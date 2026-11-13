@@ -30,7 +30,9 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space}
 use cadcraft_geom::{Bounds2, Mat3, Polyline, Vec2};
 use pen::Pen;
 
-pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, dimension_geometry, dimension_geometry_with, format_linear_value};
+pub use dim::{
+    ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrow, arrowhead, dimension_geometry, dimension_geometry_with, format_linear_value,
+};
 pub use fill::triangulate_evenodd;
 pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};

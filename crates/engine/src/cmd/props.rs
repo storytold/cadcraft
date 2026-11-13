@@ -21,7 +21,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); multileaders: text, height, dogleg, arrowSize} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
         CommandSpec::new("chprop", "Change Properties", run_set)
             .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
@@ -289,6 +289,12 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    // A multileader's landing length; zero is no landing (#3134).
+    if let Some(v) = p.get("dogleg").filter(|v| !v.is_null())
+        && !v.as_f64().is_some_and(|x| x.is_finite() && x >= 0.0)
+    {
+        return Err(bad("properties.set", "`dogleg` must be zero or a positive number"));
+    }
     if hs.is_empty() {
         // Every object was left out: the drawing stays as it was, with no undo step.
         return Ok(left_out.result(0));
@@ -402,17 +408,7 @@ fn apply_kind_properties(
                 t.rotation = x.to_radians();
             }
         }
-        // A multileader's text: its contents (#1081) and height.
-        EntityKind::MLeader(m) => {
-            if let Some(t) = &mut m.text {
-                if let Some(v) = str_param(params, "text") {
-                    t.contents = v.replace('\n', "\\P");
-                }
-                if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                    t.height = x;
-                }
-            }
-        }
+        EntityKind::MLeader(m) => set_mleader_properties(m, params),
         EntityKind::LwPolyline(pl) => {
             if let Some(x) = num("width").filter(|x| *x >= 0.0) {
                 pl.const_width = x;
@@ -425,6 +421,26 @@ fn apply_kind_properties(
         EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
         _ => {}
+    }
+}
+
+/// A multileader's text: its contents (#1081) and height; its landing (dogleg) length and
+/// arrowhead size (#3134), zero for none.
+fn set_mleader_properties(m: &mut cadcraft_doc::MLeader, params: &Value) {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    if let Some(x) = num("dogleg").filter(|x| *x >= 0.0) {
+        m.dogleg = x;
+    }
+    if let Some(x) = num("arrowSize").filter(|x| *x >= 0.0) {
+        m.arrow_size = x;
+    }
+    if let Some(t) = &mut m.text {
+        if let Some(v) = str_param(params, "text") {
+            t.contents = v.replace('\n', "\\P");
+        }
+        if let Some(x) = num("height").filter(|x| *x > 0.0) {
+            t.height = x;
+        }
     }
 }
 
