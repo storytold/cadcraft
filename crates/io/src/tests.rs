@@ -3657,3 +3657,22 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// The DWG bridge's R2000 DXF has its text in the code page it declares (ANSI_1252 for a new
+/// drawing): `é` is the byte E9, not a `\U+00E9` escape, which acadrust 0.6.7 and 0.6.8 keep as
+/// literal text for a character the code page has (hakanaktt/acadrust#260). A character the code
+/// page lacks is still escaped, and so is a backslash that starts an escape.
+#[test]
+fn dwg_bridge_writes_text_in_its_code_page() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(Layer { name: "Elétrica".into(), ..Layer::default() });
+    for value in ["Média Ω", "Ã©", "\\U+00E9"] {
+        d.add(&Space::Model, Common { layer: "Elétrica".into(), ..Common::default() }, EntityKind::Text(intl_text(value))).unwrap();
+    }
+    let bridge = dxf_write::dwg_bridge(&d, Version::R2018);
+    let has = |part: &[u8]| bridge.windows(part.len()).any(|w| w == part);
+    assert!(has(b"\r\nANSI_1252\r\n"));
+    assert!(has(b"\r\nEl\xE9trica\r\n") && has(b"\r\nM\xE9dia \\U+03A9\r\n"), "{}", String::from_utf8_lossy(&bridge));
+    assert!(has(b"\r\n\xC3\xA9\r\n"), "code page bytes that look like UTF-8 stay code page bytes");
+    assert!(has(b"\r\n\\U+005CU+00E9\r\n"), "a literal escape is escaped");
+}

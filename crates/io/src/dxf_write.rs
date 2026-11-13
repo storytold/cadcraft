@@ -121,10 +121,16 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
 /// version's (MULTILEADER from 2007).
-pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
+///
+/// Its text is in the code page its `$DWGCODEPAGE` declares, as the DXF Reference has it for
+/// R2000: a character the code page has is written as its bytes, any other as a `\U+XXXX`
+/// escape. acadrust 0.6.7 and 0.6.8 read an escape for a character the code page has as literal
+/// text (hakanaktt/acadrust#260), so a pure-ASCII bridge saved `é` in a block, layer or layout
+/// name, a text or xdata as the six characters `\U+00E9`.
+pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> Vec<u8> {
     let mut tags = tags_for(d, Version::R2000, dwg, false);
     bridge_markers(&mut tags);
-    craft_dxf::write_ascii(&tags)
+    craft_dxf::write_ascii_in_page(&tags, &code_page(d, Version::R2000))
 }
 
 /// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.

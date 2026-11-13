@@ -1146,7 +1146,7 @@ source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13af
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=006e4df225fca57e95ead0fb1f91920900798a99#006e4df225fca57e95ead0fb1f91920900798a99"
+source = "git+https://github.com/storytold/craft-libs?rev=ebb40fa0c9b6eae718a2c0bd9da594f782782d80#ebb40fa0c9b6eae718a2c0bd9da594f782782d80"
 dependencies = [
  "encoding_rs",
  "log",
