@@ -594,6 +594,18 @@ fn paint_pointer_overlay(
             dynamic_input(app, painter, hp, fields);
         }
     }
+    // A prompt for a name, a value or a choice started from a menu, a tab or a ribbon button
+    // shows beside the pointer there too, so what is typed is seen where the user is looking.
+    if !inside
+        && app.session.settings.dynmode
+        && app.ui.dialog.is_none()
+        && app.session.current_prompt().is_some_and(|p| !p.accept.point)
+        && let Some(hp) = ui.ctx().pointer_latest_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("cc_dyn_outside"));
+        let p = egui::Painter::new(ui.ctx().clone(), layer, ui.ctx().content_rect());
+        dyn_boxes::prompt_beside_pointer(app, &p, hp);
+    }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
     // No continuous repaint while hovering: input events repaint by themselves. Repainting every
