@@ -416,7 +416,7 @@ impl Session {
     pub(super) fn after_command(&mut self, before: Option<&Arc<Drawing>>, uid: Option<u64>, ok: bool) {
         #[cfg(test)]
         crate::guard::tests::panic_if_armed();
-        cmd::groups::after_command(self, before);
+        cmd::groups::after_command(self, before, uid);
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);
     }
