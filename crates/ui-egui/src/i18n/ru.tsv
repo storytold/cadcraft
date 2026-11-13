@@ -1064,6 +1064,14 @@
 	Edit text	Изменить текст
 	Edit the text of the cell (Enter, or double-click it)	Изменить текст ячейки (Enter или двойной щелчок)
 	Close the table editor (Esc)	Закрыть редактор таблиц (Esc)
+	Move Layout	Переместить лист
+	Move to...	Переместить...
+	Move before layout:	Поместить перед листом:
+	(move to end)	(в конец)
+	Custom:	Свой:
+	By window	По рамке
+	Pick a window to fit in the viewport	Указать рамку, которая заполнит видовой экран
+	Not a scale: {text} (type 1:x)	Не масштаб: {text} (введите 1:x)
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Чертёж изменился. Закройте окно и откройте его снова.

@@ -455,6 +455,10 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         let clip = Rect::from_min_max(r.min, pos2(limit.max(r.left()), r.bottom()));
         let tp = p.with_clip_rect(clip);
         let mut switch = None;
+        // Layout tabs drag to a new place in the order: (name, rect) of each shown, the one
+        // dragged and whether its drag ended this frame.
+        let mut tab_rects: Vec<(String, Rect)> = Vec::new();
+        let mut dragged: Option<(String, bool)> = None;
         for (i, (name, (g, cut))) in tabs.iter().zip(labels).enumerate() {
             if i > 0 && !shown.contains(&(i - 1)) {
                 continue;
@@ -462,7 +466,8 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let w = g.size().x + 26.0;
             let tr = Rect::from_min_size(pos2(x, r.top() + 1.0), vec2(w, r.height() - 2.0)).intersect(clip);
             let active = active_tab == Some(i);
-            let resp = ui.interact(tr, ui.scope_id().with(("lt", i)), Sense::click());
+            let resp = ui.interact(tr, ui.scope_id().with(("lt", i)), [Sense::click(), Sense::click_and_drag()][usize::from(i > 0)]);
+            note_tab_drag(i, name, tr, &resp, &mut tab_rects, &mut dragged);
             if active {
                 tp.rect_filled(tr, crate::theme::r(2.0), t.tab_active);
             } else if resp.hovered() {
@@ -489,6 +494,10 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
                 x += 22.0;
             }
+        }
+        // A dragged layout tab: a marker where it would go; dropped, it moves there.
+        if let Some((name, dropped)) = dragged {
+            drag_layout_tab(app, ui, &tp, (r.top(), r.bottom()), &tab_rects, &name, dropped);
         }
         // The layouts that didn't fit, behind a button after the last tab shown.
         let more = hidden.then(|| {
@@ -615,6 +624,134 @@ fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>)
             }
         });
         ui.add_space(12.0);
+}
+
+/// Layout tab `i` (not Model) for the drag: its place, and whether it is the one dragged.
+fn note_tab_drag(i: usize, name: &str, tr: Rect, resp: &egui::Response, tab_rects: &mut Vec<(String, Rect)>, dragged: &mut Option<(String, bool)>) {
+    if i == 0 {
+        return;
+    }
+    tab_rects.push((name.to_string(), tr));
+    if resp.dragged() || resp.drag_stopped() {
+        *dragged = Some((name.to_string(), resp.drag_stopped()));
+    }
+}
+
+/// A layout tab being dragged: the marker where it would go and, dropped, the move.
+fn drag_layout_tab(
+    app: &mut CadApp,
+    ui: &egui::Ui,
+    tp: &egui::Painter,
+    (top, bottom): (f32, f32),
+    tab_rects: &[(String, Rect)],
+    name: &str,
+    dropped: bool,
+) {
+    let t = Tokens::get();
+    let Some(px) = ui.ctx().pointer_latest_pos().map(|q| q.x) else { return };
+    let target = layout_drop_target(tab_rects, px);
+    let mark_x = match &target {
+        Some(b) => tab_rects.iter().find(|(n, _)| n == b).map(|(_, r)| r.left() - 1.0),
+        None => tab_rects.last().map(|(_, r)| r.right() + 1.0),
+    };
+    if let Some(mx) = mark_x {
+        tp.line_segment([pos2(mx, top + 2.0), pos2(mx, bottom - 2.0)], Stroke::new(2.0, t.accent));
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    // Its place now: the tab after it (or the end) leaves the order as it is.
+    let now = tab_rects.iter().position(|(n, _)| n == name).map(|i| tab_rects.get(i + 1).map(|(n, _)| n.clone()));
+    if !dropped || target.as_deref() == Some(name) || now == Some(target.clone()) {
+        return;
+    }
+    // Hidden layouts keep their places: dropped after the last tab shown, it goes before the
+    // first hidden one (or to the end).
+    let before = target.or_else(|| {
+        let all = layout_names(app);
+        let last = tab_rects.last().map(|(n, _)| n.clone());
+        last.and_then(|l| all.iter().position(|n| *n == l)).and_then(|i| all.get(i + 1)).filter(|n| n.as_str() != name).cloned()
+    });
+    let p = match before {
+        Some(b) => json!({ "name": name, "before": b }),
+        None => json!({ "name": name }),
+    };
+    if let Err(e) = app.run("layout.move", p) {
+        app.session.echo(e);
+    }
+}
+
+/// Where a layout tab dropped at `x` goes: before the first tab whose middle is right of it, or
+/// to the end (`None`).
+fn layout_drop_target(tabs: &[(String, Rect)], x: f32) -> Option<String> {
+    tabs.iter().find(|(_, r)| x < r.center().x).map(|(n, _)| n.clone())
+}
+
+/// The layouts' names in tab order.
+fn layout_names(app: &CadApp) -> Vec<String> {
+    let Ok(st) = app.session.state() else { return Vec::new() };
+    let mut ls: Vec<_> = st.doc.layouts.iter().collect();
+    ls.sort_by_key(|l| l.tab_order);
+    ls.into_iter().map(|l| l.name.clone()).collect()
+}
+
+/// Move to... (a layout tab's menu): the layouts to put `name` before, and (move to end).
+pub fn layout_move_dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool) {
+    let names = layout_names(app);
+    let sel_id = egui::Id::unique(("layout_move_before", name));
+    // The layout after it, at first: where it is now.
+    let mut sel: Option<Option<String>> = ctx.data(|d| d.get_temp(sel_id));
+    if sel.is_none() {
+        let next = names.iter().position(|n| n == name).and_then(|i| names.get(i + 1)).cloned();
+        sel = Some(next);
+    }
+    let mut chosen = sel.clone().flatten();
+    let mut done = false;
+    egui::Window::new(crate::tl!("Move Layout")).id(egui::Id::unique("layout_move")).open(open).resizable(false).collapsible(false).show(ctx, |ui| {
+        ui.label(egui::RichText::new(name).strong());
+        ui.label(crate::tl!("Move before layout:"));
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(260.0).min_scrolled_height(120.0).show(ui, |ui| {
+                ui.set_min_width(220.0);
+                for n in names.iter().filter(|n| *n != name) {
+                    let r = ui.selectable_label(chosen.as_deref() == Some(n.as_str()), n);
+                    if r.clicked() {
+                        chosen = Some(n.clone());
+                    }
+                    if r.double_clicked() {
+                        done = true;
+                    }
+                }
+                let r = ui.selectable_label(chosen.is_none(), crate::tl!("(move to end)"));
+                if r.clicked() {
+                    chosen = None;
+                }
+                if r.double_clicked() {
+                    done = true;
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui.button(crate::tl!("OK")).clicked() {
+                done = true;
+            }
+            if ui.button(crate::tl!("Cancel")).clicked() {
+                app.ui.dialog = None;
+            }
+        });
+    });
+    ctx.data_mut(|d| d.insert_temp(sel_id, Some(chosen.clone())));
+    if done {
+        let p = match &chosen {
+            Some(b) => json!({ "name": name, "before": b }),
+            None => json!({ "name": name }),
+        };
+        if let Err(e) = app.run("layout.move", p) {
+            app.session.echo(e);
+        }
+        ctx.data_mut(|d| d.remove::<Option<Option<String>>>(sel_id));
+        app.ui.dialog = None;
+    } else if app.ui.dialog.is_none() || !*open {
+        ctx.data_mut(|d| d.remove::<Option<Option<String>>>(sel_id));
     }
 }
 
@@ -755,6 +892,26 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A layout tab dropped goes before the first tab whose middle is right of the pointer, or
+    /// to the end; Move to... in its menu opens the list and OK moves it.
+    #[test]
+    fn layout_tabs_move_by_drag_and_by_move_to() {
+        let tab = |n: &str, x: f32| (n.to_string(), Rect::from_min_size(pos2(x, 0.0), vec2(60.0, 20.0)));
+        let tabs = [tab("A", 100.0), tab("B", 162.0), tab("C", 224.0)];
+        assert_eq!(layout_drop_target(&tabs, 120.0).as_deref(), Some("A"));
+        assert_eq!(layout_drop_target(&tabs, 140.0).as_deref(), Some("B"));
+        assert_eq!(layout_drop_target(&tabs, 300.0), None);
+
+        let mut app = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).unwrap();
+        app.run("layout.new", json!({ "name": "Last" })).unwrap();
+        let first = layout_names(&app).first().cloned().unwrap();
+        crate::shortcut_menus::choose(&mut app, &egui::Context::default(), "layout:move:Last");
+        assert_eq!(app.ui.dialog.as_deref(), Some("layoutmove:Last"));
+        app.run("layout.move", json!({ "name": "Last", "before": first })).unwrap();
+        assert_eq!(layout_names(&app).first().map(String::as_str), Some("Last"));
+    }
 
     #[test]
     fn mac_title_row_centres_and_clears_the_traffic_lights() {

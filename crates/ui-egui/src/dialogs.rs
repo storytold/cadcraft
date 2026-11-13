@@ -36,6 +36,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
         o if o == "toolbar" || o.starts_with("toolbar:") => crate::toolbar::dialog(app, ctx, o, &mut open),
+        o if o.starts_with("layoutmove:") => crate::chrome::layout_move_dialog(app, ctx, o.trim_start_matches("layoutmove:"), &mut open),
         o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
     }
