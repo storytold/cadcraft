@@ -38,6 +38,9 @@ fn properties_set_edits_tianzheng_field_through_hook() {
                 segments: vec![],
                 graphic_data: None,
                 texts: vec![],
+                circles: vec![],
+                polys: vec![],
+                arrow_tips: vec![],
             }),
         )
         .unwrap()

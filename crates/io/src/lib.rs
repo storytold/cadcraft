@@ -341,12 +341,56 @@ pub fn move_tianzheng_wall(d: &mut Drawing, handle: cadcraft_doc::Handle, dx: f6
     set_tianzheng_segments(d, handle, segs)
 }
 
+/// 改天正墙厚（仅支持**直墙** = 2 段平行双线；拐角/开洞墙返回 false，用 [`set_tianzheng_segment`] 自算）。
+///
+/// 直墙由两条平行线段（内线 + 外线）表示，间距 = 墙厚。改墙厚时**墙中线不动**，两条线各沿
+/// 法线方向移动 `(new_thickness - old_thickness) / 2`。中线 = 两条线段中点的中点，法线 = a 段
+/// 方向向量旋转 90°。返回是否成功（实体非天正、非 2 段、或 `new_thickness <= 0` 时返回 false）。
+pub fn set_tianzheng_thickness(d: &mut Drawing, handle: cadcraft_doc::Handle, new_thickness: f64) -> bool {
+    use cadcraft_doc::EntityKind;
+    if new_thickness <= 0.0 {
+        return false;
+    }
+    let t = match d.model.get(handle).map(|e| &e.kind) {
+        Some(EntityKind::Tianzheng(t)) => t.clone(),
+        _ => return false,
+    };
+    if t.segments.len() != 2 {
+        return false;
+    }
+    let (a, b) = (t.segments[0], t.segments[1]);
+    // a 段方向单位向量。
+    let (ax, ay) = (a.3 - a.0, a.4 - a.1);
+    let len = (ax * ax + ay * ay).sqrt();
+    if len < 1e-6 {
+        return false;
+    }
+    let (ux, uy) = (ax / len, ay / len);
+    // 法线 = 方向旋转 +90°。
+    let (nx, ny) = (-uy, ux);
+    // 两段的中点。
+    let (max, may) = ((a.0 + a.3) / 2.0, (a.1 + a.4) / 2.0);
+    let (mbx, mby) = ((b.0 + b.3) / 2.0, (b.1 + b.4) / 2.0);
+    // 有符号旧墙厚（a 中点沿法线到 b 中点的距离）。
+    let old_t = (mbx - max) * nx + (mby - may) * ny;
+    if old_t.abs() < 1e-6 {
+        return false;
+    }
+    // 中线（a 端中点）。
+    let (cx, cy) = (max + nx * old_t / 2.0, may + ny * old_t / 2.0);
+    let half = new_thickness / 2.0;
+    let new_a = (a.0 + cx - nx * half - max, a.1 + cy - ny * half - may, a.2, a.3 + cx - nx * half - max, a.4 + cy - ny * half - may, a.5);
+    let new_b = (b.0 + cx + nx * half - mbx, b.1 + cy + ny * half - mby, b.2, b.3 + cx + nx * half - mbx, b.4 + cy + ny * half - mby, b.5);
+    set_tianzheng_segments(d, handle, vec![new_a, new_b])
+}
+
 /// 改天正墙几何的 JSON 分发入口（供 engine 的 `properties.set` 通过 `tianzhengGeometry` 参数调用）。
 ///
 /// `op` 支持的操作：
 /// - `{"op": "moveWall", "dx": f64, "dy": f64, "dz": f64}` → [`move_tianzheng_wall`]
 /// - `{"op": "moveSegment", "index": usize, "dx": f64, "dy": f64, "dz": f64}` → [`move_tianzheng_segment`]
 /// - `{"op": "setSegment", "index": usize, "x1": f64, "y1": f64, "z1": f64, "x2": f64, "y2": f64, "z2": f64}` → [`set_tianzheng_segment`]
+/// - `{"op": "setThickness", "thickness": f64}` → [`set_tianzheng_thickness`]（仅直墙 = 2 段）
 ///
 /// 返回是否成功（未知 op、缺参数、或底层失败时返回 false）。
 pub fn set_tianzheng_geometry(d: &mut Drawing, handle: cadcraft_doc::Handle, op: &serde_json::Value) -> bool {
@@ -370,6 +414,10 @@ pub fn set_tianzheng_geometry(d: &mut Drawing, handle: cadcraft_doc::Handle, op:
             let coords = ["x1", "y1", "z1", "x2", "y2", "z2"].map(|k| f(&op[k]));
             let [Some(x1), Some(y1), Some(z1), Some(x2), Some(y2), Some(z2)] = coords else { return false };
             set_tianzheng_segment(d, handle, index as usize, (x1, y1, z1, x2, y2, z2))
+        }
+        Some("setThickness") => {
+            let Some(thickness) = f(&op["thickness"]) else { return false };
+            set_tianzheng_thickness(d, handle, thickness)
         }
         _ => false,
     }
