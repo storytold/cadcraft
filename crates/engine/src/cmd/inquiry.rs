@@ -13,6 +13,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod arcs;
 mod loops;
+mod proxy;
 mod regions;
 mod shapes;
 mod usage;
@@ -565,8 +566,18 @@ fn run_status(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({ "message": msg }))
 }
 
-fn entity_summary(e: &cadcraft_doc::Entity) -> Value {
-    json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "transparency": super::props::transparency_value(e.common.transparency), "geometry": e.kind })
+/// An entity as the query commands report it. An unmodelled entity with graphics data carries a
+/// `proxy` object: its class and the frames of its graphics cache, counted by type — what tells a
+/// proxy that draws nothing (transforms and state only) from one with real content.
+pub(super) fn entity_summary(d: &cadcraft_doc::Drawing, e: &cadcraft_doc::Entity) -> Value {
+    let mut v = json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "transparency": super::props::transparency_value(e.common.transparency), "geometry": e.kind });
+    if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind
+        && let Some(p) = proxy::summary(d, u)
+        && let Some(o) = v.as_object_mut()
+    {
+        o.insert("proxy".into(), p);
+    }
+    v
 }
 
 fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -575,10 +586,16 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
     let space = st.space.clone();
     let ext = d.extents(&space);
-    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
-            *counts.entry(e.kind.type_name()).or_default() += 1;
+            // An unmodelled entity counts under its own DXF name (ACAD_PROXY_ENTITY, OLE2FRAME,
+            // ARC_DIMENSION, …), not all together as "Proxy".
+            let ty = match &e.kind {
+                cadcraft_doc::EntityKind::Unknown(u) => u.dxf_type.clone(),
+                _ => e.kind.type_name().to_string(),
+            };
+            *counts.entry(ty).or_default() += 1;
         }
     }
     let mut out = json!({
@@ -608,7 +625,7 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "entities", true)
         && let (Some(o), Some(store)) = (out.as_object_mut(), d.space(&space))
     {
-        o.insert("entities".into(), Value::Array(store.iter().take(limit).map(|e| entity_summary(e)).collect()));
+        o.insert("entities".into(), Value::Array(store.iter().take(limit).map(|e| entity_summary(d, e)).collect()));
     }
     Ok(out)
 }
@@ -651,7 +668,7 @@ fn run_entities(s: &mut Session, p: &Value) -> Result<Value> {
         .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
         .filter(|e| window.as_ref().is_none_or(|w| crate::select::in_window(d, e, None, w, crossing, tol)))
         .collect();
-    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| entity_summary(e)).collect();
+    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| entity_summary(d, e)).collect();
     // `count` is every match; `returned` is this page of them (`offset`, `limit`).
     Ok(json!({ "count": matches.len(), "returned": page.len(), "offset": offset, "entities": page }))
 }
