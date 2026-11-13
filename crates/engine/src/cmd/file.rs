@@ -8,7 +8,7 @@ mod template;
 use std::sync::OnceLock;
 
 use cadcraft_doc::{Drawing, Format};
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, ok, str_param};
@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIASES, alias_name, command_id};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -24,7 +24,7 @@ pub use template::{qnew_template, set_qnew_template};
 /// endless device must be rejected before it exhausts memory (CWE-400), so native opens read
 /// through [`crate::capped_read`] rather than buffering to EOF.
 #[cfg(not(target_arch = "wasm32"))]
-const MAX_DRAWING_BYTES: usize = 512 << 20;
+pub(crate) const MAX_DRAWING_BYTES: usize = 512 << 20;
 /// Largest `.scr` script accepted from a local path.
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_SCRIPT_BYTES: usize = 64 << 20;
@@ -53,9 +53,9 @@ pub fn io() -> Option<&'static IoHooks> {
 /// (installed by the app with the DXF reader and writer, a lower layer).
 pub struct EntityCodec {
     /// The entity's type name and the groups of its record, without its `0` group.
-    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
+    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<craft_dxf::Tag>),
     /// An entity from a type name and groups.
-    pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
+    pub entity: fn(&str, &[craft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();
@@ -347,7 +347,7 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
         cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
     }
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
 fn add_read(s: &mut Session, mut drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -375,10 +375,12 @@ pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option
 fn opened(s: &Session, i: usize, entities: bool) -> Value {
     let d = s.docs.get(i).map(|st| &st.doc);
     let warnings = d.map(|d| d.read_notes.clone()).unwrap_or_default();
+    // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
+    let saved_view = d.is_some_and(|d| crate::view::saved_view(d).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings })
+        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings, "saved_view": saved_view })
     } else {
-        json!({ "index": i, "warnings": warnings })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view })
     }
 }
 
@@ -511,7 +513,7 @@ pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
     // DWG: a version tag like `AC1032` (R12 is `AC1009`).
     let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
-    if dwg || cadcraft_dxf::is_binary(bytes) {
+    if dwg || craft_dxf::is_binary(bytes) {
         return true;
     }
     // ASCII DXF: optional comments (999), then group 0 SECTION.
@@ -541,7 +543,7 @@ pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
         // Too short for any DWG's header: cut off, not unknown.
         return if head.len() < 256 { Some(false) } else { dwg_complete(head, len) };
     }
-    if cadcraft_dxf::is_binary(head) {
+    if craft_dxf::is_binary(head) {
         return Some(tail.ends_with(b"EOF\0"));
     }
     let text = String::from_utf8_lossy(tail);
@@ -633,6 +635,40 @@ pub fn save_keeps_current(_path: &std::path::Path) -> bool {
     false
 }
 
+/// The mode of a new backup: no more open than the drawing (`src_mode`, group `src_gid`) nor than the
+/// `.bak` it replaces (`old`: mode and group). The backup keeps the old `.bak`'s group, so when that
+/// differs from the drawing's group, its group bits are dropped and its other bits are capped by
+/// the drawing's group bits: a member of the drawing's group must not gain access through `other`.
+#[cfg(unix)]
+fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
+    let mut mode = src_mode & 0o777;
+    if let Some((old_mode, old_gid)) = old {
+        mode &= old_mode;
+        if old_gid != src_gid {
+            mode = without_group(src_mode, mode);
+        }
+    }
+    mode
+}
+
+/// `mode` for a backup that is not in the drawing's group: no group bits, and `other` capped by the
+/// drawing's group bits (`src_mode`).
+#[cfg(unix)]
+fn without_group(src_mode: u32, mode: u32) -> u32 {
+    (mode & !0o070) & (!0o007 | ((src_mode & 0o070) >> 3))
+}
+
+/// A first backup is created in the process's (or folder's) group, not the drawing's: move it to the
+/// drawing's group before any data is written, else drop its group bits ([`without_group`]).
+#[cfg(unix)]
+fn adopt_source_group(out: &std::fs::File, src: &std::fs::Metadata) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    if out.metadata()?.gid() == src.gid() || fchown(out, None, Some(src.gid())).is_ok() {
+        return Ok(());
+    }
+    out.set_permissions(std::fs::Permissions::from_mode(without_group(src.mode(), src.mode() & 0o777)))
+}
+
 /// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
@@ -656,19 +692,23 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     // failed write leaves the old .bak as it was; a symlink at the .bak is replaced, never
     // written through.
     #[cfg(unix)]
-    let permissions = {
-        use std::os::unix::fs::PermissionsExt;
-        let mut mode = src.metadata()?.permissions().mode() & 0o777;
-        if let Ok(m) = std::fs::symlink_metadata(&bak)
-            && m.is_file()
-        {
-            mode &= m.permissions().mode();
-        }
-        Some(std::fs::Permissions::from_mode(mode))
+    let source_metadata = src.metadata()?;
+    #[cfg(unix)]
+    let first_backup = std::cell::Cell::new(false);
+    #[cfg(unix)]
+    let permissions = || {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let old = std::fs::symlink_metadata(&bak).ok().filter(|m| m.is_file());
+        first_backup.set(old.is_none());
+        Ok(Some(std::fs::Permissions::from_mode(backup_mode(source_metadata.mode(), source_metadata.gid(), old.map(|m| (m.mode(), m.gid()))))))
     };
     #[cfg(not(unix))]
-    let permissions = None;
-    crate::atomic_write::write_atomic_with(&bak, permissions, |out| {
+    let permissions = || Ok(None);
+    crate::atomic_write::write_atomic_with_permissions(&bak, permissions, |out| {
+        #[cfg(unix)]
+        if first_backup.get() {
+            adopt_source_group(out, &source_metadata)?;
+        }
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
     })
@@ -787,7 +827,10 @@ const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 const DWG_WRITES: [&str; 1] = ["OLE2FRAME"];
 
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`].
+/// store has a record for keeps its geometry and is not counted; neither are [`DWG_WRITES`], nor
+/// another program's proxy entity whose class the file names: the DWG writes it with that class.
+/// Before 2013, or when its group 91 names no class of the file, the DWG leaves the proxy out and
+/// it is counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
@@ -804,7 +847,18 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
             if DWG_WRITES.contains(&u.dxf_type.as_str()) {
                 continue;
             }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") && d.foreign.proxy_class(&u.tags).is_some() {
+                continue;
+            }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    // Another program's proxy objects (in the OBJECTS section) follow the same rule as its proxy
+    // entities: the DWG writer leaves them out before 2013, or when their class can't be named.
+    for o in d.foreign.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACAD_PROXY_OBJECT")) {
+        if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
+            let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }
@@ -1024,6 +1078,52 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// A backup is never more open than the drawing or the old `.bak`, and loses the group bits when
+    /// it would keep the old `.bak`'s group while the drawing is in another.
+    #[cfg(unix)]
+    #[test]
+    fn backup_mode_drops_group_bits_for_a_different_group() {
+        use super::backup_mode;
+        assert_eq!(backup_mode(0o640, 10, None), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 10))), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 20))), 0o600);
+        assert_eq!(backup_mode(0o644, 10, Some((0o644, 20))), 0o604);
+        assert_eq!(backup_mode(0o600, 10, Some((0o664, 10))), 0o600);
+    }
+
+    /// With no `.bak` yet, the first backup takes the drawing's group (when the user is in another
+    /// group, as `id -G` says), never the group the new file would be created in.
+    #[cfg(unix)]
+    #[test]
+    fn first_backup_takes_the_drawings_group() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = TempDir::new("first-bak-grp");
+        let src = dir.join("a.dxf");
+        std::fs::write(&src, "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n").unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&src).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&src, None, Some(gid)).unwrap();
+        }
+        super::backup(&src).unwrap();
+        let (s, b) = (std::fs::metadata(&src).unwrap(), std::fs::metadata(super::backup_path(&src)).unwrap());
+        assert_eq!((b.gid(), b.mode() & 0o777), (s.gid(), 0o640));
+    }
+
+    /// The fail-safe when the group cannot be adopted: no group bits, `other` capped by the group's.
+    #[cfg(unix)]
+    #[test]
+    fn without_group_drops_group_bits_and_caps_other() {
+        assert_eq!(super::without_group(0o640, 0o640), 0o600);
+        assert_eq!(super::without_group(0o604, 0o604), 0o600);
+        assert_eq!(super::without_group(0o644, 0o644), 0o604);
+    }
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()

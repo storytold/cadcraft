@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle};
-use cadcraft_dxf::{Section, Tag, records};
+use craft_dxf::{Section, Tag, records};
 
 /// Deepest nesting of fields followed.
 const MAX_DEPTH: usize = 8;
@@ -181,7 +181,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_dxf::Tag;
+    use craft_dxf::Tag;
 
     fn field(code: &str, children: &[&str]) -> Vec<Tag> {
         let mut t = vec![Tag::s(100, "AcDbField"), Tag::s(2, code)];
