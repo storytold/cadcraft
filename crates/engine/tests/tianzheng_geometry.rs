@@ -37,6 +37,7 @@ fn properties_set_moves_tianzheng_wall_through_hook() {
                 dxf_type: "ACAD_PROXY_ENTITY".into(),
                 segments: vec![seg0, (240.0, 200.0, 0.0, 240.0, 400.0, 0.0)],
                 graphic_data: None,
+                texts: vec![],
             }),
         )
         .unwrap()

@@ -37,6 +37,7 @@ fn properties_set_edits_tianzheng_field_through_hook() {
                 dxf_type: "ACAD_PROXY_ENTITY".into(),
                 segments: vec![],
                 graphic_data: None,
+                texts: vec![],
             }),
         )
         .unwrap()

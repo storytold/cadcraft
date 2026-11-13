@@ -60,6 +60,21 @@ pub struct Unknown {
     pub tags: Vec<RawTag>,
 }
 
+/// 天正文字（从 proxy graphics 类型 38 图元提取），含插入点、内容和尺寸。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TianzhengText {
+    /// 插入点 x（建筑坐标 mm）。
+    pub x: f64,
+    /// 插入点 y（建筑坐标 mm）。
+    pub y: f64,
+    /// 文字内容。
+    pub text: String,
+    /// 文字高度（mm）。
+    pub height: f64,
+    /// 宽度因子。
+    pub width_factor: f64,
+}
+
 /// 天正（Tangent）自定义实体，从 DWG 解析出的字段。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tianzheng {
@@ -86,6 +101,9 @@ pub struct Tianzheng {
     /// 原始 proxy graphics 字节（几何回写用；几何不在 graphics 里时为 None）。
     #[serde(default, skip)]
     pub graphic_data: Option<Vec<u8>>,
+    /// 天正文字（标注/轴号/标高等，从 proxy graphics 类型 38 图元提取）。
+    #[serde(default, skip)]
+    pub texts: Vec<TianzhengText>,
 }
 
 impl Unknown {

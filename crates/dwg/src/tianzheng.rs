@@ -75,6 +75,21 @@ mod native {
         pub handle_bits: i64,
     }
 
+    /// 从天正 proxy graphics 提取的一个文字（类型 38 图元）。
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct TianzhengText {
+        /// 插入点 x（建筑坐标 mm）。
+        pub x: f64,
+        /// 插入点 y（建筑坐标 mm）。
+        pub y: f64,
+        /// 文字内容。
+        pub text: String,
+        /// 文字高度（mm）。
+        pub height: f64,
+        /// 宽度因子。
+        pub width_factor: f64,
+    }
+
     /// 从 DWG 字节提取所有天正实体（含 failsafe 读取，坏记录跳过而非整文件失败）。
     ///
     /// 天正自定义实体（`TCH_*`）在 acadrust 里可能是两种形态，取决于文件是否经过
@@ -178,6 +193,57 @@ mod native {
             }
         }
         (i == segments.len()).then(|| g.encode()).flatten()
+    }
+
+    /// 从 proxy graphics 提取天正文字（类型 38 图元）。
+    ///
+    /// 类型 38 图元的 payload 布局（实测 TCH_TEXT/TCH_DIMENSION）：
+    /// `x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 72 起是 UTF-16LE null 结尾的文字内容，
+    /// 其后是 `char_count(u64)`，按 8 字节对齐后是 `height(f64)` 与 `width_factor(f64)`。
+    /// 字体名（SIMPLEX/GBCBIG）在更后面，本函数不解析。
+    pub fn extract_text_entities(graphic_data: &[u8]) -> Vec<TianzhengText> {
+        let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
+        let mut out = Vec::new();
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 38, data } = r {
+                if data.len() < 88 {
+                    continue;
+                }
+                let x = f64::from_le_bytes(data[0..8].try_into().unwrap());
+                let y = f64::from_le_bytes(data[8..16].try_into().unwrap());
+                // 文字内容：偏移 72 起，UTF-16LE null 结尾。
+                let mut text = String::new();
+                let mut i = 72;
+                while i + 1 < data.len() {
+                    let u = u16::from_le_bytes([data[i], data[i + 1]]);
+                    i += 2;
+                    if u == 0 {
+                        break;
+                    }
+                    if let Some(c) = char::from_u32(u as u32) {
+                        text.push(c);
+                    }
+                }
+                // char_count(u32) 对齐到 4 字节、读后对齐到 8 字节，然后向后扫描第一个
+                // 「合理高度」的 f64（建筑文字高度 ~50..5000mm）。上标/下标文字在 char_count
+                // 后比主文字多一个字段，固定偏移会读错，故用范围扫描。
+                let mut pos = (i + 3) & !3;
+                pos = (pos + 4 + 7) & !7;
+                let mut height = 0.0;
+                let mut width_factor = 1.0;
+                while pos + 16 <= data.len() && pos < i + 64 {
+                    let v = f64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+                    if (50.0..5000.0).contains(&v) {
+                        height = v;
+                        width_factor = f64::from_le_bytes(data[pos + 8..pos + 16].try_into().unwrap());
+                        break;
+                    }
+                    pos += 8;
+                }
+                out.push(TianzhengText { x, y, text, height, width_factor });
+            }
+        }
+        out
     }
 
     /// 从天正实体的 `raw_data` 提取 text 流（含字段容器明文 + 加密字段）。
@@ -502,7 +568,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
 
 #[cfg(test)]
 mod tests {
@@ -651,5 +717,41 @@ mod tests {
 
         assert!(encode_wall_segments(&graphic_data, &[]).is_none());
         assert!(encode_wall_segments(&graphic_data, &[seg, seg]).is_none());
+    }
+
+    /// extract_text_entities 从类型 38 图元提取文字（位置/内容/高度/宽度因子）。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn extracts_text_from_type38() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        // 类型 38 图元 payload：9×f64（72B，前两个是插入点）→ UTF-16LE 文字 + null →
+        // char_count(u32，对齐到 4) → 对齐到 8 → height → width_factor。
+        let mut data = Vec::new();
+        for v in [100.0_f64, 200.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0] {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        for c in "FM".encode_utf16() {
+            data.extend_from_slice(&c.to_le_bytes());
+        }
+        data.extend_from_slice(&0u16.to_le_bytes());
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        data.extend_from_slice(&2u32.to_le_bytes());
+        while data.len() % 8 != 0 {
+            data.push(0);
+        }
+        data.extend_from_slice(&297.5_f64.to_le_bytes());
+        data.extend_from_slice(&0.7058823529411765_f64.to_le_bytes());
+        let g = ProxyGraphics { records: vec![ProxyGraphicRecord::Unknown { record_type: 38, data }] };
+        let graphic_data = g.encode().unwrap();
+
+        let texts = extract_text_entities(&graphic_data);
+        assert_eq!(texts.len(), 1);
+        let t = &texts[0];
+        assert_eq!((t.x, t.y), (100.0, 200.0));
+        assert_eq!(t.text, "FM");
+        assert_eq!(t.height, 297.5);
+        assert!((t.width_factor - 0.7058823529411765).abs() < 1e-12);
     }
 }

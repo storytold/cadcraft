@@ -387,6 +387,18 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
             .unwrap_or_default();
         // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
         let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
+        // 天正文字（标注/轴号/标高等，类型 38 图元）。
+        let mut texts: Vec<cadcraft_doc::TianzhengText> = cadcraft_dwg::tianzheng::extract_text_entities(&e.graphic_data)
+            .into_iter()
+            .map(|t| cadcraft_doc::TianzhengText { x: t.x, y: t.y, text: t.text, height: t.height, width_factor: t.width_factor })
+            .collect();
+        // 上标/下标文字（height=0 表示继承主文字）继承同实体主文字高度，否则渲染为 0 不可见。
+        let inherit = texts.iter().map(|t| t.height).fold(297.5_f64, f64::max);
+        for t in &mut texts {
+            if t.height <= 0.0 {
+                t.height = inherit;
+            }
+        }
         let graphic_data = (!e.graphic_data.is_empty()).then(|| e.graphic_data.clone());
         let handle = cadcraft_doc::Handle(e.handle);
         let class_name = e.dxf_class.clone();
@@ -405,6 +417,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                     dxf_type,
                     segments: segments.clone(),
                     graphic_data: graphic_data.clone(),
+                    texts: texts.clone(),
                 });
             }
         });

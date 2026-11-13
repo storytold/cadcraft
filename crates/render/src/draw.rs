@@ -239,6 +239,25 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             for (x1, y1, _, x2, y2, _) in &t.segments {
                 stroke(b, &[Vec2::new(*x1, *y1), Vec2::new(*x2, *y2)]);
             }
+            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角暂未逆向，按水平画。
+            if b.opts.text {
+                for tx in &t.texts {
+                    let text = cadcraft_doc::Text {
+                        insert: cadcraft_geom::Vec3::new(tx.x, tx.y, 0.0),
+                        align_pt: None,
+                        height: tx.height,
+                        value: tx.text.clone(),
+                        rotation: 0.0,
+                        width_factor: tx.width_factor,
+                        oblique: 0.0,
+                        style: "Standard".into(),
+                        halign: cadcraft_doc::HAlign::Left,
+                        valign: cadcraft_doc::VAlign::Baseline,
+                    };
+                    let (sh, _) = place_text_entity(ctx.d, &text, &tx.text);
+                    b.shaped(ctx, rgb, lw, &sh);
+                }
+            }
         }
         kind => {
             for prim in kind.prims() {

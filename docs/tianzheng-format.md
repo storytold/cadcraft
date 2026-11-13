@@ -21,6 +21,8 @@
 
 6. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@TDbWall`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线、`T20d7`=OutCircleTextAlignment、`T20d12`=SourceExtentY。故 binary 的 TCH_WALL 字段是「填充/保温/材料」**属性**，几何不在 T20 字段（在加密固定字段 + proxy graphics）。
 
+7. **天正文字在 proxy graphics 类型 38 图元**（实测 TCH_TEXT/TCH_DIMENSION/TCH_OPENING/TCH_ELEVATION）。payload 布局：`x(f64) y(f64)` 是插入点（建筑坐标 mm），偏移 16 起 7×f64（含旋转角，offset 48 处，如 `0.017rad`），偏移 72 起是 UTF-16LE null 结尾的文字内容，其后 `char_count(u32，对齐到 4)`，再对齐到 8 后是 `height(f64)`（如 297.5）与 `width_factor(f64)`（如 0.70588），更后面是字体名 `SIMPLEX`/`GBCBIG`。**上标/下标文字**（`^U2^U` 控制码对应）的 height 字段布局不同（读到 0 = 继承主文字），已用「扫描 50..5000 范围 + 继承主文字高度」启发式处理。已实现 `extract_text_entities` 提取 + 渲染层按 `Text` 画出。
+
 ## 1. 概述
 
 天正 T20（Tangent）在 DWG 中通过 ObjectARX 自定义实体（代理实体 proxy entity，DXF 类名 `TCH_*`）存储建筑 / 结构 / 给排水 / 暖通 / 电气对象。不经过天正运行时，第三方 CAD 只能看到 `ACAD_PROXY_ENTITY`，读不到真实几何与属性。
