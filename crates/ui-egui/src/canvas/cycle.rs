@@ -94,8 +94,8 @@ pub(super) fn cycle_badge(p: &egui::Painter, at: Pos2) {
     let t = Tokens::get();
     for off in [vec2(14.0, -22.0), vec2(19.0, -17.0)] {
         let r = Rect::from_min_size(at + off, vec2(9.0, 9.0));
-        p.rect_filled(r, 1.0, t.cmd_bg);
-        p.rect_stroke(r, 1.0, Stroke::new(1.0, t.text), egui::StrokeKind::Inside);
+        p.rect_filled(r, crate::theme::r(1.0), t.cmd_bg);
+        p.rect_stroke(r, crate::theme::r(1.0), Stroke::new(1.0, t.text), egui::StrokeKind::Inside);
     }
 }
 
@@ -124,14 +124,14 @@ pub(super) fn cycle_list(app: &mut CadApp, p: &egui::Painter) {
     let layer_w = galleys.iter().map(|(_, b)| b.size().x).fold(20.0, f32::max);
     let w = ty_w + layer_w + 36.0;
     let m = Rect::from_min_size(list.at + vec2(14.0, 14.0), vec2(w, row_h * galleys.len() as f32 + 4.0));
-    p.rect_filled(m, 3.0, t.cmd_bg);
-    p.rect_stroke(m, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    p.rect_filled(m, crate::theme::r(3.0), t.cmd_bg);
+    p.rect_stroke(m, crate::theme::r(3.0), Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
     let hover = app.canvas.hover;
     list.rows.clear();
     for (i, ((ty, layer), (h, _, _))) in galleys.into_iter().zip(&list.items).enumerate() {
         let row = Rect::from_min_size(pos2(m.left() + 2.0, m.top() + 2.0 + row_h * i as f32), vec2(w - 4.0, row_h));
         if hover == Some(*h) {
-            p.rect_filled(row, 2.0, t.cmd_keyword_hover);
+            p.rect_filled(row, crate::theme::r(2.0), t.cmd_keyword_hover);
         }
         p.galley(pos2(row.left() + 8.0, row.center().y - ty.size().y / 2.0), ty, t.text);
         p.galley(pos2(row.left() + 20.0 + ty_w, row.center().y - layer.size().y / 2.0), layer, t.text_dim);

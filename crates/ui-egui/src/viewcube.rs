@@ -95,8 +95,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     p.text(c + vec2(ring + 1.0, 0.0), egui::Align2::CENTER_CENTER, crate::tl!("E"), f.clone(), lc);
     p.text(c + vec2(-ring - 1.0, 0.0), egui::Align2::CENTER_CENTER, crate::tl!("W"), f, lc);
     let face_col = if part == Some(Part::Face) { Color32::from_rgb(0xb8, 0xbc, 0xc2) } else { Color32::from_rgb(0x9a, 0x9e, 0xa4) };
-    p.rect_filled(l.face, 2.0, face_col);
-    p.rect_stroke(l.face, 2.0, Stroke::new(1.0, Color32::from_rgb(0x6c, 0x70, 0x76)), egui::StrokeKind::Inside);
+    p.rect_filled(l.face, crate::theme::r(2.0), face_col);
+    p.rect_stroke(l.face, crate::theme::r(2.0), Stroke::new(1.0, Color32::from_rgb(0x6c, 0x70, 0x76)), egui::StrokeKind::Inside);
     p.text(c, egui::Align2::CENTER_CENTER, crate::tl!("TOP"), egui::FontId::proportional(13.0), Color32::from_rgb(0x50, 0x54, 0x5a));
     paint_home(&p, l.home, part == Some(Part::Home));
 
@@ -141,7 +141,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
 fn paint_home(p: &egui::Painter, r: Rect, hot: bool) {
     let t = Tokens::get();
     if hot {
-        p.rect_filled(r, 3.0, t.control_hover);
+        p.rect_filled(r, crate::theme::r(3.0), t.control_hover);
     }
     let st = Stroke::new(1.3, if hot { t.text } else { t.text_dim });
     let c = r.center();

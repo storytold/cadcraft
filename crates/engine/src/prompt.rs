@@ -102,6 +102,18 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The other corner of a rectangle drawn turned by this angle (radians) from `base`: its
+    /// width and height run along the turned sides (RECTANG's Rotation).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub corner_rotation: f64,
+    /// `base` is the rectangle's centre, not a corner: the other corner is half its width and
+    /// height away (RECTANG's CEnter).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub corner_center: bool,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -152,6 +164,13 @@ impl Prompt {
     pub fn corner(mut self, p: Vec2) -> Self {
         self.base = Some(p);
         self.corner = true;
+        self
+    }
+    /// The rectangle `corner` is turned by `rotation` and measured from its centre when
+    /// `center` (the `corner_rotation` and `corner_center` fields).
+    pub fn corner_frame(mut self, rotation: f64, center: bool) -> Self {
+        self.corner_rotation = if rotation.is_finite() { rotation } else { 0.0 };
+        self.corner_center = center;
         self
     }
     /// Asks for a distance from the base (the `distance` field).
@@ -274,6 +293,11 @@ pub trait Interactive: Send {
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
     }
+    /// Geometry shown glowing under the cursor: what picking there would take away or add
+    /// (TRIM, EXTEND), drawn over the drawing as a highlight.
+    fn glow(&self, _s: &Session, _cursor: Vec2) -> Option<Glow> {
+        None
+    }
     /// Preview objects drawn with their own properties (colour, layer, linetype) rather than
     /// the current layer's, as [`Interactive::preview`]'s are: a block reference re-evaluated
     /// under the cursor, drawn as it will look. Drawn under the rubber band.
@@ -297,6 +321,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// The text the in-place editor edits: where, how, its current contents and what kind of
+    /// object holds it. By default the new multiline text of [`Interactive::editing_mtext`].
+    fn text_editor(&self) -> Option<TextEditor> {
+        self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new() })
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
@@ -308,6 +337,42 @@ pub struct DisplayOnly {
     /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
     /// DVIEWBLOCK block), with its own properties.
     pub extra: Vec<cadcraft_doc::Entity>,
+}
+
+/// What the in-place text editor edits ([`Interactive::text_editor`]). The editor answers the
+/// command's text prompt with the new contents (`Input::Text`), then `Input::Enter`; a table cell
+/// may answer a move keyword instead of Enter (`Next`, `Previous`, `Up`, `Down`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextEditor {
+    /// Where the box sits (insertion point, attachment, rotation), its width (0: grows with the
+    /// text), text height and style; `contents` is the text to start from, in MTEXT codes.
+    pub mtext: cadcraft_doc::MText,
+    pub kind: EditorKind,
+    /// Which object (and cell) is being edited: a new key means a new text to load.
+    pub key: String,
+}
+
+/// The kind of text the in-place editor edits.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorKind {
+    /// Multiline text being created (MTEXT).
+    NewMText,
+    /// Existing multiline text: an MTEXT, a multileader's text.
+    MText,
+    /// One line of plain text (TEXT, attribute definition): no formatting, Enter finishes.
+    Line,
+    /// A dimension's text: `<>` stands for the measured value, shown as `measured`.
+    Dimension { measured: String },
+    /// A table cell (`name` such as `B3`); Tab, Shift+Tab and the arrows move between cells.
+    TableCell { name: String },
+}
+
+/// See [`Interactive::glow`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Glow {
+    pub kinds: Vec<EntityKind>,
+    /// The geometry is what a pick takes away (a trim), not what it adds (an extend).
+    pub removing: bool,
 }
 
 /// See [`Interactive::drag`].

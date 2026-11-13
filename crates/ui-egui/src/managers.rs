@@ -31,6 +31,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -53,6 +54,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => {
+            crate::dimstyles::dialog(app, ctx, open);
+            None
+        }
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -275,7 +280,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
                 } else {
                     t.control
                 };
-                ui.painter().rect_filled(rect, 3.0, fill);
+                ui.painter().rect_filled(rect, crate::theme::r(3.0), fill);
                 draw_point(ui.painter(), rect.center(), 9.0, *v, Stroke::new(1.5, t.text));
                 if r.on_hover_text(format!("PDMODE {v}")).clicked() && *v != mode {
                     action = set(*v, size, rel);
@@ -328,6 +333,13 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         .map(|s| Style {
             name: s.name.clone(),
             fields: vec![
+                Field::Choice("font", "Font", s.font.clone(), {
+                    let mut names = crate::options::font_choices().0;
+                    if !s.font.trim().is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(s.font.trim())) {
+                        names.insert(0, s.font.clone());
+                    }
+                    names.into()
+                }),
                 Field::Num("height", "Height (0 = ask)", s.height),
                 Field::Num("widthFactor", "Width factor", s.width_factor),
                 Field::Bool("backwards", "Backwards", s.backwards),
@@ -453,15 +465,7 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                         }
                         Field::Choice(key, label, v, choices) => {
                             ui.label(*label);
-                            let mut picked = None;
-                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices.iter() {
-                                    if ui.selectable_label(c == v, c).clicked() && c != v {
-                                        picked = Some(c.clone());
-                                    }
-                                }
-                            });
-                            picked.map(|c| (*key, json!(c)))
+                            searchable_choice(ui, (cmd, *key), v, choices).map(|c| (*key, json!(c)))
                         }
                     };
                     if let Some((key, v)) = change {
@@ -475,6 +479,86 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
     set_temp(ctx, &sel_key, sel);
     set_temp(ctx, &new_key, new_name);
     action
+}
+
+/// Choices past this many get a search field above the list.
+const SEARCH_FROM: usize = 12;
+
+/// The choices whose name holds `typed` (any case), as indices in list order: those starting
+/// with it first.
+pub(crate) fn matching_choices(choices: &[String], typed: &str) -> Vec<usize> {
+    let t = typed.trim().to_lowercase();
+    if t.is_empty() {
+        return (0..choices.len()).collect();
+    }
+    let lower: Vec<String> = choices.iter().map(|c| c.to_lowercase()).collect();
+    let starts = lower.iter().enumerate().filter(|(_, c)| c.starts_with(&t)).map(|(i, _)| i);
+    let within = lower.iter().enumerate().filter(|(_, c)| !c.starts_with(&t) && c.contains(&t)).map(|(i, _)| i);
+    starts.chain(within).collect()
+}
+
+/// A combo box of `choices` showing `current`; the picked choice when it is another one. A long
+/// list (a font list) has a search field at the top: typing a name shows the choices holding it,
+/// and Enter takes the first of them (or the name as typed when none does, such as a font that
+/// is not installed).
+fn searchable_choice(ui: &mut egui::Ui, salt: (&str, &str), current: &str, choices: &[String]) -> Option<String> {
+    let mut picked: Option<String> = None;
+    let combo = craft_ui::ComboBox::from_id_salt(salt).selected_text(current).height(320.0);
+    if choices.len() <= SEARCH_FROM {
+        combo.show_ui(ui, |ui| {
+            for c in choices {
+                if ui.selectable_label(c == current, c).clicked() && c != current {
+                    picked = Some(c.clone());
+                }
+            }
+        });
+        return picked;
+    }
+    let search_id = ui.make_persistent_id((salt, "search"));
+    let mut typed: String = ui.data_mut(|d| d.get_temp(search_id)).unwrap_or_default();
+    let mut entered = false;
+    let header = |ui: &mut egui::Ui| {
+        let field = ui.add(egui::TextEdit::singleline(&mut typed).hint_text("Type a name to find it").desired_width(f32::INFINITY));
+        if field.gained_focus() || ui.memory(|m| m.focused().is_none()) {
+            field.request_focus();
+        }
+        entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        ui.add_space(4.0);
+        matching_choices(choices, &typed)
+    };
+    let row = ui.spacing().interact_size.y;
+    let inner = combo.show_rows_with_header(
+        ui,
+        header,
+        row,
+        |m: &Vec<usize>| m.len().max(1),
+        |ui, range, matches| {
+            if matches.is_empty() {
+                ui.weak("No font has that name");
+            }
+            for n in range {
+                let Some(c) = matches.get(n).and_then(|&i| choices.get(i)) else { continue };
+                if ui.selectable_label(c == current, c).clicked() && c != current {
+                    picked = Some(c.clone());
+                }
+            }
+            matches
+        },
+    );
+    if entered && picked.is_none() {
+        let matches = inner.inner.unwrap_or_default();
+        let first = matches.first().and_then(|&i| choices.get(i)).cloned();
+        let name = first.or_else(|| Some(typed.trim().to_string()).filter(|t| !t.is_empty()));
+        picked = name.filter(|n| n != current);
+        ui.close();
+    }
+    // A closed list starts with an empty search next time.
+    let open = craft_ui::ComboBox::is_open(ui.ctx(), ui.make_persistent_id(salt));
+    if picked.is_some() || !open {
+        typed.clear();
+    }
+    ui.data_mut(|d| d.insert_temp(search_id, typed));
+    picked
 }
 
 // ---------- Page Setup Manager ----------
@@ -505,9 +589,39 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let [left, right] = cols else { return };
             left.label(RichText::new("Layouts").strong());
             egui::ScrollArea::vertical().id_salt("pagesetup_list").max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
+                // The layouts drag to a new place in the tab order.
+                let mut rows: Vec<(String, egui::Rect)> = Vec::new();
+                let mut dragged: Option<(String, bool)> = None;
                 for (_, name, _) in &layouts {
-                    if ui.selectable_label(*name == sel, name).clicked() {
+                    let r = ui.add(egui::Button::selectable(*name == sel, name).sense(egui::Sense::click_and_drag()));
+                    if r.clicked() {
                         sel = name.clone();
+                    }
+                    if r.dragged() || r.drag_stopped() {
+                        dragged = Some((name.clone(), r.drag_stopped()));
+                    }
+                    rows.push((name.clone(), r.rect));
+                }
+                if let Some((name, dropped)) = dragged
+                    && let Some(py) = ui.ctx().pointer_latest_pos().map(|q| q.y)
+                {
+                    let target = rows.iter().find(|(_, r)| py < r.center().y).map(|(n, _)| n.clone());
+                    let mark_y = match &target {
+                        Some(b) => rows.iter().find(|(n, _)| n == b).map(|(_, r)| r.top()),
+                        None => rows.last().map(|(_, r)| r.bottom()),
+                    };
+                    if let (Some(y), Some((_, first))) = (mark_y, rows.first()) {
+                        ui.painter().line_segment([egui::pos2(first.left(), y), egui::pos2(first.right(), y)], egui::Stroke::new(2.0, t.accent));
+                    }
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if dropped && target.as_ref() != Some(&name) {
+                        action = Some((
+                            "layout.move",
+                            match target {
+                                Some(b) => json!({ "name": name, "before": b }),
+                                None => json!({ "name": name }),
+                            },
+                        ));
                     }
                 }
             });
@@ -1282,5 +1396,21 @@ mod plot_dialog_tests {
         plot_window_resume(&mut app, &ctx);
         assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
         assert_eq!(temp::<PlotState>(&ctx, "plot_state").unwrap().window, [2.0, 3.0, 12.0, 9.0]);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    /// The font list's search: names holding what is typed, in any case, those starting with it
+    /// first; nothing typed lists all.
+    #[test]
+    fn typed_names_find_their_fonts() {
+        let fonts: Vec<String> =
+            ["Arial", "Arial Narrow", "Calibri", "romans.shx", "Times New Roman", "txt.shx"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::matching_choices(&fonts, "ROMAN"), vec![3, 4]);
+        assert_eq!(super::matching_choices(&fonts, " ari"), vec![0, 1]);
+        assert_eq!(super::matching_choices(&fonts, "shx"), vec![3, 5]);
+        assert!(super::matching_choices(&fonts, "Helvetica").is_empty());
+        assert_eq!(super::matching_choices(&fonts, "").len(), fonts.len());
     }
 }

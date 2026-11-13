@@ -8,6 +8,7 @@ mod dxf_raw;
 /// XCLIP boundaries as SPATIAL_FILTER objects.
 mod dxf_clip;
 mod dxf_ext;
+mod dxf_fields;
 mod dxf_image;
 mod dxf_mleader;
 mod dxf_read;
@@ -15,6 +16,7 @@ mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pia;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;

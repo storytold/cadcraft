@@ -1,11 +1,13 @@
 use super::blocks::{insert, sub_ctx};
-use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
+use super::dim_draw::{
+    MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, named_arrow, solid_covers, starts_text_marks,
+};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
-    Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
-    mline, point, table, tolerance, wide,
+    Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, fill, hatch, linetype, linetype_text, mline,
+    point, table, tolerance, wide,
 };
 
 /// The layer `e` is drawn on, as an index in the layer table: layer 0 inside a block is the
@@ -43,9 +45,10 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
-    // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
-    // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// A top-level annotative object draws at the view's annotation scale: a viewport's scale for
+/// model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// Whether it was drawn (or hidden) here.
+fn annotative_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) -> bool {
     if ctx.depth == 0 && cadcraft_doc::is_annotative(e) {
         let mode = if ctx.top == VIEWPORT_CONTENT {
             cadcraft_doc::anno_draw(e, 1.0 / ctx.xf.scale_factor().max(1e-12), ctx.d.anno_all_visible())
@@ -53,14 +56,22 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             ctx.d.anno_draw(e)
         };
         match mode {
-            cadcraft_doc::AnnoDraw::Hidden => return,
+            cadcraft_doc::AnnoDraw::Hidden => return true,
             cadcraft_doc::AnnoDraw::Scaled(f) => {
                 let mut scaled = cadcraft_doc::anno_scaled(e, f);
                 scaled.common.anno_scales.clear();
-                return entity_parts(b, ctx, &scaled);
+                entity_parts(b, ctx, &scaled);
+                return true;
             }
             cadcraft_doc::AnnoDraw::Plain => {}
         }
+    }
+    false
+}
+
+fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
+    if annotative_parts(b, ctx, e) {
+        return;
     }
     let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
     if !visible {
@@ -74,6 +85,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         Some(over) => over,
         None => lt,
     };
+    let lt = if b.opts.continuous { None } else { lt };
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
     // Stroke a polyline with the entity's linetype.
@@ -205,9 +217,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let st = ctx.d.dim_style(&l.style);
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
-                // DIMLDRBLK ("" = closed filled).
-                let kind = dim::Arrowhead::parse(st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""));
-                let g = dim::arrowhead(kind, *a, (*a - *n).normalized(), size);
+                // DIMLDRBLK ("" = closed filled), or a user arrowhead block.
+                let g = named_arrow(ctx.d, st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""), *a, (*a - *n).normalized(), size);
                 for l in &g.lines {
                     b.polyline(ctx, rgb, lw, l);
                 }
@@ -269,17 +280,24 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
     for pts in m.leader_paths() {
         b.polyline(ctx, rgb, lw, &pts);
         if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
-            b.tris(ctx, rgb, &dim::arrow(*a, (*a - *n).normalized(), m.arrow_size));
+            let g = named_arrow(ctx.d, m.arrow_in(ctx.d), *a, (*a - *n).normalized(), m.arrow_size);
+            for l in &g.lines {
+                b.polyline(ctx, rgb, lw, l);
+            }
+            b.tris(ctx, rgb, &g.tris);
         }
     }
     if let Some(t) = &m.text {
-        let land = m.landing.xy();
-        let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
-        b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        // No landing without a leader line (leader type None).
+        if m.dogleg > 0.0 && !m.leaderless() {
+            let land = m.landing.xy();
+            let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
+            b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        }
         mtext(b, ctx, t, rgb, lw);
     }
     if let Some(ins) = &m.block {
-        if m.dogleg > 0.0 && !m.leaders.is_empty() {
+        if m.dogleg > 0.0 && !m.leaderless() {
             let land = m.landing.xy();
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
@@ -378,7 +396,7 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
 
 /// Draw a polyline with a linetype (None: continuous).
 pub(crate) fn stroke_with(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64, pts: &[Vec2]) {
-    match lt.filter(|_| b.opts.linetypes) {
+    match lt.filter(|_| !b.opts.continuous && b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {

@@ -68,7 +68,7 @@ pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf
         let r = Rect::from_two_pos(xf.to_screen(b.min), xf.to_screen(b.max)).expand(6.0);
         if r.intersects(rect) {
             let w = if c.at == Some(i) { 2.5 } else { 1.0 };
-            p.rect_stroke(r, 4.0, Stroke::new(w, t.compare_area), egui::StrokeKind::Middle);
+            p.rect_stroke(r, crate::theme::r(4.0), Stroke::new(w, t.compare_area), egui::StrokeKind::Middle);
         }
     }
     // The comparison bar.

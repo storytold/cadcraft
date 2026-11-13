@@ -248,7 +248,10 @@ impl Interactive for RectM2 {
                 let msg = if self.center { "Specify center point for rectangle" } else { "Specify first corner point" };
                 Prompt::new(msg, Accept::POINT).kw(&["Chamfer", "CEnter", "Elevation", "Fillet", "Thickness", "Width"])
             }
-            Some(p) => Prompt::new("Specify other corner point", Accept::POINT).kw(&["Area", "Dimensions", "Rotation"]).corner(p),
+            Some(p) => Prompt::new("Specify other corner point", Accept::POINT)
+                .kw(&["Area", "Dimensions", "Rotation"])
+                .corner(p)
+                .corner_frame(self.rotation, self.center),
         }
     }
     /// Consumes one input: option keywords (`Center` only switches the first point's meaning
