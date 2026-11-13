@@ -110,6 +110,9 @@ pub struct Tianzheng {
     /// 天正填充多边形（类型 9 图元）：每个是闭合顶点列表。
     #[serde(default, skip)]
     pub polys: Vec<Vec<(f64, f64, f64)>>,
+    /// 尺寸标注箭头尖端（类型 6 零长度点）：`(x, y, dx, dy)`，尖端 + 归一化方向。
+    #[serde(default, skip)]
+    pub arrow_tips: Vec<(f64, f64, f64, f64)>,
 }
 
 impl Unknown {

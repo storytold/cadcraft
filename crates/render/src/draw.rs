@@ -252,6 +252,19 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let tris = fill::triangulate_evenodd(&[pts]);
                 b.tris(ctx, rgb, &tris);
             }
+            // 尺寸标注箭头（类型 6 零长度点 = 箭头尖端）：实心三角形，尖端朝外。
+            for (tx, ty, dx, dy) in &t.arrow_tips {
+                let size = 250.0; // 箭头长度 mm
+                let (px, py) = (-dy, dx); // 垂直方向
+                let (bx, by) = (tx - dx * size, ty - dy * size);
+                let pts = vec![
+                    Vec2::new(*tx, *ty),
+                    Vec2::new(bx + px * size * 0.5, by + py * size * 0.5),
+                    Vec2::new(bx - px * size * 0.5, by - py * size * 0.5),
+                ];
+                let tris = fill::triangulate_evenodd(&[pts]);
+                b.tris(ctx, rgb, &tris);
+            }
             // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角暂未逆向，按水平画。
             if b.opts.text {
                 for tx in &t.texts {

@@ -170,6 +170,48 @@ mod native {
         segs
     }
 
+    /// 从 proxy graphics 提取尺寸标注的箭头尖端（类型 6 图元里起点=终点的零长度「点」）。
+    ///
+    /// 尺寸标注的箭头用 type 6 的零长度线段表示（起点=终点 = 箭头尖端）。返回
+    /// `(x, y, dx, dy)`：尖端位置 + 归一化方向（从最近的尺寸线端点指向尖端，即箭头指向外）。
+    /// 方向用于画实心三角形；无相邻线段时方向取 (1,0)。
+    pub fn extract_arrow_tips(graphic_data: &[u8]) -> Vec<(f64, f64, f64, f64)> {
+        let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
+        let mut segs: Vec<(f64, f64, f64, f64)> = Vec::new();
+        let mut tips: Vec<(f64, f64)> = Vec::new();
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 6, data } = r {
+                if data.len() >= 52 {
+                    let d = |off: usize| f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+                    let (x1, y1, x2, y2) = (d(4), d(12), d(28), d(36));
+                    if x1 == x2 && y1 == y2 {
+                        tips.push((x1, y1));
+                    } else {
+                        segs.push((x1, y1, x2, y2));
+                    }
+                }
+            }
+        }
+        tips.into_iter()
+            .map(|(tx, ty)| {
+                let mut best = (0.0, 0.0, f64::MAX);
+                for &(x1, y1, x2, y2) in &segs {
+                    let d1 = (x1 - tx).powi(2) + (y1 - ty).powi(2);
+                    let d2 = (x2 - tx).powi(2) + (y2 - ty).powi(2);
+                    if d1 < best.2 {
+                        best = (x1, y1, d1);
+                    }
+                    if d2 < best.2 {
+                        best = (x2, y2, d2);
+                    }
+                }
+                let (dx, dy) = (tx - best.0, ty - best.1);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 1e-9 { (tx, ty, dx / len, dy / len) } else { (tx, ty, 1.0, 0.0) }
+            })
+            .collect()
+    }
+
     /// 把墙的几何线段反向编码回 proxy graphics 的类型 6 图元（[`extract_wall_segments`] 的逆操作）。
     ///
     /// 每个 segment 生成一个 `Unknown { record_type: 6, data }` 图元，payload 52 字节 =
@@ -620,7 +662,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_arrow_tips, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
 
 #[cfg(test)]
 mod tests {
@@ -841,5 +883,47 @@ mod tests {
         assert_eq!(polys.len(), 1);
         assert_eq!(polys[0].len(), 4);
         assert_eq!(polys[0][0], (137026.849, 4505.88, 0.0));
+    }
+
+    /// extract_arrow_tips 从类型 6 零长度点提取尺寸箭头尖端 + 方向。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn extracts_arrow_tips() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        let seg = |x1: f64, y1: f64, x2: f64, y2: f64| {
+            let mut d = Vec::with_capacity(52);
+            d.extend_from_slice(&2u32.to_le_bytes());
+            for v in [x1, y1, 0.0_f64, x2, y2, 0.0] {
+                d.extend_from_slice(&v.to_le_bytes());
+            }
+            d
+        };
+        // 尺寸线 (100,200)->(500,200)，箭头尖端在 (500,200)（右端点外）和 (100,200)。
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(100.0, 200.0, 500.0, 200.0) },
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(500.0, 200.0, 500.0, 200.0) }, // 零长度点 = 尖端
+            ],
+        };
+        let graphic_data = g.encode().unwrap();
+
+        let tips = extract_arrow_tips(&graphic_data);
+        assert_eq!(tips.len(), 1);
+        // 尖端 (500,200)，方向从最近线段端点 (500,200)→尖端 (500,200) 为 0，但最近端点应是 (500,200)，
+        // 方向 = 尖端 - 端点 = 0，fallback (1,0)。改用不在端点的尖端验证方向。
+        assert_eq!((tips[0].0, tips[0].1), (500.0, 200.0));
+
+        // 尖端在尺寸线外：(600, 200)，方向应指向 +x（从端点 500 指向 600）。
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(100.0, 200.0, 500.0, 200.0) },
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(600.0, 200.0, 600.0, 200.0) },
+            ],
+        };
+        let tips = extract_arrow_tips(&g.encode().unwrap());
+        assert_eq!(tips.len(), 1);
+        assert_eq!((tips[0].0, tips[0].1), (600.0, 200.0));
+        assert!((tips[0].2 - 1.0).abs() < 1e-9, "方向应为 +x，实际 {}", tips[0].2);
+        assert!(tips[0].3.abs() < 1e-9);
     }
 }

@@ -390,6 +390,8 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
         // 天正圆（类型 2）与填充多边形（类型 9）。
         let circles = cadcraft_dwg::tianzheng::extract_circles(&e.graphic_data);
         let polys = cadcraft_dwg::tianzheng::extract_polys(&e.graphic_data);
+        // 尺寸标注箭头尖端（类型 6 零长度点）。
+        let arrow_tips = cadcraft_dwg::tianzheng::extract_arrow_tips(&e.graphic_data);
         // 天正文字（标注/轴号/标高等，类型 38 图元）。
         let mut texts: Vec<cadcraft_doc::TianzhengText> = cadcraft_dwg::tianzheng::extract_text_entities(&e.graphic_data)
             .into_iter()
@@ -423,6 +425,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                     texts: texts.clone(),
                     circles: circles.clone(),
                     polys: polys.clone(),
+                    arrow_tips: arrow_tips.clone(),
                 });
             }
         });
