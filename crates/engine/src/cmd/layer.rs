@@ -32,6 +32,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Format", "Layer Tools", "Change to Current Layer"])
             .params("{handles?}")
             .interactive(|_| Ok(Box::new(SelectRun::new("laycur", "LAYCUR")))),
+        CommandSpec::new("laynewsel", "Move to New Layer", run_laynewsel)
+            .menu(&["Format", "Layer Tools", "Move to New Layer"])
+            .params("{name, handles?, current?: bool} → layer, changed"),
         CommandSpec::new("layiso", "Isolate Layer", run_layiso).menu(&["Format", "Layer Tools", "Isolate Layer"]).params("{handles?}"),
         CommandSpec::new("layuniso", "Unisolate Layer", run_layuniso).menu(&["Format", "Layer Tools", "Unisolate Layer"]),
         CommandSpec::new("layfrz", "Freeze Layer", |s, p| set_obj_layers(s, p, |l| l.frozen = true))
@@ -341,6 +344,37 @@ fn run_laycur(s: &mut Session, p: &Value) -> Result<Value> {
         d.modify_entity(*h, |e| e.common.layer = cur.clone())?;
     }
     Ok(json!({ "changed": hs.len() }))
+}
+
+/// A new layer made for the selected objects, and the objects moved onto it: one undo step.
+fn run_laynewsel(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    if hs.is_empty() {
+        return Err(bad("laynewsel", "select the objects to move to the new layer"));
+    }
+    let name = str_param(p, "name").map(str::trim).ok_or_else(|| bad("laynewsel", "`name` is required"))?.to_string();
+    if !valid_name(&name) {
+        return Err(bad("laynewsel", "invalid layer name"));
+    }
+    // Everything is checked before the drawing is touched: a refusal leaves no undo step and no
+    // half-done move.
+    let d = s.doc()?;
+    if d.layer(&name).is_some() {
+        return Err(bad("laynewsel", format!("layer `{name}` already exists")));
+    }
+    if let Some(h) = hs.iter().find(|h| d.entity(**h).is_none()) {
+        return Err(bad("laynewsel", format!("no object {}", h.hex())));
+    }
+    let d = s.doc_mut()?;
+    d.layers.push(Layer::new(&name));
+    for h in &hs {
+        d.modify_entity(*h, |e| e.common.layer = name.clone())?;
+    }
+    if bool_or(p, "current", false) {
+        d.header.set_str("CLAYER", &name);
+    }
+    let n = hs.len();
+    Ok(json!({ "layer": name, "changed": n, "message": format!("{n} object(s) moved to the new layer {name}.") }))
 }
 
 fn run_layiso(s: &mut Session, p: &Value) -> Result<Value> {

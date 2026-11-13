@@ -373,11 +373,81 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The name for "Move Selection to New Layer": asked in place below the tool row, a free
+/// `LayerN` offered and selected, so typing replaces it. Enter moves the selection, Escape or a
+/// click elsewhere drops it; a taken or bad name keeps the field (the reason is on the command line).
+fn new_layer_field(app: &mut CadApp, ui: &mut egui::Ui, clicked: bool) {
+    let id = ui.scope_id().with("laynewsel_name");
+    // (the text, focus given)
+    let mut editing: Option<(String, bool)> = ui.data(|m| m.get_temp(id));
+    if clicked {
+        if app.session.selection().is_empty() {
+            // Nothing to move: the command says so on the command line.
+            let _ = app.run("laynewsel", json!({}));
+            editing = None;
+        } else if let Ok(d) = app.session.doc() {
+            let mut n = 1;
+            while d.layer(&format!("Layer{n}")).is_some() {
+                n += 1;
+            }
+            editing = Some((format!("Layer{n}"), false));
+        }
+    }
+    let mut commit = None;
+    if let Some((text, ready)) = editing.as_mut() {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            let w = ui.available_width() - 10.0;
+            let resp = ui.add_sized(
+                vec2(w, 24.0),
+                egui::TextEdit::singleline(text).id(egui::Id::unique("laynewsel_field")).hint_text(crate::tl!("New layer name")),
+            );
+            if !*ready {
+                // Focus until the field has it (the command line takes typing from a field without
+                // focus), then the offered name selected once.
+                if !resp.has_focus() {
+                    resp.request_focus();
+                } else {
+                    if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), resp.id) {
+                        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+                        state.cursor.set_char_range(Some(all));
+                        state.store(ui.ctx(), resp.id);
+                    }
+                    *ready = true;
+                }
+            } else if resp.lost_focus() {
+                commit = Some(ui.input(|i| i.key_pressed(egui::Key::Enter)).then(|| text.trim().to_string()));
+            }
+        });
+    }
+    match commit {
+        Some(Some(name)) if !name.is_empty() => {
+            if app.run("laynewsel", json!({ "name": name })).is_ok() {
+                editing = None;
+            } else if let Some(e) = editing.as_mut() {
+                e.1 = false;
+            }
+        }
+        Some(_) => editing = None,
+        None => {}
+    }
+    ui.data_mut(|m| match editing {
+        Some(e) => {
+            m.insert_temp(id, e);
+        }
+        None => {
+            m.remove::<(String, bool)>(id);
+        }
+    });
+}
+
 pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     section_header(ui, "Layers");
     // Layer tools row.
     let mut cmd = None;
+    let mut new_layer = None;
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
@@ -396,7 +466,11 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 cmd = Some(c);
             }
         }
+        if icons::button(ui, Icon::LayerNewSel, 26.0, "Move Selection to New Layer", false).clicked() {
+            new_layer = Some(());
+        }
     });
+    new_layer_field(app, ui, new_layer.is_some());
     if let Some(c) = cmd {
         if c.starts_with("ui.") {
             app.start(c);

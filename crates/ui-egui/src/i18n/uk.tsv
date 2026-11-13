@@ -1422,3 +1422,9 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Перемістити на новий шар
+	Move Selection to New Layer	Перемістити вибране на новий шар
+	New layer name	Назва нового шару
+	Delete Empty Layers	Видалити порожні шари
+	Deletes every layer that has no objects on it	Видаляє кожен шар, на якому немає об'єктів

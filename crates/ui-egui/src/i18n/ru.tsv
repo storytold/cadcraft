@@ -1030,3 +1030,9 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Чертёж изменился. Закройте окно и откройте его снова.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Переместить на новый слой
+	Move Selection to New Layer	Переместить выбранное на новый слой
+	New layer name	Имя нового слоя
+	Delete Empty Layers	Удалить пустые слои
+	Deletes every layer that has no objects on it	Удаляет каждый слой, на котором нет объектов

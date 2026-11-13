@@ -1361,3 +1361,9 @@ menu	View	Nézet
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	A rajz megváltozott. Zárja be az ablakot, és nyissa meg újra.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Áthelyezés új rétegre
+	Move Selection to New Layer	A kijelölés áthelyezése új rétegre
+	New layer name	Az új réteg neve
+	Delete Empty Layers	Üres rétegek törlése
+	Deletes every layer that has no objects on it	Törli az összes réteget, amelyen nincs objektum

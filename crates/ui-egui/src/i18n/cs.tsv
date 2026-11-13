@@ -1239,3 +1239,9 @@ menu	Modify	Modifikace
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Výkres se změnil. Zavřete okno a otevřete jej znovu.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Přesunout do nové hladiny
+	Move Selection to New Layer	Přesunout výběr do nové hladiny
+	New layer name	Název nové hladiny
+	Delete Empty Layers	Odstranit prázdné hladiny
+	Deletes every layer that has no objects on it	Odstraní každou hladinu, ve které nejsou žádné objekty

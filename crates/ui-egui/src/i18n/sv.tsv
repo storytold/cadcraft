@@ -1483,3 +1483,9 @@ menu	Modify	Ändra
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Flytta till nytt lager
+	Move Selection to New Layer	Flytta markeringen till ett nytt lager
+	New layer name	Namn på det nya lagret
+	Delete Empty Layers	Ta bort tomma lager
+	Deletes every layer that has no objects on it	Tar bort varje lager som saknar objekt

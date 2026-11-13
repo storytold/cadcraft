@@ -1270,3 +1270,9 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Desplazar a una capa nueva
+	Move Selection to New Layer	Desplazar la selección a una capa nueva
+	New layer name	Nombre de la capa nueva
+	Delete Empty Layers	Eliminar capas vacías
+	Deletes every layer that has no objects on it	Elimina cada capa que no contiene objetos

@@ -1036,3 +1036,9 @@
 	Press the keys	Appuyez sur les touches
 	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
 	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
+# Layers palette: move the selection to a new layer, delete empty layers.
+	Move to New Layer	Déplacer vers un nouveau calque
+	Move Selection to New Layer	Déplacer la sélection vers un nouveau calque
+	New layer name	Nom du nouveau calque
+	Delete Empty Layers	Supprimer les calques vides
+	Deletes every layer that has no objects on it	Supprime chaque calque qui ne porte aucun objet
