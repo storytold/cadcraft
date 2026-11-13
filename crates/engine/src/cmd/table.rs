@@ -229,10 +229,12 @@ fn cell_at(p: &Value, t: &Table) -> std::result::Result<(usize, usize), String> 
 
 fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("").to_string();
-    // A formula: the `formula` parameter, or text starting with "=".
+    // A formula: the `formula` parameter, or text starting with "=" once its formatting codes
+    // are left out (the in-place editor sends `{\fArial|b1;=1+1}` for a formula typed in bold).
+    let plain = cadcraft_fonts::plain_mtext(&text);
     let formula = match str_param(p, "formula") {
         Some(f) => Some(f.trim().to_string()),
-        None => text.trim().starts_with('=').then(|| text.trim().to_string()),
+        None => plain.trim().starts_with('=').then(|| plain.trim().to_string()),
     };
     if let Some(f) = &formula {
         let f = if f.starts_with('=') { f.clone() } else { format!("={f}") };
