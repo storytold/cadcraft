@@ -905,8 +905,9 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
 /// file ends up in: `version`, or the DWG version the bridge writes) has.
-/// `frozen_341`: see [`Ctx::frozen_341`].
-pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
+/// `frozen_341`: see [`Ctx::frozen_341`]. `saved_as`: the file name (no folder, no extension) the
+/// drawing is saved under, if it is going to a file.
+pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool, saved_as: Option<&str>) -> Vec<Tag> {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -1144,7 +1145,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     }
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334).
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, saved_as);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);

@@ -116,13 +116,23 @@ pub fn write(d: &Drawing) -> String {
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`.
 pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
-    tags_for(d, version, version, version < Version::R2004)
+    tags_for(d, version, version, version < Version::R2004, None)
+}
+
+/// [`tags`] for a file saved as `name`: an attribute that shows the file name can keep its field.
+pub(crate) fn tags_saved_as(d: &Drawing, version: Version, name: &std::path::Path) -> Vec<Tag> {
+    tags_for(d, version, version, version < Version::R2004, saved_as(name).as_deref())
+}
+
+/// The name of the file a drawing is saved as, without its folder and extension.
+fn saved_as(name: &std::path::Path) -> Option<String> {
+    name.file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.is_empty())
 }
 
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
-pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg, false);
+/// version's (MULTILEADER from 2007). `name`: the file the DWG is saved as.
+pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version, name: &std::path::Path) -> String {
+    let mut tags = tags_for(d, Version::R2000, dwg, false, saved_as(name).as_deref());
     bridge_markers(&mut tags);
     craft_dxf::write_ascii(&tags)
 }

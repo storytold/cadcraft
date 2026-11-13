@@ -1,0 +1,290 @@
+//! A placed attribute keeps the field of its attribute definition: the definition's extension
+//! dictionary (ACAD_FIELD dictionary and FIELD objects) is written for the attribute too, with the
+//! checksum and cached result of the text the attribute shows.
+
+use cadcraft_doc::foreign::ForeignObject;
+use cadcraft_doc::{Handle, RawTag};
+use cadcraft_io::{SaveOptions, Version, read, write, write_with};
+
+/// An `_text` FIELD object (AutoCAD's R2007 and later layout) that owns the variable field `child`.
+fn text_field(handle: &str, owner: &str, child: &str) -> String {
+    format!(
+        "0\nFIELD\n5\n{handle}\n330\n{owner}\n100\nAcDbField\n1\n_text\n2\n%<\\_FldIdx 0>%\n90\n1\n360\n{child}\n97\n0\n91\n63\n92\n0\n94\n9\n95\n2\n96\n0\n300\n\n\
+         93\n2\n6\nACFD_FIELDTEXT_ATTDEF\n93\n2\n90\n1\n91\n1\n94\n0\n300\n\n302\n\n304\nACVALUE_END\n\
+         6\nACFD_FIELDTEXT_CHECKSUM\n93\n2\n90\n2\n140\n1914.0\n94\n0\n300\n\n302\n\n304\nACVALUE_END\n\
+         7\nACFD_FIELD_VALUE\n93\n3\n90\n0\n94\n0\n300\n\n302\n\n304\nACVALUE_END\n301\n\n98\n0\n"
+    )
+}
+
+/// The `AcVar Filename` FIELD object under it, with the template's file name cached.
+fn variable_field(handle: &str, owner: &str) -> String {
+    format!(
+        "0\nFIELD\n5\n{handle}\n330\n{owner}\n100\nAcDbField\n1\nAcVar\n2\n\\AcVar Filename \\f \"%tc1%fn2\"\n90\n0\n97\n0\n91\n63\n92\n0\n94\n59\n95\n2\n96\n0\n300\n\n\
+         93\n1\n6\nVariable\n93\n2\n90\n4\n1\nFilename\n94\n0\n300\n\n302\n\n304\nACVALUE_END\n\
+         7\nACFD_FIELD_VALUE\n93\n4\n90\n4\n1\nC:\\Drawings\\TEMPLATE.dwg\n94\n0\n300\n%tc1%fn2\n302\nTEMPLATE\n304\nACVALUE_END\n301\nTEMPLATE\n98\n8\n"
+    )
+}
+
+/// A drawing with block B (one ATTDEF NUMBER, with a field when `field`) and a reference to it
+/// whose attribute shows `text`.
+fn drawing(field: bool, text: &str) -> Vec<u8> {
+    let xdict = if field { "102\n{ACAD_XDICTIONARY\n360\nD1\n102\n}\n" } else { "" };
+    let objects = if field {
+        format!(
+            "0\nSECTION\n2\nOBJECTS\n\
+             0\nDICTIONARY\n5\nD1\n330\nA1\n100\nAcDbDictionary\n3\nACAD_FIELD\n360\nD2\n\
+             0\nDICTIONARY\n5\nD2\n330\nD1\n100\nAcDbDictionary\n3\nTEXT\n360\nF1\n{}{}0\nENDSEC\n",
+            text_field("F1", "D2", "F2"),
+            variable_field("F2", "F1")
+        )
+    } else {
+        String::new()
+    };
+    // The class of the field objects, which AutoCAD declares and a DWG needs.
+    let classes = if field {
+        "0\nSECTION\n2\nCLASSES\n0\nCLASS\n1\nFIELD\n2\nAcDbField\n3\nObjectDBX Classes\n90\n1152\n91\n4\n280\n0\n281\n0\n0\nENDSEC\n"
+    } else {
+        ""
+    };
+    format!(
+        "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n0\nENDSEC\n{classes}\
+         0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n5\nB1\n8\n0\n2\nB\n70\n0\n10\n0.0\n20\n0.0\n30\n0.0\n\
+         0\nATTDEF\n5\nA1\n{xdict}8\n0\n10\n0.0\n20\n0.0\n40\n2.5\n1\nTEMPLATE\n7\nSTANDARD\n3\nNUMBER?\n2\nNUMBER\n70\n0\n0\nENDBLK\n5\nB2\n8\n0\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nINSERT\n5\nC1\n8\n0\n2\nB\n10\n0.0\n20\n0.0\n30\n0.0\n66\n1\n\
+         0\nATTRIB\n5\nC2\n8\n0\n10\n0.0\n20\n0.0\n40\n2.5\n1\n{text}\n7\nSTANDARD\n2\nNUMBER\n70\n0\n0\nSEQEND\n5\nC3\n8\n0\n0\nENDSEC\n{objects}0\nEOF\n"
+    )
+    .into_bytes()
+}
+
+type Groups = Vec<(i32, String)>;
+
+/// The (code, value) groups of a DXF text.
+fn groups(dxf: &[u8]) -> Groups {
+    let text = String::from_utf8_lossy(dxf);
+    let lines: Vec<&str> = text.lines().collect();
+    lines.chunks(2).filter_map(|c| Some((c.first()?.trim().parse().ok()?, c.get(1)?.trim_end().to_string()))).collect()
+}
+
+/// The records of the given type: their groups after the `0` group.
+fn records(g: &Groups, kind: &str) -> Vec<Groups> {
+    g.iter()
+        .enumerate()
+        .filter(|(_, t)| t.0 == 0 && t.1 == kind)
+        .map(|(i, _)| g.iter().skip(i + 1).take_while(|t| t.0 != 0).cloned().collect())
+        .collect()
+}
+
+fn first(r: &Groups, code: i32) -> Option<&str> {
+    r.iter().find(|t| t.0 == code).map(|t| t.1.as_str())
+}
+
+/// The checksum a field on `text` carries: each character's code times its place (from 1).
+fn checksum(text: &str) -> f64 {
+    text.chars().zip(1u32..).map(|(c, i)| f64::from(u32::from(c) * i)).sum()
+}
+
+/// Asserts the placed NUMBER attribute in `dxf` has its own field chain for `text`.
+fn assert_field_on_attribute(dxf: &[u8], text: &str) {
+    let g = groups(dxf);
+    let attrib = records(&g, "ATTRIB").into_iter().find(|r| first(r, 2) == Some("NUMBER")).expect("the placed attribute");
+    assert_eq!(first(&attrib, 1), Some(text));
+    let xdict = first(&attrib, 360).expect("the attribute has an extension dictionary");
+    let dictionaries = records(&g, "DICTIONARY");
+    let of = |h: &str| dictionaries.iter().find(|r| first(r, 5) == Some(h)).cloned();
+    let xd = of(xdict).expect("the extension dictionary is written");
+    assert_eq!(first(&xd, 330), first(&attrib, 5), "the dictionary is owned by the attribute");
+    let field_dict = of(entry(&xd).expect("ACAD_FIELD entry")).expect("the field dictionary is written");
+    let fields = records(&g, "FIELD");
+    let text_field = fields.iter().find(|r| first(r, 5) == entry(&field_dict)).expect("the _text field");
+    assert_eq!(first(text_field, 330), first(&field_dict, 5), "the field is owned by its dictionary");
+    assert!(text_field.iter().any(|t| t.0 == 102 && t.1 == "{ACAD_REACTORS"), "the field reacts to its dictionary");
+    let sum = text_field.iter().skip_while(|t| t.1 != "ACFD_FIELDTEXT_CHECKSUM").find(|t| t.0 == 140).expect("a checksum");
+    assert_eq!(sum.1.parse::<f64>().unwrap(), checksum(text), "checksum of {text:?}");
+    let var = fields.iter().find(|r| first(r, 5) == first(text_field, 360)).expect("the variable field");
+    assert_eq!(first(var, 330), first(text_field, 5));
+    assert_eq!(first(var, 301), Some(text), "cached result");
+    let formatted = var.iter().skip_while(|t| t.1 != "ACFD_FIELD_VALUE").find(|t| t.0 == 302).map(|t| t.1.as_str());
+    assert_eq!(formatted, Some(text), "cached formatted result");
+    assert_eq!(first(var, 302), Some(""), "the result before the value stays empty, as AutoCAD writes it");
+    assert_eq!(first(var, 98), Some(text.chars().count().to_string().as_str()), "cached length");
+}
+
+/// The attribute shows the name of the file the drawing is saved as (the field is `%tc1%fn2`: the
+/// name without its extension, in upper case): it keeps a copy of the definition's field.
+#[test]
+fn an_attribute_that_shows_the_file_name_gets_a_copy_of_the_definitions_field() {
+    for text in ["246-302-A", "X-1", "A LONGER DRAWING NUMBER THAN USUAL 0123456789"] {
+        let d = read(&drawing(true, text), "t.dxf").unwrap();
+        assert_field_on_attribute(&write(&d, format!("{text}.dxf")).unwrap(), text);
+    }
+}
+
+/// The text of the definition is what its field shows, so an attribute that still holds it keeps
+/// the field whatever the file is called.
+#[test]
+fn an_attribute_that_still_holds_the_definitions_text_keeps_its_field() {
+    let d = read(&drawing(true, "TEMPLATE"), "t.dxf").unwrap();
+    assert_field_on_attribute(&write(&d, "other.dxf").unwrap(), "TEMPLATE");
+}
+
+/// Text typed over the field is a plain value, as in AutoCAD: giving it the field back would
+/// replace it with the file name the next time the fields are evaluated.
+#[test]
+fn an_attribute_with_other_text_stays_plain() {
+    for (text, name) in [("Rev B", "t.dxf"), ("246-302-A", "other.dxf"), ("", "t.dxf"), ("T", "")] {
+        let d = read(&drawing(true, text), "t.dxf").unwrap();
+        let g = groups(&write(&d, name).unwrap());
+        let attrib = records(&g, "ATTRIB").into_iter().find(|r| first(r, 2) == Some("NUMBER")).expect("the attribute");
+        assert_eq!(first(&attrib, 1), Some(text));
+        assert_eq!(first(&attrib, 360), None, "{text:?} saved as {name:?} has no field");
+        assert_eq!(records(&g, "FIELD").len(), 2, "only the definition's own field is written");
+    }
+}
+
+/// A file name that differs only in case, with the `%tc1` option, is the same text.
+#[test]
+fn the_file_name_field_follows_its_case_option() {
+    let d = read(&drawing(true, "ABC-1"), "t.dxf").unwrap();
+    assert_field_on_attribute(&write(&d, "abc-1.dxf").unwrap(), "ABC-1");
+}
+
+/// A field of another variable than the file name keeps its cached value: only text equal to the
+/// definition's is given the field, and the file name is not put into the cache.
+#[test]
+fn another_variable_field_is_copied_as_it_is() {
+    let author = |text: &str| {
+        let dxf = String::from_utf8(drawing(true, text)).unwrap();
+        dxf.replace("\\AcVar Filename \\f \"%tc1%fn2\"", "\\AcVar Author").replace("C:\\Drawings\\TEMPLATE.dwg", "Jane Doe").into_bytes()
+    };
+    let d = read(&author("TEMPLATE"), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    let fields = records(&g, "FIELD");
+    let copies: Vec<&Groups> = fields.iter().filter(|r| r.iter().any(|t| t.0 == 2 && t.1.contains("Author"))).collect();
+    assert_eq!(copies.len(), 2, "the definition's and the attribute's");
+    for c in copies {
+        let value = c.iter().skip_while(|t| t.1 != "ACFD_FIELD_VALUE").find(|t| t.0 == 1).map(|t| t.1.as_str());
+        assert_eq!(value, Some("Jane Doe"), "no file name in the cache of another variable");
+    }
+    let d = read(&author("Someone else"), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    assert_eq!(records(&g, "FIELD").len(), 2, "text that is not the definition's gets no field");
+}
+
+#[test]
+fn the_definition_keeps_its_own_field() {
+    let d = read(&drawing(true, "TEMPLATE"), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    let def = records(&g, "ATTDEF").into_iter().next().expect("the definition");
+    assert!(first(&def, 360).is_some(), "the definition's extension dictionary");
+    assert_eq!(records(&g, "FIELD").len(), 4, "two fields for the definition, two for the attribute");
+}
+
+#[test]
+fn a_block_without_a_field_is_unchanged() {
+    let d = read(&drawing(false, "A-1"), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    assert!(records(&g, "FIELD").is_empty());
+    assert!(records(&g, "FIELDLIST").is_empty());
+    let attrib = records(&g, "ATTRIB").into_iter().next().expect("the attribute");
+    assert_eq!(first(&attrib, 360), None);
+}
+
+/// A DWG made from a drawing with fields on its attributes holds the fields of the definition and of the attribute.
+#[test]
+fn a_dwg_with_attribute_fields_reopens() {
+    let d = read(&drawing(true, "246-302-A"), "t.dxf").unwrap();
+    for version in [Version::R2010, Version::R2018] {
+        let bytes = write_with(&d, "246-302-A.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        read(&bytes, "246-302-A.dwg").unwrap();
+        let (dxf, _) = cadcraft_dwg::dwg_to_dxf_noted(&bytes, cadcraft_dwg::Limits::DEFAULT).unwrap();
+        let fields = records(&groups(&dxf), "FIELD").len();
+        assert_eq!(fields, 4, "{version:?}: the definition's and the attribute's fields are in the DWG");
+    }
+}
+
+/// The object a dictionary's first entry names (hard owner 360 or soft owner 350).
+fn entry(r: &Groups) -> Option<&str> {
+    r.iter().find(|t| t.0 == 350 || t.0 == 360).map(|t| t.1.as_str())
+}
+
+/// A field of an object property (`AcObjProp`) points at an object of the drawing, which a copy
+/// could not keep: the attribute stays a plain value, as before.
+#[test]
+fn a_field_that_points_at_an_object_is_not_copied() {
+    let dxf = String::from_utf8(drawing(true, "TEMPLATE")).unwrap().replace("1\nAcVar\n", "1\nAcObjProp\n").into_bytes();
+    let d = read(&dxf, "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    assert_eq!(records(&g, "FIELD").len(), 2, "only the definition's own fields");
+    let attrib = records(&g, "ATTRIB").into_iter().next().expect("the placed attribute");
+    assert_eq!(first(&attrib, 360), None, "no extension dictionary on the attribute");
+}
+
+/// The field list names exactly the FIELD objects written: one that no longer exists is dropped,
+/// another field of the drawing stays, and the copies are added.
+#[test]
+fn the_field_list_names_the_written_fields() {
+    let mut d = read(&drawing(true, "246-302-A"), "t.dxf").unwrap();
+    let mut f = (*d.foreign).clone();
+    let tag = |code: i32, value: &str| RawTag { code, value: value.to_string() };
+    // A list that names a field that is gone (F7) and one that is kept (F9), owned by the named
+    // object dictionary under ACAD_FIELDLIST.
+    let list = [
+        "5",
+        "E1",
+        "330",
+        "E0",
+        "100",
+        "AcDbIdSet",
+        "90",
+        "4",
+        "99",
+        "0",
+        "330",
+        "F1",
+        "330",
+        "F7",
+        "330",
+        "F2",
+        "330",
+        "F9",
+        "100",
+        "AcDbFieldList",
+    ];
+    let tags = list.chunks(2).map(|c| tag(c[0].parse().unwrap(), c[1])).collect();
+    f.objects.push(ForeignObject { handle: Handle(0xE1), kind: "FIELDLIST".into(), tags });
+    let mut nine = f.objects.iter().find(|o| o.kind == "FIELD").cloned().unwrap();
+    nine.handle = Handle(0xF9);
+    nine.tags.iter_mut().filter(|t| t.code == 5).for_each(|t| t.value = "F9".into());
+    nine.tags.iter_mut().filter(|t| t.code == 360).for_each(|t| t.value = "0".into());
+    f.objects.push(nine);
+    f.targets.insert(Handle(0xE0), ("NOD".into(), String::new()));
+    f.dictionary.push(("ACAD_FIELDLIST".into(), Handle(0xE1)));
+    d.foreign = std::sync::Arc::new(f);
+    let g = groups(&write(&d, "246-302-A.dxf").unwrap());
+    let fields: Vec<String> = records(&g, "FIELD").iter().filter_map(|r| first(r, 5).map(str::to_string)).collect();
+    assert_eq!(fields.len(), 5, "the definition's two, F9 and the attribute's two");
+    let lists = records(&g, "FIELDLIST");
+    assert_eq!(lists.len(), 1);
+    let listed: Vec<&str> = lists[0].iter().skip_while(|t| t.0 != 90).skip(1).filter(|t| t.0 == 330).map(|t| t.1.as_str()).collect();
+    assert_eq!(first(&lists[0], 90), Some("5"));
+    let mut a: Vec<&str> = listed.clone();
+    let mut b: Vec<&str> = fields.iter().map(String::as_str).collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b, "exactly the written fields, no dead or null handle");
+}
+
+/// Only so many objects are copied for the attributes of one file: past the limit the attributes
+/// are written as they are, and the save does not grow with the number of references.
+#[test]
+fn the_copies_for_many_attributes_are_limited() {
+    let base = String::from_utf8(drawing(true, "TEMPLATE")).unwrap();
+    let insert = "0\nINSERT\n5\nC1\n8\n0\n2\nB\n10\n0.0\n20\n0.0\n30\n0.0\n66\n1\n0\nATTRIB\n5\nC2\n8\n0\n10\n0.0\n20\n0.0\n40\n2.5\n1\nTEMPLATE\n7\nSTANDARD\n2\nNUMBER\n70\n0\n0\nSEQEND\n5\nC3\n8\n0\n";
+    let many = base.replacen(insert, &insert.repeat(11_000), 1);
+    assert_ne!(many, base, "the fixture has its references");
+    let d = read(many.as_bytes(), "t.dxf").unwrap();
+    let g = groups(&write(&d, "t.dxf").unwrap());
+    let fields = records(&g, "FIELD").len();
+    // A copy is a dictionary pair and two fields (and two more handles): 6 of the 65 536 allowed.
+    assert_eq!(fields, 2 + 2 * (65_536 / 6), "the limit stops the copies");
+}

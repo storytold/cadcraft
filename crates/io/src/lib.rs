@@ -110,7 +110,7 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
     let version = opts.version.unwrap_or_else(|| save_version(d));
     match Format::from_path(name) {
         Some(Format::Dxf) => {
-            let tags = dxf_write::tags(d, version);
+            let tags = dxf_write::tags_saved_as(d, version, name);
             // Before 2007 the text is in the code page the header declares.
             let code_page = dxf_write::code_page(d, version);
             Ok(match (opts.binary, version.utf8()) {
@@ -123,7 +123,7 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
         // The DWG bridge reads our R2000 DXF and writes the DWG at the version asked for. Without
         // one, at least 2004: R2000 DWG has no true colours, transparency, table styles or
         // gradients, so a drawing from an R2000 DXF doesn't lose them by default.
-        Some(Format::Dwg) if !opts.binary => write_dwg(d, opts.version.unwrap_or_else(|| version.max(Version::R2004))).map(|(dwg, _)| dwg),
+        Some(Format::Dwg) if !opts.binary => write_dwg(d, opts.version.unwrap_or_else(|| version.max(Version::R2004)), name).map(|(dwg, _)| dwg),
         _ if opts.binary => Err(IoError::Format(format!("binary output is for DXF files, not `{}`", ext(name)))),
         _ => write_framed(d, name, None),
     }
@@ -135,7 +135,7 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
 pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
     let name = name.as_ref();
     if matches!(Format::from_path(name), Some(Format::Dwg)) && !opts.binary {
-        return write_dwg(d, opts.version.unwrap_or_else(|| save_version(d).max(Version::R2004)));
+        return write_dwg(d, opts.version.unwrap_or_else(|| save_version(d).max(Version::R2004)), name);
     }
     write_with(d, name, opts).map(|b| (b, cadcraft_dwg::Unwritten::new()))
 }
@@ -143,9 +143,9 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
 /// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
-/// reads them as that version.
-fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    let bridge = dxf_write::dwg_bridge(d, version);
+/// reads them as that version. `name`: the file the DWG is saved as.
+fn write_dwg(d: &Drawing, version: Version, name: &Path) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
+    let bridge = dxf_write::dwg_bridge(d, version, name);
     cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
 }
 
