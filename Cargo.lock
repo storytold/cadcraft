@@ -614,7 +614,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cadcraft"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-cli"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -661,14 +661,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-color"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-constraints"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-doc",
  "cadcraft-geom",
@@ -678,7 +678,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-doc"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
@@ -689,34 +689,25 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-dwg"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "acadrust",
  "log",
 ]
 
 [[package]]
-name = "cadcraft-dxf"
-version = "0.17.0"
-dependencies = [
- "encoding_rs",
- "log",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "cadcraft-engine"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-color",
  "cadcraft-constraints",
  "cadcraft-doc",
- "cadcraft-dxf",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-render",
  "craft-docpath",
+ "craft-dxf",
  "libc",
  "log",
  "rstar",
@@ -727,10 +718,10 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-fonts"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
- "cadcraft-dxf",
  "cadcraft-geom",
+ "craft-dxf",
  "encoding_rs",
  "harfrust 0.14.0",
  "icu_segmenter",
@@ -740,23 +731,23 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-geom"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-io"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "acadrust",
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-dwg",
- "cadcraft-dxf",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-render",
+ "craft-dxf",
  "craft-pdf",
  "image",
  "miniz_oxide 0.9.1",
@@ -769,13 +760,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-mcp"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
  "cadcraft-render",
  "clap",
  "getrandom 0.4.3",
+ "libc",
  "log",
  "serde_json",
  "tiny-skia",
@@ -783,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-render"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -797,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-ui-egui"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -825,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-web"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-fonts",
@@ -1153,6 +1145,16 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
 
 [[package]]
+name = "craft-dxf"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=006e4df225fca57e95ead0fb1f91920900798a99#006e4df225fca57e95ead0fb1f91920900798a99"
+dependencies = [
+ "encoding_rs",
+ "log",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
@@ -1214,7 +1216,7 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=1b34eba41e62138fc2438d2734523b302840b45d#1b34eba41e62138fc2438d2734523b302840b45d"
+source = "git+https://github.com/storytold/craft-libs?rev=6e03f65bf45181db77ba6229716e6624db9eb25b#6e03f65bf45181db77ba6229716e6624db9eb25b"
 dependencies = [
  "chrono",
  "dunce",
@@ -1224,6 +1226,7 @@ dependencies = [
  "image",
  "log",
  "plist",
+ "rustix 1.1.5",
  "semver",
  "serde",
  "serde_json",
@@ -5993,7 +5996,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.17.0"
+version = "0.20.1"
 dependencies = [
  "chrono",
  "serde_json",
