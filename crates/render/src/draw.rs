@@ -233,6 +233,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
+        // 天正墙：segments 是墙的双线（每段 = 起点/终点，建筑坐标 mm），从 proxy graphics
+        // 类型 6 图元提取。画成普通线段（z 忽略，天正墙是 2D）。
+        EntityKind::Tianzheng(t) => {
+            for (x1, y1, _, x2, y2, _) in &t.segments {
+                stroke(b, &[Vec2::new(*x1, *y1), Vec2::new(*x2, *y2)]);
+            }
+        }
         kind => {
             for prim in kind.prims() {
                 match prim {
