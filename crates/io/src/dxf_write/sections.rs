@@ -425,13 +425,14 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
     w.s(4, page.paper.replace(' ', "_"));
     w.s(6, "");
+    let (paper_w, paper_h, rotation) = plot_paper(page);
     for (c, v) in [
         (40, page.margins_mm[0]),
         (41, page.margins_mm[1]),
         (42, page.margins_mm[2]),
         (43, page.margins_mm[3]),
-        (44, page.width_mm),
-        (45, page.height_mm),
+        (44, paper_w),
+        (45, paper_h),
         (46, 0.0),
         (47, 0.0),
         (48, page.plot_window[0]),
@@ -446,7 +447,7 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(70, plot_flags);
     // Plot paper units: 1 millimetres, 0 inches (#1058).
     w.i(72, i64::from(cadcraft_render::paper::page_unit_mm(d, page) == 1.0));
-    w.i(73, i64::from(page.landscape));
+    w.i(73, rotation);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
     w.i(75, if page.scale_to_fit { 0 } else { 16 });
@@ -1155,6 +1156,42 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     w.t
 }
 
+/// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups
+/// keep a portrait size and a landscape flag. The values read from the file are written back
+/// as they were while they still describe that size and orientation, whatever convention the
+/// program that wrote them follows. Otherwise a media whose name makes it wider than tall,
+/// such as `ISO_full_bleed_A3_(420.00_x_297.00_MM)`, gets its size in that order and the
+/// rotation relative to it, so readers that take the media's size from its name agree with
+/// groups 44 and 45 (#1463). Other media are written as before.
+fn plot_paper(page: &PageSetup) -> (f64, f64, i64) {
+    if let Some((w, h, rotation)) = page.file_paper {
+        let same = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        let landscape = matches!(rotation, 1 | 3) != (w > h);
+        if same(w.min(h), page.width_mm) && same(w.max(h), page.height_mm) && landscape == page.landscape {
+            return (w, h, rotation);
+        }
+    }
+    if media_is_landscape(&page.paper) {
+        let (short, long) = (page.width_mm.min(page.height_mm), page.width_mm.max(page.height_mm));
+        (long, short, i64::from(!page.landscape))
+    } else {
+        (page.width_mm, page.height_mm, i64::from(page.landscape))
+    }
+}
+
+/// Whether a media name ends in a size wider than tall, like `… (420.00 x 297.00 MM)`.
+fn media_is_landscape(paper: &str) -> bool {
+    let name = paper.replace('_', " ");
+    let Some(open) = name.rfind('(') else { return false };
+    let mut sides = name[open + 1..].splitn(2, ['x', 'X', '×']);
+    let num = |s: Option<&str>| {
+        let s = s?.trim_start();
+        let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+        s[..end].parse::<f64>().ok()
+    };
+    matches!((num(sides.next()), num(sides.next())), (Some(w), Some(h)) if w > h)
+}
+
 /// DXF Reference group 91 of CLASS records, the instance count, which came with the 2004 format.
 /// From 2004 every CLASS record gets its actual count, counted after `dxf_raw::finish` restores
 /// foreign classes and objects (AutoCAD rejects a 2004+ file without it, #635). An R2000 file has
@@ -1172,33 +1209,56 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         return;
     }
     let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut classes = 0;
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();
         if kind != "CLASS" {
             *counts.entry(kind.to_ascii_uppercase()).or_default() += 1;
+        } else {
+            classes += 1;
         }
     }
 
-    let mut start = 0;
-    while start < tags.len() {
-        if tags.get(start).is_none_or(|t| t.code != 0 || t.str() != "CLASS") {
-            start += 1;
+    // One pass into a new list: inserting each missing count in place shifted every later tag,
+    // quadratic in the number of CLASS records.
+    // Tags move by value (no clone); the old and new buffers coexist while it runs. At most one
+    // group 91 is added per CLASS record, so that is all the room the new list needs beyond the old one.
+    let old = std::mem::take(tags);
+    tags.reserve(old.len() + classes);
+    let mut it = old.into_iter();
+    let mut pending = it.next();
+    while let Some(t) = pending.take() {
+        if t.code != 0 || t.str() != "CLASS" {
+            tags.push(t);
+            pending = it.next();
             continue;
         }
-        let end = tags[start + 1..].iter().position(|t| t.code == 0).map_or(tags.len(), |i| start + 1 + i);
-        let name = tags[start + 1..end].iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
+        let mut record = vec![t];
+        for n in it.by_ref() {
+            if n.code == 0 {
+                pending = Some(n);
+                break;
+            }
+            record.push(n);
+        }
+        let name = record.iter().skip(1).find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
         let count = counts.get(&name).copied().unwrap_or(0);
-        let inserted = if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 91) {
-            tags[start + 1 + i] = Tag::i(91, count);
-            false
-        } else if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 90) {
-            tags.insert(start + 2 + i, Tag::i(91, count));
-            true
-        } else {
-            false
-        };
-        // Inserting the group shifts the next record's start by one.
-        start = end + usize::from(inserted);
+        // The first 91 gets the count; without one, a 91 goes in after the first 90.
+        let mut added = record.iter().skip(1).any(|t| t.code == 91);
+        let mut replaced = false;
+        for (i, t) in record.into_iter().enumerate() {
+            let code = t.code;
+            if i > 0 && code == 91 && !replaced {
+                tags.push(Tag::i(91, count));
+                replaced = true;
+                continue;
+            }
+            tags.push(t);
+            if i > 0 && code == 90 && !added {
+                tags.push(Tag::i(91, count));
+                added = true;
+            }
+        }
     }
 }
 
@@ -1224,5 +1284,33 @@ fn mark_xrefs(tags: &mut [Tag], d: &Drawing) {
             (1, Some(Some((p, _)))) => *t = Tag::s(1, p),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod class_count_tests {
+    use super::*;
+
+    fn record(kind: &str, name: &str, extra: &[Tag]) -> Vec<Tag> {
+        let mut r = vec![Tag::s(0, kind), Tag::s(1, name), Tag::i(90, 0)];
+        r.extend_from_slice(extra);
+        r
+    }
+
+    /// The first 91 gets the count, a CLASS without one gets it after its 90, in one pass over many records.
+    #[test]
+    fn counts_are_set_and_added_in_one_pass() {
+        let mut tags = record("CLASS", "FOO", &[]);
+        tags.extend(record("CLASS", "BAR", &[Tag::i(91, 7), Tag::i(91, 8)]));
+        for i in 0..50_000 {
+            tags.extend(record("CLASS", &format!("X{i}"), &[]));
+        }
+        tags.push(Tag::s(0, "FOO"));
+        let started = std::time::Instant::now();
+        add_class_instance_counts(&mut tags, Version::R2018);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(&tags[..4], &[Tag::s(0, "CLASS"), Tag::s(1, "FOO"), Tag::i(90, 0), Tag::i(91, 1)]);
+        assert_eq!(&tags[4..9], &[Tag::s(0, "CLASS"), Tag::s(1, "BAR"), Tag::i(90, 0), Tag::i(91, 0), Tag::i(91, 8)]);
+        assert_eq!(tags.iter().filter(|t| t.code == 91).count(), 50_003);
     }
 }

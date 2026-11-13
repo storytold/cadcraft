@@ -10,7 +10,7 @@ mod rename;
 pub use matchprop::MatchProps;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Lineweight, Transparency};
+use cadcraft_doc::{EntityKind, Handle, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
@@ -21,9 +21,9 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); multileaders: arrow (a built-in `_Open`… or a block; empty for the style's), leaderType: straight | spline | none}"),
-        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
-            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); multileaders: arrow (a built-in `_Open`… or a block; empty for the style's), leaderType: straight | spline | none} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
+        CommandSpec::new("chprop", "Change Properties", run_set)
+            .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("change", "Change", change::run_change)
             .alias(&["-ch"])
@@ -196,11 +196,74 @@ fn set_xy(p: &mut Vec3, v: &Value) {
     }
 }
 
+/// The objects `properties.set` leaves alone, as CHPROP, MATCHPROP and MOVE do: those on locked
+/// layers and, while a reference is edited in place, those outside the working set.
+#[derive(Default)]
+struct LeftOut {
+    locked: usize,
+    outside: usize,
+}
+
+impl LeftOut {
+    /// `hs` without the objects that can't be edited, each object once, and how many those were. A
+    /// handle that names no object is an error, before anything changes.
+    fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
+        let d = s.doc()?;
+        // The working set, once: `RefEdit::is_working` searches a list.
+        let working: Option<std::collections::HashSet<Handle>> = d.refedit.as_ref().map(|r| r.items.iter().map(|i| i.copy).collect());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = LeftOut::default();
+        let mut free = Vec::new();
+        for h in hs {
+            let Some(e) = d.entity(h) else {
+                return Err(cadcraft_doc::DocError::NoEntity(h).into());
+            };
+            if !seen.insert(h) {
+                continue;
+            }
+            if working.as_ref().is_some_and(|w| !w.contains(&h)) {
+                out.outside += 1;
+            } else if d.layer(&e.common.layer).is_some_and(|l| l.locked) {
+                out.locked += 1;
+            } else {
+                free.push(h);
+            }
+        }
+        Ok((free, out))
+    }
+
+    /// `{changed, locked}`, and a message saying how many were left out when any were.
+    fn result(&self, changed: usize) -> Value {
+        let mut notes = Vec::new();
+        match self.locked {
+            0 => {}
+            1 => notes.push("1 object was on a locked layer.".to_string()),
+            n => notes.push(format!("{n} objects were on a locked layer.")),
+        }
+        match self.outside {
+            0 => {}
+            1 => notes.push("1 object was not in the working set.".to_string()),
+            n => notes.push(format!("{n} objects were not in the working set.")),
+        }
+        if changed == 0 && !notes.is_empty() {
+            notes.push("Nothing was changed.".to_string());
+        }
+        let mut r = json!({ "changed": changed, "locked": self.locked + self.outside });
+        if !notes.is_empty()
+            && let Some(o) = r.as_object_mut()
+        {
+            o.insert("message".into(), json!(notes.join(" ")));
+        }
+        r
+    }
+}
+
 fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     if hs.is_empty() {
         return Err(bad("properties.set", "nothing selected"));
     }
+    let (hs, left_out) = LeftOut::split(s, hs)?;
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
@@ -214,7 +277,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     // A new text is worked out like a typed one: a formula becomes the text's formula, other
     // text drops the one it had.
     let formula_env = crate::textformula::env(s);
-    let d = s.doc_mut()?;
+    let d = s.doc()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
         .map(|n| {
@@ -225,13 +288,18 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })
         .transpose()?;
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
-    }
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    if hs.is_empty() {
+        // Every object was left out: the drawing stays as it was, with no undo step.
+        return Ok(left_out.result(0));
+    }
+    let d = s.doc_mut()?;
+    if let Some(l) = str_param(p, "layer") {
+        d.ensure_layer(l);
+    }
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
@@ -247,7 +315,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })?;
     }
-    Ok(json!({ "changed": hs.len() }))
+    Ok(left_out.result(hs.len()))
 }
 
 /// Set the kind's own properties; whether a text was given (a new value, worked out as typed).
@@ -279,23 +347,7 @@ fn apply_kind_properties(
                 }
             }
         }
-        EntityKind::Circle(c) => {
-            if let Some(v) = params.get("center") {
-                set_xy(&mut c.center, v);
-            }
-            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                c.radius = r;
-            }
-            if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
-                c.radius = dm / 2.0;
-            }
-            if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
-                c.radius = cf / cadcraft_geom::TAU;
-            }
-            if let Some(a) = num("area").filter(|x| *x > 0.0) {
-                c.radius = (a / cadcraft_geom::PI).sqrt();
-            }
-        }
+        EntityKind::Circle(c) => set_circle_properties(c, params),
         EntityKind::Arc(a) => {
             if let Some(v) = params.get("center") {
                 set_xy(&mut a.center, v);
@@ -348,6 +400,7 @@ fn apply_kind_properties(
                 t.rotation = x.to_radians();
             }
         }
+        EntityKind::MLeader(m) => new_text = set_mleader_properties(m, params),
         EntityKind::LwPolyline(pl) => {
             if let Some(x) = num("width").filter(|x| *x >= 0.0) {
                 pl.const_width = x;
@@ -359,17 +412,52 @@ fn apply_kind_properties(
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
         EntityKind::Dimension(dimension) => new_text = set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
-        EntityKind::MLeader(m) => {
-            if let Some(v) = str_param(params, "arrow") {
-                m.arrow = v.trim().to_string();
-            }
-            match str_param(params, "leaderType").map(str::to_ascii_lowercase).as_deref() {
-                Some("spline") => (m.spline, m.no_leader) = (true, false),
-                Some("straight") => (m.spline, m.no_leader) = (false, false),
-                Some("none") => m.no_leader = true,
-                _ => {}
-            }
+        _ => {}
+    }
+    new_text
+}
+
+/// Set a circle's centre and size (radius, diameter, circumference or area).
+fn set_circle_properties(c: &mut cadcraft_doc::Circle, params: &Value) {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    if let Some(v) = params.get("center") {
+        set_xy(&mut c.center, v);
+    }
+    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
+        c.radius = r;
+    }
+    if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
+        c.radius = dm / 2.0;
+    }
+    if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
+        c.radius = cf / cadcraft_geom::TAU;
+    }
+    if let Some(a) = num("area").filter(|x| *x > 0.0) {
+        c.radius = (a / cadcraft_geom::PI).sqrt();
+    }
+}
+
+/// Set a multileader's properties: its text's contents (#1081) and height, its arrowhead and
+/// leader type; whether a text was given.
+fn set_mleader_properties(m: &mut cadcraft_doc::MLeader, params: &Value) -> bool {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    let mut new_text = false;
+    if let Some(t) = &mut m.text {
+        if let Some(v) = str_param(params, "text") {
+            t.contents = v.replace('\n', "\\P");
+            new_text = true;
         }
+        if let Some(x) = num("height").filter(|x| *x > 0.0) {
+            t.height = x;
+        }
+    }
+    if let Some(v) = str_param(params, "arrow") {
+        m.arrow = v.trim().to_string();
+    }
+    match str_param(params, "leaderType").map(str::to_ascii_lowercase).as_deref() {
+        Some("spline") => (m.spline, m.no_leader) = (true, false),
+        Some("straight") => (m.spline, m.no_leader) = (false, false),
+        Some("none") => m.no_leader = true,
         _ => {}
     }
     new_text
