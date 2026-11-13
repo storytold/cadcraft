@@ -473,6 +473,12 @@ fn reference_counts(d: &cadcraft_doc::Drawing) -> std::collections::BTreeMap<Str
     for e in stores {
         if let EntityKind::Insert(i) = &e.kind {
             count(i, &mut refs);
+        } else if let Some(name) = referenced_block(e) {
+            // A dimension's or multileader's block content is a reference too: a definition only
+            // they name is in use, not unused.
+            let name = d.block(&name).map_or_else(|| name, |b| b.name.clone());
+            let v = refs.entry(name).or_default();
+            *v = v.saturating_add(1);
         }
     }
     refs
@@ -497,6 +503,13 @@ fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "count": blocks.len(), "blocks": blocks }))
 }
 
+/// An entity anywhere in the drawing: in a space ([`cadcraft_doc::Drawing::entity`]), or inside a
+/// block definition — `blockdef.entities` reports the handles of a definition's own entities, and
+/// a reference there (an attributed insert of its own) is a fair subject for `attribs` too.
+fn entity_anywhere(d: &cadcraft_doc::Drawing, h: Handle) -> Option<&std::sync::Arc<Entity>> {
+    d.entity(h).or_else(|| d.blocks.values().flat_map(|b| b.entities.iter()).find(|e| e.handle == h))
+}
+
 /// BLOCKDEF.ENTITIES: a block definition's own objects, read-only — including the anonymous ones
 /// (`*U…`) the Block Editor refuses to open. Given a reference's handle (`insert`), the
 /// definition it shows, with where the reference places it.
@@ -519,7 +532,7 @@ fn run_blockdef_entities(s: &mut Session, p: &Value) -> Result<Value> {
             .and_then(Handle::parse_hex)
             .or_else(|| v.as_u64().map(Handle))
             .ok_or_else(|| bad(CMD, format!("`insert`: {v} is not an object handle")))?;
-        let e = d.entity(h).ok_or_else(|| bad(CMD, format!("no object {}", h.hex())))?;
+        let e = entity_anywhere(d, h).ok_or_else(|| bad(CMD, format!("no object {}", h.hex())))?;
         let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, "`insert` must be a block reference")) };
         (
             i.block.clone(),
@@ -578,7 +591,7 @@ fn run_attribs(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut out: Vec<Value> = Vec::new();
     for h in refs {
-        let Some(e) = d.entity(h) else { return Err(bad(CMD, format!("no object {}", h.hex()))) };
+        let Some(e) = entity_anywhere(d, h) else { return Err(bad(CMD, format!("no object {}", h.hex()))) };
         let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, format!("object {} is not a block reference", h.hex()))) };
         let def = d.block(&i.block);
         let attdefs: Vec<&Attrib> = def
@@ -590,20 +603,24 @@ fn run_attribs(s: &mut Session, p: &Value) -> Result<Value> {
             if !tag_matches {
                 continue;
             }
+            let instance = i.attribs.iter().find(|x| x.tag.eq_ignore_ascii_case(&a.tag));
             let (value, source) = if a.constant {
                 // A constant attribute is the definition's own value; references don't carry it.
                 (a.text.value.clone(), "definition")
             } else {
-                match i.attribs.iter().find(|x| x.tag.eq_ignore_ascii_case(&a.tag)) {
+                match instance {
                     Some(x) => (x.text.value.clone(), "instance"),
                     None => (String::new(), "none"),
                 }
             };
             let present = source != "none";
+            // An instance attribute carries its own visibility: a definition redefined since does
+            // not say what the reference shows.
+            let invisible = instance.map(|x| x.invisible).unwrap_or(a.invisible);
             attribs.push(json!({
                 "tag": a.tag, "defined": true, "present": present,
                 "value": if present { json!(value) } else { Value::Null },
-                "constant": a.constant, "invisible": a.invisible, "source": source,
+                "constant": a.constant, "invisible": invisible, "source": source,
             }));
         }
         for x in &i.attribs {

@@ -15,7 +15,7 @@ use super::SelfCheck;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Merges done while expanding nested references; a hostile file stops here (and says so).
-const MAX_WORK: u64 = 5_000_000;
+pub(super) const MAX_WORK: u64 = 5_000_000;
 /// Top-level objects reported (and highlighted) per count.
 const MAX_HANDLES: usize = 100_000;
 
@@ -122,6 +122,10 @@ impl<'a> Expander<'a> {
     /// An expander that has not traversed any block yet.
     pub(super) fn new(d: &'a Drawing) -> Self {
         Expander { d, memo: HashMap::new(), work: 0, truncated: false, depth_capped: false }
+    }
+    /// Whether the expansion had to give something up: (its work cap hit, its depth cap hit).
+    pub(super) fn gave_up(&self) -> (bool, bool) {
+        (self.truncated, self.depth_capped)
     }
     /// The definition's own name for a referenced block (names are case-insensitive).
     pub(super) fn canonical(&self, name: &str) -> String {

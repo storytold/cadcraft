@@ -260,7 +260,8 @@ fn readability_counts_spaces_definitions_and_missing_references() {
     doors(&mut s);
     text(&mut s, [200.0, 200.0], "NOTE %%c8");
     {
-        // Two references to a block the drawing does not define, on the title-block layer.
+        // Two references to a block the drawing does not define, on the title-block layer, and a
+        // gridded one: its copies sit on the lattice, inside the envelope with the others.
         let d = s.doc_mut().unwrap();
         let ghost = |h: u64, at: [f64; 2]| {
             let mut e = cadcraft_engine::doc::Entity::new(
@@ -276,13 +277,25 @@ fn readability_counts_spaces_definitions_and_missing_references() {
         };
         d.model.push(ghost(0x2C0, [100.0, 50.0]));
         d.model.push(ghost(0x2C1, [-20.0, 480.0]));
+        let mut gridded = cadcraft_engine::doc::Entity::new(
+            Handle(0x2C2),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Ghost".into(),
+                insert: cadcraft_engine::geom::Vec3::new(0.0, 0.0, 0.0),
+                cols: 2,
+                col_spacing: 100.0,
+                ..Default::default()
+            }),
+        );
+        gridded.common.layer = "frame".into();
+        d.model.push(gridded);
     }
 
     let r = s.execute("drawing.readability", &json!({})).unwrap();
-    assert_eq!(r["modelEntities"], json!(6), "{}", r["message"]); // 3 references, 1 text, 2 ghosts
+    assert_eq!(r["modelEntities"], json!(7), "{}", r["message"]); // 3 references, 1 text, 3 ghosts (one gridded)
     assert_eq!(r["blockDefs"], json!(1));
     assert_eq!(r["anonymousRefs"], json!(0));
-    assert_eq!(r["missingBlockRefs"], json!(2));
+    assert_eq!(r["missingBlockRefs"], json!(4));
     assert_eq!(r["textsInModel"], json!(1));
     assert_eq!(r["textsInBlockDefs"], json!(1));
     assert_eq!(r["textsInBlocks"], json!(3), "one per placed reference");
@@ -291,11 +304,11 @@ fn readability_counts_spaces_definitions_and_missing_references() {
     // block, the entities that place one, their layers, and where on the sheet they sit.
     let missing = unreachable.iter().find(|u| u["kind"] == "missingBlock").unwrap();
     assert_eq!(missing["code"], json!("MISSING_BLOCK"));
-    assert_eq!(missing["count"], json!(2));
+    assert_eq!(missing["count"], json!(4));
     assert_eq!(missing["blockNames"], json!(["Ghost"]));
-    assert_eq!(missing["handles"], json!(["2C0", "2C1"]));
+    assert_eq!(missing["handles"], json!(["2C0", "2C1", "2C2"]));
     assert_eq!(missing["layers"], json!(["frame"]));
-    assert_eq!(missing["insertPointsBBox"], json!({ "min": [-20.0, 50.0], "max": [100.0, 480.0] }));
+    assert_eq!(missing["insertPointsBBox"], json!({ "min": [-20.0, 0.0], "max": [100.0, 480.0] }));
     // Every entry carries its machine-readable code.
     assert!(unreachable.iter().all(|u| u["code"].is_string()), "{unreachable:?}");
 
@@ -321,4 +334,369 @@ fn the_block_editor_state_does_not_leak_across_drawings() {
     // Closing what is not open says so, not an error about the drawing.
     let err = s.execute("bclose", &json!({})).unwrap_err();
     assert!(err.to_string().contains("The Block Editor is not open"), "{err}");
+}
+
+fn doc_text(at: [f64; 2], value: &str) -> cadcraft_engine::doc::Text {
+    cadcraft_engine::doc::Text {
+        insert: Vec3::new(at[0], at[1], 0.0),
+        align_pt: None,
+        height: 2.0,
+        value: value.into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    }
+}
+
+fn block(name: &str) -> Block {
+    Block {
+        name: name.into(),
+        annotative: false,
+        base: Vec3::ZERO,
+        entities: Default::default(),
+        description: String::new(),
+        xref_overlay: false,
+        xref_status: Default::default(),
+        anonymous: false,
+        xref_path: None,
+        explodable: true,
+        units: 0,
+        array: None,
+    }
+}
+
+fn attrib(tag: &str, at: [f64; 2], value: &str) -> cadcraft_engine::doc::Attrib {
+    cadcraft_engine::doc::Attrib {
+        tag: tag.into(),
+        text: doc_text(at, value),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    }
+}
+
+#[test]
+fn nested_reference_attributes_sit_where_the_reference_sits_once() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        // "Tag" holds one text; "Panel" places "Tag" at (10, 0) and the reference carries the
+        // attribute itself, at Panel-local (15, 0) — the reference's own placement already
+        // included, as the reader stores it and the renderer draws it.
+        let mut tag = block("Tag");
+        tag.entities.push(cadcraft_engine::doc::Entity::new(Handle(0x41), EntityKind::Text(doc_text([0.0, 30.0], "TAGTEXT"))));
+        let mut panel = block("Panel");
+        panel.entities.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x42),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Tag".into(),
+                insert: Vec3::new(10.0, 0.0, 0.0),
+                attribs: vec![attrib("ROOM", [15.0, 0.0], "P1")],
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert("Tag".into(), Arc::new(tag));
+        d.blocks.insert("Panel".into(), Arc::new(panel));
+        // The model places "Panel" on a 2x2 grid at (100, 0).
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x43),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Panel".into(),
+                insert: Vec3::new(100.0, 0.0, 0.0),
+                cols: 2,
+                rows: 2,
+                col_spacing: 50.0,
+                row_spacing: 40.0,
+                ..Default::default()
+            }),
+        ));
+    }
+
+    let r = s.execute("texts", &json!({ "scope": "nested" })).unwrap();
+    assert_eq!(r["truncated"], json!(false), "{r}");
+    let hits = r["texts"].as_array().unwrap();
+    // The reference's own attribute set draws once per placed copy of "Panel" — the cell is a
+    // whole copy of the reference, and the renderer draws the set once per copy too — where the
+    // reference sits: the stored Panel-local point through the cell's placement alone, (100, 0) +
+    // (15, 0) and its three grid siblings. The reference's own placement (10, 0) is already inside
+    // the stored point: the walk must not apply it a second time.
+    let attrs = hits.iter().filter(|h| h["type"] == "Attribute").collect::<Vec<_>>();
+    assert_eq!(attrs.len(), 4, "{hits:?}");
+    assert_eq!(attrs[0]["at"], json!([115.0, 0.0]), "{}", attrs[0]);
+    assert_eq!(attrs[0]["depth"], json!(1));
+    assert_eq!(attrs[0]["source"], json!("block:Panel"));
+    assert_eq!(attrs[3]["at"], json!([165.0, 40.0]), "{}", attrs[3]);
+    // The definition's own text draws once per placed copy, transformed into the space.
+    assert_eq!(hits.iter().filter(|h| h["text"] == "TAGTEXT").count(), 4, "{hits:?}");
+
+    // A window filter speaks space coordinates: it sees the placed attribute at (115, 0), not
+    // the block-local point it is stored at.
+    let r = s.execute("texts", &json!({ "scope": "nested", "window": [[110.0, -5.0], [120.0, 5.0]] })).unwrap();
+    let hits = r["texts"].as_array().unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0]["type"], "Attribute", "{hits:?}");
+
+    // The definition entities `blockdef.entities` reports are resolvable in turn: the nested
+    // reference's handle names its definition.
+    let r = s.execute("blockdef.entities", &json!({ "name": "Panel" })).unwrap();
+    let inner = r["entities"].as_array().unwrap().iter().find(|e| e["handle"] == json!("42")).cloned().unwrap();
+    let r = s.execute("blockdef.entities", &json!({ "insert": inner["handle"] })).unwrap();
+    assert_eq!(r["block"]["name"], json!("Tag"), "{r}");
+}
+
+#[test]
+fn the_nested_walk_stops_at_its_budget_not_after_its_output() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        // "Busy" holds 1,000 texts; a 1,000 x 1,000 grid places it a billion visits deep. The
+        // walk charges every visit, so it stops at its budget instead of walking the product.
+        let mut busy = block("Busy");
+        for k in 0..1_000u64 {
+            busy.entities.push(cadcraft_engine::doc::Entity::new(
+                Handle(0x1000 + k),
+                EntityKind::Text(doc_text([(k % 50) as f64 * 3.0, (k / 50) as f64 * 3.0], "BUSY")),
+            ));
+        }
+        d.blocks.insert("Busy".into(), Arc::new(busy));
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x2000),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Busy".into(),
+                insert: Vec3::ZERO,
+                cols: 1000,
+                rows: 1000,
+                col_spacing: 100.0,
+                row_spacing: 100.0,
+                ..Default::default()
+            }),
+        ));
+    }
+    let r = s.execute("texts", &json!({ "scope": "nested" })).unwrap();
+    assert_eq!(r["truncated"], json!(true), "{}", r["count"]);
+    assert!(r["count"].as_u64().unwrap() <= 250_000, "{}", r["count"]);
+}
+
+#[test]
+fn a_self_nesting_reference_says_its_texts_are_partial() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        let mut looping = block("Loop");
+        looping.entities.push(cadcraft_engine::doc::Entity::new(Handle(0x300), EntityKind::Text(doc_text([1.0, 1.0], "DEEP"))));
+        looping
+            .entities
+            .push(cadcraft_engine::doc::Entity::new(Handle(0x301), EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Loop".into(), ..Default::default() })));
+        d.blocks.insert("Loop".into(), Arc::new(looping));
+        d.model
+            .push(cadcraft_engine::doc::Entity::new(Handle(0x302), EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Loop".into(), ..Default::default() })));
+    }
+    // The walk stops at the nesting cap and says the list is partial instead of reporting a
+    // complete-looking one.
+    let r = s.execute("texts", &json!({ "scope": "nested" })).unwrap();
+    assert_eq!(r["truncated"], json!(true), "{r}");
+}
+
+#[test]
+fn readability_counts_the_proxies_a_placed_definition_holds() {
+    let mut s = Session::new();
+    let with_drawing = metafile(&[(29, [0.0f64; 16].iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>().as_slice()), (6, [0u8; 4].as_slice())]);
+    {
+        let d = s.doc_mut().unwrap();
+        let mut holder = block("Holder");
+        holder.entities.push(unknown(
+            Handle(0x2B0),
+            "ACAD_PROXY_ENTITY",
+            vec![tag(0, "ACAD_PROXY_ENTITY"), tag(160, &with_drawing.len().to_string()), tag(310, &hex(&with_drawing))],
+        ));
+        d.blocks.insert("Holder".into(), Arc::new(holder));
+        // The model places the definition on a grid of two.
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x2B1),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Holder".into(),
+                insert: Vec3::ZERO,
+                cols: 2,
+                col_spacing: 50.0,
+                ..Default::default()
+            }),
+        ));
+    }
+    let r = s.execute("drawing.readability", &json!({})).unwrap();
+    // The definition's proxy counts per placed copy: two instances, two proxies that draw — the
+    // sheet really does hold two unmodelled entities nothing renders.
+    assert_eq!(r["proxy"]["acadProxy"], json!(2), "{}", r["proxy"]);
+    assert_eq!(r["proxy"]["withDrawable"], json!(2), "{}", r["proxy"]);
+}
+
+#[test]
+fn an_unparsable_proxy_graphic_says_so() {
+    let mut s = Session::new();
+    d_model_junk_proxy(&mut s, Handle(0x2D0));
+    let r = s.execute("drawing.readability", &json!({})).unwrap();
+    assert_eq!(r["proxy"]["unparsed"], json!(1), "{}", r["proxy"]);
+    let unreachable = r["unreachable"].as_array().unwrap();
+    let u = unreachable.iter().find(|u| u["code"] == "PROXY_UNPARSED").unwrap();
+    assert_eq!(u["count"], json!(1), "{unreachable:?}");
+}
+
+fn d_model_junk_proxy(s: &mut Session, h: Handle) {
+    let junk = [0xDE, 0xAD, 0xBE, 0xEF];
+    s.doc_mut().unwrap().model.push(unknown(
+        h,
+        "ACAD_PROXY_ENTITY",
+        vec![tag(0, "ACAD_PROXY_ENTITY"), tag(92, "999999"), tag(310, &hex(&junk))],
+    ));
+}
+
+#[test]
+fn proxy_entity_data_stays_out_of_the_graphics_walk() {
+    let mut s = Session::new();
+    let with_drawing = metafile(&[(6, [0u8; 4].as_slice())]);
+    s.doc_mut().unwrap().model.push(unknown(
+        Handle(0x2E0),
+        "ACAD_PROXY_ENTITY",
+        vec![
+            tag(0, "ACAD_PROXY_ENTITY"),
+            tag(92, &with_drawing.len().to_string()),
+            tag(310, &hex(&with_drawing)),
+            // Group 93 declares the entity-data section; its chunks are the entity's data, not
+            // graphics frames, and the walk leaves them alone.
+            tag(93, "500"),
+            tag(310, &hex(&[0xAA, 0xBB, 0xCC, 0xDD])),
+        ],
+    ));
+    let r = s.execute("entities", &json!({ "type": "ACAD_PROXY_ENTITY" })).unwrap();
+    let p = &r["entities"].as_array().unwrap()[0]["proxy"];
+    assert_eq!(p["records"], json!(1), "{}", p);
+    assert_eq!(p["unparsed"], json!(0), "{}", p);
+    assert_eq!(p["drawable"], json!(1), "{}", p);
+}
+
+#[test]
+fn a_reference_chain_past_the_expansion_cap_says_its_counts_are_partial() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        // A chain deeper than the block-expansion cap: each link holds a text and the next
+        // reference. The counts the expansion feeds say they are partial.
+        let depth = cadcraft_engine::doc::MAX_BLOCK_DEPTH + 2;
+        for k in 0..depth {
+            let name = format!("L{k:02}");
+            let mut b = block(&name);
+            b.entities.push(cadcraft_engine::doc::Entity::new(Handle(0x400 + k as u64), EntityKind::Text(doc_text([0.0, 0.0], "CHAIN"))));
+            if k + 1 < depth {
+                b.entities.push(cadcraft_engine::doc::Entity::new(
+                    Handle(0x500 + k as u64),
+                    EntityKind::Insert(cadcraft_engine::doc::Insert { block: format!("L{:02}", k + 1), ..Default::default() }),
+                ));
+            }
+            d.blocks.insert(name, Arc::new(b));
+        }
+        d.model
+            .push(cadcraft_engine::doc::Entity::new(Handle(0x600), EntityKind::Insert(cadcraft_engine::doc::Insert { block: "L00".into(), ..Default::default() })));
+    }
+    let r = s.execute("drawing.readability", &json!({})).unwrap();
+    // The expansion stopped at its depth cap: the self-check names the cap the counts hit.
+    assert_eq!(r["selfCheck"]["caps"]["blockDepth"], json!(16), "{}", r["selfCheck"]);
+}
+
+#[test]
+fn blocks_list_counts_dimension_block_content_as_a_reference() {
+    let mut s = Session::new();
+    doors(&mut s);
+    {
+        let d = s.doc_mut().unwrap();
+        // A dimension whose geometry block is the Door block: a definition only it names is in
+        // use, and blocks.list must not call it unused.
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x610),
+            EntityKind::Dimension(cadcraft_engine::doc::Dimension {
+                kind: cadcraft_engine::doc::DimKind::Aligned,
+                defpt: Vec3::new(0.0, 0.0, 0.0),
+                text_mid: Vec3::new(5.0, 5.0, 0.0),
+                p13: Vec3::ZERO,
+                p14: Vec3::ZERO,
+                p15: Vec3::ZERO,
+                p16: Vec3::ZERO,
+                text: String::new(),
+                style: "Standard".into(),
+                measurement: 0.0,
+                text_rotation: 0.0,
+                user_text_pos: false,
+                block: Some("Door".into()),
+                insertion_point: Vec3::ZERO,
+                overrides: Default::default(),
+                assoc: Vec::new(),
+                marks: Default::default(),
+            }),
+        ));
+    }
+    let r = s.execute("blocks.list", &json!({})).unwrap();
+    let door = r["blocks"].as_array().unwrap().iter().find(|b| b["name"] == "Door").unwrap();
+    // The three references the doors() helper placed, and the dimension's block.
+    assert_eq!(door["refs"], json!(4), "{}", door);
+}
+
+#[test]
+fn attribs_report_instance_visibility_not_the_definitions() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        let mut stamp = block("Stamp");
+        // The definition declares NOTE visible.
+        stamp.entities.push(cadcraft_engine::doc::Entity::new(Handle(0x700), EntityKind::AttDef(attrib("NOTE", [0.0, 0.0], "declared"))));
+        d.blocks.insert("Stamp".into(), Arc::new(stamp));
+        // The reference carries it, invisible: its own flag is what the sheet shows.
+        let mut a = attrib("NOTE", [1.0, 1.0], "carried");
+        a.invisible = true;
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x701),
+            EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Stamp".into(), attribs: vec![a], ..Default::default() }),
+        ));
+    }
+    let r = s.execute("attribs", &json!({ "handle": 0x701u64 })).unwrap();
+    let a = &r["references"].as_array().unwrap()[0]["attribs"][0];
+    assert_eq!(a["value"], json!("carried"), "{}", a);
+    assert_eq!(a["invisible"], json!(true), "{}", a);
+}
+
+#[test]
+fn a_multiline_attribute_reports_its_formatted_contents_as_raw() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        let mut ml = attrib("NOTE", [0.0, 0.0], "line1 line2");
+        ml.multiline = Some(cadcraft_engine::doc::MultilineAttrib {
+            mtext: cadcraft_engine::doc::MText {
+                insert: Vec3::ZERO,
+                height: 2.0,
+                width: 0.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "line1\\Pline2".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            },
+            read_as: "line1 line2".into(),
+        });
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x720),
+            EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Anything".into(), attribs: vec![ml], ..Default::default() }),
+        ));
+    }
+    let r = s.execute("texts", &json!({ "scope": "space" })).unwrap();
+    let hits = r["texts"].as_array().unwrap();
+    let a = hits.iter().find(|h| h["type"] == "Attribute").unwrap();
+    // Raw keeps the stored formatting; the drawn reading is the plain value.
+    assert_eq!(a["raw"], json!("line1\\Pline2"), "{}", a);
+    assert_eq!(a["text"], json!("line1 line2"), "{}", a);
 }
