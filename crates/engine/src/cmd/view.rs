@@ -348,6 +348,21 @@ fn run_view_get(s: &mut Session, _: &Value) -> Result<Value> {
     }))
 }
 
+/// Apply a camera operation starting from `st.camera.with_twist(v.twist)` and clear the consumed
+/// view twist when not inside an undoable layout viewport so downstream `with_twist` calls never
+/// re-apply the old twist (for example after rolling or orbiting back to canonical Top).
+fn apply_camera_from_twist(
+    st: &mut crate::DocState,
+    op: impl FnOnce(cadcraft_geom::Camera3D) -> cadcraft_geom::Camera3D,
+) {
+    let v = st.view();
+    let base_cam = st.camera.with_twist(v.twist);
+    st.camera = op(base_cam);
+    if st.active_viewport().is_none() && v.twist != 0.0 {
+        st.set_view_quiet(View { twist: 0.0, ..v });
+    }
+}
+
 /// Execute `3dorbit` (`{daz?, del?, clamp?, preset?}`): orbit the 3D camera or jump to a
 /// [`cadcraft_geom::Camera3D::preset`].
 fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -360,9 +375,7 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
     let daz = f64_opt("3dorbit", p, "daz", 0.0)?;
     let del = f64_opt("3dorbit", p, "del", 0.0)?;
     let clamp = bool_or(p, "clamp", true);
-    let st = s.state_mut()?;
-    let base_cam = st.camera.with_twist(st.view().twist);
-    st.camera = base_cam.orbit(daz, del, clamp);
+    apply_camera_from_twist(s.state_mut()?, |base_cam| base_cam.orbit(daz, del, clamp));
     ok()
 }
 
@@ -370,13 +383,13 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
     let angle = f64_opt("view.roll", p, "angle", 90.0)?;
     let in_plane = bool_or(p, "inPlane", false);
-    let st = s.state_mut()?;
-    let base_cam = st.camera.with_twist(st.view().twist);
-    st.camera = if in_plane {
-        base_cam.roll_in_plane(angle)
-    } else {
-        base_cam.roll_world_z(angle)
-    };
+    apply_camera_from_twist(s.state_mut()?, |base_cam| {
+        if in_plane {
+            base_cam.roll_in_plane(angle)
+        } else {
+            base_cam.roll_world_z(angle)
+        }
+    });
     ok()
 }
 
@@ -1098,6 +1111,12 @@ mod tests {
                 json!({ "angle": 90.0 }),
                 cadcraft_geom::Camera3D::TOP.with_twist(90.0_f64.to_radians()).roll_world_z(90.0),
             ),
+            (
+                "twisted_top_in_plane_restores_canonical_top",
+                json!({ "center": [0.0, 0.0], "height": 10.0, "twist": 90.0, "preset": "top" }),
+                json!({ "angle": 90.0, "inPlane": true }),
+                cadcraft_geom::Camera3D::TOP,
+            ),
         ];
 
         for (label, setup, args, expected_cam) in valid_cases {
@@ -1105,6 +1124,8 @@ mod tests {
             assert!(s.execute("view.set", &setup).is_ok(), "{label}: setup failed");
             assert!(s.execute("view.roll", &args).is_ok(), "{label}: view.roll failed");
             assert_eq!(s.state().ok().map(|st| st.camera), Some(expected_cam), "{label}: camera mismatch");
+            let displayed = s.state().ok().map(|st| st.camera.with_twist(st.view().twist));
+            assert_eq!(displayed, Some(expected_cam), "{label}: effective displayed frame mismatch");
         }
 
         let invalid_cases = [("bad_angle_string", json!({ "angle": "bad" })), ("bad_angle_bool", json!({ "angle": false }))];

@@ -263,3 +263,18 @@ fn edge_on_to_world_preserves_depth_axis() {
     assert!((up.x - down.x).abs() < 1e-9, "same horizontal screen offset keeps X: up={up:?}, down={down:?}");
     assert!((up.y - down.y).abs() > 29.0, "vertical screen motion must preserve depth in XY: up={up:?}, down={down:?}");
 }
+
+#[test]
+fn shallow_3d_screen_delta_to_world_inverts_to_screen() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    // Elevation ~5.7° (`|cam.z.z| == 0.1`, inside 0.01 < |z.z| <= 0.15): must still track 1:1.
+    let z = cadcraft_geom::Vec3::new(0.0, 0.995, -0.1).normalized();
+    let cam = cadcraft_geom::Camera3D::from_dir_up(z, cadcraft_geom::Vec3::Z);
+    assert!(cam.z.z.abs() > 0.01 && cam.z.z.abs() <= 0.15);
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 1.5, twist: 0.0, cam };
+
+    let delta = vec2(24.0, -40.0);
+    let world_offset = xf.screen_delta_to_world(delta);
+    let roundtrip = xf.to_screen(xf.center + world_offset) - rect.center();
+    assert!((roundtrip.x - delta.x).abs() < 1e-4 && (roundtrip.y - delta.y).abs() < 1e-4, "roundtrip={roundtrip:?}");
+}

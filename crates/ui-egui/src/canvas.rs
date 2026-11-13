@@ -91,9 +91,8 @@ impl Xf {
     /// The world offset a screen offset `d` (points, y down) covers: a pan moves the view by it.
     pub fn screen_delta_to_world(&self, d: egui::Vec2) -> Vec2 {
         if !self.cam.is_top_plan() {
-            if self.cam.z.z.abs() > 0.15 {
-                let c = self.rect.center();
-                return self.to_world(c + d) - self.center;
+            if let Some(world) = self.try_to_world(self.rect.center() + d) {
+                return world - self.center;
             }
             let du = f64::from(d.x) / self.scale;
             let dv = -f64::from(d.y) / self.scale;

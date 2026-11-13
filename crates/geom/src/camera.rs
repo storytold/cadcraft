@@ -249,14 +249,20 @@ impl Camera3D {
         let del = rad(del_deg);
 
         // 1) YAW about worldUp = (0, 0, 1).
-        // Enforce x_yaw.z == 0 so the camera right axis stays strictly horizontal (no gumball roll).
+        // Derive x_yaw horizontally from z_yaw and world Z when not at a pole so pre-existing
+        // in-plane roll never projects onto XY and strips elevation from z; fall back to rotated x
+        // only at the poles where z_yaw and world Z are collinear.
         let x_rot = rotate_vec_around_axis(self.x, world_up, daz);
-        let mut x_yaw = Vec3::new(x_rot.x, x_rot.y, 0.0).normalized();
-        if x_yaw == Vec3::ZERO {
-            x_yaw = Vec3::new(1.0, 0.0, 0.0);
-        }
         let y_yaw = rotate_vec_around_axis(self.y, world_up, daz).normalized();
         let z_yaw = rotate_vec_around_axis(self.z, world_up, daz).normalized();
+        let x_from_z = z_yaw.cross(world_up);
+        let mut x_yaw = if x_from_z.len() > 1e-6 {
+            let sign = if y_yaw.z < -1e-6 { -1.0 } else { 1.0 };
+            (x_from_z * sign).normalized()
+        } else {
+            let x_proj = Vec3::new(x_rot.x, x_rot.y, 0.0).normalized();
+            if x_proj == Vec3::ZERO { Vec3::new(1.0, 0.0, 0.0) } else { x_proj }
+        };
 
         // 2) PITCH about camera-right axis x_yaw.
         let mut y_pitch = rotate_vec_around_axis(y_yaw, x_yaw, del).normalized();
@@ -327,7 +333,10 @@ impl Camera3D {
         if d_angle.abs() < 1e-3 {
             d_angle = if d_roll_deg < 0.0 { -step } else { step };
         }
-        self.orbit(d_angle, 0.0, true)
+        // `orbit` flips its `daz_deg` sign below the XY plane (`z.z > 1e-6`), so compensate
+        // when applying a positive world-Z compass correction from Bottom-side views.
+        let orbit_sign = if self.z.z > 1e-6 { -1.0 } else { 1.0 };
+        self.orbit(orbit_sign * d_angle, 0.0, true)
     }
 
     /// Pole-singularity-free compass North vector in world XY (ported from MATCAD `synchronize_viewcube.m`).
@@ -909,6 +918,12 @@ mod tests {
         assert_orthonormal(&near_front, true, "unclamped near_front");
         assert!((near_front.z - Vec3::new(0.0, 1.0, 0.0)).len() > 0.01, "z={:?}", near_front.z);
 
+        // Rolling an angled camera in-plane and then starting an orbit must preserve the viewing direction.
+        let rolled = front_top.roll_in_plane(90.0);
+        let orbited_from_roll = rolled.orbit(0.0, 0.0, true);
+        assert_orthonormal(&orbited_from_roll, true, "orbit after roll_in_plane");
+        assert_vec3_near(orbited_from_roll.z, rolled.z, 1e-12, "preserves viewing dir after roll");
+
         // Pitch past the Top pole (-Z side) and Bottom pole (+Z side) without clamping.
         let over_north = front.orbit(0.0, -120.0, false);
         assert_orthonormal(&over_north, true, "over north pole");
@@ -1003,6 +1018,14 @@ mod tests {
         let front_left = Camera3D::preset("front_left").unwrap_or_default(); // compass = +45°
         assert_eq!(front_left.roll_world_z(10.0).view_name(), "Left");
         assert_eq!(front_left.roll_world_z(90.0).view_name(), "Left");
+
+        // Bottom-side compass snaps compensate for Bottom's inverted orbit yaw sign.
+        let bottom = Camera3D::preset("bottom").unwrap_or_default();
+        let bottom_tilted = bottom.orbit(20.0, 0.0, false);
+        let bottom_deg = bottom_tilted.compass_dir_xy().x.atan2(bottom_tilted.compass_dir_xy().y).to_degrees();
+        assert!((bottom_deg + 20.0).abs() < 1e-6, "bottom orbit(20) expected -20°, got {bottom_deg}");
+        let bottom_restored = bottom_tilted.roll_world_z(90.0);
+        assert_cam_near(&bottom_restored, &bottom, 1e-12, "roll_world_z(90) restores Bottom 0° heading");
         assert_eq!(front_left.roll_world_z(-10.0).view_name(), "Front");
         assert_eq!(front_left.roll_world_z(-90.0).view_name(), "Front");
 

@@ -432,32 +432,28 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     // Storing (start_pos, cam0) at drag start and calculating orbit from cam0 prevents horizon drift
     // and eliminates the gimbal / gumball effect entirely.
     if resp.drag_started_by(egui::PointerButton::Primary) {
-        if let Some(press_pos) = resp.interact_pointer_pos() {
+        let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos());
+        if let Some(press_pos) = origin {
             let is_ring = l.part_at_cam(press_pos, &cam) == Some(Part::Ring);
             app.canvas.viewcube_drag = Some((press_pos, cam, is_ring));
         }
     }
-    if resp.dragged_by(egui::PointerButton::Primary) {
-        if let Some((start_pos, cam0, is_ring)) = app.canvas.viewcube_drag {
-            if let Some(curr_pos) = resp.interact_pointer_pos() {
-                if is_ring {
-                    // Angular delta around ring center (MATCAD move_viewcube.m lines 191-198)
-                    let a0 = -(start_pos.y - l.center.y).atan2(start_pos.x - l.center.x);
-                    let a1 = -(curr_pos.y - l.center.y).atan2(curr_pos.x - l.center.x);
-                    let daz_deg = f64::from((a1 - a0).to_degrees());
-                    if let Ok(st) = app.session.state_mut() {
-                        st.camera = cam0.orbit(daz_deg, 0.0, true);
-                    }
-                } else {
-                    // Cube drag: total pixel offset from drag start
-                    let delta = curr_pos - start_pos;
-                    let daz_deg = f64::from(delta.x) * 0.5;
-                    let del_deg = -f64::from(delta.y) * 0.5; // Negative because egui Y increases downwards
-                    if let Ok(st) = app.session.state_mut() {
-                        st.camera = cam0.orbit(daz_deg, del_deg, true);
-                    }
-                }
-            }
+    if resp.dragged_by(egui::PointerButton::Primary)
+        && let Some((start_pos, cam0, is_ring)) = app.canvas.viewcube_drag
+        && let Some(curr_pos) = resp.interact_pointer_pos()
+    {
+        if is_ring {
+            // Angular delta around ring center (MATCAD move_viewcube.m lines 191-198)
+            let a0 = -(start_pos.y - l.center.y).atan2(start_pos.x - l.center.x);
+            let a1 = -(curr_pos.y - l.center.y).atan2(curr_pos.x - l.center.x);
+            let daz_deg = f64::from((a1 - a0).to_degrees());
+            apply_drag_orbit(app, cam0.orbit(daz_deg, 0.0, true));
+        } else {
+            // Cube drag: total pixel offset from drag start
+            let delta = curr_pos - start_pos;
+            let daz_deg = f64::from(delta.x) * 0.5;
+            let del_deg = -f64::from(delta.y) * 0.5; // Negative because egui Y increases downwards
+            apply_drag_orbit(app, cam0.orbit(daz_deg, del_deg, true));
         }
     }
     if resp.drag_stopped() {
@@ -478,10 +474,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
                 let _ = app.run("zoom.extents", json!({}));
             }
             Some(Part::RollCcw) => {
-                let _ = app.run("view.roll", json!({"angle": 90.0}));
+                let _ = app.run("view.roll", json!({"angle": 90.0, "inPlane": true}));
             }
             Some(Part::RollCw) => {
-                let _ = app.run("view.roll", json!({"angle": -90.0}));
+                let _ = app.run("view.roll", json!({"angle": -90.0, "inPlane": true}));
             }
             Some(Part::DirTop) => {
                 let _ = app.run("view.set", json!({"neighbor": "top"}));
@@ -897,6 +893,18 @@ fn ucs_menu(app: &mut CadApp, popup: egui::Popup<'_>) {
     }
 }
 
+/// Store an orbited camera captured from a ViewCube drag and clear any consumed Model/Paper
+/// `view.twist` so subsequent frames do not apply the old twist a second time.
+fn apply_drag_orbit(app: &mut CadApp, next_cam: Camera3D) {
+    if let Ok(st) = app.session.state_mut() {
+        st.camera = next_cam;
+        let v = st.view();
+        if st.active_viewport().is_none() && v.twist != 0.0 {
+            st.set_view_quiet(cadcraft_engine::View { twist: 0.0, ..v });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1132,5 +1140,55 @@ mod tests {
         assert!(!tooltip_shown(&ctx));
         frame_at(&mut app, &ctx, 13.5, Vec::new());
         assert!(!tooltip_shown(&ctx), "main cube face must never show a tooltip");
+    }
+
+    #[test]
+    fn roll_arrows_rotate_in_plane_preserving_view_dir() {
+        let (mut app, ctx) = app_and_ctx();
+        let l = Layout::new(canvas(&app));
+        let _ = app.run("view.set", json!({"preset": "front"}));
+        let front = app.session.state().map(|st| st.camera).unwrap_or_default();
+        let ccw_hit = (l.ccw_outer[l.ccw_outer.len() / 2].to_vec2() + l.ccw_inner[l.ccw_inner.len() / 2].to_vec2()) * 0.5;
+        let ccw_pos = ccw_hit.to_pos2();
+        let cw_hit = (l.cw_outer[l.cw_outer.len() / 2].to_vec2() + l.cw_inner[l.cw_inner.len() / 2].to_vec2()) * 0.5;
+        let cw_pos = cw_hit.to_pos2();
+        assert_eq!(l.part_at_cam(ccw_pos, &front), Some(Part::RollCcw));
+        assert_eq!(l.part_at_cam(cw_pos, &front), Some(Part::RollCw));
+
+        click(&mut app, &ctx, ccw_pos, egui::PointerButton::Primary);
+        let rolled_ccw = app.session.state().map(|st| st.camera).unwrap_or_default();
+        assert!((rolled_ccw.z - front.z).len() < 1e-12, "CCW roll arrow must keep Front z: {:?}", rolled_ccw.z);
+        assert_eq!(rolled_ccw, front.roll_in_plane(90.0));
+
+        click(&mut app, &ctx, cw_pos, egui::PointerButton::Primary);
+        let restored = app.session.state().map(|st| st.camera).unwrap_or_default();
+        assert!((restored.z - front.z).len() < 1e-12);
+        assert!((restored.y - front.y).len() < 1e-12);
+    }
+
+    #[test]
+    fn ring_drag_uses_press_origin_and_consumes_stored_twist() {
+        let (mut app, ctx) = app_and_ctx();
+        let l = Layout::new(canvas(&app));
+        let _ = app.run("view.set", json!({"center": [0.0, 0.0], "height": 20.0, "twist": 90.0, "preset": "top"}));
+        let m = egui::Modifiers::default();
+        let start_n = l.center + vec2(0.0, -l.ring);
+        let past_threshold_inside = start_n + vec2(0.0, 20.0);
+        let end_e = l.center + vec2(l.ring, 0.0);
+
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(start_n)]);
+        frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: start_n, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
+        // Move off the thin ring past egui's click threshold; press_origin must still classify as Ring.
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(past_threshold_inside)]);
+        assert!(matches!(app.canvas.viewcube_drag, Some((_, _, true))), "expected ring drag from press_origin");
+
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end_e)]);
+        frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: end_e, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
+        frame(&mut app, &ctx, Vec::new());
+
+        let st = app.session.state().expect("session state");
+        let displayed = st.camera.with_twist(st.view().twist);
+        assert!(st.view().twist.abs() < 1e-12, "twist should be consumed cleanly, got {}", st.view().twist);
+        assert!(displayed.is_top_plan(), "90° CW ring drag from 90° twisted Top should land on canonical Top: {displayed:?}");
     }
 }
