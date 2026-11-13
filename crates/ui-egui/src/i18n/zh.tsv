@@ -362,6 +362,7 @@
 	Join	合并
 	Join the ArtCraft Discord…	加入 ArtCraft Discord…
 	Join us on Discord	在 Discord 上加入我们
+	Keyboard Shortcuts...	键盘快捷键...
 	Language	语言
 	Last	最后
 	Last commit	最后提交
@@ -1474,3 +1475,6 @@ menu	View	视图
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
+	Ctrl+Enter to apply	Ctrl+Enter 应用
+	Edit Text	编辑文字
+	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
