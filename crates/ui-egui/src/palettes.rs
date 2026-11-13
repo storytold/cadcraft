@@ -583,6 +583,10 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
         edit = edit.layouter(&mut reading_order);
     }
     let resp = ui.add_sized([w, 20.0], edit);
+    // Clicking into a number selects all of it, so typing replaces it.
+    if resp.gained_focus() && (cadcraft_engine::units::parse_distance(&value).is_some() || value == crate::i18n::t("*VARIES*")) {
+        select_all(ui.ctx(), te, &buf);
+    }
     let mut out = None;
     // Keyboard focus from memory: `Response::has_focus` is false while the window itself is
     // unfocused, which dropped the typed text every frame.
@@ -595,6 +599,15 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
         out = Some(buf);
     }
     out
+}
+
+/// Selects all the text of the text edit `id`.
+fn select_all(ctx: &egui::Context, id: egui::Id, text: &str) {
+    if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()));
+        state.cursor.set_char_range(Some(all));
+        state.store(ctx, id);
+    }
 }
 
 /// A committed numeric field read as the command line reads numbers (`36`, `3'`, `3'-6 1/2"`,
@@ -612,6 +625,145 @@ fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
 fn report_bad(app: &mut CadApp, bad: Option<String>) {
     if let Some(text) = bad {
         app.session.echo(crate::tf!("Not a number or distance: {text}", text = text.trim()));
+    }
+}
+
+/// A numeric property several kinds of object have (text height on texts, dimensions and
+/// multileaders): its label, the `properties.set` keys every kind reads it from, and its kind.
+struct Shared {
+    label: &'static str,
+    keys: &'static [&'static str],
+    unit: SharedUnit,
+    get: fn(&cadcraft_doc::Drawing, &cadcraft_doc::Entity) -> Option<f64>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SharedUnit {
+    Length,
+    Angle,
+    Plain,
+}
+
+fn dim_style_of(d: &cadcraft_doc::Drawing, dm: &cadcraft_doc::Dimension) -> cadcraft_doc::DimStyle {
+    d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides)
+}
+
+/// The properties shown for a selection of several objects: each one every selected object has.
+const SHARED: [Shared; 6] = [
+    Shared {
+        label: "Text height",
+        keys: &["height", "textHeight"],
+        unit: SharedUnit::Length,
+        get: |d, e| match &e.kind {
+            EntityKind::Text(t) => Some(t.height),
+            EntityKind::MText(t) => Some(t.height),
+            EntityKind::AttDef(a) => Some(a.text.height),
+            EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.height),
+            EntityKind::Dimension(dm) => Some(dim_style_of(d, dm).text_height),
+            _ => None,
+        },
+    },
+    Shared {
+        label: "Rotation",
+        keys: &["rotation"],
+        unit: SharedUnit::Angle,
+        get: |_, e| match &e.kind {
+            EntityKind::Text(t) => Some(t.rotation),
+            EntityKind::MText(t) => Some(t.rotation),
+            EntityKind::AttDef(a) => Some(a.text.rotation),
+            EntityKind::Insert(i) => Some(i.rotation),
+            _ => None,
+        },
+    },
+    Shared {
+        label: "Width factor",
+        keys: &["widthFactor"],
+        unit: SharedUnit::Plain,
+        get: |_, e| match &e.kind {
+            EntityKind::Text(t) => Some(t.width_factor),
+            EntityKind::AttDef(a) => Some(a.text.width_factor),
+            _ => None,
+        },
+    },
+    Shared {
+        label: "Radius",
+        keys: &["radius"],
+        unit: SharedUnit::Length,
+        get: |_, e| match &e.kind {
+            EntityKind::Circle(c) => Some(c.radius),
+            EntityKind::Arc(a) => Some(a.radius),
+            _ => None,
+        },
+    },
+    Shared {
+        label: "Arrowhead size",
+        keys: &["arrowSize"],
+        unit: SharedUnit::Length,
+        get: |d, e| match &e.kind {
+            EntityKind::Dimension(dm) => Some(dim_style_of(d, dm).arrow_size),
+            EntityKind::MLeader(m) => Some(m.arrow_size),
+            _ => None,
+        },
+    },
+    Shared {
+        label: "Scale",
+        keys: &["scale"],
+        unit: SharedUnit::Plain,
+        get: |_, e| match &e.kind {
+            EntityKind::Insert(i) => Some(i.scale.x),
+            EntityKind::Hatch(h) => Some(h.scale),
+            _ => None,
+        },
+    },
+];
+
+/// The value a shared property shows for the selection: one value, or `None` when they differ.
+/// Outer `None`: some selected object doesn't have it.
+fn shared_value(d: &cadcraft_doc::Drawing, sel: &[cadcraft_doc::Handle], prop: &Shared) -> Option<Option<f64>> {
+    let values: Option<Vec<f64>> = sel.iter().map(|h| d.entity(*h).and_then(|e| (prop.get)(d, e))).collect();
+    let values = values.filter(|v| !v.is_empty())?;
+    let first = *values.first()?;
+    Some(values.iter().all(|v| (v - first).abs() <= 1e-9 * first.abs().max(1.0)).then_some(first))
+}
+
+/// The rows for the properties every selected object has, with `*VARIES*` where the values
+/// differ; a value typed in sets it on all of them.
+#[allow(clippy::too_many_arguments)]
+fn shared_rows(
+    ui: &mut egui::Ui,
+    d: &cadcraft_doc::Drawing,
+    sel: &[cadcraft_doc::Handle],
+    ids: &Vec<String>,
+    angles: &cadcraft_engine::units::AngleSettings,
+    len: &dyn Fn(f64) -> String,
+    set: &mut Option<Value>,
+    bad: &mut Option<String>,
+    group: &dyn Fn(&mut egui::Ui, &str),
+) {
+    let rows: Vec<(&Shared, Option<f64>)> = SHARED.iter().filter_map(|p| shared_value(d, sel, p).map(|v| (p, v))).collect();
+    if rows.is_empty() {
+        return;
+    }
+    group(ui, "Common");
+    for (prop, value) in rows {
+        let shown = value.map_or_else(
+            || crate::i18n::t("*VARIES*").to_string(),
+            |v| match prop.unit {
+                SharedUnit::Length => len(v),
+                SharedUnit::Angle => format!("{:.4}", angles.shown(v).to_degrees()),
+                SharedUnit::Plain => format!("{v:.4}"),
+            },
+        );
+        prop_row(ui, prop.label, |ui| {
+            if let Some(f) = number(edit_field(ui, ui.scope_id().with(("shared", prop.label, ids)), shown), bad) {
+                let mut p = serde_json::Map::new();
+                p.insert("handles".into(), json!(ids));
+                for k in prop.keys {
+                    p.insert((*k).into(), json!(f));
+                }
+                *set = Some(Value::Object(p));
+            }
+        });
     }
 }
 
@@ -1109,6 +1261,10 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         });
     }
+    if sel.len() > 1 {
+        let angles = app.session.angle_settings();
+        shared_rows(ui, d, &sel, &ids, &angles, &len, &mut set, &mut bad, &group);
+    }
     if sel.len() == 1 {
         group(ui, "Geometry");
         let real = |v: f64| format!("{v:.4}");
@@ -1441,5 +1597,47 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(all.iter().any(|t| t == "270.0000" || t == "-90.0000"), "{all:?}");
+    }
+
+    fn handle_of(v: &Value) -> String {
+        v["handle"].as_str().map(str::to_string).or_else(|| v["handles"][0].as_str().map(str::to_string)).unwrap()
+    }
+
+    fn shown_texts(app: &mut CadApp) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1600.0))), ..Default::default() };
+        let mut all = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| properties_section(app, ui));
+            all.clear();
+            output.shapes.iter().for_each(|s| texts(&s.shape, &mut all));
+            output.textures_delta.clear();
+        }
+        all
+    }
+
+    /// Several objects of different kinds show the properties they all have: a text and a
+    /// dimension both have a text height, and setting it sets both.
+    #[test]
+    fn a_mixed_selection_shows_and_sets_the_properties_its_kinds_share() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let t = handle_of(&app.run("text", json!({ "at": [0, 0], "text": "Note", "height": 2.5 })).unwrap());
+        let dm = handle_of(&app.run("dimlinear", json!({ "p1": [0, 10], "p2": [25, 10], "at": [12, 14] })).unwrap());
+        app.run("select", json!({ "handles": [t, dm] })).unwrap();
+        let all = shown_texts(&mut app);
+        assert!(all.iter().any(|s| s == "Text height"), "{all:?}");
+        assert!(all.iter().any(|s| s == "*VARIES*"), "{all:?}");
+        // A text and a dimension have no rotation in common.
+        assert!(!all.iter().any(|s| s == "Rotation"), "{all:?}");
+        let shared = SHARED.iter().find(|p| p.label == "Text height").unwrap();
+        let mut p = serde_json::Map::new();
+        p.insert("handles".into(), json!([t, dm]));
+        for k in shared.keys {
+            p.insert((*k).into(), json!(4.0));
+        }
+        app.run("properties.set", Value::Object(p)).unwrap();
+        let all = shown_texts(&mut app);
+        assert!(all.iter().any(|s| s == "4.0000"), "{all:?}");
     }
 }

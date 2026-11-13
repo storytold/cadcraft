@@ -468,6 +468,17 @@ fn apply_kind_properties(entity: &mut cadcraft_doc::Entity, params: &Value, k: &
             }
         }
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
+        EntityKind::AttDef(a) => {
+            if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                a.text.height = x;
+            }
+            if let Some(x) = num("rotation") {
+                a.text.rotation = x.to_radians();
+            }
+            if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
+                a.text.width_factor = x;
+            }
+        }
         EntityKind::Dimension(dimension) => new_text = set_dimension_properties(dimension, params, k.dim_style, k.dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
         EntityKind::MLeader(m) => {
