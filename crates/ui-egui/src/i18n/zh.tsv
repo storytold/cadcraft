@@ -362,6 +362,7 @@
 	Join	合并
 	Join the ArtCraft Discord…	加入 ArtCraft Discord…
 	Join us on Discord	在 Discord 上加入我们
+	Keyboard Shortcuts...	键盘快捷键...
 	Language	语言
 	Last	最后
 	Last commit	最后提交
@@ -1495,3 +1496,5 @@ menu	View	视图
 	Minimize	最小化
 	Maximize	最大化
 	Rounded corners on windows and buttons	窗口和按钮使用圆角
+	Ctrl+Enter to apply	Ctrl+Enter 应用
+	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。

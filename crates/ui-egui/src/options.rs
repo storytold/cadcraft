@@ -10,13 +10,16 @@
 //! |---|---|
 //! | `theme` | `"system"`, `"light"` or `"dark"` |
 //! | `animations` | `"system"`, `"on"` or `"off"`: dialog and menu fades and smoothed scrolling |
-//! | `interfaceLanguage` | `"auto"`, `"en"`, `"uk"`, `"pt-BR"`, `"de"`, `"es"`, `"cs"`, `"ru"`, `"fr"`, `"zh"`, `"it"`, `"ko"`, `"sv"`, `"ar"`, `"hu"`, `"tr"`, `"bs"`, `"vi"` or `"el"` |
+//! | `interfaceLanguage` | `"auto"`, `"en"`, `"uk"`, `"pt-BR"`, `"de"`, `"es"`, `"cs"`, `"ru"`, `"fr"`, `"zh"`, `"it"`, `"ko"`, `"sv"`, `"ar"`, `"hu"`, `"tr"`, `"bs"`, `"vi"`, `"el"` or `"ka"` |
 //! | `saveFormat` | `"dxf"` or `"dwg"`: the format Save As suggests for new drawings |
 //! | `saveVersion` | `"2000"` … `"2018"`: the version drawings with no file yet are saved in |
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
+//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: `rightClickCommand` decides |
+//! | `rightClickDuration` | how long the right button is held to open the menu while a command runs, 100–2000 ms (250) |
+//! | `rightClickDefault`, `rightClickEdit` | a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
+//! | `rightClickCommand` | a right-click while a command runs, with the time-sensitive right-click off: `"menu"` (default), `"enter"`, or `"menuWithOptions"` (the menu when the prompt has options, else Enter) |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
@@ -29,9 +32,9 @@
 //! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
 //! rather than in the profile.
 //!
-//! The profile variables and the interface preferences survive restarts: the host saves
-//! [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface prefs and restores it with
-//! [`CadApp::load_profile`].
+//! The profile variables, the user's ALIASEDIT aliases and the interface preferences survive
+//! restarts: the host saves [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface
+//! prefs and restores it with [`CadApp::load_profile`].
 
 mod dialog;
 
@@ -40,6 +43,8 @@ pub use dialog::dialog;
 use egui::Color32;
 use serde_json::{Map, Value, json};
 
+use cadcraft_engine::cmd::file::MAX_ALIAS_PROFILE_BYTES;
+
 use crate::CadApp;
 use crate::animation::AnimationPref;
 use crate::theme::{self, ThemePref};
@@ -47,8 +52,14 @@ use crate::theme::{self, ThemePref};
 /// The host storage key for [`CadApp::profile_json`].
 pub const PROFILE_KEY: &str = "cadcraft.profile";
 
-/// The largest saved profile [`CadApp::load_profile`] reads.
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
+/// The largest saved profile [`CadApp::load_profile`] reads: everything [`CadApp::profile_json`]
+/// writes — a full ALIASEDIT alias set (up to [`MAX_ALIAS_PROFILE_BYTES`]) and the profile
+/// variables, colours and interface preferences — plus the JSON around them. A valid profile is
+/// never refused; anything larger is corrupt or hostile.
+pub const MAX_PROFILE_BYTES: usize = MAX_ALIAS_PROFILE_BYTES + PROFILE_OVERHEAD_BYTES;
+
+/// Room for the profile variables, the interface preferences and the JSON around them.
+const PROFILE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 /// The longest SAVEFILEPATH the JSON form accepts.
 const MAX_PATH_CHARS: usize = 1024;
@@ -58,6 +69,66 @@ pub const SNAP_MARKER_SIZES: std::ops::RangeInclusive<f32> = 5.0..=31.0;
 
 /// Interface scales the JSON form accepts (1: the system's own size).
 pub const INTERFACE_SCALES: std::ops::RangeInclusive<f32> = 0.5..=3.0;
+
+/// How long a right-click may be held before it opens the menu, in milliseconds.
+pub const RIGHT_CLICK_DURATIONS: std::ops::RangeInclusive<u32> = 100..=2000;
+
+/// What a right-click does with no command running (Right-Click Customization's Default and Edit
+/// modes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IdleClick {
+    /// Repeat the last command.
+    Repeat,
+    /// The shortcut menu.
+    #[default]
+    Menu,
+}
+
+impl IdleClick {
+    pub const ALL: [IdleClick; 2] = [IdleClick::Repeat, IdleClick::Menu];
+
+    /// The JSON name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IdleClick::Repeat => "repeat",
+            IdleClick::Menu => "menu",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<IdleClick> {
+        IdleClick::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// What a right-click does while a command runs with the time-sensitive right-click off
+/// (Right-Click Customization's Command mode).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommandClick {
+    /// Enter.
+    Enter,
+    /// The shortcut menu, always.
+    #[default]
+    Menu,
+    /// The shortcut menu when the prompt has options, else Enter.
+    MenuWithOptions,
+}
+
+impl CommandClick {
+    pub const ALL: [CommandClick; 3] = [CommandClick::Enter, CommandClick::Menu, CommandClick::MenuWithOptions];
+
+    /// The JSON name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CommandClick::Enter => "enter",
+            CommandClick::Menu => "menu",
+            CommandClick::MenuWithOptions => "menuWithOptions",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<CommandClick> {
+        CommandClick::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
 
 /// The interface's own preferences (the drafting ones are engine settings).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,8 +142,16 @@ pub struct UiOptions {
     /// The selection highlight colour; `None` keeps the theme's.
     pub selection_color: Option<Color32>,
     /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
-    /// (AutoCAD's time-sensitive right-click). Off: a right-click always opens the menu.
+    /// (AutoCAD's time-sensitive right-click). Off: [`Self::right_click_command`] decides.
     pub time_sensitive_right_click: bool,
+    /// How long the right button is held to open the menu while a command runs, in milliseconds.
+    pub right_click_hold_ms: u32,
+    /// A right-click with no command running and nothing selected (Default mode) or a selection
+    /// (Edit mode).
+    pub right_click_default: IdleClick,
+    pub right_click_edit: IdleClick,
+    /// A right-click while a command runs, with the time-sensitive right-click off.
+    pub right_click_command: CommandClick,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
     /// Windows, menus and buttons have rounded corners; off: square ones.
@@ -87,6 +166,10 @@ impl Default for UiOptions {
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
             time_sensitive_right_click: true,
+            right_click_hold_ms: (crate::context_menu::HOLD_SECS * 1000.0) as u32,
+            right_click_default: IdleClick::Menu,
+            right_click_edit: IdleClick::Menu,
+            right_click_command: CommandClick::Menu,
             interface_scale: 1.0,
             rounded_corners: true,
         }
@@ -156,6 +239,10 @@ struct UiChanges {
     isavebak: Option<bool>,
     time_sensitive_right_click: Option<bool>,
     font_folders: Option<Vec<String>>,
+    right_click_hold_ms: Option<u32>,
+    right_click_default: Option<IdleClick>,
+    right_click_edit: Option<IdleClick>,
+    right_click_command: Option<CommandClick>,
     interface_scale: Option<f32>,
     rounded_corners: Option<bool>,
 }
@@ -207,6 +294,17 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             let names: Option<Vec<&str>> = list.iter().map(Value::as_str).collect();
             c.font_folders = Some(cadcraft_fonts::ttf::clean_dirs(&names.ok_or("fontFolders must be a list of folder paths")?));
         }
+        "rightClickDuration" => {
+            let (lo, hi) = (f64::from(*RIGHT_CLICK_DURATIONS.start()), f64::from(*RIGHT_CLICK_DURATIONS.end()));
+            let n =
+                v.as_f64().filter(|n| n.is_finite() && (lo..=hi).contains(n)).ok_or("rightClickDuration must be from 100 to 2000 milliseconds")?;
+            c.right_click_hold_ms = Some(n.round() as u32);
+        }
+        "rightClickDefault" => c.right_click_default = Some(IdleClick::parse(text()?).ok_or("rightClickDefault must be menu or repeat")?),
+        "rightClickEdit" => c.right_click_edit = Some(IdleClick::parse(text()?).ok_or("rightClickEdit must be menu or repeat")?),
+        "rightClickCommand" => {
+            c.right_click_command = Some(CommandClick::parse(text()?).ok_or("rightClickCommand must be menu, enter or menuWithOptions")?)
+        }
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -250,6 +348,10 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
     m.insert("roundedCorners".into(), json!(o.rounded_corners));
     m.insert("fontFolders".into(), json!(cadcraft_fonts::ttf::font_dirs()));
+    m.insert("rightClickDuration".into(), json!(o.right_click_hold_ms));
+    m.insert("rightClickDefault".into(), json!(o.right_click_default.as_str()));
+    m.insert("rightClickEdit".into(), json!(o.right_click_edit.as_str()));
+    m.insert("rightClickCommand".into(), json!(o.right_click_command.as_str()));
     m
 }
 
@@ -332,7 +434,24 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(dirs) = &ui.font_folders {
         cadcraft_fonts::ttf::set_font_dirs(dirs);
     }
+    apply_right_click(&mut app.options, &ui);
     Ok(report(app))
+}
+
+/// Right-Click Customization's settings (the time-sensitive switch aside) from `c`.
+fn apply_right_click(o: &mut UiOptions, c: &UiChanges) {
+    if let Some(ms) = c.right_click_hold_ms {
+        o.right_click_hold_ms = ms;
+    }
+    if let Some(m) = c.right_click_default {
+        o.right_click_default = m;
+    }
+    if let Some(m) = c.right_click_edit {
+        o.right_click_edit = m;
+    }
+    if let Some(m) = c.right_click_command {
+        o.right_click_command = m;
+    }
 }
 
 /// The interface preferences back to their defaults (the interface language stays).
@@ -380,13 +499,14 @@ pub fn font_choices() -> (Vec<String>, Vec<String>) {
 
 impl CadApp {
     /// The user profile kept across restarts, as JSON for the host's storage ([`PROFILE_KEY`]):
-    /// the engine's profile variables and the interface preferences the interface prefs
-    /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
-    /// already keep.
+    /// the engine's profile variables, the user's aliases (ALIASEDIT, not drawing data) and the
+    /// interface preferences the interface prefs ([`CadApp::prefs_json`]) and the desktop
+    /// workspace file (panels, command line) do not already keep.
     pub fn profile_json(&self) -> String {
         json!({
             "version": 1,
             "sysvars": cadcraft_engine::cmd::options::profile(&self.session),
+            "aliases": cadcraft_engine::cmd::file::alias_profile(),
             "systemCursor": self.ui.system_cursor,
             "modelBackground": color_json(self.options.model_background),
             "paperBackground": color_json(self.options.paper_background),
@@ -394,6 +514,10 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "fontFolders": cadcraft_fonts::ttf::font_dirs(),
+            "rightClickDuration": self.options.right_click_hold_ms,
+            "rightClickDefault": self.options.right_click_default.as_str(),
+            "rightClickEdit": self.options.right_click_edit.as_str(),
+            "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
             "roundedCorners": self.options.rounded_corners,
         })
@@ -410,6 +534,11 @@ impl CadApp {
         if let Some(vars) = v.get("sysvars") {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
+        // The user's aliases (ALIASEDIT) are settings, not drawing data; a malformed section is
+        // skipped by the engine without touching the aliases already in use.
+        if let Some(aliases) = v.get("aliases") {
+            cadcraft_engine::cmd::file::restore_aliases(aliases);
+        }
         let mut c = UiChanges::default();
         for key in [
             "systemCursor",
@@ -421,6 +550,11 @@ impl CadApp {
             "fontFolders",
             "interfaceScale",
             "roundedCorners",
+            "rightClickDuration",
+            "rightClickDefault",
+            "rightClickEdit",
+            "rightClickCommand",
+            "interfaceScale",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -448,6 +582,7 @@ impl CadApp {
         if let Some(dirs) = &c.font_folders {
             cadcraft_fonts::ttf::set_font_dirs(dirs);
         }
+        apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
@@ -491,5 +626,17 @@ mod tests {
         theme::set_rounded(&ctx, true);
         assert_eq!(theme::r(3.0), 3.0);
         assert_eq!(ctx.global_style().visuals.window_corner_radius, egui::CornerRadius::same(6));
+    }
+
+    #[test]
+    fn idle_and_command_clicks_parse_their_names() {
+        for c in IdleClick::ALL {
+            assert_eq!(IdleClick::parse(c.as_str()), Some(c));
+        }
+        for c in CommandClick::ALL {
+            assert_eq!(CommandClick::parse(c.as_str()), Some(c));
+        }
+        assert_eq!(IdleClick::parse("enter"), None);
+        assert_eq!(CommandClick::parse("repeat"), None);
     }
 }

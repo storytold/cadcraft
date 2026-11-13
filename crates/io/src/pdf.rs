@@ -50,6 +50,8 @@ const MAX_LAYER_NAME: usize = 1000;
 /// Most link annotations in one file, and the longest link target (bytes).
 const MAX_LINKS: usize = 10_000;
 const MAX_URL: usize = 2048;
+/// The most link annotations in one PDF, over all pages (a page holds at most [`MAX_LINKS`]).
+const MAX_FILE_ANNOTATIONS: usize = 100_000;
 /// Longest title and page label written (characters).
 const MAX_TEXT: usize = 1000;
 
@@ -357,7 +359,10 @@ fn sheet_name(space: &Space) -> String {
 /// Write a vector PDF with one page per space (at most [`MAX_PAGES`]), each labelled with its
 /// layout name. The options apply to every sheet; layouts use their own page setups.
 pub fn pdf_sheets(d: &Drawing, spaces: &[Space], o: &PdfOptions) -> Result<Vec<u8>> {
-    let items: Vec<(Space, PdfOptions)> = spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), o.clone())).collect();
+    // Links are file-wide (`pdf_items` reads them from `o`), so a sheet's own options carry none:
+    // a copy of the list per sheet multiplied it by the sheet count.
+    let sheet = PdfOptions { links: Vec::new(), ..o.clone() };
+    let items: Vec<(Space, PdfOptions)> = spaces.iter().take(MAX_PAGES + 1).map(|s| (s.clone(), sheet.clone())).collect();
     pdf_items(d, &items, o)
 }
 
@@ -453,8 +458,16 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         let mut writer = Writer::new(settings, metadata);
         let mut fonts = fonts::Fonts::new(!text_as_geometry);
         let mut groups = Groups::default();
+        // Link annotations of the whole file: each page keeps its own copy of the targets, so the
+        // pages times the links must not multiply without a bound.
+        let mut annotations_left = MAX_FILE_ANNOTATIONS;
         for (s, po) in items {
-            let page = sheet(drawn, s, po, &links)?;
+            // Once the budget is spent no link is built (scanned and cloned) for later pages.
+            let mut page = sheet(drawn, s, po, if annotations_left == 0 { &links[..0] } else { &links })?;
+            // Only targets `write_page` accepts count against the budget.
+            page.links.retain(|(_, url)| uri(url).is_some());
+            page.links.truncate(annotations_left);
+            annotations_left -= page.links.len();
             let doc = writer.document_mut();
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
@@ -672,7 +685,8 @@ pub(crate) fn placement(space: &Space, bounds: &Bounds2, fit: bool, sheet: &Shee
 /// The hyperlinks to plot: the options' own, then (with [`PdfOptions::hyperlinks`]) those the
 /// drawing file gave its entities as `PE_URL` extended data, at most [`MAX_LINKS`] in all.
 fn all_links(d: &Drawing, o: &PdfOptions) -> Vec<(Handle, String)> {
-    let mut out: Vec<(Handle, String)> = o.links.iter().take(MAX_LINKS).cloned().collect();
+    // A target past MAX_URL is refused at the annotation anyway; it is left out before it is copied.
+    let mut out: Vec<(Handle, String)> = o.links.iter().filter(|(_, u)| u.len() <= MAX_URL).take(MAX_LINKS).cloned().collect();
     if !o.hyperlinks {
         return out;
     }
