@@ -263,13 +263,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 
     if let Some(name) = pick_file {
-        // Not `Services::pick_save` directly: on macOS a dialog run inside the frame aborts the app (#1527).
-        if let Some(Err(e)) = app.pick_then(crate::Pick::Save(name), |app, path| {
-            app.wblock.path = path;
-            Ok(serde_json::Value::Null)
-        }) {
-            app.wblock.error = Some(e);
-        }
+        browse(app, name);
     }
 
     if pick_objects {
@@ -282,6 +276,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         }
     } else if cancel {
         *open = false;
+    }
+}
+
+/// The "…" button. Not `Services::pick_save` directly: on macOS a dialog run inside the frame
+/// aborts the app (#1527). The path chosen fills the field and clears an earlier refusal.
+fn browse(app: &mut CadApp, name: String) {
+    let picked = app.pick_then(crate::Pick::Save(name), |app, path| {
+        app.wblock.path = path;
+        app.wblock.error = None;
+        Ok(serde_json::Value::Null)
+    });
+    if let Some(Err(e)) = picked {
+        app.wblock.error = Some(e);
     }
 }
 
@@ -409,6 +416,19 @@ mod tests {
         resume(&mut app);
         assert_eq!(app.ui.dialog.as_deref(), Some("wblock"));
         assert_eq!((app.wblock.base_x.as_str(), app.wblock.base_y.as_str()), ("10", "5"));
+    }
+
+    #[test]
+    fn the_path_chosen_fills_the_field_and_clears_an_earlier_refusal() {
+        let mut s = Session::new();
+        s.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap();
+        let services = Services { pick_save: Some(Box::new(|_: &str| Some("/tmp/chosen.dxf".to_string()))), ..Services::default() };
+        let mut app = CadApp::new(s, services);
+        route(&mut app, "wblock", &Value::Null);
+        app.wblock.error = Some("A file dialog is already open; answer it first.".into());
+        browse(&mut app, "untitled.dxf".into());
+        assert_eq!(app.wblock.path, "/tmp/chosen.dxf");
+        assert_eq!(app.wblock.error, None);
     }
 
     #[test]
