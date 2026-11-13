@@ -755,9 +755,15 @@ fn texts_of(e: &Entity) -> Vec<TextHit> {
             .iter()
             .filter(|a| !a.invisible)
             .map(|a| {
+                // A multiline attribute keeps its formatted contents apart; the raw reading is
+                // the stored string, codes intact, until the value was edited past them.
+                let raw = match &a.multiline {
+                    Some(m) if m.read_as == a.text.value => m.mtext.contents.clone(),
+                    _ => raw_text(&a.text.value),
+                };
                 hit(
                     "Attribute",
-                    raw_text(&a.text.value),
+                    raw,
                     plain_text(&a.text.value),
                     a.text.insert,
                     a.text.height,
@@ -816,23 +822,65 @@ impl Walk<'_> {
         t
     }
 
-    /// A hit that passed the filter, transformed into the space; past the collection cap the walk
-    /// gives up (and says so) rather than grow without bound.
+    /// A hit transformed into the space first, then kept when it passes the filter — a window
+    /// filter speaks space coordinates, and the hit it is given does not yet. Past the collection
+    /// cap the walk gives up (and says so) rather than grow without bound.
     fn place(&mut self, h: TextHit, world: &cadcraft_geom::Mat3) {
+        self.work += 1;
+        if self.work > MAX_TEXT_HITS as u64 {
+            self.truncated = true;
+            return;
+        }
         if self.out.len() >= MAX_TEXT_HITS {
             self.truncated = true;
             return;
         }
-        self.out.push(Self::moved(h, world));
+        let h = Self::moved(h, world);
+        if (self.keep)(&h) {
+            self.out.push(h);
+        }
     }
 
     /// One block reference, at `level` (the depth it sits at: a top-level one is 0), placed by `m`
     /// out of the coordinates of `owner` (the space, or the block holding it): the copies a MINSERT
     /// grid places, the reference's own attributes (a top-level one's are the space's texts,
-    /// already collected), and its block's objects one deeper.
+    /// already collected), and its block's objects one deeper. Every visit is charged, drawn or
+    /// not, so a hostile grid of a generous definition cannot wander past the budget.
     fn reference(&mut self, e: &Entity, level: u32, m: cadcraft_geom::Mat3, owner: &str) {
         let EntityKind::Insert(i) = &e.kind else { return };
         let Some(def) = self.d.block(&i.block).cloned() else { return };
+        // A nested reference's own attributes sit where the reference sits: their points are the
+        // coordinates of the block holding the reference, the insert's own placement already
+        // included. So they take `m` alone, not the reference's full placement, and they are
+        // collected once, wherever the grid would repeat them (the renderer draws the set once,
+        // too). A top-level one's are the space's own texts, already collected.
+        if level >= 1 {
+            for a in i.attribs.iter().filter(|a| !a.invisible) {
+                self.work += 1;
+                if self.work > MAX_TEXT_HITS as u64 {
+                    self.truncated = true;
+                    return;
+                }
+                let h = TextHit {
+                    handle: e.handle,
+                    ty: "Attribute",
+                    layer: e.common.layer.clone(),
+                    raw: match &a.multiline {
+                        Some(m) if m.read_as == a.text.value => m.mtext.contents.clone(),
+                        _ => raw_text(&a.text.value),
+                    },
+                    text: plain_text(&a.text.value),
+                    at: a.text.insert,
+                    height: a.text.height,
+                    rotation: a.text.rotation,
+                    style: a.text.style.clone(),
+                    tag: Some(a.tag.clone()),
+                    source: format!("block:{owner}"),
+                    depth: level,
+                };
+                self.place(h, &m);
+            }
+        }
         let jt = i.transform(def.base.xy());
         for row in 0..i.rows.max(1) {
             for col in 0..i.cols.max(1) {
@@ -846,31 +894,13 @@ impl Walk<'_> {
                 let off = Vec2::new(f64::from(col) * i.col_spacing, f64::from(row) * i.row_spacing);
                 let off = Vec2::new(off.x * i.rotation.cos() - off.y * i.rotation.sin(), off.x * i.rotation.sin() + off.y * i.rotation.cos());
                 let world = m.then_before(cadcraft_geom::Mat3::translate(off)).then_before(jt);
-                // A nested reference's own attributes are drawn where the reference sits; a
-                // top-level one's are the space's own texts, already collected.
-                if level >= 1 {
-                    for a in i.attribs.iter().filter(|a| !a.invisible) {
-                        let h = TextHit {
-                            handle: e.handle,
-                            ty: "Attribute",
-                            layer: e.common.layer.clone(),
-                            raw: raw_text(&a.text.value),
-                            text: plain_text(&a.text.value),
-                            at: a.text.insert,
-                            height: a.text.height,
-                            rotation: a.text.rotation,
-                            style: a.text.style.clone(),
-                            tag: Some(a.tag.clone()),
-                            source: format!("block:{owner}"),
-                            depth: level,
-                        };
-                        if (self.keep)(&h) {
-                            self.place(h, &world);
-                        }
-                    }
-                }
                 let source = format!("block:{}", def.name);
                 for inner in def.entities.iter() {
+                    self.work += 1;
+                    if self.work > MAX_TEXT_HITS as u64 {
+                        self.truncated = true;
+                        return;
+                    }
                     if let EntityKind::Insert(_) = &inner.kind {
                         if level + 1 > MAX_TEXT_DEPTH.min(cadcraft_doc::MAX_BLOCK_DEPTH as u32) {
                             self.depth_capped = true;
@@ -879,9 +909,7 @@ impl Walk<'_> {
                         self.reference(inner, level + 1, world, &def.name);
                     } else {
                         for h in texts_in_definition(inner, &source, level + 1) {
-                            if (self.keep)(&h) {
-                                self.place(h, &world);
-                            }
+                            self.place(h, &world);
                         }
                     }
                 }
@@ -989,7 +1017,8 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     if scope {
         let n = nested_texts(&st.doc, store, &keep);
         found.extend(n.hits);
-        truncated = n.truncated;
+        // A depth-capped walk is as partial as a hit-capped one: say so either way.
+        truncated = n.truncated || n.depth_capped;
     }
     let n = found.len();
     let page: Vec<Value> = found.iter().skip(offset).take(limit).map(TextHit::json).collect();
@@ -1018,7 +1047,7 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     fn is_anonymous(d: &cadcraft_doc::Drawing, name: &str) -> bool {
         d.block(name).is_some_and(|b| b.anonymous || b.name.starts_with('*'))
     }
-    fn count_refs(d: &cadcraft_doc::Drawing, x: &mut count::Expander, name: &str, copies: u64, anonymous: &mut u64, missing: &mut u64) {
+    fn count_refs(d: &cadcraft_doc::Drawing, x: &mut count::Expander, name: &str, copies: u64, anonymous: &mut u64, missing: &mut u64, placed: &mut std::collections::BTreeMap<String, u64>) {
         if d.block(name).is_none() {
             *missing = missing.saturating_add(copies);
             return;
@@ -1026,31 +1055,38 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
         if is_anonymous(d, name) {
             *anonymous = anonymous.saturating_add(copies);
         }
+        *placed.entry(name.to_string()).or_default() += copies;
         for (k, v) in x.expand(name, cadcraft_doc::MAX_BLOCK_DEPTH.saturating_sub(1)).iter() {
             if d.block(k).is_none() {
                 *missing = missing.saturating_add(copies.saturating_mul(*v));
-            } else if is_anonymous(d, k) {
+                continue;
+            }
+            if is_anonymous(d, k) {
                 *anonymous = anonymous.saturating_add(copies.saturating_mul(*v));
             }
+            *placed.entry(k.clone()).or_default() += copies.saturating_mul(*v);
         }
     }
     let mut x = count::Expander::new(d);
     let mut anonymous_refs = 0u64;
     let mut missing_refs = 0u64;
+    // The definitions a placed reference reaches, with the copies they are placed in: the proxy
+    // tallies below weigh a definition's unmodelled entities by them.
+    let mut placed: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     // The missing references as placed, for the entry that says what they are: which block, which
     // entities place one, on which layers, and the envelope of their insertion points — the
     // definition is missing, so its placed extent is unknowable; where its points sit says how
     // much of the sheet the unread content covers (nested-only missing references have no placed
     // entity of their own and keep to the count).
-    let mut missing_at: Vec<(String, Handle, String, Vec2)> = Vec::new();
+    let mut missing_at: Vec<(String, Handle, String, &cadcraft_doc::Insert)> = Vec::new();
     for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
         if let EntityKind::Insert(i) = &e.kind {
             let name = x.canonical(&i.block);
             if d.block(&name).is_none() {
-                missing_at.push((name.clone(), e.handle, e.common.layer.clone(), i.insert.xy()));
+                missing_at.push((name.clone(), e.handle, e.common.layer.clone(), i));
             }
             let copies = u64::from(i.cols.max(1)) * u64::from(i.rows.max(1));
-            count_refs(d, &mut x, &name, copies, &mut anonymous_refs, &mut missing_refs);
+            count_refs(d, &mut x, &name, copies, &mut anonymous_refs, &mut missing_refs, &mut placed);
         }
     }
 
@@ -1070,32 +1106,50 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut other_unknowns = 0u64;
     let mut with_drawable = 0u64;
     let mut no_graphics = 0u64;
-    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
-        let EntityKind::Unknown(u) = &e.kind else { continue };
+    let mut unparsed_graphics = 0u64;
+    // One unmodelled entity, `weight` placed copies of it: a definition's entities count once per
+    // placed instance of the definition (weighted by the expansion above), since an unmodelled
+    // entity inside a placed block shows just as little as one in the space.
+    let mut tally = |e: &cadcraft_doc::Entity, weight: u64| {
+        let EntityKind::Unknown(u) = &e.kind else { return };
         match u.dxf_type.to_ascii_uppercase().as_str() {
-            "ACAD_PROXY_ENTITY" => acad_proxy += 1,
-            "OLE2FRAME" => ole_frames += 1,
-            "ARC_DIMENSION" => arc_dimensions += 1,
-            _ => other_unknowns += 1,
+            "ACAD_PROXY_ENTITY" => acad_proxy += weight,
+            "OLE2FRAME" => ole_frames += weight,
+            "ARC_DIMENSION" => arc_dimensions += weight,
+            _ => other_unknowns += weight,
         }
         let Some(f) = proxy::frames(&u.tags) else {
             // A proxy without any graphics data can neither be read nor judged.
-            no_graphics += 1;
-            continue;
+            no_graphics += weight;
+            return;
         };
         if f.drawable > 0 {
-            with_drawable += 1;
+            with_drawable += weight;
+        } else if f.records == 0 && f.unparsed > 0 {
+            // The graphics bytes are there, but not one frame of them parses: neither drawable
+            // nor a clean "no graphics", so the report names them on their own.
+            unparsed_graphics += weight;
         }
         let app = d.foreign.proxy_class(&u.tags).unwrap_or_default().to_string();
         let t = classes.entry((u.dxf_type.clone(), app)).or_default();
-        t.count += 1;
+        t.count += weight;
         if f.drawable > 0 {
-            t.with_drawable += 1;
+            t.with_drawable += weight;
         }
-        t.records += f.records;
-        t.unparsed += f.unparsed;
+        t.records = t.records.saturating_add(f.records.saturating_mul(weight));
+        t.unparsed = t.unparsed.saturating_add(f.unparsed.saturating_mul(weight));
         for (k, v) in f.histogram {
-            *t.histogram.entry(k).or_default() += v;
+            *t.histogram.entry(k).or_default() += v.saturating_mul(weight);
+        }
+    };
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
+        tally(e, 1);
+    }
+    for (name, weight) in &placed {
+        if let Some(b) = d.block(name) {
+            for e in b.entities.iter() {
+                tally(e, *weight);
+            }
         }
     }
 
@@ -1105,8 +1159,11 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     let texts_in_block_defs: usize = d.blocks.values().flat_map(|b| b.entities.iter()).map(|e| texts_in_definition(e, "", 1).len()).sum();
     let keep_all = |_: &TextHit| true;
     let walk = nested_texts(d, &d.model, &keep_all);
+    // The reference expansion can give up too (its work or depth cap): the counts it fed are
+    // partial then, like the text walk's.
+    let (exp_truncated, exp_depth_capped) = x.gave_up();
     let mut texts_in_blocks = walk.hits.len();
-    let (mut truncated, mut depth_capped) = (walk.truncated, walk.depth_capped);
+    let (mut truncated, mut depth_capped) = (walk.truncated || exp_truncated, walk.depth_capped || exp_depth_capped);
     for l in &d.layouts {
         let w = nested_texts(d, &l.entities, &keep_all);
         texts_in_blocks += w.hits.len();
@@ -1149,11 +1206,22 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
         let mut y0 = f64::INFINITY;
         let mut x1 = f64::NEG_INFINITY;
         let mut y1 = f64::NEG_INFINITY;
-        for (_, _, _, p) in &missing_at {
-            x0 = x0.min(p.x);
-            y0 = y0.min(p.y);
-            x1 = x1.max(p.x);
-            y1 = y1.max(p.y);
+        for (_, _, _, i) in &missing_at {
+            // The placed copies: the grid's lattice, whose extremes sit at its corners.
+            let (c_last, r_last) = (i.cols.max(1) - 1, i.rows.max(1) - 1);
+            for c in [0, c_last] {
+                for r in [0, r_last] {
+                    let off = Vec2::new(f64::from(c) * i.col_spacing, f64::from(r) * i.row_spacing);
+                    let p = Vec2::new(
+                        i.insert.x + off.x * i.rotation.cos() - off.y * i.rotation.sin(),
+                        i.insert.y + off.x * i.rotation.sin() + off.y * i.rotation.cos(),
+                    );
+                    x0 = x0.min(p.x);
+                    y0 = y0.min(p.y);
+                    x1 = x1.max(p.x);
+                    y1 = y1.max(p.y);
+                }
+            }
         }
         entry.insert("blockNames".into(), json!(names));
         entry.insert("handles".into(), json!(handles));
@@ -1187,6 +1255,14 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
         no_graphics,
         "a proxy without graphics data: neither readable nor drawable",
     );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyUnparsed",
+        "PROXY_UNPARSED",
+        unparsed_graphics,
+        "a proxy with graphics data, but not one frame of it parses",
+    );
     out_of_reach(&mut unreachable, &mut check, "ole2Frame", "OLE2_FRAME", ole_frames, "an embedded OLE picture");
     let skipped_records: usize = d.skipped_records.values().sum();
     out_of_reach(
@@ -1202,6 +1278,12 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     }
     if depth_capped {
         check.cap("textDepth", u64::from(MAX_TEXT_DEPTH));
+    }
+    if exp_truncated {
+        check.cap("blockRefs", count::MAX_WORK);
+    }
+    if exp_depth_capped {
+        check.cap("blockDepth", cadcraft_doc::MAX_BLOCK_DEPTH as u64);
     }
 
     let message = format!(
@@ -1243,6 +1325,7 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
             "other": other_unknowns,
             "withDrawable": with_drawable,
             "noGraphics": no_graphics,
+            "unparsed": unparsed_graphics,
             "classes": classes.iter().map(|((class, app), t)| json!({
                 "class": class, "app": app, "count": t.count, "drawable": t.with_drawable,
                 "records": t.records, "unparsed": t.unparsed, "drawableChunks": t.histogram,

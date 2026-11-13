@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 /// The frame types that draw something (ODA .dwg specification, "Proxy Entity Graphics"). A
 /// metafile made only of the others — state changes, transform push and pop — draws nothing:
 /// every proxy of the 布吉 corpus is of that kind (762 frames, all matrix pushes and pops).
-const DRAWABLE: [u32; 16] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 32, 33, 36, 38];
+const DRAWABLE: [u32; 17] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 32, 33, 36, 38, 44];
 
 /// A frame type's name as the spec gives it (`None` for the numbers the spec leaves out).
 fn type_name(t: u32) -> Option<&'static str> {
@@ -52,6 +52,7 @@ fn type_name(t: u32) -> Option<&'static str> {
         36 => "UnicodeText",
         37 => "Unknown",
         38 => "UnicodeText2",
+        44 => "EllipticArc",
         _ => return None,
     })
 }
@@ -99,6 +100,9 @@ fn blobs(tags: &[RawTag]) -> Vec<Blob> {
     };
     let mut out: Vec<Blob> = Vec::new();
     let mut current: Option<Blob> = None;
+    // Group 93 declares an entity-data section: the `310` chunks after it carry the entity's
+    // data, not graphics, and nothing here reads them. The next `92`/`160` ends the section.
+    let mut entity_data = false;
     let flush = |current: &mut Option<Blob>, out: &mut Vec<Blob>| {
         if let Some(b) = current.take().filter(|b| !b.data.is_empty()) {
             out.push(b);
@@ -109,8 +113,14 @@ fn blobs(tags: &[RawTag]) -> Vec<Blob> {
             92 | 160 => {
                 // A new length group starts a new blob, even when the last one had no chunks.
                 flush(&mut current, &mut out);
+                entity_data = false;
                 current = Some(Blob { declared: t.value.trim().parse().unwrap_or(0), data: Vec::new() });
             }
+            93 => {
+                flush(&mut current, &mut out);
+                entity_data = true;
+            }
+            310 if entity_data => {}
             310 => {
                 let b = current.get_or_insert_with(|| Blob { declared: 0, data: Vec::new() });
                 for pair in t.value.as_bytes().as_chunks::<2>().0 {
