@@ -1183,7 +1183,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
     if app.ui.dialog.as_deref() == Some("plot") {
         app.ui.dialog = None;
     }
-    match app.run("plot", params) {
+    // Plotted away from the window ([`crate::busy`]).
+    let target = target.to_string();
+    crate::busy::run(app, "plot", params, move |app, r| match r {
         Ok(r) => {
             let msg = match r.get("path").and_then(Value::as_str) {
                 Some(path) => format!("Plotted {target} to {path}"),
@@ -1191,9 +1193,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
             };
             app.session.echo(msg);
         }
-        // `run` already echoed the error; keep the dialog open to fix the settings.
+        // The error was echoed; the dialog opens again to fix the settings.
         Err(_) => app.ui.dialog = Some("plot".into()),
-    }
+    });
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.

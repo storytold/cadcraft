@@ -878,7 +878,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
         return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
     }
-    let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
+    let bytes = crate::slow::plot(hook, s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
         Some(names) => names.first().cloned().unwrap_or_default(),
         None => space.tab_name().to_string(),

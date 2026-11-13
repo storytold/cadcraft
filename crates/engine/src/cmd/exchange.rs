@@ -443,7 +443,7 @@ fn publish_list(s: &mut Session, p: &Value, list: Vec<PubSheet>) -> Result<Value
     if p.get("combine").and_then(Value::as_bool) == Some(true) {
         let hook = super::file::plot_book().ok_or_else(|| bad("publish", "combining sheets is not available in this build"))?;
         let items: Vec<(&Drawing, Space)> = list.iter().map(|x| (&*s.docs[x.doc].doc, x.space.clone())).collect();
-        let bytes = hook(&items, &book_options(s, p)).map_err(|e| bad("publish", e))?;
+        let bytes = crate::slow::book(hook, &items, &book_options(s, p)).map_err(|e| bad("publish", e))?;
         let r = match &path {
             Some(path) => {
                 write_pdf(path, &bytes)?;
