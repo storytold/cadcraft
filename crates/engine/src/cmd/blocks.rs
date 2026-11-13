@@ -90,6 +90,12 @@ pub fn specs() -> Vec<CommandSpec> {
                      the definition's own objects, read-only — anonymous definitions (*U…) too, which the Block Editor refuses")
             .enabled(has_doc)
             .noundo(),
+        CommandSpec::new("attribs", "Attribute States", run_attribs)
+            .params("{handle (a block reference)} | {block: name (every reference of it, in the model space and the layouts)} , tag? (one tag) \
+                     → {count, references: [{handle, block, attribs: [{tag, defined (the definition declares it), present (the reference shows it), \
+                     value (null: declared but not on the reference; \"\": set to empty; else the value), constant, invisible, source: \"definition\" | \"instance\"}]}]}")
+            .enabled(has_doc)
+            .noundo(),
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
         burst::burst_spec(),
@@ -541,6 +547,82 @@ fn run_blockdef_entities(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("insert".into(), i);
     }
     Ok(out)
+}
+
+/// ATTRIBS: the attributes of a block reference (or of every reference of a block) as three
+/// states, not two — a tag the definition declares but the reference does not carry (value `null`)
+/// reads differently from one set to the empty string, and both from one the definition never
+/// declared (defined false: an instance attribute past its definition's sync).
+fn run_attribs(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "attribs";
+    let given = |k: &str| p.get(k).filter(|v| !v.is_null());
+    let tag_filter = given("tag").map(|v| v.as_str().map(str::to_string).ok_or_else(|| bad(CMD, "`tag` must be a string"))).transpose()?;
+    let d = s.doc()?;
+    let refs: Vec<Handle> = if let Some(v) = given("handle") {
+        let h = v
+            .as_str()
+            .and_then(Handle::parse_hex)
+            .or_else(|| v.as_u64().map(Handle))
+            .ok_or_else(|| bad(CMD, format!("`handle`: {v} is not an object handle")))?;
+        vec![h]
+    } else if let Some(v) = given("block") {
+        let name = v.as_str().ok_or_else(|| bad(CMD, "`block` must be a string"))?;
+        d.model
+            .iter()
+            .chain(d.layouts.iter().flat_map(|l| l.entities.iter()))
+            .filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(name)))
+            .map(|e| e.handle)
+            .collect()
+    } else {
+        return Err(bad(CMD, "`handle` or `block` is required"));
+    };
+    let mut out: Vec<Value> = Vec::new();
+    for h in refs {
+        let Some(e) = d.entity(h) else { return Err(bad(CMD, format!("no object {}", h.hex()))) };
+        let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, format!("object {} is not a block reference", h.hex()))) };
+        let def = d.block(&i.block);
+        let attdefs: Vec<&Attrib> = def
+            .map(|b| b.entities.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a) } else { None }).collect())
+            .unwrap_or_default();
+        let mut attribs: Vec<Value> = Vec::new();
+        for a in &attdefs {
+            let tag_matches = tag_filter.as_ref().is_none_or(|t| a.tag.eq_ignore_ascii_case(t));
+            if !tag_matches {
+                continue;
+            }
+            let (value, source) = if a.constant {
+                // A constant attribute is the definition's own value; references don't carry it.
+                (a.text.value.clone(), "definition")
+            } else {
+                match i.attribs.iter().find(|x| x.tag.eq_ignore_ascii_case(&a.tag)) {
+                    Some(x) => (x.text.value.clone(), "instance"),
+                    None => (String::new(), "none"),
+                }
+            };
+            let present = source != "none";
+            attribs.push(json!({
+                "tag": a.tag, "defined": true, "present": present,
+                "value": if present { json!(value) } else { Value::Null },
+                "constant": a.constant, "invisible": a.invisible, "source": source,
+            }));
+        }
+        for x in &i.attribs {
+            let tag_matches = tag_filter.as_ref().is_none_or(|t| x.tag.eq_ignore_ascii_case(t));
+            if !tag_matches || attdefs.iter().any(|a| a.tag.eq_ignore_ascii_case(&x.tag)) {
+                continue;
+            }
+            // The reference carries a tag its definition no longer declares.
+            attribs.push(json!({
+                "tag": x.tag, "defined": false, "present": true, "value": x.text.value,
+                "constant": x.constant, "invisible": x.invisible, "source": "instance",
+            }));
+        }
+        if attribs.is_empty() {
+            continue;
+        }
+        out.push(json!({ "handle": h.hex(), "block": i.block, "attribs": attribs }));
+    }
+    Ok(json!({ "count": out.len(), "references": out }))
 }
 
 /// A dynamic block's parameters and actions as read from the file (null for a block that has
