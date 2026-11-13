@@ -6,6 +6,12 @@ pub enum EngineError {
     Disabled(String, String),
     #[error("invalid parameters for `{cmd}`: {msg}")]
     BadParams { cmd: String, msg: String },
+    /// Reading, writing, or converting a drawing file failed (missing file,
+    /// disk full, unreadable content): the storage or the content is at fault,
+    /// not the command's parameters — embedders surface these as I/O errors
+    /// distinct from bad input.
+    #[error("io error in `{cmd}`: {msg}")]
+    Io { cmd: String, msg: String },
     #[error("no active document")]
     NoDocument,
     #[error("{0}")]

@@ -11,7 +11,7 @@ use cadcraft_doc::{Drawing, Format};
 pub use craft_dxf::Version;
 use serde_json::{Value, json};
 
-use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, ok, str_param};
+use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, io_err, ok, str_param};
 
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
@@ -175,7 +175,7 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
         let w = write_as().ok_or_else(|| bad(cmd, "saving at a chosen version or as binary DXF is not available in this build"))?;
         w(d, path, opts)
     };
-    r.map_err(|e| bad(cmd, e))
+    r.map_err(|e| io_err(cmd, e))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -224,8 +224,8 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let bytes =
-                crate::capped_read::read_capped(std::path::Path::new(path), MAX_SCRIPT_BYTES).map_err(|e| bad("script", format!("{path}: {e}")))?;
+            let bytes = crate::capped_read::read_capped(std::path::Path::new(path), MAX_SCRIPT_BYTES)
+                .map_err(|e| io_err("script", format!("{path}: {e}")))?;
             String::from_utf8_lossy(&bytes).into_owned()
         }
         #[cfg(target_arch = "wasm32")]
@@ -262,7 +262,9 @@ impl Interactive for ScriptM {
         }
         match run_script(s, &json!({ "path": t })) {
             Ok(_) => Ok(Step::Done),
-            Err(EngineError::BadParams { msg, .. }) => {
+            // A mistyped name or unreadable file is expected user input: echo
+            // the reason and end the command (don't leave SCRIPT running).
+            Err(EngineError::BadParams { msg, .. } | EngineError::Io { msg, .. }) => {
                 s.echo(msg);
                 Ok(Step::Done)
             }
@@ -304,12 +306,12 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
             let Some(text_path) = path.to_str() else {
                 return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
             };
-            let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
+            let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| io_err("open", format!("{shown}: {e}")))?;
             read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
         match r {
             Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err(bad("open", format!("{}: the file could not be read", path.display())).to_string()),
+            Err(_) => Err(io_err("open", format!("{}: the file could not be read", path.display())).to_string()),
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -330,7 +332,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let drawing = (hooks.read)(bytes, name).map_err(|e| io_err("open", e))?;
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
@@ -382,7 +384,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let bytes =
-                crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
+                crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| io_err("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
             super::image::after_open(s, i);
@@ -467,17 +469,17 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
         // A file in a folder still to be made has nothing to back up.
         if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
-                .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
+                .map_err(|e| io_err("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
         }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
-        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
+        crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| io_err("save", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {
         let name = file_name(path);
         let deliver = deliver().ok_or_else(|| bad("save", "saving files is not available in this build; use document.bytes"))?;
-        deliver(&name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
+        deliver(&name, "application/octet-stream", bytes).map_err(|e| io_err("save", format!("{name}: {e}")))
     }
 }
 

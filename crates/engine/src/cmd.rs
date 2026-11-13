@@ -239,6 +239,11 @@ pub fn resolve_alias(name: &str) -> String {
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
+/// File IO (read/write/convert) failure — distinct from [`bad`]: hosts branch
+/// on it for open/save UX (disk full, missing file) instead of "bad input".
+pub(crate) fn io_err(cmd: &str, msg: impl Into<String>) -> EngineError {
+    EngineError::Io { cmd: cmd.into(), msg: msg.into() }
+}
 pub(crate) fn f64_or(p: &Value, key: &str, default: f64) -> f64 {
     p.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(default)
 }
