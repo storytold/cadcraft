@@ -27,6 +27,9 @@ pub const ROLL_ARROW_WIDTH: f32 = 4.8;
 /// Angular span of roll arrows in degrees (MATCAD `rollArrowSpan = [39, 62]`).
 pub const ROLL_ARROW_START_DEG: f32 = 62.0;
 pub const ROLL_ARROW_END_DEG: f32 = 39.0;
+/// Multiplier applied to egui's global `style.interaction.tooltip_delay` for ViewCube tooltips
+/// (2.0 = twice the global delay; set to 1.0 to match the global delay directly).
+pub const VIEWCUBE_TIP_DELAY_SCALE: f64 = 2.0;
 
 /// Where the ViewCube's parts are on the canvas.
 #[derive(Clone, Debug)]
@@ -161,21 +164,102 @@ pub enum Part {
 }
 
 impl Part {
-    /// Hover tooltip text for this ViewCube part.
-    fn tip(self) -> &'static str {
+    /// Hover tooltip text for this ViewCube part, returning `None` for the 6 main faces that
+    /// already display their label on the cube.
+    fn tip(self) -> Option<&'static str> {
         match self {
-            Part::Face => "Top: plan view of the drawing (zoom extents)",
-            Part::Cube(name) => name,
-            Part::Home => "Home: isometric / extents view",
-            Part::Ring => "Compass: drag to orbit around World Z, or click N/E/S/W",
-            Part::RollCcw => "Roll view 90° counter-clockwise",
-            Part::RollCw => "Roll view 90° clockwise",
-            Part::DirTop => "Tilt view 90° up",
-            Part::DirBottom => "Tilt view 90° down",
-            Part::DirLeft => "Tilt view 90° left",
-            Part::DirRight => "Tilt view 90° right",
+            Part::Face => None,
+            Part::Cube("top" | "bottom" | "front" | "back" | "left" | "right") => None,
+            Part::Cube(name) => Some(name),
+            Part::Home => Some("Home: isometric / extents view"),
+            Part::Ring => Some("Compass: drag to orbit around World Z, or click N/E/S/W"),
+            Part::RollCcw => Some("Roll view 90° counter-clockwise"),
+            Part::RollCw => Some("Roll view 90° clockwise"),
+            Part::DirTop => Some("Tilt view 90° up"),
+            Part::DirBottom => Some("Tilt view 90° down"),
+            Part::DirLeft => Some("Tilt view 90° left"),
+            Part::DirRight => Some("Tilt view 90° right"),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TipTarget {
+    ViewCube(Part),
+    Wcs,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TipHoverState {
+    target: Option<TipTarget>,
+    entered_at: f64,
+    shown: bool,
+}
+
+/// Gate a ViewCube tooltip behind `style.interaction.tooltip_delay * VIEWCUBE_TIP_DELAY_SCALE`
+/// per hovered target so tooltips follow the global style while waiting longer on ViewCube controls
+/// and resetting cleanly when moving between parts.
+fn delayed_tip(
+    resp: &egui::Response,
+    hovered: Option<(TipTarget, &'static str)>,
+    dragging: bool,
+) -> Option<&'static str> {
+    let ctx = &resp.ctx;
+    let state_id = resp.id.with("viewcube_tip_delay");
+    let clear = || ctx.data_mut(|d| d.remove_temp::<TipHoverState>(state_id));
+
+    if dragging {
+        clear();
+        return None;
+    }
+
+    let Some((target, tip)) = hovered else {
+        clear();
+        return None;
+    };
+
+    let delay = f64::from(ctx.global_style().interaction.tooltip_delay) * VIEWCUBE_TIP_DELAY_SCALE.max(1.0);
+    let (now, any_down, time_since_scroll, time_since_click, time_since_move) = ctx.input(|i| {
+        (
+            i.time,
+            i.pointer.any_down(),
+            i.time_since_last_scroll(),
+            i.pointer.time_since_last_click(),
+            i.pointer.time_since_last_movement(),
+        )
+    });
+    if any_down || time_since_click < time_since_move + 0.1 {
+        clear();
+        return None;
+    }
+
+    let prev = ctx.data(|d| d.get_temp::<TipHoverState>(state_id));
+    if let Some(state) = prev
+        && state.target == Some(target)
+        && state.shown
+    {
+        return Some(tip);
+    }
+
+    let entered_at = match prev {
+        Some(state) if state.target == Some(target) => state.entered_at,
+        _ => now,
+    };
+    let idle = f64::from(time_since_scroll.min(time_since_move).min(time_since_click));
+    let elapsed = (now - entered_at).min(idle).max(0.0);
+
+    if elapsed >= delay {
+        ctx.data_mut(|d| {
+            d.insert_temp(state_id, TipHoverState { target: Some(target), entered_at, shown: true });
+        });
+        return Some(tip);
+    }
+
+    ctx.data_mut(|d| {
+        d.insert_temp(state_id, TipHoverState { target: Some(target), entered_at, shown: false });
+    });
+    ctx.request_repaint_after_secs((delay - elapsed).max(0.01) as f32);
+    None
 }
 
 /// A projected 3D beveled-cube quad sorted back-to-front for painting and hit-testing.
@@ -329,10 +413,20 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     // 5. Home button at the top-left.
     paint_home(&p, l.home, part == Some(Part::Home));
 
-    let resp = match part {
-        Some(part) => resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(part.tip()),
-        None => resp,
+    let resp = if part.is_some() {
+        resp.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        resp
     };
+    let tip_target = part.and_then(|p| p.tip().map(|t| (TipTarget::ViewCube(p), t)));
+    if let Some(tip) = delayed_tip(&resp, tip_target, app.canvas.viewcube_drag.is_some()) {
+        egui::Tooltip::for_enabled(&resp)
+            .at_pointer()
+            .gap(12.0)
+            .show(|ui| {
+                ui.label(tip);
+            });
+    }
 
     // 6. ViewCube and Compass Ring Dragging:
     // Storing (start_pos, cam0) at drag start and calculating orbit from cam0 prevents horizon drift
@@ -433,7 +527,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     }
     // The WCS pill (painted by the canvas) opens the coordinate-system menu.
     let pill = ui.interact(l.pill, ui.scope_id().with("viewcube_wcs"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
-    let pill = pill.on_hover_text("Coordinate system");
+    let pill_target = pill.hovered().then_some((TipTarget::Wcs, "Coordinate system"));
+    if let Some(tip) = delayed_tip(&pill, pill_target, app.canvas.viewcube_drag.is_some()) {
+        egui::Tooltip::for_enabled(&pill).show(|ui| {
+            ui.label(tip);
+        });
+    }
     ucs_menu(app, egui::Popup::menu(&pill));
 }
 
@@ -969,5 +1068,69 @@ mod tests {
         click(&mut app, &ctx, l.pill.center(), egui::PointerButton::Primary);
         assert!(menu_shown(&ctx), "WCS menu");
         assert!(app.session.pending_window.is_none());
+    }
+
+    #[test]
+    fn main_face_tooltips_are_suppressed_and_control_tips_exist() {
+        assert_eq!(Part::Face.tip(), None);
+        for face in ["top", "bottom", "front", "back", "left", "right"] {
+            assert_eq!(Part::Cube(face).tip(), None, "{face} already renders a face label");
+        }
+        for edge_or_corner in ["front_top", "top_front_right", "bottom_back_left"] {
+            assert_eq!(Part::Cube(edge_or_corner).tip(), Some(edge_or_corner));
+        }
+        for control in [Part::Home, Part::Ring, Part::RollCcw, Part::RollCw, Part::DirTop, Part::DirBottom, Part::DirLeft, Part::DirRight] {
+            assert!(control.tip().is_some(), "{control:?} should keep a tooltip");
+        }
+    }
+
+    fn frame_at(app: &mut CadApp, ctx: &egui::Context, time: f64, events: Vec<egui::Event>) {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn tooltip_shown(ctx: &egui::Context) -> bool {
+        ctx.memory(|m| m.areas().visible_layer_ids().iter().any(|l| l.order == egui::Order::Tooltip))
+    }
+
+    #[test]
+    fn viewcube_tooltips_wait_for_doubled_delay_and_reset_between_parts() {
+        let (mut app, ctx) = app_and_ctx();
+        let l = Layout::new(canvas(&app));
+        let home = l.home.center();
+        let ring_n = l.center + vec2(0.0, -l.ring);
+        assert_eq!(l.part_at(home), Some(Part::Home));
+        assert_eq!(l.part_at(ring_n), Some(Part::Ring));
+
+        // Hover Home: stays hidden past egui's 0.5 s default, opens at >= 1.0 s.
+        frame_at(&mut app, &ctx, 10.0, vec![egui::Event::PointerMoved(home)]);
+        assert!(!tooltip_shown(&ctx));
+        frame_at(&mut app, &ctx, 10.6, Vec::new());
+        assert!(!tooltip_shown(&ctx), "tooltip must wait past egui's 0.5 s default");
+        frame_at(&mut app, &ctx, 11.05, Vec::new());
+        assert!(tooltip_shown(&ctx), "tooltip should appear after 2x global tooltip_delay (1.0 s)");
+
+        // Moving to another ViewCube part hides the open tooltip and resets the 1.0 s delay.
+        frame_at(&mut app, &ctx, 11.1, vec![egui::Event::PointerMoved(ring_n)]);
+        assert!(!tooltip_shown(&ctx), "tooltip must reset immediately when moving to another part");
+        frame_at(&mut app, &ctx, 11.7, Vec::new());
+        assert!(!tooltip_shown(&ctx));
+        frame_at(&mut app, &ctx, 12.15, Vec::new());
+        assert!(tooltip_shown(&ctx), "new part tooltip should appear after its own 1.0 s delay");
+
+        // Moving onto the labeled Top face suppresses the tooltip immediately.
+        frame_at(&mut app, &ctx, 12.2, vec![egui::Event::PointerMoved(l.center)]);
+        assert!(!tooltip_shown(&ctx));
+        frame_at(&mut app, &ctx, 13.5, Vec::new());
+        assert!(!tooltip_shown(&ctx), "main cube face must never show a tooltip");
     }
 }

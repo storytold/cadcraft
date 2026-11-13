@@ -16,6 +16,14 @@ mod vports;
 
 pub(super) use vports::{config_names, config_tiles, model_vports, tile_model};
 
+macro_rules! camera_presets_doc {
+    () => {
+        "top|bottom|front|back|left|right (aliases: plan|south|s|north|n|west|w|east|e) | \
+         edges: front_top|front_bottom|front_right|front_left|back_top|back_bottom|back_right|back_left|right_top|right_bottom|left_top|left_bottom (aliases: top_front|bottom_front|top_back|bottom_back|top_right|bottom_right|top_left|bottom_left) | \
+         corners: top_front_right|top_front_left|top_back_right|top_back_left|bottom_front_right|bottom_front_left|bottom_back_right|bottom_back_left (aliases: se_isometric|iso_se|seiso|home|iso|sw_isometric|iso_sw|swiso|ne_isometric|iso_ne|neiso|nw_isometric|iso_nw|nwiso)"
+    };
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
         CommandSpec::new("zoom", "Zoom", run_zoom)
@@ -98,16 +106,24 @@ pub fn specs() -> Vec<CommandSpec> {
         .transparent(),
         dview::spec(),
         CommandSpec::new("view.set", "Set View", run_view_set)
-            .params("{center?: [x,y], height?: f64, twist?: degrees, preset?: string (top|bottom|front|back|left|right|iso_se|...), dir?: [x,y,z], up?: [x,y,z]}")
+            .params(concat!(
+                "{center?: [x,y], height?: f64 (center and height must be given together), twist?: degrees (requires center and height; default: keep the current twist; in a layout viewport it is the viewport's twist, an undoable edit; not in Paper space), preset?: string (",
+                camera_presets_doc!(),
+                "), neighbor?: string (top|bottom|left|right), dir?: [x,y,z] (non-zero), up?: [x,y,z] (non-zero, requires dir)} (requires center+height and/or one of preset|dir|neighbor, which are mutually exclusive)"
+            ))
             .noundo(),
         CommandSpec::new("3dorbit", "3D Orbit", run_3dorbit)
             .menu(&["View", "3D Orbit"])
             .alias(&["orbit", "3do"])
-            .params("{daz?: f64 (deg), del?: f64 (deg), clamp?: bool, preset?: string}")
+            .params(concat!(
+                "{daz?: f64 (deg, default 0), del?: f64 (deg, default 0), clamp?: bool (default true: snap within 2° of principal axes), preset?: string (",
+                camera_presets_doc!(),
+                ")}"
+            ))
             .noundo()
             .transparent(),
         CommandSpec::new("view.roll", "Roll View", run_view_roll)
-            .params("{angle?: f64 (deg, default 90), inPlane?: bool}")
+            .params("{angle?: f64 (deg, default 90; when inPlane is false, snaps world-Z compass heading to the next multiple of max(90, |angle|) in the sign direction of angle; when inPlane is true, rolls by the exact angle), inPlane?: bool (default false: world-Z cardinal step roll; true: continuous in-plane roll around the viewing axis)}")
             .noundo()
             .transparent(),
         CommandSpec::new("plan", "Plan View", |s, _| {
@@ -117,21 +133,9 @@ pub fn specs() -> Vec<CommandSpec> {
         .menu(&["View", "3D Views", "Plan View"])
         .noundo()
         .transparent(),
-        CommandSpec::new("view.get", "Get View", |s, _| {
-            let st = s.state()?;
-            let v = st.view();
-            let cam = st.camera;
-            Ok(json!({
-                "center": [v.center.x, v.center.y],
-                "height": v.height,
-                "twist": v.twist.to_degrees(),
-                "viewportPx": [s.viewport_px.0, s.viewport_px.1],
-                "viewName": cam.view_name(),
-                "dir": [cam.z.x, cam.z.y, cam.z.z],
-                "up": [cam.y.x, cam.y.y, cam.y.z],
-            }))
-        })
-        .noundo(),
+        CommandSpec::new("view.get", "Get View", run_view_get)
+            .params("{} → {center: [x,y], height: f64, twist: degrees, viewportPx: [w,h], viewName: string (Top|Bottom|Front|Back|Left|Right|SW Isometric|SE Isometric|NE Isometric|NW Isometric|3D), dir: [x,y,z] (camera forward vector), up: [x,y,z] (camera up vector)}")
+            .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
     ];
     v.extend(named_views::specs());
@@ -297,34 +301,74 @@ fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Parse an optional 2D/3D vector `[x, y, z?]` from JSON parameter `key`.
-fn vec3_param(p: &Value, key: &str) -> Option<cadcraft_geom::Vec3> {
-    let a = p.get(key)?.as_array()?;
-    let x = a.first()?.as_f64()?;
-    let y = a.get(1)?.as_f64()?;
-    let z = a.get(2).and_then(Value::as_f64).unwrap_or(0.0);
-    (x.is_finite() && y.is_finite() && z.is_finite()).then_some(cadcraft_geom::Vec3::new(x, y, z))
+/// Whether JSON parameter `key` is present and not `null`.
+fn has_param(p: &Value, key: &str) -> bool {
+    p.get(key).is_some_and(|v| !v.is_null())
 }
 
-/// Execute `3dorbit` (`{daz?, del?, clamp?, preset?}`): orbit the 3D camera or jump to a preset.
+/// Parse an optional finite `f64` parameter, returning `default` when absent or `null` and an error for invalid/non-finite values.
+fn f64_opt(cmd: &str, p: &Value, key: &str, default: f64) -> Result<f64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad(cmd, format!("`{key}` must be a finite number"))),
+    }
+}
+
+/// Parse an optional non-zero 3D vector `[x, y, z]` from JSON parameter `key`.
+fn vec3_nonzero(cmd: &str, p: &Value, key: &str) -> Result<Option<cadcraft_geom::Vec3>> {
+    let Some(v) = p.get(key).filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let parsed = (|| {
+        let a = v.as_array().filter(|a| a.len() == 3)?;
+        let x = a.first()?.as_f64()?;
+        let y = a.get(1)?.as_f64()?;
+        let z = a.get(2)?.as_f64()?;
+        let vec = cadcraft_geom::Vec3::new(x, y, z);
+        (x.is_finite() && y.is_finite() && z.is_finite() && vec.normalized() != cadcraft_geom::Vec3::ZERO).then_some(vec)
+    })();
+    parsed.map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a non-zero [x, y, z] vector")))
+}
+
+/// Execute `view.get`: return the 2D view state (`center`, `height`, `twist`, `viewportPx`) and
+/// 3D camera classification/frame (`viewName`, `dir` = camera forward vector `Camera3D::z`,
+/// `up` = camera up vector `Camera3D::y`).
+fn run_view_get(s: &mut Session, _: &Value) -> Result<Value> {
+    let st = s.state()?;
+    let v = st.view();
+    let cam = st.camera;
+    Ok(json!({
+        "center": [v.center.x, v.center.y],
+        "height": v.height,
+        "twist": v.twist.to_degrees(),
+        "viewportPx": [s.viewport_px.0, s.viewport_px.1],
+        "viewName": cam.view_name(),
+        "dir": [cam.z.x, cam.z.y, cam.z.z],
+        "up": [cam.y.x, cam.y.y, cam.y.z],
+    }))
+}
+
+/// Execute `3dorbit` (`{daz?, del?, clamp?, preset?}`): orbit the 3D camera or jump to a
+/// [`cadcraft_geom::Camera3D::preset`].
 fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
-    let st = s.state_mut()?;
-    if let Some(preset) = str_param(p, "preset") {
+    if has_param(p, "preset") {
+        let preset = str_param(p, "preset").ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
         let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
-        st.camera = cam;
+        s.state_mut()?.camera = cam;
         return ok();
     }
-    let daz = f64_or(p, "daz", 0.0);
-    let del = f64_or(p, "del", 0.0);
+    let daz = f64_opt("3dorbit", p, "daz", 0.0)?;
+    let del = f64_opt("3dorbit", p, "del", 0.0)?;
     let clamp = bool_or(p, "clamp", true);
+    let st = s.state_mut()?;
     let base_cam = st.camera.with_twist(st.view().twist);
     st.camera = base_cam.orbit(daz, del, clamp);
     ok()
 }
 
-/// Execute `view.roll` (`{angle?, inPlane?}`): roll the 3D camera around world Z or in-plane.
+/// Execute `view.roll` (`{angle?, inPlane?}`): snap world-Z heading to `max(90, |angle|)` steps (`inPlane = false`) or roll in-plane by exact `angle` (`inPlane = true`).
 fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
-    let angle = f64_or(p, "angle", 90.0);
+    let angle = f64_opt("view.roll", p, "angle", 90.0)?;
     let in_plane = bool_or(p, "inPlane", false);
     let st = s.state_mut()?;
     let base_cam = st.camera.with_twist(st.view().twist);
@@ -336,12 +380,16 @@ fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Execute `view.set`: set a 3D camera preset, orthogonal neighbor, custom direction/up, or 2D center/height/twist.
+/// Execute `view.set`: set a [`cadcraft_geom::Camera3D::preset`], orthogonal neighbor, custom
+/// direction/up, or 2D center/height/twist.
 fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
-    let has_center = p.get("center").is_some();
-    let has_height = p.get("height").is_some();
+    let has_center = has_param(p, "center");
+    let has_height = has_param(p, "height");
     if has_center != has_height {
         return Err(bad("view.set", "center and height must be given together"));
+    }
+    if has_param(p, "twist") && !has_center {
+        return Err(bad("view.set", "`twist` requires `center` and `height`"));
     }
     let center_height = if has_center {
         let c = point_req("view.set", p, "center")?;
@@ -353,8 +401,17 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let mut new_cam = None;
-    if let Some(neighbor) = str_param(p, "neighbor") {
+    let has_neighbor = has_param(p, "neighbor");
+    let has_preset = has_param(p, "preset");
+    let has_dir = has_param(p, "dir");
+    if usize::from(has_neighbor) + usize::from(has_preset) + usize::from(has_dir) > 1 {
+        return Err(bad("view.set", "`preset`, `dir`, and `neighbor` are mutually exclusive"));
+    }
+    if has_param(p, "up") && !has_dir {
+        return Err(bad("view.set", "`up` requires `dir`"));
+    }
+    let new_cam = if has_neighbor {
+        let neighbor = str_param(p, "neighbor").ok_or_else(|| bad("view.set", "unknown neighbor direction"))?;
         let dir = match neighbor.trim().to_ascii_lowercase().as_str() {
             "top" | "up" | "n" => "top",
             "bottom" | "down" | "s" => "bottom",
@@ -363,15 +420,16 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(bad("view.set", "unknown neighbor direction")),
         };
         let st = s.state()?;
-        new_cam = Some(st.camera.with_twist(st.view().twist).orthogonal_neighbor(dir));
-    }
-    if let Some(preset) = str_param(p, "preset") {
-        new_cam = Some(cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?);
-    }
-    if let Some(dir) = vec3_param(p, "dir") {
-        let up = vec3_param(p, "up").unwrap_or(cadcraft_geom::Vec3::Z);
-        new_cam = Some(cadcraft_geom::Camera3D::from_dir_up(dir, up));
-    }
+        Some(st.camera.with_twist(st.view().twist).orthogonal_neighbor(dir))
+    } else if has_preset {
+        let preset = str_param(p, "preset").ok_or_else(|| bad("view.set", "unknown camera preset"))?;
+        Some(cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?)
+    } else if let Some(dir) = vec3_nonzero("view.set", p, "dir")? {
+        let up = vec3_nonzero("view.set", p, "up")?.unwrap_or(cadcraft_geom::Vec3::Z);
+        Some(cadcraft_geom::Camera3D::from_dir_up(dir, up))
+    } else {
+        None
+    };
     let Some((c, h)) = center_height else {
         if let Some(cam) = new_cam {
             s.state_mut()?.camera = cam;
@@ -745,6 +803,365 @@ impl Interactive for PanM {
             }
             (_, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_set_rejects_zero_dir_and_zero_up() {
+        let mut s = Session::new();
+        assert!(s.execute("view.set", &json!({ "preset": "front" })).is_ok());
+        let before = s.state().ok().map(|st| st.camera);
+
+        assert!(s.execute("view.set", &json!({ "dir": [0, 0, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0, 0], "up": [0, 0, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "up": [0, 0, 1] })).is_err());
+        assert_eq!(s.state().ok().map(|st| st.camera), before);
+    }
+
+    #[test]
+    fn view_set_rejects_mutually_exclusive_camera_selectors() {
+        let mut s = Session::new();
+        assert!(s.execute("view.set", &json!({ "preset": "front", "dir": [0, 1, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "preset": "front", "neighbor": "top" })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [0, 1, 0], "neighbor": "top" })).is_err());
+        assert!(s.execute("view.set", &json!({ "preset": "front", "dir": [0, 1, 0], "neighbor": "top" })).is_err());
+    }
+
+    #[test]
+    fn view_set_requires_center_and_height_for_twist() {
+        let mut s = Session::new();
+        assert!(s.execute("view.set", &json!({ "twist": 30 })).is_err());
+        assert!(s.execute("view.set", &json!({ "preset": "front", "twist": 30 })).is_err());
+        assert_eq!(s.state().ok().map(|st| st.camera), Some(cadcraft_geom::Camera3D::TOP));
+    }
+
+    #[test]
+    fn view_set_requires_exact_three_element_vectors() {
+        let mut s = Session::new();
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0, 0, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0, 0], "up": [0, 1] })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0, 0], "up": [0, 0, 1, 0] })).is_err());
+        assert!(s.execute("view.set", &json!({ "dir": [1, 0, 0], "up": [0, 0, 1] })).is_ok());
+    }
+
+    #[test]
+    fn orbit_validates_numeric_and_preset_params() {
+        let mut s = Session::new();
+        let before = s.state().ok().map(|st| st.camera);
+        assert!(s.execute("3dorbit", &json!({ "daz": "bad" })).is_err());
+        assert!(s.execute("3dorbit", &json!({ "del": "bad" })).is_err());
+        assert!(s.execute("3dorbit", &json!({ "preset": 123 })).is_err());
+        assert!(s.execute("3dorbit", &json!({ "preset": "does_not_exist" })).is_err());
+        assert_eq!(s.state().ok().map(|st| st.camera), before);
+    }
+
+    #[test]
+    fn view_roll_modes_and_validation() {
+        let mut s = Session::new();
+        assert!(s.execute("view.roll", &json!({ "angle": "bad" })).is_err());
+
+        // Default world-Z roll snaps to 90° steps even for angle: 30.
+        assert!(s.execute("view.set", &json!({ "preset": "front" })).is_ok());
+        assert!(s.execute("view.roll", &json!({ "angle": 30 })).is_ok());
+        let world_z_rolled = s.state().ok().map(|st| st.camera.view_name());
+        assert_eq!(world_z_rolled, Some("Left"));
+
+        // inPlane: true rolls continuously by the exact angle in-plane.
+        assert!(s.execute("view.set", &json!({ "preset": "front" })).is_ok());
+        assert!(s.execute("view.roll", &json!({ "angle": 30, "inPlane": true })).is_ok());
+        let expected_y = cadcraft_geom::Camera3D::preset("front").map(|c| c.roll_in_plane(30.0).y);
+        assert_eq!(s.state().ok().map(|st| st.camera.y), expected_y);
+    }
+
+    type ViewSnapshot = (cadcraft_geom::Vec2, f64, f64, cadcraft_geom::Camera3D);
+
+    fn snapshot(s: &Session) -> Option<ViewSnapshot> {
+        let st = s.state().ok()?;
+        let v = st.view();
+        Some((v.center, v.height, v.twist, st.camera))
+    }
+
+    fn seeded_session() -> Session {
+        let mut s = Session::new();
+        let _ = s.execute(
+            "view.set",
+            &json!({ "center": [12.0, -4.0], "height": 42.0, "twist": 15.0, "preset": "sw_isometric" }),
+        );
+        s
+    }
+
+    fn preset_cam(name: &str) -> cadcraft_geom::Camera3D {
+        cadcraft_geom::Camera3D::preset(name).unwrap_or_default()
+    }
+
+    fn json_vec3(v: &Value, key: &str) -> Option<[f64; 3]> {
+        let a = v.get(key)?.as_array()?;
+        if a.len() != 3 {
+            return None;
+        }
+        Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?])
+    }
+
+    fn assert_arr3_near(actual: Option<[f64; 3]>, expected: cadcraft_geom::Vec3, label: &str) {
+        let Some([x, y, z]) = actual else {
+            assert!(actual.is_some(), "missing vec3 for {label}");
+            return;
+        };
+        assert!(
+            (x - expected.x).abs() < 1e-9 && (y - expected.y).abs() < 1e-9 && (z - expected.z).abs() < 1e-9,
+            "{label}: got [{x}, {y}, {z}], want {:?}",
+            expected
+        );
+    }
+
+    #[test]
+    fn view_set_branches_update_camera_and_view_table() {
+        let cases: Vec<(&str, Value, Value, (f64, f64, f64, f64), cadcraft_geom::Camera3D)> = vec![
+            (
+                "preset_front_keeps_view",
+                json!({ "center": [5.0, 6.0], "height": 20.0, "twist": 10.0, "preset": "top" }),
+                json!({ "preset": "front" }),
+                (5.0, 6.0, 20.0, 10.0_f64.to_radians()),
+                preset_cam("front"),
+            ),
+            (
+                "neighbor_down_from_top",
+                json!({ "center": [5.0, 6.0], "height": 20.0, "twist": 0.0, "preset": "top" }),
+                json!({ "neighbor": "down" }),
+                (5.0, 6.0, 20.0, 0.0),
+                cadcraft_geom::Camera3D::TOP.orthogonal_neighbor("bottom"),
+            ),
+            (
+                "neighbor_west_with_twist",
+                json!({ "center": [0.0, 0.0], "height": 10.0, "twist": 90.0, "preset": "top" }),
+                json!({ "neighbor": "w" }),
+                (0.0, 0.0, 10.0, 90.0_f64.to_radians()),
+                cadcraft_geom::Camera3D::TOP.with_twist(90.0_f64.to_radians()).orthogonal_neighbor("left"),
+            ),
+            (
+                "dir_only",
+                json!({ "preset": "top" }),
+                json!({ "dir": [0.0, -1.0, 0.0] }),
+                (0.0, 0.0, 0.0, 0.0),
+                cadcraft_geom::Camera3D::from_dir_up(cadcraft_geom::Vec3::new(0.0, -1.0, 0.0), cadcraft_geom::Vec3::Z),
+            ),
+            (
+                "dir_and_up",
+                json!({ "preset": "top" }),
+                json!({ "dir": [1.0, 1.0, 1.0], "up": [0.0, 0.0, 1.0] }),
+                (0.0, 0.0, 0.0, 0.0),
+                cadcraft_geom::Camera3D::from_dir_up(cadcraft_geom::Vec3::new(1.0, 1.0, 1.0), cadcraft_geom::Vec3::Z),
+            ),
+            (
+                "combined_center_height_twist_and_preset",
+                json!({ "preset": "top" }),
+                json!({ "center": [10.0, 25.0], "height": 50.0, "twist": 30.0, "preset": "sw_isometric" }),
+                (10.0, 25.0, 50.0, 30.0_f64.to_radians()),
+                preset_cam("sw_isometric"),
+            ),
+            (
+                "combined_center_height_and_dir_preserves_twist",
+                json!({ "center": [1.0, 2.0], "height": 15.0, "twist": 22.5, "preset": "front" }),
+                json!({ "center": [-3.0, 7.0], "height": 80.0, "dir": [0.0, 0.0, -1.0], "up": [0.0, 1.0, 0.0] }),
+                (-3.0, 7.0, 80.0, 22.5_f64.to_radians()),
+                cadcraft_geom::Camera3D::from_dir_up(cadcraft_geom::Vec3::new(0.0, 0.0, -1.0), cadcraft_geom::Vec3::new(0.0, 1.0, 0.0)),
+            ),
+        ];
+
+        for (label, setup, args, expected_view, expected_cam) in cases {
+            let mut s = Session::new();
+            assert!(s.execute("view.set", &setup).is_ok(), "{label}: setup failed");
+            let base_snap = snapshot(&s);
+            assert!(s.execute("view.set", &args).is_ok(), "{label}: command failed");
+            let got = snapshot(&s);
+            let want_view = if args.get("center").is_some() || setup.get("center").is_some() {
+                (cadcraft_geom::Vec2::new(expected_view.0, expected_view.1), expected_view.2, expected_view.3)
+            } else if let Some((c, h, t, _)) = base_snap {
+                (c, h, t)
+            } else {
+                (cadcraft_geom::Vec2::ZERO, 0.0, 0.0)
+            };
+            assert_eq!(got, Some((want_view.0, want_view.1, want_view.2, expected_cam)), "{label}: state mismatch");
+        }
+    }
+
+    #[test]
+    fn view_set_errors_do_not_mutate_state_table() {
+        let invalid_cases = [
+            ("empty", json!({})),
+            ("center_without_height", json!({ "center": [1.0, 2.0] })),
+            ("height_without_center", json!({ "height": 10.0 })),
+            ("twist_without_center_height", json!({ "twist": 20.0 })),
+            ("preset_and_twist_only", json!({ "preset": "front", "twist": 20.0 })),
+            ("zero_height", json!({ "center": [1.0, 2.0], "height": 0.0 })),
+            ("negative_height", json!({ "center": [1.0, 2.0], "height": -5.0 })),
+            ("bad_center_array", json!({ "center": [1.0], "height": 10.0 })),
+            ("bad_twist_with_valid_center_height", json!({ "center": [1.0, 2.0], "height": 10.0, "twist": "bad" })),
+            ("preset_and_dir", json!({ "preset": "front", "dir": [0.0, 1.0, 0.0] })),
+            ("preset_and_neighbor", json!({ "preset": "front", "neighbor": "top" })),
+            ("dir_and_neighbor", json!({ "dir": [0.0, 1.0, 0.0], "neighbor": "top" })),
+            ("all_three_selectors", json!({ "preset": "front", "dir": [0.0, 1.0, 0.0], "neighbor": "top" })),
+            ("up_without_dir", json!({ "up": [0.0, 0.0, 1.0] })),
+            ("unknown_preset", json!({ "preset": "bogus" })),
+            ("unknown_neighbor", json!({ "neighbor": "diagonal" })),
+            ("zero_dir", json!({ "dir": [0.0, 0.0, 0.0] })),
+            ("zero_up", json!({ "dir": [1.0, 0.0, 0.0], "up": [0.0, 0.0, 0.0] })),
+            ("two_elem_dir", json!({ "dir": [1.0, 0.0] })),
+            ("four_elem_up", json!({ "dir": [1.0, 0.0, 0.0], "up": [0.0, 0.0, 1.0, 0.0] })),
+            ("valid_view_with_invalid_preset", json!({ "center": [99.0, 99.0], "height": 100.0, "preset": "bogus" })),
+            ("invalid_height_with_valid_preset", json!({ "center": [99.0, 99.0], "height": -1.0, "preset": "front" })),
+        ];
+
+        for (label, args) in invalid_cases {
+            let mut s = seeded_session();
+            let before = snapshot(&s);
+            assert!(s.execute("view.set", &args).is_err(), "{label}: expected error");
+            assert_eq!(snapshot(&s), before, "{label}: state mutated on error");
+        }
+    }
+
+    #[test]
+    fn orbit_valid_and_error_cases_table() {
+        let valid_cases = [
+            (
+                "orbit_default_clamp",
+                json!({ "preset": "top" }),
+                json!({ "daz": 35.0, "del": -25.0 }),
+                cadcraft_geom::Camera3D::TOP.orbit(35.0, -25.0, true),
+            ),
+            (
+                "orbit_unclamped",
+                json!({ "preset": "front" }),
+                json!({ "daz": 0.0, "del": 120.0, "clamp": false }),
+                preset_cam("front").orbit(0.0, 120.0, false),
+            ),
+            (
+                "orbit_from_twisted_top",
+                json!({ "center": [0.0, 0.0], "height": 10.0, "twist": 45.0, "preset": "top" }),
+                json!({ "daz": 15.0, "del": -10.0 }),
+                cadcraft_geom::Camera3D::TOP.with_twist(45.0_f64.to_radians()).orbit(15.0, -10.0, true),
+            ),
+            ("orbit_preset", json!({ "preset": "top" }), json!({ "preset": "se_isometric" }), preset_cam("se_isometric")),
+        ];
+
+        for (label, setup, args, expected_cam) in valid_cases {
+            let mut s = Session::new();
+            assert!(s.execute("view.set", &setup).is_ok(), "{label}: setup failed");
+            assert!(s.execute("3dorbit", &args).is_ok(), "{label}: 3dorbit failed");
+            assert_eq!(s.state().ok().map(|st| st.camera), Some(expected_cam), "{label}: camera mismatch");
+        }
+
+        let invalid_cases = [
+            ("unknown_preset", json!({ "preset": "nope" })),
+            ("non_string_preset", json!({ "preset": 42 })),
+            ("bad_daz_string", json!({ "daz": "nan" })),
+            ("bad_del_array", json!({ "del": [1] })),
+            ("bad_daz_bool", json!({ "daz": true })),
+        ];
+
+        for (label, args) in invalid_cases {
+            let mut s = seeded_session();
+            let before = snapshot(&s);
+            assert!(s.execute("3dorbit", &args).is_err(), "{label}: expected error");
+            assert_eq!(snapshot(&s), before, "{label}: state mutated on error");
+        }
+    }
+
+    #[test]
+    fn view_roll_valid_and_error_cases_table() {
+        let valid_cases = [
+            ("world_z_plus_90", json!({ "preset": "front" }), json!({ "angle": 90.0 }), preset_cam("front").roll_world_z(90.0)),
+            ("world_z_minus_90", json!({ "preset": "front" }), json!({ "angle": -90.0 }), preset_cam("front").roll_world_z(-90.0)),
+            ("world_z_snaps_30_to_90", json!({ "preset": "front" }), json!({ "angle": 30.0 }), preset_cam("front").roll_world_z(30.0)),
+            ("world_z_180", json!({ "preset": "front" }), json!({ "angle": 180.0 }), preset_cam("front").roll_world_z(180.0)),
+            (
+                "in_plane_continuous_30",
+                json!({ "preset": "front" }),
+                json!({ "angle": 30.0, "inPlane": true }),
+                preset_cam("front").roll_in_plane(30.0),
+            ),
+            (
+                "in_plane_continuous_neg45",
+                json!({ "preset": "right" }),
+                json!({ "angle": -45.0, "inPlane": true }),
+                preset_cam("right").roll_in_plane(-45.0),
+            ),
+            (
+                "twisted_top_world_z",
+                json!({ "center": [0.0, 0.0], "height": 10.0, "twist": 90.0, "preset": "top" }),
+                json!({ "angle": 90.0 }),
+                cadcraft_geom::Camera3D::TOP.with_twist(90.0_f64.to_radians()).roll_world_z(90.0),
+            ),
+        ];
+
+        for (label, setup, args, expected_cam) in valid_cases {
+            let mut s = Session::new();
+            assert!(s.execute("view.set", &setup).is_ok(), "{label}: setup failed");
+            assert!(s.execute("view.roll", &args).is_ok(), "{label}: view.roll failed");
+            assert_eq!(s.state().ok().map(|st| st.camera), Some(expected_cam), "{label}: camera mismatch");
+        }
+
+        let invalid_cases = [("bad_angle_string", json!({ "angle": "bad" })), ("bad_angle_bool", json!({ "angle": false }))];
+        for (label, args) in invalid_cases {
+            let mut s = seeded_session();
+            let before = snapshot(&s);
+            assert!(s.execute("view.roll", &args).is_err(), "{label}: expected error");
+            assert_eq!(snapshot(&s), before, "{label}: state mutated on error");
+        }
+    }
+
+    #[test]
+    fn plan_resets_camera_to_top_while_preserving_center_and_height() {
+        let mut s = Session::new();
+        assert!(
+            s.execute("view.set", &json!({ "center": [24.0, -12.0], "height": 64.0, "preset": "sw_isometric" }))
+                .is_ok()
+        );
+        assert!(s.execute("3dorbit", &json!({ "daz": 15.0, "del": -10.0 })).is_ok());
+        let before_view = s.state().ok().map(|st| (st.view().center, st.view().height));
+
+        assert!(s.execute("plan", &json!({})).is_ok());
+        assert_eq!(s.state().ok().map(|st| st.camera), Some(cadcraft_geom::Camera3D::TOP));
+        assert_eq!(s.state().ok().map(|st| (st.view().center, st.view().height)), before_view);
+
+        let info = s.execute("view.get", &json!({}));
+        assert!(info.is_ok());
+        if let Ok(v) = info {
+            assert_eq!(v.get("viewName").and_then(Value::as_str), Some("Top"));
+            assert_arr3_near(json_vec3(&v, "dir"), cadcraft_geom::Camera3D::TOP.z, "plan dir");
+            assert_arr3_near(json_vec3(&v, "up"), cadcraft_geom::Camera3D::TOP.y, "plan up");
+        }
+    }
+
+    #[test]
+    fn view_get_reports_name_dir_and_up_after_preset_and_orbit() {
+        let mut s = Session::new();
+        let steps: Vec<(&str, &str, Value)> = vec![
+            ("initial_top", "view.get", json!({})),
+            ("preset_front", "view.set", json!({ "preset": "front" })),
+            ("preset_right", "view.set", json!({ "preset": "right" })),
+            ("preset_sw_iso", "view.set", json!({ "preset": "sw_isometric" })),
+            ("orbit_custom", "3dorbit", json!({ "daz": 25.0, "del": -15.0 })),
+        ];
+
+        for (label, cmd, args) in steps {
+            if cmd != "view.get" {
+                assert!(s.execute(cmd, &args).is_ok(), "{label}: {cmd} failed");
+            }
+            let cam = s.state().ok().map(|st| st.camera).unwrap_or_default();
+            let got = s.execute("view.get", &json!({}));
+            assert!(got.is_ok(), "{label}: view.get failed");
+            if let Ok(v) = got {
+                assert_eq!(v.get("viewName").and_then(Value::as_str), Some(cam.view_name()), "{label}: viewName");
+                assert_arr3_near(json_vec3(&v, "dir"), cam.z, label);
+                assert_arr3_near(json_vec3(&v, "up"), cam.y, label);
+            }
         }
     }
 }

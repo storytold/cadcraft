@@ -68,7 +68,18 @@ impl Xf {
         let q = self.turn(p - self.center);
         pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
-    /// Map a screen position `p` back to the world XY plane (`Z = 0`).
+    /// Intersect screen position `p` with the world XY plane (`Z = 0`), returning `None` in
+    /// edge-on 3D views (`|cam.z.z| <= 1e-2`) where rays are parallel to the XY plane.
+    pub fn try_to_world(&self, p: Pos2) -> Option<Vec2> {
+        let c = self.rect.center();
+        if !self.cam.is_top_plan() {
+            let uv = Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale);
+            return self.cam.try_unproject_to_xy(uv, self.center);
+        }
+        Some(self.center + self.screen_delta_to_world(p - c))
+    }
+    /// Map a screen position `p` back to world XY (`Z = 0`), falling back in edge-on views to
+    /// isometric horizontal/depth mapping without discarding the vertical axis.
     pub fn to_world(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
         if !self.cam.is_top_plan() {

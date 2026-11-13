@@ -248,3 +248,18 @@ fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
     click_grip(&mut app, (shown, 0), false);
     assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
 }
+
+#[test]
+fn edge_on_to_world_preserves_depth_axis() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    let cam = cadcraft_geom::Camera3D::preset("front").unwrap();
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 2.0, twist: 0.0, cam };
+
+    assert!(xf.try_to_world(rect.center()).is_none());
+    assert!(xf.to_world(rect.center()).near(xf.center, 1e-9));
+
+    let up = xf.to_world(rect.center() + vec2(12.0, -30.0));
+    let down = xf.to_world(rect.center() + vec2(12.0, 30.0));
+    assert!((up.x - down.x).abs() < 1e-9, "same horizontal screen offset keeps X: up={up:?}, down={down:?}");
+    assert!((up.y - down.y).abs() > 29.0, "vertical screen motion must preserve depth in XY: up={up:?}, down={down:?}");
+}

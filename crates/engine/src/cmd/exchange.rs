@@ -927,7 +927,26 @@ mod tests {
             assert!(e.contains("not available yet"), "{c}: {e}");
         }
         for c in ["3dorbit", "orbit"] {
-            assert!(s.execute(&resolve_alias(c), &Value::Null).is_ok(), "{c} should succeed");
+            let cmd = resolve_alias(c);
+            let _ = s.execute("view.set", &json!({ "preset": "top" }));
+            let cam0 = s.state().ok().map(|st| st.camera);
+            assert!(s.execute(&cmd, &Value::Null).is_ok(), "{c} Null should succeed");
+            assert_eq!(s.state().ok().map(|st| st.camera), cam0, "{c} Null leaves camera unchanged");
+
+            // daz/del actually orbits the camera as expected.
+            assert!(s.execute(&cmd, &json!({ "daz": 35.0, "del": -25.0 })).is_ok(), "{c} orbit should succeed");
+            let orbited = s.state().ok().map(|st| st.camera);
+            assert_ne!(orbited, cam0, "{c} should mutate camera");
+            assert_eq!(orbited, cam0.map(|cam| cam.orbit(35.0, -25.0, true)), "{c} orbit target mismatch");
+
+            // Preset parameter switches directly to that preset camera.
+            assert!(s.execute(&cmd, &json!({ "preset": "sw_isometric" })).is_ok(), "{c} preset should succeed");
+            assert_eq!(s.state().ok().map(|st| st.camera), cadcraft_geom::Camera3D::preset("sw_isometric"), "{c} preset mismatch");
+
+            // Unknown preset returns an error without mutating camera state.
+            let before_err = s.state().ok().map(|st| st.camera);
+            assert!(s.execute(&cmd, &json!({ "preset": "does_not_exist" })).is_err(), "{c} unknown preset should error");
+            assert_eq!(s.state().ok().map(|st| st.camera), before_err, "{c} error should not mutate camera");
         }
     }
 }

@@ -128,8 +128,27 @@ impl Camera3D {
         "3D"
     }
 
-    /// Camera preset for any of the 26 ViewCube zones (faces, edges, corners) or standard names
+    /// Camera preset for any of the 26 ViewCube zones (faces, edges, corners) or standard aliases
     /// (ported from MATCAD `applyViewToNamedView.m`).
+    ///
+    /// `name` is trimmed, matched case-insensitively, and has `-` and spaces normalized to `_`.
+    /// Returns `None` if `name` is not recognized.
+    ///
+    /// Accepted preset names and aliases:
+    /// - **Faces (6):** `"top"` (`"plan"`), `"bottom"`, `"front"` (`"south"`, `"s"`),
+    ///   `"back"` (`"north"`, `"n"`), `"left"` (`"west"`, `"w"`), `"right"` (`"east"`, `"e"`).
+    /// - **Edges (12):** `"front_top"` (`"top_front"`), `"front_bottom"` (`"bottom_front"`),
+    ///   `"front_right"`, `"front_left"`, `"back_top"` (`"top_back"`),
+    ///   `"back_bottom"` (`"bottom_back"`), `"back_right"`, `"back_left"`,
+    ///   `"right_top"` (`"top_right"`), `"right_bottom"` (`"bottom_right"`),
+    ///   `"left_top"` (`"top_left"`), `"left_bottom"` (`"bottom_left"`).
+    /// - **Corners / Isometrics (8):**
+    ///   `"top_front_right"` (`"se_isometric"`, `"iso_se"`, `"seiso"`, `"home"`, `"iso"`),
+    ///   `"top_front_left"` (`"sw_isometric"`, `"iso_sw"`, `"swiso"`),
+    ///   `"top_back_right"` (`"ne_isometric"`, `"iso_ne"`, `"neiso"`),
+    ///   `"top_back_left"` (`"nw_isometric"`, `"iso_nw"`, `"nwiso"`),
+    ///   `"bottom_front_right"`, `"bottom_front_left"`,
+    ///   `"bottom_back_right"`, `"bottom_back_left"`.
     pub fn preset(name: &str) -> Option<Self> {
         let n = name.trim().to_ascii_lowercase().replace(['-', ' '], "_");
         // Matches MATCAD applyViewToNamedView.m: rotate canonical Top camera by (az, 90 - el).
@@ -167,8 +186,20 @@ impl Camera3D {
         Some(Self::TOP.orbit(az_deg, 90.0 - el_deg, true))
     }
 
-    /// Neighbor orthogonal view when clicking one of the 4 directional triangles (`top`, `bottom`, `left`, `right`)
-    /// around the ViewCube in an orthogonal main view (ported from MATCAD `start_viewcube.m`).
+    /// Neighbor orthogonal view when clicking one of the 4 directional triangles around the
+    /// ViewCube in an orthogonal main view (ported from MATCAD `start_viewcube.m`).
+    ///
+    /// Accepted `dir` values (exact lowercase): `"top"`, `"bottom"`, `"left"`, `"right"`.
+    ///
+    /// Transitions by `self.view_name()`:
+    /// - `"Top"`: `"top" -> "back"`, `"bottom" -> "front"`, `"left" -> "left"`, `"right" -> "right"`
+    /// - `"Bottom"`: `"top" -> "back"`, `"bottom" -> "front"`, `"left" -> "right"`, `"right" -> "left"`
+    /// - `"Front"`: `"top" -> "top"`, `"bottom" -> "bottom"`, `"left" -> "left"`, `"right" -> "right"`
+    /// - `"Back"`: `"top" -> "top"`, `"bottom" -> "bottom"`, `"left" -> "right"`, `"right" -> "left"`
+    /// - `"Left"`: `"top" -> "top"`, `"bottom" -> "bottom"`, `"left" -> "back"`, `"right" -> "front"`
+    /// - `"Right"`: `"top" -> "top"`, `"bottom" -> "bottom"`, `"left" -> "front"`, `"right" -> "back"`
+    ///
+    /// For non-orthogonal views or any unrecognized `dir`, falls back to `"top"` ([`Camera3D::TOP`]).
     pub fn orthogonal_neighbor(&self, dir: &'static str) -> Self {
         let target = match (self.view_name(), dir) {
             ("Top", "top") => "back",
@@ -335,15 +366,23 @@ impl Camera3D {
     }
 
     /// Intersect a camera ray through camera-plane offset `uv` with the world XY plane (`Z = 0`),
-    /// ported from MATCAD `intersectRayPlane.m`. Falls back to in-plane projection when viewing edge-on.
+    /// ported from MATCAD `intersectRayPlane.m`. In edge-on views where rays are parallel to XY,
+    /// folds the out-of-plane vertical component along the camera's XY depth axis so neither screen
+    /// axis is discarded.
     pub fn unproject_to_xy(&self, uv: Vec2, center: Vec2) -> Vec2 {
         if let Some(hit) = self.try_unproject_to_xy(uv, center) {
             return hit;
         }
-        // Edge-on view (Front/Back/Left/Right): map directly onto the active horizontal/vertical axes.
-        let target = Vec3::new(center.x, center.y, 0.0);
-        let p = target + self.x * uv.x + self.y * uv.y;
-        Vec2::new(p.x, p.y)
+        // Edge-on view (Front/Back/Left/Right): preserve both screen axes by mapping the Z
+        // component onto the camera's viewing depth axis in XY.
+        let d3 = self.x * uv.x + self.y * uv.y;
+        let z_xy = Vec2::new(self.z.x, self.z.y);
+        let depth_dir = if z_xy.len() > 1e-12 {
+            z_xy / z_xy.len()
+        } else {
+            Vec2::new(-self.x.y, self.x.x).normalized()
+        };
+        center + Vec2::new(d3.x, d3.y) + depth_dir * d3.z
     }
 }
 
@@ -363,13 +402,27 @@ pub fn face_text_axes(face: &str) -> (Vec3, Vec3) {
 /// One quad of the 26-part beveled 3D ViewCube (6 faces, 12 edges, 8 corners).
 #[derive(Clone, Debug)]
 pub struct CubeQuad {
+    /// Four 3D corner vertices of the quad on its cube side plane (`[-scale, scale]`).
     pub verts: [Vec3; 4],
+    /// Unit outward normal of the cube side (`±X`, `±Y`, or `±Z`).
     pub normal: Vec3,
+    /// ViewCube part name accepted by [`Camera3D::preset`] (6 faces, 12 edges, or 8 corners).
     pub part: &'static str,
+    /// `true` for the central quad (`i == 1 && j == 1`) of each of the 6 main faces; `false` for bevel edges/corners.
     pub is_main_face: bool,
 }
 
 /// Build the 54 external quads of the 4x4x4 beveled cube (ported from MATCAD `buildBeveledCubeFaces.m`).
+///
+/// # Parameters
+/// - `scale`: Half-extent of the cube in ViewCube/world units; generated vertex coordinates span
+///   `[-scale, scale]` along each axis.
+/// - `ew`: Normalized edge/bevel strip width fraction relative to `scale`, clamped internally to
+///   `[0.05, 0.45]`, placing the inner grid cuts at `±(1.0 - ew) * scale`.
+///
+/// # Returns
+/// A `Vec<CubeQuad>` with 54 quads (`6` sides × `3×3` grid) partitioned across 26 ViewCube parts
+/// (6 main faces appearing once, 12 edges appearing twice, and 8 corners appearing three times).
 pub fn build_beveled_cube(scale: f64, ew: f64) -> Vec<CubeQuad> {
     let ew = ew.clamp(0.05, 0.45);
     let c = [-scale, (-1.0 + ew) * scale, (1.0 - ew) * scale, scale];
@@ -475,8 +528,8 @@ fn name_from_grid(i: usize, j: usize, face: &'static str) -> &'static str {
         return match face {
             "top" => "right_top",
             "bottom" => "right_bottom",
-            "front" | "right" => "front_right",
-            "back" => "back_right",
+            "front" => "front_right",
+            "back" | "right" => "back_right",
             "left" => "back_left",
             _ => face,
         };
@@ -533,12 +586,58 @@ mod tests {
 
     #[test]
     fn beveled_cube_has_54_quads_and_26_parts() {
-        let quads = build_beveled_cube(1.0, 0.22);
+        let scale = 1.0;
+        let quads = build_beveled_cube(scale, 0.22);
         assert_eq!(quads.len(), 54);
         assert_eq!(quads.iter().filter(|q| q.is_main_face).count(), 6);
+
+        let mut distinct: Vec<&'static str> = quads.iter().map(|q| q.part).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 26, "expected 26 distinct ViewCube parts: {distinct:?}");
+
         for q in &quads {
             assert!(Camera3D::preset(q.part).is_some(), "missing preset for {}", q.part);
+            let geometric = (q.verts[1] - q.verts[0]).cross(q.verts[2] - q.verts[0]).normalized();
+            assert!(
+                geometric.dot(q.normal).abs() > 0.999_999,
+                "quad {} geometry not perpendicular to normal {:?}",
+                q.part,
+                q.normal
+            );
+            for v in q.verts {
+                assert!((v.dot(q.normal) - scale).abs() < 1e-12, "quad {} off face plane: v={v:?}", q.part);
+            }
         }
+
+        let face_normals = [
+            ("top", Vec3::new(0.0, 0.0, 1.0)),
+            ("bottom", Vec3::new(0.0, 0.0, -1.0)),
+            ("front", Vec3::new(0.0, -1.0, 0.0)),
+            ("back", Vec3::new(0.0, 1.0, 0.0)),
+            ("right", Vec3::new(1.0, 0.0, 0.0)),
+            ("left", Vec3::new(-1.0, 0.0, 0.0)),
+        ];
+        for (face, normal) in face_normals {
+            let side: Vec<&CubeQuad> = quads.iter().filter(|q| (q.normal - normal).len() < 1e-12).collect();
+            assert_eq!(side.len(), 9, "{face}: expected 9 quads");
+            let main: Vec<&&CubeQuad> = side.iter().filter(|q| q.is_main_face).collect();
+            assert_eq!(main.len(), 1, "{face}: expected 1 main face");
+            assert_eq!(main[0].part, face);
+        }
+
+        // 6 faces appear once, 12 edges appear twice, 8 corners appear three times.
+        let mut counts = std::collections::BTreeMap::new();
+        for q in &quads {
+            *counts.entry(q.part).or_insert(0usize) += 1;
+        }
+        assert_eq!(counts.values().filter(|&&c| c == 1).count(), 6);
+        assert_eq!(counts.values().filter(|&&c| c == 2).count(), 12);
+        assert_eq!(counts.values().filter(|&&c| c == 3).count(), 8);
+
+        // `ew` clamps to [0.05, 0.45]: clamping extremes match boundary values.
+        assert_eq!(build_beveled_cube(2.0, 0.01)[0].verts, build_beveled_cube(2.0, 0.05)[0].verts);
+        assert_eq!(build_beveled_cube(2.0, 0.90)[0].verts, build_beveled_cube(2.0, 0.45)[0].verts);
     }
 
     #[test]
@@ -553,5 +652,542 @@ mod tests {
         let bot1 = bot0.orbit(30.0, 0.0, true);
         assert!((top1.y.dot(top0.x) - bot1.y.dot(bot0.x)).abs() < 1e-12);
         assert!((top1.y.dot(top0.y) - bot1.y.dot(bot0.y)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn edge_on_unproject_preserves_depth_axis() {
+        let center = Vec2::new(15.0, -8.0);
+        let uv = Vec2::new(12.0, 25.0);
+        for name in ["front", "back", "left", "right", "front_left", "front_right"] {
+            let c = Camera3D::preset(name).unwrap_or_default();
+            assert!(c.try_unproject_to_xy(uv, center).is_none(), "{name} should be edge-on");
+            assert!(c.unproject_to_xy(Vec2::ZERO, center).near(center, EPS));
+
+            let up = c.unproject_to_xy(uv, center);
+            let down = c.unproject_to_xy(Vec2::new(uv.x, -uv.y), center);
+            assert!((up - down).len() > 49.0, "{name} discarded vertical offset: up={up:?}, down={down:?}");
+            assert!(((up - center).len() - uv.len()).abs() < 1e-9, "{name} should map uv isometrically: up={up:?}");
+
+            // Rolled edge-on views must also map both screen axes without collapsing either.
+            let rolled = c.roll_in_plane(90.0);
+            let rp = rolled.unproject_to_xy(uv, center);
+            assert!(((rp - center).len() - uv.len()).abs() < 1e-9, "{name} rolled lost norm: rp={rp:?}");
+        }
+    }
+
+    fn assert_orthonormal(c: &Camera3D, require_horizontal_x: bool, label: &str) {
+        assert!((c.x.len() - 1.0).abs() < 1e-12, "{label}: |x| != 1: {:?}", c.x);
+        assert!((c.y.len() - 1.0).abs() < 1e-12, "{label}: |y| != 1: {:?}", c.y);
+        assert!((c.z.len() - 1.0).abs() < 1e-12, "{label}: |z| != 1: {:?}", c.z);
+        assert!((c.up.len() - 1.0).abs() < 1e-12, "{label}: |up| != 1: {:?}", c.up);
+        assert!((c.up - c.y).len() < 1e-12, "{label}: up != y: up={:?}, y={:?}", c.up, c.y);
+        assert!(c.x.dot(c.y).abs() < 1e-12, "{label}: x·y != 0: {}", c.x.dot(c.y));
+        assert!(c.y.dot(c.z).abs() < 1e-12, "{label}: y·z != 0: {}", c.y.dot(c.z));
+        assert!(c.z.dot(c.x).abs() < 1e-12, "{label}: z·x != 0: {}", c.z.dot(c.x));
+        assert!((c.x.cross(c.z) - c.y).len() < 1e-12, "{label}: handedness x×z != y");
+        if require_horizontal_x {
+            assert!(c.x.z.abs() < 1e-12, "{label}: x.z != 0: {}", c.x.z);
+        }
+    }
+
+    fn assert_vec3_near(actual: Vec3, expected: Vec3, tol: f64, label: &str) {
+        assert!(
+            (actual - expected).len() < tol,
+            "{label}: got {actual:?}, want {expected:?} (tol {tol})"
+        );
+    }
+
+    fn assert_cam_near(a: &Camera3D, b: &Camera3D, tol: f64, label: &str) {
+        assert_vec3_near(a.x, b.x, tol, &format!("{label}.x"));
+        assert_vec3_near(a.y, b.y, tol, &format!("{label}.y"));
+        assert_vec3_near(a.z, b.z, tol, &format!("{label}.z"));
+        assert_vec3_near(a.up, b.up, tol, &format!("{label}.up"));
+    }
+
+    #[test]
+    fn preset_covers_all_26_zones_aliases_and_unknown_names() {
+        let d = 0.5_f64.sqrt();
+        let h = 0.5_f64;
+        let canonical_26 = [
+            // 6 main faces
+            ("top", Vec3::new(0.0, 0.0, -1.0), "Top"),
+            ("bottom", Vec3::new(0.0, 0.0, 1.0), "Bottom"),
+            ("front", Vec3::new(0.0, 1.0, 0.0), "Front"),
+            ("back", Vec3::new(0.0, -1.0, 0.0), "Back"),
+            ("left", Vec3::new(1.0, 0.0, 0.0), "Left"),
+            ("right", Vec3::new(-1.0, 0.0, 0.0), "Right"),
+            // 12 edges
+            ("front_top", Vec3::new(0.0, d, -d), "3D"),
+            ("front_bottom", Vec3::new(0.0, d, d), "3D"),
+            ("front_right", Vec3::new(-d, d, 0.0), "3D"),
+            ("front_left", Vec3::new(d, d, 0.0), "3D"),
+            ("back_top", Vec3::new(0.0, -d, -d), "3D"),
+            ("back_bottom", Vec3::new(0.0, -d, d), "3D"),
+            ("back_right", Vec3::new(-d, -d, 0.0), "3D"),
+            ("back_left", Vec3::new(d, -d, 0.0), "3D"),
+            ("right_top", Vec3::new(-d, 0.0, -d), "3D"),
+            ("right_bottom", Vec3::new(-d, 0.0, d), "3D"),
+            ("left_top", Vec3::new(d, 0.0, -d), "3D"),
+            ("left_bottom", Vec3::new(d, 0.0, d), "3D"),
+            // 8 corners
+            ("top_front_right", Vec3::new(-h, h, -d), "3D"),
+            ("top_front_left", Vec3::new(h, h, -d), "3D"),
+            ("top_back_right", Vec3::new(-h, -h, -d), "3D"),
+            ("top_back_left", Vec3::new(h, -h, -d), "3D"),
+            ("bottom_front_right", Vec3::new(-h, h, d), "3D"),
+            ("bottom_front_left", Vec3::new(h, h, d), "3D"),
+            ("bottom_back_right", Vec3::new(-h, -h, d), "3D"),
+            ("bottom_back_left", Vec3::new(h, -h, d), "3D"),
+        ];
+
+        assert_eq!(canonical_26.len(), 26);
+        for (name, expected_z, expected_view) in canonical_26 {
+            let Some(cam) = Camera3D::preset(name) else {
+                assert!(false, "missing preset for {name}");
+                return;
+            };
+            assert_orthonormal(&cam, true, name);
+            assert_vec3_near(cam.z, expected_z, 1e-12, name);
+            assert_eq!(cam.view_name(), expected_view, "view_name mismatch for {name}");
+        }
+
+        let aliases = [
+            ("plan", "top"),
+            ("south", "front"),
+            ("s", "front"),
+            ("north", "back"),
+            ("n", "back"),
+            ("west", "left"),
+            ("w", "left"),
+            ("east", "right"),
+            ("e", "right"),
+            ("top_front", "front_top"),
+            ("top_back", "back_top"),
+            ("bottom_front", "front_bottom"),
+            ("bottom_back", "back_bottom"),
+            ("top_right", "right_top"),
+            ("bottom_right", "right_bottom"),
+            ("top_left", "left_top"),
+            ("bottom_left", "left_bottom"),
+            ("se_isometric", "top_front_right"),
+            ("iso_se", "top_front_right"),
+            ("seiso", "top_front_right"),
+            ("home", "top_front_right"),
+            ("iso", "top_front_right"),
+            ("sw_isometric", "top_front_left"),
+            ("iso_sw", "top_front_left"),
+            ("swiso", "top_front_left"),
+            ("ne_isometric", "top_back_right"),
+            ("iso_ne", "top_back_right"),
+            ("neiso", "top_back_right"),
+            ("nw_isometric", "top_back_left"),
+            ("iso_nw", "top_back_left"),
+            ("nwiso", "top_back_left"),
+            ("  SW-Isometric ", "top_front_left"),
+            ("Front Top", "front_top"),
+        ];
+        for (alias, canonical) in aliases {
+            let (Some(a), Some(b)) = (Camera3D::preset(alias), Camera3D::preset(canonical)) else {
+                assert!(false, "alias {alias} -> {canonical} failed to resolve");
+                return;
+            };
+            assert_cam_near(&a, &b, 1e-12, &format!("{alias} == {canonical}"));
+        }
+
+        for unknown in ["", "   ", "unknown", "center", "top_bottom", "side"] {
+            assert!(Camera3D::preset(unknown).is_none(), "expected None for {unknown:?}");
+        }
+    }
+
+    #[test]
+    fn orthogonal_neighbor_covers_all_24_mappings_and_fallbacks() {
+        let mappings = [
+            ("top", "top", "back"),
+            ("top", "bottom", "front"),
+            ("top", "left", "left"),
+            ("top", "right", "right"),
+            ("bottom", "top", "back"),
+            ("bottom", "bottom", "front"),
+            ("bottom", "left", "right"),
+            ("bottom", "right", "left"),
+            ("front", "top", "top"),
+            ("front", "bottom", "bottom"),
+            ("front", "left", "left"),
+            ("front", "right", "right"),
+            ("back", "top", "top"),
+            ("back", "bottom", "bottom"),
+            ("back", "left", "right"),
+            ("back", "right", "left"),
+            ("left", "top", "top"),
+            ("left", "bottom", "bottom"),
+            ("left", "left", "back"),
+            ("left", "right", "front"),
+            ("right", "top", "top"),
+            ("right", "bottom", "bottom"),
+            ("right", "left", "front"),
+            ("right", "right", "back"),
+        ];
+        assert_eq!(mappings.len(), 24);
+        for (start, dir, expected) in mappings {
+            let (Some(cam), Some(want)) = (Camera3D::preset(start), Camera3D::preset(expected)) else {
+                assert!(false, "preset lookup failed for {start} -> {expected}");
+                return;
+            };
+            let got = cam.orthogonal_neighbor(dir);
+            assert_eq!(got.view_name(), want.view_name(), "({start}, {dir}) view_name");
+            assert_cam_near(&got, &want, 1e-12, &format!("({start}, {dir})"));
+        }
+
+        // Fallback cases: unknown direction or non-orthogonal starting view return Top.
+        for (start, dir) in [("front", "diagonal"), ("top", ""), ("sw_isometric", "left"), ("front_top", "top")] {
+            let Some(cam) = Camera3D::preset(start) else {
+                assert!(false, "missing preset {start}");
+                return;
+            };
+            let got = cam.orthogonal_neighbor(dir);
+            assert_eq!(got.view_name(), "Top", "fallback for ({start}, {dir})");
+            assert_cam_near(&got, &Camera3D::TOP, 1e-12, &format!("fallback ({start}, {dir})"));
+        }
+    }
+
+    #[test]
+    fn orbit_clamps_to_principal_axes_and_preserves_orthonormality() {
+        for start in ["top", "front", "bottom", "sw_isometric"] {
+            for clamp in [true, false] {
+                let Some(mut c) = Camera3D::preset(start) else {
+                    assert!(false, "missing preset {start}");
+                    return;
+                };
+                for (daz, del) in [(27.0, 18.0), (-53.0, 31.0), (112.0, -49.0), (-77.0, 62.0)] {
+                    c = c.orbit(daz, del, clamp);
+                    assert_orthonormal(&c, true, &format!("{start} clamp={clamp}"));
+                }
+            }
+        }
+
+        // Clamping within 2° snaps cleanly to all 6 principal axes.
+        let near_axis_cases = [
+            ("front", 0.0, -89.0, "Top", Vec3::new(0.0, 0.0, -1.0)),
+            ("front", 0.0, 89.0, "Bottom", Vec3::new(0.0, 0.0, 1.0)),
+            ("front_top", 0.0, 44.0, "Front", Vec3::new(0.0, 1.0, 0.0)),
+            ("back_top", 0.0, 44.0, "Back", Vec3::new(0.0, -1.0, 0.0)),
+            ("left_top", 0.0, 44.0, "Left", Vec3::new(1.0, 0.0, 0.0)),
+            ("right_top", 0.0, 44.0, "Right", Vec3::new(-1.0, 0.0, 0.0)),
+        ];
+        for (start, daz, del, expected_name, expected_z) in near_axis_cases {
+            let Some(base) = Camera3D::preset(start) else {
+                assert!(false, "missing preset {start}");
+                return;
+            };
+            let snapped = base.orbit(daz, del, true);
+            assert_orthonormal(&snapped, true, &format!("snap {expected_name}"));
+            assert_eq!(snapped.view_name(), expected_name, "{start} -> {expected_name}");
+            assert_vec3_near(snapped.z, expected_z, 1e-12, expected_name);
+        }
+
+        // Secondary Top/Bottom XY snap within 2° restores canonical plan axes.
+        let snapped_top = Camera3D::TOP.orbit(1.5, 0.0, true);
+        assert!(snapped_top.is_top_plan(), "small Top yaw should snap back to plan");
+
+        // Outside 2° does not snap to a principal axis or plan.
+        let front = Camera3D::preset("front").unwrap_or_default();
+        assert_eq!(front.orbit(0.0, 5.0, true).view_name(), "3D");
+        assert!(!Camera3D::TOP.orbit(5.0, 0.0, true).is_top_plan());
+    }
+
+    #[test]
+    fn orbit_unclamped_skips_snap_and_pitches_past_poles() {
+        let front = Camera3D::preset("front").unwrap_or_default();
+        let front_top = Camera3D::preset("front_top").unwrap_or_default();
+
+        // With clamp=false, <2° off-axis orbits do not snap to Top or Front exact axes.
+        let near_top = front.orbit(0.0, -89.0, false);
+        assert_orthonormal(&near_top, true, "unclamped near_top");
+        assert!((near_top.z - Vec3::new(0.0, 0.0, -1.0)).len() > 0.01, "z={:?}", near_top.z);
+
+        let near_front = front_top.orbit(0.0, 44.0, false);
+        assert_orthonormal(&near_front, true, "unclamped near_front");
+        assert!((near_front.z - Vec3::new(0.0, 1.0, 0.0)).len() > 0.01, "z={:?}", near_front.z);
+
+        // Pitch past the Top pole (-Z side) and Bottom pole (+Z side) without clamping.
+        let over_north = front.orbit(0.0, -120.0, false);
+        assert_orthonormal(&over_north, true, "over north pole");
+        assert!(over_north.z.y < 0.0 && over_north.z.z < 0.0, "unexpected z={:?}", over_north.z);
+        assert!(over_north.y.z < 0.0, "expected inverted y past pole: {:?}", over_north.y);
+
+        let over_south = front.orbit(0.0, 120.0, false);
+        assert_orthonormal(&over_south, true, "over south pole");
+        assert!(over_south.z.y < 0.0 && over_south.z.z > 0.0, "unexpected z={:?}", over_south.z);
+        assert!(over_south.y.z < 0.0, "expected inverted y past south pole: {:?}", over_south.y);
+    }
+
+    #[test]
+    fn from_dir_up_handles_degenerate_inputs_and_fallbacks() {
+        // Zero, sub-EPS, and NaN viewing directions all fall back to Camera3D::TOP.
+        for bad_z in [Vec3::ZERO, Vec3::new(1e-12, 0.0, 0.0), Vec3::new(f64::NAN, 0.0, 0.0)] {
+            assert_eq!(Camera3D::from_dir_up(bad_z, Vec3::Z), Camera3D::TOP);
+        }
+
+        // Degenerate or collinear `up` triggers automatic fallback axes while preserving `z`.
+        let front = Camera3D::preset("front").unwrap_or_default();
+        let zero_up_front = Camera3D::from_dir_up(Vec3::new(0.0, 1.0, 0.0), Vec3::ZERO);
+        assert_orthonormal(&zero_up_front, false, "zero_up_front");
+        assert_cam_near(&zero_up_front, &front, 1e-12, "zero_up_front");
+
+        let zero_up_top = Camera3D::from_dir_up(Vec3::new(0.0, 0.0, -1.0), Vec3::ZERO);
+        assert_cam_near(&zero_up_top, &Camera3D::TOP, 1e-12, "zero_up_top");
+
+        let collinear_front = Camera3D::from_dir_up(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        assert_orthonormal(&collinear_front, false, "collinear_front");
+        assert_cam_near(&collinear_front, &front, 1e-12, "collinear_front");
+
+        let collinear_top = Camera3D::from_dir_up(Vec3::new(0.0, 0.0, -1.0), Vec3::Z);
+        assert_cam_near(&collinear_top, &Camera3D::TOP, 1e-12, "collinear_top");
+
+        // Non-orthogonal inputs yield a normalized orthonormal camera aligned with `z`.
+        let raw_z = Vec3::new(1.0, 1.0, 0.0);
+        let cam = Camera3D::from_dir_up(raw_z, Vec3::new(1.0, 0.0, 1.0));
+        assert_orthonormal(&cam, false, "non_orthogonal");
+        assert_vec3_near(cam.z, raw_z.normalized(), 1e-12, "non_orthogonal.z");
+    }
+
+    #[test]
+    fn roll_in_plane_preserves_view_dir_and_is_invertible() {
+        for name in ["top", "front", "right", "sw_isometric"] {
+            let Some(base) = Camera3D::preset(name) else {
+                assert!(false, "missing preset {name}");
+                return;
+            };
+            for angle in [0.0, 30.0, -45.0, 90.0, 180.0] {
+                let rolled = base.roll_in_plane(angle);
+                assert_orthonormal(&rolled, false, &format!("{name} roll {angle}"));
+                assert_vec3_near(rolled.z, base.z, 1e-12, &format!("{name} roll {angle} preserves z"));
+
+                let expected_y = rotate_vec_around_axis(base.y, base.z, -rad(angle)).normalized();
+                assert_vec3_near(rolled.y, expected_y, 1e-12, &format!("{name} roll {angle} y"));
+
+                let restored = rolled.roll_in_plane(-angle);
+                assert_cam_near(&restored, &base, 1e-12, &format!("{name} roll {angle} roundtrip"));
+            }
+
+            let nan_rolled = base.roll_in_plane(f64::NAN);
+            assert_cam_near(&nan_rolled, &base, 1e-12, &format!("{name} NaN roll"));
+        }
+    }
+
+    #[test]
+    fn roll_world_z_steps_to_next_multiple_in_both_directions() {
+        let front = Camera3D::preset("front").unwrap_or_default();
+
+        // Cardinal 90° steps cycle Front -> Left -> Back -> Right -> Front (+), and reverse (-).
+        let mut pos = front;
+        for expected in ["Left", "Back", "Right", "Front"] {
+            pos = pos.roll_world_z(90.0);
+            assert_orthonormal(&pos, true, expected);
+            assert_eq!(pos.view_name(), expected);
+        }
+        let mut neg = front;
+        for expected in ["Right", "Back", "Left", "Front"] {
+            neg = neg.roll_world_z(-90.0);
+            assert_orthonormal(&neg, true, expected);
+            assert_eq!(neg.view_name(), expected);
+        }
+
+        // Small angles (< 90°) enforce the 90° minimum step in both directions.
+        assert_eq!(front.roll_world_z(30.0).view_name(), "Left");
+        assert_eq!(front.roll_world_z(-30.0).view_name(), "Right");
+        assert_eq!(front.roll_world_z(180.0).view_name(), "Back");
+        assert_eq!(front.roll_world_z(-180.0).view_name(), "Back");
+
+        // Intermediate headings snap strictly forward (+) or backward (-) to the next 90° multiple.
+        let front_left = Camera3D::preset("front_left").unwrap_or_default(); // compass = +45°
+        assert_eq!(front_left.roll_world_z(10.0).view_name(), "Left");
+        assert_eq!(front_left.roll_world_z(90.0).view_name(), "Left");
+        assert_eq!(front_left.roll_world_z(-10.0).view_name(), "Front");
+        assert_eq!(front_left.roll_world_z(-90.0).view_name(), "Front");
+
+        let front_right = Camera3D::preset("front_right").unwrap_or_default(); // compass = -45°
+        assert_eq!(front_right.roll_world_z(10.0).view_name(), "Front");
+        assert_eq!(front_right.roll_world_z(-10.0).view_name(), "Right");
+
+        let skewed = front.orbit(20.0, 0.0, true); // compass = +20°
+        assert_eq!(skewed.roll_world_z(90.0).view_name(), "Left");
+        assert_eq!(skewed.roll_world_z(-90.0).view_name(), "Front");
+    }
+
+    #[test]
+    fn compass_dir_xy_tracks_horizon_and_pole_without_singularity() {
+        for name in ["front", "back", "left", "right"] {
+            let Some(cam) = Camera3D::preset(name) else {
+                assert!(false, "missing preset {name}");
+                return;
+            };
+            assert!(cam.compass_dir_xy().near(cam.z.xy().normalized(), 1e-12), "{name}");
+        }
+
+        // At Top/Bottom poles (z.xy == 0), compass follows y.xy smoothly even when rolled in-plane.
+        let top_rolled = Camera3D::TOP.roll_in_plane(90.0);
+        assert!(Camera3D::TOP.compass_dir_xy().near(Vec2::Y, 1e-12));
+        assert!(top_rolled.compass_dir_xy().near(top_rolled.y.xy().normalized(), 1e-12));
+        let bottom = Camera3D::preset("bottom").unwrap_or_default();
+        assert!(bottom.compass_dir_xy().near(bottom.y.xy().normalized(), 1e-12));
+
+        // Degenerate camera with zero XY projections in both `y` and `z` falls back to Vec2::Y.
+        let degenerate = Camera3D { x: Vec3::Z, y: Vec3::Z, z: Vec3::Z, up: Vec3::Z };
+        assert_eq!(degenerate.compass_dir_xy(), Vec2::Y);
+    }
+
+    #[test]
+    fn intersect_ray_plane_and_behind_camera_projection_cases() {
+        // Parallel rays and degenerate inputs return None.
+        assert!(intersect_ray_plane(Vec3::new(0.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, Vec3::Z).is_none());
+        assert!(intersect_ray_plane(Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 1.0), Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)).is_none());
+        assert!(intersect_ray_plane(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::Z).is_none());
+        assert!(intersect_ray_plane(Vec3::ZERO, Vec3::Z, Vec3::ZERO, Vec3::ZERO).is_none());
+        assert!(intersect_ray_plane(Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 1.0), Vec3::ZERO, Vec3::Z).is_none());
+        assert!(intersect_ray_plane(Vec3::new(f64::INFINITY, 0.0, 1.0), Vec3::Z, Vec3::ZERO, Vec3::Z).is_none());
+
+        // Oblique hit in front of ray origin (t > 0) and geometric hit behind ray origin (t < 0).
+        let Some(hit_front) = intersect_ray_plane(Vec3::new(1.0, 2.0, 4.0), Vec3::new(1.0, -1.0, -2.0), Vec3::ZERO, Vec3::Z) else {
+            assert!(false, "expected oblique ray-plane hit");
+            return;
+        };
+        assert_vec3_near(hit_front, Vec3::new(3.0, 0.0, 0.0), 1e-12, "oblique hit");
+
+        let Some(hit_behind) = intersect_ray_plane(Vec3::new(4.0, -3.0, 5.0), Vec3::Z, Vec3::ZERO, Vec3::Z) else {
+            assert!(false, "expected behind-origin line-plane hit");
+            return;
+        };
+        assert_vec3_near(hit_behind, Vec3::new(4.0, -3.0, 0.0), 1e-12, "behind-origin hit");
+
+        // Orthographic project_point agrees with project_xy on Z=0 and is invariant along `z` (in front or behind camera).
+        let cam = Camera3D::TOP.orbit(37.0, -52.0, true);
+        let center = Vec2::new(-8.0, 14.0);
+        let p2 = Vec2::new(6.5, -2.25);
+        let uv0 = cam.project_xy(p2, center);
+        let uv3 = cam.project_point(Vec3::new(p2.x, p2.y, 0.0), center);
+        assert!(uv0.near(uv3, 1e-12));
+
+        let target = Vec3::new(center.x, center.y, 0.0);
+        for depth in [-500.0, -100.0, 0.0, 250.0] {
+            let shifted = target + cam.x * uv0.x + cam.y * uv0.y + cam.z * depth;
+            assert!(cam.project_point(shifted, center).near(uv0, 1e-12), "depth {depth} shifted uv");
+        }
+    }
+
+    #[test]
+    fn projection_roundtrips_and_edge_on_fallback_cases() {
+        let center = Vec2::new(-12.5, 7.25);
+        let p = Vec2::new(19.0, -21.5);
+
+        // Non-isometric 3D view and Bottom view both round-trip cleanly via try_unproject_to_xy and unproject_to_xy.
+        let oblique = Camera3D::TOP.orbit(37.0, -52.0, true);
+        assert_eq!(oblique.view_name(), "3D");
+        let bottom = Camera3D::preset("bottom").unwrap_or_default();
+        let shallow = Camera3D::preset("front").unwrap_or_default().orbit(0.0, -1.5, false); // |z.z| > 1e-2
+        assert!(!shallow.is_edge_on_xy());
+
+        for (label, cam) in [("bottom", bottom), ("oblique_3d", oblique), ("shallow_non_edge", shallow)] {
+            let uv = cam.project_xy(p, center);
+            let Some(try_back) = cam.try_unproject_to_xy(uv, center) else {
+                assert!(false, "{label}: try_unproject_to_xy returned None");
+                return;
+            };
+            assert!(try_back.near(p, 1e-8), "{label}: try_back={try_back:?}, want={p:?}");
+            assert!(cam.unproject_to_xy(uv, center).near(p, 1e-8), "{label}: unproject mismatch");
+        }
+
+        // Front and near-edge-on views (|z.z| <= 1e-2) return None from try_unproject_to_xy and use the fallback.
+        let front = Camera3D::preset("front").unwrap_or_default();
+        let near_edge = front.orbit(0.0, -0.3, false);
+        assert!(near_edge.is_edge_on_xy());
+        assert!(near_edge.try_unproject_to_xy(Vec2::new(4.0, 5.0), center).is_none());
+
+        let front_uv = front.project_xy(p, center);
+        assert!(front_uv.near(Vec2::new(p.x - center.x, 0.0), 1e-12));
+        assert!(front.try_unproject_to_xy(front_uv, center).is_none());
+        let front_back = front.unproject_to_xy(front_uv, center);
+        assert!(front_back.near(Vec2::new(p.x, center.y), 1e-12), "front_back={front_back:?}");
+        // In-plane vertical motion in Front maps cleanly between screen v and world Z in project_point.
+        let screen_uv = Vec2::new(14.0, -9.5);
+        assert!(front.project_point(Vec3::new(center.x + screen_uv.x, center.y, screen_uv.y), center).near(screen_uv, 1e-12));
+    }
+
+    #[test]
+    fn name_from_grid_maps_every_face_edge_and_corner_cell() {
+        let grid_table: [(&str, [[&str; 3]; 3]); 6] = [
+            (
+                "top",
+                [
+                    ["top_front_left", "front_top", "top_front_right"],
+                    ["left_top", "top", "right_top"],
+                    ["top_back_left", "back_top", "top_back_right"],
+                ],
+            ),
+            (
+                "bottom",
+                [
+                    ["bottom_front_left", "front_bottom", "bottom_front_right"],
+                    ["left_bottom", "bottom", "right_bottom"],
+                    ["bottom_back_left", "back_bottom", "bottom_back_right"],
+                ],
+            ),
+            (
+                "front",
+                [
+                    ["bottom_front_left", "front_bottom", "bottom_front_right"],
+                    ["front_left", "front", "front_right"],
+                    ["top_front_left", "front_top", "top_front_right"],
+                ],
+            ),
+            (
+                "back",
+                [
+                    ["bottom_back_left", "back_bottom", "bottom_back_right"],
+                    ["back_left", "back", "back_right"],
+                    ["top_back_left", "back_top", "top_back_right"],
+                ],
+            ),
+            (
+                "right",
+                [
+                    ["bottom_front_right", "right_bottom", "bottom_back_right"],
+                    ["front_right", "right", "back_right"],
+                    ["top_front_right", "right_top", "top_back_right"],
+                ],
+            ),
+            (
+                "left",
+                [
+                    ["bottom_front_left", "left_bottom", "bottom_back_left"],
+                    ["front_left", "left", "back_left"],
+                    ["top_front_left", "left_top", "top_back_left"],
+                ],
+            ),
+        ];
+
+        for (face, rows_by_j) in grid_table {
+            for (j, row) in rows_by_j.iter().enumerate() {
+                for (i, &expected) in row.iter().enumerate() {
+                    assert_eq!(name_from_grid(i, j, face), expected, "({face}, i={i}, j={j})");
+                }
+            }
+        }
+
+        let axes_expected = [
+            ("top", Vec3::new(0.0, 0.0, 1.0)),
+            ("bottom", Vec3::new(0.0, 0.0, -1.0)),
+            ("front", Vec3::new(0.0, -1.0, 0.0)),
+            ("back", Vec3::new(0.0, 1.0, 0.0)),
+            ("right", Vec3::new(1.0, 0.0, 0.0)),
+            ("left", Vec3::new(-1.0, 0.0, 0.0)),
+        ];
+        for (face, normal) in axes_expected {
+            let (u, v) = face_text_axes(face);
+            assert!((u.len() - 1.0).abs() < 1e-12 && (v.len() - 1.0).abs() < 1e-12, "{face} length");
+            assert!(u.dot(v).abs() < 1e-12, "{face} orthogonal");
+            assert_vec3_near(u.cross(v), normal, 1e-12, &format!("{face} outward normal"));
+        }
+        assert_eq!(face_text_axes("unknown"), face_text_axes("top"));
     }
 }
