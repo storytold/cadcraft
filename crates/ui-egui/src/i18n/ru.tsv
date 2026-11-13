@@ -187,6 +187,7 @@
 	Distance	Расстояние
 	Divide	Поделить
 	Do not plot (click: plot)	Не выводить на печать (щелкните для печати)
+	Don't Save	Не сохранять
 	Donut	Кольцо
 	Double-click to edit the description	Дважды щелкните, чтобы изменить описание
 	Down	Вниз
@@ -640,6 +641,7 @@
 	Save As...	Сохранить как...
 	Save Layer State	Сохранить состояние слоев
 	Save State	Сохранить состояние
+	Save changes to {name}?	Сохранить изменения в {name}?
 	Scale	Масштаб
 	Search for layer	Поиск слоя
 	Search for parameter	Поиск параметра
@@ -975,6 +977,7 @@
 	Xline	Вспомогательная прямая
 	Yellow	Желтый
 	Yes	Да
+	Your changes will be lost if you don't save them.	Если вы не сохраните изменения, они будут потеряны.
 	Zoom	Показать
 	Zoom All	Показать все
 	Zoom Extents	Показать границы объектов

@@ -249,6 +249,7 @@
 	Distance	Відстань
 	Divide	Поділити
 	Do not plot (click: plot)	Не друкувати (натисніть для друку)
+	Don't Save	Не зберігати
 	Donut	Кільце
 	Double-click to edit the description	Двічі клацніть, щоб редагувати опис
 	Down	Униз
@@ -777,6 +778,7 @@
 	Save As...	Зберегти як...
 	Save Layer State	Зберегти стан шарів
 	Save State	Зберегти стан
+	Save changes to {name}?	Зберегти зміни в {name}?
 	Scale	Масштаб
 	Search for layer	Пошук шару
 	Search for parameter	Пошук параметра
@@ -1206,6 +1208,7 @@
 	Xline	Допоміжна пряма
 	Yellow	Жовтий
 	Yes	Так
+	Your changes will be lost if you don't save them.	Якщо ви не збережете зміни, їх буде втрачено.
 	Zoom	Масштабування виду
 	Zoom All	Показати все
 	Zoom Dynamic	Динамічне масштабування

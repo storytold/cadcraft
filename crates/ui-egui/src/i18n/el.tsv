@@ -283,6 +283,7 @@
 	Distance	Απόσταση
 	Divide	Διαίρεση (Divide)
 	Do not plot (click: plot)	Να μην εκτυπωθεί (κλικ: εκτύπωση)
+	Don't Save	Χωρίς αποθήκευση
 	Donut	Δακτύλιος (Donut)
 	Double-click to edit the description	Διπλό κλικ για επεξεργασία της περιγραφής
 	Down	Κάτω
@@ -885,6 +886,7 @@
 	Save new drawings as	Αποθήκευση νέων σχεδίων ως
 	Save Reference Edits	Αποθήκευση αλλαγών αναφοράς
 	Save State	Αποθήκευση κατάστασης
+	Save changes to {name}?	Αποθήκευση των αλλαγών στο {name};
 	Saved Path	Αποθηκευμένη διαδρομή
 	Scale	Κλίμακα (Scale)
 	Scale List...	Λίστα κλιμάκων...
@@ -1306,6 +1308,7 @@
 	Y	Y
 	Yellow	Κίτρινο
 	Yes	Ναι
+	Your changes will be lost if you don't save them.	Οι αλλαγές σας θα χαθούν αν δεν τις αποθηκεύσετε.
 	Zoom	Μεγέθυνση (Zoom)
 	Zoom All	Μεγέθυνση όλου του σχεδίου
 	Zoom Dynamic	Δυναμική μεγέθυνση
