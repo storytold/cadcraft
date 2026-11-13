@@ -56,7 +56,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
         CommandSpec::new("loops", "Implied Loops", loops::run).params(loops::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
-            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
+            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), \
+                     scope?: \"space\" (default) | \"nested\" (also the texts inside the blocks the space's references draw, \
+                     once per placed copy; attribute definitions are not drawn, a reference's own attributes are), \
+                     limit? (default 200), offset?} \
+                     → {count (all matches), returned, offset, truncated, texts: [{handle, type, layer, raw (as stored, format codes intact), \
+                     text (as drawn: formatting and %% codes removed), at, height, rotation (degrees), style, tag? (attributes), \
+                     source: \"space\" | \"block:<name>\", depth (0 in the space, 1 inside a placed reference, deeper in a nested block)}]}")
             .noundo(),
         CommandSpec::new("countlist", "Count List", count::run_countlist)
             .params("{space?: all (default)|current|model|<layout>, nested?: bool} → per-block counts, as COUNT")
@@ -650,9 +656,268 @@ fn run_entities(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "count": matches.len(), "returned": page.len(), "offset": offset, "entities": page }))
 }
 
+/// One readable text, wherever it is drawn from: its content as stored (`raw`) and as drawn
+/// (`text`), where and how it is drawn, and where it came from (`source` "space", or the block a
+/// reference drew it from; `depth` 0 in the space itself, 1 inside a placed reference, deeper in a
+/// block that block holds).
+#[derive(Clone)]
+struct TextHit {
+    handle: Handle,
+    ty: &'static str,
+    layer: String,
+    raw: String,
+    text: String,
+    at: Vec3,
+    height: f64,
+    rotation: f64,
+    style: String,
+    tag: Option<String>,
+    source: String,
+    depth: u32,
+}
+
+/// `s` as drawn: its `%%d`-style control codes become the characters they stand for.
+fn plain_text(s: &str) -> String {
+    cadcraft_fonts::decode_controls(s).into_iter().map(|(c, _, _)| c).collect()
+}
+
+/// A text as it is stored: format codes (`\P`, `%%c`, …) intact.
+fn raw_text(s: &str) -> String {
+    s.to_string()
+}
+
+impl TextHit {
+    /// The hit as TEXTS reports it.
+    fn json(&self) -> Value {
+        let mut v = json!({
+            "handle": self.handle.hex(), "type": self.ty, "layer": self.layer,
+            "raw": self.raw, "text": self.text,
+            "at": [self.at.x, self.at.y], "height": self.height,
+            "rotation": self.rotation.to_degrees(), "style": self.style,
+            "source": self.source, "depth": self.depth,
+        });
+        if let (Some(t), Some(o)) = (&self.tag, v.as_object_mut()) {
+            o.insert("tag".into(), json!(t));
+        }
+        v
+    }
+}
+
+/// The readable texts `e` holds in the space itself: a text, a multiline text, a multileader's,
+/// and the visible attributes of a block reference (an attribute definition is not drawn — only a
+/// reference's own attributes are, and those live on the reference).
+fn texts_of(e: &Entity) -> Vec<TextHit> {
+    let hit = |ty: &'static str, raw: String, text: String, at: Vec3, height: f64, rotation: f64, style: &str, tag: Option<String>| TextHit {
+        handle: e.handle,
+        ty,
+        layer: e.common.layer.clone(),
+        raw,
+        text,
+        at,
+        height,
+        rotation,
+        style: style.to_string(),
+        tag,
+        source: "space".into(),
+        depth: 0,
+    };
+    match &e.kind {
+        EntityKind::Text(t) => vec![hit("Text", raw_text(&t.value), plain_text(&t.value), t.insert, t.height, t.rotation, &t.style, None)],
+        EntityKind::MText(t) => {
+            vec![hit("MText", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None)]
+        }
+        EntityKind::Insert(i) => i
+            .attribs
+            .iter()
+            .filter(|a| !a.invisible)
+            .map(|a| {
+                hit(
+                    "Attribute",
+                    raw_text(&a.text.value),
+                    plain_text(&a.text.value),
+                    a.text.insert,
+                    a.text.height,
+                    a.text.rotation,
+                    &a.text.style,
+                    Some(a.tag.clone()),
+                )
+            })
+            .collect(),
+        EntityKind::MLeader(m) => match &m.text {
+            Some(t) => {
+                vec![hit("MLeader", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None)]
+            }
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// How far the texts a block reference tree can draw may go: past this many levels of nested
+/// references the walk stops and says so (the drawing's own cap on nesting, `MAX_BLOCK_DEPTH`,
+/// bounds it too).
+const MAX_TEXT_DEPTH: u32 = 32;
+
+/// Text hits the walk gives up collecting (a hostile drawing of self-nesting blocks); the counts
+/// past it are partial, and the result says so.
+const MAX_TEXT_HITS: usize = 250_000;
+
+/// What the nested walk over a space's block references found: the texts its references draw,
+/// and whether it had to give up, with why (a reference to a block the drawing does not define
+/// draws nothing; DRAWING.READABILITY counts those separately).
+struct NestedTexts {
+    hits: Vec<TextHit>,
+    truncated: bool,
+    depth_capped: bool,
+}
+
+/// The nested walk's state: the drawing, the filter a hit passes, and the guards.
+struct Walk<'a> {
+    d: &'a cadcraft_doc::Drawing,
+    keep: &'a dyn Fn(&TextHit) -> bool,
+    out: Vec<TextHit>,
+    truncated: bool,
+    depth_capped: bool,
+    work: u64,
+}
+
+impl Walk<'_> {
+    /// A text transformed from the block it is drawn in into the space: its point through `m`, its
+    /// size by the transform's scale, its direction along the transformed baseline.
+    fn moved(mut t: TextHit, m: &cadcraft_geom::Mat3) -> TextHit {
+        let at = m.apply(Vec2::new(t.at.x, t.at.y));
+        t.at = Vec3::new(at.x, at.y, t.at.z);
+        t.height *= m.scale_factor();
+        t.rotation = m.apply_vec(Vec2::new(t.rotation.cos(), t.rotation.sin())).angle();
+        t
+    }
+
+    /// A hit that passed the filter, transformed into the space; past the collection cap the walk
+    /// gives up (and says so) rather than grow without bound.
+    fn place(&mut self, h: TextHit, world: &cadcraft_geom::Mat3) {
+        if self.out.len() >= MAX_TEXT_HITS {
+            self.truncated = true;
+            return;
+        }
+        self.out.push(Self::moved(h, world));
+    }
+
+    /// One block reference, at `level` (the depth it sits at: a top-level one is 0), placed by `m`
+    /// out of the coordinates of `owner` (the space, or the block holding it): the copies a MINSERT
+    /// grid places, the reference's own attributes (a top-level one's are the space's texts,
+    /// already collected), and its block's objects one deeper.
+    fn reference(&mut self, e: &Entity, level: u32, m: cadcraft_geom::Mat3, owner: &str) {
+        let EntityKind::Insert(i) = &e.kind else { return };
+        let Some(def) = self.d.block(&i.block).cloned() else { return };
+        let jt = i.transform(def.base.xy());
+        for row in 0..i.rows.max(1) {
+            for col in 0..i.cols.max(1) {
+                self.work += 1;
+                if self.work > MAX_TEXT_HITS as u64 {
+                    self.truncated = true;
+                    return;
+                }
+                // The grid's offsets run along the reference's own axes, in the coordinates of the
+                // block holding it, not scaled with it.
+                let off = Vec2::new(f64::from(col) * i.col_spacing, f64::from(row) * i.row_spacing);
+                let off = Vec2::new(off.x * i.rotation.cos() - off.y * i.rotation.sin(), off.x * i.rotation.sin() + off.y * i.rotation.cos());
+                let world = m.then_before(cadcraft_geom::Mat3::translate(off)).then_before(jt);
+                // A nested reference's own attributes are drawn where the reference sits; a
+                // top-level one's are the space's own texts, already collected.
+                if level >= 1 {
+                    for a in i.attribs.iter().filter(|a| !a.invisible) {
+                        let h = TextHit {
+                            handle: e.handle,
+                            ty: "Attribute",
+                            layer: e.common.layer.clone(),
+                            raw: raw_text(&a.text.value),
+                            text: plain_text(&a.text.value),
+                            at: a.text.insert,
+                            height: a.text.height,
+                            rotation: a.text.rotation,
+                            style: a.text.style.clone(),
+                            tag: Some(a.tag.clone()),
+                            source: format!("block:{owner}"),
+                            depth: level,
+                        };
+                        if (self.keep)(&h) {
+                            self.place(h, &world);
+                        }
+                    }
+                }
+                let source = format!("block:{}", def.name);
+                for inner in def.entities.iter() {
+                    if let EntityKind::Insert(_) = &inner.kind {
+                        if level + 1 > MAX_TEXT_DEPTH.min(cadcraft_doc::MAX_BLOCK_DEPTH as u32) {
+                            self.depth_capped = true;
+                            continue;
+                        }
+                        self.reference(inner, level + 1, world, &def.name);
+                    } else {
+                        for h in texts_in_definition(inner, &source, level + 1) {
+                            if (self.keep)(&h) {
+                                self.place(h, &world);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The texts the block references of `store` draw, one set per placed copy, transformed into the
+/// space's coordinates — what the sheet shows beyond the space's own objects. Attribute
+/// definitions are not drawn by a reference, so they never appear; the attributes a reference
+/// carries itself do, at the depth the reference sits at.
+fn nested_texts(d: &cadcraft_doc::Drawing, store: &cadcraft_doc::EntityStore, keep: &dyn Fn(&TextHit) -> bool) -> NestedTexts {
+    let mut w = Walk { d, keep, out: Vec::new(), truncated: false, depth_capped: false, work: 0 };
+    for e in store.iter() {
+        if matches!(&e.kind, EntityKind::Insert(_)) {
+            w.reference(e, 0, cadcraft_geom::Mat3::IDENTITY, "space");
+        }
+    }
+    NestedTexts { hits: w.out, truncated: w.truncated, depth_capped: w.depth_capped }
+}
+
+/// The texts an entity of a block definition holds (attribute definitions excluded: a reference
+/// does not draw them), tagged with the definition they sit in.
+fn texts_in_definition(e: &Entity, source: &str, depth: u32) -> Vec<TextHit> {
+    let hit = |ty: &'static str, raw: String, text: String, at: Vec3, height: f64, rotation: f64, style: &str| TextHit {
+        handle: e.handle,
+        ty,
+        layer: e.common.layer.clone(),
+        raw,
+        text,
+        at,
+        height,
+        rotation,
+        style: style.to_string(),
+        tag: None,
+        source: source.to_string(),
+        depth,
+    };
+    match &e.kind {
+        EntityKind::Text(t) => vec![hit("Text", raw_text(&t.value), plain_text(&t.value), t.insert, t.height, t.rotation, &t.style)],
+        EntityKind::MText(t) => {
+            vec![hit("MText", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style)]
+        }
+        EntityKind::MLeader(m) => match &m.text {
+            Some(t) => {
+                vec![hit("MLeader", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style)]
+            }
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 /// TEXTS: the readable text of the space's texts, multiline texts, block attributes and
 /// multileaders, with where they are, filtered by content, layer and a window around their
 /// insertion points. Read-only (FIND selects and can replace; this only reports).
+///
+/// `scope: "nested"` also reads the texts inside the blocks the space's references draw, once per
+/// placed copy — the number of them on the sheet, not the number of definitions that hold them.
 fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "texts";
     let given = |k: &str| p.get(k).filter(|v| !v.is_null());
@@ -666,6 +931,11 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let contains = text("contains")?;
     let layer = text("layer")?;
+    let scope = match p.get("scope").and_then(Value::as_str).unwrap_or("space") {
+        "space" => false,
+        "nested" => true,
+        other => return Err(bad(CMD, format!("`scope` must be \"space\" or \"nested\", got {other:?}"))),
+    };
     let window = given("window")
         .map(|w| {
             let corners: Option<Vec<Vec2>> = w.as_array().filter(|a| a.len() == 2).and_then(|a| a.iter().map(point_value).collect());
@@ -678,48 +948,28 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = count("limit", 200)?;
     let offset = count("offset", 0)?;
     let st = s.state()?;
-    let Some(store) = st.doc.space(&st.space) else { return Ok(json!({ "count": 0, "returned": 0, "offset": offset, "texts": [] })) };
-    let mut found: Vec<Value> = Vec::new();
+    let Some(store) = st.doc.space(&st.space) else {
+        return Ok(json!({ "count": 0, "returned": 0, "offset": offset, "truncated": false, "texts": [] }));
+    };
+    let keep = |h: &TextHit| -> bool {
+        !h.text.trim().is_empty()
+            && layer.as_ref().is_none_or(|l| h.layer.to_lowercase() == *l)
+            && contains.as_ref().is_none_or(|c| h.text.trim().to_lowercase().contains(c.as_str()))
+            && window.as_ref().is_none_or(|w| w.contains(Vec2::new(h.at.x, h.at.y)))
+    };
+    let mut found: Vec<TextHit> = Vec::new();
     for e in store.iter() {
-        if layer.as_ref().is_some_and(|l| e.common.layer.to_lowercase() != *l) {
-            continue;
-        }
-        let mut push = |ty: &str, value: String, at: cadcraft_geom::Vec3, height: f64, rotation: f64, style: &str, tag: Option<&str>| {
-            let value = value.trim().to_string();
-            if value.is_empty()
-                || contains.as_ref().is_some_and(|c| !value.to_lowercase().contains(c.as_str()))
-                || window.as_ref().is_some_and(|w| !w.contains(Vec2::new(at.x, at.y)))
-            {
-                return;
-            }
-            let mut v = json!({
-                "handle": e.handle.hex(), "type": ty, "layer": e.common.layer, "text": value,
-                "at": [at.x, at.y], "height": height, "rotation": rotation.to_degrees(), "style": style,
-            });
-            if let (Some(t), Some(o)) = (tag, v.as_object_mut()) {
-                o.insert("tag".into(), json!(t));
-            }
-            found.push(v);
-        };
-        match &e.kind {
-            EntityKind::Text(t) => push("Text", t.value.clone(), t.insert, t.height, t.rotation, &t.style, None),
-            EntityKind::MText(t) => push("MText", cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None),
-            EntityKind::Insert(i) => {
-                for a in i.attribs.iter().filter(|a| !a.invisible) {
-                    push("Attribute", a.text.value.clone(), a.text.insert, a.text.height, a.text.rotation, &a.text.style, Some(&a.tag));
-                }
-            }
-            EntityKind::MLeader(m) => {
-                if let Some(t) = &m.text {
-                    push("MLeader", cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None);
-                }
-            }
-            _ => {}
-        }
+        found.extend(texts_of(e).into_iter().filter(|h| keep(h)));
+    }
+    let mut truncated = false;
+    if scope {
+        let n = nested_texts(&st.doc, store, &keep);
+        found.extend(n.hits);
+        truncated = n.truncated;
     }
     let n = found.len();
-    let page: Vec<Value> = found.into_iter().skip(offset).take(limit).collect();
-    Ok(json!({ "count": n, "returned": page.len(), "offset": offset, "texts": page }))
+    let page: Vec<Value> = found.iter().skip(offset).take(limit).map(TextHit::json).collect();
+    Ok(json!({ "count": n, "returned": page.len(), "offset": offset, "truncated": truncated, "texts": page }))
 }
 
 mod count;
