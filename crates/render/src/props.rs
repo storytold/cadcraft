@@ -38,6 +38,13 @@ pub(crate) fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool
     (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency))
 }
 
+/// The ink of colour ByLayer for an object on `layer` (layer 0 inside a block: the block
+/// reference's layer, as [`resolve_common`] finds it).
+pub(crate) fn layer_ink(ctx: &Ctx, layer: &str) -> Ink {
+    let layer_name = if layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { layer };
+    ink(Color::ByLayer, ctx.layer_color(layer_name).unwrap_or(Color::Index(7)), ctx.block_color)
+}
+
 /// The transparency (percent, 0..=90) of an object whose own setting is `t`: the percentage, its
 /// layer's `layer` when ByLayer (layer 0 inside a block: the block reference's layer, as
 /// [`resolve_common`] finds it), the block reference's `block` when ByBlock (opaque outside

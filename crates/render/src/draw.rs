@@ -1,7 +1,7 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
-use super::props::{resolve, transparency};
+use super::props::{layer_ink, resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
     Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
@@ -121,10 +121,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
+            let layer = layer_ink(ctx, &e.common.layer);
             if e.common.matches_layout_orientation() && t.rotation != 0.0 {
-                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, layer, lw);
             } else {
-                mtext(b, ctx, t, rgb, lw);
+                mtext(b, ctx, t, rgb, layer, lw);
             }
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
@@ -276,7 +277,7 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
         let land = m.landing.xy();
         let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
         b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-        mtext(b, ctx, t, rgb, lw);
+        mtext(b, ctx, t, rgb, layer_ink(ctx, &e.common.layer), lw);
     }
     if let Some(ins) = &m.block {
         if m.dogleg > 0.0 && !m.leaders.is_empty() {
