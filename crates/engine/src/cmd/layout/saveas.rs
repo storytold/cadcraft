@@ -26,11 +26,30 @@ const MAX_PURGE_PASSES: usize = 64;
 
 /// The file a SAveas typed at the command line suggests: `<layout>.dwt` beside the drawing.
 pub(super) fn default_path(s: &Session, layout: &str) -> String {
-    let file = format!("{layout}.dwt");
-    match s.state().ok().and_then(|st| st.path.clone()) {
-        Some(p) => std::path::Path::new(&p).with_file_name(&file).to_string_lossy().into_owned(),
-        None => file,
+    // A layout name from a file may hold path separators or `..`; the suggestion is one file name
+    // beside the drawing, so those become `_`.
+    let name: String = layout.chars().map(|c| if matches!(c, '/' | '\\' | ':') || c.is_control() { '_' } else { c }).collect();
+    // Windows reserves device names (`CON`, `NUL`, `COM1`...) with any extension, so prefix them.
+    let base = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4 && (base.starts_with("COM") || base.starts_with("LPT")) && base.ends_with(|c: char| ('1'..='9').contains(&c)));
+    let file = if reserved { format!("_{name}.dwt") } else { format!("{name}.dwt") };
+    let candidate = match s.state().ok().and_then(|st| st.path.clone()) {
+        Some(p) => std::path::Path::new(&p).with_file_name(&file),
+        None => std::path::PathBuf::from(file),
+    };
+    if !candidate.exists() {
+        return candidate.to_string_lossy().into_owned();
     }
+    let stem = candidate.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
+    let extension = candidate.extension().and_then(|e| e.to_str()).unwrap_or("dwt");
+    let parent = candidate.parent().unwrap_or_else(|| std::path::Path::new(""));
+    // The suffix range never ends in practice; the fallback only keeps the code panic-free.
+    let alternative = (2u64..)
+        .map(|suffix| parent.join(format!("{stem}-{suffix}.{extension}")))
+        .find(|alternative| !alternative.exists())
+        .unwrap_or(candidate.clone());
+    alternative.to_string_lossy().into_owned()
 }
 
 /// `path` with `.dwt` added when it has no extension; an error for any other file type.
@@ -131,5 +150,34 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(target_arch = "wasm32")]
     {
         super::super::exchange::deliver_file("layout.saveas", path, bytes, super::super::file::deliver())
+    }
+}
+
+#[cfg(test)]
+mod default_path_tests {
+    use super::*;
+
+    /// A layout name with separators suggests a file beside the drawing, not a path elsewhere.
+    #[test]
+    fn layout_name_is_one_file_name() {
+        let s = Session::empty();
+        for name in ["../../etc/x", "a/b", "a\\b", "C:x"] {
+            let p = default_path(&s, name);
+            assert!(!p.contains('/') && !p.contains('\\') && !p.contains(':'), "{p}");
+            assert!(p.ends_with(".dwt"));
+        }
+        assert_eq!(default_path(&s, "Layout1"), "Layout1.dwt");
+    }
+
+    /// Windows device names are prefixed so the suggestion is never a device.
+    #[test]
+    fn reserved_device_names_are_prefixed() {
+        let s = Session::empty();
+        for name in ["CON", "nul", "Com1", "LPT9", "aux.x"] {
+            assert_eq!(default_path(&s, name), format!("_{name}.dwt"));
+        }
+        for name in ["COM0", "CONSOLE", "COM10"] {
+            assert_eq!(default_path(&s, name), format!("{name}.dwt"));
+        }
     }
 }
