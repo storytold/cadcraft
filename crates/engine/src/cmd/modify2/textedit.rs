@@ -11,9 +11,8 @@ fn text_of(k: &EntityKind) -> Option<String> {
         EntityKind::Text(t) => Some(t.value.clone()),
         EntityKind::AttDef(a) => Some(a.text.value.clone()),
         EntityKind::MText(t) => Some(t.contents.replace("\\P", "\n")),
-        // A multileader's text (one with a block instead has none, #1081).
-        EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.contents.replace("\\P", "\n")),
         EntityKind::Dimension(d) => Some(if d.text.is_empty() { "<>".into() } else { d.text.clone() }),
+        EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.contents.replace("\\P", "\n")),
         _ => None,
     }
 }
