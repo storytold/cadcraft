@@ -151,6 +151,11 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str, from_editor: bool
         EntityKind::Text(t) => t.value = text.to_string(),
         EntityKind::AttDef(a) => a.text.value = text.to_string(),
         EntityKind::MText(t) => t.contents = text.replace('\n', "\\P"),
+        EntityKind::MLeader(m) if m.text.is_some() => {
+            if let Some(t) = &mut m.text {
+                t.contents = text.replace('\n', "\\P");
+            }
+        }
         EntityKind::Dimension(d) => {
             // A formula from the editor is read without its codes (its escaped braces and
             // backslashes are letters again); other text stays multiline text, as an override is.
@@ -163,7 +168,7 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str, from_editor: bool
             Some(t) => t.contents = text.replace('\n', "\\P"),
             None => return Err(other("This multileader has no text.")),
         },
-        _ => return Err(other("Select a text, mtext, attribute definition or dimension.")),
+        _ => return Err(other("Select a text, mtext, multileader, attribute definition or dimension.")),
     }
     let mut env = crate::textformula::env(s);
     if let EntityKind::Dimension(dm) = &k {
@@ -219,6 +224,10 @@ impl Interactive for TextEditM {
     fn name(&self) -> &'static str {
         "TEXTEDIT"
     }
+    /// An MTEXT asking for its new text opens in the in-place editor with its contents.
+    fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
+        self.h.as_ref().and(self.editor.as_ref().filter(|e| matches!(e.kind, crate::EditorKind::MText)).map(|e| e.mtext.clone()))
+    }
     fn prompt(&self, _s: &Session) -> Prompt {
         if self.mode {
             let current = if self.single { "Single" } else { "Multiple" };
@@ -243,8 +252,19 @@ impl Interactive for TextEditM {
         match (&self.h, i) {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
-                let old = text_of(&curves::entity(s, h)?.kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                // Refused when picked, not after the new text has been typed.
+                if curves::is_locked(s, h) {
+                    return Err(other("The object is on a locked layer."));
+                }
+                let old = text_of(&curves::entity(s, h)?.kind)
+                    .ok_or_else(|| other("Select a text, mtext, multileader, attribute definition or dimension."))?;
                 self.editor = editor_for(s, h);
+                // The editor would drop part of a text this long, and saving would lose it: the
+                // command line asks for it instead.
+                if self.editor.as_ref().is_some_and(|e| !crate::mtext_edit::Formatted::fits(&e.mtext.contents)) {
+                    self.editor = None;
+                    s.echo("This text is too long for the editor; enter the new text at the command line.");
+                }
                 self.h = Some((h, old));
                 Ok(Step::Continue)
             }
