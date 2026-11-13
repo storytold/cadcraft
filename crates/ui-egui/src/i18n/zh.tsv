@@ -1382,6 +1382,13 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Text Formulas	文字公式
+	Update Fields	更新字段
+	Edit Table Cells	编辑表格单元格
+	Edit Text	编辑文字
+	List Fonts	列出字体
+	Look for Fonts Again	重新查找字体
+	Missing Fonts	缺失的字体
 	Find All	查找全部
 	Find what:	查找内容：
 	Match case	区分大小写
@@ -1470,9 +1477,66 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	Add to Tool Bar	添加到工具栏
+	Black	黑色
+	Customize Tool Bar...	自定义工具栏...
+	Dock Tool Bar	停靠工具栏
+	Layers Tool Bar	图层工具栏
+	Light Blue	浅蓝色
+	Move Tool Bar Button	移动工具栏按钮
+	Place Tool Sets	放置工具集
+	Remove from Tool Bar	从工具栏中删除
+	Reset Tool Bar	重置工具栏
+	Tool Bar Position	工具栏位置
+	Tool Sets Tool Bar	工具集工具栏
+	Top	顶部
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
+	Minimize	最小化
+	Maximize	最大化
+	Rounded corners on windows and buttons	窗口和按钮使用圆角
+	Common	共同特性
+	Set Row Height / Column Width	设置行高/列宽
+	Fit Rows / Columns to Contents	按内容调整行/列
+	Set Cell Properties	设置单元特性
+	Row ↑	行 ↑
+	Row ↓	行 ↓
+	Column ←	列 ←
+	Column →	列 →
+	Insert a row above	在上方插入行
+	Insert a row below	在下方插入行
+	Insert a column to the left	在左侧插入列
+	Insert a column to the right	在右侧插入列
+	Delete rows	删除行
+	Delete the selected rows	删除选定的行
+	Delete columns	删除列
+	Delete the selected columns	删除选定的列
+	Merge	合并
+	Merge the selected cells	合并选定的单元
+	Unmerge	取消合并
+	Unmerge the cell	取消合并单元
+	By cell style	按单元样式
+	Fit width	适应宽度
+	Columns as wide as their text	列宽适应文字
+	Fit height	适应高度
+	Rows as high as their text	行高适应文字
+	Equal widths	均分列宽
+	The selected columns share their width equally	选定的列等宽
+	Equal heights	均分行高
+	The selected rows share their height equally	选定的行等高
+	Select all	全选
+	Select every cell (Ctrl+A)	选择所有单元 (Ctrl+A)
+	Edit text	编辑文字
+	Edit the text of the cell (Enter, or double-click it)	编辑单元文字（Enter 或双击）
+	Close the table editor (Esc)	关闭表格编辑器 (Esc)
+	Move Layout	移动布局
+	Move to...	移动到...
+	Move before layout:	移到布局之前：
+	(move to end)	（移到末尾）
+	Custom:	自定义:
+	By window	按窗口
+	Pick a window to fit in the viewport	选取要充满视口的窗口
+	Not a scale: {text} (type 1:x)	不是比例：{text}（请输入 1:x）
 	Ctrl+Enter to apply	Ctrl+Enter 应用
-	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。

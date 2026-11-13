@@ -135,8 +135,8 @@ fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(220.0, 170.0), egui::Sense::hover());
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 4.0, t.canvas);
-    p.rect_stroke(rect, 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    p.rect_filled(rect, crate::theme::r(4.0), t.canvas);
+    p.rect_stroke(rect, crate::theme::r(4.0), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     match list.filter(|l| !l.bounds.is_empty() && !l.prims.is_empty()) {
         Some(l) => {
             let b = l.bounds;
@@ -144,7 +144,7 @@ fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
             let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
             let scale = (f64::from(inner.width()) / w).min(f64::from(inner.height()) / h);
             let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale, twist: 0.0 };
-            crate::canvas::draw_list(&p, &xf, l, Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), false);
+            crate::canvas::draw_list(&p, &xf, l, Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), crate::gpu::LwScale::Off);
         }
         None => {
             p.text(rect.center(), egui::Align2::CENTER_CENTER, note, crate::theme::small(), t.text_dim);

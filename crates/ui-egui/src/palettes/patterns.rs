@@ -59,10 +59,10 @@ fn swatch(c: PatternChoice) -> Swatch {
 fn paint(p: &egui::Painter, r: Rect, s: &Swatch, selected: bool, hovered: bool) {
     let t = Tokens::get();
     let square = Rect::from_min_size(r.min, vec2(CELL, CELL));
-    p.rect_filled(square, 3.0, t.field);
+    p.rect_filled(square, crate::theme::r(3.0), t.field);
     let inner = square.shrink(3.0);
     if s.solid {
-        p.rect_filled(inner, 1.0, t.text);
+        p.rect_filled(inner, crate::theme::r(1.0), t.text);
     } else {
         let at = |v: &Vec2| pos2(inner.min.x + v.x as f32 * inner.width(), inner.max.y - v.y as f32 * inner.height());
         let stroke = Stroke::new(1.0, t.text);
@@ -83,7 +83,7 @@ fn paint(p: &egui::Painter, r: Rect, s: &Swatch, selected: bool, hovered: bool) 
         (false, true) => Stroke::new(1.0, t.accent),
         _ => Stroke::new(1.0, t.border),
     };
-    p.rect_stroke(square, 3.0, border, egui::StrokeKind::Inside);
+    p.rect_stroke(square, crate::theme::r(3.0), border, egui::StrokeKind::Inside);
     let label = Rect::from_min_max(pos2(r.min.x, square.max.y), r.max);
     let color = if selected { t.accent } else { t.text_dim };
     p.with_clip_rect(label).text(label.center_top() + vec2(0.0, 2.0), Align2::CENTER_TOP, &s.name, crate::theme::small(), color);

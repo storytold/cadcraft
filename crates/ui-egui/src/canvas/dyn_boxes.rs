@@ -1,4 +1,4 @@
-use super::widgets::draw_lock;
+use super::widgets::{draw_lock, rectangle_dims};
 use super::{CadApp, Pos2, Rect, Shape, Stroke, Tokens, Vec2, pos2, vec2};
 
 /// The Dynamic Input tooltip beside the cursor, styled like the command line. At a point prompt
@@ -15,7 +15,13 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             hover
         }
     };
-    let Some(prompt) = app.session.current_prompt() else { return };
+    let Some(prompt) = app.session.current_prompt() else {
+        // At "Command:": the command name being typed.
+        if !app.cmd.buffer.is_empty() {
+            echo_box(p, at, None, &app.cmd.buffer, false);
+        }
+        return;
+    };
     // DYNPROMPT = 0: no prompt beside the cursor (the value boxes stay).
     let show_prompt = app.session.settings.dynprompt;
     let options = show_prompt && !prompt.keywords.is_empty();
@@ -25,7 +31,37 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
         && let Some(c) = app.canvas.cursor
     {
         let message = if show_prompt { crate::i18n::t(&prompt.message) } else { "" };
-        let r = dynamic_input_boxes(p, at, message, &f, &e, c, app.cmd.second_locked(), options, length_units(&app.session));
+        if f.dims
+            && e.format == crate::dyninput::Format::Cartesian
+            && let Some(xf) = app.canvas.xf
+        {
+            rectangle_dims(p, &xf, &f, &e, c, (app.cmd.second_locked(), app.cmd.first_active(&e)), length_units(&app.session));
+            let r = if show_prompt {
+                let t = Tokens::get();
+                let g = p.layout_no_wrap(message.to_owned(), crate::theme::small(), t.text_dim);
+                let hint = if options { OPTIONS_HINT_W } else { 0.0 };
+                let r = tooltip_frame(p, at, vec2(g.size().x + 12.0 + hint, g.size().y + 8.0));
+                let gy = r.center().y - g.size().y / 2.0;
+                p.galley(pos2(r.left() + 6.0, gy), g, t.text_dim);
+                if options {
+                    options_hint(p, r);
+                }
+                r
+            } else {
+                Rect::from_min_size(at, vec2(0.0, 0.0))
+            };
+            options_menu(app, p, r, hover);
+            return;
+        }
+        let r =
+            dynamic_input_boxes(p, at, message, &f, &e, c, (app.cmd.second_locked(), app.cmd.first_active(&e)), options, length_units(&app.session));
+        options_menu(app, p, r, hover);
+        return;
+    }
+    // Text typed at a prompt (a number of sides, a name, an option) shows in a box by the cursor,
+    // so the eyes needn't go to the command line and back.
+    if !app.cmd.buffer.is_empty() {
+        let r = echo_box(p, at, show_prompt.then(|| crate::i18n::t(&prompt.message)), &app.cmd.buffer, options);
         options_menu(app, p, r, hover);
         return;
     }
@@ -44,6 +80,12 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             distance_text(&app.session, base.dist(c)),
             (base.angle_to(c).to_degrees() * 10.0).round() / 10.0
         );
+    } else if prompt.accept.number {
+        // A value without a base point (OFFSET's distance): an empty field for it, not the
+        // cursor's coordinates.
+        let r = echo_box(p, at, Some(crate::i18n::t(&prompt.message)), "", options);
+        options_menu(app, p, r, hover);
+        return;
     } else if let Some(c) = app.canvas.cursor {
         text = format!("{}   {}, {}", crate::i18n::t(&prompt.message), distance_text(&app.session, c.x), distance_text(&app.session, c.y));
     }
@@ -58,7 +100,60 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
     options_menu(app, p, r, hover);
 }
 
+/// The text being typed at the command line, in an input box beside the cursor, after the prompt
+/// (`message`) when there is one; returns the tooltip's rectangle.
+pub(super) fn echo_box(p: &egui::Painter, at: Pos2, message: Option<&str>, typed: &str, options: bool) -> Rect {
+    let t = Tokens::get();
+    let label = message.map(|m| p.layout_no_wrap(format!("{m}:"), crate::theme::small(), t.text_dim));
+    let value = p.layout_no_wrap(typed.to_string(), crate::theme::body(), t.text);
+    let box_size = vec2((value.size().x + 14.0).max(48.0), value.size().y + 6.0);
+    let label_w = label.as_ref().map_or(0.0, |g| g.size().x + 8.0);
+    let hint = if options { OPTIONS_HINT_W } else { 0.0 };
+    let r = tooltip_frame(p, at, vec2(label_w + box_size.x + 10.0 + hint, box_size.y + 8.0));
+    if let Some(g) = label {
+        let y = r.center().y - g.size().y / 2.0;
+        p.galley(pos2(r.left() + 6.0, y), g, t.text_dim);
+    }
+    let b = Rect::from_min_size(pos2(r.left() + 5.0 + label_w, r.top() + 4.0), box_size);
+    p.rect_filled(b, crate::theme::r(2.0), t.field);
+    p.rect_stroke(b, crate::theme::r(2.0), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    let text_at = pos2(b.left() + 5.0, b.center().y - value.size().y / 2.0);
+    let caret_x = text_at.x + value.size().x + 1.0;
+    p.galley(text_at, value, t.text);
+    p.line_segment([pos2(caret_x, b.top() + 3.0), pos2(caret_x, b.bottom() - 3.0)], Stroke::new(1.0, t.text));
+    if options {
+        options_hint(p, r);
+    }
+    r
+}
+
 /// The drawing's length units: (LUNITS, LUPREC).
+/// The prompt and what is typed, beside the pointer away from the drawing area (a name asked
+/// for after a tab's or a ribbon button's command): no coordinates, which belong to the drawing.
+pub(super) fn prompt_beside_pointer(app: &mut CadApp, p: &egui::Painter, hover: Pos2) {
+    app.cmd.option_rows.clear();
+    let at = match app.cmd.options {
+        Some(_) => *app.cmd.options_anchor.get_or_insert(hover),
+        None => {
+            app.cmd.options_anchor = None;
+            hover
+        }
+    };
+    let Some(prompt) = app.session.current_prompt() else { return };
+    let options = !prompt.keywords.is_empty();
+    let message = crate::i18n::t(&prompt.message);
+    let text = if app.cmd.buffer.is_empty() { message.to_string() } else { format!("{message}: {}", app.cmd.buffer) };
+    let t = Tokens::get();
+    let galley = p.layout_no_wrap(text, crate::theme::small(), t.text);
+    let hint = if options { OPTIONS_HINT_W } else { 0.0 };
+    let r = tooltip_frame(p, at, galley.size() + vec2(12.0 + hint, 8.0));
+    p.galley(r.min + vec2(6.0, 4.0), galley, t.text);
+    if options {
+        options_hint(p, r);
+    }
+    options_menu(app, p, r, hover);
+}
+
 pub(crate) fn length_units(session: &cadcraft_engine::Session) -> (i64, i64) {
     session.doc().map(|d| (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4))).unwrap_or((2, 4))
 }
@@ -90,9 +185,11 @@ fn options_menu(app: &mut CadApp, p: &egui::Painter, r: Rect, hover: Pos2) {
     let row_h = rows.iter().map(|g| g.size().y).fold(12.0, f32::max) + 6.0;
     let w = rows.iter().map(|g| g.size().x).fold(60.0, f32::max) + 28.0;
     let h = row_h * rows.len() as f32 + 4.0;
-    let m = Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(w, h));
-    p.rect_filled(m, 3.0, t.cmd_bg);
-    p.rect_stroke(m, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    // Below the crosshair's horizontal arm (the tooltip sits above the cursor, its bottom 14
+    // points above it), so the menu never covers the cursor.
+    let m = Rect::from_min_size(pos2(r.left(), r.bottom() + 28.0), vec2(w, h));
+    p.rect_filled(m, crate::theme::r(3.0), t.cmd_bg);
+    p.rect_stroke(m, crate::theme::r(3.0), Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
     let row_at = |i: usize| Rect::from_min_size(pos2(m.left() + 2.0, m.top() + 2.0 + row_h * i as f32), vec2(w - 4.0, row_h));
     // The row under the pointer is the highlighted one.
     if let Some(i) = (0..menu.keywords.len()).find(|i| row_at(*i).contains(hover)) {
@@ -102,7 +199,7 @@ fn options_menu(app: &mut CadApp, p: &egui::Painter, r: Rect, hover: Pos2) {
     for (i, (g, k)) in rows.into_iter().zip(&menu.keywords).enumerate() {
         let row = row_at(i);
         if i == menu.index {
-            p.rect_filled(row, 2.0, t.cmd_keyword_hover);
+            p.rect_filled(row, crate::theme::r(2.0), t.cmd_keyword_hover);
             p.circle_filled(pos2(row.left() + 9.0, row.center().y), 2.5, t.accent);
         }
         p.galley(pos2(row.left() + 20.0, row.center().y - g.size().y / 2.0), g, t.text);
@@ -114,8 +211,8 @@ fn options_menu(app: &mut CadApp, p: &egui::Painter, r: Rect, hover: Pos2) {
 fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {
     let t = Tokens::get();
     let r = Rect::from_min_size(at + vec2(18.0, -size.y - 14.0), size);
-    p.rect_filled(r, 3.0, t.cmd_bg);
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    p.rect_filled(r, crate::theme::r(3.0), t.cmd_bg);
+    p.rect_stroke(r, crate::theme::r(3.0), Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
     r
 }
 
@@ -131,7 +228,7 @@ fn dynamic_input_boxes(
     f: &crate::dyninput::Frame,
     e: &crate::dyninput::Entry<'_>,
     cursor: Vec2,
-    second_locked: bool,
+    (second_locked, first_active): (bool, bool),
     options: bool,
     (lu, lp): (i64, i64),
 ) -> Rect {
@@ -155,15 +252,9 @@ fn dynamic_input_boxes(
             if e.first.is_empty() { dist(live_first) } else { e.first.to_owned() },
             !e.first.is_empty(),
             e.first_locked().is_some(),
-            !e.split,
+            first_active,
         ),
-        (
-            label_second,
-            if e.second.is_empty() { live_second } else { e.second.to_owned() },
-            !e.second.is_empty(),
-            second_locked,
-            e.split && !second_locked,
-        ),
+        (label_second, if e.second.is_empty() { live_second } else { e.second.to_owned() }, !e.second.is_empty(), second_locked, !first_active),
     ];
 
     let msg = p.layout_no_wrap(message.to_owned(), font.clone(), t.text_dim);
@@ -206,9 +297,9 @@ fn dynamic_input_boxes(
         p.galley(pos2(x, cy - label.size().y / 2.0), label, t.text_faint);
         x += lw + 3.0;
         let b = Rect::from_min_size(pos2(x, cy - box_h / 2.0), vec2(bw, box_h));
-        p.rect_filled(b, 2.0, t.chrome_dark);
+        p.rect_filled(b, crate::theme::r(2.0), t.chrome_dark);
         let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.border) };
-        p.rect_stroke(b, 2.0, stroke, egui::StrokeKind::Inside);
+        p.rect_stroke(b, crate::theme::r(2.0), stroke, egui::StrokeKind::Inside);
         let vw = value.size().x;
         p.galley(pos2(b.left() + 5.0, cy - value.size().y / 2.0), value, t.text);
         if active {
