@@ -84,6 +84,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(has_doc)
             .noundo(),
         battman::battman_spec(),
+        CommandSpec::new("blockdef.entities", "Block Definition Entities", run_blockdef_entities)
+            .params("{name} | {insert: handle (a block reference: its definition)} , type?, layer?, limit? (default 500), offset? \
+                     → {count, returned, offset, block: {name, base, anonymous, entities}, insert?: {handle, at, scale, rotation}, entities: [...]}: \
+                     the definition's own objects, read-only — anonymous definitions (*U…) too, which the Block Editor refuses")
+            .enabled(has_doc)
+            .noundo(),
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
         burst::burst_spec(),
@@ -483,6 +489,58 @@ fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let blocks = d.blocks.values().filter(|b| include_anonymous || !b.anonymous).map(|b| block(b)).collect::<Vec<_>>();
     Ok(json!({ "count": blocks.len(), "blocks": blocks }))
+}
+
+/// BLOCKDEF.ENTITIES: a block definition's own objects, read-only — including the anonymous ones
+/// (`*U…`) the Block Editor refuses to open. Given a reference's handle (`insert`), the
+/// definition it shows, with where the reference places it.
+fn run_blockdef_entities(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "blockdef.entities";
+    let given = |k: &str| p.get(k).filter(|v| !v.is_null());
+    let count = |k: &str, default: usize| -> Result<usize> {
+        given(k).map_or(Ok(default), |v| {
+            v.as_u64().map(|n| usize::try_from(n).unwrap_or(usize::MAX)).ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number, 0 or more")))
+        })
+    };
+    let ty = given("type").map(|v| v.as_str().map(str::to_ascii_lowercase).ok_or_else(|| bad(CMD, "`type` must be a string"))).transpose()?;
+    let layer = given("layer").map(|v| v.as_str().map(str::to_ascii_lowercase).ok_or_else(|| bad(CMD, "`layer` must be a string"))).transpose()?;
+    let limit = count("limit", 500)?;
+    let offset = count("offset", 0)?;
+    let d = s.doc()?;
+    let (name, insert) = if let Some(v) = given("insert") {
+        let h = v
+            .as_str()
+            .and_then(Handle::parse_hex)
+            .or_else(|| v.as_u64().map(Handle))
+            .ok_or_else(|| bad(CMD, format!("`insert`: {v} is not an object handle")))?;
+        let e = d.entity(h).ok_or_else(|| bad(CMD, format!("no object {}", h.hex())))?;
+        let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, "`insert` must be a block reference")) };
+        (
+            i.block.clone(),
+            Some(json!({ "handle": h.hex(), "at": [i.insert.x, i.insert.y], "scale": [i.scale.x, i.scale.y], "rotation": i.rotation.to_degrees() })),
+        )
+    } else if let Some(v) = given("name") {
+        (v.as_str().ok_or_else(|| bad(CMD, "`name` must be a string"))?.to_string(), None)
+    } else {
+        return Err(bad(CMD, "`name` or `insert` is required"));
+    };
+    let block = d.block(&name).ok_or_else(|| bad(CMD, format!("Block \"{name}\" not found.")))?;
+    let matches: Vec<_> = block
+        .entities
+        .iter()
+        .filter(|e| ty.as_ref().is_none_or(|t| e.kind.type_name().to_ascii_lowercase() == *t || e.kind.dxf_name().to_ascii_lowercase() == *t))
+        .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
+        .collect();
+    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| super::inquiry::entity_summary(d, e)).collect();
+    let mut out = json!({
+        "count": matches.len(), "returned": page.len(), "offset": offset,
+        "block": { "name": block.name, "base": [block.base.x, block.base.y], "anonymous": block.anonymous, "entities": block.entities.len() },
+        "entities": page,
+    });
+    if let (Some(i), Some(o)) = (insert, out.as_object_mut()) {
+        o.insert("insert".into(), i);
+    }
+    Ok(out)
 }
 
 /// A dynamic block's parameters and actions as read from the file (null for a block that has
