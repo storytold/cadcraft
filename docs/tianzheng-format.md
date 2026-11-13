@@ -17,6 +17,8 @@
 
 4. **真实生产图纸的墙几何在 proxy graphics 的类型 6 图元**（acadrust `ProxyGraphicRecord::Unknown{record_type:6}`），payload 52 字节 = `u32 顶点数(=2) + 起点(X1,Y1,Z1) + 终点(X2,Y2,Z2)`，6 个 double LE。墙 = 多个类型 6 图元（每段路径一个；简单墙 2 段、复杂墙 18 段）。坐标是建筑坐标 mm（如 X=137026.85/Y=4505.88），双线墙间距=墙厚 240mm。已实现 `cadcraft_dwg::tianzheng::extract_wall_segments` 提取（commit `aa85032`）。**binary 格式（TIANZHENTEST）graphic_data 仅 8 字节，几何在 text 流加密固定字段**（`decrypt_field` 解密得 ASCII 数字）。
 
+5. **binary 字段命名方法**：字段名（`T20xx`）是字符串常量，被 getter/setter 函数引用，函数名即语义（`feature_find` 搜字段名 → 找 `Get/Set…@TDbWall`）。`TDbWall`(TCH_WALL) 字段映射：`T20b2`=HatchPattern 类型(byte)、`T20b3`=LineHatch 线填充标志、`T20s4`=HatchPattern 名("实心材料")、`T20u6`=HatchColor 填充颜色、`T20s14`=WallMat 墙材料("砖墙")、`T20s1`=Grade 等级("A级")、`T20u11`/`T20u16`=InsulateLine 保温层线、`T20d7`=OutCircleTextAlignment、`T20d12`=SourceExtentY。故 binary 的 TCH_WALL 字段是「填充/保温/材料」**属性**，几何不在 T20 字段（在加密固定字段 + proxy graphics）。
+
 ## 1. 概述
 
 天正 T20（Tangent）在 DWG 中通过 ObjectARX 自定义实体（代理实体 proxy entity，DXF 类名 `TCH_*`）存储建筑 / 结构 / 给排水 / 暖通 / 电气对象。不经过天正运行时，第三方 CAD 只能看到 `ACAD_PROXY_ENTITY`，读不到真实几何与属性。
