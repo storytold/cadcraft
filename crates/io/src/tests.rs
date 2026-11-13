@@ -3736,3 +3736,25 @@ fn dangling_block_refs_names_the_blocks_the_file_would_drop() {
     assert!(dangling_block_refs(&claimed).is_empty());
     assert!(write_dxf(&claimed).lines().any(|l| l.trim() == "*D500"), "a claimed block is written");
 }
+
+#[test]
+fn dangling_block_refs_skips_the_records_a_dropped_block_takes_with_it() {
+    let mut d = Drawing::new_metric();
+    // *D500 and *D600 are both dropped by the save. A raw record inside the dropped *D500 names
+    // *D600: neither record nor target is in the saved file, so nothing about them dangles in it.
+    let mut holder = Block::new("*D500");
+    holder.entities.push(Entity {
+        handle: d.new_handle(),
+        common: Common::default(),
+        kind: EntityKind::Unknown(Unknown {
+            dxf_type: "LARGE_RADIAL_DIMENSION".into(),
+            tags: vec![RawTag { code: 2, value: "*D600".into() }, RawTag { code: 8, value: "0".into() }],
+        }),
+    });
+    d.blocks.insert("*D500".into(), std::sync::Arc::new(holder));
+    let mut dropped = Block::new("*D600");
+    let h = d.new_handle();
+    dropped.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    d.blocks.insert("*D600".into(), std::sync::Arc::new(dropped));
+    assert!(dangling_block_refs(&d).is_empty());
+}

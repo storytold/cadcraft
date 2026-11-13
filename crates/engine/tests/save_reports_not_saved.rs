@@ -364,3 +364,49 @@ fn ole_objects_are_not_reported() {
         assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
     }
 }
+
+#[test]
+fn the_dangling_report_counts_the_host_drawing_while_a_block_is_edited() {
+    use cadcraft_engine::cmd::file::set_dangling_blocks;
+
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    set_write_as(|_, _, _: &SaveAs| Ok(b"0\nEOF\n".to_vec()));
+    set_dangling_blocks(|d| {
+        serde_json::json!(
+            cadcraft_io::dangling_block_refs(d)
+                .iter()
+                .map(|x| serde_json::json!({ "code": "DANGLING_BLOCK_REF", "handle": x.handle, "entity": x.entity, "block": x.block }))
+                .collect::<Vec<_>>()
+        )
+    });
+    let mut d = Drawing::new_imperial();
+    let mut b = Block::new("*D500");
+    let h = d.new_handle();
+    b.entities.push(cadcraft_engine::doc::Entity {
+        handle: h,
+        common: Common::default(),
+        kind: EntityKind::Line(cadcraft_engine::doc::Line {
+            a: cadcraft_engine::geom::Vec3::ZERO,
+            b: cadcraft_engine::geom::Vec3::new(1.0, 0.0, 0.0),
+        }),
+    });
+    d.blocks.insert("*D500".into(), std::sync::Arc::new(b));
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Unknown(Unknown {
+            dxf_type: "LARGE_RADIAL_DIMENSION".into(),
+            tags: vec![RawTag { code: 2, value: "*D500".into() }, RawTag { code: 8, value: "0".into() }],
+        }),
+    )
+    .unwrap();
+    d.blocks.insert("Door".into(), std::sync::Arc::new(Block::new("Door")));
+    let mut s = Session::empty();
+    s.open_drawing(d, "dangling-edit.dxf", None);
+    s.execute("bedit", &json!({ "name": "Door" })).unwrap();
+
+    // document.bytes writes the drawing itself, which waits in the editor while `doc` is the
+    // editor's copy: the report reads the drawing the file holds, editor or not.
+    let r = s.execute("document.bytes", &json!({ "format": "dxf" })).unwrap();
+    assert_eq!(r["danglingBlockRefs"][0]["block"], json!("*D500"), "{r}");
+}

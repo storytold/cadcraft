@@ -156,7 +156,12 @@ pub fn dangling_block_refs(d: &Drawing) -> Vec<DanglingBlockRef> {
     };
     // Entity classes whose group 2 names their geometry block, as DIMENSION's does.
     const GEOMETRY_BLOCK: [&str; 3] = ["DIMENSION", "ARC_DIMENSION", "LARGE_RADIAL_DIMENSION"];
-    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    // A block the save omits entirely (an unclaimed `*D` the writer drops) takes its records with
+    // it: a raw record inside it names a block the saved file will never miss, so it is not a
+    // dangling reference of the save.
+    let stores = std::iter::once(&d.model)
+        .chain(d.layouts.iter().map(|l| &l.entities))
+        .chain(d.blocks.values().filter(|b| !dropped(&b.name)).map(|b| &b.entities));
     let mut out = Vec::new();
     for e in stores.flat_map(|s| s.iter()) {
         let EntityKind::Unknown(u) = &e.kind else { continue };

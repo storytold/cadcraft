@@ -787,7 +787,9 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = save_options("document.bytes", p)?;
     let version = opts.version.unwrap_or_else(|| drawing_version(s, &format!("drawing.{fmt}")));
     let lost = not_saved_as(s.doc()?, version);
-    let dangling = if fmt.eq_ignore_ascii_case("dxf") { dangling_blocks(s.doc()?) } else { json!([]) };
+    // The writer saves the drawing itself (`state.drawing`), which waits in the Block Editor
+    // while `doc` is the editor's copy: the report reads the drawing the file will hold.
+    let dangling = if fmt.eq_ignore_ascii_case("dxf") { dangling_blocks(s.state()?.drawing()) } else { json!([]) };
     let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
@@ -1011,8 +1013,9 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     let version = asked.unwrap_or_else(|| drawing_version(s, &path));
     let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
     // A DXF's block references the file wouldn't resolve, said before the save runs, on the
-    // same drawing (the save doesn't change which blocks the drawing's records name).
-    let dangling = if is_dxf_file(&path) { s.doc().map(dangling_blocks).unwrap_or_else(|_| json!([])) } else { json!([]) };
+    // drawing the file will hold (`state.drawing`, not the Block Editor's copy the `doc` is
+    // while it is open): the save doesn't change which blocks the drawing's records name.
+    let dangling = if is_dxf_file(&path) { s.state().map(|st| dangling_blocks(st.drawing())).unwrap_or_else(|_| json!([])) } else { json!([]) };
     let folder = new_folder(&path);
     let mut r = run(s, p)?;
     report_new_folder(s, &mut r, folder);
