@@ -79,6 +79,10 @@ pub struct Tianzheng {
     /// 原 `Unknown` 实体的 DXF 类型名（如 `ACAD_PROXY_ENTITY`），保存时按原样回写。
     #[serde(default)]
     pub dxf_type: String,
+    /// 墙的几何线段（`(x1,y1,z1,x2,y2,z2)`，建筑坐标），从 proxy graphics 类型 6 图元提取；
+    /// 非墙实体或 binary 格式（几何在加密固定字段）为空。
+    #[serde(default, skip)]
+    pub segments: Vec<(f64, f64, f64, f64, f64, f64)>,
 }
 
 impl Unknown {

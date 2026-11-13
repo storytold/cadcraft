@@ -135,6 +135,26 @@ mod native {
         Ok(entities)
     }
 
+    /// 从 proxy graphics 提取墙的几何线段（类型 6 图元）。
+    ///
+    /// 真实生产图纸（XML 自描述）的墙几何在 proxy graphics 的类型 6 图元里，每个图元是墙的
+    /// 一段：payload 52 字节 = u32 顶点数(2) + 起点 (X1,Y1,Z1) + 终点 (X2,Y2,Z2)，6 个
+    /// double（LE）。返回 `(x1,y1,z1,x2,y2,z2)` 列表，按图元出现顺序（墙 = 多段线）。
+    /// binary 格式（TIANZHENTEST）的 graphic_data 仅 8 字节，几何在 text 流加密固定字段，本函数返回空。
+    pub fn extract_wall_segments(graphic_data: &[u8]) -> Vec<(f64, f64, f64, f64, f64, f64)> {
+        let Some(g) = acadrust::entities::ProxyGraphics::decode(graphic_data) else { return Vec::new(); };
+        let mut segs = Vec::new();
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type: 6, data } = r {
+                if data.len() >= 52 {
+                    let d = |off: usize| f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+                    segs.push((d(4), d(12), d(20), d(28), d(36), d(44)));
+                }
+            }
+        }
+        segs
+    }
+
     /// 从天正实体的 `raw_data` 提取 text 流（含字段容器明文 + 加密字段）。
     ///
     /// text 流在 DWG merged record 的布局 `[main][text][modular_short][flag][handles]` 中，
@@ -457,7 +477,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
+pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity};
 
 #[cfg(test)]
 mod tests {

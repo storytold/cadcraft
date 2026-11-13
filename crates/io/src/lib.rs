@@ -243,6 +243,8 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
         let fields = cadcraft_dwg::tianzheng::extract_text_stream(&e.raw_data, e.handle_bits)
             .map(|text| cadcraft_dwg::tianzheng::parse_tianzheng_fields(&text))
             .unwrap_or_default();
+        // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
+        let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
         let handle = cadcraft_doc::Handle(e.handle);
         let class_name = e.dxf_class.clone();
         let raw_data = e.raw_data.clone();
@@ -258,6 +260,7 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                     handle_bits,
                     tags,
                     dxf_type,
+                    segments: segments.clone(),
                 });
             }
         });
