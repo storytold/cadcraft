@@ -287,8 +287,17 @@ fn readability_counts_spaces_definitions_and_missing_references() {
     assert_eq!(r["textsInBlockDefs"], json!(1));
     assert_eq!(r["textsInBlocks"], json!(3), "one per placed reference");
     let unreachable = r["unreachable"].as_array().unwrap();
+    // What the missing references are, so a pipeline can judge them without the drawing: the
+    // block, the entities that place one, their layers, and where on the sheet they sit.
     let missing = unreachable.iter().find(|u| u["kind"] == "missingBlock").unwrap();
+    assert_eq!(missing["code"], json!("MISSING_BLOCK"));
     assert_eq!(missing["count"], json!(2));
+    assert_eq!(missing["blockNames"], json!(["Ghost"]));
+    assert_eq!(missing["handles"], json!(["2C0", "2C1"]));
+    assert_eq!(missing["layers"], json!(["frame"]));
+    assert_eq!(missing["insertPointsBBox"], json!({ "min": [-20.0, 50.0], "max": [100.0, 480.0] }));
+    // Every entry carries its machine-readable code.
+    assert!(unreachable.iter().all(|u| u["code"].is_string()), "{unreachable:?}");
 
     // The drawn text keeps its raw form: `%%c` intact as stored, decoded as drawn (⌀, so a
     // `contains` filter matches what the sheet shows, not what the file stores).

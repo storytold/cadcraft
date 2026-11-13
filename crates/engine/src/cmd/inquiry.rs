@@ -54,7 +54,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{} → {modelEntities, layoutEntities, blockDefs, anonymousDefs, anonymousRefs, missingBlockRefs, \
                      proxy: {acadProxy, ole2Frame, arcDimension, other, withDrawable, classes: [{class, app?, count, drawable, records, unparsed, drawableChunks}]}, \
                      textsInModel, textsInLayouts, textsInBlocks (per placed reference), textsInBlockDefs (per definition), \
-                     unreachable: [{kind, count, reason}], truncated, selfCheck, message}")
+                     unreachable: [{kind, code, count, reason, …missingBlock: blockNames, handles (≤256), layers, insertPointsBBox}], \
+                     truncated, selfCheck, message}")
             .noundo(),
         CommandSpec::new("entities", "Query Entities", run_entities)
             .params("{type?, layer?, selected?: bool (default false; true = current selection in active space), window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit?, offset?} → {count (all matches), returned, offset, entities}")
@@ -1036,9 +1037,18 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut x = count::Expander::new(d);
     let mut anonymous_refs = 0u64;
     let mut missing_refs = 0u64;
+    // The missing references as placed, for the entry that says what they are: which block, which
+    // entities place one, on which layers, and the envelope of their insertion points — the
+    // definition is missing, so its placed extent is unknowable; where its points sit says how
+    // much of the sheet the unread content covers (nested-only missing references have no placed
+    // entity of their own and keep to the count).
+    let mut missing_at: Vec<(String, Handle, String, Vec2)> = Vec::new();
     for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
         if let EntityKind::Insert(i) = &e.kind {
             let name = x.canonical(&i.block);
+            if d.block(&name).is_none() {
+                missing_at.push((name.clone(), e.handle, e.common.layer.clone(), i.insert.xy()));
+            }
             let copies = u64::from(i.cols.max(1)) * u64::from(i.rows.max(1));
             count_refs(d, &mut x, &name, copies, &mut anonymous_refs, &mut missing_refs);
         }
@@ -1104,25 +1114,89 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
         depth_capped |= w.depth_capped;
     }
 
-    // What stays out of reach, and why.
+    // What stays out of reach, and why. `code` is the machine-readable name (`reason` is for
+    // people): a pipeline decides on it without parsing English.
     let mut unreachable: Vec<Value> = Vec::new();
     let mut check = SelfCheck::new();
     check.found((model_entities + layout_entities) as u64);
     check.analyzed((model_entities + layout_entities) as u64);
-    let out_of_reach = |list: &mut Vec<Value>, check: &mut SelfCheck, kind: &str, count: u64, reason: &str| {
+    let out_of_reach = |list: &mut Vec<Value>, check: &mut SelfCheck, kind: &str, code: &str, count: u64, reason: &str| {
         if count > 0 {
-            list.push(json!({ "kind": kind, "count": count, "reason": reason }));
+            list.push(json!({ "kind": kind, "code": code, "count": count, "reason": reason }));
             check.skip(kind, reason, count);
         }
     };
-    out_of_reach(&mut unreachable, &mut check, "missingBlock", missing_refs, "placed copies of a reference to a block the drawing does not define");
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "missingBlock",
+        "MISSING_BLOCK",
+        missing_refs,
+        "placed copies of a reference to a block the drawing does not define",
+    );
+    if let Some(entry) = unreachable.last_mut().and_then(Value::as_object_mut).filter(|_| !missing_at.is_empty()) {
+        // How many handles the entry lists: enough to place and cross-check every reference of a
+        // whole title-block run, without an entry per reference bloating a huge drawing's report.
+        const MAX_HANDLES: usize = 256;
+        let mut names: Vec<&str> = missing_at.iter().map(|(n, _, _, _)| n.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        let mut layers: Vec<&str> = missing_at.iter().map(|(_, _, l, _)| l.as_str()).collect();
+        layers.sort_unstable();
+        layers.dedup();
+        let handles: Vec<String> = missing_at.iter().map(|(_, h, _, _)| h.hex()).take(MAX_HANDLES).collect();
+        let mut x0 = f64::INFINITY;
+        let mut y0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for (_, _, _, p) in &missing_at {
+            x0 = x0.min(p.x);
+            y0 = y0.min(p.y);
+            x1 = x1.max(p.x);
+            y1 = y1.max(p.y);
+        }
+        entry.insert("blockNames".into(), json!(names));
+        entry.insert("handles".into(), json!(handles));
+        entry.insert("layers".into(), json!(layers));
+        // The insertion points' envelope, named for what it is: the block's own extent is
+        // unknowable without its definition.
+        entry.insert("insertPointsBBox".into(), json!({ "min": [x0, y0], "max": [x1, y1] }));
+    }
     let xref_not_loaded = d.blocks.values().filter(|b| b.xref_path.is_some() && b.entities.is_empty()).count() as u64;
-    out_of_reach(&mut unreachable, &mut check, "xrefNotLoaded", xref_not_loaded, "an external reference whose drawing is not loaded");
-    out_of_reach(&mut unreachable, &mut check, "proxyDrawable", with_drawable, "proxy graphics that draw; kept as raw records, not as entities");
-    out_of_reach(&mut unreachable, &mut check, "proxyNoGraphics", no_graphics, "a proxy without graphics data: neither readable nor drawable");
-    out_of_reach(&mut unreachable, &mut check, "ole2Frame", ole_frames, "an embedded OLE picture");
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "xrefNotLoaded",
+        "XREF_NOT_LOADED",
+        xref_not_loaded,
+        "an external reference whose drawing is not loaded",
+    );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyDrawable",
+        "PROXY_DRAWABLE",
+        with_drawable,
+        "proxy graphics that draw; kept as raw records, not as entities",
+    );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyNoGraphics",
+        "PROXY_NO_GRAPHICS",
+        no_graphics,
+        "a proxy without graphics data: neither readable nor drawable",
+    );
+    out_of_reach(&mut unreachable, &mut check, "ole2Frame", "OLE2_FRAME", ole_frames, "an embedded OLE picture");
     let skipped_records: usize = d.skipped_records.values().sum();
-    out_of_reach(&mut unreachable, &mut check, "skippedRecords", skipped_records as u64, "records the file reader could not place");
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "skippedRecords",
+        "SKIPPED_RECORDS",
+        skipped_records as u64,
+        "records the file reader could not place",
+    );
     if truncated {
         check.cap("textHits", MAX_TEXT_HITS as u64);
     }
