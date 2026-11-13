@@ -79,7 +79,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["pu", "-purge"])
             .params("{type?: all|blocks|dimstyles|groups|layers|linetypes|mleaderstyles|tablestyles|textstyles|zerolength|emptytext (default all: every named type), names?: \"A*,B\" (default *)} → purged")
             .interactive(|_| Ok(Box::new(purge::PurgeM::default()))),
-        CommandSpec::new("blocks.list", "List Blocks", run_list).enabled(has_doc).noundo(),
+        CommandSpec::new("blocks.list", "List Blocks", run_list)
+            .params("{includeAnonymous?: bool (default false: the `*`-named definitions a drawing makes for its own objects stay hidden)} → {blocks: [{name, entities, base, description, dynamic, anonymous, refs (references in every space and definition)}]}")
+            .enabled(has_doc)
+            .noundo(),
         battman::battman_spec(),
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
@@ -442,16 +445,44 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
+/// Direct references to each block, from every space and every definition: `name` → how many
+/// block references point at it (a MINSERT grid counts per cell, nested references where they
+/// sit). Anonymous definitions are referenced too — a reader reaches them by name, which is what
+/// this count is for.
+fn reference_counts(d: &cadcraft_doc::Drawing) -> std::collections::BTreeMap<String, u64> {
+    let mut refs: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let count = |i: &Insert, refs: &mut std::collections::BTreeMap<String, u64>| {
+        let name = d.block(&i.block).map_or_else(|| i.block.clone(), |b| b.name.clone());
+        let copies = u64::from(i.cols.max(1)).saturating_mul(u64::from(i.rows.max(1)));
+        let v = refs.entry(name).or_default();
+        *v = v.saturating_add(copies);
+    };
+    let stores = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));
+    for e in stores {
+        if let EntityKind::Insert(i) = &e.kind {
+            count(i, &mut refs);
+        }
+    }
+    refs
+}
+
+fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    let include_anonymous = bool_or(p, "includeAnonymous", false);
     // One object index for the whole listing: rebuilding it per block multiplies the block count
     // by the drawing's kept object count (CWE-407).
     let objects = cadcraft_doc::dynblock::ObjectIndex::new(d);
+    let refs = reference_counts(d);
     let block = |b: &Block| {
         let dynamic = cadcraft_doc::dynblock::is_dynamic_block_in(d, &objects, &b.name);
-        json!({"name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y], "description": b.description, "dynamic": dynamic})
+        json!({
+            "name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y],
+            "description": b.description, "dynamic": dynamic,
+            "anonymous": b.anonymous, "refs": refs.get(&b.name).copied().unwrap_or(0),
+        })
     };
-    Ok(json!({ "blocks": d.blocks.values().filter(|b| !b.anonymous).map(|b| block(b)).collect::<Vec<_>>() }))
+    let blocks = d.blocks.values().filter(|b| include_anonymous || !b.anonymous).map(|b| block(b)).collect::<Vec<_>>();
+    Ok(json!({ "count": blocks.len(), "blocks": blocks }))
 }
 
 /// A dynamic block's parameters and actions as read from the file (null for a block that has
