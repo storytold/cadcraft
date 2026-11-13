@@ -56,7 +56,7 @@ pub(crate) fn expand(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
             }
             let Some(g) = d.groups.get(*gi) else { continue };
             for m in &g.members {
-                if store.get(*m).is_some_and(|e| d.is_visible(e)) && seen.insert(*m) {
+                if store.get(*m).is_some_and(|e| crate::select::selectable(d, e)) && seen.insert(*m) {
                     out.push(*m);
                 }
             }

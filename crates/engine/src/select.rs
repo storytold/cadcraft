@@ -152,8 +152,17 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether a selection may take `e` in: a visible object that commands can edit. A proxy (or
+/// another record CADCraft keeps as it was read) is drawn and snapped to, but never selected:
+/// commands can't edit it, and saving writes its record as it was read.
+pub(crate) fn selectable(d: &Drawing, e: &Entity) -> bool {
+    d.is_visible(e) && !kept_as_read(&e.kind)
+}
+
+/// Whether `k` is a record CADCraft keeps as it was read and commands can't edit: every
+/// [`EntityKind::Unknown`] but an OLE2FRAME, which moves and scales with its frame.
+pub(crate) fn kept_as_read(k: &EntityKind) -> bool {
+    matches!(k, EntityKind::Unknown(u) if !u.is_ole_frame())
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -380,7 +389,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.
@@ -519,7 +528,8 @@ mod tests {
     #[test]
     fn clicking_an_ole_frame_edge_selects_it() {
         let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
-        let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let frame =
+            |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
         let mut d = Drawing::new_metric();
         let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
         d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();

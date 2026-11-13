@@ -219,14 +219,18 @@ fn type_matches(e: &Entity, ty: Option<&str>) -> bool {
     }
 }
 
-/// The candidate objects: the whole edit space, or the current selection.
+/// The candidate objects: the whole edit space (without proxies, which no selection takes in), or
+/// the current selection.
 fn candidates(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     let apply = str_param(p, "applyTo").unwrap_or("drawing").to_ascii_lowercase();
     if apply.starts_with("sel") || apply == "current" {
         return Ok(s.selection());
     }
     let space = s.space();
-    Ok(s.doc()?.space(&space).map(|st| st.iter().take(MAX_SCAN).map(|e| e.handle).collect()).unwrap_or_default())
+    Ok(s.doc()?
+        .space(&space)
+        .map(|st| st.iter().take(MAX_SCAN).filter(|e| !crate::select::kept_as_read(&e.kind)).map(|e| e.handle).collect())
+        .unwrap_or_default())
 }
 
 fn run_qselect(s: &mut Session, p: &Value) -> Result<Value> {

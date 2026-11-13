@@ -62,6 +62,7 @@ mod plot_model_png_scale;
 mod plot_styles;
 mod polyface_roundtrip;
 mod portable_fonts;
+mod proxy_graphics;
 mod region_roundtrip;
 mod roundtrip;
 mod roundtrip_audit;

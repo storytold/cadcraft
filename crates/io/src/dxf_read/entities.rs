@@ -323,6 +323,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         other => EntityKind::Unknown(Unknown {
             dxf_type: other.to_string(),
             tags: tags.iter().map(|tg| RawTag { code: tg.code, value: tg.str() }).collect(),
+            graphics: Vec::new(),
         }),
     };
     Some((c, k))
@@ -482,6 +483,10 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
+        // Its proxy graphics, with the table indices resolved while the file's order is known.
+        ("ACAD_PROXY_ENTITY", EntityKind::Unknown(u)) => {
+            u.graphics = cadcraft_doc::proxy_entities(&u.proxy_graphics_bytes(), &rx.proxy_tables, h);
+        }
         ("DIMENSION", EntityKind::Dimension(dm)) => {
             dm.overrides = crate::dxf_ext::read_dstyle(tags, &rx.styles, &rx.brs, &rx.ltypes);
             dm.assoc = crate::dxf_ext::read_assoc(tags);

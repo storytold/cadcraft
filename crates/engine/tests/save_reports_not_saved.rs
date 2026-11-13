@@ -8,7 +8,7 @@ use cadcraft_engine::doc::{Block, Common, Drawing, EntityKind, RawTag, Space, Un
 use serde_json::json;
 
 fn unknown(kind: &str) -> EntityKind {
-    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }] })
+    EntityKind::Unknown(Unknown { dxf_type: kind.into(), tags: vec![RawTag { code: 8, value: "0".into() }], graphics: Vec::new() })
 }
 
 #[test]
@@ -129,6 +129,7 @@ fn proxy_entities_are_reported_only_before_2013() {
                 RawTag { code: 90, value: "498".into() },
                 RawTag { code: 91, value: class.to_string() },
             ],
+            graphics: Vec::new(),
         })
     };
     let mut d = Drawing::new_imperial();
@@ -190,6 +191,7 @@ fn saving_sat_text_solids_as_dxf_2013_reports_them() {
             RawTag { code: 1, value: "400 1 1 0".into() },
             RawTag { code: 3, value: "End-of-ACIS-data".into() },
         ],
+        graphics: Vec::new(),
     });
     d.add(&Space::Model, Common::default(), sat).unwrap();
     let mut s = Session::empty();
@@ -219,7 +221,7 @@ fn a_dxf_2013_loss_is_known_before_saving() {
     set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
     let sat = |d: &mut Drawing| {
         let tags = vec![RawTag { code: 8, value: "0".into() }, RawTag { code: 1, value: "400 1 1 0".into() }];
-        d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "REGION".into(), tags })).unwrap();
+        d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "REGION".into(), tags, graphics: Vec::new() })).unwrap();
     };
     let mut modern = Drawing::new_imperial();
     modern.header.set_str("ACADVER", "AC1032");
@@ -255,6 +257,7 @@ fn the_note_counts_the_host_drawing_while_a_block_is_edited() {
             RawTag { code: 1, value: "400 1 1 0".into() },
             RawTag { code: 3, value: "End-of-ACIS-data".into() },
         ],
+        graphics: Vec::new(),
     });
     d.add(&Space::Model, Common::default(), sat).unwrap();
     d.blocks.insert("Door".into(), std::sync::Arc::new(Block::new("Door")));
@@ -275,7 +278,7 @@ fn the_note_counts_the_host_drawing_while_a_block_is_edited() {
 fn a_dwg_keeps_sat_text_solids_only_before_2013() {
     use cadcraft_engine::cmd::file::{Version, not_saved_as};
     let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
-    let solid = |tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: "3DSOLID".into(), tags });
+    let solid = |tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: "3DSOLID".into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "400 1 1 0")])).unwrap();
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(70, "1")])).unwrap();
