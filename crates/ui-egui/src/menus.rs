@@ -736,9 +736,14 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 }
 
 pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
+    /// A submenu with more items than this scrolls, so that it stays on the screen.
+    const LONG_SUBMENU: usize = 24;
+    const LONG_SUBMENU_HEIGHT: f32 = 480.0;
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
+            // An item named after its command (Recent Commands, LISP Commands) shows that name:
+            // only the interface's own text is translated.
+            let mut b = egui::Button::new(if *label == id.to_ascii_uppercase() { label.as_str() } else { crate::i18n::t(label) });
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
@@ -749,8 +754,15 @@ pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String
         }
         Entry::Sub { label, children } => {
             ui.menu_button(crate::i18n::menu(label), |ui| {
-                for c in children {
-                    entry_ui(ui, c, clicked);
+                let mut list = |ui: &mut egui::Ui| {
+                    for c in children {
+                        entry_ui(ui, c, clicked);
+                    }
+                };
+                if children.len() > LONG_SUBMENU {
+                    egui::ScrollArea::vertical().id_salt(label).max_height(LONG_SUBMENU_HEIGHT).show(ui, |ui| list(ui));
+                } else {
+                    list(ui);
                 }
             });
         }
@@ -1195,5 +1207,47 @@ mod units_dialog_tests {
         assert!(app.ui.dialog.is_none(), "JSON calls never open dialogs");
         let h = &app.session.doc().unwrap().header;
         assert_eq!((h.i64("LUNITS", 0), h.i64("LUPREC", 0), h.i64("INSUNITS", 0)), (4, 3, 4));
+    }
+}
+
+#[cfg(test)]
+mod entry_ui_tests {
+    use super::{Entry, entry_ui};
+    use egui::vec2;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    fn item(label: &str, id: &str) -> Entry {
+        Entry::Item { label: label.into(), id: id.into(), shortcut: None, enabled: true }
+    }
+
+    fn harness(e: Entry) -> Harness<'static> {
+        Harness::builder().with_size(vec2(600.0, 768.0)).build_ui(move |ui| {
+            let mut clicked = None;
+            crate::i18n::with_language("es", || entry_ui(ui, &e, &mut clicked));
+        })
+    }
+
+    /// A command's name is not interface text; the same text as a menu's own label is.
+    #[test]
+    fn an_item_named_after_its_command_is_not_translated() {
+        let h = harness(item("TOP", "top"));
+        assert!(h.query_all_by_label("TOP").next().is_some());
+        let h = harness(item("TOP", "view.top"));
+        assert!(h.query_all_by_label("SUP.").next().is_some());
+    }
+
+    /// A long submenu's window stays shorter than the list, which would not fit on the screen.
+    #[test]
+    fn a_long_submenu_scrolls() {
+        let children = (0..60).map(|k| item(&format!("PIDZ{k:02}"), &format!("pidz{k:02}"))).collect();
+        let mut h = harness(Entry::Sub { label: "Long".into(), children });
+        h.get_by_label("Long").click();
+        h.run_steps(4);
+        assert!(h.query_all_by_label("PIDZ59").next().is_some(), "the submenu opened");
+        let tallest = h.ctx.memory(|m| {
+            m.layer_ids().filter(|l| l.order == egui::Order::Foreground).filter_map(|l| m.area_rect(l.id)).map(|r| r.height()).fold(0.0, f32::max)
+        });
+        assert!(tallest < 600.0, "tallest window: {tallest}");
     }
 }

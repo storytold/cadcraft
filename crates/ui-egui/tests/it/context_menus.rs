@@ -241,3 +241,48 @@ fn time_sensitive_right_click() {
     assert!(app.session.running.is_none(), "a quick right-click is Enter: {}", app.session.prompt_text());
     assert_eq!(app.session.doc().unwrap().model.handles().len(), 1);
 }
+
+#[test]
+fn idle_menu_lists_and_repeats_lisp_commands() {
+    let mut app = app();
+    assert!(!labels(&context_menu::entries(&app)).iter().any(|x| x.starts_with("LISP Commands/")), "no LISP loaded");
+    app.cmdline("(defun c:pidinst () (setq *ran* (1+ (if *ran* *ran* 0))) (princ))");
+    app.cmdline("(defun c:pidlinea () (princ))");
+    app.cmdline("PIDINST");
+    let g = context_menu::entries(&app);
+    let l = labels(&g);
+    assert_eq!(l.first().map(String::as_str), Some("Repeat PIDINST"));
+    assert!(l.iter().any(|x| x == "Recent Commands/PIDINST"), "{l:?}");
+    let lisp: Vec<_> = l.iter().filter(|x| x.starts_with("LISP Commands/")).collect();
+    assert_eq!(lisp, ["LISP Commands/PIDINST", "LISP Commands/PIDLINEA"]);
+    // The command line's menu lists it under Recent Commands too.
+    assert!(labels(&cadcraft_ui_egui::shortcut_menus::command_line_entries(&app)).iter().any(|x| x == "Recent Commands/PIDINST"));
+    // Choosing an item runs the LISP command.
+    context_menu::choose(&mut app, "pidinst");
+    assert_eq!(app.cmdline("(princ *ran*)"), None);
+    assert!(app.session.log.iter().any(|x| x.trim() == "2"), "{:?}", app.session.log.iter().rev().take(4).collect::<Vec<_>>());
+}
+
+/// Choosing `C` starts CIRCLE, and a UI command's name opens that, so a `c:` function with such a
+/// name is not offered: the menu would run something else.
+#[test]
+fn a_lisp_command_another_command_takes_over_is_not_listed() {
+    let mut app = app();
+    app.cmdline("(defun c:c () (princ))");
+    app.cmdline(&format!("(defun c:{} () (princ))", cadcraft_ui_egui::menus::UI_COMMANDS[0].0));
+    app.cmdline("(defun c:pidinst () (princ))");
+    let lisp: Vec<_> = labels(&context_menu::entries(&app)).into_iter().filter(|x| x.starts_with("LISP Commands/")).collect();
+    assert_eq!(lisp, ["LISP Commands/PIDINST"]);
+    assert_eq!(context_menu::lisp_commands(&app), ["PIDINST"]);
+}
+
+/// More commands than the old limit of 40 are all listed.
+#[test]
+fn every_lisp_command_of_a_large_library_is_listed() {
+    let mut app = app();
+    for k in 0..60 {
+        app.cmdline(&format!("(defun c:pidz{k:02} () (princ))"));
+    }
+    let n = labels(&context_menu::entries(&app)).iter().filter(|x| x.starts_with("LISP Commands/")).count();
+    assert_eq!(n, 60);
+}

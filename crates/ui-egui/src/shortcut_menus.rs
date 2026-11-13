@@ -13,8 +13,6 @@ use serde_json::{Value, json};
 use crate::CadApp;
 use crate::menus::{Entry, activate};
 
-/// How many recent commands the command line menu lists.
-const RECENT: usize = 8;
 /// The command line history heights offered (lines).
 const LINES: &[usize] = &[0, 1, 3, 5, 8, 12];
 
@@ -46,13 +44,7 @@ fn push(groups: &mut Vec<Vec<Entry>>, group: Vec<Entry>) {
 /// Copy History and Clear.
 pub fn command_line_entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut groups = Vec::new();
-    let recent: Vec<Entry> = app
-        .session
-        .recent_commands(RECENT)
-        .iter()
-        .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
-        .collect();
+    let recent = crate::context_menu::recent_entries(app);
     if !recent.is_empty() {
         groups.push(vec![Entry::Sub { label: "Recent Commands".into(), children: recent }]);
     }

@@ -1,7 +1,8 @@
 //! The canvas's right-click menus, after AutoCAD's shortcut menus:
 //!
-//! - **No command running** ([`entries`]): Repeat the last command, Recent Commands, the
-//!   Clipboard and Isolate; with a selection the editing commands, Draw Order, Group, the edit
+//! - **No command running** ([`entries`]): Repeat the last command, Recent Commands, LISP
+//!   Commands (the `c:` functions the drawing's LISP defines; Repeat and Recent Commands include
+//!   them too), the Clipboard and Isolate; with a selection the editing commands, Draw Order, Group, the edit
 //!   commands of the selected object type, Select Similar and Deselect All; then Undo/Redo,
 //!   Pan/Zoom, Quick Select, Find, Properties and Options.
 //! - **While a command runs** ([`command_entries`]): a quick right-click is Enter; holding the
@@ -73,6 +74,45 @@ fn items(app: &CadApp, ids: &[&str]) -> Vec<Entry> {
     ids.iter().filter_map(|id| item(app, id, None)).collect()
 }
 
+/// Most LISP commands the LISP Commands submenu lists (it scrolls).
+pub const LISP_MAX: usize = 200;
+
+/// Whether starting `id` runs a command the drawing's LISP defines: not one that a registered or
+/// UI command of that name takes over.
+fn runs_lisp(app: &CadApp, id: &str) -> bool {
+    app.session.is_lisp_command(id) && !crate::menus::is_ui_command(&id.to_ascii_lowercase())
+}
+
+/// The commands the drawing's LISP defines that their names start, uppercase and sorted.
+pub fn lisp_commands(app: &CadApp) -> Vec<String> {
+    app.session.lisp_commands().into_iter().filter(|n| runs_lisp(app, n)).collect()
+}
+
+/// Command `id` as a menu shows it: its upper-case name, the id that starts it and whether it is
+/// enabled. A registered command, or a command the drawing's LISP defines (`c:` function), which
+/// is always enabled.
+fn command_target(app: &CadApp, id: &str) -> Option<(String, String, bool)> {
+    if let Some(c) = find_command(id) {
+        return Some((c.id.to_ascii_uppercase(), c.id.to_string(), (c.enabled)(&app.session).is_ok()));
+    }
+    runs_lisp(app, id).then(|| (id.to_ascii_uppercase(), id.to_ascii_lowercase(), true))
+}
+
+/// A menu item that starts command `id` ([`command_target`]).
+pub fn command_entry(app: &CadApp, id: &str) -> Option<Entry> {
+    command_target(app, id).map(|(label, id, enabled)| Entry::Item { label, id, shortcut: None, enabled })
+}
+
+/// Recent Commands ▸, LISP commands included.
+pub fn recent_entries(app: &CadApp) -> Vec<Entry> {
+    app.session.recent_commands(RECENT).iter().filter_map(|id| command_entry(app, id)).collect()
+}
+
+/// LISP Commands ▸: the commands the drawing's LISP defines, in alphabetical order.
+fn lisp_entries(app: &CadApp) -> Vec<Entry> {
+    lisp_commands(app).iter().take(LISP_MAX).filter_map(|n| command_entry(app, n)).collect()
+}
+
 /// A submenu, left out when none of its commands exist.
 fn sub(label: &str, children: Vec<Entry>) -> Option<Entry> {
     (!children.is_empty()).then(|| Entry::Sub { label: label.into(), children })
@@ -89,18 +129,11 @@ fn push(groups: &mut Vec<Vec<Entry>>, group: Vec<Entry>) {
 pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut groups = Vec::new();
     let mut first = Vec::new();
-    if let Some(last) = app.session.last_command.as_deref().and_then(find_command) {
-        let label = crate::tf!("Repeat {command}", command = last.id.to_ascii_uppercase());
-        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: (last.enabled)(&app.session).is_ok() });
+    if let Some((name, id, enabled)) = app.session.last_command.as_deref().and_then(|c| command_target(app, c)) {
+        first.push(Entry::Item { label: crate::tf!("Repeat {command}", command = name), id, shortcut: None, enabled });
     }
-    let recent: Vec<Entry> = app
-        .session
-        .recent_commands(RECENT)
-        .iter()
-        .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
-        .collect();
-    first.extend(sub("Recent Commands", recent));
+    first.extend(sub("Recent Commands", recent_entries(app)));
+    first.extend(sub("LISP Commands", lisp_entries(app)));
     push(&mut groups, first);
     // In the Block Editor: save the block or go back to the drawing.
     if app.session.state().is_ok_and(|st| st.block_edit.is_some()) {
