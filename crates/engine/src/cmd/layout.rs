@@ -31,6 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
+        CommandSpec::new("layout.move", "Move Layout", run_move).params("{name, before?: layout name (none: to the end)}"),
         CommandSpec::new("layout.list", "List Layouts", run_list).params("→ [{name, tabOrder, page, viewports}]").noundo(),
         CommandSpec::new("layout.saveas", "Save Layout as Template", saveas::run_saveas)
             .params("{name?: layout (default: the current layout, else the first tab), path: .dwt (or .dwg, .dxf; no extension adds .dwt)} → {name, path, bytes, notSaved?}")
@@ -263,6 +264,33 @@ fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.touch();
     Ok(json!({ "deleted": name }))
+}
+
+/// A layout moved in the tab order: before another layout, or to the end. The tab orders are
+/// numbered again from 1.
+fn run_move(s: &mut Session, p: &Value) -> Result<Value> {
+    let name = str_param(p, "name").ok_or_else(|| bad("layout.move", "`name` is required"))?;
+    let d = s.doc()?;
+    let name = layout_name("layout.move", d, name)?;
+    let before = match str_param(p, "before").map(str::trim).filter(|b| !b.is_empty()) {
+        Some(b) => Some(layout_name("layout.move", d, b)?),
+        None => None,
+    };
+    if before.as_deref() == Some(name.as_str()) {
+        return Ok(json!({ "name": name, "moved": false }));
+    }
+    let mut order: Vec<(u32, String)> = d.layouts.iter().map(|l| (l.tab_order, l.name.clone())).collect();
+    order.sort();
+    let mut names: Vec<String> = order.into_iter().map(|(_, n)| n).filter(|n| *n != name).collect();
+    let at = before.and_then(|b| names.iter().position(|n| *n == b)).unwrap_or(names.len());
+    names.insert(at, name.clone());
+    let d = s.doc_mut()?;
+    for l in &mut d.layouts {
+        if let Some(i) = names.iter().position(|n| *n == l.name) {
+            l.tab_order = u32::try_from(i).unwrap_or(u32::MAX).saturating_add(1);
+        }
+    }
+    Ok(json!({ "name": name, "moved": true, "order": names }))
 }
 
 fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {

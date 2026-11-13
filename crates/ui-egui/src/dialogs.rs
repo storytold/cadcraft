@@ -34,6 +34,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
+        o if o.starts_with("layoutmove:") => crate::chrome::layout_move_dialog(app, ctx, o.trim_start_matches("layoutmove:"), &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
     }
     // A dialog that closed by opening another (Plot Preview back to Plot) keeps the new one.

@@ -307,3 +307,30 @@ fn plot_help_names_the_device_and_the_built_in_devices() {
         assert!(help.contains(name), "plot help lacks {name}");
     }
 }
+
+/// LAYOUT moves: a layout goes before another one or to the end of the tabs.
+#[test]
+fn layouts_move_in_the_tab_order() {
+    let mut s = Session::new();
+    for _ in 0..2 {
+        s.execute("layout.new", &json!({})).unwrap();
+    }
+    let order = |s: &Session| -> Vec<String> {
+        let mut ls: Vec<_> = s.doc().unwrap().layouts.iter().map(|l| (l.tab_order, l.name.clone())).collect();
+        ls.sort();
+        ls.into_iter().map(|(_, n)| n).collect()
+    };
+    let start = order(&s);
+    assert_eq!(start.len(), 4, "{start:?}");
+    let (a, b, c, d) = (start[0].clone(), start[1].clone(), start[2].clone(), start[3].clone());
+    s.execute("layout.move", &json!({ "name": d, "before": a })).unwrap();
+    assert_eq!(order(&s), [d.clone(), a.clone(), b.clone(), c.clone()]);
+    s.execute("layout.move", &json!({ "name": d })).unwrap();
+    assert_eq!(order(&s), [a.clone(), b.clone(), c.clone(), d.clone()]);
+    s.execute("layout.move", &json!({ "name": a, "before": c })).unwrap();
+    assert_eq!(order(&s), [b.clone(), a.clone(), c.clone(), d.clone()]);
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(order(&s), [a.clone(), b.clone(), c.clone(), d.clone()]);
+    assert!(s.execute("layout.move", &json!({ "name": "Nope" })).is_err());
+    assert!(s.execute("layout.move", &json!({ "name": a, "before": "Nope" })).is_err());
+}

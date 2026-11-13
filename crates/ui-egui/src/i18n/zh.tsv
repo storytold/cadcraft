@@ -1474,3 +1474,7 @@ menu	View	视图
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
+	Move Layout	移动布局
+	Move to...	移动到...
+	Move before layout:	移到布局之前：
+	(move to end)	（移到末尾）
