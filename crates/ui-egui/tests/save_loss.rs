@@ -61,6 +61,7 @@ fn save_anyway_saves_and_the_same_loss_is_not_asked_again() {
     let (mut app, path) = opened("anyway", &["MLINE"]);
     menus::activate(&mut app, "qsave");
     app.answer_save_loss(Choice::SaveAnyway);
+    cadcraft_ui_egui::busy::wait(&mut app);
     assert!(app.save_loss.is_none());
     assert_ne!(std::fs::read(&path).unwrap(), ORIGINAL);
 
@@ -79,6 +80,7 @@ fn a_save_that_loses_nothing_does_not_ask() {
     let (mut app, path) = opened("clean", &[]);
     menus::activate(&mut app, "qsave");
     assert!(app.save_loss.is_none());
+    cadcraft_ui_egui::busy::wait(&mut app);
     assert_ne!(std::fs::read(&path).unwrap(), ORIGINAL);
     cleanup(&path);
 }

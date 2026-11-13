@@ -245,11 +245,12 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
     let copy = (opts.portable_fonts && is_drawing_file(path)).then(|| Drawing { portable_fonts: true, ..d.clone() });
     let d = copy.as_ref().unwrap_or(d);
+    // Under `slow::step` (the window's saves) the bytes are worked out on another thread.
     let r = if opts.version.is_none() && !opts.binary {
-        (hooks.write)(d, path)
+        crate::slow::write(hooks.write, d, path)
     } else {
         let w = write_as().ok_or_else(|| bad(cmd, "saving at a chosen version or as binary DXF is not available in this build"))?;
-        w(d, path, opts)
+        crate::slow::write_as(w, d, path, opts)
     };
     r.map_err(|e| bad(cmd, e))
 }

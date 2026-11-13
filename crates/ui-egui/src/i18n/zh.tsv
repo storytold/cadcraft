@@ -1486,3 +1486,7 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Saving...	正在保存...
+	Plotting...	正在打印...
+	Wait until the file is written.	请等待文件写入完成。
+	The file could not be written.	无法写入文件。

@@ -538,12 +538,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 .unwrap_or_else(|| "Drawing".into());
             let picked = app.services.pick_save.as_ref().and_then(|pick| pick(&format!("{stem}.pdf")));
             if let Some(path) = picked {
-                match publish_params(&app.session.docs.iter().map(|d| d.uid).collect::<Vec<_>>(), &st.sheets, !st.separate, Some(&path))
-                    .and_then(|p| app.run("publish", p))
-                {
-                    Ok(r) => {
-                        let msg = r["message"].as_str().unwrap_or("").to_string();
-                        app.session.echo(msg);
+                match publish_params(&app.session.docs.iter().map(|d| d.uid).collect::<Vec<_>>(), &st.sheets, !st.separate, Some(&path)) {
+                    // Plotted away from the window ([`crate::busy`]), which reports the result.
+                    Ok(p) => {
+                        crate::busy::run(app, "publish", p, |_, _| {});
                         close = true;
                     }
                     Err(e) => st.note = Some(e),

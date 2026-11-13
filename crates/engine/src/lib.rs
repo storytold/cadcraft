@@ -32,6 +32,7 @@ pub mod render_look;
 pub mod sample;
 pub mod select;
 pub mod settings_dir;
+pub mod slow;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;

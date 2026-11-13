@@ -373,7 +373,11 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
         return run_ui_command(app, "ui.saveas", &Value::Null);
     }
-    app.hold_lossy_save().then_some(Ok(Value::Null))
+    if !app.hold_lossy_save() {
+        // The file is written away from the window ([`crate::busy`]).
+        crate::busy::run(app, "qsave", json!({}), |_, _| {});
+    }
+    Some(Ok(Value::Null))
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -452,7 +456,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let name = app.ui.save_format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), |app, p| {
-                app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
+                // The file is written away from the window ([`crate::busy`]).
+                let params = saveas_params(&app.ui, &app.session, &p);
+                crate::busy::run(app, "saveas", params, |_, _| {});
+                Ok(Value::Null)
             })
             .unwrap_or(Ok(Value::Null))
         }
@@ -464,12 +471,14 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             return app.pick_then(Pick::Save(format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))), |app, path| {
-                let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
-                app.session.echo(match &r {
-                    Ok(_) => format!("Plotted to {path}"),
-                    Err(e) => e.clone(),
+                // Plotted away from the window ([`crate::busy`]), which reports any error.
+                let msg = format!("Plotted to {path}");
+                crate::busy::run(app, "exportpdf", json!({ "path": path }), move |app, r| {
+                    if r.is_ok() {
+                        app.session.echo(msg);
+                    }
                 });
-                r
+                Ok(Value::Null)
             });
         }
         "ui.sample" => {
