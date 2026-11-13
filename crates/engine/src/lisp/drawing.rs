@@ -400,6 +400,7 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     match list_to_groups(list) {
         Ok((k, tags)) if k == "BLOCK" => return Ok(Flow::Value(begin_block(ctx, list, &tags))),
         Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
+        Ok((k, tags)) if k == "STYLE" => return Ok(Flow::Value(make_style(ctx, list, &tags))),
         _ => {}
     }
     let (_, common, kind) = match entity_from_list(ctx, list) {
@@ -426,6 +427,46 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Err(_) => Ok(Flow::Value(Value::Nil)),
     }
+}
+
+/// The most text styles `entmake` can leave in a drawing (a runaway loop can't fill memory).
+const MAX_TEXT_STYLES: usize = 100_000;
+
+/// `entmake` of a STYLE list (2 name, 70 flags, 40 height, 41 width factor, 50 oblique angle in
+/// degrees, 71 generation flags, 3 font file, 4 big font): add a text style to the table. nil
+/// for a name that is empty, invalid or already in use, and for numbers that aren't usable.
+fn make_style(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
+    let group = |code: i32| tags.iter().find(|t| t.code == code);
+    let name = group(2).map(|t| t.str().trim().to_string()).unwrap_or_default();
+    if !crate::cmd::blocks::valid_block_name(&name) || group(70).is_none() {
+        return Value::Nil;
+    }
+    let flags = group(70).map(Tag::i64).unwrap_or(0);
+    let gen_flags = group(71).map(Tag::i64).unwrap_or(0);
+    let font = group(3).map(|t| t.str().trim().to_string()).filter(|f| !f.is_empty());
+    let num = |code: i32, default: f64| group(code).map_or(default, Tag::f64);
+    let style = cadcraft_doc::TextStyle {
+        font: font.unwrap_or_else(|| cadcraft_doc::TextStyle::default().font),
+        big_font: group(4).map(|t| t.str().trim().to_string()).unwrap_or_default(),
+        height: num(40, 0.0),
+        width_factor: num(41, 1.0),
+        oblique: num(50, 0.0).to_radians(),
+        backwards: gen_flags & 2 != 0,
+        upside_down: gen_flags & 4 != 0,
+        vertical: flags & 4 != 0,
+        name,
+        annotative: false,
+    };
+    if !(style.height.is_finite() && style.height >= 0.0 && style.width_factor.is_finite() && style.width_factor > 0.0 && style.oblique.is_finite()) {
+        return Value::Nil;
+    }
+    let Ok(d) = ctx.s.doc_mut() else { return Value::Nil };
+    if d.text_style(&style.name).is_some() || d.text_styles.len() >= MAX_TEXT_STYLES {
+        return Value::Nil;
+    }
+    d.text_styles.push(style);
+    ctx.s.touch();
+    list.clone()
 }
 
 /// `entmake` of a BLOCK list (2 name, 70 flags, 10 base point, 4 description): begin a block
