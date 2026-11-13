@@ -2344,6 +2344,41 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     assert!((dims[0].p15 - Vec3::new(5.0, 5.0, 0.0)).len() < 1e-9);
 }
 
+/// An ARC_DIMENSION (AcDbArcDimension) — the entity class the DWG bridge and AutoCAD write for
+/// an arc-length dimension — reads as the dimension it is, and saving keeps the geometry block
+/// its group 2 names: the entity counts the block as referenced, so it is regenerated under the
+/// same name instead of dropped as unreferenced while the entity still points at it.
+#[test]
+fn arc_dimension_entity_reads_as_a_dimension_and_keeps_its_block() {
+    // An ARC_DIMENSION record as another writer makes it: dimtype 40 (8 arc length | 32 the
+    // block is its own), 15 the arc centre, geometry in the `*D477` block.
+    let text = concat!(
+        "0\nSECTION\n2\nBLOCKS\n",
+        "0\nBLOCK\n2\n*D477\n10\n0\n20\n0\n30\n0\n3\n*D477\n",
+        "0\nLINE\n5\nAA\n8\n0\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDBLK\n",
+        "0\nENDSEC\n",
+        "0\nSECTION\n2\nENTITIES\n",
+        "0\nARC_DIMENSION\n5\n1FC27B\n8\ndims\n100\nAcDbDimension\n2\n*D477\n10\n20\n20\n20\n30\n0\n11\n20\n21\n31\n31\n0\n70\n40\n3\nStandard\n",
+        "100\nAcDbArcDimension\n13\n10\n23\n20\n33\n0\n14\n30\n24\n20\n34\n0\n15\n20\n25\n20\n35\n0\n70\n0\n",
+        "0\nENDSEC\n0\nEOF\n",
+    );
+    let d = read_dxf(text.as_bytes()).unwrap();
+    let EntityKind::Dimension(dm) = &d.model.iter().next().unwrap().kind else { panic!("a dimension, not a raw proxy record") };
+    assert!(matches!(dm.kind, DimKind::ArcLength));
+    assert_eq!(dm.block.as_deref(), Some("*D477"), "group 2 keeps the geometry block");
+    assert_eq!(dm.p15, Vec3::new(20.0, 20.0, 0.0), "group 15 is the arc centre");
+    assert!(!dm.user_text_pos, "dimtype 40 carries no bit 7");
+    // Saving: the block the dimension names is written (regenerated under its name), the
+    // dimtype keeps bit 5 (32), and what comes back is still the arc-length dimension.
+    let saved = write_dxf(&d);
+    assert!(saved.lines().any(|l| l.trim() == "*D477"), "the geometry block is in the file");
+    assert!(saved.lines().zip(saved.lines().skip(1)).any(|(c, v)| c.trim() == "70" && v.trim() == "33"), "dimtype 1 | 32");
+    let back = read_dxf(saved.as_bytes()).unwrap();
+    let EntityKind::Dimension(x) = &back.model.iter().next().unwrap().kind else { panic!("dimension expected") };
+    assert!(matches!(x.kind, DimKind::ArcLength));
+    assert!(x.block.as_deref().is_some_and(|n| back.block(n).is_some()), "the named block is defined: no dangling reference");
+}
+
 /// Two gradient hatches (true colours, shifted, rotated; index colours, centered) and a plain
 /// solid hatch over the same square.
 fn gradient_sample() -> (Drawing, Vec<Option<Gradient>>) {
