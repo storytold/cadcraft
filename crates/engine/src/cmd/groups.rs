@@ -196,9 +196,13 @@ fn echo_list(s: &mut Session) -> Result<()> {
 /// The post-command pass: members that no longer exist (erased, moved into a block) leave their
 /// groups, and groups left empty are deleted. Cheap when the drawing has no groups or the
 /// command changed nothing.
-pub(crate) fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>) {
+///
+/// `uid` is the document the command started in (when known): `open` swaps the whole drawing, and
+/// pruning the loaded file's stale groups here would sever the doc/saved Arc pair and mark a just
+/// opened file as modified (DBMOD 1) without any user edit — same guard as the assoc pass.
+pub(crate) fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, uid: Option<u64>) {
     let Ok(st) = s.state_mut() else { return };
-    if st.doc.groups.is_empty() || before.is_some_and(|b| Arc::ptr_eq(b, &st.doc)) {
+    if st.doc.groups.is_empty() || uid.is_some_and(|u| u != st.uid) || before.is_some_and(|b| Arc::ptr_eq(b, &st.doc)) {
         return;
     }
     let d: &Drawing = &st.doc;
