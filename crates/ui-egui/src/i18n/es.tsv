@@ -1108,7 +1108,7 @@
 	Synchronize Attributes	Sincronizar atributos
 	Toggle PICKADD (off: each pick replaces the selection)	Alternar PICKADD (desactivado: cada clic reemplaza la selección)
 	Toggle PICKADD (on: picks add to the selection)	Alternar PICKADD (activado: los clics añaden objetos a la selección)
-	TOP	SUP.
+	TOP	SUPERIOR
 	Table	Tabla
 	Table Style...	Estilo de tabla...
 	Table style	Estilo de tabla
@@ -1270,3 +1270,8 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+	BOTTOM	INFERIOR
+	FRONT	FRONTAL
+	BACK	POSTERIOR
+	LEFT	IZQUIERDA
+	RIGHT	DERECHA

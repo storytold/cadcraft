@@ -1058,7 +1058,7 @@
 	To	Đến
 	Toggle PICKADD (off: each pick replaces the selection)	Bật/tắt PICKADD (tắt: mỗi lần chọn sẽ thay thế tập chọn)
 	Toggle PICKADD (on: picks add to the selection)	Bật/tắt PICKADD (bật: mỗi lần chọn sẽ thêm vào tập chọn)
-	TOP	TOP
+	TOP	TRÊN
 	Table	Bảng
 	Table Breaks	Ngắt bảng
 	Table Cell Style	Kiểu ô bảng
@@ -1464,3 +1464,8 @@ menu	Modify	Hiệu chỉnh
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+	BOTTOM	DƯỚI
+	FRONT	TRƯỚC
+	BACK	SAU
+	LEFT	TRÁI
+	RIGHT	PHẢI

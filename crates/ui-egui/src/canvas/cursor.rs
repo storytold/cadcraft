@@ -217,13 +217,29 @@ fn pickbox_half(pickbox: f64) -> Option<f32> {
     (half.is_finite() && half >= 1.0).then_some(half)
 }
 
+/// Draw the 2D or 3D axis-aligned crosshair and optional pickbox centered at `at`.
 pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool, ink: Color32) {
     let st = Stroke::new(1.0, ink);
     let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
     let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
     let gap = pb.unwrap_or(0.0);
     // Along the isometric plane's axes in isometric drafting.
-    if app.session.settings.isodraft {
+    let cam = app.session.state().map(|st| st.camera).unwrap_or_default();
+    if !cam.is_top_plan() {
+        for axis in [
+            cadcraft_geom::Vec3::new(1.0, 0.0, 0.0),
+            cadcraft_geom::Vec3::new(0.0, 1.0, 0.0),
+            cadcraft_geom::Vec3::new(0.0, 0.0, 1.0),
+        ] {
+            let uv = cam.project_point(axis, Vec2::ZERO);
+            let raw = vec2(uv.x as f32, -(uv.y as f32));
+            if raw.length() > 0.08 {
+                let dir = raw.normalized();
+                p.line_segment([at - dir * len, at - dir * gap], st);
+                p.line_segment([at + dir * gap, at + dir * len], st);
+            }
+        }
+    } else if app.session.settings.isodraft {
         for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
             let dir = vec2(a.cos() as f32, -(a.sin() as f32));
             p.line_segment([at - dir * len, at - dir * gap], st);

@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0 };
+    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
@@ -247,4 +247,34 @@ fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
     app.session.set_selection(vec![shown, hidden]);
     click_grip(&mut app, (shown, 0), false);
     assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
+}
+
+#[test]
+fn edge_on_to_world_preserves_depth_axis() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    let cam = cadcraft_geom::Camera3D::preset("front").unwrap();
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 2.0, twist: 0.0, cam };
+
+    assert!(xf.try_to_world(rect.center()).is_none());
+    assert!(xf.to_world(rect.center()).near(xf.center, 1e-9));
+
+    let up = xf.to_world(rect.center() + vec2(12.0, -30.0));
+    let down = xf.to_world(rect.center() + vec2(12.0, 30.0));
+    assert!((up.x - down.x).abs() < 1e-9, "same horizontal screen offset keeps X: up={up:?}, down={down:?}");
+    assert!((up.y - down.y).abs() > 29.0, "vertical screen motion must preserve depth in XY: up={up:?}, down={down:?}");
+}
+
+#[test]
+fn shallow_3d_screen_delta_to_world_inverts_to_screen() {
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    // Elevation ~5.7° (`|cam.z.z| == 0.1`, inside 0.01 < |z.z| <= 0.15): must still track 1:1.
+    let z = cadcraft_geom::Vec3::new(0.0, 0.995, -0.1).normalized();
+    let cam = cadcraft_geom::Camera3D::from_dir_up(z, cadcraft_geom::Vec3::Z);
+    assert!(cam.z.z.abs() > 0.01 && cam.z.z.abs() <= 0.15);
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 1.5, twist: 0.0, cam };
+
+    let delta = vec2(24.0, -40.0);
+    let world_offset = xf.screen_delta_to_world(delta);
+    let roundtrip = xf.to_screen(xf.center + world_offset) - rect.center();
+    assert!((roundtrip.x - delta.x).abs() < 1e-4 && (roundtrip.y - delta.y).abs() < 1e-4, "roundtrip={roundtrip:?}");
 }

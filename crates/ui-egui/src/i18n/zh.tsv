@@ -1476,3 +1476,12 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	3D Orbit	三维动态观察
+	3D Views	三维视图
+	Plan View	俯视平面图
+	Roll View	旋转视图
+	BOTTOM	仰视
+	FRONT	前视
+	BACK	后视
+	LEFT	左
+	RIGHT	右
