@@ -171,7 +171,7 @@ dimensions are edited).
 | Navigation bar, SteeringWheels | yes | no |
 | Workspaces | Drafting & Annotation, 3D Modeling | no |
 | Browser panel layout storage | not applicable | Versioned, validated panel placement and visibility saved through the browser host; floating palettes remain embedded. Requires available browser storage and a completed host save; named workspaces and drawing persistence are separate. |
-| Options / Preferences dialog | many tabs | **no** (issue #23) |
+| Options / Preferences dialog | many tabs | yes (#23): Files, Display, Open and Save, Drafting, Dimensions, Selection, User Preferences, Profiles and All settings tabs, a gear button in the top right corner that no interface toggle hides; no Plot and Publish, System or 3D Modeling tabs |
 | Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); no CUI or tool palettes |
 | Themes | Dark, Light | Dark, Light, System (#179) |
 | Accessibility | VoiceOver basics | AccessKit through eframe; screen-reader coverage untested; magnifier issue #39; animation effects follow the OS setting (View ▸ Accessibility ▸ Animation Effects: System, On, Off) |
@@ -211,6 +211,7 @@ dimensions are edited).
 | 2026-10-27 | minor | WIPEOUT grips treat implicit and explicit closure alike; moving the first vertex carries the closing marker, and moving endpoints together keeps both corners editable. Open/closed polyline flags and coincident polyline vertices remain independent (#2256) |
 | 2026-10-26 | minor | Browser host stores bounded, validated panel layout separately from drawing state; malformed or unsupported records retain defaults. Native workspace storage is unchanged. |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text for TK and typed snap overrides, PolarSnap, Dynamic Input, hot-grip options, dynamic block grips, SCRIPT, ZOOM Realtime/Dynamic, named views and VPORTS; headline no longer lists selection cycling as missing; the 48% and the area percentages are not re-measured |
+| 2026-10-25 | minor | Options: a gear button in the top right corner, drawn whatever the Tool Bar, menu bar and palettes show; a Files tab (default template, alternate and fallback fonts, kept in the profile), a Dimensions tab (number format of the current dimension style, kept for new drawings) and an All settings tab (every setting of the OPTIONS JSON form and the interface state, one row each or as JSON) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

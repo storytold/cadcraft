@@ -12,13 +12,16 @@ use crate::animation::AnimationPref;
 use crate::theme::{ThemePref, Tokens};
 
 /// The tabs: (id in the dialog name, label).
-pub(super) const TABS: [(&str, &str); 6] = [
+pub(super) const TABS: [(&str, &str); 9] = [
+    ("locations", "Files"),
     ("display", "Display"),
     ("files", "Open and Save"),
     ("drafting", "Drafting"),
+    ("dimensions", "Dimensions"),
     ("selection", "Selection"),
     ("preferences", "User Preferences"),
     ("profiles", "Profiles"),
+    ("advanced", "All settings"),
 ];
 
 const WIDTH: f32 = 580.0;
@@ -28,6 +31,9 @@ const MIN_TAB_HEIGHT: f32 = 200.0;
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool) {
     let tab = name.strip_prefix("options:").and_then(|t| TABS.iter().find(|(id, _)| *id == t)).map_or("display", |(id, _)| *id);
     let mut changes = Map::new();
+    // The All settings tab's edits run apart, so a refused value is shown in the tab.
+    let mut edits = Map::new();
+    let mut ui_edits = Map::new();
     let mut next_tab = None;
     let mut start = None;
     let mut close = false;
@@ -54,6 +60,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
             match tab {
                 "files" => files(app, ui, &mut changes),
                 "drafting" => drafting(app, ui, &mut changes, &mut start),
+                "dimensions" => super::dimensions::dimensions(app, ui, &mut changes),
+                "locations" => super::locations::locations(ui, &mut changes),
+                "advanced" => super::advanced::advanced(app, ui, &mut edits, &mut ui_edits),
                 "selection" => selection(app, ui, &mut changes),
                 "preferences" => preferences(app, ui, &mut changes),
                 "profiles" => profiles(app, ui, &mut changes),
@@ -80,16 +89,38 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     if !changes.is_empty() {
         let _ = app.run("options", Value::Object(changes));
     }
+    if !ui_edits.is_empty() {
+        let result = app.set_ui_state(&ui_edits);
+        let error = egui::Id::unique(super::advanced::ERROR);
+        ctx.data_mut(|d| match result {
+            Ok(()) => d.remove::<String>(error),
+            Err(e) => {
+                d.insert_temp(error, e);
+            }
+        });
+    }
+    if !edits.is_empty() {
+        let error = egui::Id::unique(super::advanced::ERROR);
+        let result = app.run("options", Value::Object(edits));
+        ctx.data_mut(|d| match result {
+            Ok(_) => d.remove::<String>(error),
+            Err(e) => {
+                d.insert_temp(error, e);
+            }
+        });
+    }
     if let Some(id) = start {
         app.start(id);
     }
 }
 
-fn grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
+/// A two-column grid of caption and control, spaced as every Options tab lays out its rows.
+pub(super) fn grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id).num_columns(2).spacing(vec2(14.0, 8.0)).show(ui, add);
 }
 
-fn hint(ui: &mut egui::Ui, text: &str) {
+/// A small dimmed line under a tab's rows explaining them.
+pub(super) fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).small().color(Tokens::get().text_dim));
 }
 
@@ -662,6 +693,8 @@ fn right_click_window(o: &super::UiOptions, ctx: &egui::Context, open: &mut bool
     }
 }
 
+/// Profiles tab: where the preferences are kept, Reset to Defaults and Copy as JSON; edits
+/// accumulate in `changes`.
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     ui.label(crate::tl!(
         "CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts."
@@ -676,4 +709,18 @@ fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         }
     });
     hint(ui, crate::tl!("Reset keeps the interface language."));
+}
+
+#[cfg(test)]
+mod tests {
+    /// The tab names come from a constant list the catalog scanner can't see: each one needs its
+    /// own row in the reference (Ukrainian) and Italian catalogs.
+    #[test]
+    fn every_tab_name_is_translated() {
+        for (_, label) in super::TABS {
+            for language in ["uk", "it"] {
+                assert_ne!(crate::i18n::tr(language, label), label, "{language}: {label}");
+            }
+        }
+    }
 }

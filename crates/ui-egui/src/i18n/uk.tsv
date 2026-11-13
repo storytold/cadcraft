@@ -1422,3 +1422,58 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Above	Над лінією
+	Angular precision	Точність кутів
+	Angular units	Одиниці кутів
+	Architectural	Архітектурні
+	Arrow size	Розмір стрілок
+	Changes apply to the current dimension style at once and are kept for new drawings. Other drawings keep their own styles.	Зміни застосовуються до поточного стилю розмірів одразу й зберігаються для нових креслень. Інші креслення зберігають власні стилі.
+	Comma (,)	Кома (,)
+	Current dimension style	Поточний стиль розмірів
+	Decimal	Десяткові
+	Decimal degrees	Десяткові градуси
+	Decimal separator	Десятковий роздільник
+	Degrees, minutes, seconds	Градуси, хвилини, секунди
+	Edit as JSON	Редагувати як JSON
+	Engineering	Інженерні
+	Extension beyond dimension line	Виступ виносної лінії за розмірну
+	Extension line offset	Відступ виносної лінії від об'єкта
+	Forget defaults for new drawings	Забути типові значення для нових креслень
+	Fractional	Дробові
+	Gradians	Гради
+	JIS	JIS
+	Linear scale factor	Коефіцієнт лінійного масштабу
+	Linear units	Лінійні одиниці
+	No drawing is open: these values are kept for new drawings.	Немає відкритого креслення: ці значення зберігаються для нових креслень.
+	Not valid JSON	Некоректний JSON
+	Offset from dimension line	Відступ тексту від розмірної лінії
+	Outside	Зовні
+	Overall scale	Загальний масштаб
+	Period (.)	Крапка (.)
+	Precision (decimal places)	Точність (знаків після коми)
+	Prefix	Префікс
+	Radians	Радіани
+	Round off to	Округляти до
+	Scientific	Наукові
+	Space	Пробіл
+	Suffix	Суфікс
+	Suppress leading zeros	Прибирати початкові нулі
+	Suppress trailing zeros	Прибирати кінцеві нулі
+	Text position	Положення тексту
+	The settings must be a JSON object.	Налаштування мають бути об'єктом JSON.
+	Windows desktop	Як у Windows
+	Zero suppression	Придушення нулів
+	{n} settings	Налаштувань: {n}
+	Interface state	Стан інтерфейсу
+	Panels, toolbars and recent files	Панелі, панелі інструментів і нещодавні файли
+	Dimensions	Розміри
+	All settings	Усі налаштування
+	Files	Файли
+	Default template for new drawings	Типовий шаблон для нових креслень
+	Alternate font	Замінний шрифт
+	Fallback fonts	Резервні шрифти
+	The template is a .dwt or .dxf file that New and the first drawing at startup are made from; empty: none.	Шаблон — це файл .dwt або .dxf, з якого створюються нові креслення і перше креслення під час запуску; порожньо — без шаблону.
+	The alternate font replaces a text style font that can't be found; empty: the built-in drafting font.	Замінний шрифт заступає шрифт текстового стилю, якого не знайдено; порожньо — вбудований креслярський шрифт.
+	Fallback fonts (names separated by commas) are searched for characters a text's own font lacks.	У резервних шрифтах (назви через кому) шукаються символи, яких немає у власному шрифті тексту.
+	The automatic save file location is on Open and Save.	Папка файлів автозбереження — на вкладці «Відкриття та збереження».
+	Unknown setting	Невідоме налаштування

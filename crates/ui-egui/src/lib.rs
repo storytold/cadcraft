@@ -600,6 +600,24 @@ impl CadApp {
         r
     }
 
+    /// Change interface state fields by name (`ui.set` and the Options dialog's All settings tab):
+    /// `patch` is merged into [`UiState`]'s JSON and the result must still be a valid state, or
+    /// nothing changes.
+    pub fn set_ui_state(&mut self, patch: &serde_json::Map<String, Value>) -> Result<(), String> {
+        let mut cur = serde_json::to_value(&self.ui).map_err(|e| e.to_string())?;
+        if let Some(o) = cur.as_object_mut() {
+            for (k, v) in patch {
+                o.insert(k.clone(), v.clone());
+            }
+        }
+        let mut u: UiState = serde_json::from_value(cur).map_err(|e| e.to_string())?;
+        // Shortcuts are checked as the preferences check them.
+        u.shortcuts = keys::from_prefs(&serde_json::json!(u.shortcuts));
+        docking::validate(&u.docking).map_err(|e| e.to_string())?;
+        self.ui = u;
+        Ok(())
+    }
+
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
@@ -1102,6 +1120,7 @@ impl CadApp {
                 chrome::start_page(self, ui);
             }
         });
+        chrome::options_button(self, ui.ctx());
         self.opening.show(ui.ctx());
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, ui.ctx());

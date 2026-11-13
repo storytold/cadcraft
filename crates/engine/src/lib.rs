@@ -75,6 +75,44 @@ pub fn build_version() -> &'static str {
     &VERSION
 }
 
+/// Apply the user's dimension defaults to the current dimension style of a new drawing (values a
+/// style refuses are skipped).
+pub fn apply_dim_defaults(defaults: &serde_json::Map<String, serde_json::Value>, d: &mut Drawing) {
+    if defaults.is_empty() {
+        return;
+    }
+    let name = d.header.str("DIMSTYLE", "Standard");
+    if let Some(style) = d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
+        let _ = style.apply_fields(defaults);
+        d.sync_dim_vars();
+    }
+}
+
+impl Session {
+    /// Keep `defaults` for new drawings; open drawings keep their styles.
+    pub fn set_dim_defaults(&mut self, defaults: serde_json::Map<String, serde_json::Value>) {
+        self.dim_defaults = defaults;
+    }
+
+    /// The profile's defaults at start-up: kept for new drawings and, when the open drawing is
+    /// the untouched first one (no file, nothing drawn or undoable), given to it too, since the
+    /// startup drawing is made before the profile is read.
+    pub fn restore_dim_defaults(&mut self, defaults: serde_json::Map<String, serde_json::Value>) {
+        self.set_dim_defaults(defaults);
+        if let [only] = self.docs.as_mut_slice()
+            && only.path.is_none()
+            && only.undo.is_empty()
+            && only.redo.is_empty()
+            && only.doc.model.is_empty()
+        {
+            let mut d = (*only.doc).clone();
+            apply_dim_defaults(&self.dim_defaults, &mut d);
+            only.doc = std::sync::Arc::new(d);
+            only.saved = only.doc.clone();
+        }
+    }
+}
+
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {
     pub docs: Vec<DocState>,
@@ -135,6 +173,10 @@ pub struct Session {
     /// SIngle typed at "Select objects": the next selection ends the prompt.
     pub select_single: bool,
     pub untitled_counter: u32,
+    /// Dimension style values the user keeps for new drawings (the Options dialog's Dimensions
+    /// tab, saved in the profile): DIM* variables or style field names, applied to the current
+    /// dimension style of every drawing [`Session::new_drawing`] makes. Empty: the built-in style.
+    pub dim_defaults: serde_json::Map<String, serde_json::Value>,
     /// The last dimension created (DIMCONTINUE / DIMBASELINE).
     pub last_dim: Option<Handle>,
     /// Options remembered between invocations of interactive commands.
@@ -199,6 +241,7 @@ impl Session {
             select_mode: None,
             select_single: false,
             untitled_counter: 0,
+            dim_defaults: serde_json::Map::new(),
             last_dim: None,
             last_used: LastUsed::default(),
             clipboard_source: None,

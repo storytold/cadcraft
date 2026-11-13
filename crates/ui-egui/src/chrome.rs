@@ -61,6 +61,33 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
+/// Width the Tool Bar leaves free at the right for the Options button.
+const OPTIONS_BUTTON_RESERVE: f32 = 40.0;
+/// The Options button's side.
+const OPTIONS_BUTTON_SIZE: f32 = 26.0;
+
+/// The Options button: a gear in the top right corner of the window that opens the Options
+/// dialog. It is drawn every frame, whatever the Tool Bar, menu bar, status bar, palettes or
+/// start page show, and nothing turns it off, so the preferences are always one click away. It
+/// sits above the panels (its own foreground area) and under dialogs' windows only by order.
+pub fn options_button(app: &mut CadApp, ctx: &egui::Context) {
+    let top = if app.integrated_titlebar { (MAC_TITLE_BAR - OPTIONS_BUTTON_SIZE) / 2.0 } else { 4.0 };
+    let mut clicked = false;
+    egui::Area::new(egui::Id::unique("cc_options_button")).order(egui::Order::Foreground).anchor(egui::Align2::RIGHT_TOP, vec2(-8.0, top)).show(
+        ctx,
+        |ui| {
+            let resp = icons::button(ui, Icon::Gear, OPTIONS_BUTTON_SIZE, "Options", false);
+            icons::describe_control(ui, &resp, "Options", None, false);
+            let mac = ctx.os().is_mac();
+            let tip = format!("{} ({})", crate::i18n::t("Options"), if mac { "⌘," } else { "OPTIONS" });
+            clicked = resp.on_hover_text(tip).clicked();
+        },
+    );
+    if clicked {
+        app.start("options");
+    }
+}
+
 /// Title row (with the integrated macOS title bar) and the Tool Bar.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -88,23 +115,26 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             let mut clicked = None;
             let mac = ui.ctx().os().is_mac();
             let widths: Vec<_> = TOOLBAR.iter().map(|group| group.len() as f32 * (size + 6.0) - 6.0).collect();
-            let available = (row.right() - 12.0 - x).max(0.0);
+            let available = (row.right() - 12.0 - OPTIONS_BUTTON_RESERVE - x).max(0.0);
             let Some(fit) = craft_ui::layout::fit_toolbar(&widths, available, 24.0, 30.0) else {
                 // Very small windows still expose the complete command row by scrolling.
-                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink2(vec2(4.0, 0.0))), |ui| {
-                    egui::ScrollArea::horizontal().id_salt("toolbar_small").show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for group in TOOLBAR {
-                                for (icon, cmd, tip, _) in *group {
-                                    if icons::button(ui, *icon, size, tip, false).clicked() {
-                                        clicked = Some(*cmd);
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(Rect::from_min_max(row.min + vec2(4.0, 0.0), row.max - vec2(4.0 + OPTIONS_BUTTON_RESERVE, 0.0))),
+                    |ui| {
+                        egui::ScrollArea::horizontal().id_salt("toolbar_small").show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                for group in TOOLBAR {
+                                    for (icon, cmd, tip, _) in *group {
+                                        if icons::button(ui, *icon, size, tip, false).clicked() {
+                                            clicked = Some(*cmd);
+                                        }
                                     }
+                                    ui.add_space(18.0);
                                 }
-                                ui.add_space(18.0);
-                            }
+                            });
                         });
-                    });
-                });
+                    },
+                );
                 if let Some(command) = clicked {
                     app.start(command);
                 }

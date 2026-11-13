@@ -70,6 +70,8 @@ fn translation_gaps() {
     }
 }
 
+/// The command labels, menu headings, tool names and object snap names that `language`'s catalog
+/// has no row for.
 fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     let catalog = catalog(language).unwrap();
     let mut sources = BTreeSet::new();
@@ -94,6 +96,8 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     sources.into_iter().filter(|s| !s.is_empty() && !catalog.contains_key(&("", *s))).map(str::to_string).collect()
 }
 
+/// The `tl!`/`tf!` literals of the UI files listed here that `language`'s catalog has no row for: a
+/// new label must come with its translation.
 fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
@@ -114,6 +118,9 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "quick",
         "vpscale",
         "options/dialog",
+        "options/dimensions",
+        "options/advanced",
+        "options/locations",
         "finddlg",
         "textdlg",
     ];

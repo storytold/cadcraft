@@ -1398,3 +1398,58 @@ menu	Modify	Edita
 	ENTER	INVIO
 	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
+	Above	Sopra
+	Angular precision	Precisione angolare
+	Angular units	Unità angolari
+	Architectural	Architettoniche
+	Arrow size	Dimensione delle frecce
+	Changes apply to the current dimension style at once and are kept for new drawings. Other drawings keep their own styles.	Le modifiche si applicano subito allo stile di quota corrente e vengono mantenute per i nuovi disegni. Gli altri disegni conservano i propri stili.
+	Comma (,)	Virgola (,)
+	Current dimension style	Stile di quota corrente
+	Decimal	Decimali
+	Decimal degrees	Gradi decimali
+	Decimal separator	Separatore decimale
+	Degrees, minutes, seconds	Gradi, primi, secondi
+	Edit as JSON	Modifica come JSON
+	Engineering	Ingegneristiche
+	Extension beyond dimension line	Estensione oltre la linea di quota
+	Extension line offset	Distanza della linea di estensione dall'origine
+	Forget defaults for new drawings	Dimentica i valori predefiniti per i nuovi disegni
+	Fractional	Frazionarie
+	Gradians	Gradianti
+	JIS	JIS
+	Linear scale factor	Fattore di scala lineare
+	Linear units	Unità lineari
+	No drawing is open: these values are kept for new drawings.	Nessun disegno aperto: questi valori vengono mantenuti per i nuovi disegni.
+	Not valid JSON	JSON non valido
+	Offset from dimension line	Distanza del testo dalla linea di quota
+	Outside	All'esterno
+	Overall scale	Scala complessiva
+	Period (.)	Punto (.)
+	Precision (decimal places)	Precisione (cifre decimali)
+	Prefix	Prefisso
+	Radians	Radianti
+	Round off to	Arrotonda a
+	Scientific	Scientifiche
+	Space	Spazio
+	Suffix	Suffisso
+	Suppress leading zeros	Sopprimi gli zeri iniziali
+	Suppress trailing zeros	Sopprimi gli zeri finali
+	Text position	Posizione del testo
+	The settings must be a JSON object.	Le impostazioni devono essere un oggetto JSON.
+	Windows desktop	Formato Windows
+	Zero suppression	Soppressione degli zeri
+	{n} settings	{n} impostazioni
+	Interface state	Stato dell'interfaccia
+	Panels, toolbars and recent files	Pannelli, barre degli strumenti e file recenti
+	Dimensions	Quote
+	All settings	Tutte le impostazioni
+	Files	File
+	Default template for new drawings	Modello predefinito per i nuovi disegni
+	Alternate font	Font alternativo
+	Fallback fonts	Font di riserva
+	The template is a .dwt or .dxf file that New and the first drawing at startup are made from; empty: none.	Il modello è un file .dwt o .dxf da cui vengono creati i nuovi disegni e il primo disegno all'avvio; vuoto: nessuno.
+	The alternate font replaces a text style font that can't be found; empty: the built-in drafting font.	Il font alternativo sostituisce il font di uno stile di testo che non viene trovato; vuoto: il font da disegno incorporato.
+	Fallback fonts (names separated by commas) are searched for characters a text's own font lacks.	Nei font di riserva (nomi separati da virgole) si cercano i caratteri che mancano nel font del testo.
+	The automatic save file location is on Open and Save.	Il percorso dei file di salvataggio automatico si trova in Apri e salva.
+	Unknown setting	Impostazione sconosciuta
