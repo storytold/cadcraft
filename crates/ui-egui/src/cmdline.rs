@@ -64,7 +64,7 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
     // A value asked for without a base point (OFFSET's distance, a scale factor): the box takes
     // that value, not a point's coordinates.
-    if p.accept.number && p.base.is_none() {
+    if p.accept.number && (p.base.is_none() || asks_for_a_value(&p.message)) {
         return None;
     }
     // RECTANG's other corner: its width and height, in boxes beside the sides.
@@ -77,6 +77,15 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         rotation: if dims { p.corner_rotation } else { 0.0 },
         center: dims && p.corner_center,
     })
+}
+
+/// A prompt whose answer is a value that a picked point only measures (a scale factor, a
+/// rotation angle): Dynamic Input takes the value in one box, as typed. Its distance and angle
+/// boxes would turn `2` and Tab into a point (INSERT's "Enter X scale factor, specify opposite
+/// corner" then read it as the opposite corner, and the block came out at a scale of its own).
+fn asks_for_a_value(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    ["factor", "angle"].iter().any(|w| m.contains(w))
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -129,7 +138,10 @@ fn tab(app: &mut CadApp) {
             app.cmd.back_to_first = true;
         }
         app.cmd.fresh_box = true;
-    } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
+    } else if !app.cmd.buffer.starts_with(|c: char| c.is_ascii_digit() || "-+.@#<,".contains(c))
+        && let Some(s) = suggestions(&app.cmd.buffer).first()
+    {
+        // A command name being typed (not a number: `3` and Tab is not 3DALIGN).
         app.cmd.buffer = s.id.clone();
     }
 }
@@ -860,6 +872,42 @@ mod tests {
         assert!(dyn_frame(&app).is_none());
         app.session.input(Input::Point(cadcraft_geom::Vec2::ZERO)).unwrap();
         assert!(dyn_frame(&app).is_some_and(|f| f.base == Some(cadcraft_geom::Vec2::ZERO)));
+    }
+
+    /// INSERT's scale factor and rotation angle take a value in one box: `3` and Tab stays the
+    /// number 3, not a point at distance 3 (which was read as the opposite corner, giving the
+    /// block a scale of its own).
+    #[test]
+    fn insert_scale_and_rotation_take_a_value() {
+        let mut app = CadApp::new(Session::default(), crate::Services::default());
+        app.run("new", serde_json::json!({})).unwrap();
+        app.session.settings.dynmode = true;
+        let c = app.run("circle", serde_json::json!({ "center": [0, 0], "radius": 5 })).unwrap();
+        let h = c["handles"][0].as_str().or_else(|| c["handle"].as_str()).unwrap().to_string();
+        app.run("block", serde_json::json!({ "name": "B", "base": [0, 0], "handles": [h], "keep": "delete" })).unwrap();
+        app.session.start("insert").unwrap();
+        app.session.input(Input::Text("B".into())).unwrap();
+        app.session.input(Input::Point(cadcraft_geom::Vec2::new(100.0, 50.0))).unwrap();
+        assert!(app.session.current_prompt().is_some_and(|p| p.message.contains("scale factor")));
+        assert!(dyn_frame(&app).is_none(), "the scale factor is a value");
+        app.canvas.cursor = Some(cadcraft_geom::Vec2::new(130.0, 70.0));
+        app.cmd.buffer = "3".into();
+        tab(&mut app);
+        submit(&mut app);
+        let msg = app.session.current_prompt().map(|p| p.message.clone()).unwrap_or_default();
+        assert!(msg.contains("Y scale"), "{msg:?} {:?}", app.cmd.buffer);
+        submit(&mut app);
+        assert!(app.session.current_prompt().is_some_and(|p| p.message.contains("rotation angle")));
+        assert!(dyn_frame(&app).is_none(), "the rotation is a value");
+        app.cmd.buffer = "30".into();
+        submit(&mut app);
+        let d = app.session.doc().unwrap();
+        let Some(cadcraft_doc::EntityKind::Insert(i)) = d.model.iter().map(|e| &e.kind).find(|k| matches!(k, cadcraft_doc::EntityKind::Insert(_)))
+        else {
+            panic!("no block reference")
+        };
+        assert_eq!((i.scale.x, i.scale.y), (3.0, 3.0));
+        assert!((i.rotation - 30f64.to_radians()).abs() < 1e-9);
     }
 
     /// Tab moves between RECTANG's width and height boxes as often as it is pressed: no comma
