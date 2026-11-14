@@ -11,7 +11,7 @@ pub const MAX_DASHES: f64 = 2_000_000.0;
 /// Split `pts` into dashes. Dots come back as single-point runs. When the scaled pattern is
 /// shorter than `min_pattern` (sub-pixel), the polyline is returned whole; a display build
 /// (`min_pattern` above 0) also returns it whole when the pattern would repeat too often (see
-/// [`ranges`]).
+/// [`ranges`]), and so does a run whose expansion would emit more than [`MAX_DASHES`] dashes.
 pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Vec<Vec2>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
@@ -29,6 +29,10 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
     let pattern: Vec<f64> = lt.pattern.iter().map(|d| d.length * scale).collect();
     // AutoCAD centres the pattern so lines start and end with a dash: start at half the first dash.
     let mut out: Vec<Vec<Vec2>> = Vec::new();
+    // The expansion's own budget, independent of the pattern's length: a multi-element pattern
+    // must not get past the repeat ceiling above by emitting one dash per element. Past it the
+    // run is drawn continuous, at the same point the repeat ceiling falls back (#1285).
+    let max_runs = MAX_DASHES as usize;
     let mut cur: Vec<Vec2> = Vec::new();
     let mut idx = 0usize;
     let first = pattern.first().copied().unwrap_or(0.0);
@@ -67,11 +71,17 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
             if on {
                 cur.push(p);
                 out.push(std::mem::take(&mut cur));
+                if out.len() > max_runs {
+                    return vec![pts.to_vec()];
+                }
             }
             idx = (idx + 1) % pattern.len();
             let n = pattern.get(idx).copied().unwrap_or(0.0);
             if n == 0.0 {
                 out.push(vec![p]);
+                if out.len() > max_runs {
+                    return vec![pts.to_vec()];
+                }
                 idx = (idx + 1) % pattern.len();
                 let n2 = pattern.get(idx).copied().unwrap_or(0.0);
                 remaining = n2.abs();
@@ -179,6 +189,25 @@ mod tests {
         let d = apply(&[Vec2::ZERO, Vec2::new(1_000_000.0, 0.0)], &lt, 1.0, 0.0);
         // One dash per repeat, plus the run's last, partial one.
         assert_eq!(d.len(), 100_001, "the run was drawn as one solid line");
+    }
+
+    #[test]
+    fn a_wide_pattern_cannot_emit_more_dashes_than_the_ceiling() {
+        // 50 elements per repeat (25 dashes, 25 gaps) over 1,000,000 repeats: the walk budget
+        // (MAX_DASHES * pattern.len()) and the repeat ceiling both admit it, but it would emit
+        // 25,000,000 dash polylines. The output budget draws the whole run continuous instead
+        // (#1285).
+        let mut pattern = Vec::new();
+        for _ in 0..25 {
+            pattern.extend([0.1, -0.1]);
+        }
+        let lt = Linetype::simple("MANY", "", &pattern);
+        let pts = [Vec2::ZERO, Vec2::new(5.0e6, 0.0)];
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 1, "the run did not fall back to one continuous run");
+        // The same pattern over 10,000 repeats (about 250,000 dashes) fits the output budget and
+        // still emits dashes: the budget counts dashes, not pattern elements.
+        let fits = [Vec2::ZERO, Vec2::new(5.0e4, 0.0)];
+        assert!(apply(&fits, &lt, 1.0, 0.0).len() > 1_000, "a run under the budget was drawn continuous");
     }
 
     #[test]
