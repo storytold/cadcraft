@@ -47,6 +47,7 @@ mod draworder;
 mod dyn_input;
 mod dynamic_block_data;
 mod dynamic_grips;
+mod esc_select_objects;
 mod explode_stretched;
 mod extend_polyline_arc_end;
 mod fillet_chamfer;
