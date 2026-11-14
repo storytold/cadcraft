@@ -105,7 +105,15 @@ fn can_write(_path: &str) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn write_text_file(path: &str, text: &str, append: bool) {
+    write_text_file_with(path, text, append, cfg!(windows));
+}
+
+/// Files open in text mode, as AutoLISP's do: with `crlf` (on Windows) each `\n` is written as
+/// CR LF (#2986), and `read-line` reads either ending back. Otherwise `\n` is written as it is.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_text_file_with(path: &str, text: &str, append: bool, crlf: bool) {
     use std::io::Write;
+    let text = if crlf { std::borrow::Cow::Owned(text.replace('\n', "\r\n")) } else { std::borrow::Cow::Borrowed(text) };
     // Opened without blocking and without truncating, so a FIFO with no reader fails at once
     // instead of stalling the interpreter; only a regular file is then truncated and written.
     let mut o = std::fs::OpenOptions::new();
@@ -120,6 +128,23 @@ fn write_text_file(path: &str, text: &str, append: bool) {
         && (append || f.set_len(0).is_ok())
     {
         let _ = f.write_all(text.as_bytes());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod newline_tests {
+    /// The CR LF path is checked on every platform, not only on Windows (#2986).
+    #[test]
+    fn text_files_get_cr_lf_only_when_asked() {
+        let path = std::env::temp_dir().join(format!("cadcraft-lisp-newlines-{}.txt", std::process::id()));
+        let p = path.to_string_lossy();
+        super::write_text_file_with(&p, "a\nb\n", false, true);
+        let crlf = std::fs::read(&path);
+        super::write_text_file_with(&p, "c\n", true, false);
+        let appended = std::fs::read(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(crlf.unwrap(), b"a\r\nb\r\n");
+        assert_eq!(appended.unwrap(), b"a\r\nb\r\nc\n");
     }
 }
 

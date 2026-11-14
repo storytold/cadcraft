@@ -30,6 +30,21 @@ fn ok(s: &mut Session, code: &str) -> String {
     }
 }
 
+/// `write-line` ends lines as a text-mode file does: CR LF on Windows, LF elsewhere (#2986).
+/// `read-line` gets the same lines back either way.
+#[test]
+fn write_line_uses_the_platform_line_ending() {
+    let mut s = session();
+    let path = std::env::temp_dir().join(format!("cadcraft-lisp-crlf-{}.txt", std::process::id()));
+    let lisp_path = path.to_string_lossy().replace('\\', "/");
+    ok(&mut s, &format!("(setq f (open \"{lisp_path}\" \"w\")) (write-line \"a\" f) (write-line \"b\" f) (close f)"));
+    let bytes = std::fs::read(&path).unwrap();
+    let want: &[u8] = if cfg!(windows) { b"a\r\nb\r\n" } else { b"a\nb\n" };
+    assert_eq!(bytes, want);
+    assert_eq!(ok(&mut s, &format!("(setq f (open \"{lisp_path}\" \"r\")) (list (read-line f) (read-line f) (read-line f))")), "(\"a\" \"b\" nil)");
+    std::fs::remove_file(&path).unwrap();
+}
+
 #[test]
 fn real_print_subnormal_and_rounding() {
     let mut s = session();
