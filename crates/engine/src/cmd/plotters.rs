@@ -208,18 +208,25 @@ fn device_paper<'a>(dev: &'a PlotterConfig, name: &str) -> Option<&'a DevicePape
     dev.paper(name).or_else(|| dev.paper(cadcraft_render::paper_size(name)?.name))
 }
 
+/// A paper's stored portrait margins on the landscape sheet: the sheet's axes swap, so left and
+/// right become bottom and top (#1266).
+fn landscape_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
+    [t, l, b, r]
+}
+
+/// The inverse: a landscape page's margins on the stored portrait sheet, for a page that keeps
+/// its paper when its orientation turns (#1266).
+pub(crate) fn portrait_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
+    [b, r, t, l]
+}
+
 fn set_paper(page: &mut PageSetup, p: &DevicePaper) {
     page.paper = p.name.clone();
     page.width_mm = p.width;
     page.height_mm = p.height;
     // The paper keeps its margins for its stored portrait sheet; the page measures them against
     // the sheet in the orientation it names, so they turn with it (#1266).
-    page.margins_mm = if page.landscape {
-        let [l, b, r, t] = p.margins;
-        [t, l, b, r]
-    } else {
-        p.margins
-    };
+    page.margins_mm = if page.landscape { landscape_margins(p.margins) } else { p.margins };
 }
 
 fn unknown_device(cmd: &str, name: &str) -> EngineError {
