@@ -1410,3 +1410,6 @@ menu	Modify	Edita
 	ENTER	INVIO
 	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
+
+# ArtCraft feature naming
+	Additional Tools	Strumenti aggiuntivi

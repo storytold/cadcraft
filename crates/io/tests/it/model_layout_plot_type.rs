@@ -59,7 +59,7 @@ fn model_layout_plots_extents_fitted_and_layouts_their_sheet() {
 fn model_layout_plot_type_survives_the_dwg_bridge() {
     let dwg = cadcraft_io::write(&drawing(), "x.dwg").unwrap();
     // What the DWG holds, as the bridge's own DXF.
-    let dxf = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).to_string();
+    let dxf = String::from_utf8_lossy(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).to_string();
     let p = plots(&dxf);
     let model = p.iter().find(|(n, _, _)| n.eq_ignore_ascii_case("Model")).unwrap();
     assert_eq!(model.1, Some(1), "{p:?}");
