@@ -347,6 +347,25 @@ fn printing_many_lines_is_linear() {
 }
 
 #[test]
+fn command_block_runs_the_command_line_form_and_erases_the_selection() {
+    // #2990: `command` runs -BLOCK, which erases the selected objects once the block is defined.
+    for name in ["_.block", "BLOCK", "b", "-block"] {
+        let mut s = session();
+        let code =
+            format!("(command \"_.line\" (list 0 0) (list 10 0) \"\") (command \"{name}\" \"B1\" (list 0 0) (ssget \"_L\") \"\") (ssget \"_X\")");
+        assert_eq!(ok(&mut s, &code), "nil", "{name}: the line is erased");
+        assert!(s.doc().unwrap().blocks.contains_key("B1"), "{name}: the block is defined");
+    }
+    // Typed at Command:, BLOCK keeps converting the selection into a reference.
+    let mut s = session();
+    for t in ["line 0,0 10,0", "", "block", "B1", "0,0", "all", ""] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"_X\"))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"_X\" '((0 . \"INSERT\"))))"), "1", "the line became a reference");
+}
+
+#[test]
 fn command_draws_and_one_routine_is_one_undo_step() {
     let mut s = session();
     let n = |s: &Session| s.doc().unwrap().model.handles().len();

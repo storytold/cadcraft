@@ -88,7 +88,7 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             }
             Value::Str(s) => {
                 let r = if ctx.s.running.is_none() {
-                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start(s) }
+                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start(&command_line_form(s)) }
                 } else if s.is_empty() {
                     ctx.s.input(Input::Enter)
                 } else {
@@ -126,6 +126,15 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
     }
     Ok(Flow::Value(Value::Nil))
+}
+
+/// The command `command` starts for `name`: BLOCK (any of its names, with or without `_`/`.`)
+/// starts its command-line form -BLOCK, which erases the selected objects once the block is
+/// defined; typed at Command:, BLOCK converts them into a reference. Only BLOCK is mapped: other
+/// dash twins (-ARRAY…) are not what `command` runs for the plain name.
+fn command_line_form(name: &str) -> String {
+    let id = crate::cmd::resolve_alias(&name.trim().trim_start_matches(['_', '.']).to_ascii_lowercase());
+    if id == "block" { "-block".to_string() } else { name.to_string() }
 }
 
 fn feed(s: &mut Session, input: Input) {
