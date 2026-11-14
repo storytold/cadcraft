@@ -640,6 +640,12 @@ mod tests {
         std::fs::write(base.join("in/Mixed.dxf"), "x").unwrap();
         std::os::unix::fs::symlink(base.join("outside"), base.join("in/Alias")).unwrap();
         std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/sub/Mixed.dxf")).unwrap();
+        if base.join("in/alias").exists() {
+            // A case-insensitive file system never needs a name corrected: nothing to test.
+            eprintln!("skipped: this file system ignores case");
+            std::fs::remove_dir_all(&base).unwrap();
+            return;
+        }
         let roots = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
         confine(Some(&roots), || {
             // `alias` isn't there but `Alias` is, a link out: the probe stops before looking in it.
