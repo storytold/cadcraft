@@ -276,7 +276,9 @@ pub(super) fn draw_arc_length(config: &DimConfig<'_>, g: &mut DimGeometry, text_
     if st.arc_symbol == 1 {
         // A small arc over the text.
         let (tw, tht) = measure(&g.mtext);
-        let (x, y) = (Vec2::from_angle(text_angle), Vec2::from_angle(text_angle).perp());
+        // The symbol turns with the text, a DIMTEDIT Angle included.
+        let a = if d.text_rotation != 0.0 && d.text_rotation.is_finite() { d.text_rotation } else { text_angle };
+        let (x, y) = (Vec2::from_angle(a), Vec2::from_angle(a).perp());
         let half = (tw / 2.0).max(th / 2.0);
         let base = text_mid + y * (tht / 2.0 + gap / 2.0);
         let sym: Vec<Vec2> = (0..=12)
