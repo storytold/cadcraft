@@ -19,6 +19,8 @@ pub enum Preference {
     Greek,
     #[serde(rename = "uk")]
     Ukrainian,
+    #[serde(rename = "pl")]
+    Polish,
     #[serde(rename = "pt-BR")]
     BrazilianPortuguese,
     #[serde(rename = "de")]
@@ -52,13 +54,13 @@ pub enum Preference {
     #[serde(rename = "vi")]
     Vietnamese,
 }
-
 impl Preference {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
         Self::Ukrainian,
+        Self::Polish,
         Self::BrazilianPortuguese,
         Self::German,
         Self::Spanish,
@@ -109,6 +111,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -134,6 +137,7 @@ impl Preference {
             Self::English => "English",
             Self::Greek => "Ελληνικά",
             Self::Ukrainian => "Українська",
+            Self::Polish => "Polski",
             Self::BrazilianPortuguese => "Português (Brasil)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
@@ -188,6 +192,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -220,8 +225,9 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 19] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
         code: "el", name: "Ελληνικά", source: include_str!("i18n/el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
@@ -373,6 +379,17 @@ pub fn format(source: &str, values: &[(&str, String)]) -> String {
     }
     result.push_str(rest);
     result
+}
+
+/// Polish plurals: one (1), few (2–4, 22–24), many (0, 5–21, 25–31).
+pub fn plural_pl(n: u64) -> usize {
+    if n == 1 {
+        0
+    } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
+        1
+    } else {
+        2
+    }
 }
 
 /// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).
