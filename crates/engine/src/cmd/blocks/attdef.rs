@@ -122,7 +122,12 @@ impl AttdefM {
             prompt: std::mem::take(&mut self.prompt),
             props: Default::default(),
             multiline: None,
-            modes: AttribModes { verify: self.flags & VERIFY != 0, preset: self.flags & PRESET != 0, lock_position: self.flags & LOCK != 0 },
+            modes: AttribModes {
+                verify: self.flags & VERIFY != 0,
+                preset: self.flags & PRESET != 0,
+                lock_position: self.flags & LOCK != 0,
+                hidden: false,
+            },
         }))?;
         Ok(Step::Done)
     }
