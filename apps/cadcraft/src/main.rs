@@ -181,6 +181,8 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         Pick::Open => vec![
             (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
             (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
+            (i18n::t("3D meshes (OBJ, STL, 3MF, glTF, GLB)"), vec!["obj", "stl", "3mf", "gltf", "glb"]),
+            (i18n::t("Exact 3D solids (STEP, IGES)"), vec!["step", "stp", "iges", "igs"]),
             (i18n::t("All files"), vec!["*"]),
         ],
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
@@ -203,9 +205,22 @@ fn file_dialog(pick: &Pick) -> rfd::FileDialog {
 /// filter's extension, and macOS accepts only listed extensions, replacing any other with the
 /// first one. DWG must be listed for a `.dwg` name to survive, and a drawing opened from DWG
 /// then defaults to DWG; other names keep DXF first.
-fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
-    let mut filters =
-        [("Drawing (DXF)", "dxf"), ("Drawing (DWG)", "dwg"), ("Drawing Template (DWT)", "dwt"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
+fn filters_for_save(name: &str) -> [(&'static str, &'static str); 13] {
+    let mut filters = [
+        ("Drawing (DXF)", "dxf"),
+        ("Drawing (DWG)", "dwg"),
+        ("Drawing Template (DWT)", "dwt"),
+        ("SVG", "svg"),
+        ("PNG", "png"),
+        ("PDF", "pdf"),
+        ("Wavefront OBJ mesh", "obj"),
+        ("STL mesh", "stl"),
+        ("3MF mesh", "3mf"),
+        ("glTF JSON mesh", "gltf"),
+        ("glTF binary mesh", "glb"),
+        ("STEP exact solid", "step"),
+        ("IGES planar exact solid", "iges"),
+    ];
     let lower = name.to_ascii_lowercase();
     filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
     filters
@@ -452,7 +467,18 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{filters, filters_for_save, follow_desktop, saved_window, window_options};
+    use cadcraft_ui_egui::Pick;
+
+    /// File ▸ Open offers the 3D mesh and exact-solid formats this build imports, in the
+    /// blocking dialog and the macOS sheet alike (both read `filters`).
+    #[test]
+    fn open_offers_the_3d_formats() {
+        let exts: Vec<&str> = filters(&Pick::Open).into_iter().flat_map(|(_, e)| e).collect();
+        for ext in ["dwg", "dxf", "svg", "obj", "stl", "3mf", "gltf", "glb", "step", "stp", "iges", "igs"] {
+            assert!(exts.contains(&ext), "{ext} missing from {exts:?}");
+        }
+    }
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -467,6 +493,19 @@ mod tests {
         for name in ["a.dwg", "b.dxf", "c"] {
             let exts: Vec<_> = filters_for_save(name).iter().map(|(_, e)| *e).collect();
             assert!(exts.contains(&"dwg") && exts.contains(&"dxf"), "{name}");
+            assert!(
+                exts.contains(&"obj")
+                    && exts.contains(&"stl")
+                    && exts.contains(&"gltf")
+                    && exts.contains(&"glb")
+                    && exts.contains(&"3mf")
+                    && exts.contains(&"step")
+                    && exts.contains(&"iges"),
+                "{name}"
+            );
+        }
+        for ext in ["obj", "stl", "gltf", "glb", "3mf", "step", "iges"] {
+            assert_eq!(first(&format!("part.{ext}")), ext);
         }
     }
 

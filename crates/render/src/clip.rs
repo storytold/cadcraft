@@ -209,7 +209,7 @@ pub fn boundary_polygon(k: &EntityKind) -> Option<Vec<Vec2>> {
         EntityKind::Ellipse(e) => {
             let g = cadcraft_geom::Ellipse { center: e.center.xy(), major: e.major.xy(), ratio: e.ratio, start: e.start, end: e.end };
             let r = g.major.len();
-            if !g.is_full() || !(r.is_finite() && r > 0.0 && e.ratio.is_finite() && e.ratio > 0.0) {
+            if !(g.is_full() && r.is_finite() && r > 0.0 && e.ratio.is_finite() && e.ratio > 0.0) {
                 return None;
             }
             g.tessellate(r * e.ratio.min(1.0) * 2e-3, &mut pts);

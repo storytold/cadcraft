@@ -254,7 +254,7 @@ pub(crate) fn osnap_with_neighborhood(
         let model_cursor = view.to_model(cursor);
         let model_aperture = aperture / view.scale;
         let model_base = base.map(|p| view.to_model(p));
-        if !model_cursor.is_finite() || !(model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
+        if !(model_cursor.is_finite() && model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
             continue;
         }
         let hit = osnap_in(

@@ -21,7 +21,7 @@ mod pick;
 pub(crate) use pick::expand;
 
 /// The most groups one drawing holds, and the most names one call lists.
-const MAX_GROUPS: usize = 100_000;
+pub(crate) const MAX_GROUPS: usize = 100_000;
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![

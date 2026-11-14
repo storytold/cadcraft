@@ -193,7 +193,7 @@ pub fn draw(app: &mut CadApp, p: &egui::Painter) -> bool {
             p.line_segment([cs + off * 0.2, cs + off * 1.1], Stroke::new(1.0, t.text_faint));
             a + off + along * (0.25 + 0.25 * offset_rank.min(2.0))
         };
-        let live = locked.is_none() && !(active && !app.cmd.buffer.is_empty());
+        let live = locked.is_none() && (!active || app.cmd.buffer.is_empty());
         field(p, at, &text, &font, active, locked.is_some(), live);
     }
     true

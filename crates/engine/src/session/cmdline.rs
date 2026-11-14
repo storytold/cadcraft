@@ -129,6 +129,19 @@ impl Session {
             return self.input(Input::Keyword(k));
         }
         if prompt.accept.point {
+            if prompt.point3d
+                && let Some(local) = crate::ucs::parse_point3(tt, self.active_ucs().from_world(self.last_point3))
+            {
+                return self.input(Input::Point3(self.active_ucs().to_world(local)));
+            }
+            if prompt.point3d {
+                let frame = self.active_ucs();
+                let last_local = frame.from_world(self.last_point3);
+                if let Some(p) = prompt::parse_point_with(tt, last_local.xy(), &self.angle_settings()) {
+                    self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
+                    return self.input(Input::Point3(frame.to_world(cadcraft_geom::Vec3::new(p.x, p.y, 0.0))));
+                }
+            }
             if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
                 return self.input(Input::Point(p));

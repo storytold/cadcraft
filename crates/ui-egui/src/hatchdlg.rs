@@ -449,7 +449,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            let ready = !st.edit.is_empty() || !(st.points.is_empty() && st.handles.is_empty());
+            let ready = !st.edit.is_empty() || !st.points.is_empty() || !st.handles.is_empty();
             if ui.add_enabled(ready, egui::Button::new(crate::tl!("OK"))).clicked() {
                 action = Action::Ok;
             }

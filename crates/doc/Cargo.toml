@@ -14,3 +14,6 @@ cadcraft-color = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+# Bounded native exact-solid payloads (MIT).
+miniz_oxide = "0.9"
