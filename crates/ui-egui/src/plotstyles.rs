@@ -5,7 +5,7 @@
 //! (`app.run`), so every edit is undoable and scriptable.
 
 use egui::RichText;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use cadcraft_doc::{Drawing, Entity, EntityKind};
 use cadcraft_color::{Color, aci_rgb};
 use serde_json::{Value, json};
@@ -76,7 +76,7 @@ fn used_aci_colors(d: &Drawing) -> BTreeSet<u8> {
         }
     }
     fn visit(d: &Drawing, e: &Entity, inherited_layer: Option<&str>, inherited_block: Color,
-             used: &mut BTreeSet<u8>, stack: &mut Vec<String>, depth: usize) {
+             used: &mut BTreeSet<u8>, stack: &mut Vec<String>, visited: &mut HashSet<(String, String, String)>, depth: usize) {
         if depth > 64 { return; }
         let layer_name = if e.common.layer == "0" { inherited_layer.unwrap_or(&e.common.layer) } else { &e.common.layer };
         let color = resolved(d, e, inherited_layer, inherited_block);
@@ -85,12 +85,17 @@ fn used_aci_colors(d: &Drawing) -> BTreeSet<u8> {
                 // An INSERT is a container; only its instantiated geometry and attributes count.
                 if let Some(block) = d.block(&insert.block) {
                     if !stack.iter().any(|name| name.eq_ignore_ascii_case(&insert.block)) {
-                        stack.push(insert.block.clone());
-                        for child in block.entities.iter() {
-                            // Layer 0 and ByBlock inherit the insertion context.
-                            visit(d, child, Some(layer_name), color, used, stack, depth + 1);
+                        // Repeated instances with the same effective layer and colour have
+                        // identical block-definition colours. Attributes are still checked below.
+                        let context = (insert.block.to_ascii_lowercase(), layer_name.to_ascii_lowercase(), format!("{color:?}"));
+                        if visited.insert(context) {
+                            stack.push(insert.block.clone());
+                            for child in block.entities.iter() {
+                                // Layer 0 and ByBlock inherit the insertion context.
+                                visit(d, child, Some(layer_name), color, used, stack, visited, depth + 1);
+                            }
+                            stack.pop();
                         }
-                        stack.pop();
                     }
                 }
                 // Attribute instances can override their definition's colour and layer.
@@ -112,9 +117,10 @@ fn used_aci_colors(d: &Drawing) -> BTreeSet<u8> {
     }
     let mut used = BTreeSet::new();
     let mut stack = Vec::new();
-    for e in d.model.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, 0); }
+    let mut visited = HashSet::new();
+    for e in d.model.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, &mut visited, 0); }
     for layout in &d.layouts {
-        for e in layout.entities.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, 0); }
+        for e in layout.entities.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, &mut visited, 0); }
     }
     used
 }
@@ -129,11 +135,10 @@ fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) -> egui:
         egui::vec2(width, 24.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(width);
-            ui.set_max_width(width);
+            ui.set_width(width);
             let rect = ui.max_rect();
             ui.set_clip_rect(ui.clip_rect().intersect(rect));
-            ui.add_space(CELL_PADDING);
+            ui.add_space(CELL_PADDING.min((width - 1.0).max(0.0)));
             add(ui);
         },
     );
@@ -146,7 +151,7 @@ fn resize_handle(ui: &mut egui::Ui, rect: egui::Rect, index: usize, width: f32, 
     let hit = egui::Rect::from_min_max(egui::pos2(x - 4.0, rect.top()), egui::pos2(x + 4.0, rect.bottom()));
     let response = ui.interact(hit, ui.scope_id().with(("pstyle_resize", index)), egui::Sense::click_and_drag())
         .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-        .on_hover_text("Glisser pour redimensionner ; double-clic pour ajuster");
+        .on_hover_text(crate::tl!("Drag to resize; double-click to fit"));
     ui.painter().vline(x, rect.y_range(), egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color));
     if response.dragged() {
         columns.widths[index] = (width + response.drag_delta().x).max(MIN_WIDTH);
@@ -195,12 +200,12 @@ pub fn panel(app: &mut CadApp, ui: &mut egui::Ui) {
             "plotstyle.import" => {
                 let result = app.pick_then(Pick::PlotStyleOpen, |app, path| {
                     app.run("stylesmanager", json!({ "action": "load", "path": path }))?;
-                    app.set_status("Table de styles importée.");
+                    app.set_status(crate::tl!("Plot style table imported."));
                     Ok(Value::Null)
                 });
                 match result {
                     Some(Err(e)) => app.set_status(e),
-                    None => app.set_status("Aucun sélecteur de fichiers disponible pour l'importation."),
+                    None => app.set_status(crate::tl!("No file picker available for import.")),
                     _ => {}
                 }
             }
@@ -214,12 +219,12 @@ pub fn panel(app: &mut CadApp, ui: &mut egui::Ui) {
                 let table_name = name.to_owned();
                 let result = app.pick_then(Pick::PlotStyleSave(filename), move |app, path| {
                     app.run("stylesmanager", json!({ "action": "save", "name": table_name, "path": path }))?;
-                    app.set_status("Table de styles exportée.");
+                    app.set_status(crate::tl!("Plot style table exported."));
                     Ok(Value::Null)
                 });
                 match result {
                     Some(Err(e)) => app.set_status(e),
-                    None => app.set_status("Aucun sélecteur de fichiers disponible pour l'exportation."),
+                    None => app.set_status(crate::tl!("No file picker available for export.")),
                     _ => {}
                 }
             }
@@ -286,11 +291,11 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
             if ui.button("+STB").clicked() {
                 action.push(("stylesmanager", json!({ "action": "new", "name": "new.stb" })));
             }
-            if ui.button("Importer").on_hover_text("Charger une table de styles JSON native de CADCraft").clicked() {
+            if ui.button(crate::tl!("Import")).on_hover_text(crate::tl!("Load a CADCraft native JSON plot style table")).clicked() {
                 action.push(("plotstyle.import", Value::Null));
             }
-            if ui.add_enabled(table.is_some(), egui::Button::new("Exporter"))
-                .on_hover_text("Enregistrer la table sélectionnée au format JSON natif de CADCraft")
+            if ui.add_enabled(table.is_some(), egui::Button::new(crate::tl!("Export")))
+                .on_hover_text(crate::tl!("Save the selected table in CADCraft native JSON format"))
                 .clicked()
             {
                 action.push(("plotstyle.export", json!({ "name": sel })));
@@ -359,19 +364,22 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                 cmp
             });
         }
+        // Remove names deleted from the table so a later batch edit cannot recreate them.
+        let current_names: BTreeSet<String> = table.styles.iter().map(|st| st.name.clone()).collect();
+        state.selected.retain(|name| current_names.contains(name));
         let count = 7;
         let (state_id, mut columns) = column_state(&ctx, named);
-        let fit_requested = ui.button("Ajuster les colonnes").clicked();
+        let fit_requested = ui.button(crate::tl!("Fit columns")).clicked();
         let height = (ui.available_height() - if named { 46.0 } else { 0.0 }).max(120.0);
-        let headings = ["Style de tracé", "Couleur", "Niveaux de gris", "Tramage", "Type de ligne", "Épaisseur de ligne", if named { "Supprimer" } else { "Utilisé" }];
+        let headings = [crate::tl!("Plot style"), crate::tl!("Color"), crate::tl!("Grayscale"), crate::tl!("Screening"), crate::tl!("Linetype"), crate::tl!("Lineweight"), if named { crate::tl!("Remove") } else { crate::tl!("Used") }];
         let mut fitted = [MIN_WIDTH; 7];
         for i in 0..count { fitted[i] = text_width(ui, headings[i]) + 26.0; }
         for st in &rows {
             fitted[0] = fitted[0].max(text_width(ui, &st.name) + 40.0);
-            fitted[1] = fitted[1].max(text_width(ui, &st.color.map(|c| c.hex()).unwrap_or_else(|| "Objet".into())) + 42.0);
+            fitted[1] = fitted[1].max(text_width(ui, &st.color.map(|c| c.hex()).unwrap_or_else(|| crate::tl!("Object").to_owned())) + 42.0);
             fitted[3] = fitted[3].max(text_width(ui, &format!("{} %", st.screening)) + 28.0);
-            fitted[4] = fitted[4].max(text_width(ui, st.linetype.as_deref().unwrap_or("Par défaut")) + 42.0);
-            let lw = st.lineweight.map(|w| format!("{:.2} mm", f64::from(w) / 100.0)).unwrap_or_else(|| "Par défaut".into());
+            fitted[4] = fitted[4].max(text_width(ui, st.linetype.as_deref().unwrap_or(crate::tl!("Default"))) + 42.0);
+            let lw = st.lineweight.map(|w| format!("{:.2} mm", f64::from(w) / 100.0)).unwrap_or_else(|| crate::tl!("Default").to_owned());
             fitted[5] = fitted[5].max(text_width(ui, &lw) + 42.0);
         }
         for name in &linetypes { fitted[4] = fitted[4].max(text_width(ui, name) + 42.0); }
@@ -379,7 +387,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
         if fit_requested { columns.manual = [false; 7]; }
         let widths = displayed_widths(&columns, count, &fitted);
         let total_width = widths[..count].iter().sum::<f32>() + COLUMN_GAP * count as f32;
-        ui.label(format!("{} styles sélectionnés", state.selected.len()));
+        ui.label(format!("{} {}", state.selected.len(), crate::tl!("styles selected")));
         // One scrollable grid: a single horizontal coordinate system for headers and rows.
         // The selection checkboxes share the same vertical scroll as their data rows.
         egui::ScrollArea::horizontal()
@@ -392,7 +400,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                     let all = !rows.is_empty() && rows.iter().all(|s| state.selected.contains(&s.name));
                     let mut check = all;
                     if ui.add_sized([24.0, 24.0], egui::Checkbox::without_text(&mut check))
-                        .on_hover_text("Sélectionner tous les styles affichés").changed() {
+                        .on_hover_text(crate::tl!("Select all displayed styles")).changed() {
                         for st in &rows {
                             if check { state.selected.insert(st.name.clone()); }
                             else { state.selected.remove(&st.name); }
@@ -417,8 +425,8 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                                 state.secondary = None;
                             }
                         }
-                        if i == 4 { ui.label("?").on_hover_text("Utiliser le type de ligne de l’objet"); }
-                        if i == 5 { ui.label("?").on_hover_text("Utiliser l’épaisseur de ligne de l’objet"); }
+                        if i == 4 { ui.label("?").on_hover_text(crate::tl!("Use object linetype")); }
+                        if i == 5 { ui.label("?").on_hover_text(crate::tl!("Use object lineweight")); }
                     });
                     resize_handle(ui, rect, i, widths[i], &mut columns, fitted[i]);
                 }
@@ -473,11 +481,11 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                         } else {
                             ui.painter().with_clip_rect(rect).text(
                                 rect.left_center(), egui::Align2::LEFT_CENTER,
-                                "Objet", crate::theme::body(), ui.visuals().text_color(),
+                                crate::tl!("Object"), crate::theme::body(), ui.visuals().text_color(),
                             );
                         }
                         let response = response.on_hover_text(
-                            st.color.map(|c| format!("RGB : {}", c.hex())).unwrap_or_else(|| "Couleur de l'objet".to_owned())
+                            st.color.map(|c| format!("RGB : {}", c.hex())).unwrap_or_else(|| crate::tl!("Object color").to_owned())
                         );
                         egui::Popup::from_toggle_button_response(&response)
                             .id(id)
@@ -487,7 +495,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                                 // The popup must not inherit the clipped grid cell: the RGB
                                 // picker paints its gradient outside the cell's bounds.
                                 ui.set_clip_rect(ui.ctx().content_rect());
-                                if ui.button("Couleur de l'objet").clicked() {
+                                if ui.button(crate::tl!("Object color")).clicked() {
                                     edit("color", Value::Null);
                                     ui.close();
                                 }
@@ -500,27 +508,31 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                     });
                     cell(ui, widths[2], |ui| {
                         let mut gray = st.grayscale;
-                        if ui.checkbox(&mut gray, "").on_hover_text("Imprimer en niveaux de gris").changed() {
+                        if ui.checkbox(&mut gray, "").on_hover_text(crate::tl!("Print in grayscale")).changed() {
                             edit("grayscale", json!(gray));
                         }
                     });
                     cell(ui, widths[3], |ui| {
                         let mut screen = st.screening.min(100);
-                        if ui.add(egui::DragValue::new(&mut screen).range(0..=100).suffix(" %")).changed() { edit("screening", json!(screen)); }
+                        ui.push_id(("pstyle_screening", &table.name, &st.name), |ui| {
+                            if ui.add(egui::DragValue::new(&mut screen).range(0..=100).suffix(" %")).changed() {
+                                edit("screening", json!(screen));
+                            }
+                        });
                     });
                     cell(ui, widths[4], |ui| {
-                        let lt = st.linetype.clone().unwrap_or_else(|| "Par défaut".to_string());
+                        let lt = st.linetype.clone().unwrap_or_else(|| crate::tl!("Default").to_string());
                         craft_ui::ComboBox::from_id_salt(("pstyle_lt", &st.name)).selected_text(lt).width((widths[4] - 18.0).max(12.0)).show_ui(ui, |ui| {
-                            if ui.selectable_label(st.linetype.is_none(), "Par défaut").clicked() { edit("linetype", Value::Null); }
+                            if ui.selectable_label(st.linetype.is_none(), crate::tl!("Default")).clicked() { edit("linetype", Value::Null); }
                             for n in &linetypes {
                                 if ui.selectable_label(st.linetype.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(n)), n).clicked() { edit("linetype", json!(n)); }
                             }
                         });
                     });
                     cell(ui, widths[5], |ui| {
-                        let lw = st.lineweight.map(|w| format!("{:.2} mm", f64::from(w) / 100.0)).unwrap_or_else(|| "Par défaut".to_string());
+                        let lw = st.lineweight.map(|w| format!("{:.2} mm", f64::from(w) / 100.0)).unwrap_or_else(|| crate::tl!("Default").to_string());
                         craft_ui::ComboBox::from_id_salt(("pstyle_lw", &st.name)).selected_text(lw).width((widths[5] - 18.0).max(12.0)).show_ui(ui, |ui| {
-                            if ui.selectable_label(st.lineweight.is_none(), "Par défaut").clicked() { edit("lineweight", Value::Null); }
+                            if ui.selectable_label(st.lineweight.is_none(), crate::tl!("Default")).clicked() { edit("lineweight", Value::Null); }
                             for mm in LINEWEIGHTS {
                                 let hundredths = (mm * 100.0).round() as u16;
                                 if ui.selectable_label(st.lineweight == Some(hundredths), format!("{mm:.2} mm")).clicked() { edit("lineweight", json!(mm)); }
@@ -531,7 +543,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                     if !named {
                         cell(ui, widths[6], |ui| {
                             if style_aci(&st.name).is_some_and(|i| used_colors.contains(&i)) {
-                                ui.label("✓").on_hover_text("Couleur utilisée par au moins un objet");
+                                ui.label("✓").on_hover_text(crate::tl!("Color used by at least one object"));
                             }
                         });
                     }
@@ -539,6 +551,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                         cell(ui, widths[6], |ui| {
                             let normal = st.name.eq_ignore_ascii_case(cadcraft_doc::NORMAL_STYLE);
                             if ui.add_enabled(!normal, egui::Button::new(crate::tl!("Remove"))).clicked() {
+                                state.selected.remove(&st.name);
                                 action.push(("stylesmanager", json!({ "action": "set", "name": table.name, "removeStyle": st.name })));
                             }
                         });
