@@ -102,7 +102,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
     // a polygon mesh) would otherwise get handles that records further on still have. A file
     // CADCraft wrote names its own next handle, above which its rebuilt records are numbered
-    // (#495), so for it only the entity records are reserved.
+    // (#495), so for it only the entity records are reserved. Handles in the reserved band are
+    // reserved for allocation rather than followed (#913): a handle-less entity read before the
+    // section that names one is placed would otherwise be given it and replace the record (#1276).
     let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
     if ours {
         // Its table and object records are numbered above its seed and rebuilt on save (#495),
@@ -116,12 +118,19 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
             }
             if let Some(h) = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(t.str().trim())) {
                 d.bump_handseed(h);
+                d.reserve_handle(h);
             }
         }
     } else {
-        for t in secs.iter().flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
-            if let Some(h) = Handle::parse_hex(t.str().trim()) {
-                d.bump_handseed(h);
+        for s in &secs {
+            let entity_section = s.name == "BLOCKS" || s.name == "ENTITIES";
+            for t in s.tags.iter().filter(|t| t.code == 5 || t.code == 105) {
+                if let Some(h) = Handle::parse_hex(t.str().trim()) {
+                    d.bump_handseed(h);
+                    if entity_section {
+                        d.reserve_handle(h);
+                    }
+                }
             }
         }
     }

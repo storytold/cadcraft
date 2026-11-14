@@ -132,6 +132,10 @@ pub struct Drawing {
     pub scales: Vec<AnnoScale>,
     /// Next free handle.
     pub handseed: u64,
+    /// Handles a file's records hold in the reserved band, recorded while reading before the
+    /// record is placed: [`Drawing::new_handle`] skips them meanwhile. [`Drawing::bump_handseed`]
+    /// does not follow them (#913). Never written to a file.
+    pub reserved_handles: BTreeSet<u64>,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
@@ -205,6 +209,7 @@ impl Drawing {
             parametric: Parametric::default(),
             scales: imperial_scales(),
             handseed: 0x100,
+            reserved_handles: BTreeSet::new(),
             hidden_objects: BTreeSet::new(),
             read_notes: Vec::new(),
             refedit: None,
@@ -225,7 +230,7 @@ impl Drawing {
         loop {
             let h = Handle(self.handseed);
             self.handseed = self.handseed.saturating_add(1);
-            if !self.handle_in_use(h) {
+            if !self.handle_in_use(h) && !self.reserved_handles.contains(&h.0) {
                 return h;
             }
             // All 64-bit handles in use: wrap into the band the file's own handles sit above,
@@ -240,6 +245,18 @@ impl Drawing {
     fn handle_in_use(&self, h: Handle) -> bool {
         self.model.contains(h) || self.layouts.iter().any(|l| l.entities.contains(h)) || self.blocks.values().any(|b| b.entities.contains(h))
     }
+    /// Record a handle a file's record holds in the reserved band, before the record is placed in
+    /// the drawing, so [`Drawing::new_handle`] does not hand it to an object read earlier (#1276).
+    ///
+    /// Only handles at or above [`HANDLE_LIMIT`] are recorded: below it [`Drawing::bump_handseed`]
+    /// already moves the seed past them. The reservation stays separate from the seed because the
+    /// writer's growth lives above the limit and a file's handles there are not followed (#913).
+    pub fn reserve_handle(&mut self, h: Handle) {
+        if h.0 >= HANDLE_LIMIT {
+            self.reserved_handles.insert(h.0);
+        }
+    }
+
     /// Make sure future handles don't collide with `h` (after loading a file).
     ///
     /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not

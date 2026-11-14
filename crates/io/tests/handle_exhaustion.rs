@@ -166,6 +166,65 @@ fn a_marked_files_sections_reserve_handles_against_each_other() {
     assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 10.0)), "the ENTITIES line is gone");
 }
 
+/// A file whose BLOCKS holds a handle-less model-space entity and whose ENTITIES names the
+/// last handle below the reserved band and the first handle in it. With `marked` the file names
+/// CADCraft's own seed record, which narrows the reader's handle pre-scan to the entity sections.
+fn file_with_reserved_band_entities(marked: bool) -> String {
+    let below = format!("{:X}", cadcraft_doc::HANDLE_LIMIT - 1);
+    let band = format!("{:X}", cadcraft_doc::HANDLE_LIMIT);
+    let objects = if marked {
+        "0\nSECTION\n2\nOBJECTS\n\
+         0\nXRECORD\n5\n300\n100\nAcDbXrecord\n3\nCADCRAFT_HANDSEED\n1\n1000\n\
+         0\nENDSEC\n"
+    } else {
+        ""
+    };
+    format!(
+        "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$HANDSEED\n5\n1000\n0\nENDSEC\n\
+         0\nSECTION\n2\nBLOCKS\n\
+         0\nBLOCK\n8\n0\n2\n*MODEL_SPACE\n70\n0\n10\n0.0\n20\n0.0\n30\n0.0\n3\n*MODEL_SPACE\n1\n\n\
+         0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n1.0\n21\n0.0\n31\n0.0\n\
+         0\nENDBLK\n8\n0\n\
+         0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n\
+         0\nLINE\n5\n{below}\n8\n0\n10\n10.0\n20\n0.0\n30\n0.0\n11\n11.0\n21\n0.0\n31\n0.0\n\
+         0\nLINE\n5\n{band}\n8\n0\n10\n20.0\n20\n0.0\n30\n0.0\n11\n21.0\n21\n0.0\n31\n0.0\n\
+         0\nENDSEC\n{objects}0\nEOF\n"
+    )
+}
+
+/// All three lines survive with their own handles: the handle-less block entity could not take
+/// the reserved-band handle of the file's own ENTITIES record.
+fn assert_three_lines_survive(d: &Drawing) {
+    assert_eq!(d.model.len(), 3, "one entity replaced another");
+    let handles = distinct(d);
+    let unique: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+    assert_eq!(unique.len(), handles.len(), "duplicate handles: {handles:?}");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 0.0)), "the block entity is gone");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 10.0)), "the line below the band is gone");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 20.0)), "the line in the band is gone");
+    // The band's explicit handle stays with the record that names it.
+    let band = Handle(cadcraft_doc::HANDLE_LIMIT);
+    let owner = d.model.iter().find(|e| e.handle == band).expect("the band handle was renumbered");
+    assert!(matches!(&owner.kind, EntityKind::Line(l) if l.a.x == 20.0), "the band handle moved to another line");
+}
+
+#[test]
+fn reserved_band_handles_in_entities_are_not_handed_to_a_handle_less_block_entity() {
+    // The handle below the reserved band is the file's, so the reader's next handle is the first
+    // handle in the band, which an ENTITIES record already owns. The seed cannot follow it
+    // (#913), so the handle is reserved for allocation instead: the handle-less model-space
+    // block entity must not take it and replace the file's line.
+    assert_three_lines_survive(&read(&file_with_reserved_band_entities(true)));
+}
+
+#[test]
+fn reserved_band_handles_are_reserved_without_the_cadcraft_seed_record() {
+    // The same reservation holds when the pre-scan reads every section's handles: a handle in
+    // the band is the file's own there too, and still must not be given away.
+    assert_three_lines_survive(&read(&file_with_reserved_band_entities(false)));
+}
+
 #[test]
 fn generated_geometry_never_takes_a_handle_an_object_holds() {
     // The drawing's own handles sit in the reserved band and the seed is at the top of the
