@@ -15,6 +15,8 @@ fn menu_items_open_their_dialogs() {
         ("style", "textstyle"),
         ("tablestyle", "tablestyle"),
         ("mleaderstyle", "mleaderstyle"),
+        ("dimstyle", "dimstyle"),
+        ("dimstyle.dimension", "dimstyle"),
         ("ddptype", "ptype"),
         ("constraintsettings", "csettings"),
         ("plot", "plot"),
@@ -37,6 +39,12 @@ fn menu_items_open_their_dialogs() {
         assert!(app.cmdline(typed).is_none(), "bare {typed} is not an error");
         assert_eq!(app.ui.dialog.as_deref(), Some("textstyle"), "{typed}");
     }
+    // #3160: typed DIMSTYLE and its aliases open the Dimension Style dialog.
+    for typed in ["DIMSTYLE", "dimstyle", "D", "DST", "DDIM"] {
+        app.ui.dialog = None;
+        assert!(app.cmdline(typed).is_none(), "bare {typed} is not an error");
+        assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"), "{typed}");
+    }
 }
 
 #[test]
@@ -46,6 +54,8 @@ fn json_calls_never_open_the_dialogs() {
     app.run("linetype", json!({ "load": "DASHED", "current": "DASHED" })).unwrap();
     app.run("tablestyle", json!({ "name": "Schedule", "current": false })).unwrap();
     app.run("style", json!({ "name": "SCHEM", "font": "Arial" })).unwrap();
+    app.run("dimstyle", json!({ "name": "Arch", "current": false })).unwrap();
+    assert!(app.session.doc().unwrap().dim_styles.iter().any(|s| s.name == "Arch"));
     assert!(app.session.doc().unwrap().text_styles.iter().any(|s| s.name == "SCHEM"));
     assert!(app.ui.dialog.is_none());
     let d = app.session.doc().unwrap();

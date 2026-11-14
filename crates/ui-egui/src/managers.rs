@@ -1,5 +1,5 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings and Named
+//! Table Style, Multileader Style, Dimension Style, Page Setup Manager, Plot, Constraint Settings and Named
 //! Viewports.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
@@ -33,6 +33,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "style" | "st" => "textstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
         "vports.named" => "namedvports",
@@ -55,6 +56,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "textstyle" => text_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
         "namedvports" => named_vports::dialog(app, ctx, open),
@@ -396,6 +398,37 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
     }
     let current = d.header.str("CMLEADERSTYLE", "Standard");
     style_manager(ctx, open, "Multileader Style", "mleaderstyle", &current, &styles)
+}
+
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style", open);
+        return None;
+    };
+    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| Style {
+            name: s.name.clone(),
+            fields: vec![
+                Field::Num("scale", "Overall scale", s.scale),
+                Field::Num("textHeight", "Text height", s.text_height),
+                Field::Num("arrowSize", "Arrowhead size", s.arrow_size),
+                Field::Num("textGap", "Offset from dim line", s.text_gap),
+                Field::Num("extOffset", "Offset from origin", s.ext_offset),
+                Field::Num("extExtend", "Extend beyond dim lines", s.ext_extend),
+                Field::Num("decimals", "Precision", f64::from(s.decimals)),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
+            ],
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
 }
 
 /// A style list (set current, new) beside the selected style's properties. `cmd` takes
