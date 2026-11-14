@@ -402,13 +402,21 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// The alias store is process-wide. A test of this crate that changes it holds this guard while
+/// it does, so such tests take turns.
+#[cfg(test)]
+pub(crate) fn lock_alias_store() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
+    use std::sync::MutexGuard;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::{Mutex, MutexGuard, PoisonError};
 
     use cadcraft_engine::Session;
     use serde_json::json;
@@ -419,8 +427,7 @@ mod tests {
 
     /// The alias store is process-wide, so the tests that load files take turns and clear it.
     fn alone() -> MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+        super::lock_alias_store()
     }
 
     fn temp_dir(name: &str) -> PathBuf {

@@ -52,6 +52,7 @@ mod extend_polyline_arc_end;
 mod fillet_chamfer;
 mod fix_holds_grips;
 mod followups_626;
+mod greek_keyboard;
 mod grip_dim_input;
 mod grip_options;
 mod grip_selection;
