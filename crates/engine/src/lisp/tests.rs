@@ -347,6 +347,20 @@ fn printing_many_lines_is_linear() {
 }
 
 #[test]
+fn command_text_string_keeps_its_spaces() {
+    // #2994: the text typed at TEXT's "Enter text" prompt is the text exactly, spaces kept.
+    let mut s = session();
+    ok(&mut s, "(command \"_.text\" '(0 0) 2.5 0 \"3P, \")");
+    assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[3P, ]\"");
+    ok(&mut s, "(command \"_.text\" '(0 5) 2.5 0 \" a  b\")");
+    assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[ a  b]\"");
+    // Only spaces is a text too; only "" is Enter.
+    ok(&mut s, "(command \"_.text\" '(0 10) 2.5 0 \"   \")");
+    assert_eq!(ok(&mut s, "(strcat \"[\" (cdr (assoc 1 (entget (entlast)))) \"]\")"), "\"[   ]\"");
+    assert_eq!(ok(&mut s, "(getvar \"CMDACTIVE\")"), "0");
+}
+
+#[test]
 fn command_draws_and_one_routine_is_one_undo_step() {
     let mut s = session();
     let n = |s: &Session| s.doc().unwrap().model.handles().len();

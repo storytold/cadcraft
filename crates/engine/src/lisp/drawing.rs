@@ -92,7 +92,7 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                 } else if s.is_empty() {
                     ctx.s.input(Input::Enter)
                 } else {
-                    ctx.s.typed(s)
+                    ctx.s.typed_exact(s)
                 };
                 if let Err(e) = r {
                     ctx.s.echo(e.to_string());

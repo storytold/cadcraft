@@ -72,6 +72,16 @@ impl Session {
         self.typed_token(t, true)
     }
 
+    /// A string given to a command by LISP's `command`: the answer exactly as written, spaces
+    /// kept, at a prompt for [literal](crate::Prompt::literal) text (TEXT's "Enter text", #2994);
+    /// anywhere else it is typed as [`Session::typed`] reads it.
+    pub(crate) fn typed_exact(&mut self, t: &str) -> Result<()> {
+        if !t.is_empty() && self.current_prompt().is_some_and(|p| p.literal) {
+            return self.input(Input::Text(t.to_string()));
+        }
+        self.typed(t)
+    }
+
     /// One token typed while a command runs; `lisp` evaluates a LISP expression first. The value
     /// of that expression is the answer, so it comes back with `lisp` off: re-evaluating it would
     /// let `(setq q "!q")` evaluate itself forever and overflow the stack (#1920).

@@ -102,6 +102,10 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// Free text that LISP's `command` gives exactly as written, spaces kept: TEXT's "Enter text"
+    /// (#2994). Typed at the command line it is still trimmed.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub literal: bool,
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -157,6 +161,11 @@ impl Prompt {
     /// Asks for a distance from the base (the `distance` field).
     pub fn distance(mut self) -> Self {
         self.distance = true;
+        self
+    }
+    /// A string from LISP's `command` is kept as written (the `literal` field).
+    pub fn literal(mut self) -> Self {
+        self.literal = true;
         self
     }
     /// Accept deferred tangent/perpendicular snaps (the `deferred` field).
