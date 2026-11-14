@@ -47,7 +47,7 @@ fn edit_primary(drawing: &mut Drawing, edit: impl Fn(&mut Attrib)) {
 fn reopen(drawing: &Drawing, version: Version, binary: bool, context: &str) -> Drawing {
     let options = SaveOptions { version: Some(version), binary };
     let bytes = cadcraft_io::write_with(drawing, "attributes.dxf", &options).unwrap_or_else(|e| panic!("{context}: write: {e}"));
-    assert_eq!(cadcraft_dxf::is_binary(&bytes), binary, "{context}: encoding");
+    assert_eq!(craft_dxf::is_binary(&bytes), binary, "{context}: encoding");
     let back = cadcraft_io::read(&bytes, "attributes.dxf").unwrap_or_else(|e| panic!("{context}: read: {e}"));
     assert_eq!(cadcraft_io::save_version(&back), version, "{context}: version");
     assert!(back.read_notes.is_empty(), "{context}: {:?}", back.read_notes);

@@ -2,9 +2,9 @@
 //! block name and values, or one row per reference with its handle, layer, position and
 //! rotation — returned, written to a CSV file and/or inserted as a table. Tags match in any case.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use cadcraft_doc::{EntityKind, Insert};
+use cadcraft_doc::{Drawing, EntityKind, Insert};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -88,20 +88,73 @@ fn matches(spec: &str, text: &str) -> bool {
     spec.split(',').any(|p| wildcard(p.trim(), text))
 }
 
-/// The attribute values of `ins`: its own, then the constant ones of its block.
-fn values(d: &cadcraft_doc::Drawing, ins: &Insert) -> Vec<(String, String)> {
-    let mut v: Vec<(String, String)> = ins.attribs.iter().map(|a| (a.tag.to_ascii_uppercase(), a.text.value.clone())).collect();
-    if let Some(b) = d.block(&ins.block) {
-        for e in b.entities.iter() {
-            if let EntityKind::AttDef(a) = &e.kind
-                && a.constant
-                && !v.iter().any(|(t, _)| t.eq_ignore_ascii_case(&a.tag))
-            {
-                v.push((a.tag.to_ascii_uppercase(), a.text.value.clone()));
-            }
+/// The constant attribute values of a block definition whose tags are selected for output.
+fn constants(b: &cadcraft_doc::Block, selected: &[String]) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = Vec::new();
+    for e in b.entities.iter() {
+        if let EntityKind::AttDef(a) = &e.kind
+            && a.constant
+            && selected.iter().any(|tag| tag == &a.tag.to_ascii_uppercase())
+            && !v.iter().any(|(t, _)| t.eq_ignore_ascii_case(&a.tag))
+        {
+            v.push((a.tag.to_ascii_uppercase(), a.text.value.clone()));
         }
     }
     v
+}
+
+/// The attribute values of `ins` that `o.tags` selects: its own, then the constant ones of its
+/// block (`consts`, read once per block). Values no column shows are not copied.
+fn values(ins: &Insert, consts: &[(String, String)], selected: &[String]) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = ins
+        .attribs
+        .iter()
+        .map(|a| (a.tag.to_ascii_uppercase(), a))
+        .filter(|(t, _)| selected.contains(t))
+        .map(|(t, a)| (t, a.text.value.clone()))
+        .collect();
+    for (t, val) in consts {
+        if !v.iter().any(|(k, _)| k.eq_ignore_ascii_case(t)) {
+            v.push((t.clone(), val.clone()));
+        }
+    }
+    v
+}
+
+/// Select the output columns before copying any attribute text. A block definition can contain
+/// many large constants that do not survive the table's 190-column limit.
+fn selected_tags(ents: &[std::sync::Arc<cadcraft_doc::Entity>], d: &Drawing, o: &Options) -> Vec<String> {
+    let mut selected = Vec::new();
+    let mut add = |tag: &str| {
+        let tag = tag.to_ascii_uppercase();
+        if selected.len() < MAX_TAGS && matches(&o.tags, &tag) && !selected.contains(&tag) {
+            selected.push(tag);
+        }
+    };
+    let mut scanned = std::collections::HashSet::new();
+    for entity in ents {
+        let EntityKind::Insert(ins) = &entity.kind else { continue };
+        let anonymous = ins.block.starts_with('*') || d.block(&ins.block).is_some_and(|b| b.anonymous);
+        if anonymous || !matches(&o.blocks, &ins.block) {
+            continue;
+        }
+        for attribute in &ins.attribs {
+            add(&attribute.tag);
+        }
+        // A block's constants are read once, however many inserts reference it.
+        if scanned.insert(ins.block.as_str())
+            && let Some(block) = d.block(&ins.block)
+        {
+            for entity in block.entities.iter() {
+                if let EntityKind::AttDef(attribute) = &entity.kind
+                    && attribute.constant
+                {
+                    add(&attribute.tag);
+                }
+            }
+        }
+    }
+    selected
 }
 
 /// The block references to extract from: `handles` when given, else model space and the layouts.
@@ -112,7 +165,9 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     } else {
         d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).cloned().collect()
     };
+    let selected = selected_tags(&ents, d, o);
     let mut out = Vec::new();
+    let mut consts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for e in &ents {
         let EntityKind::Insert(ins) = &e.kind else { continue };
         let anonymous = ins.block.starts_with('*') || d.block(&ins.block).is_some_and(|b| b.anonymous);
@@ -121,12 +176,17 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
         }
         let block = d.block(&ins.block).map(|b| b.name.clone()).unwrap_or_else(|| ins.block.clone());
         out.push(Found {
-            block,
             handle: e.handle.hex(),
             layer: e.common.layer.clone(),
             at: ins.insert.xy(),
             rotation: ins.rotation.to_degrees(),
-            values: values(d, ins),
+            block: block.clone(),
+            values: values(
+                ins,
+                // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
+                consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &selected)).unwrap_or_default()),
+                &selected,
+            ),
         });
     }
     Ok(out)
