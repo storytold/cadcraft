@@ -55,13 +55,15 @@ const MAX_GAUSS_DEPTH: usize = 10;
 
 /// `gauss` over [a, b], halving until the two halves agree with the whole: a fixed panel count
 /// is far off on a tight bend, and the arc-length inverse must agree with the measure.
-fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize) -> f64 {
+/// `floor` is an absolute error nobody can resolve (rounding noise of the control coordinates): on
+/// a constant spline the speed is pure noise, which a relative test alone never accepts.
+fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, floor: f64, depth: usize) -> f64 {
     let m = (a + b) / 2.0;
     let (l, r) = (gauss(a, m, f), gauss(m, b, f));
-    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs() {
+    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs() + floor {
         return l + r;
     }
-    adaptive_gauss(a, m, l, f, depth - 1) + adaptive_gauss(m, b, r, f, depth - 1)
+    adaptive_gauss(a, m, l, f, floor, depth - 1) + adaptive_gauss(m, b, r, f, floor, depth - 1)
 }
 
 /// Clamped knots over Bézier pieces meeting at `breaks`, for degree `p`.
@@ -527,7 +529,22 @@ impl Spline {
     /// sample.
     fn panel_length(&self, a: f64, b: f64, derivative: fn(&Spline, f64) -> Vec2) -> f64 {
         let speed = |t: f64| derivative(self, t).len();
-        adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+        adaptive_gauss(a, b, gauss(a, b, speed), &speed, self.length_floor(a, b), MAX_GAUSS_DEPTH)
+    }
+
+    /// The absolute length error below which the panel [a, b] counts as converged: rounding of the
+    /// coordinates of the control points that shape it (1e-15 of the largest), so a distant control
+    /// point does not relax the tolerance. Costs one span's control points, not the whole spline.
+    fn length_floor(&self, a: f64, b: f64) -> f64 {
+        let Some(n) = self.control.len().checked_sub(1) else { return 0.0 };
+        let span = find_span(n, self.degree, (a + b) / 2.0, &self.knots);
+        let first = span.saturating_sub(self.degree);
+        let last = span.min(n);
+        let local = self.control.get(first..=last).unwrap_or_default();
+        // A control point's pull on the curve is its coordinate times its share of the weight, so a
+        // far point of tiny weight does not loosen the floor.
+        let heaviest = (first..=last).map(|i| self.weight(i)).fold(f64::MIN_POSITIVE, f64::max);
+        1e-15 * local.iter().enumerate().map(|(k, c)| c.x.abs().max(c.y.abs()) * (self.weight(first + k) / heaviest).min(1.0)).fold(0.0, f64::max)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
@@ -618,10 +635,11 @@ impl Ellipse {
         let h = sweep / n as f64;
         // Each panel halved where it needs it: a flat ellipse turns sharply at its ends.
         let speed = |t: f64| self.derivative(t).len();
+        let floor = 0.0;
         let l: f64 = (0..n)
             .map(|i| {
                 let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
-                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, floor, MAX_GAUSS_DEPTH)
             })
             .sum();
         if l.is_finite() { l } else { 0.0 }
@@ -658,6 +676,40 @@ impl Ellipse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A constant spline's speed is rounding noise: the integration accepts it at once rather than
+    /// halving to the depth cap (1,024 panels per knot span).
+    #[test]
+    fn noise_speed_converges_with_the_absolute_floor() {
+        let calls = std::cell::Cell::new(0usize);
+        let noise = |t: f64| {
+            calls.set(calls.get() + 1);
+            1e-16 * (t * 977.0).sin().abs()
+        };
+        let l = adaptive_gauss(0.0, 1.0, gauss(0.0, 1.0, noise), &noise, 1e-15, MAX_GAUSS_DEPTH);
+        assert!(l < 1e-15 && calls.get() < 100, "{l} {}", calls.get());
+        let c = Spline::from_control(vec![Vec2::new(1e6, 1e6); 5], 3);
+        assert!(c.length() < 1e-6);
+    }
+
+    #[test]
+    fn a_low_weight_control_point_does_not_relax_the_floor() {
+        let mut s = Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1e13, 0.0), Vec2::new(0.0, 0.0)], 2);
+        s.knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        s.weights = vec![1.0, 1e-13, 0.25];
+        let floor = s.length_floor(0.0, 1.0);
+        assert!(floor <= 1.5e-15, "{floor}");
+    }
+
+    /// A distant control point does not relax the tolerance of a span it does not shape.
+    #[test]
+    fn the_error_floor_is_local_to_the_span() {
+        let mut s =
+            Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.2, 0.0), Vec2::new(1e13, 0.0), Vec2::new(1e13, 0.0)], 2);
+        s.knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0];
+        let got = s.length_between(0.0, 1.0);
+        assert!((got - 41.0 / 45.0).abs() < 1e-9, "{got}");
+    }
 
     fn cubic() -> Spline {
         Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 3.0), Vec2::new(6.0, -3.0), Vec2::new(9.0, 0.0), Vec2::new(12.0, 2.0)], 3)
