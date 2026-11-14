@@ -399,8 +399,9 @@ fn run_state_save(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.save", "`name` is required"))?.to_string();
     let d = s.doc_mut()?;
     let layers = d.layers.clone();
+    let current = d.header.str("CLAYER", "0");
     d.layer_states.retain(|st| st.name != name);
-    d.layer_states.push(cadcraft_doc::LayerState { name, layers });
+    d.layer_states.push(cadcraft_doc::LayerState::new(name, layers, current));
     ok()
 }
 
@@ -408,24 +409,81 @@ fn run_state_restore(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layerstate.restore", "`name` is required"))?;
     let d = s.doc_mut()?;
     let st = d.layer_states.iter().find(|st| st.name == name).cloned().ok_or_else(|| bad("layerstate.restore", "no such layer state"))?;
-    restore_layers(d, st.layers);
+    restore_state(d, &st);
     ok()
+}
+
+/// Restore a saved layer state as AutoCAD 2024 does (measured): first the current layer it
+/// names, when the drawing has it and the restore doesn't leave it frozen, then on each drawing
+/// layer the state names (without regard to case) the properties its mask covers. The current
+/// layer is never frozen; other properties (descriptions, names) stay as they are.
+pub(crate) fn restore_state(d: &mut cadcraft_doc::Drawing, st: &cadcraft_doc::LayerState) {
+    use cadcraft_doc::LayerState as S;
+    // A frozen layer only thaws with Frozen in the mask and an entry of its own: without one
+    // AutoCAD 2024 keeps the current layer (measured).
+    let thaws = |l: &Layer| st.mask & S::FROZEN != 0 && st.layers.iter().any(|saved| saved.name.eq_ignore_ascii_case(&l.name));
+    if let Some(l) = d.layer(&st.current).filter(|l| !l.frozen || thaws(l)) {
+        let name = l.name.clone();
+        d.header.set_str("CLAYER", &name);
+    }
+    let current = d.header.str("CLAYER", "0");
+    let index = layer_index(d);
+    let has = |bit: u32| st.mask & bit != 0;
+    for saved in &st.layers {
+        let Some(l) = index.get(&saved.name.to_ascii_lowercase()).and_then(|&i| d.layers.get_mut(i)) else { continue };
+        if has(S::ON) {
+            l.on = saved.on;
+        }
+        if has(S::FROZEN) {
+            l.frozen = saved.frozen && !l.name.eq_ignore_ascii_case(&current);
+        }
+        if has(S::LOCKED) {
+            l.locked = saved.locked;
+        }
+        if has(S::PLOT) {
+            l.plot = saved.plot;
+        }
+        if has(S::VP_FREEZE_NEW) {
+            l.vp_freeze_new = saved.vp_freeze_new;
+        }
+        if has(S::COLOR) {
+            l.color = saved.color;
+        }
+        if has(S::LINETYPE) {
+            l.linetype.clone_from(&saved.linetype);
+        }
+        if has(S::LINEWEIGHT) {
+            l.lineweight = saved.lineweight;
+        }
+        if has(S::PLOT_STYLE) {
+            l.plot_style.clone_from(&saved.plot_style);
+        }
+        if has(S::TRANSPARENCY) {
+            l.transparency = saved.transparency;
+        }
+    }
 }
 
 /// Put the saved layers back over the drawing's layers of the same name (without regard to case);
 /// saved layers the drawing no longer has are skipped. Both lists can come from a file, so the
 /// drawing's layers are looked up in an index rather than scanned per saved layer.
 pub(crate) fn restore_layers(d: &mut cadcraft_doc::Drawing, saved: Vec<Layer>) {
-    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::with_capacity(d.layers.len());
-    for (i, l) in d.layers.iter().enumerate() {
-        // The first of names that differ only in case, as `Drawing::layer_mut` finds it.
-        index.entry(l.name.to_ascii_lowercase()).or_insert(i);
-    }
+    let index = layer_index(d);
     for layer in saved {
         if let Some(l) = index.get(&layer.name.to_ascii_lowercase()).and_then(|&i| d.layers.get_mut(i)) {
             *l = layer;
         }
     }
+}
+
+/// The drawing's layers by lower-case name: the first of names that differ only in case, as
+/// `Drawing::layer_mut` finds it.
+fn layer_index(d: &cadcraft_doc::Drawing) -> std::collections::HashMap<String, usize> {
+    let mut index = std::collections::HashMap::with_capacity(d.layers.len());
+    for (i, l) in d.layers.iter().enumerate() {
+        index.entry(l.name.to_ascii_lowercase()).or_insert(i);
+    }
+    index
 }
 
 fn run_state_list(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -510,6 +568,146 @@ mod tests {
         let v = s.execute("layer", &json!({})).unwrap();
         let used: Vec<bool> = v["layers"].as_array().unwrap().iter().map(|l| l["used"].as_bool().unwrap()).collect();
         assert!(used.contains(&true) && used.contains(&false));
+    }
+
+    /// Restoring follows AutoCAD 2024 (measured with -LAYER stAte and states written into a DXF):
+    /// the current layer first, then only the properties the mask covers; the current layer stays
+    /// thawed; a current layer that is empty or gone leaves the current layer as it is.
+    #[test]
+    fn layer_state_restore_follows_the_mask_and_current_layer() {
+        use cadcraft_color::Color;
+        use cadcraft_doc::LayerState;
+        let mut s = Session::new();
+        s.execute("layer.new", &json!({ "name": "A", "color": 1, "current": true })).unwrap();
+        s.execute("layer.new", &json!({ "name": "B" })).unwrap();
+        s.execute("layerstate.save", &json!({ "name": "all" })).unwrap();
+        let saved = s.doc().unwrap().layer_states[0].clone();
+        assert_eq!((saved.mask, saved.current.as_str()), (LayerState::ALL, "A"));
+        // Only On: A's colour stays green, B comes back on (AutoCAD's S7, mask 513).
+        let d = s.doc_mut().unwrap();
+        d.layer_states.push(LayerState { name: "on".into(), mask: LayerState::ON | 512, ..saved.clone() });
+        s.execute("layer.set", &json!({ "name": "A", "color": 3 })).unwrap();
+        s.execute("layer.set", &json!({ "name": "B", "on": false, "locked": true })).unwrap();
+        s.execute("layer.current", &json!({ "name": "B" })).unwrap();
+        s.execute("layerstate.restore", &json!({ "name": "on" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "A");
+        let (a, b) = (d.layer("A").unwrap(), d.layer("B").unwrap());
+        assert_eq!((a.color, b.on, b.locked), (Color::Index(3), true, true));
+        // Every property.
+        s.execute("layerstate.restore", &json!({ "name": "all" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!((d.layer("A").unwrap().color, d.layer("B").unwrap().locked), (Color::Index(1), false));
+        // A state that freezes B with no current layer of its own (or one that is gone), restored
+        // with B current: B stays current and thawed; A is turned off.
+        for current in ["", "NOSUCH"] {
+            let mut frozen = s.doc().unwrap().layers.clone();
+            for l in &mut frozen {
+                l.frozen = l.name == "B";
+                l.on = l.name != "A";
+            }
+            s.doc_mut().unwrap().layer_states.push(LayerState::new(format!("f{current}"), frozen.clone(), current));
+            s.execute("layer.current", &json!({ "name": "B" })).unwrap();
+            s.execute("layerstate.restore", &json!({ "name": format!("f{current}") })).unwrap();
+            let d = s.doc().unwrap();
+            assert_eq!(d.header.str("CLAYER", ""), "B", "{current:?}");
+            assert!(!d.layer("B").unwrap().frozen && !d.layer("A").unwrap().on, "{current:?}");
+            // Naming A current, it becomes current and B freezes.
+            s.doc_mut().unwrap().layer_states.push(LayerState::new("fA", frozen, "A"));
+            s.execute("layerstate.restore", &json!({ "name": "fA" })).unwrap();
+            let d = s.doc().unwrap();
+            assert_eq!(d.header.str("CLAYER", ""), "A");
+            assert!(d.layer("B").unwrap().frozen);
+            s.doc_mut().unwrap().layer_states.retain(|st| st.name != "fA");
+            s.execute("layerstate.restore", &json!({ "name": "all" })).unwrap();
+        }
+        // A current layer the state's mask leaves frozen doesn't become current (AutoCAD's S9: On
+        // only, current B; restored with A current and B frozen).
+        let mut on_only = s.doc().unwrap().layer_states[0].clone();
+        (on_only.name, on_only.mask, on_only.current) = ("S9".into(), LayerState::ON | 512, "B".into());
+        s.doc_mut().unwrap().layer_states.push(on_only);
+        s.execute("layer.current", &json!({ "name": "A" })).unwrap();
+        s.execute("layer.set", &json!({ "name": "B", "frozen": true })).unwrap();
+        s.execute("layerstate.restore", &json!({ "name": "S9" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "A");
+        assert!(d.layer("B").unwrap().frozen);
+        // With Frozen in the mask B is thawed and made current.
+        let mut thaw = s.doc().unwrap().layer_states[0].clone();
+        (thaw.name, thaw.current) = ("thaw".into(), "B".into());
+        s.doc_mut().unwrap().layer_states.push(thaw);
+        s.execute("layerstate.restore", &json!({ "name": "thaw" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "B");
+        assert!(!d.layer("B").unwrap().frozen);
+        // Frozen in the mask, but no entry for B (a state written elsewhere): nothing would thaw
+        // B, so A stays current and B frozen (AutoCAD 2024, measured).
+        let mut no_entry = s.doc().unwrap().layer_states[0].clone();
+        (no_entry.name, no_entry.current) = ("no entry".into(), "B".into());
+        no_entry.layers.retain(|l| l.name != "B");
+        s.doc_mut().unwrap().layer_states.push(no_entry);
+        s.execute("layer.current", &json!({ "name": "A" })).unwrap();
+        s.execute("layer.set", &json!({ "name": "B", "frozen": true })).unwrap();
+        s.execute("layerstate.restore", &json!({ "name": "no entry" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "A");
+        assert!(d.layer("B").unwrap().frozen);
+        // An entry spelled in another case is B's (layer names ignore case, as the restore of the
+        // properties does): B is thawed and made current.
+        let mut other_case = s.doc().unwrap().layer_states[0].clone();
+        (other_case.name, other_case.current) = ("other case".into(), "B".into());
+        for l in other_case.layers.iter_mut().filter(|l| l.name == "B") {
+            l.name = "b".into();
+        }
+        s.doc_mut().unwrap().layer_states.push(other_case);
+        s.execute("layerstate.restore", &json!({ "name": "other case" })).unwrap();
+        let d = s.doc().unwrap();
+        assert_eq!(d.header.str("CLAYER", ""), "B");
+        assert!(!d.layer("B").unwrap().frozen);
+        // What a state doesn't hold stays: the description.
+        s.execute("layer.set", &json!({ "name": "A", "description": "kept" })).unwrap();
+        s.execute("layerstate.restore", &json!({ "name": "all" })).unwrap();
+        assert_eq!(s.doc().unwrap().layer("A").unwrap().description, "kept");
+    }
+
+    /// Plotting, freezing in new viewports, linetype, lineweight, plot style and transparency each
+    /// come back under their own mask bit only: a state of one bit restores that property and
+    /// leaves the other five as they are.
+    #[test]
+    fn layer_state_restores_each_property_under_its_own_bit_only() {
+        use cadcraft_doc::{Drawing, LayerState as S, Lineweight};
+        let mut s = Session::new();
+        s.execute("layer.new", &json!({ "name": "A" })).unwrap();
+        s.execute("layerstate.save", &json!({ "name": "all" })).unwrap();
+        let saved = s.doc().unwrap().layer_states[0].clone();
+        let props = |d: &Drawing| {
+            let l = d.layer("A").unwrap();
+            (l.plot, l.vp_freeze_new, l.linetype.clone(), l.lineweight, l.plot_style.clone(), l.transparency)
+        };
+        let change = |d: &mut Drawing| {
+            let l = d.layer_mut("A").unwrap();
+            (l.plot, l.vp_freeze_new, l.linetype, l.lineweight, l.plot_style, l.transparency) =
+                (false, true, "DASHED".into(), Lineweight::from_dxf(50), "Thick".into(), 40);
+        };
+        let before = props(s.doc().unwrap());
+        change(s.doc_mut().unwrap());
+        let after = props(s.doc().unwrap());
+        for bit in [S::PLOT, S::VP_FREEZE_NEW, S::LINETYPE, S::LINEWEIGHT, S::PLOT_STYLE, S::TRANSPARENCY] {
+            let name = format!("b{bit}");
+            s.doc_mut().unwrap().layer_states.push(S { name: name.clone(), mask: bit | 512, ..saved.clone() });
+            change(s.doc_mut().unwrap());
+            s.execute("layerstate.restore", &json!({ "name": name })).unwrap();
+            let mut want = after.clone();
+            match bit {
+                S::PLOT => want.0 = before.0,
+                S::VP_FREEZE_NEW => want.1 = before.1,
+                S::LINETYPE => want.2.clone_from(&before.2),
+                S::LINEWEIGHT => want.3 = before.3,
+                S::PLOT_STYLE => want.4.clone_from(&before.4),
+                _ => want.5 = before.5,
+            }
+            assert_eq!(props(s.doc().unwrap()), want, "mask {bit}");
+        }
     }
 
     #[test]

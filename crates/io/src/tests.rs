@@ -1856,22 +1856,24 @@ fn layer_states_roundtrip_next_to_constraints() {
         description: "walls \\ hidden".into(),
         ..Layer::default()
     });
-    d.layer_states.push(LayerState { name: "Plot".into(), layers: d.layers.clone() });
+    d.layer_states.push(LayerState::new("Plot", d.layers.clone(), "Wände"));
     let mut off = d.layers.clone();
     for l in &mut off {
         (l.on, l.frozen, l.locked, l.plot) = (false, true, true, false);
     }
-    d.layer_states.push(LayerState { name: "All off".into(), layers: off });
+    d.layer_states.push(LayerState::new("All off", off, ""));
     let text = write_dxf(&d);
-    assert!(text.contains("CADCRAFT_LAYERSTATES"));
+    // AutoCAD's dictionary holds both states; CADCraft's record isn't needed.
+    assert!(text.contains("ACAD_LAYERSTATES") && !text.contains("CADCRAFT_LAYERSTATES"));
     let back = read_dxf(text.as_bytes()).unwrap();
     assert_eq!(back.layer_states, d.layer_states);
     assert_eq!(back.constraints, constraints);
     assert_eq!(roundtrip(&back).layer_states, d.layer_states);
     #[cfg(not(target_arch = "wasm32"))]
     assert_eq!(read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap().layer_states, d.layer_states);
-    // Drawings without saved layer states carry no record.
-    assert!(!write_dxf(&Drawing::new_imperial()).contains("CADCRAFT_LAYERSTATES"));
+    // Drawings without saved layer states carry neither.
+    let none = write_dxf(&Drawing::new_imperial());
+    assert!(!none.contains("CADCRAFT_LAYERSTATES") && !none.contains("ACAD_LAYERSTATES"));
 }
 
 fn table_sample() -> Table {
@@ -3676,4 +3678,14 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+}
+
+/// A layer state of CADCraft's own record from before states had a mask, a current layer and a
+/// description (its JSON holds only the name and the layers) restores every property and names no
+/// current layer.
+#[test]
+fn a_layer_state_saved_before_masks_restores_everything() {
+    let states = crate::dxf_ext::parse_layer_states(r#"{"version":1,"states":[{"name":"S","layers":[]}]}"#).unwrap();
+    let got: Vec<(&str, u32, &str, &str)> = states.iter().map(|s| (s.name.as_str(), s.mask, s.current.as_str(), s.description.as_str())).collect();
+    assert_eq!(got, [("S", LayerState::ALL, "", "")]);
 }

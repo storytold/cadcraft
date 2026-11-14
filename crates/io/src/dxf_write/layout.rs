@@ -143,10 +143,18 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
 }
 
 pub(super) fn table_head(w: &mut W, name: &str, count: usize) -> String {
+    table_head_x(w, name, count, None)
+}
+
+/// A table's head, with its extension dictionary `xdict` when it has one.
+pub(super) fn table_head_x(w: &mut W, name: &str, count: usize, xdict: Option<&str>) -> String {
     let h = w.h();
     w.s(0, "TABLE");
     w.s(2, name);
     w.s(5, h.clone());
+    if let Some(x) = xdict {
+        w.group("ACAD_XDICTIONARY", 360, &[x]);
+    }
     w.s(330, "0");
     w.s(100, "AcDbSymbolTable");
     w.i(70, count as i64);
