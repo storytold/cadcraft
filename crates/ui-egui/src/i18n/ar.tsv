@@ -406,7 +406,7 @@
 	Grip Option	خيار المقبض
 	Grip Rotate	تدوير بالمقبض
 	Grip Scale	تحجيم بالمقبض
-	Grip Stretch	تمديد بالمقبض
+	Grip Stretch	تمطيط بالمقبض
 	Grip size	حجم المقبض
 	Group	تجميع
 	Group Edit	تحرير المجموعة
@@ -703,7 +703,7 @@
 	Plotter Manager	مدير الطابعات
 	Plotter Manager...	مدير الطابعات...
 	Plus/minus	زائد/ناقص
-	Point	تأشير
+	Point	نقطة
 	Point Filters	مرشحات النقطة
 	Point Style...	نمط النقطة...
 	Polar (distance < angle)	قطبي (المسافة < الزاوية)
@@ -872,15 +872,15 @@
 	Select object	حدد كائناً
 	Select object to dimension	حدد كائناً لتأشيره
 	Select object to divide	حدد كائناً لتقسيمه
-	Select object to extend or shift-select to trim	حدد كائناً لتمديده أو حدد مع Shift للقص
+	Select object to extend or shift-select to trim	حدد كائناً لتمديده أو حدد مع Shift للتشذيب
 	Select object to measure	حدد كائناً لقياسه
 	Select object to offset	حدد كائناً لإزاحته
-	Select object to trim or shift-select to extend	حدد كائناً لقصه أو حدد مع Shift للتمديد
+	Select object to trim or shift-select to extend	حدد كائناً لتشذيبه أو حدد مع Shift للتمديد
 	Select objects	حدد كائنات
 	Select objects (crossing window first corner)	حدد كائنات (الزاوية الأولى لنافذة التقاطع)
 	Select objects first, then choose a command	حدد الكائنات أولاً ثم اختر أمراً
 	Select objects to array.	حدد كائنات لتكوين مصفوفة.
-	Select objects to stretch by crossing-window or crossing-polygon...	حدد كائنات لتمديدها بنافذة التقاطع أو مضلع التقاطع...
+	Select objects to stretch by crossing-window or crossing-polygon...	حدد كائنات لتمطيطها بنافذة التقاطع أو مضلع التقاطع...
 	Select objects:	حدد كائنات:
 	Select one polyline (Multiple is available through the JSON form).	حدد متعدد خطوط واحداً (يتوفر الوضع المتعدد عبر نموذج JSON).
 	Select path curve	حدد منحنى المسار
@@ -1083,8 +1083,8 @@
 	Start, End, Radius	بداية، نهاية، نصف قطر
 	Status	الحالة
 	Status Bar	شريط الحالة
-	Stretch	تمديد
-	Stretch Vertex	تمديد رأس
+	Stretch	تمطيط
+	Stretch Vertex	تمطيط رأس
 	Style: Standard	النمط: Standard
 	Subtract	طرح
 	Sweep	كنس
@@ -1133,7 +1133,7 @@
 	Track orthogonally only	تعقب متعامد فقط
 	Track using all polar angle settings	تعقب باستخدام كل إعدادات الزوايا القطبية
 	Transparency	شفافية
-	Trim	حدود التشذيب
+	Trim	تشذيب
 	True Color	لون حقيقي
 	Turn All Layers On	تشغيل كل الطبقات
 	Turn Off Layer	إيقاف طبقة
