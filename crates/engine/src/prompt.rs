@@ -263,6 +263,10 @@ pub trait Interactive: Send {
     fn name(&self) -> &'static str;
     fn prompt(&self, s: &Session) -> Prompt;
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step>;
+    /// Input method that accepts a shift parameter.
+    fn input_with_shift(&mut self, s: &mut Session, input: Input, _shift: bool) -> Result<Step> {
+        self.input(s, input)
+    }
     /// Called once when the command starts (may finish at once, e.g. with a pickfirst selection).
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)

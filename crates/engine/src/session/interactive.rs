@@ -105,9 +105,13 @@ impl Session {
     /// Feed an object-snap pick, retaining its viewport origin for measurements. Point modifiers
     /// that combine or constrain coordinates produce ordinary drawing-space points.
     pub fn input_snapped(&mut self, hit: snap::SnapHit) -> Result<()> {
+        self.input_snapped_with_shift(hit, false)
+    }
+
+    pub fn input_snapped_with_shift(&mut self, hit: snap::SnapHit, shift: bool) -> Result<()> {
         let source = hit.viewport.filter(|_| self.point_mods.iter().all(|f| matches!(f, pointmod::Frame::Snap { mode } if *mode != 0)));
         let previous = std::mem::replace(&mut self.picked_viewport, source);
-        let result = self.input(hit.input());
+        let result = self.input_with_shift(hit.input(), shift);
         self.picked_viewport = previous;
         result
     }
@@ -116,15 +120,19 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        self.input_with_shift(input, false)
+    }
+
+    pub fn input_with_shift(&mut self, input: Input, shift: bool) -> Result<()> {
         if self.lisp_input(input.clone()) {
             return Ok(());
         }
-        let r = self.input_to_command(input);
+        let r = self.input_to_command(input, shift);
         self.lisp_after_command_input();
         r
     }
 
-    fn input_to_command(&mut self, input: Input) -> Result<()> {
+    fn input_to_command(&mut self, input: Input, shift: bool) -> Result<()> {
         if self.running.is_none() {
             if input == Input::Enter
                 && let Some(last) = self.last_command.clone()
@@ -148,7 +156,7 @@ impl Session {
             Some(i) => {
                 // SIngle: the first selection that finds objects also ends the prompt.
                 let single = self.select_single && matches!(&i, Input::Pick(hs) if !hs.is_empty());
-                self.feed(Some(i))?;
+                self.feed_with_shift(Some(i), shift)?;
                 if single {
                     self.select_single = false;
                     if self.current_prompt().is_some_and(|p| p.accept.select) {
@@ -278,6 +286,10 @@ impl Session {
     }
 
     pub(crate) fn feed(&mut self, input: Option<Input>) -> Result<()> {
+        self.feed_with_shift(input, false)
+    }
+
+    fn feed_with_shift(&mut self, input: Option<Input>, shift: bool) -> Result<()> {
         let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
@@ -294,7 +306,7 @@ impl Session {
                     // A temporary tracking point (TT) serves one point.
                     self.tracking.release_temporary();
                 }
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.machine.input(self, i)));
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.machine.input_with_shift(self, i, shift)));
                 match r {
                     Ok(r) => r,
                     Err(_) => Err(EngineError::Internal(run.id.clone(), "panic".into())),

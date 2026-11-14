@@ -309,6 +309,16 @@ impl Interactive for StretchM {
     fn name(&self) -> &'static str {
         "STRETCH"
     }
+    fn input_with_shift(&mut self, s: &mut Session, input: Input, shift: bool) -> Result<Step> {
+        if !shift || !matches!(self.phase, StretchPhase::Select) || !matches!(&input, Input::Point(_) | Input::Pick(_)) {
+            return self.input(s, input);
+        }
+        let removing = self.removing;
+        self.removing = true;
+        let result = self.input(s, input);
+        self.removing = removing;
+        result
+    }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");

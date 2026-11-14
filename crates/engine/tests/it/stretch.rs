@@ -1,8 +1,9 @@
 //! STRETCH: repeated crossing selections until Enter, the `C`/`W` selection keywords, and the
 //! Displacement option (typed, or Enter at the base point prompt).
 
-use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
+use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::{Input, Session};
 
 /// Every line as ((ax, ay), (bx, by)), sorted by the first x.
 fn lines(s: &Session) -> Vec<((f64, f64), (f64, f64))> {
@@ -66,4 +67,37 @@ fn stretch_displacement_option() {
     s.script("STRETCH C 12,1 8,-1  2,0\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(lines(&s), vec![((0.0, 0.0), (12.0, 0.0))]);
+}
+
+#[test]
+fn stretch_shift_click_removes_without_changing_add_mode() {
+    let mut session = session_with_lines(&["0,0 10,0", "0,5 10,5"]);
+    session.cmdline("STRETCH C 12,6 8,-1").unwrap();
+    assert_eq!(session.selection().len(), 2);
+    session.input_with_shift(Input::Point(Vec2::new(10.0, 0.0)), true).unwrap();
+    assert_eq!(session.selection().len(), 1);
+    session.input_with_shift(Input::Point(Vec2::new(5.0, 20.0)), true).unwrap();
+    session.input_with_shift(Input::Point(Vec2::new(5.0, 21.0)), true).unwrap();
+    assert_eq!(session.selection().len(), 1);
+    session.input_with_shift(Input::Point(Vec2::new(10.0, 0.0)), false).unwrap();
+    assert_eq!(session.selection().len(), 2);
+    session.input_with_shift(Input::Point(Vec2::new(10.0, 0.0)), true).unwrap();
+    session.script("\n0,0\n0,2\n").unwrap();
+    assert!(session.running.is_none());
+    assert_eq!(lines(&session), vec![((0.0, 0.0), (10.0, 0.0)), ((0.0, 5.0), (10.0, 7.0))]);
+}
+
+#[test]
+fn stretch_shift_window_removes_in_both_directions() {
+    for (first, second) in [(Vec2::new(12.0, 1.0), Vec2::new(-2.0, -1.0)), (Vec2::new(-2.0, -1.0), Vec2::new(12.0, 1.0))] {
+        let mut session = session_with_lines(&["0,0 10,0", "0,5 10,5"]);
+        session.cmdline("STRETCH C 12,6 8,-1").unwrap();
+        assert_eq!(session.selection().len(), 2);
+        session.input_with_shift(Input::Point(first), true).unwrap();
+        session.input_with_shift(Input::Point(second), true).unwrap();
+        assert_eq!(session.selection().len(), 1);
+        session.script("\n0,0\n0,2\n").unwrap();
+        assert!(session.running.is_none());
+        assert_eq!(lines(&session), vec![((0.0, 0.0), (10.0, 0.0)), ((0.0, 5.0), (10.0, 7.0))]);
+    }
 }
