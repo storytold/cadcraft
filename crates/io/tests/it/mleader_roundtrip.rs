@@ -220,6 +220,76 @@ fn foreign_multileader_with_two_landings() {
     assert_eq!(t.attach, 4);
 }
 
+/// A text multileader as AutoCAD saves it: the text location (12) is the text's top left / top
+/// right corner (171), set off from the landing so the landing meets the middle of the text.
+fn placed_text_body(attach: i64, location: (f64, f64)) -> String {
+    format!(
+        "270\n2\n300\nCONTEXT_DATA{{\n40\n1.0\n10\n5.0\n20\n5.0\n30\n0.0\n41\n2.5\n140\n1.0\n174\n2\n175\n2\n290\n1\n304\nNOTE\\P\n\
+12\n{}\n22\n{}\n32\n0.0\n13\n1.0\n23\n0.0\n33\n0.0\n171\n{attach}\n296\n0\n\
+302\nLEADER{{\n10\n3.0\n20\n5.0\n30\n0.0\n40\n2.0\n304\nLEADER_LINE{{\n10\n0.0\n20\n0.0\n30\n0.0\n305\n}}\n303\n}}\n\
+301\n}}\n170\n1\n291\n1\n172\n2\n173\n2\n95\n2\n",
+        location.0, location.1
+    )
+}
+
+#[test]
+fn autocad_text_location_is_the_corner_171_names() {
+    // Top left, half a text height above the landing: drawn from its top left corner, not
+    // centred on that point (which put the text above the leader).
+    let d = cadcraft_io::read_dxf(dxf_with(&placed_text_body(1, (7.0, 6.25))).as_bytes()).unwrap();
+    let t = mleaders(&d)[0].text.clone().unwrap();
+    assert_eq!(t.insert, Vec3::new(7.0, 6.25, 0.0));
+    assert_eq!(t.attach, 1);
+    // Text to the left of the landing, right-aligned: its top right corner.
+    let d = cadcraft_io::read_dxf(dxf_with(&placed_text_body(3, (1.0, 6.25))).as_bytes()).unwrap();
+    assert_eq!(mleaders(&d)[0].text.as_ref().unwrap().attach, 3);
+}
+
+#[test]
+fn cadcraft_text_on_the_landing_keeps_its_middle_attachment() {
+    // CADCraft's own saves: 171 the column only, the location on the landing line.
+    let d = cadcraft_io::read_dxf(dxf_with(&placed_text_body(1, (7.0, 5.0))).as_bytes()).unwrap();
+    assert_eq!(mleaders(&d)[0].text.as_ref().unwrap().attach, 4);
+    let d = cadcraft_io::read_dxf(dxf_with(&placed_text_body(3, (1.0, 5.0))).as_bytes()).unwrap();
+    assert_eq!(mleaders(&d)[0].text.as_ref().unwrap().attach, 6);
+}
+
+#[test]
+fn rotated_text_keeps_its_attachment_after_save_and_reopen() {
+    // CADCraft's landing runs along X, so rotated text sits on that line, off the line along
+    // the text: still read with 171 as the column only.
+    let mut d = Drawing::new_metric();
+    let mut m = text_mleader();
+    m.landing = Vec3::new(3.0, 5.0, 0.0);
+    m.dogleg = 2.0;
+    m.style = "Standard".into();
+    if let Some(t) = &mut m.text {
+        t.insert = Vec3::new(7.0, 5.0, 0.0);
+        t.rotation = std::f64::consts::FRAC_PI_2;
+        t.height = 0.4;
+        t.attach = 4;
+        t.style = "Standard".into();
+    }
+    d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();
+    let (_, back) = roundtrip(&d);
+    let t = mleaders(&back)[0].text.clone().unwrap();
+    assert_eq!(t.insert, Vec3::new(7.0, 5.0, 0.0));
+    assert_eq!(t.attach, 4);
+}
+
+#[test]
+fn autocad_rotated_text_location_is_still_the_corner_171_names() {
+    // Text along 0.5 rad, its top left corner half a text height off the landing,
+    // perpendicular to the text: off both the line along the text and the X line.
+    let (s, c) = 0.5_f64.sin_cos();
+    let at = (5.0 - 1.25 * s, 5.0 + 1.25 * c);
+    let body = placed_text_body(1, at).replace("13\n1.0\n23\n0.0\n", &format!("13\n{c}\n23\n{s}\n"));
+    let d = cadcraft_io::read_dxf(dxf_with(&body).as_bytes()).unwrap();
+    let t = mleaders(&d)[0].text.clone().unwrap();
+    assert!((t.rotation - 0.5).abs() < 1e-12);
+    assert_eq!(t.attach, 1);
+}
+
 #[test]
 fn hostile_multileaders_do_not_panic() {
     let many_lines: String = (0..10_000).map(|i| format!("304\nLEADER_LINE{{\n10\n{i}\n20\nnan\n30\n1e999\n")).collect();
