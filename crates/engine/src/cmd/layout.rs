@@ -683,6 +683,11 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     // The standard size the layout had before this call, so that resubmitting it (the Plot
     // dialog's Apply to Layout always sends `paper`) keeps the layout's paper units.
     let old_paper = cadcraft_render::paper_size(&page.paper).map(|ps| ps.name);
+    // The orientation first: a paper taken from a device turns its margins to the sheet the page
+    // names when `page_device` copies them.
+    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
+        page.landscape = l;
+    }
     // A plotter's own papers (with their printable areas) come first.
     let device_paper = super::plotters::page_device(cmd, p, &mut page)?;
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
@@ -722,9 +727,6 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) if p.get("width").is_none() && p.get("height").is_none() => {}
         _ => return Err(bad(cmd, "`width` and `height` (mm, 0-5080) are both required for a custom size")),
-    }
-    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
-        page.landscape = l;
     }
     // Paper units: what one paper-space unit is on this layout, whatever the paper's own family
     // (an ARCH D sheet can be drawn in millimetres, #3249).
