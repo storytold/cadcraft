@@ -134,6 +134,7 @@ thread_local! {
 struct Restore(Option<Arc<AutomationRoots>>);
 
 impl Drop for Restore {
+    /// Puts the roots it replaced back.
     fn drop(&mut self) {
         ROOTS.with(|r| *r.borrow_mut() = self.0.take());
     }
@@ -389,12 +390,14 @@ mod tests {
 
     impl std::ops::Deref for TestDir {
         type Target = Path;
+        /// The folder itself.
         fn deref(&self) -> &Path {
             &self.0
         }
     }
 
     impl Drop for TestDir {
+        /// Removes the folder and all it holds; a failure here must not hide the test's own.
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }

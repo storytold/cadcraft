@@ -300,6 +300,7 @@ impl Backend for Remote {
     fn has_ui(&self) -> bool {
         true
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         format!("connected to CADCraft at {}", self.addr)
     }

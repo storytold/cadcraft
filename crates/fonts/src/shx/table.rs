@@ -23,6 +23,10 @@ pub trait FontProvider: Send + Sync {
     fn load(&self, file_name: &str) -> Option<Vec<u8>>;
 }
 
+/// Decides whether the file at a path may be opened by the font search; asked of every candidate in
+/// a folder, before anything opens it.
+pub type OpenGuard = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
+
 /// Most fonts kept loaded, and their total bytes.
 const MAX_FONTS: usize = 128;
 const MAX_LOADED_BYTES: usize = 256 << 20;
@@ -38,6 +42,8 @@ struct Table {
     loaded_bytes: usize,
     provider: Option<Arc<dyn FontProvider>>,
     drawing_dirs: Vec<PathBuf>,
+    /// The guards of the drawing folders that have one.
+    drawing_guards: HashMap<PathBuf, OpenGuard>,
     font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
@@ -118,16 +124,39 @@ pub fn set_provider(provider: Option<Arc<dyn FontProvider>>) {
 /// Search the folder of a drawing being opened for the fonts its styles name (most recent
 /// first).
 pub fn add_drawing_dir(dir: &Path) {
+    add_dir(dir, None);
+}
+
+/// Like [`add_drawing_dir`], with every file the search would open in `dir` put to `guard` first,
+/// whatever its name and however it is found in the folder: a font the guard refuses is skipped. The
+/// guard stays with the folder until the folder is added again.
+pub fn add_drawing_dir_guarded(dir: &Path, guard: OpenGuard) {
+    add_dir(dir, Some(guard));
+}
+
+/// Remember `dir`, most recent first, with the guard it is searched under (none: unrestricted).
+fn add_dir(dir: &Path, guard: Option<OpenGuard>) {
     if dir.as_os_str().is_empty() {
         return;
     }
     let mut t = table();
-    if t.drawing_dirs.first().is_some_and(|d| d == dir) {
+    if guard.is_none() && t.drawing_dirs.first().is_some_and(|d| d == dir) && !t.drawing_guards.contains_key(dir) {
         return;
     }
     t.drawing_dirs.retain(|d| d != dir);
     t.drawing_dirs.insert(0, dir.to_path_buf());
     t.drawing_dirs.truncate(MAX_DIRS);
+    match guard {
+        Some(g) => {
+            t.drawing_guards.insert(dir.to_path_buf(), g);
+        }
+        None => {
+            t.drawing_guards.remove(dir);
+        }
+    }
+    // A folder dropped from the list takes its guard with it.
+    let Table { drawing_dirs, drawing_guards, .. } = &mut *t;
+    drawing_guards.retain(|d, _| drawing_dirs.contains(d));
     t.changed();
 }
 
@@ -206,7 +235,9 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let dirs: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
+        let drawing = t.drawing_dirs.iter().map(|d| (d.clone(), t.drawing_guards.get(d).cloned()));
+        let dirs: Vec<(PathBuf, Option<OpenGuard>)> =
+            drawing.chain(t.font_dirs.iter().chain(t.search_path.iter()).map(|d| (d.clone(), None))).collect();
         (t.provider.clone(), dirs, t.generation)
     };
     let font = provider
@@ -266,21 +297,17 @@ pub fn installed() -> Vec<String> {
 
 /// The file `name` (a lower-case key) in the first of `dirs` that has it, whatever the case of
 /// its name: lower-case, upper-case, else any other case found in the directory (`Simplex.shx`
-/// on a case-sensitive file system).
+/// on a case-sensitive file system). A folder's guard is asked about each candidate before anything
+/// opens it, so a link is judged by where it leads.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_from(dirs: &[PathBuf], name: &str) -> Option<Vec<u8>> {
-    use std::io::Read as _;
-    let read = |file: &Path| -> Option<Vec<u8>> {
-        let meta = std::fs::metadata(file).ok()?;
-        if !meta.is_file() || meta.len() > MAX_FILE_BYTES as u64 {
-            return None;
-        }
-        let mut bytes = Vec::new();
-        let limit = u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX).saturating_add(1);
-        std::fs::File::open(file).and_then(|f| f.take(limit).read_to_end(&mut bytes)).ok()?;
-        Some(bytes)
-    };
-    for d in dirs {
+fn read_from(dirs: &[(PathBuf, Option<OpenGuard>)], name: &str) -> Option<Vec<u8>> {
+    for (d, guard) in dirs {
+        let read = |file: &Path| -> Option<Vec<u8>> {
+            if guard.as_ref().is_some_and(|g| !g(file)) {
+                return None;
+            }
+            read_file(file)
+        };
         if let Some(b) = [d.join(name), d.join(name.to_ascii_uppercase())].iter().find_map(|f| read(f)) {
             return Some(b);
         }
@@ -297,7 +324,21 @@ fn read_from(dirs: &[PathBuf], name: &str) -> Option<Vec<u8>> {
     None
 }
 
+/// The bytes of the SHX file at `file`, when it is a file of a sensible size.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_file(file: &Path) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let meta = std::fs::metadata(file).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES as u64 {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    let limit = u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX).saturating_add(1);
+    std::fs::File::open(file).and_then(|f| f.take(limit).read_to_end(&mut bytes)).ok()?;
+    Some(bytes)
+}
+
 #[cfg(target_arch = "wasm32")]
-fn read_from(_dirs: &[PathBuf], _name: &str) -> Option<Vec<u8>> {
+fn read_from(_dirs: &[(PathBuf, Option<OpenGuard>)], _name: &str) -> Option<Vec<u8>> {
     None
 }

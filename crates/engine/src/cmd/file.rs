@@ -341,23 +341,18 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
-        if fonts_stay_inside_the_roots(dir) {
-            cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+        let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+        match crate::file_access::current() {
+            None => cadcraft_fonts::shx::add_drawing_dir(&dir),
+            // The folder holds no record of the roots, and a font's name there can be a link leading
+            // out of them: the search asks the roots about each file before it opens one.
+            Some(roots) => cadcraft_fonts::shx::add_drawing_dir_guarded(
+                &dir,
+                std::sync::Arc::new(move |font| roots.check(font, crate::file_access::Access::Read).is_ok()),
+            ),
         }
     }
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
-}
-
-/// May the font search use `dir`? It holds no record of the automation roots, and a font's name
-/// there can be a link leading out of them, so under the roots every font in the folder must stay
-/// inside.
-fn fonts_stay_inside_the_roots(dir: &std::path::Path) -> bool {
-    crate::file_access::current().is_none()
-        || std::fs::read_dir(dir).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .all(|e| !e.file_name().to_string_lossy().to_ascii_lowercase().ends_with(".shx") || crate::file_access::check_read(e.path()).is_ok())
-        })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {

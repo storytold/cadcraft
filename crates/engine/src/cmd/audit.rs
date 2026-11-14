@@ -161,6 +161,7 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
 fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
+/// The bytes of the file at `path`, once the automation roots allow reading it.
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
     crate::file_access::check_read(path).map_err(|e| bad(cmd, e))?;
     crate::capped_read::read_capped(std::path::Path::new(path), file::MAX_DRAWING_BYTES).map_err(|e| bad(cmd, format!("{path}: {e}")))

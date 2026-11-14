@@ -115,6 +115,7 @@ pub fn support_text(cmd: &str, p: &serde_json::Value, path_key: &str, text_key: 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// The text of the support file at `path`, once the automation roots allow reading it, up to the size limit.
 fn read_support_file(cmd: &str, path: &str) -> crate::Result<String> {
     use std::io::Read;
     crate::file_access::check_read(path).map_err(|e| super::bad(cmd, e))?;

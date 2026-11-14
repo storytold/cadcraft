@@ -67,8 +67,8 @@ configuration works across the suite) keep the agent to the folders you give it:
   `LPT¹`…) are refused too.
 - A path you write must also stand under the write root: a link outside it pointing in is refused,
   because a drawing's `.bak` goes beside the link and a delete removes the link.
-- A refused path is an ordinary tool error with `isError: true` that the agent can read and
-  correct, for example `automation path rejected: outside the write root
+- A refused path in a tool other than `command_line` is an ordinary tool error with `isError: true`
+  that the agent can read and correct, for example `automation path rejected: outside the write root
   /work/project/out: /etc/x.png`, `automation path rejected: outside the read root (or the write
   root): /etc/x.png`, `automation path rejected: the write root itself cannot be written:
   /work/project/out`, `automation path rejected: UNC paths are refused unless a root is on the
@@ -79,8 +79,9 @@ configuration works across the suite) keep the agent to the folders you give it:
 - A command runs under the roots only if it is classified (`crates/engine/src/file_access/commands.rs`):
   one nobody classified is refused, whatever it does. `drawingrecovery` is refused, and SAVEFILEPATH
   can't be changed, because both work on the server's autosave folder.
-- SHX fonts beside an opened drawing are searched only if every `.shx` in that folder stays inside
-  the roots: one link leading out and the folder is skipped.
+- SHX fonts beside an opened drawing are searched, and each file the search would open there is
+  checked against the roots first, whatever its name: a font that is a link leading out of the
+  roots is skipped, and the rest of the folder is still used.
 - The server itself still reads the system's fonts, from the system font folders and
   `CADCRAFT_SHXPATH`. Their paths come from the server's setup, never from the agent, but a font file
   named by a drawing can decide which of them is read.

@@ -101,6 +101,7 @@ impl Server {
 }
 
 impl Drop for Server {
+    /// Stops the server it started.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -237,6 +238,7 @@ impl Fixture {
 }
 
 impl Drop for Fixture {
+    /// Removes the fixture folder when the test ends, also when it fails.
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.base);
     }
@@ -683,6 +685,41 @@ fn a_font_beside_a_drawing_inside_the_roots_is_used() {
     server.tool("render", json!({})).unwrap();
     if f.sees_reads {
         assert_ne!(std::fs::metadata(&font).unwrap().accessed().unwrap(), before, "the font was read");
+    }
+}
+
+/// One font that is a link leading out doesn't cost the drawing the other fonts beside it, and
+/// nothing outside is touched.
+#[test]
+fn a_font_link_leading_out_does_not_cost_the_fonts_beside_it() {
+    let mut f = Fixture::new("font-mixed");
+    let host = f.base.join("in/host.dxf");
+    {
+        let mut free = Server::start(&[], &f.outside.join("cwd"), &f.outside.join("config"));
+        free.execute("new", json!({})).unwrap();
+        for (style, font) in [("Good", "walkgood.shx"), ("Bad", "walkbad.shx")] {
+            free.execute("style", json!({"name": style, "font": font})).unwrap();
+            free.execute("style.current", json!({"name": style})).unwrap();
+            free.execute("text", json!({"at": [0, 0], "height": 5, "text": style})).unwrap();
+        }
+        free.execute("saveas", json!({"path": s(&host)})).unwrap();
+    }
+    let good = f.base.join("in/walkgood.shx");
+    std::fs::write(&good, b"AutoCAD-86 shapes 1.0").unwrap();
+    age_access_time(&good);
+    let before = std::fs::metadata(&good).unwrap().accessed().unwrap();
+    let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
+    let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
+    f.reset();
+    std::fs::write(f.outside.join("walkbad.shx"), b"AutoCAD-86 shapes 1.0").unwrap();
+    std::os::unix::fs::symlink(f.outside.join("walkbad.shx"), f.base.join("in/walkbad.shx")).unwrap();
+    f.watch();
+    server.tool("open", json!({"path": s(&host)})).unwrap();
+    server.tool("render", json!({})).unwrap();
+    let touched = f.touched();
+    assert!(touched.is_empty(), "{touched:?}");
+    if f.sees_reads {
+        assert_ne!(std::fs::metadata(&good).unwrap().accessed().unwrap(), before, "the good font was read");
     }
 }
 
