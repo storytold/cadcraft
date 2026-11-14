@@ -103,3 +103,11 @@ mod hatch_pick_tests {
         assert!(app.session.running.is_none(), "{:?}", app.session.running.as_ref().map(|r| r.machine.name()));
     }
 }
+
+/// The block reference under world point `w` in the current space, when the top object the pick
+/// aperture finds is one.
+pub(super) fn insert_at(app: &CadApp, w: Vec2) -> Option<Handle> {
+    let h = cadcraft_engine::cmd::curves::pick_at(&app.session, w)?;
+    let d = app.session.doc().ok()?;
+    matches!(d.entity(h)?.kind, cadcraft_doc::EntityKind::Insert(_)).then_some(h)
+}
