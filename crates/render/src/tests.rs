@@ -862,6 +862,30 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 }
 
 #[test]
+fn an_attribute_shown_by_itself_shows_under_a_hidden_definition() {
+    // Title blocks from other programs hide their attribute definitions as objects (group 60)
+    // and show the references' attributes; without visibility of its own an attribute hides with
+    // its definition (a dynamic block's visibility state), and its Invisible mode still hides it.
+    let hidden_def = Common { visible: false, ..Default::default() };
+    let with = |visible: Option<bool>, invisible: bool| {
+        let mut d = attributed(hidden_def.clone(), Common::default());
+        let h = d.model.iter().next().unwrap().handle;
+        d.modify_entity(h, |e| {
+            if let EntityKind::Insert(ins) = &mut e.kind {
+                ins.attribs[0].props.visible = visible;
+                ins.attribs[0].invisible = invisible;
+            }
+        })
+        .unwrap();
+        build(&d, &Space::Model, &with_transparency()).prims.len()
+    };
+    let line_only = with(None, false);
+    assert!(with(Some(true), false) > line_only, "the attribute is drawn");
+    assert_eq!(with(Some(true), true), line_only);
+    assert_eq!(with(Some(false), false), line_only);
+}
+
+#[test]
 fn mtext_exact_spacing_ignores_taller_lines() {
     // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {

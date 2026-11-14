@@ -1,5 +1,5 @@
-//! Properties set on one attribute of a block reference (an ATTRIB's layer, colour, linetype and
-//! lineweight) survive a DXF save and reopen; untouched attributes stay untouched.
+//! Properties set on one attribute of a block reference (an ATTRIB's layer, colour, linetype,
+//! lineweight and visibility) survive a DXF save and reopen; untouched attributes stay untouched.
 
 use std::sync::Arc;
 
@@ -87,6 +87,7 @@ fn attribute_properties_roundtrip() {
         color: Some(Color::True(Rgb(10, 20, 30))),
         linetype: Some("DASHED".into()),
         lineweight: Some(Lineweight::Mm100(50)),
+        visible: None,
     };
     let red = AttribProps { color: Some(Color::ByLayer), ..AttribProps::default() };
     let (d, h) = drawing(vec![attrib("OWN", 0.0, own.clone()), attrib("DEFLAYER", 10.0, AttribProps::default()), attrib("RED", 20.0, red.clone())]);
@@ -119,4 +120,25 @@ fn hostile_attrib_groups_do_not_panic() {
     let p = &i.attribs.first().expect("attrib").props;
     assert_eq!((p.layer.as_deref(), p.linetype.as_deref()), (None, None), "empty names are not properties");
     let _ = write_dxf(&d);
+}
+
+/// A title block can hide its attribute definitions as objects (ATTDEF group 60) and still show
+/// the references' attributes (ATTRIB without 60). Read from such a file, the attributes stay
+/// shown; an attribute without visibility of its own hides with its hidden definition (a dynamic
+/// block's visibility state); one hidden by itself stays hidden under a shown definition.
+#[test]
+fn attribute_visibility_over_its_definition_survives_reopening() {
+    let shown = AttribProps { visible: Some(true), ..AttribProps::default() };
+    let hidden = AttribProps { visible: Some(false), ..AttribProps::default() };
+    let (mut d, h) =
+        drawing(vec![attrib("OWN", 0.0, shown.clone()), attrib("DEFLAYER", 10.0, AttribProps::default()), attrib("RED", 20.0, hidden.clone())]);
+    let blk = Arc::make_mut(d.blocks.get_mut("TAGS").expect("block"));
+    for def in [Handle(0x100), Handle(0x101)] {
+        assert!(blk.entities.modify(def, |e| e.common.visible = false));
+    }
+    let a = reopened_attribs(&d, h);
+    assert_eq!(a.iter().map(|a| a.props.visible).collect::<Vec<_>>(), [Some(true), None, Some(false)]);
+    // Drawn as AutoCAD shows them: OWN only (DEFLAYER hides with its definition, RED by itself).
+    let shown_by = |a: &Attrib, def_visible: bool| a.props.over(&Common { visible: def_visible, ..Common::default() }).visible;
+    assert_eq!([shown_by(&a[0], false), shown_by(&a[1], false), shown_by(&a[2], true)], [true, false, false]);
 }

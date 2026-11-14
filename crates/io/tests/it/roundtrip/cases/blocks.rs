@@ -158,6 +158,7 @@ pub(crate) fn nested_attributes() -> Vec<Case> {
                             color: Some(Color::ByBlock),
                             linetype: Some("Continuous".into()),
                             lineweight: Some(Lineweight::Mm100(0)),
+                            visible: None,
                         }
                     };
                     parent.entities.push(Entity::new(
