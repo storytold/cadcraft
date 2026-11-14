@@ -1049,6 +1049,33 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
 }
 
 #[test]
+fn closing_drawings_releases_their_lisp_state() {
+    let mut s = session();
+    ok(&mut s, "(setq a 1)");
+    s.execute("new", &serde_json::json!({})).unwrap();
+    ok(&mut s, "(setq b 2)");
+    s.execute("new", &serde_json::json!({})).unwrap();
+    ok(&mut s, "(setq c 3)");
+    assert_eq!(s.lisp.envs.len(), 3);
+    let uids: Vec<u64> = s.docs.iter().map(|d| d.uid).collect();
+    s.lisp.autoloaded.extend(uids.iter().copied());
+    s.lisp.files.insert("tool".into(), "(defun c:tool () 1)".into());
+    // An inactive drawing, then the active one.
+    s.execute("close", &serde_json::json!({"index": 0})).unwrap();
+    assert_eq!(s.lisp.envs.len(), 2);
+    assert!(!s.lisp.autoloaded.contains(&uids[0]));
+    s.execute("close", &serde_json::json!({})).unwrap();
+    assert_eq!(s.lisp.envs.len(), 1);
+    assert_eq!(s.lisp.autoloaded.iter().copied().collect::<Vec<_>>(), vec![uids[1]]);
+    assert_eq!(ok(&mut s, "b"), "2");
+    s.execute("closeall", &serde_json::json!({})).unwrap();
+    assert!(s.lisp.envs.is_empty());
+    assert!(s.lisp.autoloaded.is_empty());
+    // APPLOAD'd files are the session's, not a drawing's.
+    assert!(s.lisp.files.contains_key("tool"));
+}
+
+#[test]
 fn angtof_reads_the_string_in_the_given_units() {
     let mut s = Session::new();
     assert_eq!(ok(&mut s, "(angtof \"1.5\" 3)"), "1.5");
