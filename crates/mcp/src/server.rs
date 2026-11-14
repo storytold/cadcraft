@@ -44,9 +44,15 @@ impl Server {
     }
 
     /// Serve newline-delimited JSON-RPC until `input` closes (logs to stderr only).
-    pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
+    pub fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            if input.read_until(b'\n', &mut buf)? == 0 {
+                break;
+            }
+            // Invalid UTF-8 becomes U+FFFD, which `handle_line` answers with a parse error.
+            let line = String::from_utf8_lossy(&buf);
             if let Some(reply) = self.handle_line(&line) {
                 output.write_all(reply.as_bytes())?;
                 output.write_all(b"\n")?;
