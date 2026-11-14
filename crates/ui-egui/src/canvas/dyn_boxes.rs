@@ -81,26 +81,49 @@ fn options_hint(p: &egui::Painter, r: Rect) {
 }
 
 /// The options menu under the tooltip `r` (DYNPROMPT): one row per keyword, the highlighted one
-/// marked; the rows are kept for clicks.
+/// marked; the rows are kept for clicks. A list taller than the room down to the bottom of the
+/// canvas shows the rows that fit, with a scroll bar; the wheel scrolls it while the pointer is on
+/// the menu (the canvas does not zoom then), and the arrow keys keep the highlight in view.
 fn options_menu(app: &mut CadApp, p: &egui::Painter, r: Rect, hover: Pos2) {
     let Some(mut menu) = app.cmd.options.clone() else { return };
     let t = Tokens::get();
     let font = crate::theme::small();
     let rows: Vec<_> = menu.keywords.iter().map(|k| p.layout_no_wrap(k.clone(), font.clone(), t.text)).collect();
     let row_h = rows.iter().map(|g| g.size().y).fold(12.0, f32::max) + 6.0;
-    let w = rows.iter().map(|g| g.size().x).fold(60.0, f32::max) + 28.0;
-    let h = row_h * rows.len() as f32 + 4.0;
-    let m = Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(w, h));
+    let top = r.bottom() + 2.0;
+    // Rows that fit between the tooltip and the bottom of the drawing area, above the command
+    // line (always a few).
+    let bottom = app.canvas.rect.map_or(p.clip_rect().bottom(), |c| c.bottom().min(p.clip_rect().bottom()));
+    let room = bottom - top - 8.0;
+    let fit = ((room - 4.0) / row_h).floor().max(3.0) as usize;
+    let first_draw = menu.fit == menu.keywords.len() && fit < menu.keywords.len();
+    menu.set_fit(fit);
+    if first_draw {
+        menu.reveal();
+    }
+    let bar = if menu.scrolls() { SCROLL_BAR_W } else { 0.0 };
+    let w = rows.iter().map(|g| g.size().x).fold(60.0, f32::max) + 28.0 + bar;
+    let h = row_h * menu.fit as f32 + 4.0;
+    let m = Rect::from_min_size(pos2(r.left(), top), vec2(w, h));
+    // The wheel over the menu scrolls it, a row per notch (or per row height of smooth scrolling).
+    if menu.scrolls() && m.contains(hover) {
+        let opts = p.ctx().options(|o| o.input_options);
+        let wheel = p.ctx().input(|i| super::pick::wheel_zoom_points(&i.raw.events, &opts, h));
+        if wheel != 0.0 {
+            let rows = (wheel.abs() / row_h).round().max(1.0) as isize;
+            menu.scroll(if wheel > 0.0 { -rows } else { rows });
+        }
+    }
     p.rect_filled(m, 3.0, t.cmd_bg);
     p.rect_stroke(m, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
-    let row_at = |i: usize| Rect::from_min_size(pos2(m.left() + 2.0, m.top() + 2.0 + row_h * i as f32), vec2(w - 4.0, row_h));
+    let row_at = |i: usize| Rect::from_min_size(pos2(m.left() + 2.0, m.top() + 2.0 + row_h * i as f32), vec2(w - 4.0 - bar, row_h));
+    let shown = menu.first..(menu.first + menu.fit).min(menu.keywords.len());
     // The row under the pointer is the highlighted one.
-    if let Some(i) = (0..menu.keywords.len()).find(|i| row_at(*i).contains(hover)) {
-        menu.index = i;
-        app.cmd.options = Some(menu.clone());
+    if let Some(i) = (0..shown.len()).find(|i| row_at(*i).contains(hover)) {
+        menu.index = menu.first + i;
     }
-    for (i, (g, k)) in rows.into_iter().zip(&menu.keywords).enumerate() {
-        let row = row_at(i);
+    for (i, (g, k)) in rows.into_iter().zip(&menu.keywords).enumerate().skip(shown.start).take(shown.len()) {
+        let row = row_at(i - shown.start);
         if i == menu.index {
             p.rect_filled(row, 2.0, t.cmd_keyword_hover);
             p.circle_filled(pos2(row.left() + 9.0, row.center().y), 2.5, t.accent);
@@ -108,7 +131,22 @@ fn options_menu(app: &mut CadApp, p: &egui::Painter, r: Rect, hover: Pos2) {
         p.galley(pos2(row.left() + 20.0, row.center().y - g.size().y / 2.0), g, t.text);
         app.cmd.option_rows.push((row, k.clone()));
     }
+    if menu.scrolls() {
+        // The bar: where the window is in the whole list.
+        let n = menu.keywords.len() as f32;
+        let track = Rect::from_min_max(pos2(m.right() - bar + 1.0, m.top() + 3.0), pos2(m.right() - 3.0, m.bottom() - 3.0));
+        let thumb_h = (track.height() * menu.fit as f32 / n).max(8.0);
+        let thumb_y = track.top() + (track.height() - thumb_h) * menu.first as f32 / (n - menu.fit as f32).max(1.0);
+        p.rect_filled(track, 2.0, t.cmd_border);
+        p.rect_filled(Rect::from_min_size(pos2(track.left(), thumb_y), vec2(track.width(), thumb_h)), 2.0, t.text_dim);
+        // The whole menu catches the pointer, bar included, so the wheel and clicks there stay off the drawing.
+        app.cmd.option_rows.push((Rect::from_min_max(track.left_top(), track.right_bottom()), String::new()));
+    }
+    app.cmd.options = Some(menu);
 }
+
+/// Room for the options menu's scroll bar.
+const SCROLL_BAR_W: f32 = 8.0;
 
 /// The tooltip background, matching the command line bar; returns its rectangle.
 fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {

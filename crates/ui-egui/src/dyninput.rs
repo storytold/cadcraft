@@ -193,26 +193,55 @@ pub fn complete(entry: &Entry<'_>, frame: &Frame, cursor: Vec2, last: Vec2) -> O
 }
 
 /// The Dynamic Input options menu (DYNPROMPT): Down Arrow at a prompt with keywords lists them
-/// at the cursor; the arrows move the highlight and Enter or a click sends the keyword.
+/// at the cursor; the arrows move the highlight and Enter or a click sends the keyword. A list
+/// taller than the room under the cursor shows a window of `fit` rows from `first`, with a scroll
+/// bar; the arrows keep the highlight in view and the mouse wheel scrolls it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OptionsMenu {
     /// The prompt's keywords, as they were when the menu opened.
     pub keywords: Vec<String>,
     /// The highlighted keyword.
     pub index: usize,
+    /// The first keyword on show.
+    pub first: usize,
+    /// How many rows fit on screen (set when the menu is drawn; all of them until then).
+    pub fit: usize,
 }
 
 impl OptionsMenu {
     /// The menu for a prompt's keywords, or `None` when it has none.
     pub fn open(keywords: &[String]) -> Option<Self> {
-        (!keywords.is_empty()).then(|| OptionsMenu { keywords: keywords.to_vec(), index: 0 })
+        (!keywords.is_empty()).then(|| OptionsMenu { keywords: keywords.to_vec(), index: 0, first: 0, fit: keywords.len() })
     }
-    /// Move the highlight down (`step` = 1) or up (-1), wrapping around.
+    /// Move the highlight down (`step` = 1) or up (-1), wrapping around, and scroll it into view.
     pub fn step(&mut self, step: isize) {
         let n = self.keywords.len();
         if n > 0 {
             self.index = (self.index % n).checked_add_signed(step).unwrap_or(n - 1) % n;
+            self.reveal();
         }
+    }
+    /// Set how many rows fit, keeping the window inside the list.
+    pub fn set_fit(&mut self, fit: usize) {
+        self.fit = fit.clamp(1, self.keywords.len().max(1));
+        self.first = self.first.min(self.keywords.len().saturating_sub(self.fit));
+    }
+    /// Scroll the window so the highlighted row is on show.
+    pub fn reveal(&mut self) {
+        if self.index < self.first {
+            self.first = self.index;
+        } else if self.index >= self.first + self.fit {
+            self.first = self.index + 1 - self.fit;
+        }
+    }
+    /// Scroll the window by `rows` (negative: up), without moving past either end.
+    pub fn scroll(&mut self, rows: isize) {
+        let last = self.keywords.len().saturating_sub(self.fit);
+        self.first = self.first.saturating_add_signed(rows).min(last);
+    }
+    /// Whether the list is longer than the window.
+    pub fn scrolls(&self) -> bool {
+        self.fit < self.keywords.len()
     }
     /// The highlighted keyword.
     pub fn current(&self) -> Option<&str> {
@@ -337,6 +366,33 @@ mod tests {
         assert!(!m.fits(&kws[..2]));
     }
 
+    #[test]
+    fn a_long_menu_scrolls_to_keep_the_highlight_in_view() {
+        let kws: Vec<String> = (0..30).map(|i| format!("K{i}")).collect();
+        let mut m = OptionsMenu::open(&kws).unwrap();
+        m.set_fit(10);
+        assert!(m.scrolls());
+        for _ in 0..12 {
+            m.step(1);
+        }
+        assert_eq!((m.index, m.first), (12, 3), "row 13 is the last on show");
+        m.step(-1);
+        assert_eq!(m.first, 3, "moving inside the window does not scroll");
+        // Up from the top wraps to the end, and the window follows.
+        let mut m = OptionsMenu::open(&kws).unwrap();
+        m.set_fit(10);
+        m.step(-1);
+        assert_eq!((m.index, m.first), (29, 20));
+        // The wheel scrolls the window but stops at both ends.
+        m.scroll(-50);
+        assert_eq!(m.first, 0);
+        m.scroll(50);
+        assert_eq!(m.first, 20);
+        // A short list does not scroll.
+        let mut m = OptionsMenu::open(&kws[..4]).unwrap();
+        m.set_fit(10);
+        assert!(!m.scrolls() && m.fit == 4);
+    }
     #[test]
     fn plain_numbers_and_other_text_go_through_as_typed() {
         let f = second_point(Vec2::ZERO);

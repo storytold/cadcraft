@@ -198,7 +198,8 @@ impl CmdLine {
     /// The options menu row under `at` (screen), if the menu is open.
     pub fn option_at(&self, at: Pos2) -> Option<String> {
         self.options.as_ref()?;
-        self.option_rows.iter().find(|(r, _)| r.contains(at)).map(|(_, k)| k.clone())
+        // The scroll bar's entry has no keyword: it only keeps the pointer off the drawing.
+        self.option_rows.iter().find(|(r, k)| !k.is_empty() && r.contains(at)).map(|(_, k)| k.clone())
     }
 }
 
