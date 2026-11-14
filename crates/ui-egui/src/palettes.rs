@@ -408,7 +408,9 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     // Current layer combo.
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
-    let layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    // By name, as the Layer Properties Manager lists them, not in the order they were made (#2858).
+    let mut layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    layers.sort_by_key(|l| crate::layers::natural_lower(&l.0));
     let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
@@ -1786,5 +1788,42 @@ mod tests {
         h.state_mut().run("select", json!({ "handles": [handles[0].clone()] })).unwrap();
         h.run_steps(3);
         assert!(h.query_all_by_value("4.0000").count() > 0, "one circle alone shows its radius");
+    }
+
+    /// The painted texts with their top edge, in paint order.
+    fn painted_texts_at(shape: &Shape, out: &mut Vec<(String, f32)>) {
+        match shape {
+            Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos.y)),
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| painted_texts_at(shape, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_layer_list_is_sorted_by_name_not_by_creation_order() {
+        // #2858: layers made out of order (Z, a, M) show A to Z, ignoring case, as in the Layer
+        // Properties Manager.
+        let mut app = CadApp::new(Session::default(), Services::default());
+        for name in ["Z_Finish", "a_Base", "M_Layout"] {
+            app.run("layer.new", json!({ "name": name })).unwrap();
+        }
+        app.ui.show_layer_list = true;
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1200.0))), ..Default::default() };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| layers_section(&mut app, ui));
+            texts.clear();
+            output.shapes.iter().for_each(|shape| painted_texts_at(&shape.shape, &mut texts));
+            output.textures_delta.clear();
+        }
+        let names = ["0", "a_Base", "M_Layout", "Z_Finish"];
+        let mut rows: Vec<(String, f32)> = texts.into_iter().filter(|(t, _)| names.contains(&t.as_str())).collect();
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // The current layer's name is painted first, in the combo above the list; the list follows.
+        assert_eq!(rows.remove(0).0, "0", "the combo above the list shows the current layer");
+        let order: Vec<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(order, names, "the list runs from top to bottom by name");
     }
 }
