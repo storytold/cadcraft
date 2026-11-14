@@ -8,10 +8,14 @@ use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup
 pub(super) struct Objects {
     /// Dictionary entry handle (upper case) → entry name.
     names: HashMap<String, String>,
+    /// (dictionary handle, entry handle), both upper case, in the order the dictionaries list them.
+    entry_order: Vec<(String, String)>,
     /// SCALE objects (the annotation scale list), in file order.
     scales: Vec<cadcraft_doc::AnnoScale>,
     /// XRECORD handle (upper case) → its groups.
     xrecords: HashMap<String, Vec<Tag>>,
+    /// XRECORD handles in file order.
+    xrecord_order: Vec<String>,
     /// TABLESTYLE objects: (handle, groups).
     table_styles: Vec<(String, Vec<Tag>)>,
     /// DIMASSOC objects.
@@ -50,7 +54,11 @@ impl Objects {
                             if let Some(n) = name.take()
                                 && self.names.len() < MAX_OBJECTS
                             {
-                                self.names.insert(t.str().trim().to_ascii_uppercase(), n);
+                                let entry = t.str().trim().to_ascii_uppercase();
+                                if self.entry_order.len() < MAX_OBJECTS {
+                                    self.entry_order.push((h.clone(), entry.clone()));
+                                }
+                                self.names.insert(entry, n);
                             }
                         }
                         _ => {}
@@ -58,7 +66,9 @@ impl Objects {
                 }
             }
             "XRECORD" if self.xrecords.len() < MAX_OBJECTS => {
-                self.xrecords.insert(h, tags.to_vec());
+                if self.xrecords.insert(h.clone(), tags.to_vec()).is_none() {
+                    self.xrecord_order.push(h);
+                }
             }
             "TABLESTYLE" if self.table_styles.len() < MAX_OBJECTS => self.table_styles.push((h, tags.to_vec())),
             "DIMASSOC" if self.dimassocs.len() < MAX_OBJECTS => self.dimassocs.push(tags.to_vec()),
@@ -78,6 +88,65 @@ impl Objects {
             }
             _ => {}
         }
+    }
+
+    /// The layer states of the LAYER table's `ACAD_LAYERSTATES` dictionary (its XRECORDs, in file
+    /// order), read with the drawing's layers and linetypes. Entries whose names differ only in case
+    /// are one state, as AutoCAD 2024 opens them (measured with `S` and `s` in both orders): named as
+    /// the first of them in the dictionary, holding the last one's record, where the first of their
+    /// records comes in the file.
+    fn acad_layer_states(&self, d: &Drawing, rx: &Rx) -> Vec<cadcraft_doc::LayerState> {
+        let dicts: std::collections::HashSet<&str> =
+            self.names.iter().filter(|(_, n)| n.eq_ignore_ascii_case(crate::dxf_layer_states::KEY)).map(|(h, _)| h.as_str()).collect();
+        if dicts.is_empty() {
+            return Vec::new();
+        }
+        let mut by_name: HashMap<String, &cadcraft_doc::Layer> = HashMap::with_capacity(d.layers.len());
+        for l in &d.layers {
+            by_name.entry(l.name.to_ascii_lowercase()).or_insert(l);
+        }
+        let layer_of =
+            |h: &str| rx.layers.get(&h.trim().to_ascii_uppercase()).and_then(|n| by_name.get(&n.to_ascii_lowercase())).map(|l| (*l).clone());
+        let ltype_of = |h: &str| rx.ltypes.get(&h.trim().to_ascii_uppercase()).cloned();
+        let pstyle_of = |h: &str| rx.pstyles.get(&h.trim().to_ascii_uppercase()).cloned();
+        let lookup = crate::dxf_layer_states::Lookup {
+            layer: &layer_of,
+            ltype: &ltype_of,
+            pstyle: &pstyle_of,
+            colour_dependent: d.header.i64("PSTYLEMODE", 1) != 0,
+        };
+        let ours = |tags: &[Tag]| owner(tags).is_some_and(|o| dicts.contains(o.as_str()));
+        // By lower-case name: the first entry's name and the last entry's record, in dictionary order.
+        let mut first: HashMap<String, &String> = HashMap::new();
+        let mut last: HashMap<String, &Vec<Tag>> = HashMap::new();
+        for (dict, h) in &self.entry_order {
+            if dicts.contains(dict.as_str())
+                && let (Some(name), Some(tags)) = (self.names.get(h), self.xrecords.get(h))
+                && ours(tags)
+            {
+                first.entry(name.to_ascii_lowercase()).or_insert(name);
+                last.insert(name.to_ascii_lowercase(), tags);
+            }
+        }
+        let mut out = Vec::new();
+        let mut taken = std::collections::HashSet::new();
+        let mut budget = crate::dxf_layer_states::MAX_COPIED_BYTES;
+        for h in &self.xrecord_order {
+            let (Some(tags), Some(name)) = (self.xrecords.get(h), self.names.get(h)) else { continue };
+            if out.len() >= crate::dxf_ext::MAX_LAYER_STATES {
+                break;
+            }
+            if !ours(tags) {
+                continue;
+            }
+            let key = name.to_ascii_lowercase();
+            if taken.insert(key.clone()) {
+                let name = first.get(&key).copied().unwrap_or(name);
+                let tags = last.get(&key).copied().unwrap_or(tags);
+                out.push(crate::dxf_layer_states::read(name, tags, &lookup, &mut budget));
+            }
+        }
+        out
     }
 
     /// The text of the CADCraft XRECORD stored under `key` in a dictionary (its 1/3 strings).
@@ -208,10 +277,18 @@ impl Objects {
         if let Some(p) = self.xrecord_text(crate::dxf_ext::ANNOTATION_KEY).and_then(|t| crate::dxf_ext::parse_anno(&t)) {
             crate::dxf_ext::apply_anno(d, p);
         }
-        // Saved layer states.
-        if let Some(states) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
-            d.layer_states = states;
+        // Saved layer states: AutoCAD's, then those of CADCraft's own record (a file of an
+        // earlier version keeps them all there) that AutoCAD's doesn't hold.
+        let mut states = self.acad_layer_states(d, rx);
+        if let Some(own) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
+            let mut names: std::collections::HashSet<String> = states.iter().map(|s| s.name.clone()).collect();
+            for st in own {
+                if states.len() < crate::dxf_ext::MAX_LAYER_STATES && names.insert(st.name.clone()) {
+                    states.push(st);
+                }
+            }
         }
+        d.layer_states = states;
         // The drawing's plot style tables.
         if let Some(tables) = self.xrecord_text(crate::dxf_ext::PLOT_STYLES_KEY).and_then(|t| crate::dxf_ext::parse_plot_styles(&t)) {
             d.plot_style_tables = tables;
@@ -229,6 +306,20 @@ impl Objects {
             dimassoc(d, tags);
         }
     }
+}
+
+/// An object's owner (its first group 330 outside a `102` group), upper case.
+fn owner(tags: &[Tag]) -> Option<String> {
+    let mut inside = false;
+    for t in tags {
+        match t.code {
+            102 => inside = t.str().trim().starts_with('{'),
+            330 if !inside => return Some(t.str().trim().to_ascii_uppercase()),
+            100 => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Page setup from a LAYOUT object's AcDbPlotSettings fields (sizes and margins in mm).

@@ -58,6 +58,8 @@ pub(super) struct Ctx {
     pub(super) frozen_341: bool,
     /// MTEXT columns as the legacy groups 75..79 even from R2018 (the groups AutoLISP lists).
     pub(super) legacy_columns: bool,
+    /// Saved layer states in AutoCAD's form (the LAYER table's extension dictionary).
+    pub(super) layer_states: crate::dxf_layer_states::Plan,
 }
 
 impl Ctx {

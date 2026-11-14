@@ -73,6 +73,7 @@ mod join_close;
 mod json_param_validation;
 mod layer_cmdline;
 mod layer_merge_delete;
+mod layer_state_cmdline;
 mod layoff_repeat;
 mod layout_prompts;
 mod leader_command;
