@@ -730,3 +730,83 @@ mod hatch_pattern_pick_tests {
         assert!(pick(&d, &Space::Model, Vec2::new(5.0, 5.0), 0.05).is_some());
     }
 }
+
+#[cfg(test)]
+mod xclip_selection_tests {
+    use super::*;
+    use cadcraft_doc::{Block, ClipBoundary, Common, Insert, Layer, Line as DocLine};
+    use cadcraft_geom::Vec3;
+
+    fn insert_with_line(name: &str, a: (f64, f64), b: (f64, f64), layer: &str, clip: ClipBoundary) -> (Drawing, Handle) {
+        let mut d = Drawing::new_metric();
+        if layer != "0" {
+            d.layers.push(Layer::new(layer));
+        }
+        let mut blk = Block::new(name);
+        blk.base = Vec3::new(a.0, a.1, 0.0);
+        let common = Common { layer: layer.into(), ..Default::default() };
+        blk.entities.push(Entity {
+            handle: Handle(10),
+            common,
+            kind: EntityKind::Line(DocLine { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) }),
+        });
+        d.blocks.insert(name.into(), std::sync::Arc::new(blk));
+        let h = d
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::Insert(Insert {
+                    block: name.into(),
+                    insert: Vec3::new(a.0, a.1, 0.0),
+                    scale: Vec3::new(1.0, 1.0, 1.0),
+                    rotation: 0.0,
+                    attribs: Vec::new(),
+                    cols: 1,
+                    rows: 1,
+                    col_spacing: 0.0,
+                    row_spacing: 0.0,
+                    clip: Some(clip),
+                }),
+            )
+            .unwrap();
+        (d, h)
+    }
+
+    #[test]
+    fn xclip_boundary_selects_when_block_parts_are_hidden() {
+        // Block base == insert point, so block coordinates equal world coordinates.
+        let clip = ClipBoundary::new(vec![Vec2::new(-2.0, 27.0), Vec2::new(12.0, 33.0)]);
+        for (frozen, on) in [(true, true), (false, false)] {
+            for frame in [2, 0] {
+                let (mut d, h) = insert_with_line("BC", (0.0, 30.0), (10.0, 30.0), "Hidden", clip.clone());
+                d.header.set_i64("XCLIPFRAME", frame);
+                let l = d.layers.iter_mut().find(|l| l.name == "Hidden").unwrap();
+                l.frozen = frozen;
+                l.on = on;
+                let cross = Bounds2::new(Vec2::new(-3.0, 29.0), Vec2::new(-1.0, 31.0));
+                let win = Bounds2::new(Vec2::new(-4.0, 25.0), Vec2::new(14.0, 35.0));
+                assert_eq!(select_window(&d, &Space::Model, cross, true), vec![h], "crossing frozen={frozen} on={on} frame={frame}");
+                assert_eq!(
+                    select_fence(&d, &Space::Model, &[Vec2::new(-3.0, 30.0), Vec2::new(-1.0, 30.0)]),
+                    vec![h],
+                    "fence frozen={frozen} on={on} frame={frame}"
+                );
+                assert_eq!(select_window(&d, &Space::Model, win, false), vec![h], "window frozen={frozen} on={on} frame={frame}");
+            }
+        }
+    }
+
+    #[test]
+    fn inverted_xclip_boundary_counts_in_selection() {
+        // Block base == insert point, so block coordinates equal world coordinates.
+        let mut clip = ClipBoundary::new(vec![Vec2::new(33.0, 28.0), Vec2::new(37.0, 32.0)]);
+        clip.inverted = true;
+        let (d, h) = insert_with_line("BC", (30.0, 30.0), (40.0, 30.0), "0", clip);
+        let cross_top = Bounds2::new(Vec2::new(34.0, 31.5), Vec2::new(36.0, 32.5));
+        let win_line_only = Bounds2::new(Vec2::new(29.0, 29.0), Vec2::new(41.0, 31.0));
+        let win_all = Bounds2::new(Vec2::new(29.0, 27.0), Vec2::new(41.0, 33.0));
+        assert_eq!(select_window(&d, &Space::Model, cross_top, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, win_line_only, false).is_empty());
+        assert_eq!(select_window(&d, &Space::Model, win_all, false), vec![h]);
+    }
+}
