@@ -1,6 +1,7 @@
 //! The anonymous `*D` block written for a dimension (what other programs draw) holds its text at
 //! the height it is drawn at: the dimension's overrides and DIMSCALE (0 = the drawing's) count
-//! (issue #367). Angular text also keeps its decimal separator in the stored block (#1646).
+//! (issue #367). Angular text also keeps its decimal separator in the stored block (#1646), and
+//! a text override keeps its formatting codes (#2854).
 
 use cadcraft_doc::{Common, DimKind, DimStyle, Dimension, Drawing, EntityKind, Space};
 use cadcraft_geom::Vec3;
@@ -127,5 +128,80 @@ fn dwg_angular_block_text_keeps_the_decimal_separator() {
             })
             .collect();
         assert_eq!(texts, [expected], "DIMDSEP override: {separator_override:?}");
+    }
+}
+
+/// The MTEXT contents of the `*D` blocks in a drawing as stored, without regenerating them.
+fn stored_block_texts(d: &Drawing) -> Vec<String> {
+    d.blocks
+        .values()
+        .filter(|b| b.name.starts_with("*D"))
+        .flat_map(|b| b.entities.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::MText(t) => Some(t.contents.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The text override of #2854: a stacked superscript at 0.7 of the height.
+const FORMATTED: &str = r"2,81{\H0.7x;\S5^ ;}";
+
+/// A drawing with one linear dimension whose text override is `text`.
+fn override_drawing(text: &str) -> Drawing {
+    let mut d = Drawing::new_metric();
+    let dm = Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        defpt: Vec3::new(1.4, 0.5, 0.0),
+        text_mid: Vec3::ZERO,
+        p13: Vec3::ZERO,
+        p14: Vec3::new(2.815, 0.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: text.into(),
+        style: "Standard".into(),
+        measurement: 0.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: None,
+        overrides: Default::default(),
+        assoc: Vec::new(),
+        marks: Default::default(),
+        insertion_point: Vec3::ZERO,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    d
+}
+
+/// #2854: the `*D` block keeps the formatting of a text override (a stacked superscript, a
+/// height), so the reopened dimension, drawn from its block, looks as it did before the save.
+/// It held the plain text, `2,81 5/ `.
+#[test]
+fn dxf_block_text_keeps_the_override_formatting() {
+    let stored = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&override_drawing(FORMATTED)).as_bytes()).unwrap();
+    assert_eq!(stored_block_texts(&stored), [FORMATTED]);
+}
+
+/// #2854 in a DWG, read with acadrust as other programs read it: the `*D` block's MTEXT has the
+/// override's formatting, in the default version (AC1018) and a recent one.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dwg_block_text_keeps_the_override_formatting() {
+    use acadrust::entities::EntityType;
+    use cadcraft_io::{SaveOptions, Version};
+
+    for version in [None, Some(Version::R2018)] {
+        let dwg = cadcraft_io::write_with(&override_drawing(FORMATTED), "a.dwg", &SaveOptions { version, binary: false }).unwrap();
+        let stored = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
+        let texts: Vec<&str> = stored
+            .entities()
+            .filter_map(|e| match e {
+                EntityType::MText(t) if stored.block_records.iter().any(|b| b.handle == t.common.owner_handle && b.name.starts_with("*D")) => {
+                    Some(t.value.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, [FORMATTED], "version {version:?}");
     }
 }
