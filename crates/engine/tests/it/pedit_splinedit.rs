@@ -369,3 +369,57 @@ fn edit_vertex_add_and_elevate_order_keep_the_shape() {
     }
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexadd" })).is_err());
 }
+
+#[test]
+fn the_polyline_precision_is_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Specify a precision <10>:": +5, 05, 0, 99 and the LISP real 5.0 are taken;
+    // 5.0, 5., 4.5, 1e1, 8/2, 100, -1, a point and the real 4.6 from LISP are refused and asked
+    // again (measured).
+    let control = json!({ "control": [[0, 0], [2, 3], [4, 0], [6, 3], [8, 0]] });
+    for (typed, precision) in [("+5", 5), ("05", 5), ("0", 0), ("99", 99), ("", 10), ("(+ 2.5 2.5)", 5)] {
+        // The same spline converted through the JSON form, for the vertices to expect.
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        s.execute("splinedit", &json!({ "handle": sp, "option": "polyline", "precision": precision })).unwrap();
+        let EntityKind::LwPolyline(want) = kind(&s, &sp) else { panic!("converted") };
+
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        s.cmdline("splinedit 0,0 p").unwrap();
+        let asked = s.prompt_text();
+        for bad in ["5.0", "5.", "4.5", "1e1", "8/2", "100", "-1", "(list 1 2)", "(+ 2.3 2.3)"] {
+            let logged = s.log.len();
+            s.cmdline(bad).unwrap();
+            let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+            assert_eq!(said, ["Requires an integer between 0 and 99."], "{bad}");
+            assert_eq!(s.prompt_text(), asked, "{bad}");
+        }
+        s.cmdline(typed).unwrap();
+        assert!(s.running.is_none(), "{typed:?}: {}", s.prompt_text());
+        let EntityKind::LwPolyline(got) = kind(&s, &sp) else { panic!("{typed:?} converted") };
+        assert_eq!(pts(&got), pts(&want), "{typed:?}");
+    }
+}
+
+#[test]
+fn the_json_polyline_precision_is_a_whole_number_from_0_to_99() {
+    let mut s = Session::new();
+    let sp = h(&s.execute("spline", &json!({ "control": [[0, 0], [2, 3], [4, 0], [6, 3], [8, 0]] })).unwrap());
+    for bad in [json!(100), json!(-1), json!(4.5), json!(5.0), json!("5")] {
+        assert!(s.execute("splinedit", &json!({ "handle": sp, "option": "polyline", "precision": bad })).is_err(), "{bad}");
+        assert!(matches!(kind(&s, &sp), EntityKind::Spline(_)), "{bad}");
+    }
+    s.execute("splinedit", &json!({ "handle": sp, "option": "polyline", "precision": 99 })).unwrap();
+    assert!(matches!(kind(&s, &sp), EntityKind::LwPolyline(_)));
+    // Without a precision, or with null, it is 10, the prompt's default.
+    let [a, b, c] = [json!({ "precision": 10 }), json!({}), json!({ "precision": null })].map(|mut p| {
+        let sp = h(&s.execute("spline", &json!({ "control": [[0, 0], [2, 3], [4, 0], [6, 3], [8, 0]] })).unwrap());
+        p["handle"] = json!(sp);
+        p["option"] = json!("polyline");
+        s.execute("splinedit", &p).unwrap();
+        let EntityKind::LwPolyline(poly) = kind(&s, &sp) else { panic!("converted") };
+        pts(&poly)
+    });
+    assert_eq!(a, b);
+    assert_eq!(a, c);
+}
