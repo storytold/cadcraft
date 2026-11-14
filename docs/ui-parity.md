@@ -183,6 +183,7 @@ dimensions are edited).
 | ZOOM Extents, All, Window, Previous, In/Out, Center, Scale, Object | yes | yes, 50-entry history (`cmd/view.rs:107-149`) |
 | ZOOM Realtime (drag), Dynamic | yes | yes (`zoom.realtime`, `zoom.dynamic`, `cmd/view.rs`) |
 | Wheel zoom about cursor, ZOOMFACTOR, ZOOMWHEEL | yes | ZOOMFACTOR is a setting (`Session::zoomfactor`, 3–100, default 60); ZOOMWHEEL not checked |
+| Crosshair size (CURSORSIZE 1–100, Options) | yes; 100 spans the whole drawing area | yes (#951): a share of the drawing area's height; at 100 the arms run out to every edge wherever the cursor is |
 | Middle-drag pan, double-middle-click extents | yes | yes (`canvas.rs:538-583`) |
 | Trackpad two-finger pan, pinch zoom (macOS) | yes | yes (#58) |
 | Named views (VIEW) | yes | yes (`cmd/view/named_views.rs`; the VIEW table is read and written); Orthographic views print "not available yet" |
@@ -219,6 +220,7 @@ dimensions are edited).
 | 2026-10-16 | minor | ALIASEDIT opens the Command Aliases dialog (#1381) |
 | 2026-10-18 | minor | In-window menu bar: once a menu is open, pointing at another title closes it and opens that one (#1567) |
 | 2026-10-13 | minor | Options ▸ Selection adds Select using two clicks only; PICKDRAG 0 disables drag-window creation/completion, 2 preserves clicks or drag, and the preference survives restart; UI pointer and profile regressions |
+| 2026-10-13 | trivial | Crosshair size 100 reaches the edges (#951) |
 | 2026-10-12 | minor | Selected and hovered objects redrawn in the selection colour (text and arrowheads included); Options ▸ Selection laid out as AutoCAD's: Object grouping, Show grips, grip object limit, selection preview, Visual Effect Settings (selection area, preview filter) |
 | 2026-10-12 | minor | Animation effects (dialog and menu fades, smoothed wheel scrolling and ⌘/Ctrl+wheel zoom) follow the operating system's setting; View ▸ Accessibility ▸ Animation Effects chooses System, On or Off |
 | 2026-10-12 | minor | Hatch and Gradient / Hatch Edit dialogs (HATCH, GRADIENT, HATCHEDIT, double-click a hatch; HPDLGMODE) |
