@@ -910,7 +910,7 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
+pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool, target_modern: bool) {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
@@ -939,7 +939,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     }
     let renumber = |old| proxy_class_number(f, &numbers, old);
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
+    let mut planned = plan_unknown(d, &recs, tags, &roles, modern, target_modern);
     for list in planned.values_mut() {
         list.retain_mut(|(_, t)| {
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
@@ -1143,6 +1143,7 @@ fn plan_unknown(
     tags: &[Tag],
     roles: &HashMap<ForeignKey, String>,
     modern: bool,
+    target_modern: bool,
 ) -> HashMap<usize, Vec<(String, Vec<Tag>)>> {
     let stored = d.foreign.data_store_entities();
     let mut out: HashMap<usize, Vec<(String, Vec<Tag>)>> = HashMap::new();
@@ -1182,7 +1183,9 @@ fn plan_unknown(
         for e in store.iter() {
             match &e.kind {
                 EntityKind::Unknown(u) => {
-                    if modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored) {
+                    if (modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored))
+                        || (!target_modern && cadcraft_doc::foreign::acis_left_out(u, e.handle, &stored, false))
+                    {
                         continue;
                     }
                     let t = unknown_entity(u, e, &owner, paper);

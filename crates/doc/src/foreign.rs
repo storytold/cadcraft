@@ -122,9 +122,24 @@ pub fn sat_text_acis(u: &crate::Unknown, handle: Handle, stored: &std::collectio
     ["3DSOLID", "REGION", "BODY"].iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && !stored.contains(&handle) && has_sat_text(&u.tags)
 }
 
+/// Whether a solid modeler entity can't be written to a DXF of 2013 and later (`modern`: SAT text
+/// with no data store record, [`sat_text_acis`]) or of 2010 and earlier (geometry only in the data
+/// store, which those files don't have, and no SAT text to write instead) (#2334).
+pub fn acis_left_out(u: &crate::Unknown, handle: Handle, stored: &std::collections::BTreeSet<Handle>, modern: bool) -> bool {
+    if modern {
+        return sat_text_acis(u, handle, stored);
+    }
+    ["3DSOLID", "REGION", "BODY"].iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&handle) && !has_sat_text(&u.tags)
+}
+
 /// The entities a DXF of 2013 or later leaves out because they hold SAT-text ACIS data
 /// ([`sat_text_acis`]), counted by DXF type, across model space, layouts and block definitions.
 pub fn sat_text_dropped(d: &crate::Drawing) -> BTreeMap<String, usize> {
+    acis_dropped(d, true)
+}
+
+/// The entities a DXF leaves out by [`acis_left_out`], counted like [`sat_text_dropped`].
+pub fn acis_dropped(d: &crate::Drawing, modern: bool) -> BTreeMap<String, usize> {
     let stored = d.foreign.data_store_entities();
     let mut out = BTreeMap::new();
     // The writer saves xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
@@ -132,7 +147,7 @@ pub fn sat_text_dropped(d: &crate::Drawing) -> BTreeMap<String, usize> {
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(own_blocks.map(|b| &b.entities));
     for e in stores.flat_map(|s| s.iter()) {
         if let crate::EntityKind::Unknown(u) = &e.kind
-            && sat_text_acis(u, e.handle, &stored)
+            && acis_left_out(u, e.handle, &stored, modern)
         {
             let n: &mut usize = out.entry(u.dxf_type.to_ascii_uppercase()).or_default();
             *n = n.saturating_add(1);
@@ -158,6 +173,23 @@ pub fn data_store_records(tags: &[RawTag]) -> Vec<&[RawTag]> {
         start = end;
     }
     out
+}
+
+/// The ACIS version a modeler entity's SAT text declares (the first number of its first line:
+/// 400, 700, 21800…), if it has SAT text.
+pub fn sat_version(tags: &[RawTag]) -> Option<u32> {
+    let marked = tags.iter().take_while(|r| r.code < 1000).any(|r| r.code == 100);
+    let mut in_modeler = !marked;
+    for r in tags.iter().take_while(|r| r.code < 1000) {
+        if r.code == 100 {
+            in_modeler = r.value.trim().eq_ignore_ascii_case("AcDbModelerGeometry");
+        } else if in_modeler && r.code == 1 {
+            let first = r.value.split_whitespace().next()?;
+            // DXF before 2013 encodes SAT text: each character but a space is 159 minus it ("hoo" is 700).
+            return first.parse().ok().or_else(|| first.bytes().map(|b| char::from(159u8.wrapping_sub(b))).collect::<String>().parse().ok());
+        }
+    }
+    None
 }
 
 /// Whether an entity's groups hold SAT text: groups 1 and 3 inside its `AcDbModelerGeometry`

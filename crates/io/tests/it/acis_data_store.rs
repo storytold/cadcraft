@@ -217,3 +217,25 @@ fn a_dwg_keeps_a_sat_text_region_only_before_2013() {
     assert!(holds_sat(cadcraft_io::Version::R2010), "2010 keeps the SAT text");
     assert!(!holds_sat(cadcraft_io::Version::R2018), "2018 comes back without it");
 }
+
+/// The other way round: a solid whose geometry is only in the data store (a 2013+ file) has no
+/// SAT text to write to a DXF of 2010 or earlier, which has no data store. Writing it would leave
+/// an empty 2013-style record (290/2 groups) other programs reject, so it is left out and counted
+/// there, and kept in 2013 and later (#2334).
+#[test]
+fn data_store_solids_are_left_out_of_dxf_2010_and_earlier() {
+    let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
+    let text = |v: cadcraft_io::Version| {
+        let out = cadcraft_io::write_with(&d, "x.dxf", &cadcraft_io::SaveOptions { version: Some(v), binary: false }).unwrap();
+        String::from_utf8(out).unwrap().replace("\r\n", "\n")
+    };
+    let solids = |t: &str| t.matches("\n0\n3DSOLID\n").count() + t.matches("\n  0\n3DSOLID\n").count();
+    assert_eq!(cadcraft_doc::foreign::acis_dropped(&d, false), [("3DSOLID".to_string(), 2)].into());
+    assert!(cadcraft_doc::foreign::acis_dropped(&d, true).is_empty());
+    for v in [cadcraft_io::Version::R2000, cadcraft_io::Version::R2010] {
+        let t = text(v);
+        assert_eq!(solids(&t), 0, "{v:?} leaves them out");
+        assert!(!t.contains("AcDbModelerGeometry"), "{v:?} writes no empty modeler record");
+    }
+    assert_eq!(solids(&text(cadcraft_io::Version::R2018)), 2, "2018 keeps them");
+}
