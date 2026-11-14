@@ -37,6 +37,26 @@ fn save(d: &Drawing, v: Version) -> Drawing {
     cadcraft_io::read(&bytes, "t.dwg").unwrap()
 }
 
+/// A style whose name is too long for one pre-R2007 EED string once its characters are escaped.
+#[test]
+fn long_non_latin_style_name_roundtrips_through_dwg() {
+    let mut d = drawing();
+    let long = "中".repeat(80);
+    if let Some(st) = d.table_styles.iter_mut().find(|s| s.name == "Costs") {
+        let mut other = st.cell_style(CellStyle::DATA);
+        other.name = long.clone();
+        other.align = 5;
+        st.set_cell_style(other);
+    }
+    let want = d.table_styles.iter().find(|s| s.name == "Costs").unwrap().clone();
+    for v in [Version::R2004, Version::R2007, Version::R2018] {
+        let back = save(&d, v);
+        let st = back.table_styles.iter().find(|s| s.name == "Costs").unwrap();
+        assert!(st.has_cell_style(&long), "{v:?}: cell styles after DWG: {:?}", st.cell_styles);
+        assert_eq!(st.cell_styles, want.cell_styles, "{v:?}");
+    }
+}
+
 #[test]
 fn custom_cell_styles_roundtrip_through_dwg() {
     let d = drawing();
