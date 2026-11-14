@@ -47,6 +47,19 @@ pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     true
 }
 
+/// Start TABLEDIT on the cell at `p`, whose in-place editor the UI then opens (#3136); false when
+/// no table cell is there.
+pub(super) fn edit_table_cell_at(app: &mut CadApp, p: Vec2) -> bool {
+    if cadcraft_engine::cmd::table::cell_under(&app.session, p).is_none() {
+        return false;
+    }
+    app.start("tabledit");
+    if let Err(e) = app.session.input(Input::Point(p)) {
+        app.session.echo(e.to_string());
+    }
+    true
+}
+
 /// The hatch under world point `w` within the pick aperture (PICKBOX × 1.5 pixels at `scale`
 /// pixels per unit), if any.
 pub(super) fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
