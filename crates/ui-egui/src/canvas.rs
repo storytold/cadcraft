@@ -918,6 +918,18 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             app.session.echo(e.to_string());
         }
     }
+    // Dragging a grip (no command running): the grip edit starts when the drag does, and letting
+    // go places the point as a click would (above, at point prompts), so a grip can be dragged as
+    // well as clicked, then clicked again.
+    if resp.drag_started_by(egui::PointerButton::Primary)
+        && !middle_down
+        && !app.session.prompting()
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+        && rect.contains(origin)
+        && let Some(g) = grip_at(app, &xf, Some(origin))
+    {
+        click_grip(app, g, false);
+    }
     // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
     // that starts while objects are being selected opens a window where the button went down,
     // and letting go closes it. Drags on grips and drags while drawing are left alone.
