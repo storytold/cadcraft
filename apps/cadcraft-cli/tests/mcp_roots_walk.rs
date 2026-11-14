@@ -371,6 +371,7 @@ fn walk(tag: &str, roots: bool) -> Walk {
     let o = f.outside.clone();
     let canary = |ext: &str| s(&o.join(format!("canary.{ext}")));
     let (circle, table) = seed(&mut server).expect("seed");
+    assert!(!circle.is_empty(), "the seed circle has no handle");
     assert!(!table.is_empty(), "the seed table has no handle");
     for spec in &specs {
         let id = spec["id"].as_str().unwrap().to_string();

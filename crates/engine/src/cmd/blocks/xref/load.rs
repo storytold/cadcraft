@@ -676,7 +676,11 @@ mod tests {
             std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/lone/Only.dxf")).unwrap();
             assert_eq!(find("lone/only.dxf", Some(&host), true), Err(Missing::OutsideRoots));
         });
-        assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Ok(Some(base.join("in/Alias/target.dxf"))), "without roots the link is followed");
+        assert_eq!(
+            case_insensitive(&base.join("in/alias/target.dxf")),
+            Ok(Some(base.join("in/Alias/target.dxf"))),
+            "without roots the link is followed"
+        );
         std::fs::remove_dir_all(&base).unwrap();
     }
 
