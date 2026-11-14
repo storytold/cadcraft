@@ -493,12 +493,16 @@ fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
     let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
 
     if let Some(v) = str_param(params, "pattern") {
-        if !hatch.pattern.eq_ignore_ascii_case(v) {
-            hatch.pattern_lines = super::hatch::lines_for(v);
+        let name = v.to_ascii_uppercase();
+        // A library pattern is drawn from the library; a loaded .pat pattern carries its own
+        // line families; nothing else is known about the name. Naming the pattern the hatch
+        // already carries keeps those families: the session-wide registry may no longer hold
+        // them (HATCH.PATTERNS cleared, or the drawing reopened without the .pat file), and
+        // re-setting the same name must not drop the definition (#1232).
+        if !hatch.pattern.eq_ignore_ascii_case(&name) || hatch.pattern_lines.is_empty() {
+            hatch.pattern_lines = super::hatch::lines_for(&name);
         }
-        hatch.pattern = v.to_ascii_uppercase();
-        // The old pattern's definition lines no longer apply.
-        hatch.pattern_lines.clear();
+        hatch.pattern = name;
         hatch.solid = hatch.pattern == "SOLID";
         if !hatch.solid {
             // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
@@ -1367,5 +1371,25 @@ mod tests {
             s.execute("properties.set", &json!({ "handles": [h], "linetype": ok })).unwrap();
             assert_eq!(lt(&s), ok);
         }
+    }
+
+    #[test]
+    fn setting_the_same_pattern_keeps_the_lines_the_hatch_carries() {
+        // The loaded patterns are session-wide: HATCH.PATTERNS can clear them, and a drawing
+        // reopened without its .pat file leaves the hatch's own families as the only copy.
+        // Setting the name the hatch already carries must keep them (#1232).
+        let mut h: cadcraft_doc::Hatch = serde_json::from_value(json!({
+            "pattern": "MYGRID",
+            "solid": false,
+            "loops": [],
+            "patternLines": [{"angle": 0.0, "origin": [0.0, 0.0], "delta": [0.0, 0.5], "dashes": []}],
+        }))
+        .unwrap();
+        set_hatch_properties(&mut h, &json!({ "pattern": "mygrid" }));
+        assert_eq!(h.pattern, "MYGRID");
+        assert_eq!(h.pattern_lines.len(), 1, "the definition the hatch carries was dropped");
+        // A name nothing is known about (the registry does not hold it) is still a rename.
+        set_hatch_properties(&mut h, &json!({ "pattern": "MYOTHER" }));
+        assert!(h.pattern_lines.is_empty());
     }
 }
