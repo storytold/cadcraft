@@ -297,6 +297,33 @@ fn arrayedit_base_replace_and_reset() {
 }
 
 #[test]
+fn shrinking_an_array_keeps_replacements_outside_the_grid() {
+    let mut s = Session::new();
+    let a = rect_array(&mut s);
+    let l = s.execute("line", &json!({"points": [[0, 20], [1, 20]]})).unwrap()["handles"][0].clone();
+    s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [l], "base": [0, 20], "items": [[2, 0, 0]]}})).unwrap();
+    assert_eq!(lines_in(&s, &a), 1);
+    s.execute("arrayedit", &json!({"handle": a, "cols": 2})).unwrap();
+    assert_eq!(lines_in(&s, &a), 0);
+    // Growing back brings the replaced item back; its block must still exist.
+    s.execute("arrayedit", &json!({"handle": a, "cols": 3})).unwrap();
+    assert_eq!(lines_in(&s, &a), 1);
+    assert_eq!(centres(&s, &a), vec![(0, 0), (2000, 0)]);
+}
+
+#[test]
+fn purge_keeps_replacements_outside_a_shrunk_array() {
+    let mut s = Session::new();
+    let a = rect_array(&mut s);
+    let l = s.execute("line", &json!({"points": [[0, 20], [1, 20]]})).unwrap()["handles"][0].clone();
+    s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [l], "base": [0, 20], "items": [[2, 0, 0]]}})).unwrap();
+    s.execute("arrayedit", &json!({"handle": a, "cols": 2})).unwrap();
+    s.execute("purge", &json!({"type": "blocks"})).unwrap();
+    s.execute("arrayedit", &json!({"handle": a, "cols": 3})).unwrap();
+    assert_eq!(lines_in(&s, &a), 1);
+}
+
+#[test]
 fn arrayedit_source_then_arrayclose() {
     let mut s = Session::new();
     let a = rect_array(&mut s);

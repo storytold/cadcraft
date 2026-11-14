@@ -127,8 +127,9 @@ pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iter
         .filter(|n| !n.is_empty())
 }
 
-/// Upper-case names of blocks reachable from model space, the layouts and dimensions, and the
-/// arrowhead blocks dimension styles and dimension overrides name.
+/// Upper-case names of blocks reachable from model space, the layouts and dimensions, the
+/// arrowhead blocks dimension styles and dimension overrides name, and the source and replacement
+/// blocks an associative array's parameters name.
 pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
     let mut used = HashSet::new();
     let mut frontier: Vec<String> = Vec::new();
@@ -168,6 +169,11 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
                     EntityKind::MLeader(m) => frontier.extend(m.block.as_ref().map(|b| b.block.clone())),
                     _ => {}
                 }
+            }
+            // A replacement outside a shrunk array's item grid comes back when the array grows.
+            if let Some(a) = &b.array {
+                frontier.push(a.source.clone());
+                frontier.extend(a.replaced.iter().map(|r| r.block.clone()));
             }
         }
     }
