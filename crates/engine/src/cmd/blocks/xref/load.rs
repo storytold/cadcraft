@@ -220,8 +220,20 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     let looked_for = files.len();
     let files: Vec<PathBuf> = files.into_iter().filter(allowed).collect();
     let outside = files.len() < looked_for;
+    // A match found by ignoring case that the roots refuse counts as outside them too.
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p).filter(allowed)));
+    let mut refused_match = false;
+    #[cfg(not(target_arch = "wasm32"))]
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| {
+        files.iter().find_map(|p| {
+            let c = case_insensitive(p)?;
+            let ok = allowed(&c);
+            refused_match |= !ok;
+            ok.then_some(c)
+        })
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    let outside = outside || refused_match;
     #[cfg(target_arch = "wasm32")]
     let found: Option<PathBuf> = None;
     found.ok_or(if outside { Missing::OutsideRoots } else { refused.map_or(Missing::NotFound, Missing::Refused) })
@@ -654,6 +666,10 @@ mod tests {
             let host = base.join("in/host.dxf");
             let found = find("sub/mixed.dxf", Some(&host), true).unwrap();
             assert_eq!(found, base.join("in/Mixed.dxf"));
+            // With no other candidate it is still a refusal by the roots, not a missing file.
+            std::fs::create_dir_all(base.join("in/lone")).unwrap();
+            std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/lone/Only.dxf")).unwrap();
+            assert_eq!(find("lone/only.dxf", Some(&host), true), Err(Missing::OutsideRoots));
         });
         assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Some(base.join("in/Alias/target.dxf")), "without roots the link is followed");
         std::fs::remove_dir_all(&base).unwrap();

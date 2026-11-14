@@ -47,6 +47,8 @@ struct Table {
     drawing_dirs: Vec<PathBuf>,
     /// The guards of the drawing folders that have any, by the owner that gave each one.
     drawing_guards: HashMap<PathBuf, Vec<(String, OpenGuard)>>,
+    /// Guards given once [`MAX_GUARDED_DIRS`] folders had one: they apply to every folder searched.
+    overflow_guards: Vec<(String, OpenGuard)>,
     font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
@@ -152,15 +154,14 @@ fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
         return;
     }
     // Guards outlive the drawing list: a folder dropped from it can still be reached as a font
-    // folder or on the search path. When there is no room for another, the folder isn't searched.
-    if guard.is_some() && !t.drawing_guards.contains_key(dir) && t.drawing_guards.len() >= MAX_GUARDED_DIRS {
-        return;
-    }
+    // folder or on the search path. When there is no room for another folder's guards, they apply to
+    // every folder searched from then on, so nothing is left unguarded.
+    let no_room = !t.drawing_guards.contains_key(dir) && t.drawing_guards.len() >= MAX_GUARDED_DIRS;
     t.drawing_dirs.retain(|d| d != dir);
     t.drawing_dirs.insert(0, dir.to_path_buf());
     t.drawing_dirs.truncate(MAX_DIRS);
     if let Some((owner, guard)) = guard {
-        let guards = t.drawing_guards.entry(dir.to_path_buf()).or_default();
+        let guards = if no_room { &mut t.overflow_guards } else { t.drawing_guards.entry(dir.to_path_buf()).or_default() };
         guards.retain(|(o, _)| o != owner);
         guards.push((owner.to_string(), guard));
     }
@@ -230,7 +231,7 @@ pub fn generation() -> u64 {
 /// The SHX font file a style or linetype names, if CADCraft can find and read it.
 pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     let mut k = key(name)?;
-    let (provider, folders, guarded, generation) = {
+    let (provider, folders, (guarded, overflow), generation) = {
         let t = table();
         // The font map renames once (a map can't loop).
         if let Some(to) = t.map.iter().find(|(from, _)| *from == k).and_then(|(_, to)| key(to)) {
@@ -245,14 +246,16 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         let folders: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
         let guarded: Vec<(PathBuf, Vec<OpenGuard>)> =
             t.drawing_guards.iter().map(|(d, g)| (d.clone(), g.iter().map(|(_, g)| g.clone()).collect())).collect();
-        (t.provider.clone(), folders, guarded, t.generation)
+        let overflow: Vec<OpenGuard> = t.overflow_guards.iter().map(|(_, g)| g.clone()).collect();
+        (t.provider.clone(), folders, (guarded, overflow), t.generation)
     };
     // A guard belongs to the folder, however the search reaches it: a font folder or the search path
     // naming the same folder as a drawing's is held to the same guards.
     let dirs: Vec<(PathBuf, Vec<OpenGuard>)> = folders
         .into_iter()
         .map(|d| {
-            let guards = guarded.iter().filter(|(g, _)| same_folder(g, &d)).flat_map(|(_, g)| g.iter().cloned()).collect();
+            let own = guarded.iter().filter(|(g, _)| same_folder(g, &d)).flat_map(|(_, g)| g.iter().cloned());
+            let guards = own.chain(overflow.iter().cloned()).collect();
             (d, guards)
         })
         .collect();

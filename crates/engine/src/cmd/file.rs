@@ -688,7 +688,9 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     };
     let (head, tail, len) = ends(&mut src)?;
     let bak = backup_path(path);
-    if !backup_replaced(&head, &tail, len, bak.exists()) {
+    // Whether the .bak name is taken is asked without following a link there: a link leading out of
+    // the roots (or to another computer) isn't looked at.
+    if !backup_replaced(&head, &tail, len, std::fs::symlink_metadata(&bak).is_ok()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
         return Ok(());
     }
@@ -1083,6 +1085,20 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// Whether the `.bak` name is taken is asked without following a link there: a dangling link
+    /// counts as taken, so a file that doesn't look like a drawing leaves it alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_bak_name_counts_as_a_backup_without_being_followed() {
+        let dir = TempDir::new("cc-bak-link");
+        let path = dir.join("plain.dxf");
+        std::fs::write(&path, "just some text, not a drawing").unwrap();
+        let bak = super::backup_path(&path);
+        std::os::unix::fs::symlink(dir.join("nowhere"), &bak).unwrap();
+        super::backup(&path).unwrap();
+        assert!(std::fs::symlink_metadata(&bak).unwrap().file_type().is_symlink(), "the link is left as it was");
+    }
 
     /// A backup is never more open than the drawing or the old `.bak`, and loses the group bits when
     /// it would keep the old `.bak`'s group while the drawing is in another.
