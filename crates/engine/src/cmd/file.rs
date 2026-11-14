@@ -439,6 +439,9 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
     }
+    if is_drawing_file(path) {
+        keep_view(s)?;
+    }
     let bytes = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
     if is_drawing_file(path) {
@@ -452,6 +455,35 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
         }
     }
     Ok(n)
+}
+
+/// The Model tab's view as it is on screen becomes the view the drawing is saved at
+/// (`$VIEWCTR`/`$VIEWSIZE`, which the writer repeats in the first `*Active` VPORT record), so the
+/// drawing opens there again (#1602). Saving used to write the view it was opened at, or the
+/// extents.
+///
+/// - In the Block Editor the view on screen is the block's: the drawing keeps the view it has.
+/// - From a layout, the Model tab's view as it was left, never the sheet's or a viewport's.
+/// - With tiled viewports, the first tile's: the first record is the one a reader takes the view
+///   from (and that tile opens current); the other tiles keep their records.
+///
+/// Keeping the view is no change: a drawing without unsaved changes stays without them, and there
+/// is no undo step.
+fn keep_view(s: &mut Session) -> Result<()> {
+    if s.state()?.block_edit.is_some() {
+        return Ok(());
+    }
+    let Some(v) = s.opening_view() else { return Ok(()) };
+    let st = s.state_mut()?;
+    if !crate::view::usable_view(&v) || st.drawing().header.saved_view() == Some((v.center, v.height)) {
+        return Ok(());
+    }
+    let clean = !st.is_dirty();
+    std::sync::Arc::make_mut(st.drawing_arc_mut()).header.set_saved_view(v.center, v.height);
+    if clean {
+        st.saved = st.drawing().clone();
+    }
+    Ok(())
 }
 
 /// Put saved bytes where the user gets them: natively the file at `path`; on the web, which has
