@@ -180,3 +180,22 @@ fn stylesmanager_set_with_a_long_style_name_replies_with_the_stored_style() {
     assert_eq!(styles.len(), 2, "Normal and the one long-named style: {got}");
     assert_eq!(styles[1]["lineweight"], 50, "{got}");
 }
+
+/// A long name whose 255th character is a space is stored without it (`sanitized` trims the cut
+/// name), so the reply still has the style and setting the same name again edits it.
+#[test]
+fn stylesmanager_set_with_a_long_name_cut_at_a_space_edits_one_style() {
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    let long = format!("{} tail", "P".repeat(254));
+    let stored = "P".repeat(254);
+    let set = |lw: f64| json!({"action": "set", "name": "office.stb", "style": {"name": long, "lineweight": lw}});
+    let r = s.execute("stylesmanager", &set(0.3)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(30)), "{r}");
+    let r = s.execute("stylesmanager", &set(0.5)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(50)), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    let styles = got["styles"].as_array().unwrap();
+    assert_eq!(styles.len(), 2, "Normal and the one long-named style: {got}");
+    assert_eq!(styles[1]["lineweight"], 50, "{got}");
+}

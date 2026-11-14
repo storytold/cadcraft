@@ -268,9 +268,11 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(v) = p.get("style") {
                 let sname = v.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
                 let sname = sname.ok_or_else(|| bad(cmd, "`style.name` is required"))?;
-                // The name as it is stored (at most 255 characters, as `sanitized` cuts it), so a
-                // long name finds the style it was stored as and the reply finds the edited style.
-                let sname: &str = &sname.chars().take(255).collect::<String>();
+                // The name as it is stored (at most 255 characters, as `sanitized` cuts it, and
+                // without a space the cut leaves at the end, which `sanitized` trims), so a long
+                // name finds the style it was stored as and the reply finds the edited style.
+                let cut: String = sname.chars().take(255).collect();
+                let sname = cut.trim_end();
                 changed = Some(sname.to_string());
                 let idx = match t.styles.iter().position(|x| x.name.eq_ignore_ascii_case(sname)) {
                     Some(i) => i,
