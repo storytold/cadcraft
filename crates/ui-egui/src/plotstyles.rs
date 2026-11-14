@@ -75,28 +75,33 @@ fn used_aci_colors(d: &Drawing) -> BTreeSet<u8> {
             color => color,
         }
     }
+    struct VisitState {
+        used: BTreeSet<u8>,
+        stack: Vec<String>,
+        visited: HashSet<(String, String, String)>,
+    }
     fn visit(d: &Drawing, e: &Entity, inherited_layer: Option<&str>, inherited_block: Color,
-             used: &mut BTreeSet<u8>, stack: &mut Vec<String>, visited: &mut HashSet<(String, String, String)>, depth: usize) {
+             state: &mut VisitState, depth: usize) {
         if depth > 64 { return; }
         let layer_name = if e.common.layer == "0" { inherited_layer.unwrap_or(&e.common.layer) } else { &e.common.layer };
         let color = resolved(d, e, inherited_layer, inherited_block);
         match &e.kind {
             EntityKind::Insert(insert) => {
                 // An INSERT is a container; only its instantiated geometry and attributes count.
-                if let Some(block) = d.block(&insert.block) {
-                    if !stack.iter().any(|name| name.eq_ignore_ascii_case(&insert.block)) {
+                if let Some(block) = d.block(&insert.block)
+                    && !state.stack.iter().any(|name| name.eq_ignore_ascii_case(&insert.block))
+                {
                         // Repeated instances with the same effective layer and colour have
                         // identical block-definition colours. Attributes are still checked below.
                         let context = (insert.block.to_ascii_lowercase(), layer_name.to_ascii_lowercase(), format!("{color:?}"));
-                        if visited.insert(context) {
-                            stack.push(insert.block.clone());
+                        if state.visited.insert(context) {
+                            state.stack.push(insert.block.clone());
                             for child in block.entities.iter() {
                                 // Layer 0 and ByBlock inherit the insertion context.
-                                visit(d, child, Some(layer_name), color, used, stack, visited, depth + 1);
+                                visit(d, child, Some(layer_name), color, state, depth + 1);
                             }
-                            stack.pop();
+                            state.stack.pop();
                         }
-                    }
                 }
                 // Attribute instances can override their definition's colour and layer.
                 for attr in &insert.attribs {
@@ -108,21 +113,23 @@ fn used_aci_colors(d: &Drawing) -> BTreeSet<u8> {
                         Color::ByBlock => color,
                         c => c,
                     };
-                    if let Color::Index(i) = effective { if i > 0 { used.insert(i); } }
+                    if let Color::Index(i) = effective && i > 0 { state.used.insert(i); }
                 }
             }
             EntityKind::AttDef(_) => {} // Definitions do not draw as independent objects.
-            _ => { if let Color::Index(i) = color { if i > 0 { used.insert(i); } } }
+            _ => { if let Color::Index(i) = color && i > 0 { state.used.insert(i); } }
         }
     }
-    let mut used = BTreeSet::new();
-    let mut stack = Vec::new();
-    let mut visited = HashSet::new();
-    for e in d.model.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, &mut visited, 0); }
+    let mut state = VisitState {
+        used: BTreeSet::new(),
+        stack: Vec::new(),
+        visited: HashSet::new(),
+    };
+    for e in d.model.iter() { visit(d, e, None, Color::Index(7), &mut state, 0); }
     for layout in &d.layouts {
-        for e in layout.entities.iter() { visit(d, e, None, Color::Index(7), &mut used, &mut stack, &mut visited, 0); }
+        for e in layout.entities.iter() { visit(d, e, None, Color::Index(7), &mut state, 0); }
     }
-    used
+    state.used
 }
 
 fn style_aci(name: &str) -> Option<u8> {
@@ -131,18 +138,18 @@ fn style_aci(name: &str) -> Option<u8> {
 
 // Clip content to the cell: even a 25-pixel column must not displace its neighbour.
 fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) -> egui::Rect {
-    let result = ui.allocate_ui_with_layout(
-        egui::vec2(width, 24.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_width(width);
-            let rect = ui.max_rect();
-            ui.set_clip_rect(ui.clip_rect().intersect(rect));
-            ui.add_space(CELL_PADDING.min((width - 1.0).max(0.0)));
-            add(ui);
-        },
+    // Reserve the exact footprint in the parent before laying out any controls.
+    // A child widget may request more space, but cannot move subsequent columns.
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    result.response.rect
+    child.set_clip_rect(ui.clip_rect().intersect(rect));
+    child.add_space(CELL_PADDING.min((width - 1.0).max(0.0)));
+    add(&mut child);
+    rect
 }
 
 // Draw the handle on the actual right border, not after the heading text.
@@ -355,11 +362,11 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
             rows.sort_by(|a, b| {
                 let mut cmp = sort_key!(a, col).cmp(&sort_key!(b, col));
                 if descending { cmp = cmp.reverse(); }
-                if cmp == std::cmp::Ordering::Equal {
-                    if let Some((second, reverse)) = state.secondary {
-                        cmp = sort_key!(a, second).cmp(&sort_key!(b, second));
-                        if reverse { cmp = cmp.reverse(); }
-                    }
+                if cmp == std::cmp::Ordering::Equal
+                    && let Some((second, reverse)) = state.secondary
+                {
+                    cmp = sort_key!(a, second).cmp(&sort_key!(b, second));
+                    if reverse { cmp = cmp.reverse(); }
                 }
                 cmp
             });
