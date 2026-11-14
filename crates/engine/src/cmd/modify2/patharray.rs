@@ -61,9 +61,11 @@ pub(crate) fn arraypath(
 pub(super) fn run_arraypath(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let path = curves::handle_param(p, "path").ok_or_else(|| bad("arraypath", "`path` (handle) is required"))?;
-    let count = p.get("count").and_then(Value::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-    let spacing = p.get("spacing").and_then(Value::as_f64);
-    let r = arraypath(s, &hs, path, count, spacing, bool_or(p, "align", true))?;
+    // As in the other arrays' JSON forms, a value that isn't a whole number of at least 1 (or a
+    // positive spacing) is refused, not ignored; missing or null is the default.
+    let count = crate::cmd::array::count_or("arraypath", p, "count", 6)?;
+    let spacing = crate::cmd::size_param("arraypath", p, "spacing", false)?;
+    let r = arraypath(s, &hs, path, Some(usize::try_from(count).unwrap_or(usize::MAX)), spacing, bool_or(p, "align", true))?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 

@@ -229,3 +229,34 @@ fn json_arraypolar_rejects_bad_fill_angles() {
         s.execute("arraypolar", &p).unwrap();
     }
 }
+
+#[test]
+fn json_arraypath_rejects_a_bad_count_or_spacing() {
+    // As arrayrect's and arraypolar's counts: not a whole number of at least 1 is refused, as is a
+    // spacing that isn't a positive number. Before, these fell back to the default 6 items.
+    let mut s = Session::new();
+    let h = s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap()["handle"].clone();
+    let path = s.execute("line", &json!({"points": [[0, 0], [100, 0]]})).unwrap()["handles"][0].clone();
+    let before = s.doc().unwrap().model.iter().count();
+    for (key, bad) in [
+        ("count", json!(0)),
+        ("count", json!(-3)),
+        ("count", json!(4.5)),
+        ("count", json!("8")),
+        ("spacing", json!(0)),
+        ("spacing", json!(-5)),
+        ("spacing", json!("10")),
+    ] {
+        let p = json!({"handles": [h], "path": path, key: bad});
+        let e = s.execute("arraypath", &p).unwrap_err();
+        assert!(e.to_string().contains(&format!("`{key}`")), "{key} {bad}: {e}");
+        assert_eq!(s.doc().unwrap().model.iter().count(), before, "{key} {bad}");
+    }
+    // Missing or null is the default, 6 items: the original and 5 copies.
+    for p in [json!({"handles": [h], "path": path}), json!({"handles": [h], "path": path, "count": null, "spacing": null})] {
+        assert_eq!(s.execute("arraypath", &p).unwrap()["handles"].as_array().map(Vec::len), Some(5), "{p}");
+    }
+    // One item is the original alone; a spacing of 25 along 100 is 5 items.
+    assert_eq!(s.execute("arraypath", &json!({"handles": [h], "path": path, "count": 1})).unwrap()["handles"], json!([]));
+    assert_eq!(s.execute("arraypath", &json!({"handles": [h], "path": path, "spacing": 25})).unwrap()["handles"].as_array().map(Vec::len), Some(4));
+}
