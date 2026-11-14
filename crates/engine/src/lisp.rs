@@ -151,6 +151,8 @@ pub(crate) struct Limits {
     pub cells: usize,
     /// Bytes of strings, printed text and files read per run.
     pub string_bytes: u64,
+    /// Steps a blocking run may take in all, however often it waits for input.
+    pub blocking_steps: u64,
     /// Maximum interpreter steps per synchronous callback.
     pub callback_steps: u64,
 }
@@ -158,7 +160,12 @@ pub(crate) struct Limits {
 impl Default for Limits {
     /// Provide finite cons-cell, string-byte, and synchronous-callback limits for a LISP run.
     fn default() -> Self {
-        Limits { cells: value::MAX_CELLS, string_bytes: value::STRING_BUDGET, callback_steps: 500_000_000 }
+        Limits {
+            cells: value::MAX_CELLS,
+            string_bytes: value::STRING_BUDGET,
+            blocking_steps: BLOCKING_CAP,
+            callback_steps: 500_000_000,
+        }
     }
 }
 
@@ -197,7 +204,8 @@ struct Run {
 
 /// Steps per slice before the interface gets a frame.
 const SLICE: u64 = 400_000;
-/// Steps a blocking run (a programmatic call) may take before it is stopped.
+/// Steps a blocking run (a programmatic call) may take in all, counting every wait for input, before it is stopped
+/// with the error "routine stopped after 500000000 steps".
 const BLOCKING_CAP: u64 = 500_000_000;
 
 impl Session {
@@ -359,6 +367,14 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // Every slice and every resumption after input counts toward the blocking cap.
+            run.steps = run.steps.saturating_add(run.machine.last_steps);
+            if run.blocking && run.steps > self.lisp.limits.blocking_steps && matches!(outcome, Outcome::Wait(_)) {
+                let cap = self.lisp.limits.blocking_steps;
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(format!("routine stopped after {cap} steps")));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -371,13 +387,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }

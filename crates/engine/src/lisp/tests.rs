@@ -326,6 +326,17 @@ fn setvar_rejects_an_oversized_shared_structure() {
 }
 
 #[test]
+fn blocking_input_waits_count_toward_the_step_cap() {
+    let mut s = session();
+    s.lisp.limits.blocking_steps = 10_000;
+    // Every `getint` answers nil at once, so no single slice runs out; the total still must.
+    let r = eval(&mut s, "(while t (getint))");
+    assert_eq!(r, Err("routine stopped after 10000 steps".into()));
+    // A finite run with input waits still finishes.
+    assert_eq!(eval(&mut s, "(setq n 0) (repeat 10 (getint) (setq n (1+ n))) n"), Ok("10".into()));
+}
+
+#[test]
 fn printing() {
     let mut s = session();
     let before = s.log.len();
