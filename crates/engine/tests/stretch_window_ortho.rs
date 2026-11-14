@@ -27,7 +27,8 @@ fn ortho_session() -> Session {
 
 /// Pick the window's opposite corner at `to`, stretch by 5,0 and return the extents.
 fn stretch_from_corner(mut s: Session, to: Vec2) -> (Vec2, Vec2) {
-    assert_eq!(s.current_prompt().unwrap().message, "Specify opposite corner");
+    // The session's window (implied) or the typed mode's (`C`) waits for its opposite corner.
+    assert!(s.selection_window().is_some(), "a selection window waits at {:?}", s.current_prompt().map(|p| p.message));
     let c = hover(&mut s, to);
     assert!(c.near(to, 1e-9), "the corner is where the cursor is: {c:?}");
     s.input(Input::Point(c)).unwrap();
