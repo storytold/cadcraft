@@ -340,7 +340,7 @@
 	Exclude from new selection set	ახალი მონიშნულიდან გამორიცხვა
 	Explode	დაშლა
 	Explode Attributes to Text	ატრიბუტების ტექსტად დაშლა
-	Export	ექსპორტი
+	Export	ექსპორტირება
 	Export Table	ცხრილის ექსპორტი
 	Export to PDF...	PDF-ად ექსპორტი...
 	Express Tools	Express Tools
@@ -707,8 +707,8 @@
 	Previous Change	წინა ცვლილება
 	Previous Layer	წინა შრე
 	Primitives	პრიმიტივები
-	Print	დაბეჭდვა
-	Print...	დაბეჭდვა...
+	Print	ბეჭდვა
+	Print...	ბეჭდვა...
 	Properties	თვისებები
 	Properties Inspector	თვისებების ინსპექტორი
 	Properties:	თვისებები:
@@ -1242,7 +1242,7 @@
 	Animation effects	ანიმაციის ეფექტები
 	Interface scale	ინტერფეისის მასშტაბი
 	Import...	იმპორტი...
-	Export...	ექსპორტი...
+	Export...	ექსპორტირება...
 	Batch Publish...	პაკეტური გამოქვეყნება...
 	Scale List...	მასშტაბების სია...
 	Annotative Object Scale	ანოტაციური ობიექტის მასშტაბი
@@ -1472,6 +1472,26 @@ menu	View	ხედი
 	Text to find	მოსაძებნი ტექსტი
 	Whole words	მთლიანი სიტყვები
 	Nothing found	ვერაფერი მოიძებნა
+	Multiple Insert	მრავალჯერადი ჩასმა
+	Ctrl+Enter to apply	გამოსაყენებლად: Ctrl+Enter
+	Edit Text	ტექსტის რედაქტირება
+	The drawing changed. Close the window and open it again.	ნახაზი შეიცვალა. დახურეთ ფანჯარა და ხელახლა გახსენით.
+	DView	დინამიკური ხედი
+	Raster Image Reference...	რასტრული გამოსახულების მიმართვა...
+	Raster Images	რასტრული გამოსახულებები
+	Clip Xref	გარე მიმართვის მოჭრა
+	Xref	გარე მიმართვა
+	Xref Clip Frame	გარე მიმართვის მოჭრის ჩარჩო
+	Backup copies are off, so the current file will be replaced.	სარეზერვო ასლები გამორთულია, ამიტომ მიმდინარე ფაილი ჩანაცვლდება.
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 და უფრო ძველი ვერსიები მათ ინახავს. ნახაზში მათ შესანარჩუნებლად გამოიყენეთ „შენახვა როგორც“.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF მათ ინახავს. ნახაზში მათ შესანარჩუნებლად გამოიყენეთ „შენახვა როგორც“.
+	Save Anyway	მაინც შენახვა
+	Save cancelled: {path} was not changed.	შენახვა გაუქმდა: {path} არ შეცვლილა.
+	Saving {name} will remove content	ფაილში {name} შენახვისას შიგთავსის ნაწილი წაიშლება
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	მიმდინარე ფაილი არასრული ჩანს, ამიტომ {name} უცვლელი რჩება, მიმდინარე ფაილი კი ჩანაცვლდება.
+	The current file is kept as {name} until the next save.	მიმდინარე ფაილი შემდეგ შენახვამდე შენარჩუნდება სახელით {name}.
+	This format can't keep these objects yet: {objects}.	ეს ფორმატი ამ ობიექტებს ჯერ ვერ ინახავს: {objects}.
+	{count} more types	კიდევ {count} ტიპი
 
 # ArtCraft feature naming
 	Additional Tools	დამატებითი ხელსაწყოები
