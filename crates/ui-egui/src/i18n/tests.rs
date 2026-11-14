@@ -102,6 +102,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "chrome",
         "cmdline",
         "credits",
+        "docking",
         "dialogs",
         "hatchdlg",
         "aliasdlg",

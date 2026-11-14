@@ -123,7 +123,7 @@ fn palette_icons_are_painted_in_code_and_shown_in_an_iconic_column() {
     let ctx = egui::Context::default();
     let mut paint = |panel: Panel| {
         let mut painted = false;
-        let mut content = Panels { app: &mut app };
+        let mut content = Panels { app: &mut app, close: None };
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background());
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(20.0, 20.0));
@@ -592,4 +592,63 @@ fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     assert!(end[0].iter().any(|group| group.contains(&Panel::ToolSets) && group.contains(&Panel::Layers)), "{end:?}");
     assert_eq!(frames(layout), [[Panel::Canvas]]);
     assert_eq!(h.state().session.doc().unwrap(), &document);
+}
+
+/// Guard that every closable panel header offers a visible close button: a docked tab group,
+/// the default accordion stack, and a floating group. Each click must remove the panel, the
+/// button must not cover the title, and the tab context menu must still close the same panel.
+#[test]
+fn every_panel_header_has_a_close_button_that_closes_like_the_context_menu() {
+    let mut h = harness(None, 1280.0, 1.0);
+    assert!(h.query_by_label("Close Tool Sets").is_some(), "docked tab headers show a close button");
+    assert!(h.query_by_label("Close Drawing").is_none(), "the drawing view is not a closable panel");
+    // External References opens as a tabbed pane; its button sits beside the title, not over it.
+    h.state_mut().run("ui.dock", json!({"operation":"open","panel":"externalReferences"})).unwrap();
+    h.run_steps(4);
+    assert!(h.state().ui.docking.layout.contains(&Panel::ExternalRefs));
+    let close = h.get_by_label("Close External References").rect();
+    let title = h.get_by_role_and_label(egui::accesskit::Role::Tab, "External References").rect();
+    assert!(!close.intersects(title), "the close button does not cover the panel title");
+    h.get_by_label("Close External References").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::ExternalRefs));
+
+    // Accordion headers (the default Layers/Properties stack) get one too.
+    assert!(h.state().ui.docking.layout.contains(&Panel::Layers));
+    h.get_by_label("Close Layers").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Layers));
+
+    // The context menu still closes the same panel after it is reopened.
+    h.state_mut().run("ui.dock", json!({"operation":"open","panel":"layers"})).unwrap();
+    h.run_steps(4);
+    assert!(h.state().ui.docking.layout.contains(&Panel::Layers));
+    h.get_by_role_and_label(egui::accesskit::Role::Tab, "Layers").click_button(PointerButton::Secondary);
+    h.run_steps(3);
+    // The docking surface's stock tab menu item ("Close Panel"), not our tooltip.
+    h.get_by_label("Close Panel").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Layers));
+
+    // Floating panels get the same button in their group header.
+    h.state_mut().run("ui.dock", json!({"operation":"float","panel":"properties","rect":[400,250,300,350]})).unwrap();
+    h.run_steps(4);
+    h.get_by_label("Close Properties").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Properties));
+}
+
+/// The accessible name is one translated string, not an English verb glued to a translated
+/// panel label: Spanish readers must hear "Cerrar Capas", never "Close Capas".
+#[test]
+fn spanish_close_button_accessible_name_is_localized_as_a_whole() {
+    let mut h = harness(None, 1280.0, 1.0);
+    h.state_mut().run("ui.language", json!({"lang": "es"})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Cerrar Capas").is_some(), "the accordion close button is named in Spanish");
+    assert!(h.query_by_label("Cerrar Propiedades").is_some(), "every panel's close button follows the language");
+    assert!(h.query_by_label("Close Capas").is_none(), "no English verb survives the translation");
+    h.get_by_label("Cerrar Capas").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Layers), "the localized name still closes its panel");
 }
