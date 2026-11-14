@@ -2,7 +2,8 @@ use super::break_join::join;
 use super::explode::explode;
 use super::transform::{at_elevation, erase, scale_entities, transform_entities};
 use super::{
-    Accept, EngineError, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Vec2, line, number,
+    Accept, EngineError, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Vec2, line,
+    mirror_entities, mirror_kind, number,
 };
 
 // ---------------- interactive ----------------
@@ -248,10 +249,11 @@ impl SelectThen {
     }
 }
 
-/// Objects whose text MIRROR keeps readable instead of mirroring it with the geometry.
-fn keeps_reading_when_mirrored(k: &EntityKind) -> bool {
+/// Objects MIRROR must preview individually: readable text and hatches retaining fill direction.
+fn needs_mirror_preview(k: &EntityKind) -> bool {
     match k {
         EntityKind::Insert(i) => !i.attribs.is_empty(),
+        EntityKind::Hatch(h) => !h.solid || h.gradient.is_some(),
         k => matches!(
             k,
             EntityKind::Text(_)
@@ -265,8 +267,8 @@ fn keeps_reading_when_mirrored(k: &EntityKind) -> bool {
     }
 }
 
-/// Text objects transformed for each frame of a MIRROR preview (on the CPU); more are not drawn.
-const MAX_MIRROR_TEXT_PREVIEW: usize = 1000;
+/// Objects transformed for each frame of a MIRROR preview (on the CPU); more are not drawn.
+const MAX_MIRROR_OBJECT_PREVIEW: usize = 1000;
 
 /// A finite length greater than zero (rejects 0, negatives, NaN and infinity).
 fn positive_length(v: Option<f64>) -> Option<f64> {
@@ -347,6 +349,7 @@ impl Interactive for SelectThen {
             _ => Prompt::new("", Accept::POINT),
         }
     }
+    /// Advance the selected transform command, applying MIRROR fill policy at commit.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.sel.done {
             match self.sel.feed(s, &i)? {
@@ -364,7 +367,7 @@ impl Interactive for SelectThen {
         if self.ask_erase {
             let yes = matches!(&i, Input::Keyword(k) if k == "Yes") || matches!(&i, Input::Text(t) if t.trim().to_ascii_lowercase().starts_with('y'));
             let (a, b) = (self.pts[0], self.pts[1]);
-            transform_entities(s, &self.objs, &Mat3::mirror(a, b), !yes)?;
+            mirror_entities(s, &self.objs, &Mat3::mirror(a, b), !yes)?;
             s.set_selection(Vec::new());
             return Ok(Step::Done);
         }
@@ -456,6 +459,7 @@ impl Interactive for SelectThen {
             _ => Ok(Step::Continue),
         }
     }
+    /// Build bounded transform previews, retaining readable text and hatch fill directions.
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         if self.op == Op::Rotate && self.reference {
             return self.rotate_reference_preview(s, c);
@@ -484,13 +488,18 @@ impl Interactive for SelectThen {
             .filter_map(|h| d.entity(*h))
             .map(|e| {
                 let mut k = e.kind.clone();
-                k.transform(&m);
+                if self.op == Op::Mirror {
+                    mirror_kind(&mut k, &m);
+                } else {
+                    k.transform(&m);
+                }
                 k
             })
             .collect();
         out.push(line(base, c));
         out
     }
+    /// Separate shared GPU transforms from objects that need an individual MIRROR preview.
     fn drag(&self, s: &Session, c: Vec2) -> Option<crate::prompt::Drag> {
         if (self.op == Op::Rotate && self.reference) || !self.sel.done {
             return None;
@@ -508,19 +517,19 @@ impl Interactive for SelectThen {
         if self.op != Op::Mirror {
             return Some(crate::prompt::Drag { handles: self.objs.clone(), matrix, extra, clipboard: false });
         }
-        // Mirrored text keeps reading left to right (MIRRTEXT 0), which the matrix alone can't
-        // draw: those objects are transformed one by one, the rest is mirrored on the GPU.
+        // Readable text and unchanged hatch directions cannot be drawn by reflecting their
+        // already-rendered primitives: preview those objects individually, the rest on the GPU.
         let d = s.doc().ok()?;
         let mut handles = Vec::with_capacity(self.objs.len());
-        let mut texts = 0;
+        let mut individual = 0;
         for h in &self.objs {
             let Some(e) = d.entity(*h) else { continue };
-            if !keeps_reading_when_mirrored(&e.kind) {
+            if !needs_mirror_preview(&e.kind) {
                 handles.push(*h);
-            } else if texts < MAX_MIRROR_TEXT_PREVIEW {
-                texts += 1;
+            } else if individual < MAX_MIRROR_OBJECT_PREVIEW {
+                individual += 1;
                 let mut k = e.kind.clone();
-                k.transform(&matrix);
+                mirror_kind(&mut k, &matrix);
                 extra.push(k);
             }
         }
