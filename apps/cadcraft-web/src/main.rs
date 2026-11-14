@@ -112,6 +112,8 @@ mod web {
         Services { pick_save: Some(Box::new(|name: &str| Some(name.to_string()))), no_file_system: true, ..Services::default() }
     }
 
+    /// Install logging and the I/O hooks, connect an embedding host when there is one, ask the
+    /// wgpu device for the adapter's largest buffer, and start eframe's web runner on the canvas.
     pub fn start() {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
@@ -155,6 +157,10 @@ mod web {
             {
                 create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
             }
+            // Whole-drawing previews (BEDIT's Edit Block Definition, #2291) and large command
+            // previews outgrow wgpu's default 256 MiB buffer cap, which left the canvas black:
+            // ask for what the adapter supports, as the desktop app does.
+            cadcraft_ui_egui::gpu::request_adapter_buffer_limit(&mut options.wgpu_options.wgpu_setup);
             let result = eframe::WebRunner::new()
                 .start(
                     canvas,
