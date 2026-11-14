@@ -126,9 +126,11 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 #[cfg(target_arch = "wasm32")]
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 
+/// A file or a folder: routines test whether a module is installed with `(findfile "module/.")`.
 #[cfg(not(target_arch = "wasm32"))]
 fn file_exists(path: &str) -> bool {
-    std::path::Path::new(path).is_file()
+    let p = std::path::Path::new(path);
+    p.is_file() || p.is_dir()
 }
 
 #[cfg(target_arch = "wasm32")]
