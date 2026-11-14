@@ -99,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 pub(crate) fn valid_block_name(n: &str) -> bool {
-    !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
+    !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| c.is_control() || "<>/\\\":;?*|,=`".contains(c))
 }
 
 /// The block an entity draws, if any: a block reference's block, a dimension's block or a
