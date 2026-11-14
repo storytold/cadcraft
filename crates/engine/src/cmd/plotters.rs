@@ -212,7 +212,14 @@ fn set_paper(page: &mut PageSetup, p: &DevicePaper) {
     page.paper = p.name.clone();
     page.width_mm = p.width;
     page.height_mm = p.height;
-    page.margins_mm = p.margins;
+    // The paper keeps its margins for its stored portrait sheet; the page measures them against
+    // the sheet in the orientation it names, so they turn with it (#1266).
+    page.margins_mm = if page.landscape {
+        let [l, b, r, t] = p.margins;
+        [t, l, b, r]
+    } else {
+        p.margins
+    };
 }
 
 fn unknown_device(cmd: &str, name: &str) -> EngineError {
@@ -309,9 +316,16 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
         o.remove("paper");
         o.insert("width".into(), json!(pp.width));
         o.insert("height".into(), json!(pp.height));
-        o.insert("margins".into(), json!(pp.margins));
+        // The paper's margins belong to its stored portrait sheet; the plot draws on the sheet in
+        // the orientation it names, so they turn to it (#1266).
+        let landscape = p.get("landscape").and_then(Value::as_bool).unwrap_or_else(|| match &layout {
+            Some(pg) => pg.landscape,
+            None => dev.orientation == Orientation::Landscape,
+        });
+        let [l, b, r, t] = pp.margins;
+        o.insert("margins".into(), json!(if landscape { [t, l, b, r] } else { [l, b, r, t] }));
         if p.get("landscape").is_none() && layout.is_none() {
-            o.insert("landscape".into(), json!(dev.orientation == Orientation::Landscape));
+            o.insert("landscape".into(), json!(landscape));
         }
     }
     Ok(out)
@@ -486,7 +500,9 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
                 // Stored margins belong to the stored portrait sheet; naming the same sheet
                 // landscape turns them back, so re-saving a paper does not refuse its own
                 // margins.
-                Some(e) if w > h && e.width == h && e.height == w => {
+                // Naming the sheet landscape turns the stored portrait margins to it, whatever
+                // its new sides: sanitization turns them back for the stored (portrait) sheet.
+                Some(e) if w > h => {
                     let [l, b, r, t] = e.margins;
                     [t, l, b, r]
                 }

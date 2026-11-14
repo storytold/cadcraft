@@ -669,6 +669,11 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }));
     };
     let mut page = s.doc()?.layout(&name).map(|l| l.page.clone()).unwrap_or_default();
+    // The orientation first: a paper taken from a device turns its margins to the sheet the page
+    // names when `page_device` copies them.
+    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
+        page.landscape = l;
+    }
     // A plotter's own papers (with their printable areas) come first.
     let device_paper = super::plotters::page_device(cmd, p, &mut page)?;
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
@@ -690,9 +695,6 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) if p.get("width").is_none() && p.get("height").is_none() => {}
         _ => return Err(bad(cmd, "`width` and `height` (mm, 0-5080) are both required for a custom size")),
-    }
-    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
-        page.landscape = l;
     }
     if let Some(m) = p.get("margins") {
         let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
