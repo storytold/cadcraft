@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::MAX_ALIASES;
 use cadcraft_engine::cmd::resolve_alias;
+use cadcraft_ui_egui::docking::Panel;
 use cadcraft_ui_egui::options::MAX_PROFILE_BYTES;
 use cadcraft_ui_egui::{CadApp, Services};
 use serde_json::{Value, json};
@@ -174,4 +175,39 @@ fn a_loaded_alias_file_survives_with_its_path_and_reinit_rereads_it() {
     assert_eq!(resolve_alias("zzprofile"), "circle", "REINIT re-reads the restored file");
     a.run("aliasedit", json!({ "clear": true })).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_user_alias_that_redefines_qc_runs_its_file_command() {
+    let _one = lock();
+    let picks = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counting = || {
+        let counted = picks.clone();
+        let services = Services {
+            pick_save: Some(Box::new(move |_| {
+                counted.set(counted.get() + 1);
+                None
+            })),
+            ..Services::default()
+        };
+        CadApp::new(Session::new(), services)
+    };
+    // Built in, QC is QuickCalc.
+    let mut a = counting();
+    assert_eq!(a.cmdline("QC"), None);
+    assert!(a.ui.docking.layout.contains(&Panel::QuickCalc), "built-in QC opens QuickCalc");
+    assert_eq!(picks.get(), 0);
+
+    a.run("aliasedit", json!({ "set": { "qc": "qsave" } })).unwrap();
+    let mut b = counting();
+    assert_eq!(b.cmdline("QC"), None, "QC as QSAVE is not refused");
+    assert_eq!(picks.get(), 1, "QC redefined as QSAVE opens the Save dialog on an unnamed drawing");
+    assert!(!b.ui.docking.layout.contains(&Panel::QuickCalc), "and not QuickCalc");
+    assert_eq!(b.session.last_command.as_deref(), Some("qsave"));
+
+    a.run("aliasedit", json!({ "clear": true })).unwrap();
+    let mut c = counting();
+    assert_eq!(c.cmdline("QC"), None);
+    assert!(c.ui.docking.layout.contains(&Panel::QuickCalc), "cleared, QC is QuickCalc again");
+    assert_eq!(picks.get(), 1);
 }

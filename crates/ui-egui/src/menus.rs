@@ -376,13 +376,26 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if let Some(result) = route_ui_subsystems(app, id, params) {
-        return Some(result);
-    }
     // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
     // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
     // never open a picker.
     let no_path = should_pick_file_path(id, params);
+    // A typed alias of a file command (SAVE for QSAVE, a user alias, `_SAVE` or `.SAVE` as the
+    // engine reads them) asks for the file as the command's own name does. It is resolved before
+    // the UI subsystems, so a user alias that redefines a name they handle (QC) runs the file
+    // command; a built-in alias resolves to its own command and keeps its meaning there.
+    let file_id =
+        if no_path && !id.starts_with("ui.") { cadcraft_engine::cmd::resolve_alias(id.trim_start_matches(['_', '.'])) } else { String::new() };
+    let id = if matches!(file_id.as_str(), "open" | "saveas" | "qsave") {
+        // The picker handles it without `Session::start`, so Enter repeats it as it would there.
+        app.session.last_command = Some(file_id.clone());
+        file_id.as_str()
+    } else {
+        id
+    };
+    if let Some(result) = route_ui_subsystems(app, id, params) {
+        return Some(result);
+    }
     if let Some(result) = run_recent_file_command(app, id) {
         return Some(result);
     }

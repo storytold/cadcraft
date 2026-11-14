@@ -97,3 +97,36 @@ fn print_opens_the_plot_dialog_but_json_plot_never_does() {
     assert!(app.ui.dialog.is_none());
     assert_eq!(picks.get(), 0);
 }
+
+#[test]
+fn typed_save_commands_and_their_aliases_open_the_save_dialog() {
+    let (mut app, picks) = app();
+    for c in ["QSAVE", "SAVEAS", "SAVE", "save"] {
+        let before = picks.get();
+        assert_eq!(app.cmdline(c), None, "{c} typed is not refused");
+        assert_eq!(picks.get(), before + 1, "{c} typed on an unnamed drawing opens the Save dialog");
+    }
+    assert!(app.run("save", json!({})).is_err(), "the JSON form still never opens a picker");
+    assert_eq!(picks.get(), 4);
+}
+
+#[test]
+fn prefixed_typed_save_opens_the_save_dialog() {
+    let (mut app, picks) = app();
+    for c in ["_SAVE", ".SAVE", "_.qsave", "_SAVEAS"] {
+        let before = picks.get();
+        assert_eq!(app.cmdline(c), None, "{c} typed is not refused");
+        assert_eq!(picks.get(), before + 1, "{c} typed on an unnamed drawing opens the Save dialog");
+    }
+}
+
+#[test]
+fn enter_after_a_typed_save_repeats_the_save() {
+    let (mut app, _) = app();
+    app.cmdline("CIRCLE 0,0 5");
+    assert_eq!(app.session.last_command.as_deref(), Some("circle"));
+    app.cmdline("SAVE");
+    assert_eq!(app.session.last_command.as_deref(), Some("qsave"), "the picker's save is the command Enter repeats");
+    app.cmdline("SAVEAS");
+    assert_eq!(app.session.last_command.as_deref(), Some("saveas"));
+}
