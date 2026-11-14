@@ -42,15 +42,23 @@ overrides:
       - mesa-vulkan-drivers
       - xdg-desktop-portal
   rpm:
+    # Library sonames rather than package names, so the same requirements resolve on Fedora/RHEL
+    # and openSUSE (which has no libxkbcommon, vulkan-loader or libglvnd-egl package). The glibc
+    # floor names libm because the binaries' GLIBC_2.35 symbols (hypot, hypotf) are libm's: RHEL 9's
+    # glibc 2.34 provides libc.so.6(GLIBC_2.35) through backports, but not this, so it refuses.
     depends:
-      - libxkbcommon
-      - (vulkan-loader or libglvnd-egl)
+      - libc.so.6()(64bit)
+      - libm.so.6(GLIBC_2.35)(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
+    # The windowing libraries by soname too, so the recommendations resolve on openSUSE as well.
     recommends:
-      - libwayland-client
-      - libX11
-      - libXcursor
-      - libXi
-      - libXrandr
+      - libwayland-client.so.0()(64bit)
+      - libX11.so.6()(64bit)
+      - libXcursor.so.1()(64bit)
+      - libXi.so.6()(64bit)
+      - libXrandr.so.2()(64bit)
       - mesa-vulkan-drivers
       - xdg-desktop-portal
 
@@ -61,9 +69,32 @@ contents:
   - src: ${STAGE}/usr/bin/cadcraft-cli
     dst: /usr/bin/cadcraft-cli
     file_info: { mode: 0755 }
-  - src: ${STAGE}/usr/share/
-    dst: /usr/share/
+  # Named one by one rather than as a tree of /usr/share: a tree would also own shared directories
+  # such as /usr/share/mime, which openSUSE's filesystem package owns with other modes, and RPM
+  # refuses to install a package that conflicts with it.
+  - src: ${STAGE}/usr/share/applications/ai.storyteller.cadcraft.desktop
+    dst: /usr/share/applications/ai.storyteller.cadcraft.desktop
+  - src: ${STAGE}/usr/share/mime/packages/ai.storyteller.cadcraft.xml
+    dst: /usr/share/mime/packages/ai.storyteller.cadcraft.xml
+  - src: ${STAGE}/usr/share/metainfo/ai.storyteller.cadcraft.metainfo.xml
+    dst: /usr/share/metainfo/ai.storyteller.cadcraft.metainfo.xml
+  - src: ${STAGE}/usr/share/icons/hicolor/
+    dst: /usr/share/icons/hicolor/
     type: tree
+  - src: ${STAGE}/usr/share/doc/cadcraft/
+    dst: /usr/share/doc/cadcraft/
+    type: tree
+  # cli-docs:begin. cadcraft-cli's man pages and completions. When package.sh leaves them out it deletes
+  # this block, through the end marker below: nfpm refuses an entry whose file is missing.
+  - src: ${STAGE}/usr/share/man/man1/*.1
+    dst: /usr/share/man/man1/
+  - src: ${STAGE}/usr/share/bash-completion/completions/cadcraft-cli
+    dst: /usr/share/bash-completion/completions/cadcraft-cli
+  - src: ${STAGE}/usr/share/zsh/site-functions/_cadcraft-cli
+    dst: /usr/share/zsh/site-functions/_cadcraft-cli
+  - src: ${STAGE}/usr/share/fish/vendor_completions.d/cadcraft-cli.fish
+    dst: /usr/share/fish/vendor_completions.d/cadcraft-cli.fish
+  # cli-docs:end
 
 scripts:
   postinstall: packaging/linux/postinst.sh
