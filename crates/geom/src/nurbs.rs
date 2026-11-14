@@ -88,6 +88,21 @@ fn elevate_bezier(p: &[H]) -> Vec<H> {
         .collect()
 }
 
+/// A closed spline's fit points in the other direction, still from the seam: the first point
+/// (with its repeats, a kink) stays first and the rest turn round, as AutoCAD 2024's REVERSE
+/// leaves them; a repeated closing point stays last.
+fn reversed_loop(fit: &[Vec2]) -> Vec<Vec2> {
+    let Some(seam) = fit.first().copied() else { return Vec::new() };
+    let at_seam = |q: &&Vec2| q.near(seam, 1e-12);
+    let lead = fit.iter().take_while(at_seam).count();
+    let trail = fit.iter().skip(lead).rev().take_while(at_seam).count();
+    let middle = fit.get(lead..fit.len() - trail).unwrap_or(&[]);
+    let mut out = fit.get(..lead).unwrap_or(&[]).to_vec();
+    out.extend(middle.iter().rev());
+    out.extend(fit.get(fit.len() - trail..).unwrap_or(&[]));
+    out
+}
+
 /// Basis functions of degree `p` in `n[..=p]` and of degree `p - 1` in `lower[..p]` for `p >= 1`,
 /// in one Cox-de Boor sweep: the degree `p - 1` values are the state just before the last step,
 /// so they match [`basis`] exactly. `left` and `right` are scratch of `p + 1` values; the outputs
@@ -334,7 +349,7 @@ impl Spline {
     }
 
     /// Reversed direction: control points, weights, fit points and knots (and the fit end
-    /// tangents swap ends and turn round).
+    /// tangents swap ends and turn round). A closed spline still starts at its first fit point.
     pub fn reversed(&self) -> Spline {
         let (lo, hi) = (self.knots.first().copied().unwrap_or(0.0), self.knots.last().copied().unwrap_or(1.0));
         Spline {
@@ -342,7 +357,7 @@ impl Spline {
             knots: self.knots.iter().rev().map(|k| lo + hi - k).collect(),
             control: self.control.iter().rev().copied().collect(),
             weights: self.weights.iter().rev().copied().collect(),
-            fit: self.fit.iter().rev().copied().collect(),
+            fit: if self.closed { reversed_loop(&self.fit) } else { self.fit.iter().rev().copied().collect() },
             closed: self.closed,
             fit_opts: crate::FitOptions {
                 start_tangent: self.fit_opts.end_tangent.map(|t| -t),
@@ -817,12 +832,24 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_fit_list_reverses_from_its_seam() {
+        let (a, b, c, d) = (Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(6.0, 3.0), Vec2::new(1.0, 4.0));
+        assert_eq!(reversed_loop(&[a, b, c, d]), [a, d, c, b]);
+        // A kink at the seam stays first, a repeated closing point last.
+        assert_eq!(reversed_loop(&[a, a, b, c, d]), [a, a, d, c, b]);
+        assert_eq!(reversed_loop(&[a, b, c, d, a]), [a, d, c, b, a]);
+        assert_eq!(reversed_loop(&[a, a]), [a, a]);
+        assert!(reversed_loop(&[]).is_empty());
+    }
+
+    #[test]
     fn periodic_spline_clamps_to_the_same_curve() {
         let fit = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 1.0), Vec2::new(5.0, 4.0), Vec2::new(1.0, 5.0)];
-        let p = Spline::from_fit(&fit, true);
-        assert!(p.is_periodic());
+        // Uniform parameters: the control points wrap round (a chord-length fit is clamped).
+        let p = Spline::fit_with(&fit, true, crate::FitOptions { knots: crate::KnotParam::Uniform, ..Default::default() });
+        assert!(p.wraps() && p.is_periodic());
         let c = p.clamped().unwrap();
-        assert!(!c.is_periodic());
+        assert!(!c.wraps() && c.is_periodic(), "the same smooth closed curve");
         let ((plo, phi), (clo, chi)) = (p.domain(), c.domain());
         for i in 0..=20 {
             let f = i as f64 / 20.0;
