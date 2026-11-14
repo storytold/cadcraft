@@ -64,6 +64,7 @@ fn fixtures() -> Vec<Fixture> {
         Fixture {
             wire_type: "MTEXT",
             kind: EntityKind::MText(MText {
+                formula: None,
                 insert: Vec3::new(1.25, -2.5, 3.75),
                 height: 2.25,
                 width: 12.5,

@@ -274,6 +274,11 @@ pub trait Interactive: Send {
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
     }
+    /// Geometry shown glowing under the cursor: what picking there would take away or add
+    /// (TRIM, EXTEND), drawn over the drawing as a highlight.
+    fn glow(&self, _s: &Session, _cursor: Vec2) -> Option<Glow> {
+        None
+    }
     /// Preview objects drawn with their own properties (colour, layer, linetype) rather than
     /// the current layer's, as [`Interactive::preview`]'s are: a block reference re-evaluated
     /// under the cursor, drawn as it will look. Drawn under the rubber band.
@@ -308,6 +313,14 @@ pub struct DisplayOnly {
     /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
     /// DVIEWBLOCK block), with its own properties.
     pub extra: Vec<cadcraft_doc::Entity>,
+}
+
+/// See [`Interactive::glow`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Glow {
+    pub kinds: Vec<EntityKind>,
+    /// The geometry is what a pick takes away (a trim), not what it adds (an extend).
+    pub removing: bool,
 }
 
 /// See [`Interactive::drag`].
