@@ -33,10 +33,11 @@ fn fenceline_draws_a_circle_in_every_gap() {
     let (a, b) = (Vec2::ZERO, Vec2::new(9.5, 0.0));
     let d = drawing(fence, a, b);
     let marks = off_line(&d, &Options::default(), a, b);
-    // Pattern 0.25 on, 0.1 off, "o", 0.1 off, 0.5 on = 0.95: ten repeats along 9.5.
+    // Pattern 0.25 on, 0.1 off, "o", 0.1 off, 0.5 on = 0.95: ten repeats along 9.5, the pattern
+    // centred on it (p0 = (9.5 + 0.25 − 9.5) / 2 = 0.125, so it starts 0.125 before the line).
     assert_eq!(marks.len(), 10, "{marks:?}");
     for (i, m) in marks.iter().enumerate() {
-        let gap = i as f64 * 0.95 + 0.25;
+        let gap = i as f64 * 0.95 + 0.25 - 0.125;
         assert!(m.min.x > gap && m.max.x < gap + 0.2, "mark {i} at {m:?} outside its gap");
         // Centred on the line.
         assert!((m.min.y + m.max.y).abs() < 0.01 && m.max.y > 0.02, "{m:?}");
@@ -72,9 +73,10 @@ fn text_follows_the_line_or_keeps_an_absolute_rotation() {
         let marks = off_line(&drawing(gas(absolute), a, b), &Options::default(), a, b);
         assert!(!marks.is_empty(), "absolute {absolute}: no text");
         let all = Bounds2::from_points(marks.iter().flat_map(|m| [m.min, m.max]));
-        // Anchor 0.7 up the line, shifted 0.1 back along it and 0.05 to its right: the text
-        // starts at (0.05, 0.6).
-        assert!((all.min.y - 0.6).abs() < 0.01, "absolute {absolute}: {all:?}");
+        // The pattern centred on the line (p0 = (0.95 + 0.5 − 1) / 2 = 0.225): anchor 0.7 − 0.225
+        // up the line, shifted 0.1 back along it and 0.05 to its right: the text starts at
+        // (0.05, 0.375).
+        assert!((all.min.y - 0.375).abs() < 0.01, "absolute {absolute}: {all:?}");
         if absolute {
             assert!(all.width() > all.height(), "{all:?}");
             assert!((all.min.x - 0.05).abs() < 0.01, "{all:?}");
