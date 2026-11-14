@@ -732,14 +732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cadcraft-dwg"
-version = "0.20.1"
-dependencies = [
- "acadrust",
- "log",
-]
-
-[[package]]
 name = "cadcraft-engine"
 version = "0.20.1"
 dependencies = [
@@ -790,11 +782,11 @@ dependencies = [
  "acadrust",
  "cadcraft-color",
  "cadcraft-doc",
- "cadcraft-dwg",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-render",
  "chrono",
+ "craft-dwg",
  "craft-dxf",
  "craft-pdf",
  "image",
@@ -1214,6 +1206,15 @@ dependencies = [
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
+
+[[package]]
+name = "craft-dwg"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf#7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf"
+dependencies = [
+ "acadrust",
+ "log",
+]
 
 [[package]]
 name = "craft-dxf"
