@@ -124,7 +124,8 @@ mod native {
         let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
         let written = std::panic::catch_unwind(AssertUnwindSafe(|| {
             acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)?;
-            mtext_contents(&doc, &mut out)
+            mtext_contents(&doc, &mut out)?;
+            table_style_xdata_to_dxf(&doc, &mut out)
         }))
         .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
@@ -137,6 +138,210 @@ mod native {
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
         Ok((add_header_vars(out.buf, &doc.header), notes))
+    }
+
+    /// The xdata application CADCraft keeps its own data under (DXF APPID `CADCRAFT`).
+    const CADCRAFT_APP: &str = "CADCRAFT";
+
+    /// CADCraft's xdata strings on table styles (custom cell styles, #3132). acadrust 0.6.6's DXF
+    /// reader keeps a TABLESTYLE's xdata only in its raw groups, which its DWG writer ignores, so
+    /// before a DWG is written the strings after `1001 CADCRAFT` are made the style's object xdata.
+    ///
+    /// A DWG's EED string is at most 255 bytes in its code page before R2007, and acadrust writes
+    /// an application's block only when it is under 32 767 bytes, silently leaving it out
+    /// otherwise. So each string is re-split by its encoded length (the strings are joined when
+    /// read, so the split points don't matter), and a block that would not be written is an error.
+    fn table_style_xdata_from_dxf(doc: &mut acadrust::CadDocument) -> Result<(), String> {
+        use acadrust::io::dxf::code_page::{dwg_code_page_index, encode_legacy_string, encoding_from_dwg_code_page};
+        use acadrust::objects::ObjectType;
+        use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+        let wide = doc.version >= acadrust::DxfVersion::AC1021;
+        let encoding = encoding_from_dwg_code_page(dwg_code_page_index(&doc.header.code_page));
+        let mut records = Vec::new();
+        for o in doc.objects.values() {
+            let ObjectType::TableStyle(s) = o else { continue };
+            let Some(codes) = &s.raw_dxf_codes else { continue };
+            let mut ours = false;
+            let mut record = ExtendedDataRecord::new(CADCRAFT_APP);
+            let mut size = 0usize;
+            for (code, value) in codes {
+                match code {
+                    1001 => ours = value.trim() == CADCRAFT_APP,
+                    1000 if ours => {
+                        let mut rest = value.as_str();
+                        while !rest.is_empty() {
+                            let mut end = 0;
+                            let mut bytes = 0;
+                            for ch in rest.chars() {
+                                let n = if wide { 0 } else { encode_legacy_string(ch.encode_utf8(&mut [0u8; 4]), encoding).len() };
+                                if !wide && bytes + n > usize::from(u8::MAX) {
+                                    break;
+                                }
+                                bytes += n;
+                                end += ch.len_utf8();
+                            }
+                            // A character that alone is over the limit cannot happen (an escape is 7 bytes).
+                            let (chunk, tail) = rest.split_at(end.max(rest.chars().next().map_or(0, char::len_utf8)));
+                            size += if wide { 3 + 2 * chunk.encode_utf16().count() } else { 4 + bytes };
+                            record.add_value(XDataValue::String(chunk.to_string()));
+                            rest = tail;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if size >= usize::from(i16::MAX.unsigned_abs()) {
+                return Err(format!(
+                    "DWG: the custom cell styles of table style \"{}\" take {size} bytes, more than the {} a DWG can keep for one object; \
+                     remove some cell styles or shorten their names",
+                    s.name,
+                    i16::MAX
+                ));
+            }
+            if !record.is_empty() {
+                records.push((s.handle, record));
+            }
+        }
+        for (handle, record) in records {
+            doc.set_object_xdata_record(handle, record);
+        }
+        Ok(())
+    }
+
+    /// The other half of [`table_style_xdata_from_dxf`]: acadrust 0.6.6 reads a TABLESTYLE's
+    /// xdata from DWG into the object xdata, but its DXF writer writes a table style's xdata only
+    /// from raw groups, which a style read from DWG has none of. The CADCraft strings are added
+    /// after the style's groups in the DXF it wrote; every other group stays byte-for-byte.
+    fn table_style_xdata_to_dxf(doc: &acadrust::CadDocument, out: &mut CappedWriter) -> acadrust::Result<()> {
+        use acadrust::io::dxf::{DxfStreamWriter, DxfTextWriter};
+        use acadrust::objects::ObjectType;
+        use acadrust::xdata::XDataValue;
+        let strings: std::collections::HashMap<u64, Vec<&str>> = doc
+            .objects
+            .iter()
+            .filter(|(_, o)| matches!(o, ObjectType::TableStyle(_)))
+            .filter_map(|(h, _)| {
+                let record = doc.object_xdata.get(h)?.get_record(CADCRAFT_APP)?;
+                let values: Vec<&str> = record
+                    .values
+                    .iter()
+                    .filter_map(|v| match v {
+                        XDataValue::String(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                (!values.is_empty()).then_some((h.value(), values))
+            })
+            .collect();
+        if strings.is_empty() {
+            return Ok(());
+        }
+        let dxf = std::mem::take(&mut out.buf);
+        let mut lines = dxf.split_inclusive(|b| *b == b'\n');
+        let (mut style, mut pending) = (false, None);
+        while let Some(code) = lines.next() {
+            let value = lines.next().ok_or_else(|| std::io::Error::other("incomplete DWG bridge DXF pair"))?;
+            match code.trim_ascii() {
+                b"0" => {
+                    if let Some(values) = pending.take() {
+                        let mut writer = DxfTextWriter::new(&mut *out);
+                        if doc.version < acadrust::DxfVersion::AC1021
+                            && let Some(encoding) = acadrust::io::dxf::code_page::encoding_from_code_page(&doc.header.code_page)
+                        {
+                            writer.set_encoding(encoding);
+                        }
+                        writer.write_string(1001, CADCRAFT_APP)?;
+                        for &v in values {
+                            writer.write_xrecord_string(1000, v)?;
+                        }
+                    }
+                    style = value.trim_ascii() == b"TABLESTYLE";
+                }
+                b"5" if style => {
+                    pending =
+                        std::str::from_utf8(value.trim_ascii()).ok().and_then(|s| u64::from_str_radix(s, 16).ok()).and_then(|h| strings.get(&h));
+                    style = false;
+                }
+                _ => {}
+            }
+            out.write_all(code)?;
+            out.write_all(value)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn table_style_xdata_goes_after_the_styles_groups_only() -> acadrust::Result<()> {
+        use acadrust::objects::{ObjectType, TableStyle};
+        use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+        let mut doc = acadrust::CadDocument::new();
+        let mut style = TableStyle::new("Costs");
+        style.handle = acadrust::Handle::new(0x2A);
+        doc.objects.insert(style.handle, ObjectType::TableStyle(style));
+        let mut record = ExtendedDataRecord::new(CADCRAFT_APP);
+        record.add_value(XDataValue::String("CELLSTYLES".into()));
+        record.add_value(XDataValue::String("{\"v\":1}".into()));
+        doc.set_object_xdata_record(acadrust::Handle::new(0x2A), record);
+        // Another style (5 2B) and the style's own groups are left as they are.
+        let style = b"  0\r\nTABLESTYLE\r\n  5\r\n2A\r\n100\r\nAcDbTableStyle\r\n";
+        let rest = b"  0\r\nTABLESTYLE\r\n  5\r\n2B\r\n  0\r\nENDSEC\r\n";
+        let mut out = CappedWriter { buf: [style.as_slice(), rest].concat(), limit: 4096, exceeded: false };
+        table_style_xdata_to_dxf(&doc, &mut out)?;
+        let xdata = b"1001\r\nCADCRAFT\r\n1000\r\nCELLSTYLES\r\n1000\r\n{\"v\":1}\r\n";
+        assert_eq!(out.buf, [style.as_slice(), xdata, rest].concat());
+        let mut limited = CappedWriter { buf: [style.as_slice(), rest].concat(), limit: 1, exceeded: false };
+        assert!(table_style_xdata_to_dxf(&doc, &mut limited).is_err());
+        assert!(limited.exceeded);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn doc_with_cadcraft_strings(version: acadrust::DxfVersion, strings: &[String]) -> acadrust::CadDocument {
+        use acadrust::objects::{ObjectType, TableStyle};
+        let mut doc = acadrust::CadDocument::new();
+        doc.version = version;
+        let mut style = TableStyle::new("Costs");
+        style.handle = acadrust::Handle::new(0x2A);
+        let mut codes = vec![(1001, CADCRAFT_APP.to_string())];
+        codes.extend(strings.iter().map(|s| (1000, s.clone())));
+        style.raw_dxf_codes = Some(codes);
+        doc.objects.insert(style.handle, ObjectType::TableStyle(style));
+        doc
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn table_style_xdata_strings_fit_the_legacy_string_limit() -> Result<(), String> {
+        use acadrust::io::dxf::code_page::{dwg_code_page_index, encode_legacy_string, encoding_from_dwg_code_page};
+        use acadrust::xdata::XDataValue;
+        // 80 characters the code page lacks: each is a 7-byte `\U+XXXX` escape, 560 bytes in all.
+        let long = "中".repeat(80);
+        let mut doc = doc_with_cadcraft_strings(acadrust::DxfVersion::AC1018, std::slice::from_ref(&long));
+        table_style_xdata_from_dxf(&mut doc)?;
+        let record = doc.object_xdata.get(&acadrust::Handle::new(0x2A)).and_then(|x| x.get_record(CADCRAFT_APP)).ok_or("no record")?;
+        let encoding = encoding_from_dwg_code_page(dwg_code_page_index(&doc.header.code_page));
+        let mut joined = String::new();
+        for v in &record.values {
+            let XDataValue::String(s) = v else { return Err("not a string".into()) };
+            assert!(encode_legacy_string(s, encoding).len() <= 255, "chunk of {} bytes", encode_legacy_string(s, encoding).len());
+            joined.push_str(s);
+        }
+        assert!(record.values.len() > 1);
+        assert_eq!(joined, long);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn table_style_xdata_too_big_for_a_dwg_is_an_error() {
+        let strings = vec!["x".repeat(255); 140];
+        for version in [acadrust::DxfVersion::AC1018, acadrust::DxfVersion::AC1032] {
+            let mut doc = doc_with_cadcraft_strings(version, &strings);
+            let err = table_style_xdata_from_dxf(&mut doc).err().unwrap_or_default();
+            assert!(err.contains("Costs"), "{version:?}: {err:?}");
+            assert!(doc.object_xdata.is_empty(), "{version:?}: nothing is stored for a style that cannot be written");
+        }
     }
 
     /// acadrust 0.6.6's ASCII writer treats a caret followed by a literal space as already
@@ -1226,6 +1431,7 @@ mod native {
             };
             other_layout_owners(&mut doc);
             table_style_rows(&mut doc, true);
+            table_style_xdata_from_dxf(&mut doc)?;
             dimension_flags(&mut doc);
             let mut unwritten = drop_unwritable(&mut doc);
             for (kind, n) in proxies {
@@ -1236,9 +1442,9 @@ mod native {
             add_variable_dictionary(&mut doc);
             current_text_style(&mut doc);
             current_layer(&mut doc);
-            unwritten
+            Ok::<_, String>(unwritten)
         }))
-        .map_err(|_| "the DXF to DWG conversion failed on this file".to_string())?;
+        .map_err(|_| "the DXF to DWG conversion failed on this file".to_string())??;
         let dwg = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DwgWriter::write_to_vec(&doc)))
             .map_err(|_| "the DWG writer failed on this drawing".to_string())?
             .map_err(|e| format!("DWG write: {e}"))?;
