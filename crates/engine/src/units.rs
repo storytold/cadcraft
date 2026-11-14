@@ -219,7 +219,11 @@ pub fn parse_distance(s: &str) -> Option<f64> {
         let ft: f64 = rest.get(..i)?.trim().parse().ok()?;
         total += ft * 12.0;
         parsed = true;
-        rest = rest.get(i + 1..)?.trim_start_matches('-').trim();
+        let after = rest.get(i + 1..)?;
+        rest = after.strip_prefix('-').unwrap_or(after).trim();
+        if rest.starts_with(['-', '+']) {
+            return None;
+        }
     }
     let rest = rest.trim_end_matches('"').trim();
     if !rest.is_empty() {
@@ -436,6 +440,14 @@ mod tests {
             assert_eq!(parse_angle(t), None, "{t}");
         }
         assert!(parse_angle("45d30'15\"").is_some());
+    }
+
+    #[test]
+    fn parse_distance_allows_one_separator_minus_after_feet() {
+        assert_eq!(parse_distance("5'-6\""), Some(66.0));
+        for t in ["5'--3\"", "5'---3", "5'-+3"] {
+            assert_eq!(parse_distance(t), None, "{t}");
+        }
     }
 
     #[test]
