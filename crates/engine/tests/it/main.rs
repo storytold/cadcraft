@@ -118,6 +118,7 @@ mod prompt_or_once;
 mod properties_set_locked;
 mod props_bad_lineweight;
 mod props_insert_scale_attribs;
+mod purge_list;
 mod purge_mlinestyles;
 mod purge_prompts;
 mod qdim;
