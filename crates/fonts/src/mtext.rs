@@ -93,6 +93,7 @@ pub fn plain_mtext(s: &str) -> String {
 /// A colour set inline with `\C` (ACI) or `\c` (24-bit RGB as 0xRRGGBB).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MTextColor {
+    /// 1..=255, or 256 for ByLayer (`\C256;`): the layer's colour, whatever the object's own.
     Aci(u16),
     Rgb(u32),
 }
@@ -496,7 +497,8 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                         let (a, n) = arg(&chars, i);
                         i = n;
                         if let Ok(v) = a.trim().parse::<u16>() {
-                            let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
+                            // 0 (ByBlock) and values past 256 (ByLayer) use the object's colour.
+                            let col = if v == 0 || v > 256 { None } else { Some(MTextColor::Aci(v)) };
                             derive(&mut fmts, &mut cur, &|f| f.color = col);
                         }
                     }
@@ -1119,6 +1121,10 @@ mod tests {
         let l = lay("A{\\C1;B}C", 0.0);
         let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
         assert_eq!(cols, vec![None, Some(MTextColor::Aci(1)), None]);
+        let l = lay("{\\C256;B}{\\C0;C}{\\C257;D}", 0.0);
+        let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
+        assert_eq!(cols.first(), Some(&Some(MTextColor::Aci(256))), "ByLayer is kept");
+        assert!(cols.iter().skip(1).all(Option::is_none), "ByBlock and out of range use the object's colour: {cols:?}");
         let l = lay("\\c16711680;R", 0.0);
         assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0xFF0000))));
     }

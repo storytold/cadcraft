@@ -57,8 +57,11 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
     cadcraft_fonts::layout_mtext_with(&t.contents, &params)
 }
 
-fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
+/// The ink of an MTEXT run with inline colour `c`: `rgb` (the object's) when there is none,
+/// `layer` (its layer's) for ByLayer.
+fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink, layer: Ink) -> Ink {
     match c {
+        Some(cadcraft_fonts::MTextColor::Aci(256)) => layer,
         Some(cadcraft_fonts::MTextColor::Aci(i)) => {
             u8::try_from(i).ok().filter(|i| *i > 0).map(|i| ink(Color::Index(i), Color::Index(7), Color::Index(7))).unwrap_or(rgb)
         }
@@ -69,10 +72,11 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
     }
 }
 
-pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+/// Draw an MTEXT in the object's ink `rgb`; runs coloured ByLayer inline take `layer`.
+pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, layer: Ink, lw: f32) {
     let l = layout_mtext_entity(ctx.d, t);
     for p in &l.pieces {
-        b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
+        b.shaped(ctx, mtext_color(p.color, rgb, layer), lw, &p.shaped);
     }
 }
 

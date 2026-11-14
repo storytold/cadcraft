@@ -193,7 +193,7 @@ impl Formatted {
                                 'f' | 'F' => apply_font(&mut cur, &a),
                                 'H' => apply_height(&mut cur, &a, height),
                                 'C' => {
-                                    cur.color = a.trim().parse::<u16>().ok().and_then(|v| (v > 0 && v < 256).then_some(MTextColor::Aci(v)));
+                                    cur.color = a.trim().parse::<u16>().ok().and_then(|v| (v > 0 && v <= 256).then_some(MTextColor::Aci(v)));
                                 }
                                 'c' => {
                                     if let Ok(v) = a.trim().parse::<u32>() {
@@ -570,6 +570,16 @@ mod tests {
         assert!(n.contains("\\H3x;b") && n.contains("\\H8;d"), "{n}");
         // With no height known it is still kept.
         assert!(Formatted::from_contents("{\\H2x;x}").to_contents().contains("\\H2x;x"));
+    }
+
+    #[test]
+    fn a_bylayer_colour_run_survives_an_edit() {
+        let f = Formatted::from_contents("{\\C256;layer}x");
+        assert_eq!(f.fmt_at(0).color, Some(MTextColor::Aci(256)));
+        assert!(f.to_contents().contains("\\C256;layer"), "{}", f.to_contents());
+        // ByBlock (0) and out-of-range values still carry no colour.
+        assert_eq!(Formatted::from_contents("{\\C257;a}").fmt_at(0).color, None);
+        assert_eq!(Formatted::from_contents("{\\C0;a}").fmt_at(0).color, None);
     }
 
     #[test]
