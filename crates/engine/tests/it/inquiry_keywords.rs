@@ -75,9 +75,10 @@ fn area_too_large_to_hold_is_refused() {
 
 #[test]
 fn area_object_on_an_open_polyline_closes_the_area_but_not_the_perimeter() {
-    // Open, 160 long; the closing side back to 0,0 would add 116.619.
+    // Open, 160 long; the closing side back to 0,0 would add 116.619. An open polyline's figure is
+    // its length (#2894).
     let (_, log) = run(&["pline", "0,0", "100,0", "100,60", "", "area", "o", "50,0"]);
-    assert!(has(&log, "Area = 3000.0000, Perimeter = 160.0000"), "{log:?}");
+    assert!(has(&log, "Area = 3000.0000, Length = 160.0000"), "{log:?}");
 }
 
 #[test]
@@ -330,7 +331,7 @@ fn area_of_an_ellipse_reports_its_exact_perimeter() {
         assert!((got - want).abs() < 1e-9 * want, "{a} x {b}: {got} vs {want}");
     }
     let (_, log) = run(&["ellipse c 0,0 10,0 4", "area", "o", "10,0"]);
-    assert!(has(&log, "Perimeter = 46.0262"), "{log:?}");
+    assert!(has(&log, "Circumference = 46.0262"), "{log:?}");
 }
 
 #[test]
@@ -432,4 +433,37 @@ fn tools_inquiry_volume_adds_and_subtracts_a_running_total() {
     let (_, log) = run(&["setvar lunits 4", "measuregeom", "v", "0,0", "10,0", "10,10", "0,10", "", "12"]);
     assert!(has(&log, "Volume = 1200"), "{log:?}");
     assert!(!has(&log, "'-"), "{log:?}");
+}
+
+/// #2894: AREA names the distance around an object as AutoCAD's AREA help does: a circle's or
+/// ellipse's circumference, an open polyline's length (the closing segment counts for the area
+/// only), and the perimeter of a closed outline or of picked points.
+#[test]
+fn area_says_circumference_for_a_circle_and_length_for_an_open_polyline() {
+    let cases: [(&[&str], &str); 5] = [
+        (&["pline 0,0 10,0 10,10", "", "area", "o", "10,5"], "Area = 50.0000, Length = 20.0000"),
+        (&["circle 0,0 5", "area", "o", "5,0"], "Area = 78.5398, Circumference = 31.4159"),
+        (&["ellipse 0,0 10,0 5", "area", "o", "5,5"], "Area = 78.5398, Circumference = 31.4159"),
+        (&["rectang 0,0 10,10", "area", "o", "10,5"], "Area = 100.0000, Perimeter = 40.0000"),
+        (&["area", "0,0", "10,0", "10,10", ""], "Area = 50.0000, Perimeter = 34.1421"),
+    ];
+    for (lines, expected) in cases {
+        let (_, log) = run(lines);
+        assert!(has(&log, expected), "{lines:?}: {log:?}");
+    }
+}
+
+/// The JSON `area` command's message uses the same words; its `perimeter` value is unchanged. An
+/// open spline is a length and a closed one a perimeter.
+#[test]
+fn area_json_message_names_a_splines_length_or_perimeter() {
+    for (closed, word) in [(false, "Length = "), (true, "Perimeter = ")] {
+        let mut s = Session::new();
+        s.execute("spline", &json!({ "fit": [[0, 0], [5, 5], [10, 0]], "closed": closed })).unwrap();
+        let h = s.doc().unwrap().model.iter().last().unwrap().handle;
+        let r = s.execute("area", &json!({ "handle": h.hex() })).unwrap();
+        let message = r["message"].as_str().unwrap();
+        assert!(message.contains(word), "closed={closed}: {message}");
+        assert!(r["perimeter"].as_f64().is_some_and(|p| p > 0.0), "{r}");
+    }
 }
