@@ -186,8 +186,14 @@ impl Interactive for LinearM {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
-                let seg =
-                    s.doc()?.entity(h).and_then(|e| e.kind.prims().into_iter().find_map(|pr| if let Prim::Seg(sg) = pr { Some(sg) } else { None }));
+                // The segment nearest the pick, so a polyline is dimensioned along the segment clicked (#3014).
+                let seg = s.doc()?.entity(h).and_then(|e| {
+                    e.kind
+                        .prims()
+                        .into_iter()
+                        .filter_map(|pr| if let Prim::Seg(sg) = pr { Some(sg) } else { None })
+                        .min_by(|x, y| x.closest(p).dist(p).total_cmp(&y.closest(p).dist(p)))
+                });
                 match seg {
                     Some(sg @ Segment::Line(_)) | Some(sg @ Segment::Arc { .. }) => {
                         self.pts = vec![sg.start(), sg.end()];
