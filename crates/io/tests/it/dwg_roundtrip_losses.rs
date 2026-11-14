@@ -71,7 +71,7 @@ fn dwg_keeps_true_colours_and_transparency() {
     );
 
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
-    assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some("AC1032"));
+    assert_eq!(craft_dwg::version(&dwg).as_deref(), Some("AC1032"));
     let header = records(&cadcraft_io::write_dxf(&d), "SECTION");
     assert_eq!(header.first().and_then(|h| group(h, "1")), Some("AC1015"), "the DXF stays R2000");
 
