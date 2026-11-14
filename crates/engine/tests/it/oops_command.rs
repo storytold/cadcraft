@@ -9,7 +9,11 @@ use serde_json::{Value, json};
 
 /// A session that `entmake` works in.
 fn session() -> Session {
-    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    set_entity_codec(EntityCodec {
+        groups: cadcraft_io::entity_groups,
+        sub_groups: cadcraft_io::entity_sub_groups,
+        entity: cadcraft_io::entity_from_groups,
+    });
     Session::new()
 }
 

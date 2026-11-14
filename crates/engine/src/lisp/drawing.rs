@@ -356,17 +356,38 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
+    if let Some((ins, k)) = sub_of(ctx, h) {
+        return sub_entget(ctx, h, ins, k);
+    }
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
     let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
-    let layout = match space_of(d, h) {
+    Ok(Flow::Value(entity_list(d, h, &kind, &tags, None)))
+}
+
+/// `entget` of an INSERT's ATTRIB or SEQEND (`k` after the INSERT's own record), owned by it.
+fn sub_entget(ctx: &Ctx<'_>, h: Handle, ins: Handle, k: usize) -> Result<Flow, LispError> {
+    let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
+    let Some(e) = d.entity(ins).filter(|_| k < sub_count(d, ins)) else { return Ok(Flow::Value(Value::Nil)) };
+    let Some((kind, mut tags)) = (codec()?.sub_groups)(d, e).into_iter().nth(k) else { return Ok(Flow::Value(Value::Nil)) };
+    convert_angles(&kind, &mut tags, f64::to_radians);
+    Ok(Flow::Value(entity_list(d, h, &kind, &tags, Some(ins))))
+}
+
+/// An entity list: name, type, owner (for an INSERT's ATTRIB or SEQEND) and groups, with the
+/// layout name after the AcDbEntity marker.
+fn entity_list(d: &cadcraft_doc::Drawing, h: Handle, kind: &str, tags: &[Tag], owner: Option<Handle>) -> Value {
+    let layout = match space_of(d, owner.unwrap_or(h)) {
         Some(Space::Paper(name)) => name,
         _ => "Model".into(),
     };
-    let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
+    let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(kind))];
+    if let Some(o) = owner {
+        items.push(Value::cons(Value::Int(330), Value::Ename(o)));
+    }
     let mut placed_layout = false;
-    for v in groups_to_list(&tags) {
+    for v in groups_to_list(tags) {
         // The layout name follows the AcDbEntity marker, as AutoCAD lists it.
         let after_marker = !placed_layout && v.car().as_number() == Some(100.0) && matches!(v.cdr(), Value::Str(ref s) if &**s == "AcDbEntity");
         items.push(v);
@@ -375,7 +396,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             placed_layout = true;
         }
     }
-    Ok(Flow::Value(Value::list(items)))
+    Value::list(items)
 }
 
 /// The entity a list describes, as the reader makes it; a missing layer (8) is the current one.
@@ -503,6 +524,9 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let Some(Value::Ename(h)) = list.iter().find(|v| v.car().as_number() == Some(-1.0)).map(|v| v.cdr()) else {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
+    if let Some((ins, k)) = sub_of(ctx, h) {
+        return entmod_attrib(ctx, list, ins, k);
+    }
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
     let (kind_name, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
@@ -518,6 +542,53 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         .modify_entity(h, |e| {
             e.common = common;
             e.kind = kind;
+        })
+        .is_ok();
+    if ok {
+        ctx.s.touch();
+    }
+    Ok(Flow::Value(if ok { list.clone() } else { Value::Nil }))
+}
+
+/// `entmod` of an INSERT's ATTRIB (`k`): its tag, value, text placement, flags and properties.
+/// A SEQEND holds nothing to change.
+fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, ins: Handle, k: usize) -> Result<Flow, LispError> {
+    let Ok((kind, mut tags)) = list_to_groups(list) else { return Ok(Flow::Value(Value::Nil)) };
+    if kind != "ATTRIB" {
+        return Ok(Flow::Value(Value::Nil));
+    }
+    convert_angles(&kind, &mut tags, f64::to_degrees);
+    // An ATTRIB's groups read as an attribute definition's, less the prompt.
+    let Some((common, cadcraft_doc::EntityKind::AttDef(new))) = (codec()?.entity)("ATTDEF", &tags) else { return Ok(Flow::Value(Value::Nil)) };
+    let has = |code: i32| tags.iter().any(|t| t.code == code);
+    let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
+    // The last record is the SEQEND.
+    let Some(insert_layer) = d.entity(ins).filter(|_| k.saturating_add(1) < sub_count(d, ins)).map(|e| e.common.layer.clone()) else {
+        return Ok(Flow::Value(Value::Nil));
+    };
+    // As the DXF reader takes an ATTRIB's own properties: those it has groups for, its layer
+    // when it isn't the reference's.
+    let props = cadcraft_doc::AttribProps {
+        layer: Some(common.layer.clone()).filter(|l| has(8) && !l.is_empty() && !l.eq_ignore_ascii_case(&insert_layer)),
+        color: (has(62) || has(420)).then_some(common.color),
+        linetype: Some(common.linetype.clone()).filter(|l| has(6) && !l.is_empty()),
+        lineweight: has(370).then_some(common.lineweight),
+    };
+    if let Some(l) = &props.layer {
+        d.ensure_layer(l);
+    }
+    let ok = d
+        .modify_entity(ins, |e| {
+            if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind
+                && let Some(a) = i.attribs.get_mut(k)
+            {
+                a.tag = new.tag;
+                a.text = new.text;
+                a.invisible = new.invisible;
+                a.props = props;
+                a.multiline = new.multiline;
+                a.modes = new.modes;
+            }
         })
         .is_ok();
     if ok {
@@ -589,11 +660,50 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         None | Some(Value::Nil) => order.first().copied(),
         Some(v) => {
             let h = ename(v)?;
-            let i = order.partition_point(|x| *x <= h);
+            // An INSERT with attributes is followed by its ATTRIBs and a SEQEND.
+            let (after, k) = match sub_of(ctx, h) {
+                Some((ins, k)) => (ins, k + 1),
+                None => (h, 0),
+            };
+            if k < ctx.s.doc().map(|d| sub_count(d, after)).unwrap_or(0) {
+                return Ok(Flow::Value(Value::Ename(sub_ename(ctx, after, k))));
+            }
+            let i = order.partition_point(|x| *x <= after);
             order.get(i).copied()
         }
     };
     Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()))
+}
+
+/// How many records follow an INSERT's own: its ATTRIBs and a SEQEND (none without attributes).
+fn sub_count(d: &cadcraft_doc::Drawing, h: Handle) -> usize {
+    match d.entity(h).map(|e| &e.kind) {
+        Some(cadcraft_doc::EntityKind::Insert(i)) if !i.attribs.is_empty() => i.attribs.len().saturating_add(1),
+        _ => 0,
+    }
+}
+
+/// The entity name of record `k` after INSERT `ins`'s own (an ATTRIB, or the SEQEND last). These
+/// have no handles in the drawing: they are named from the top of the handle range down.
+fn sub_ename(ctx: &mut Ctx<'_>, ins: Handle, k: usize) -> Handle {
+    let subs = &mut ctx.env.subents;
+    let at = match subs.iter().position(|x| *x == (ins, k)) {
+        Some(at) => at,
+        None => {
+            subs.push((ins, k));
+            subs.len() - 1
+        }
+    };
+    Handle(u64::MAX - at as u64)
+}
+
+/// The INSERT and record an entity name from [`sub_ename`] stands for (none for an entity's own).
+fn sub_of(ctx: &Ctx<'_>, h: Handle) -> Option<(Handle, usize)> {
+    if ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) {
+        return None;
+    }
+    let at = usize::try_from(u64::MAX - h.0).ok()?;
+    ctx.env.subents.get(at).copied()
 }
 
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {

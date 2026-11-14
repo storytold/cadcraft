@@ -150,6 +150,21 @@ fn bridge_markers(tags: &mut [Tag]) {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
+    let mut records = entity_records(d, e).into_iter();
+    let (kind, tags) = records.next().unwrap_or_default();
+    (kind, tags.into_iter().filter(|t| t.code != 330).collect())
+}
+
+/// The records an entity is written with after its own, each as its type name and groups
+/// without its `0` group: an INSERT's ATTRIBs and SEQEND, a POLYLINE's VERTEXes and SEQEND.
+/// Their handles (5) and owner (330) are left out: they have none of their own in the drawing.
+/// AutoLISP's `entnext` and `entget` reach an INSERT's attributes through it.
+pub fn entity_sub_groups(d: &Drawing, e: &Entity) -> Vec<(String, Vec<Tag>)> {
+    entity_records(d, e).into_iter().skip(1).map(|(kind, tags)| (kind, tags.into_iter().filter(|t| t.code != 5 && t.code != 330).collect())).collect()
+}
+
+/// An entity's records as the writer stores them, split at their `0` groups.
+fn entity_records(d: &Drawing, e: &Entity) -> Vec<(String, Vec<Tag>)> {
     let mut w = W {
         t: Vec::new(),
         next: d.handseed.max(0x100).saturating_add(0x1000),
@@ -160,10 +175,17 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);
-    let mut tags = w.t.into_iter();
-    let kind = tags.next().filter(|t| t.code == 0).map(|t| t.value.as_str()).unwrap_or_default();
-    let mut tags: Vec<Tag> = tags.take_while(|t| t.code != 0).filter(|t| t.code != 330).collect();
+    let mut records: Vec<(String, Vec<Tag>)> = Vec::new();
+    for t in w.t {
+        if t.code == 0 {
+            records.push((t.value.as_str(), Vec::new()));
+        } else if let Some((_, tags)) = records.last_mut() {
+            tags.push(t);
+        }
+    }
     // Strings as AutoLISP sees them: `10^2`, not the file's `10^ 2`.
-    crate::dxf_read::mtext_dxf::map_text_groups(&kind, &mut tags, crate::dxf_read::mtext_dxf::decode_line);
-    (kind, tags)
+    for (kind, tags) in &mut records {
+        crate::dxf_read::mtext_dxf::map_text_groups(kind, tags, crate::dxf_read::mtext_dxf::decode_line);
+    }
+    records
 }
