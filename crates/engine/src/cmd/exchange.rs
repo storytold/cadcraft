@@ -497,6 +497,30 @@ fn frame_books(d: &Drawing, frame_height: f64, unit: f64) -> (Vec<Vec<Frame>>, u
     (books, skipped)
 }
 
+/// Most page-by-entity renderings one PDFBOOK may ask for: every page draws the whole model through
+/// its window, so the work is the frames times the model's objects (1,000 sheets of a 500,000-object
+/// drawing).
+const MAX_BOOK_WORK: u64 = 500_000_000;
+
+/// Objects one page draws: the model's objects, and the contents of each block reference (once per
+/// array cell, and the reference's own attributes; nested blocks count as their own entries).
+fn model_visits(d: &Drawing) -> usize {
+    d.model
+        .iter()
+        .map(|e| match &e.kind {
+            EntityKind::Insert(i) => {
+                d.block(&i.block).map_or(1, |b| 1 + b.entities.len().saturating_mul((i.rows as usize).saturating_mul(i.cols as usize)))
+            }
+            _ => 1,
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
+/// Whether `frames` pages of a model with `entities` objects stay within [`MAX_BOOK_WORK`].
+fn book_work_fits(frames: usize, entities: usize) -> bool {
+    (frames as u64).saturating_mul(entities as u64) <= MAX_BOOK_WORK
+}
+
 fn run_pdfbook(s: &mut Session, p: &Value) -> Result<Value> {
     if io().and_then(|h| h.plot).is_none() {
         return Err(bad("pdfbook", "plotting is not available in this build"));
@@ -506,6 +530,13 @@ fn run_pdfbook(s: &mut Session, p: &Value) -> Result<Value> {
     let (books, skipped) = frame_books(s.doc()?, frame_height, unit);
     if books.is_empty() {
         return Err(bad("pdfbook", format!("no closed polylines {frame_height} mm high (sheet frames) in model space")));
+    }
+    let sheets: usize = books.iter().map(Vec::len).sum();
+    if !book_work_fits(sheets, model_visits(s.doc()?)) {
+        return Err(bad(
+            "pdfbook",
+            format!("{sheets} sheets of a model this large are too much work for one command; plot part of the drawing at a time"),
+        ));
     }
     let target = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone()));
     let pb = target.as_deref().map(std::path::Path::new);
@@ -559,6 +590,13 @@ mod tests {
     fn record(name: &str, mime: &str, bytes: &[u8]) -> std::result::Result<(), String> {
         DELIVERED.lock().map_err(|e| e.to_string())?.push((name.into(), mime.into(), bytes.len()));
         Ok(())
+    }
+
+    #[test]
+    fn a_book_is_bounded_by_pages_times_objects() {
+        assert!(book_work_fits(1_000, 500_000));
+        assert!(!book_work_fits(100_000, 100_000));
+        assert!(!book_work_fits(usize::MAX, usize::MAX));
     }
 
     #[test]

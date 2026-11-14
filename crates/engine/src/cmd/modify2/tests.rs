@@ -777,3 +777,25 @@ fn offset_elliptical_arc_follows_picked_side() {
     let outer = max_x(json!([20, 20]));
     assert!((outer - 11.0).abs() < 0.05, "outer side went inward: max x = {outer}");
 }
+
+/// Nested references multiply visits even when no leaf results; NCOPY refuses past its visit budget.
+#[test]
+fn ncopy_charges_every_nested_visit() {
+    use cadcraft_doc::{Block, Common, Entity, Insert};
+    let mut s = Session::new();
+    let d = s.doc_mut().unwrap();
+    let mut n = 1;
+    for level in 0..15 {
+        let mut b = Block::new(&format!("B{level}"));
+        for _ in 0..100 {
+            let ins = Insert { block: format!("B{}", level + 1), ..Insert::default() };
+            b.entities.push(Entity::new(Handle(n), EntityKind::Insert(ins)));
+            n += 1;
+        }
+        d.blocks.insert(b.name.clone(), std::sync::Arc::new(b));
+    }
+    d.blocks.insert("B15".into(), std::sync::Arc::new(Block::new("B15")));
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(Insert { block: "B0".into(), ..Insert::default() })).unwrap();
+    let err = s.execute("ncopy", &json!({ "handle": h.hex() })).unwrap_err().to_string();
+    assert!(err.contains("nests too many objects"), "{err}");
+}

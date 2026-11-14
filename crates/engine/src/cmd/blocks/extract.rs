@@ -19,6 +19,21 @@ const MAX_TABLE_ROWS: usize = 2000;
 const MAX_TABLE_COLS: usize = 200;
 /// Attribute columns kept at most.
 const MAX_TAGS: usize = 190;
+/// Attribute text one extraction may hold across all its references (each row owns a copy of its
+/// values, constants included). Far above any real schedule; an error, never a silent cut.
+const MAX_VALUE_BYTES: usize = 1 << 30;
+
+/// Add `add` bytes to `used`; an error past `limit`.
+fn charge(used: &mut usize, add: usize, limit: usize) -> Result<()> {
+    *used = used.saturating_add(add);
+    if *used > limit {
+        return Err(bad(
+            "dataextraction",
+            format!("the attribute text of the block references passes {} MiB; narrow `blocks`, `tags` or `handles`", limit >> 20),
+        ));
+    }
+    Ok(())
+}
 
 const PARAMS: &str = "{blocks?: \"A*,B\" (block names, wildcards, default *), tags?: attribute tags to include (wildcards, default *), handles? (default: the block references in model space and every layout), combine?: bool (default true: identical rows once, with a Count column; false: one row per reference with handle, layer, position and rotation), file?: path (.csv; .txt is tab-separated), at?: [x,y] (insert a table there), title?: table title} → {columns, rows, file?, table?}";
 
@@ -167,6 +182,8 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
     };
     let selected = selected_tags(&ents, d, o);
     let mut out = Vec::new();
+    let mut used = 0usize;
+    let mut const_sizes: HashMap<String, Vec<(String, usize)>> = HashMap::new();
     let mut consts: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for e in &ents {
         let EntityKind::Insert(ins) = &e.kind else { continue };
@@ -175,18 +192,47 @@ fn found(s: &Session, p: &Value, o: &Options) -> Result<Vec<Found>> {
             continue;
         }
         let block = d.block(&ins.block).map(|b| b.name.clone()).unwrap_or_else(|| ins.block.clone());
+        // Charged from the lengths, before any text is copied.
+        let selected_bytes: usize =
+            ins.attribs.iter().filter(|a| selected.contains(&a.tag.to_ascii_uppercase())).map(|a| a.text.value.len() + a.tag.len()).sum();
+        // The constants this row copies (those its own attributes do not override), from the lengths.
+        let first_of_block = !const_sizes.contains_key(&block);
+        let consts_sizes = const_sizes.entry(block.clone()).or_insert_with(|| {
+            d.block(&ins.block).map_or_else(Vec::new, |b| {
+                b.entities
+                    .iter()
+                    .filter_map(|e| match &e.kind {
+                        EntityKind::AttDef(a) if a.constant && selected.iter().any(|t| t == &a.tag.to_ascii_uppercase()) => {
+                            Some((a.tag.to_ascii_uppercase(), a.tag.len() + a.text.value.len()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+        });
+        if first_of_block {
+            // The per-block cache of constants is one more copy of them, made once.
+            charge(&mut used, consts_sizes.iter().map(|(_, n)| *n).fold(0, usize::saturating_add), MAX_VALUE_BYTES)?;
+        }
+        let const_bytes: usize = consts_sizes
+            .iter()
+            .filter(|(tag, _)| !ins.attribs.iter().any(|a| a.tag.eq_ignore_ascii_case(tag)))
+            .map(|(_, n)| *n)
+            .fold(0, usize::saturating_add);
+        charge(&mut used, selected_bytes.saturating_add(const_bytes), MAX_VALUE_BYTES)?;
+        let values = values(
+            ins,
+            // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
+            consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &selected)).unwrap_or_default()),
+            &selected,
+        );
         out.push(Found {
             handle: e.handle.hex(),
             layer: e.common.layer.clone(),
             at: ins.insert.xy(),
             rotation: ins.rotation.to_degrees(),
             block: block.clone(),
-            values: values(
-                ins,
-                // Keyed by the resolved definition's exact name: `Part` and `PART` can both exist.
-                consts.entry(block.clone()).or_insert_with(|| d.block(&ins.block).map(|b| constants(b, &selected)).unwrap_or_default()),
-                &selected,
-            ),
+            values,
         });
     }
     Ok(out)
@@ -449,6 +495,15 @@ impl Interactive for ExtractM {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn attribute_text_is_charged_against_one_budget() {
+        let mut used = 0;
+        assert!(super::charge(&mut used, 60, 100).is_ok());
+        assert!(super::charge(&mut used, 40, 100).is_ok());
+        assert!(super::charge(&mut used, 1, 100).is_err());
+        assert!(super::charge(&mut used, usize::MAX, 100).is_err());
+    }
+
     use super::*;
 
     #[test]
