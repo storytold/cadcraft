@@ -314,8 +314,9 @@ pub fn mono() -> FontId {
 /// language: file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513). In a Chinese interface (`language` "zh…") the Chinese font comes first, else a
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
-/// Arabic font follows. The embedded Georgian face loads in every language, so the language
-/// picker can show ქართული. A font embedded from craft-fonts comes
+/// Arabic font follows, and in a Tamil one an installed Tamil font ([`tamil_font`]). The
+/// embedded Georgian face loads in every language, so the language picker can show ქართული. A
+/// font embedded from craft-fonts comes
 /// last, for systems without any (and the web build, which has no system fonts). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
@@ -364,6 +365,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             && let Some(bytes) = arabic_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
         {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
+        // தமிழ்: likewise an installed Tamil face, for the Tamil interface.
+        if language == "ta"
+            && let Some(bytes) = tamil_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
+        {
+            added.push(("system-tamil".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
     }
     let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
@@ -484,7 +491,8 @@ pub fn shows_vietnamese(language: &str) -> bool {
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
 /// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
 /// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
-/// the picker names the language ქართული); العربية adds its Arabic face after those.
+/// the picker names the language ქართული); العربية adds its Arabic face after those, and தமிழ்
+/// its Tamil face.
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
     let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
@@ -495,6 +503,9 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
+    }
+    if language == "ta" {
+        out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Taml")));
     }
     out
 }
@@ -590,6 +601,83 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
     }
     #[cfg(target_arch = "wasm32")]
     None
+}
+
+/// The Tamil letters the Tamil interface shows: its catalog and its own name.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn tamil_letters() -> &'static std::collections::BTreeSet<char> {
+    static LETTERS: std::sync::OnceLock<std::collections::BTreeSet<char>> = std::sync::OnceLock::new();
+    LETTERS.get_or_init(|| {
+        include_str!("i18n/ta.tsv")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split('\t').nth(2))
+            .flat_map(str::chars)
+            .chain("தமிழ்".chars())
+            .filter(|c| ('\u{0b80}'..='\u{0bff}').contains(c))
+            .collect()
+    })
+}
+
+/// Whether `face` has every Tamil letter the Tamil interface shows (rejects malformed fonts and
+/// faces without Tamil).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn covers_tamil(face: &cadcraft_fonts::ttf::Face) -> bool {
+    tamil_letters().iter().all(|c| face.has_glyph(*c))
+}
+
+/// An installed font with the Tamil letters, for the தமிழ் interface; fonts are never bundled
+/// (only looked for where the OS or common packages put them). The file's first face, the one
+/// egui uses, must have every Tamil letter the interface shows. Checked once.
+pub fn tamil_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let candidates: &[&str] = if cfg!(target_os = "macos") {
+                    &[
+                        "/System/Library/Fonts/Supplemental/Tamil Sangam MN.ttc",
+                        "/System/Library/Fonts/Tamil Sangam MN.ttc",
+                        "/System/Library/Fonts/Supplemental/Tamil MN.ttc",
+                        "/System/Library/Fonts/Supplemental/InaiMathi-MN.ttc",
+                    ]
+                } else if cfg!(windows) {
+                    &[
+                        "C:\\Windows\\Fonts\\Nirmala.ttc",
+                        "C:\\Windows\\Fonts\\Nirmala.ttf",
+                        "C:\\Windows\\Fonts\\latha.ttf",
+                        "C:\\Windows\\Fonts\\vijaya.ttf",
+                    ]
+                } else {
+                    &[
+                        "/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/google-noto/NotoSansTamil-Regular.ttf",
+                        "/usr/share/fonts/google-noto-vf/NotoSansTamil[wght].ttf",
+                        "/usr/share/fonts/truetype/noto/NotoSansTamilUI-Regular.ttf",
+                        "/usr/share/fonts/truetype/lohit-tamil/Lohit-Tamil.ttf",
+                        "/usr/share/fonts/lohit-tamil/Lohit-Tamil.ttf",
+                        "/usr/share/fonts/truetype/samyak-fonts/Samyak-Tamil.ttf",
+                    ]
+                };
+                let covers = |p: &std::path::Path| {
+                    read_capped(p, MAX_UI_FONT_BYTES)
+                        .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
+                        .is_some_and(|face| covers_tamil(&face))
+                };
+                candidates.iter().map(std::path::PathBuf::from).find(|p| covers(p))
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Whether the interface in `language` shows the Tamil letters (தமிழ் in the language picker): only
+/// the Tamil interface loads a Tamil font, so only it does.
+pub fn shows_tamil(language: &str) -> bool {
+    language == "ta" && can_show("ta")
 }
 
 /// An installed Japanese font, for Japanese names in a non-Chinese interface. Checked once.
@@ -732,13 +820,14 @@ pub fn shows_hangul(language: &str) -> bool {
 /// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
 /// font with Hangul, العربية an installed Arabic font or the embedded Arabic face, Tiếng Việt a
 /// system interface font with its tone-marked letters ([`vietnamese_font`]), ქართული the
-/// embedded Georgian face.
+/// embedded Georgian face, தமிழ் an installed Tamil font ([`tamil_font`]) or the embedded Tamil face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
         "vi" => vietnamese_font().is_some(),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
         "ka" => embedded_script("Geor"),
+        "ta" => tamil_font().is_some() || embedded_script("Taml"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
@@ -842,6 +931,23 @@ mod tests {
         }
     }
 
+    /// A Tamil font counts only when its first face has every Tamil letter the interface shows:
+    /// the catalog's letters, its two-part and pre-base vowel signs and the language's own name
+    /// among them.
+    #[test]
+    fn tamil_font_needs_every_letter_of_the_tamil_interface() {
+        let letters = super::tamil_letters();
+        assert!("தமிழ்".chars().chain(['ொ', 'ோ', 'ை']).all(|c| letters.contains(&c)), "{letters:?}");
+        assert!(letters.iter().all(|c| ('\u{0b80}'..='\u{0bff}').contains(c)));
+        for bytes in [vec![], vec![0xff; 32]] {
+            assert!(cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).first().is_none_or(|f| !super::covers_tamil(f)));
+        }
+        if let Some(path) = super::tamil_font() {
+            let face = std::fs::read(path).ok().and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next());
+            assert!(face.is_some_and(|f| super::covers_tamil(&f)), "{}", path.display());
+        }
+    }
+
     /// The interface's own script leads the embedded faces it loads, and العربية adds its face.
     #[test]
     fn embedded_faces_lead_with_the_interfaces_own_script() {
@@ -858,6 +964,16 @@ mod tests {
         // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
         assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Arabic"]);
         assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        // தமிழ் adds the Tamil face; no other interface loads it.
+        let tamil = face("Noto Sans Tamil", &["Taml"]);
+        let with_tamil = [&japanese, &chinese, &arabic, &georgian, &tamil];
+        assert_eq!(
+            families(&super::embedded_ui_faces(&with_tamil, "ta")),
+            ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Tamil"]
+        );
+        for language in ["en", "ar", "ka", "zh"] {
+            assert!(!families(&super::embedded_ui_faces(&with_tamil, language)).contains(&"Noto Sans Tamil"), "{language}");
+        }
         // Another weight is a style of a face, not an interface face of its own.
         let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
         assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
@@ -877,6 +993,9 @@ mod tests {
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
         // ქართული rides on the embedded Georgian face alone.
         assert_eq!(super::can_show("ka"), super::embedded_script("Geor"));
+        // தமிழ் takes an installed Tamil font or the embedded Tamil face.
+        assert!(super::any_script(&[face("Noto Sans Tamil", &["Taml"])], "Taml") && !super::any_script(&faces, "Taml"));
+        assert_eq!(super::can_show("ta"), super::tamil_font().is_some() || super::embedded_script("Taml"));
         assert!(super::can_show("en") && super::can_show("uk"));
     }
 
