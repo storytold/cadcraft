@@ -176,8 +176,12 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 clip: None,
             })
         }
-        "DIMENSION" => {
-            let ty = t.i(70).unwrap_or(0) & 0x0f;
+        "DIMENSION" | "ARC_DIMENSION" => {
+            // An ARC_DIMENSION (AcDbArcDimension) is the arc-length type as its own entity
+            // class: the same groups as a DIMENSION, with 15 the arc centre. Its geometry is
+            // the block group 2 names, so it reads as the dimension it is — however a writer
+            // numbered group 70's type nibble, the class fixes the kind at arc length.
+            let ty = if kind == "ARC_DIMENSION" { 8 } else { t.i(70).unwrap_or(0) & 0x0f };
             let kind = match ty {
                 0 => DimKind::Linear { rotation: t.fd(50, 0.0).to_radians() },
                 1 => DimKind::Aligned,
@@ -482,7 +486,7 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
-        ("DIMENSION", EntityKind::Dimension(dm)) => {
+        ("DIMENSION" | "ARC_DIMENSION", EntityKind::Dimension(dm)) => {
             dm.overrides = crate::dxf_ext::read_dstyle(tags, &rx.styles, &rx.brs, &rx.ltypes);
             dm.assoc = crate::dxf_ext::read_assoc(tags);
             if let Some(center) = crate::dxf_ext::read_arclen(tags) {

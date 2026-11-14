@@ -787,6 +787,9 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let opts = save_options("document.bytes", p)?;
     let version = opts.version.unwrap_or_else(|| drawing_version(s, &format!("drawing.{fmt}")));
     let lost = not_saved_as(s.doc()?, version);
+    // The writer saves the drawing itself (`state.drawing`), which waits in the Block Editor
+    // while `doc` is the editor's copy: the report reads the drawing the file will hold.
+    let dangling = if fmt.eq_ignore_ascii_case("dxf") { dangling_blocks(s.state()?.drawing()) } else { json!([]) };
     let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
@@ -794,6 +797,7 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
         report_sat_text_dropped(s, &mut r);
     }
+    report_dangling_blocks(s, &mut r, &dangling);
     Ok(r)
 }
 
@@ -959,6 +963,48 @@ pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::colle
     }
 }
 
+/// The block references a saved DXF would not resolve, as its writer reports them (a lower
+/// layer, which owns the block-liveness rules; installed by the app with [`set_io`]): a JSON
+/// array of `{code, handle, entity, block}` — an entity the file keeps names, by its group 2,
+/// a block the file won't define, so the file opens holding a dangling reference. The save
+/// still happens; SAVEAS says this in the result (`danglingBlockRefs`) and at the command line
+/// instead of writing the broken file silently.
+pub type DanglingBlocksHook = fn(&Drawing) -> Value;
+
+static DANGLING_BLOCKS: OnceLock<DanglingBlocksHook> = OnceLock::new();
+
+/// Install the DXF writer's dangling-block-reference report (see [`DanglingBlocksHook`]).
+pub fn set_dangling_blocks(h: DanglingBlocksHook) {
+    let _ = DANGLING_BLOCKS.set(h);
+}
+
+/// The dangling block references of `d`, as the installed writer hook reports them: an empty
+/// array when there is none, or no hook (a build whose files it writes cannot dangle).
+fn dangling_blocks(d: &Drawing) -> Value {
+    DANGLING_BLOCKS.get().map_or_else(|| json!([]), |h| h(d))
+}
+
+/// Say which block references the saved DXF doesn't resolve, and list them in the result's
+/// `danglingBlockRefs`: the file is still written, but it holds records that name blocks it
+/// doesn't define — the drawing keeps the blocks, so saving it again elsewhere repairs it. The
+/// caller decides whether that blocks its pipeline; the engine doesn't fail the save over it.
+fn report_dangling_blocks(s: &mut Session, r: &mut Value, refs: &Value) {
+    let Some(list) = refs.as_array().filter(|a| !a.is_empty()) else { return };
+    let names = list
+        .iter()
+        .map(|x| format!("{} {} -> {}", x["entity"].as_str().unwrap_or("?"), x["handle"].as_str().unwrap_or("?"), x["block"].as_str().unwrap_or("?")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    s.echo(format!(
+        "The saved DXF holds {} dangling block reference(s): {}. The drawing still has the blocks; the file does not.",
+        list.len(),
+        names
+    ));
+    if let Some(o) = r.as_object_mut() {
+        o.insert("danglingBlockRefs".into(), json!(list));
+    }
+}
+
 /// Save, then report the entities the file couldn't keep (nothing is dropped silently).
 fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
     // What the file will hold depends on the version it is saved as (the data store from 2013).
@@ -966,6 +1012,10 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     let path = str_param(p, "path").map(str::to_string).or_else(|| s.state().ok().and_then(|st| st.path.clone())).unwrap_or_default();
     let version = asked.unwrap_or_else(|| drawing_version(s, &path));
     let lost = s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default();
+    // A DXF's block references the file wouldn't resolve, said before the save runs, on the
+    // drawing the file will hold (`state.drawing`, not the Block Editor's copy the `doc` is
+    // while it is open): the save doesn't change which blocks the drawing's records name.
+    let dangling = if is_dxf_file(&path) { s.state().map(|st| dangling_blocks(st.drawing())).unwrap_or_else(|_| json!([])) } else { json!([]) };
     let folder = new_folder(&path);
     let mut r = run(s, p)?;
     report_new_folder(s, &mut r, folder);
@@ -973,6 +1023,9 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
         report_not_saved(s, &mut r, &lost);
     } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
         report_sat_text_dropped(s, &mut r);
+    }
+    if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        report_dangling_blocks(s, &mut r, &dangling);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);

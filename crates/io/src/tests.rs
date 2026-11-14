@@ -2364,6 +2364,41 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     assert!((dims[0].p15 - Vec3::new(5.0, 5.0, 0.0)).len() < 1e-9);
 }
 
+/// An ARC_DIMENSION (AcDbArcDimension) — the entity class the DWG bridge and AutoCAD write for
+/// an arc-length dimension — reads as the dimension it is, and saving keeps the geometry block
+/// its group 2 names: the entity counts the block as referenced, so it is regenerated under the
+/// same name instead of dropped as unreferenced while the entity still points at it.
+#[test]
+fn arc_dimension_entity_reads_as_a_dimension_and_keeps_its_block() {
+    // An ARC_DIMENSION record as another writer makes it: dimtype 40 (8 arc length | 32 the
+    // block is its own), 15 the arc centre, geometry in the `*D477` block.
+    let text = concat!(
+        "0\nSECTION\n2\nBLOCKS\n",
+        "0\nBLOCK\n2\n*D477\n10\n0\n20\n0\n30\n0\n3\n*D477\n",
+        "0\nLINE\n5\nAA\n8\n0\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDBLK\n",
+        "0\nENDSEC\n",
+        "0\nSECTION\n2\nENTITIES\n",
+        "0\nARC_DIMENSION\n5\n1FC27B\n8\ndims\n100\nAcDbDimension\n2\n*D477\n10\n20\n20\n20\n30\n0\n11\n20\n21\n31\n31\n0\n70\n40\n3\nStandard\n",
+        "100\nAcDbArcDimension\n13\n10\n23\n20\n33\n0\n14\n30\n24\n20\n34\n0\n15\n20\n25\n20\n35\n0\n70\n0\n",
+        "0\nENDSEC\n0\nEOF\n",
+    );
+    let d = read_dxf(text.as_bytes()).unwrap();
+    let EntityKind::Dimension(dm) = &d.model.iter().next().unwrap().kind else { panic!("a dimension, not a raw proxy record") };
+    assert!(matches!(dm.kind, DimKind::ArcLength));
+    assert_eq!(dm.block.as_deref(), Some("*D477"), "group 2 keeps the geometry block");
+    assert_eq!(dm.p15, Vec3::new(20.0, 20.0, 0.0), "group 15 is the arc centre");
+    assert!(!dm.user_text_pos, "dimtype 40 carries no bit 7");
+    // Saving: the block the dimension names is written (regenerated under its name), the
+    // dimtype keeps bit 5 (32), and what comes back is still the arc-length dimension.
+    let saved = write_dxf(&d);
+    assert!(saved.lines().any(|l| l.trim() == "*D477"), "the geometry block is in the file");
+    assert!(saved.lines().zip(saved.lines().skip(1)).any(|(c, v)| c.trim() == "70" && v.trim() == "33"), "dimtype 1 | 32");
+    let back = read_dxf(saved.as_bytes()).unwrap();
+    let EntityKind::Dimension(x) = &back.model.iter().next().unwrap().kind else { panic!("dimension expected") };
+    assert!(matches!(x.kind, DimKind::ArcLength));
+    assert!(x.block.as_deref().is_some_and(|n| back.block(n).is_some()), "the named block is defined: no dangling reference");
+}
+
 /// Two gradient hatches (true colours, shifted, rotated; index colours, centered) and a plain
 /// solid hatch over the same square.
 fn gradient_sample() -> (Drawing, Vec<Option<Gradient>>) {
@@ -3676,4 +3711,70 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+}
+
+/// A dimension class the writer keeps raw names its geometry block by group 2, but nothing
+/// modelled claims the block, so the writer drops it while the record stays: the file would
+/// hold a dangling reference. [`dangling_block_refs`] says so — and a modelled dimension
+/// (an ARC_DIMENSION read as one) that claims its block says nothing.
+#[test]
+fn dangling_block_refs_names_the_blocks_the_file_would_drop() {
+    let mut d = Drawing::new_metric();
+    let mut b = Block::new("*D500");
+    let h = d.new_handle();
+    b.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    d.blocks.insert("*D500".into(), std::sync::Arc::new(b));
+    let raw_dim = |name: &str| {
+        EntityKind::Unknown(Unknown {
+            dxf_type: name.into(),
+            tags: vec![RawTag { code: 2, value: "*D500".into() }, RawTag { code: 8, value: "0".into() }],
+        })
+    };
+    let raw = d.add(&Space::Model, Common::default(), raw_dim("LARGE_RADIAL_DIMENSION")).unwrap();
+    let refs = dangling_block_refs(&d);
+    assert_eq!(refs, [DanglingBlockRef { handle: raw.hex(), entity: "LARGE_RADIAL_DIMENSION".into(), block: "*D500".into() }]);
+    // The writer really leaves the block out while the record stays: the saved file names a
+    // block it doesn't define.
+    let text = write_dxf(&d);
+    assert!(text.contains("LARGE_RADIAL_DIMENSION"), "the record that names it is");
+    let saved = read_dxf(text.as_bytes()).unwrap();
+    assert!(saved.block("*D500").is_none(), "the dropped block is not in the file");
+    // A block the drawing itself doesn't define is a read finding, not a save defect.
+    let mut missing = d.clone();
+    missing.blocks.remove("*D500");
+    assert!(dangling_block_refs(&missing).is_empty());
+    // A modelled dimension claims the block: nothing dangles, the block is written.
+    let mut claimed = Drawing::new_metric();
+    let mut cb = Block::new("*D500");
+    let h = claimed.new_handle();
+    cb.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    claimed.blocks.insert("*D500".into(), std::sync::Arc::new(cb));
+    let mut dm = dim(DimKind::ArcLength, Vec3::new(0.0, 10.0, 0.0), Vec3::new(10.0, 10.0, 0.0));
+    dm.p15 = Vec3::new(5.0, 5.0, 0.0);
+    dm.block = Some("*D500".into());
+    claimed.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    assert!(dangling_block_refs(&claimed).is_empty());
+    assert!(write_dxf(&claimed).lines().any(|l| l.trim() == "*D500"), "a claimed block is written");
+}
+
+#[test]
+fn dangling_block_refs_skips_the_records_a_dropped_block_takes_with_it() {
+    let mut d = Drawing::new_metric();
+    // *D500 and *D600 are both dropped by the save. A raw record inside the dropped *D500 names
+    // *D600: neither record nor target is in the saved file, so nothing about them dangles in it.
+    let mut holder = Block::new("*D500");
+    holder.entities.push(Entity {
+        handle: d.new_handle(),
+        common: Common::default(),
+        kind: EntityKind::Unknown(Unknown {
+            dxf_type: "LARGE_RADIAL_DIMENSION".into(),
+            tags: vec![RawTag { code: 2, value: "*D600".into() }, RawTag { code: 8, value: "0".into() }],
+        }),
+    });
+    d.blocks.insert("*D500".into(), std::sync::Arc::new(holder));
+    let mut dropped = Block::new("*D600");
+    let h = d.new_handle();
+    dropped.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) }) });
+    d.blocks.insert("*D600".into(), std::sync::Arc::new(dropped));
+    assert!(dangling_block_refs(&d).is_empty());
 }
