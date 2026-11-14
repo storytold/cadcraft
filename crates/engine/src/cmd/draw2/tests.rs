@@ -710,6 +710,57 @@ fn divide_and_measure_command_line() {
     s.cancel();
 }
 
+#[test]
+fn divide_takes_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Enter the number of segments or [Block]:": +5, 05, the LISP real 5.0 and
+    // 32767 are taken; 5.0, 5., 1e1, 4.5, 1, 0, -3, 32768, x, Enter and a point from LISP are
+    // refused and asked again (measured).
+    let points = |s: &Session| kinds(s).iter().filter(|k| **k == "Point").count();
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.cmdline("divide 5,0").unwrap();
+    let asked = s.prompt_text();
+    assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter the number of segments or [Block]:"));
+    for bad in ["5.0", "5.", "1e1", "4.5", "1", "0", "-3", "32768", "x", "", "(list 1 2)"] {
+        let logged = s.log.len();
+        s.cmdline(bad).unwrap();
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, ["Requires an integer between 2 and 32767, or option keyword."], "{bad:?}");
+        assert_eq!(s.prompt_text(), asked, "{bad:?}");
+    }
+    assert_eq!(points(&s), 0);
+    s.cmdline("+5").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(points(&s), 4);
+    for (typed, n) in [("05", 4), ("(+ 2.5 2.5)", 4), ("2", 1), ("32767", 32766)] {
+        let mut s = Session::new();
+        s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        s.cmdline("divide 5,0").unwrap();
+        s.cmdline(typed).unwrap();
+        assert!(s.running.is_none(), "{typed}: {}", s.prompt_text());
+        assert_eq!(points(&s), n, "{typed}");
+    }
+    // MEASURE shares the prompt machine and is unchanged: Enter at its length still ends it.
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.cmdline("measure 5,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(points(&s), 0);
+    // After Block the prompt offers no keyword, and the message names none (AutoCAD 2024, measured).
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let tick = s.execute("circle", &json!({"center": [50, 50], "radius": 0.1})).unwrap();
+    s.execute("block", &json!({"name": "DOT", "base": [50, 50], "handles": [h(&tick)], "keep": "delete"})).unwrap();
+    s.cmdline("divide 5,0 b DOT y").unwrap();
+    assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter the number of segments:"));
+    s.cmdline("5.0").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 2 and 32767."));
+    s.cmdline("5").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(kinds(&s).iter().filter(|k| **k == "Block Reference").count(), 4);
+}
+
 // ---------------- REVCLOUD ----------------
 
 #[test]
