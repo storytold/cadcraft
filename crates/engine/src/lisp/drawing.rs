@@ -400,6 +400,7 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     match list_to_groups(list) {
         Ok((k, tags)) if k == "BLOCK" => return Ok(Flow::Value(begin_block(ctx, list, &tags))),
         Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
+        Ok((k, tags)) if k == "LAYER" => return Ok(Flow::Value(make_layer(ctx, list, &tags))),
         _ => {}
     }
     let (_, common, kind) = match entity_from_list(ctx, list) {
@@ -426,6 +427,69 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Err(_) => Ok(Flow::Value(Value::Nil)),
     }
+}
+
+/// `entmake` of a LAYER list: 2 name, 70 flags (1 frozen, 2 frozen in new viewports, 4 locked),
+/// 62 colour (negative: the layer is off), 420 true colour, 6 linetype, 290 plot flag, 370
+/// lineweight. The list when the layer is made; nil, and no layer, when the name is missing,
+/// invalid or already in use, the linetype isn't loaded, or the colour isn't 1 to 255.
+fn make_layer(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
+    use cadcraft_color::{Color, Rgb};
+    let group = |code: i32| tags.iter().find(|t| t.code == code);
+    let Some(name) = group(2).filter(|t| matches!(t.value, cadcraft_dxf::Value::Str(_))).map(|t| t.str().trim().to_string()) else {
+        return Value::Nil;
+    };
+    if !crate::cmd::layer::valid_name(&name) {
+        return Value::Nil;
+    }
+    let flags = group(70).map(Tag::i64).unwrap_or(0);
+    let mut layer = cadcraft_doc::Layer::new(&name);
+    layer.frozen = flags & 1 != 0;
+    layer.vp_freeze_new = flags & 2 != 0;
+    layer.locked = flags & 4 != 0;
+    if let Some(t) = group(62) {
+        let aci = t.i64();
+        // 0 (ByBlock) and 256 (ByLayer) aren't colours a layer can have.
+        let Ok(index) = u8::try_from(aci.unsigned_abs()) else { return Value::Nil };
+        if index == 0 {
+            return Value::Nil;
+        }
+        layer.color = Color::Index(index);
+        layer.on = aci > 0;
+    }
+    if let Some(t) = group(420) {
+        match u32::try_from(t.i64()) {
+            Ok(rgb) if rgb <= 0xFF_FFFF => layer.color = Color::True(Rgb::from_u32(rgb)),
+            _ => return Value::Nil,
+        }
+    }
+    if let Some(t) = group(290) {
+        layer.plot = t.i64() != 0;
+    }
+    if let Some(t) = group(370) {
+        // A layer's lineweight is Default (-3) or a standard weight, never ByLayer / ByBlock.
+        let Ok(w) = i16::try_from(t.i64()) else { return Value::Nil };
+        let standard = u16::try_from(w).is_ok_and(|v| cadcraft_doc::Lineweight::STANDARD.contains(&v));
+        if w != -3 && !standard {
+            return Value::Nil;
+        }
+        layer.lineweight = cadcraft_doc::Lineweight::from_dxf(w);
+    }
+    let Ok(d) = ctx.s.doc_mut() else { return Value::Nil };
+    if d.layer(&name).is_some() {
+        return Value::Nil;
+    }
+    if let Some(t) = group(6) {
+        let lt = t.str();
+        // A layer's linetype is one the drawing has; ByLayer and ByBlock aren't linetypes of a layer.
+        let Some(found) = d.linetype(lt.trim()).filter(|l| !l.name.eq_ignore_ascii_case("ByLayer") && !l.name.eq_ignore_ascii_case("ByBlock")) else {
+            return Value::Nil;
+        };
+        layer.linetype = found.name.clone();
+    }
+    d.layers.push(layer);
+    ctx.s.touch();
+    list.clone()
 }
 
 /// `entmake` of a BLOCK list (2 name, 70 flags, 10 base point, 4 description): begin a block
@@ -947,7 +1011,7 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .layers
             .iter()
             .map(|l| {
-                let flags = i32::from(l.frozen) | (i32::from(l.locked) << 2);
+                let flags = i32::from(l.frozen) | (i32::from(l.vp_freeze_new) << 1) | (i32::from(l.locked) << 2);
                 let color = color_index(l.color);
                 Value::list(vec![
                     pair(0, Value::str("LAYER")),

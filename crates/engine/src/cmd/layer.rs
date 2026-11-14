@@ -181,7 +181,7 @@ fn loaded_linetype(d: &cadcraft_doc::Drawing, cmd: &str, p: &Value) -> Result<Op
     Ok(Some(t.name.clone()))
 }
 
-fn valid_name(n: &str) -> bool {
+pub(crate) fn valid_name(n: &str) -> bool {
     !n.trim().is_empty() && n.len() <= 255 && !n.chars().any(|c| c.is_control() || "<>/\\\":;?*|,=`".contains(c))
 }
 
