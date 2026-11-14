@@ -35,11 +35,12 @@ fn auto_rotation(p1: Vec2, p2: Vec2, at: Vec2) -> f64 {
     if outside_x && !outside_y { std::f64::consts::FRAC_PI_2 } else { 0.0 }
 }
 
+/// Choose the linear dimension orientation from explicit rotation or the placement point.
 pub(super) fn linear_kind(p1: Vec2, p2: Vec2, at: Vec2, rotation: Option<f64>, aligned: bool) -> DimKind {
     if aligned { DimKind::Aligned } else { DimKind::Linear { rotation: rotation.unwrap_or_else(|| auto_rotation(p1, p2, at)) } }
 }
 
-/// Add a dimension. With DIMASSOC on, definition points that sit on object endpoints,
+/// Add a dimension. With DIMASSOC 2, definition points that sit on object endpoints,
 /// vertices or centres are attached to them (associative dimensions).
 pub(super) fn add_dim(s: &mut Session, k: EntityKind) -> Result<Handle> {
     let mut k = k;
@@ -67,8 +68,10 @@ pub(super) fn add_dim(s: &mut Session, k: EntityKind) -> Result<Handle> {
     Ok(h)
 }
 
+/// Only DIMASSOC mode 2 attaches newly created dimensions to their source geometry.
 pub(super) fn assoc_enabled(s: &Session) -> bool {
-    s.doc().map(|d| d.header.i64("DIMASSOC", 2) != 0).unwrap_or(false)
+    // Mode 1 keeps a dimension as one object without linking it to source geometry.
+    s.doc().map(|d| d.header.i64("DIMASSOC", 2) == 2).unwrap_or(false)
 }
 
 pub(super) fn with_assoc(k: EntityKind, assoc: Vec<DimAssoc>) -> EntityKind {
