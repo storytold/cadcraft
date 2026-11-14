@@ -289,6 +289,8 @@ fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
     // 7. STRETCH's "Remove objects" prompt also draws the pickbox-only cursor.
     app.session.cmdline("stretch r").unwrap();
     assert_eq!(paint(&app), (0, 1), "STRETCH Remove objects prompt");
+}
+
 /// A hot grip whose object was hidden since (HIDEOBJECTS, a layer turned off) is no longer
 /// painted, so clicking another hot grip must not stretch the hidden object along with it.
 #[test]
