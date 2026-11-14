@@ -239,6 +239,7 @@
 	Distance	Vzdálenost
 	Divide	Dělit
 	Do not plot (click: plot)	Netisknout (kliknutím: tisknout)
+	Don't Save	Neukládat
 	Donut	Prstenec
 	Double-click to edit the description	Dvojitým kliknutím upravíte popis
 	Down	Dolů
@@ -755,6 +756,7 @@
 	Save As...	Uložit jako...
 	Save Layer State	Uložit stav hladin
 	Save State	Uložit stav
+	Save changes to {name}?	Uložit změny v {name}?
 	Scale	Měřítko
 	Search for layer	Hledat hladinu
 	Search for parameter	Hledat parametr
@@ -1152,6 +1154,7 @@
 	Xline	Konstrukční přímka
 	Yellow	Žlutá
 	Yes	Ano
+	Your changes will be lost if you don't save them.	Pokud změny neuložíte, budou ztraceny.
 	Zoom	Změna přiblížení
 	Zoom All	Přiblížit vše
 	Zoom Dynamic	Dynamické přiblížení

@@ -240,6 +240,7 @@
 	Distance	거리
 	Divide	등분할
 	Do not plot (click: plot)	플롯 안 함(클릭: 플롯)
+	Don't Save	저장 안 함
 	Donut	도넛
 	Double-click to edit the description	두 번 클릭하여 설명 편집
 	Down	아래로
@@ -757,6 +758,7 @@
 	Save As...	다른 이름으로 저장...
 	Save Layer State	도면층 상태 저장
 	Save State	상태 저장
+	Save changes to {name}?	{name}의 변경 내용을 저장하시겠습니까?
 	Scale	축척
 	Search for layer	도면층 검색
 	Search for parameter	매개변수 검색
@@ -1151,6 +1153,7 @@
 	Xline	구성선
 	Yellow	노란색
 	Yes	예
+	Your changes will be lost if you don't save them.	저장하지 않으면 변경 내용이 사라집니다.
 	Zoom	줌
 	Zoom All	전체 줌
 	Zoom Dynamic	동적 줌

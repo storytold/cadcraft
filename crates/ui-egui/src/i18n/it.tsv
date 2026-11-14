@@ -249,6 +249,7 @@ menu	Modify	Edita
 	Distance	Distanza
 	Divide	Dividi
 	Do not plot (click: plot)	Non stampare (clic: stampa)
+	Don't Save	Non salvare
 	Donut	Anello
 	Double-click to edit the description	Doppio clic per modificare la descrizione
 	Down	Giù
@@ -768,6 +769,7 @@ menu	Modify	Edita
 	Save As...	Salva con nome...
 	Save Layer State	Salva stato layer
 	Save State	Salva stato
+	Save changes to {name}?	Salvare le modifiche a {name}?
 	Scale	Scala
 	Search for layer	Cerca layer
 	Search for parameter	Cerca parametro
@@ -1161,6 +1163,7 @@ menu	Modify	Edita
 	Xline	Xlinea
 	Yellow	Giallo
 	Yes	Sì
+	Your changes will be lost if you don't save them.	Se non si salvano, le modifiche andranno perse.
 	Zoom	Zoom
 	Zoom All	Zoom tutto
 	Zoom Dynamic	Zoom dinamico

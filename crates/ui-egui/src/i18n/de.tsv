@@ -188,6 +188,7 @@
 	Distance	Abstand
 	Divide	Teilen
 	Do not plot (click: plot)	Nicht plotten (Klick: plotten)
+	Don't Save	Nicht speichern
 	Donut	Ring
 	Double-click to edit the description	Doppelklicken, um die Beschreibung zu bearbeiten
 	Down	Nach unten
@@ -646,6 +647,7 @@
 	Save As...	Speichern unter...
 	Save Layer State	Layerstatus speichern
 	Save State	Status speichern
+	Save changes to {name}?	Änderungen an {name} speichern?
 	Scale	Skalieren
 	Search for layer	Layer suchen
 	Search for parameter	Parameter suchen
@@ -981,6 +983,7 @@
 	Xline	Konstruktionslinie
 	Yellow	Gelb
 	Yes	Ja
+	Your changes will be lost if you don't save them.	Ihre Änderungen gehen verloren, wenn Sie sie nicht speichern.
 	Zoom	Zoom
 	Zoom All	Zoom Alles
 	Zoom Extents	Zoom Grenzen

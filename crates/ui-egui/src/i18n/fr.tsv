@@ -187,6 +187,7 @@
 	Distance	Distance
 	Divide	Diviser
 	Do not plot (click: plot)	Ne pas tracer (cliquer pour tracer)
+	Don't Save	Ne pas enregistrer
 	Donut	Anneau
 	Double-click to edit the description	Double-cliquez pour modifier la description
 	Down	Bas
@@ -640,6 +641,7 @@
 	Save As...	Enregistrer sous...
 	Save Layer State	Enregistrer l'état des calques
 	Save State	Enregistrer l'état
+	Save changes to {name}?	Enregistrer les modifications de {name} ?
 	Scale	Échelle
 	Search for layer	Rechercher un calque
 	Search for parameter	Rechercher un paramètre
@@ -975,6 +977,7 @@
 	Xline	Ligne de construction
 	Yellow	Jaune
 	Yes	Oui
+	Your changes will be lost if you don't save them.	Vos modifications seront perdues si vous ne les enregistrez pas.
 	Zoom	Zoom
 	Zoom All	Zoom tout
 	Zoom Extents	Zoom étendu
