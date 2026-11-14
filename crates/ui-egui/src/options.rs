@@ -21,6 +21,7 @@
 //! | `rightClickDefault`, `rightClickEdit` | a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
 //! | `rightClickCommand` | a right-click while a command runs, with the time-sensitive right-click off: `"menu"` (default), `"enter"`, or `"menuWithOptions"` (the menu when the prompt has options, else Enter) |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
+//! | `showRibbon` | the Ribbon under the menu bar (default: off) |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
@@ -238,6 +239,7 @@ struct UiChanges {
     right_click_edit: Option<IdleClick>,
     right_click_command: Option<CommandClick>,
     interface_scale: Option<f32>,
+    show_ribbon: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -280,6 +282,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "showRibbon" => c.show_ribbon = Some(v.as_bool().ok_or("showRibbon must be true or false")?),
         "rightClickDuration" => {
             let (lo, hi) = (f64::from(*RIGHT_CLICK_DURATIONS.start()), f64::from(*RIGHT_CLICK_DURATIONS.end()));
             let n =
@@ -321,6 +324,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("interfaceLanguage".into(), json!(app.ui.interface_language.code()));
     m.insert("saveFormat".into(), json!(app.ui.save_format.as_str()));
     m.insert("systemCursor".into(), json!(app.ui.system_cursor));
+    m.insert("showRibbon".into(), json!(app.ui.show_ribbon));
     m.insert("historyLines".into(), json!(app.ui.history_lines));
     m.insert("modelBackground".into(), color_json(o.model_background));
     m.insert("paperBackground".into(), color_json(o.paper_background));
@@ -412,6 +416,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(b) = ui.show_ribbon {
+        app.ui.show_ribbon = b;
+    }
     apply_right_click(&mut app.options, &ui);
     Ok(report(app))
 }
@@ -441,6 +448,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.save_version = d.save_version;
     app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
+    app.ui.show_ribbon = d.show_ribbon;
     app.options = UiOptions::default();
 }
 
@@ -465,6 +473,7 @@ impl CadApp {
             "rightClickEdit": self.options.right_click_edit.as_str(),
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
+            "showRibbon": self.ui.show_ribbon,
         })
         .to_string()
     }
@@ -497,6 +506,7 @@ impl CadApp {
             "rightClickEdit",
             "rightClickCommand",
             "interfaceScale",
+            "showRibbon",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -524,6 +534,9 @@ impl CadApp {
         apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
+        }
+        if let Some(b) = c.show_ribbon {
+            self.ui.show_ribbon = b;
         }
     }
 }

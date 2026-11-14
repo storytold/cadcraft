@@ -3,6 +3,7 @@
 # Written from the meaning of CADCraft English strings; no proprietary translations copied.
 # UTF-8: context<TAB>English source<TAB>Czech translation.
 # @plural = one|few|other forms for integer counts.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Panel příkazů s kartami pod řádkem nabídek s panely karty Výchozí: Kreslit, Upravit, Poznámky, Hladiny, Blok a Vlastnosti.
 	Apply	Použít
 	Attach DWG...	Připojit DWG...
 	Bind	Svázat
@@ -20,6 +21,7 @@
 	References: {n}	Reference: {n}
 	Reload	Znovu načíst
 	Reload All	Znovu načíst vše
+	Ribbon	Pás karet
 	Saved Path	Uložená cesta
 	Unload	Uvolnit
 	Unloaded	Uvolněno

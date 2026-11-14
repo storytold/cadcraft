@@ -28,6 +28,7 @@
 	= Equals	= Igual a
 	> Greater than	> Maior que
 	A drawing opened from a file keeps that file's format.	Um desenho aberto de um arquivo mantém o formato desse arquivo.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Uma barra de comandos com guias sob a barra de menus, com os painéis Desenhar, Modificar, Anotação, Camadas, Bloco e Propriedades da guia Início.
 	A variable name starts with a letter and has only letters, digits and _	Um nome de variável começa com uma letra e contém apenas letras, dígitos e _
 	About	Sobre
 	About CADCraft	Sobre o CADCraft
@@ -699,6 +700,7 @@
 	Reset Panel Layout	Redefinir layout dos painéis
 	Reset keeps the interface language.	A redefinição mantém o idioma da interface.
 	Reset to Defaults	Redefinir para os padrões
+	Ribbon	Faixa de opções
 	SVG drawings (SVG, SVGZ)	Desenhos SVG (SVG, SVGZ)
 	Save new drawings as	Salvar novos desenhos como
 	Saved Path	Caminho salvo

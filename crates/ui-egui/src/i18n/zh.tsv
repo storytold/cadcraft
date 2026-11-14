@@ -27,6 +27,7 @@
 	<> Not Equal	<> 不等于
 	= Equals	= 等于
 	> Greater than	> 大于
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	菜单栏下方的选项卡式命令栏，包含“主页”选项卡的绘图、修改、注释、图层、块和特性面板。
 	About	关于
 	About CADCraft	关于 CADCraft
 	Absolute	绝对
@@ -39,6 +40,7 @@
 	All files	所有文件
 	Angle	角度
 	Angular	角度
+	Annotation	注释
 	Annotation Visibility	注释可见性
 	Annotation scale	注释比例
 	Apparent Intersection	外观交点
@@ -541,6 +543,7 @@
 	New STB	新 STB
 	New style	新样式
 	Reset Panel Layout	重置面板布局
+	Ribbon	功能区
 	Use for this layout	用于此布局
 	Display plot styles	显示打印样式
 	No plot style tables.	没有打印样式表。

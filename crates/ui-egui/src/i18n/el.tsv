@@ -33,6 +33,7 @@
 	> Greater than	> Μεγαλύτερο από
 	A built-in table: editing it keeps an edited copy in the drawing.	Ενσωματωμένος πίνακας: με την επεξεργασία του αποθηκεύεται τροποποιημένο αντίγραφο στο σχέδιο.
 	A drawing opened from a file keeps that file's format.	Ένα σχέδιο που ανοίγεται από αρχείο διατηρεί τη μορφή του αρχείου του.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Γραμμή εντολών με καρτέλες κάτω από τη γραμμή μενού, με τα πλαίσια Σχεδίαση, Τροποποίηση, Σχολιασμός, Επίπεδα, Μπλοκ και Ιδιότητες της καρτέλας Αρχική.
 	A variable name starts with a letter and has only letters, digits and _	Το όνομα μιας μεταβλητής αρχίζει με γράμμα και περιέχει μόνο γράμματα, ψηφία και _
 	About	Πληροφορίες
 	About CADCraft	Πληροφορίες για το CADCraft
@@ -870,6 +871,7 @@
 	Reverse zoom direction	Αντιστροφή κατεύθυνσης μεγέθυνσης
 	Revision Cloud	Σύννεφο αναθεώρησης (Revision Cloud)
 	Revolve	Περιστροφή για δημιουργία στερεού (Revolve)
+	Ribbon	Κορδέλα
 	Right	Δεξιά
 	Rotate	Περιστροφή (Rotate)
 	Rotation	Γωνία περιστροφής
