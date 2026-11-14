@@ -208,7 +208,9 @@ impl Interactive for DashLinetype {
             Ask::LoadFile => Prompt::new("Enter name of linetype file", Accept::TEXT).default("built-in library"),
             Ask::Reload => {
                 let name = self.reloads.last().map(|l| l.name.as_str()).unwrap_or("");
-                Prompt::new(format!("Linetype {name} is already loaded. Reload it?"), Accept::TEXT).kw(&["Yes", "No"]).default("Yes")
+                Prompt::with_values("Linetype {name} is already loaded. Reload it?", [("name", name.to_string())], Accept::TEXT)
+                    .kw(&["Yes", "No"])
+                    .default("Yes")
             }
             Ask::Set => {
                 let cur = s.doc().map(|d| d.header.str("CELTYPE", "ByLayer")).unwrap_or_default();

@@ -249,7 +249,9 @@ impl Interactive for AtteditM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.attribs.get(self.values.len()) {
-            Some((_, tag, cur)) if self.block.is_some() => Prompt::new(format!("Enter value for {tag}"), Accept::TEXT).default(cur.clone()),
+            Some((_, tag, cur)) if self.block.is_some() => {
+                Prompt::with_values("Enter value for {tag}", [("tag", tag.clone())], Accept::TEXT).default(cur.clone())
+            }
             _ => Prompt::new("Select block reference", Accept::SELECT),
         }
     }

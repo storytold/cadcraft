@@ -344,13 +344,13 @@ impl Interactive for VplayerM {
             Stage::Color => Prompt::new("Enter color name or number (1-255)", NAME).kw(&["Truecolor"]),
             Stage::TrueColor => Prompt::new("Red, Green, Blue", NAME),
             Stage::Layers(c) => {
-                let what = match c {
-                    Change::Freeze => "to freeze",
-                    Change::Thaw => "to thaw",
-                    Change::Reset => "to reset",
-                    Change::Color(_) => "to change color",
+                let msg = match c {
+                    Change::Freeze => "Enter layer name(s) to freeze",
+                    Change::Thaw => "Enter layer name(s) to thaw",
+                    Change::Reset => "Enter layer name(s) to reset",
+                    Change::Color(_) => "Enter layer name(s) to change color",
                 };
-                Prompt::new(format!("Enter layer name(s) {what}"), NAME)
+                Prompt::new(msg, NAME)
             }
             Stage::Apply(..) => {
                 if active(s).is_some() {

@@ -285,7 +285,7 @@ impl Interactive for BeditM {
     fn prompt(&self, s: &Session) -> Prompt {
         if self.pending.is_some() {
             let name = s.state().ok().and_then(|st| st.block_editor().map(str::to_string)).unwrap_or_default();
-            return Prompt::new(format!("Save changes to block \"{name}\"?"), KW).kw(&["Yes", "No"]).default("Y");
+            return Prompt::with_values("Save changes to block \"{name}\"?", [("name", name)], KW).kw(&["Yes", "No"]).default("Y");
         }
         Prompt::new("Enter block name or select a block reference [?]", Accept { point: true, number: false, text: true, select: true, enter: true })
     }
@@ -340,7 +340,7 @@ impl Interactive for BcloseM {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let name = s.state().ok().and_then(|st| st.block_editor().map(str::to_string)).unwrap_or_default();
-        Prompt::new(format!("Save changes to block \"{name}\"?"), KW).kw(&["Yes", "No"]).default("Y")
+        Prompt::with_values("Save changes to block \"{name}\"?", [("name", name)], KW).kw(&["Yes", "No"]).default("Y")
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let answer = match i {
@@ -375,7 +375,9 @@ impl Interactive for BsaveasM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match &self.name {
-            Some(n) => Prompt::new(format!("Block \"{n}\" already exists. Redefine it?"), KW).kw(&["Yes", "No"]).default("N"),
+            Some(n) => {
+                Prompt::with_values("Block \"{name}\" already exists. Redefine it?", [("name", n.clone())], KW).kw(&["Yes", "No"]).default("N")
+            }
             None => Prompt::new("Enter block name", Accept::TEXT),
         }
     }

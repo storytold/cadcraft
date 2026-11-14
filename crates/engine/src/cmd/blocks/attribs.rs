@@ -285,7 +285,7 @@ impl Interactive for AttsyncM {
             Stage::List => Prompt::new("Enter block(s) to list", Accept::TEXT).default("*"),
             Stage::Name => Prompt::new("Enter name of block to sync", Accept::TEXT).kw(&["?"]),
             Stage::Select => Prompt::new("Select a block", Accept::SELECT),
-            Stage::Confirm => Prompt::new(format!("ATTSYNC block {}?", self.picked), KW).kw(&["Yes", "No"]).default("Yes"),
+            Stage::Confirm => Prompt::with_values("ATTSYNC block {block}?", [("block", self.picked.clone())], KW).kw(&["Yes", "No"]).default("Yes"),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
