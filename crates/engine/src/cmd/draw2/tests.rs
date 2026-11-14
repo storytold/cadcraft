@@ -996,7 +996,8 @@ fn rectang_options_command_line() {
     s.cmdline("rectang 0,0 r p 0,0 1,1 d 2 2 5,5").unwrap();
     let pts = rect_pts(&s);
     assert!(pts.iter().any(|p| near(*p, 0.0, 8f64.sqrt())), "{pts:?}");
-    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 4,4").unwrap();
+    // RECTANG keeps the rotation of the rectangle before (45 degrees), as AutoCAD does: back to 0.
+    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 r 0 4,4").unwrap();
     match last(&s) {
         EntityKind::LwPolyline(p) => assert!(p.const_width == 0.5 && p.vertices.len() == 8),
         k => panic!("{k:?}"),

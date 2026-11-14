@@ -549,13 +549,7 @@ fn run_pasteorig(s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut hs = s.selection();
     hs.retain(|h| !super::curves::is_locked(s, *h));
-    let d = s.doc_mut()?;
-    let mut n = 0;
-    for h in hs {
-        if d.remove_entity(h).is_some() {
-            n += 1;
-        }
-    }
+    let n = super::modify::erase_kept(s, &hs)?;
     s.set_selection(Vec::new());
     Ok(json!({ "erased": n }))
 }

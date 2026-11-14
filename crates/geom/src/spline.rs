@@ -205,10 +205,69 @@ impl Spline {
         out
     }
 
+    /// Points along the curve for measuring it (AREA). Each knot span has a segment, so a narrow
+    /// span, which one grid over the whole domain can step over entirely, is measured too. The
+    /// count [`Spline::tessellate`] takes at `tol` is then shared out among the spans that bend
+    /// ([`Spline::span_bend`]), by the cube root of their bend: a span's chord error falls with
+    /// the square of its segments, so that share keeps the total error least. A straight span
+    /// keeps its one segment, which measures it exactly. The points number one per span plus
+    /// that count, past `MAX_SAMPLES` when the spans are that many, as [`Spline::length`]
+    /// integrates every span. An invalid spline gives its control points, as `tessellate` does.
+    pub fn tessellate_spans(&self, tol: f64) -> Vec<Vec2> {
+        if !self.is_valid() {
+            return self.control.clone();
+        }
+        let (lo, hi) = self.domain();
+        let n = self.sample_count(tol);
+        let spans: Vec<(f64, f64, f64)> = self.indexed_knot_spans().map(|(j, a, b)| (a, b, self.span_bend(j).cbrt())).collect();
+        if spans.is_empty() {
+            return self.samples(n).collect();
+        }
+        let total: f64 = spans.iter().map(|s| s.2).sum();
+        let shared = total.is_finite() && total > 0.0;
+        let mut out = Vec::with_capacity(spans.len() + n + 1);
+        let (mut acc, mut used) = (0.0, 0);
+        for (a, b, share) in spans {
+            // Rounded on the running total, so the extra samples add up to `n` however thinly the
+            // shares are spread; the fraction first, at most 1, so a huge bend can't overflow.
+            acc += share;
+            let upto = if shared { (n as f64 * (acc / total).min(1.0)) as usize } else { 0 };
+            let seg = 1 + upto.saturating_sub(used);
+            used = used.max(upto);
+            out.extend((0..seg).map(|i| self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi)));
+        }
+        out.push(self.eval_valid(hi, lo, hi));
+        out
+    }
+
+    /// How far knot span `j` (as [`Spline::indexed_knot_spans`] numbers it) can stray from its
+    /// chord, as an area: twice the largest triangle its first control point, the one farthest
+    /// from it and another make. That is between a quarter of the area of their convex hull and
+    /// twice it. With positive weights the span and its chord lie in that hull, so the area
+    /// between them is no more; it is zero when the points are collinear, and then the span is
+    /// straight. A weight that isn't positive lets the span leave the hull, so the square of the
+    /// points' polygon length counts instead.
+    fn span_bend(&self, j: usize) -> f64 {
+        let Some(pts) = self.control.get(j..=j + self.degree) else { return 0.0 };
+        let Some(&a) = pts.first() else { return 0.0 };
+        if !self.weights.get(j..=j + self.degree).is_none_or(|w| w.iter().all(|w| *w > 0.0)) {
+            let len: f64 = pts.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(p, q)| p.dist(*q))).sum();
+            return len * len;
+        }
+        let far = pts.iter().copied().max_by(|p, q| a.dist(*p).total_cmp(&a.dist(*q))).unwrap_or(a);
+        pts.iter().map(|p| (*p - a).cross(far - a).abs()).fold(0.0, f64::max)
+    }
+
     /// The non-empty knot spans the curve is defined over, in parameter order.
     fn knot_spans(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.indexed_knot_spans().map(|(_, a, b)| (a, b))
+    }
+
+    /// The non-empty knot spans with the index of the first of the `degree + 1` control points
+    /// that shape each.
+    fn indexed_knot_spans(&self) -> impl Iterator<Item = (usize, f64, f64)> + '_ {
         let knots = self.knots.get(self.degree..=self.control.len()).unwrap_or(&[]);
-        knots.windows(2).filter_map(|w| w.first().zip(w.get(1)).map(|(a, b)| (*a, *b)).filter(|(a, b)| b > a))
+        knots.windows(2).enumerate().filter_map(|(j, w)| w.first().zip(w.get(1)).map(|(a, b)| (j, *a, *b)).filter(|(_, a, b)| b > a))
     }
 }
 
@@ -288,21 +347,64 @@ fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left:
     }
 }
 
-/// Gaussian elimination with partial pivoting.
+/// Gaussian elimination with partial pivoting. The interpolation and least-squares matrices are
+/// banded, so every loop is limited to the band (lower width `kl`, upper width `ku`, measured from
+/// the matrix; partial pivoting widens the upper band to at most `kl + ku`). The skipped operations
+/// only combine entries that are exactly `+0.0` (they stay `+0.0` through the full sweep), so the
+/// result is bit for bit that of the full sweep (for finite input that does not overflow). A matrix with full bandwidth (the cyclic matrix of
+/// a closed fit) costs what it did before.
+///
+/// A skipped `0 * x` is not zero when `x` is NaN or infinite, so a matrix or right-hand side with
+/// NaN, infinity or magnitudes above `1e100` (which could overflow) takes the full sweep, and so
+/// does a back-substitution row whose banded sum is zero (skipped zero terms can flip its sign).
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    #[cfg(test)]
+    if tests::DENSE_ORACLE.get() {
+        return tests::solve_dense(a, b);
+    }
     let n = b.len();
+    // Per row: how far its non-zero entries reach left and right of the diagonal, and whether one
+    // is NaN, infinite or large enough to overflow.
+    let measure = |r: usize, row: &[f64]| {
+        // Bit test, not `!= 0.0`: a stored `-0.0` is not the `+0.0` the skipped entries rely on.
+        let row = row.get(..n).unwrap_or(row);
+        let Some(first) = row.iter().position(|v| v.to_bits() != 0) else { return (0, 0, false) };
+        let last = row.iter().rposition(|v| v.to_bits() != 0).unwrap_or(first);
+        let wild = row.get(first..=last).is_some_and(|band| band.iter().any(|v| v.is_nan() || v.abs() > 1e100));
+        (r.saturating_sub(first), last.saturating_sub(r), wild)
+    };
+    let join = |x: (usize, usize, bool), m: (usize, usize, bool)| (x.0.max(m.0), x.1.max(m.1), x.2 | m.2);
+    // A last row that reaches column 0 (the cyclic matrix of a closed fit) makes every range of the
+    // sweep full-width whatever the other rows hold, so they need no measuring.
+    let mut m = (0usize, 0usize, false);
+    for r in [0, n.saturating_sub(1)] {
+        if let Some(row) = a.get(r) {
+            m = join(m, measure(r, row));
+        }
+    }
+    // (kl = n - 1 widens every range to the full matrix, so the unmeasured rows cannot matter.)
+    if m.0 + 1 < n {
+        m = a.iter().enumerate().take(n).fold(m, |x, (r, row)| join(x, measure(r, row)));
+    }
+    let (mut kl, mut ku, wild) = m;
+    if wild || b.iter().any(|v| v.is_nan() || v.abs() > 1e100) {
+        (kl, ku) = (n, n);
+    }
+    let kw = ku + kl;
     for c in 0..n {
-        let piv = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        let end = (c + kl).min(n - 1) + 1;
+        let piv = (c..end).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
         if a[piv][c].abs() < 1e-14 {
             return None;
         }
         a.swap(c, piv);
         b.swap(c, piv);
-        for r in c + 1..n {
+        let kend = (c + kw).min(n - 1) + 1;
+        for r in c + 1..end {
             let f = a[r][c] / a[c][c];
             if f != 0.0 {
-                for k in c..n {
+                for k in c..kend {
                     a[r][k] -= f * a[c][k];
                 }
                 b[r] -= f * b[c];
@@ -311,7 +413,12 @@ pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     }
     let mut x = vec![0.0; n];
     for r in (0..n).rev() {
-        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        let end = (r + kw).min(n - 1) + 1;
+        let mut s: f64 = (r + 1..end).map(|k| a[r][k] * x[k]).sum();
+        if s == 0.0 && end < n {
+            // The skipped terms are signed zeros; added to a zero they can flip its sign.
+            s = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        }
         x[r] = (b[r] - s) / a[r][r];
     }
     Some(x)
