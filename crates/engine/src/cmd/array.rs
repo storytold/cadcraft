@@ -313,16 +313,18 @@ fn fmt(v: f64) -> String {
     format!("{v:.4}")
 }
 
-/// A count typed at a prompt (Enter keeps `cur`); `None` for inputs the prompt ignores.
+/// A count typed at a prompt (Enter keeps `cur`); `None` for inputs the prompt ignores. A whole
+/// number as typed: AutoCAD 2024 takes +3 and 03 at its array counts and refuses 5.0, 1e1, 8/2
+/// and 3' (measured at ARRAYRECT's rows and columns, ARRAYPOLAR's items and rows, and -ARRAY).
 fn count(i: &Input, cur: u64, max: u64) -> Result<Option<u64>> {
     match i {
         Input::Enter => Ok(Some(cur)),
         Input::Text(t) => t
             .trim()
-            .parse::<f64>()
+            .parse::<u64>()
             .ok()
-            .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= max as f64)
-            .map(|v| Some(v as u64))
+            .filter(|v| (1..=max).contains(v))
+            .map(Some)
             .ok_or_else(|| other(format!("Requires an integer between 1 and {max} (MAXARRAY limits the size of the array)."))),
         _ => Ok(None),
     }
