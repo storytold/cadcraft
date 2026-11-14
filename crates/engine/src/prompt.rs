@@ -297,6 +297,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// Whether this command collects points on the model work plane (`z = 0`) rather than
+    /// picking objects or selection areas in the 2D view plane.
+    fn collects_work_points(&self) -> bool {
+        true
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
