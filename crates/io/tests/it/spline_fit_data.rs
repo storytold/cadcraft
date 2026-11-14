@@ -25,8 +25,12 @@ fn fit_options_roundtrip_through_dxf() {
         assert!(r.fit_opts.start_tangent.is_some_and(|t| t.near(Vec2::Y, 1e-9)));
         assert!(r.fit_opts.end_tangent.is_some_and(|t| t.near(Vec2::new(1.0, -1.0).normalized(), 1e-9)));
         assert_eq!(r.control.len(), sp.control.len());
+        // Over the whole curve: chord-length knots run to the fit points' length, not to 1.
+        let (lo, hi) = sp.domain();
+        let (rlo, rhi) = r.domain();
+        assert!((rlo - lo).abs() < 1e-9 && (rhi - hi).abs() < 1e-9, "{:?} vs {:?}", r.domain(), (lo, hi));
         for i in 0..=20 {
-            let t = i as f64 / 20.0;
+            let t = lo + (hi - lo) * f64::from(i) / 20.0;
             assert!(r.eval(t).near(sp.eval(t), 1e-9));
         }
         // Closed (periodic) splines keep their parametrisation too.
@@ -60,5 +64,7 @@ fn fit_data_is_written_with_the_documented_groups() {
     let dxf = "0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nSPLINE\r\n8\r\n0\r\n100\r\nAcDbSpline\r\n70\r\n8\r\n71\r\n3\r\n74\r\n3\r\n12\r\n0.0\r\n22\r\n1.0\r\n32\r\n0.0\r\n11\r\n0.0\r\n21\r\n0.0\r\n31\r\n0.0\r\n11\r\n4.0\r\n21\r\n0.0\r\n31\r\n0.0\r\n11\r\n8.0\r\n21\r\n2.0\r\n31\r\n0.0\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
     let back = cadcraft_io::read(dxf.as_bytes(), "b.dxf").unwrap();
     let Some(EntityKind::Spline(r)) = back.model.iter().map(|e| e.kind.clone()).next() else { panic!("no spline") };
-    assert!(r.is_valid() && r.fit_opts.start_tangent == Some(Vec2::Y) && r.control.len() == 4);
+    // Three fit points and a start tangent: five control points, the other end without a second
+    // derivative, as AutoCAD 2024 builds it.
+    assert!(r.is_valid() && r.fit_opts.start_tangent == Some(Vec2::Y) && r.control.len() == 5);
 }
