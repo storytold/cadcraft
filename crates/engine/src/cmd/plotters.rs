@@ -206,11 +206,25 @@ fn device_paper<'a>(dev: &'a PlotterConfig, name: &str) -> Option<&'a DevicePape
     dev.paper(name).or_else(|| dev.paper(cadcraft_render::paper_size(name)?.name))
 }
 
+/// A paper's stored portrait margins on the landscape sheet: the sheet's axes swap, so left and
+/// right become bottom and top (#1266).
+fn landscape_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
+    [t, l, b, r]
+}
+
+/// The inverse: a landscape page's margins on the stored portrait sheet, for a page that keeps
+/// its paper when its orientation turns (#1266).
+pub(crate) fn portrait_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
+    [b, r, t, l]
+}
+
 fn set_paper(page: &mut PageSetup, p: &DevicePaper) {
     page.paper = p.name.clone();
     page.width_mm = p.width;
     page.height_mm = p.height;
-    page.margins_mm = p.margins;
+    // The paper keeps its margins for its stored portrait sheet; the page measures them against
+    // the sheet in the orientation it names, so they turn with it (#1266).
+    page.margins_mm = if page.landscape { landscape_margins(p.margins) } else { p.margins };
 }
 
 fn unknown_device(cmd: &str, name: &str) -> EngineError {
@@ -345,9 +359,16 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
         o.remove("paper");
         o.insert("width".into(), json!(pp.width));
         o.insert("height".into(), json!(pp.height));
-        o.insert("margins".into(), json!(pp.margins));
+        // The paper's margins belong to its stored portrait sheet; the plot draws on the sheet in
+        // the orientation it names, so they turn to it (#1266).
+        let landscape = p.get("landscape").and_then(Value::as_bool).unwrap_or_else(|| match &layout {
+            Some(pg) => pg.landscape,
+            None => dev.orientation == Orientation::Landscape,
+        });
+        let [l, b, r, t] = pp.margins;
+        o.insert("margins".into(), json!(if landscape { [t, l, b, r] } else { [l, b, r, t] }));
         if p.get("landscape").is_none() && layout.is_none() {
-            o.insert("landscape".into(), json!(dev.orientation == Orientation::Landscape));
+            o.insert("landscape".into(), json!(landscape));
         }
     }
     Ok(out)
@@ -518,13 +539,22 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
             _ => return Err(bad(cmd, "`paper.width` and `paper.height` (mm) are both required")),
         };
         let margins = match pv.get("margins") {
-            None => existing.as_ref().map(|e| e.margins).unwrap_or([0.0; 4]),
+            None => match existing.as_ref() {
+                // Stored margins belong to the stored portrait sheet; naming the same sheet
+                // landscape turns them back, so re-saving a paper does not refuse its own
+                // margins.
+                // Naming the sheet landscape turns the stored portrait margins to it, whatever
+                // its new sides: sanitization turns them back for the stored (portrait) sheet.
+                Some(e) if w > h => {
+                    let [l, b, r, t] = e.margins;
+                    [t, l, b, r]
+                }
+                _ => existing.as_ref().map(|e| e.margins).unwrap_or([0.0; 4]),
+            },
             Some(m) => {
                 let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
                 match a[..] {
-                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w.min(h) && b + t < w.max(h) => {
-                        [l, b, r, t]
-                    }
+                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w && b + t < h => [l, b, r, t],
                     _ => return Err(bad(cmd, "`paper.margins` must be [left, bottom, right, top] in mm, leaving a printable area")),
                 }
             }

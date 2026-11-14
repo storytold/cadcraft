@@ -118,6 +118,73 @@ fn page_setup_takes_a_device_and_its_papers() {
 }
 
 #[test]
+/// A paper stored portrait keeps its printable area when the page names it landscape: the margins
+/// turn back to the axes the user gave, and PLOT hands them on that way (#1266).
+fn a_landscape_page_gets_the_papers_margins_back() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "pdf"})).unwrap();
+    let paper = json!({"name": "Banner", "width": 400, "height": 200, "margins": [150, 0, 150, 0]});
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": paper})).unwrap();
+    // Stored portrait, 200 x 400, the side margins on the long axis.
+    let stored = |s: &mut Session| {
+        let r = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+        r["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").cloned().unwrap()
+    };
+    let p = stored(&mut s);
+    assert_eq!((p["width"].as_f64(), p["height"].as_f64()), (Some(200.0), Some(400.0)));
+    assert_eq!(p["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "Banner Printer", "paper": "Banner", "landscape": true})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.width_mm, page.height_mm, page.margins_mm), (200.0, 400.0, [150.0, 0.0, 150.0, 0.0]));
+    // The 400 x 200 sheet's printable area is 100 x 200 mm, not the whole sheet.
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    let mm = |v: f64| v * sheet.unit_mm;
+    assert_eq!((mm(sheet.size.x), mm(sheet.size.y)), (400.0, 200.0));
+    assert_eq!((mm(sheet.printable.min.x), mm(sheet.printable.min.y)), (150.0, 0.0));
+    assert_eq!((mm(sheet.printable.max.x), mm(sheet.printable.max.y)), (250.0, 200.0));
+
+    // PLOT hands the margins on in the sheet's orientation.
+    let o = plotted(s.execute("plot", &json!({"layout": "Layout1", "paper": "Banner"})).unwrap());
+    assert_eq!((o["width"].as_f64(), o["height"].as_f64()), (Some(200.0), Some(400.0)));
+    assert_eq!(o["margins"], json!([150.0, 0.0, 150.0, 0.0]));
+
+    // Naming the paper landscape again at a new size keeps the margins' axes as well.
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 500, "height": 200}}))
+        .unwrap();
+    let p = stored(&mut s);
+    assert_eq!((p["width"].as_f64(), p["height"].as_f64()), (Some(200.0), Some(500.0)));
+    assert_eq!(p["margins"], json!([0.0, 150.0, 0.0, 150.0]), "the margins keep the short sides");
+}
+
+#[test]
+/// A page set up on a landscape device paper keeps its printable area when a later PAGESETUP only
+/// changes the orientation: no paper is copied, so the retained margins turn to the new sheet
+/// instead of being saved against the wrong axes (#1266).
+fn an_orientation_only_pagesetup_turns_the_retained_margins() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "pdf"})).unwrap();
+    let paper = json!({"name": "Banner", "width": 400, "height": 200, "margins": [150, 0, 150, 0]});
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": paper})).unwrap();
+    // The landscape page carries the margins on its 400 mm sides: 150 mm left and right.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "Banner Printer", "paper": "Banner", "landscape": true})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.width_mm, page.height_mm, page.margins_mm), (200.0, 400.0, [150.0, 0.0, 150.0, 0.0]));
+
+    // A second command changes only the orientation. The paper is not copied and no margins are
+    // given, so the retained margins turn to the 200 x 400 portrait sheet: 150 mm top and bottom,
+    // leaving the same 100 x 200 mm printable area rather than falling back to the whole sheet.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": false})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.paper.as_str(), page.margins_mm), ("Banner", [0.0, 150.0, 0.0, 150.0]));
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    let mm = |v: f64| v * sheet.unit_mm;
+    assert_eq!((mm(sheet.size.x), mm(sheet.size.y)), (200.0, 400.0));
+    assert_eq!((mm(sheet.printable.min.x), mm(sheet.printable.min.y)), (0.0, 150.0));
+    assert_eq!((mm(sheet.printable.max.x), mm(sheet.printable.max.y)), (200.0, 250.0));
+}
+
+#[test]
 /// PLOT and EXPORTPDF hand the hook the device's output, resolution, paper and margins, and a
 /// layout plots with its own page setup; unknown devices and papers are refused.
 fn plot_uses_the_device() {
@@ -204,6 +271,30 @@ fn plotwindow_keeps_the_picked_window_for_the_plot_dialog() {
     let r = s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 4]})).unwrap();
     assert_eq!(r["window"], json!([[0.0, 0.0], [3.0, 4.0]]));
     assert!(s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 0]})).is_err());
+}
+
+#[test]
+fn paper_margins_are_checked_against_their_own_axis() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "png"})).unwrap();
+    let paper = |margins: Value| json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200, "margins": margins}});
+    // 250 mm of bottom + top margin leaves no printable height on a 200 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([0, 250, 0, 0]))).is_err());
+    // 300 mm of left + right margin still leaves 100 mm of printable width on a 400 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([150, 0, 150, 0]))).is_ok());
+    // The paper is stored portrait and the margins turn with it: the 100 x 200 printable area
+    // of the requested sheet stays 200 x 100 on the stored 200 x 400 one.
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!((banner["width"].as_f64().unwrap(), banner["height"].as_f64().unwrap()), (200.0, 400.0));
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+    // Setting the same sheet again without margins keeps them: the stored margins belong to the
+    // portrait sheet and turn back before the per-axis check.
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200}}))
+        .unwrap();
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
 }
 
 /// Snap `raw` at the current prompt the way the canvas does, so a test sees the pick ORTHO and

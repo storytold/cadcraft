@@ -670,8 +670,20 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }));
     };
     let mut page = s.doc()?.layout(&name).map(|l| l.page.clone()).unwrap_or_default();
+    let turned = p.get("landscape").and_then(Value::as_bool).filter(|l| *l != page.landscape);
+    // The orientation first: a paper taken from a device turns its margins to the sheet the page
+    // names when `page_device` copies them.
+    if let Some(l) = turned {
+        page.landscape = l;
+    }
     // A plotter's own papers (with their printable areas) come first.
     let device_paper = super::plotters::page_device(cmd, p, &mut page)?;
+    // A page that keeps its paper keeps its margins, and the margins are measured against the
+    // sheet's axes: turning the orientation turns them too (#1266). Explicit margins are already
+    // on the new sheet's axes.
+    if turned.is_some() && !device_paper && p.get("margins").is_none() {
+        page.margins_mm = super::plotters::portrait_margins(page.margins_mm);
+    }
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
         let n = paper.as_str().ok_or_else(|| bad(cmd, "`paper` must be a paper name"))?;
         let ps = cadcraft_render::paper_size(n).ok_or_else(|| {
@@ -691,9 +703,6 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) if p.get("width").is_none() && p.get("height").is_none() => {}
         _ => return Err(bad(cmd, "`width` and `height` (mm, 0-5080) are both required for a custom size")),
-    }
-    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
-        page.landscape = l;
     }
     if let Some(m) = p.get("margins") {
         let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
