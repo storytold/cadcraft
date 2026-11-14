@@ -179,6 +179,8 @@ fn services() -> Services {
 fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
     match pick {
         Pick::Open => vec![
+            (i18n::t("Drawings & LISP (DWG, DXF, LSP)"), vec!["dwg", "dxf", "dwt", "lsp"]),
+            (i18n::t("AutoLISP Routine (LSP)"), vec!["lsp"]),
             (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
             (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
             (i18n::t("All files"), vec!["*"]),
