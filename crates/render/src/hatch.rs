@@ -31,7 +31,18 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
     let stretch = max_scale(&ctx.xf);
     let px = if stretch > 1e-12 { b.opts.min_dash / 2.0 / stretch } else { 0.0 };
     let dense = b.opts.fill && reads_solid(ctx.d, h, px);
-    if h.solid || h.pattern.eq_ignore_ascii_case("SOLID") || h.gradient.is_some() || dense {
+    let filled = h.solid || h.pattern.eq_ignore_ascii_case("SOLID") || h.gradient.is_some();
+    // FILLMODE 0 turns fills off: a solid or gradient hatch shows as its boundary, as a SOLID and
+    // a wide polyline do, and a pattern loses its background colour (#3116).
+    let fill_mode = ctx.d.header.i64("FILLMODE", 1) != 0;
+    if filled && !fill_mode {
+        // The loops are tessellated closed (last point = first), so each outline is a ring.
+        for l in &loops {
+            b.polyline(ctx, rgb, lw, l);
+        }
+        return;
+    }
+    if filled || dense {
         if b.opts.fill {
             let tris = fill::triangulate_evenodd(&loops);
             match &h.gradient {
@@ -43,6 +54,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
     }
     if let Some(bg) = h.background
         && b.opts.fill
+        && fill_mode
     {
         b.tris(ctx, ink(bg, layer_color, ctx.block_color), &fill::triangulate_evenodd(&loops));
     }

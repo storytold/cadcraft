@@ -100,6 +100,66 @@ fn hatch_pattern_and_solid() {
 }
 
 #[test]
+fn fillmode_0_draws_a_solid_or_gradient_hatch_as_its_boundary() {
+    // FILLMODE 0 turns fills off, for hatches as for SOLIDs and wide polylines (#3116).
+    let sq = vec![
+        PolyVertex::new(Vec2::new(0.0, 0.0)),
+        PolyVertex::new(Vec2::new(4.0, 0.0)),
+        PolyVertex::new(Vec2::new(4.0, 4.0)),
+        PolyVertex::new(Vec2::new(0.0, 4.0)),
+    ];
+    let hole = vec![
+        PolyVertex::new(Vec2::new(1.0, 1.0)),
+        PolyVertex::new(Vec2::new(2.0, 1.0)),
+        PolyVertex::new(Vec2::new(2.0, 2.0)),
+        PolyVertex::new(Vec2::new(1.0, 2.0)),
+    ];
+    let solid = Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops: vec![
+            HatchLoop { vertices: sq.clone(), outer: true, sources: Vec::new() },
+            HatchLoop { vertices: hole, outer: false, sources: Vec::new() },
+        ],
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: None,
+        origin: Vec2::ZERO,
+        background: None,
+        pattern_lines: Vec::new(),
+    };
+    let kinds = |h: &Hatch, fillmode: i64| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_i64("FILLMODE", fillmode);
+        d.add(&Space::Model, Common::default(), EntityKind::Hatch(h.clone())).unwrap();
+        build(&d, &Space::Model, &Options::default()).prims.iter().map(|p| p.kind).collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(&solid, 1), vec![Kind::Tris]);
+    // Off: no fill, one closed outline per loop, the island's too.
+    let off = kinds(&solid, 0);
+    assert!(!off.contains(&Kind::Tris), "{off:?}");
+    assert_eq!(off.len(), 2, "{off:?}");
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("FILLMODE", 0);
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(solid.clone())).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    for p in &l.prims {
+        let ring = &l.verts[p.start as usize..(p.start + p.len) as usize];
+        assert!(ring.len() == 5 && ring.first() == ring.last(), "{ring:?}");
+    }
+    // A pattern hatch keeps its lines, and loses only its background colour.
+    let pattern = Hatch { pattern: "ANSI31".into(), solid: false, background: Some(Color::Index(5)), ..solid.clone() };
+    let on = kinds(&pattern, 1);
+    let off = kinds(&pattern, 0);
+    assert_eq!(on.iter().filter(|k| **k == Kind::Tris).count(), 1, "{on:?}");
+    assert!(!off.contains(&Kind::Tris), "{off:?}");
+    assert_eq!(off.len(), on.len() - 1);
+}
+
+#[test]
 fn raster_draws_pixels() {
     let d = sample();
     let l = build(&d, &Space::Model, &Options::default());
