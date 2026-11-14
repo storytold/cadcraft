@@ -13,6 +13,8 @@ fn menu_items_open_their_dialogs() {
         ("pagesetup", "pagesetup"),
         ("linetype", "linetype"),
         ("style", "textstyle"),
+        ("dimstyle", "dimstyle"),
+        ("dimstyle.dimension", "dimstyle"),
         ("tablestyle", "tablestyle"),
         ("mleaderstyle", "mleaderstyle"),
         ("ddptype", "ptype"),
@@ -37,6 +39,13 @@ fn menu_items_open_their_dialogs() {
         assert!(app.cmdline(typed).is_none(), "bare {typed} is not an error");
         assert_eq!(app.ui.dialog.as_deref(), Some("textstyle"), "{typed}");
     }
+    // DIMSTYLE used to be a command that needed `name` without a dialog, so typing D errored
+    // with "`name` is required" (#3149).
+    for typed in ["dimstyle", "D", "DST", "DDIM"] {
+        app.ui.dialog = None;
+        assert!(app.cmdline(typed).is_none(), "bare {typed} is not an error");
+        assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"), "{typed}");
+    }
 }
 
 #[test]
@@ -46,10 +55,12 @@ fn json_calls_never_open_the_dialogs() {
     app.run("linetype", json!({ "load": "DASHED", "current": "DASHED" })).unwrap();
     app.run("tablestyle", json!({ "name": "Schedule", "current": false })).unwrap();
     app.run("style", json!({ "name": "SCHEM", "font": "Arial" })).unwrap();
+    app.run("dimstyle", json!({ "name": "Arch", "textHeight": 0.25, "current": false })).unwrap();
     assert!(app.session.doc().unwrap().text_styles.iter().any(|s| s.name == "SCHEM"));
     assert!(app.ui.dialog.is_none());
     let d = app.session.doc().unwrap();
     assert_eq!((d.header.i64("PDMODE", 0), d.header.f64("PDSIZE", 0.0)), (34, -5.0));
     assert_eq!(d.header.str("CELTYPE", ""), "DASHED");
     assert!(d.table_styles.iter().any(|s| s.name == "Schedule"));
+    assert!(d.dim_styles.iter().any(|s| s.name == "Arch" && s.text_height == 0.25));
 }
