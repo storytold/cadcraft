@@ -538,8 +538,11 @@ fn the_walk_finds_escapes_without_roots() {
         "tool:render",
         "lisp:code",
     ];
+    // What a command touched is kept with its kind (`wrote`, `created`, `removed`, `read`): a writer
+    // must show a write, not just a read, or a writer that only reads would still pass.
+    let kinds = |id: &str, kinds: &[&str]| w.escapes.get(id).is_some_and(|e| e.iter().any(|l| kinds.iter().any(|k| l.starts_with(k))));
     for id in writers {
-        assert!(found.contains(id), "the walk no longer finds `{id}` writing outside: {found:?}");
+        assert!(kinds(id, &["wrote ", "created ", "removed "]), "the walk no longer finds `{id}` writing outside: {found:?}");
     }
     if w.sees_reads {
         for id in [
@@ -564,7 +567,7 @@ fn the_walk_finds_escapes_without_roots() {
             "setvar:QNEWTEMPLATE",
             "setvar:SAVEFILEPATH",
         ] {
-            assert!(found.contains(id), "the walk no longer finds `{id}` reading outside: {found:?}");
+            assert!(kinds(id, &["read "]), "the walk no longer finds `{id}` reading outside: {found:?}");
         }
     }
 }
