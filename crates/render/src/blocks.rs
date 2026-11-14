@@ -12,16 +12,17 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     };
     let lw = match e.common.lineweight {
         Lineweight::ByBlock => ctx.block_lw,
-        Lineweight::ByLayer => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.lineweight).unwrap_or(Lineweight::Default),
+        Lineweight::ByLayer => ctx.layer(layer.as_deref().unwrap_or("0")).map(|l| l.lineweight).unwrap_or(Lineweight::Default),
         x => x,
     };
     let lt = match e.common.linetype.to_ascii_lowercase().as_str() {
         "byblock" => ctx.block_ltype.clone(),
-        "bylayer" => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.linetype.clone()).unwrap_or_else(|| "Continuous".into()),
+        "bylayer" => ctx.layer(layer.as_deref().unwrap_or("0")).map(|l| l.linetype.clone()).unwrap_or_else(|| "Continuous".into()),
         _ => e.common.linetype.clone(),
     };
     Ctx {
         d: ctx.d,
+        layers: ctx.layers,
         xf: ctx.xf.then_before(m),
         block_color: color,
         block_layer: layer,
