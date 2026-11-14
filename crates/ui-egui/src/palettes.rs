@@ -789,6 +789,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);
     let sel = app.session.selection();
+    let uid = app.session.state().ok().map(|st| st.uid);
     let Ok(d) = app.session.doc() else { return };
     ui.add_space(4.0);
     let h = &d.header;
@@ -986,6 +987,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids = &*memo.ids();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut att_set: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1255,6 +1257,29 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                let atts = cadcraft_engine::attributes(d, e.handle);
+                if !atts.is_empty() {
+                    group(ui, "Attributes");
+                    for (i, a) in atts.iter().enumerate() {
+                        prop_row(ui, &a.tag, |ui| {
+                            // The buffer is the drawing's too: handles repeat across drawings, and a
+                            // pending value must not follow a tab switch.
+                            // A value with line breaks is edited in the Edit Attributes dialog;
+                            // a single-line field would join its lines.
+                            if !a.editable || a.value.contains('\n') {
+                                let r = value_box(ui, &a.value.replace('\n', " "), false, false);
+                                r.on_hover_text(if a.editable {
+                                    crate::tl!("Multiline: edit it with Edit Attributes")
+                                } else {
+                                    crate::tl!("Constant")
+                                });
+                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", uid, e.handle, i)), a.value.clone()) {
+                                // By place: another attribute may share the tag.
+                                att_set = Some(json!({ "handle": e.handle.hex(), "at": { i.to_string(): v } }));
+                            }
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -1496,6 +1521,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+    if let Some(p) = att_set {
+        let _ = app.run("attedit", p);
     }
 }
 
