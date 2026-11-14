@@ -1090,3 +1090,23 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+/// #3002: routines that update menus or the status line called `menucmd` and `grtext`, which were
+/// undefined, so the routine stopped with "no function definition". Headless they show nothing but
+/// return as AutoLISP does: `grtext` its text, `menucmd` nil (or the text of a plain `M=` string).
+#[test]
+fn menucmd_and_grtext_are_defined() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (type menucmd) (type grtext))"), "(SUBR SUBR)");
+    assert_eq!(ok(&mut s, "(grtext -1 \"Working...\")"), "\"Working...\"");
+    assert_eq!(ok(&mut s, "(grtext -2 \"x\" 1)"), "\"x\"");
+    assert_eq!(ok(&mut s, "(grtext)"), "nil");
+    assert_eq!(eval(&mut s, "(grtext -1)"), Err("too few arguments".into()));
+    assert_eq!(eval(&mut s, "(grtext \"a\" \"b\")"), Err("bad argument type: fixnump: \"a\"".into()));
+    assert_eq!(eval(&mut s, "(grtext -1 2)"), Err("bad argument type: stringp: 2".into()));
+    assert_eq!(ok(&mut s, "(menucmd \"P1=*\")"), "nil");
+    assert_eq!(ok(&mut s, "(menucmd \"M=plain\")"), "\"plain\"");
+    assert_eq!(ok(&mut s, "(menucmd \"m=\")"), "\"\"");
+    assert_eq!(eval(&mut s, "(menucmd 1)"), Err("bad argument type: stringp: 1".into()));
+    assert_eq!(eval(&mut s, "(menucmd)"), Err("too few arguments".into()));
+}
