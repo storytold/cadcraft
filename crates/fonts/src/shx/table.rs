@@ -20,6 +20,7 @@ use super::{ShxError, ShxFont};
 /// app's own font folder). Called with the normalised file name (`romans.shx`); returns the
 /// file's bytes. Called without the font table's lock held.
 pub trait FontProvider: Send + Sync {
+    /// The bytes of the font file `file_name`, or `None` when this provider has none by that name.
     fn load(&self, file_name: &str) -> Option<Vec<u8>>;
 }
 
@@ -338,6 +339,7 @@ fn read_file(file: &Path) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// On the web there are no folders to search.
 #[cfg(target_arch = "wasm32")]
 fn read_from(_dirs: &[(PathBuf, Option<OpenGuard>)], _name: &str) -> Option<Vec<u8>> {
     None

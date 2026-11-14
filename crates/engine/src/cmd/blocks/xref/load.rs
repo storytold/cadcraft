@@ -625,6 +625,8 @@ mod tests {
         assert_eq!(find("", Some(&host), false), Err(Missing::NotFound));
     }
 
+    /// A name corrected to another case is checked against the roots before it is looked inside, and a
+    /// match they refuse leaves the other candidates to be tried.
     #[cfg(unix)]
     #[test]
     fn a_name_corrected_to_a_link_out_of_the_roots_is_not_looked_inside() {
