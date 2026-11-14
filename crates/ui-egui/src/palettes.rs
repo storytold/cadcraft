@@ -1566,6 +1566,53 @@ mod tests {
         texts
     }
 
+    /// The Door fixture's `code value` lines as DXF pairs.
+    fn dxf(src: &str) -> String {
+        src.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| {
+                let (code, value) = l.split_once(' ').unwrap_or((l, ""));
+                format!("{code}\n{value}\n")
+            })
+            .collect()
+    }
+
+    /// An app whose drawing holds two references to the dynamic Door block, each changed so it
+    /// points at its own anonymous `*U…` block, as a real dynamic reference does.
+    fn app_with_two_door_references() -> CadApp {
+        let src = include_str!("../../io/tests/data/dynblock_door.txt").replace("\r\n", "\n");
+        let d = cadcraft_io::read_dxf(dxf(&src).as_bytes()).expect("the Door fixture reads");
+        let mut s = Session::empty();
+        s.open_drawing(d, "door", None);
+        let handles: Vec<Value> = [[100.0, 0.0], [100.0, 0.0]]
+            .map(|at| s.execute("insert", &json!({ "name": "Door", "at": at })).expect("Door inserts")["handle"].clone())
+            .to_vec();
+        for h in &handles {
+            s.execute("blocks.reference.set", &json!({ "handle": h, "name": "Visibility1", "value": "Closed" })).expect("Visibility1 sets");
+        }
+        {
+            let block = |h: &Value| match &s.doc().unwrap().entity(cadcraft_doc::Handle::parse_hex(h.as_str().unwrap()).unwrap()).unwrap().kind {
+                EntityKind::Insert(i) => i.block.clone(),
+                _ => panic!("the handle is not an insert"),
+            };
+            assert!(handles.iter().all(|h| block(h).starts_with("*U")), "the changed references point at anonymous blocks");
+        }
+        s.execute("select", &json!({ "handles": handles })).expect("the references select");
+        CadApp::new(s, Services::default())
+    }
+
+    /// Several references to one dynamic block show its name, not the anonymous `*U…` blocks
+    /// they point at; that fix had no regression test.
+    #[test]
+    fn several_dynamic_block_references_show_the_block_name() {
+        let mut app = app_with_two_door_references();
+        let texts = painted_texts(&mut app, properties_section);
+        assert!(texts.iter().any(|t| t == "Door"), "the dynamic block name shows; painted: {texts:?}");
+        assert!(!texts.iter().any(|t| t == VARIES), "both references show the same name; painted: {texts:?}");
+        assert!(!texts.iter().any(|t| t.starts_with("*U")), "no anonymous block name shows; painted: {texts:?}");
+    }
+
     /// Several dimensions selected: the Properties palette shows all of a dimension's properties,
     /// `*VARIES*` for those that differ, and an edit applies to every dimension.
     #[test]
