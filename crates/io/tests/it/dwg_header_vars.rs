@@ -138,6 +138,7 @@ fn user_variables_round_trip_through_dxf() {
 
 /// The DWG half of [`user_variables_round_trip_through_dxf`]: write DWG, read it back.
 #[test]
+#[ignore = "Needs storytold/craft-libs#1285: the DWG reader leaves USERI/USERR out of its DXF header"]
 fn user_variables_round_trip_through_dwg() {
     let dwg = cadcraft_io::write(&user_vars(), "x.dwg").unwrap();
     let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();

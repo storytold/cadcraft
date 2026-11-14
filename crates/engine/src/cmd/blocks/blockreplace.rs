@@ -15,7 +15,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 pub(super) fn blockreplace_spec() -> CommandSpec {
     CommandSpec::new("blockreplace", "Replace Block...", run_blockreplace)
-        .menu(&["Tools", "Express Tools", "Replace Block..."])
+        .menu(&["Tools", "Additional Tools", "Replace Block..."])
         .alias(&["-blockreplace"])
         .params("{block (the block whose references are replaced), with (the replacement block), purge?: bool (default false: remove the replaced block's definition when nothing references it any more)} → {block, with, replaced, purged}")
         .interactive(|_| Ok(Box::new(BlockreplaceM::default())))
