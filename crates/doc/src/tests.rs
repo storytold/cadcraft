@@ -744,6 +744,49 @@ fn rotating_a_gradient_hatch_turns_its_gradient() {
     assert!((h.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "the pattern angle too: {:?}", h.angle);
 }
 
+#[test]
+fn mirroring_a_gradient_hatch_reflects_its_angles() {
+    // A mirror is not a rotation: a 45-degree direction reflected about the line it runs along
+    // stays 45 degrees, and about the X axis it becomes -45 degrees.
+    let hatch = |angle: f64| {
+        EntityKind::Hatch(Hatch {
+            pattern: "SOLID".into(),
+            solid: true,
+            loops: vec![],
+            scale: 1.0,
+            angle,
+            associative: false,
+            style: 0,
+            elevation: 0.0,
+            gradient: Some(Gradient {
+                name: "LINEAR".into(),
+                color1: crate::color::Color::Index(5),
+                color2: crate::color::Color::Index(7),
+                angle,
+                centered: true,
+            }),
+            origin: Vec2::ZERO,
+            background: None,
+            pattern_lines: vec![],
+        })
+    };
+    let quarter = std::f64::consts::FRAC_PI_4;
+    let mut k = hatch(quarter);
+    k.transform(&Mat3::mirror(Vec2::ZERO, Vec2::new(1.0, 1.0)));
+    let EntityKind::Hatch(h) = k else { panic!("a hatch") };
+    let g = h.gradient.expect("the gradient");
+    assert!((h.angle - quarter).abs() < 1e-9, "the pattern angle: {:?}", h.angle);
+    assert!((g.angle - quarter).abs() < 1e-9, "the gradient angle: {:?}", g.angle);
+
+    let mut k = hatch(quarter);
+    k.transform(&Mat3::mirror(Vec2::ZERO, Vec2::X));
+    let EntityKind::Hatch(h) = k else { panic!("a hatch") };
+    let g = h.gradient.expect("the gradient");
+    let down = cadcraft_geom::norm_angle(-quarter);
+    assert!((h.angle - down).abs() < 1e-9, "the pattern angle: {:?}", h.angle);
+    assert!((g.angle - down).abs() < 1e-9, "the gradient angle: {:?}", g.angle);
+}
+
 /// Several spellings of one DIM field apply once, the last in the map's order, and none is rejected.
 #[test]
 fn dim_style_spellings_of_one_field_apply_once() {
