@@ -205,21 +205,7 @@ pub fn standard_patterns() -> Vec<HatchPattern> {
             description: "Staircase effect",
             lines: vec![pl(0.0, (0.0, 0.0), (0.125, 0.125), &[0.125, -0.125]), pl(90.0, (0.125, 0.0), (0.125, 0.125), &[0.125, -0.125])],
         },
-        // Drawn at the scale of the pattern CAD programs ship under this name (about 16x
-        // coarser than first drawn here: AR-CONC hatches came out hundreds of times too dense).
-        scaled_pattern(
-            HatchPattern {
-                name: "AR-CONC",
-                description: "Random dot and stone pattern",
-                lines: vec![
-                    pl(50.0, (0.0, 0.0), (0.4, 0.25), &[0.15, -0.6]),
-                    pl(355.0, (0.0, 0.0), (0.27, 0.3), &[0.12, -0.5]),
-                    pl(100.0, (0.12, 0.05), (0.35, 0.33), &[0.1, -0.55]),
-                    pl(0.0, (0.07, 0.02), (0.21, 0.17), &[0.0, -0.4]),
-                ],
-            },
-            16.0,
-        ),
+        HatchPattern { name: "AR-CONC", description: "Random dot and stone pattern", lines: ar_conc() },
         // Drawn at the scale of the pattern CAD programs ship under this name (about 16x
         // coarser than first drawn here: AR-CONC hatches came out hundreds of times too dense).
         scaled_pattern(
@@ -235,6 +221,36 @@ pub fn standard_patterns() -> Vec<HatchPattern> {
             16.0,
         ),
     ]
+}
+
+/// AR-CONC, concrete: stones (small triangles, sides about 0.5 to 0.75) about two units apart
+/// and dots about one unit apart, so an object a few units across shows the pattern at scale 1.
+/// (It was a few long strokes several units apart, which left such objects nearly blank, #3140.)
+fn ar_conc() -> Vec<PatternLine> {
+    let mut lines = stone((2.3, 0.0), (0.8, 2.0), 0.3, (0.0, 0.0)).to_vec();
+    lines.extend(stone((2.1, -0.9), (1.2, 1.7), 0.22, (1.3, 1.1)));
+    lines.extend([
+        pl(0.0, (0.45, 0.3), (0.61, 1.13), &[0.0, -1.73]),
+        pl(63.0, (1.6, 0.35), (0.47, 1.29), &[0.0, -2.11]),
+        pl(141.0, (0.2, 1.5), (0.9, 1.51), &[0.0, -1.97]),
+    ]);
+    lines
+}
+
+/// The three line families of a small triangle repeated on the lattice spanned by `a` and `b`:
+/// its corners are `at`, `at + t·a` and `at + t·b`, so its sides run along `a`, `b − a` and `b`.
+/// Each family's lines pass through every repeat of its side, which is the family's dash.
+fn stone(a: (f64, f64), b: (f64, f64), t: f64, at: (f64, f64)) -> [PatternLine; 3] {
+    // The side along `d` from `o`; `e` is the lattice step to the next line of the family.
+    let side = |d: (f64, f64), e: (f64, f64), o: (f64, f64)| {
+        let len = d.0.hypot(d.1);
+        let u = (d.0 / len, d.1 / len);
+        let (along, across) = (e.0 * u.0 + e.1 * u.1, u.0 * e.1 - u.1 * e.0);
+        // The next line on the positive side: hatches step from line to line by a positive spacing.
+        let delta = if across < 0.0 { (-along, -across) } else { (along, across) };
+        pl(d.1.atan2(d.0).to_degrees(), o, delta, &[t * len, -(1.0 - t) * len])
+    };
+    [side(a, b, at), side((b.0 - a.0, b.1 - a.1), a, (at.0 + t * a.0, at.1 + t * a.1)), side(b, a, at)]
 }
 
 pub fn pattern(name: &str) -> Option<HatchPattern> {
