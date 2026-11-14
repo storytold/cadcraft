@@ -12,7 +12,7 @@ use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::file::base64_decode;
-use super::{CommandSpec, bad, f64_or, point_param, str_param};
+use super::{CommandSpec, bad, point_value, str_param};
 use crate::{Result, Session};
 
 /// Most image files loaded per drawing.
@@ -247,6 +247,9 @@ pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(ID, "`path` is too long"));
     }
     let place = placement(p)?;
+    if p.get("name").is_some_and(|n| !(n.is_null() || n.is_string())) {
+        return Err(bad(ID, "`name` must be text"));
+    }
     let raster = pixels(s, p, &path)?;
     let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
     // One pixel in drawing units, along the image's bottom edge (`u`) and its left edge (`v`).
@@ -284,18 +287,30 @@ struct Placement {
 
 /// `at`, `rotation` and the width (`width`, else `scale`: an image is one unit wide at scale 1).
 fn placement(p: &Value) -> Result<Placement> {
-    let at = point_param(p, "at").unwrap_or(Vec2::ZERO);
+    let at = match p.get("at") {
+        None | Some(Value::Null) => Vec2::ZERO,
+        Some(v) => point_value(v).ok_or_else(|| bad(ID, "`at` must be a point"))?,
+    };
     if !(at.x.is_finite() && at.y.is_finite()) {
         return Err(bad(ID, "`at` must be a point"));
     }
     let width = match p.get("width") {
         Some(v) => v.as_f64().filter(|w| w.is_finite()).ok_or_else(|| bad(ID, "`width` must be a number"))?,
-        None => f64_or(p, "scale", 1.0),
+        None => number(p, "scale")?.unwrap_or(1.0),
     };
     if !(width.is_finite() && width > 0.0) {
         return Err(bad(ID, "`scale` and `width` must be greater than zero"));
     }
-    Ok(Placement { at, rotation: f64_or(p, "rotation", 0.0).to_radians(), width })
+    let rotation = number(p, "rotation")?.unwrap_or(0.0);
+    Ok(Placement { at, rotation: rotation.to_radians(), width })
+}
+
+/// The number `key` of `p`: `None` when it is omitted or null, an error when it is not a number.
+fn number(p: &Value, key: &str) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| bad(ID, format!("`{key}` must be a number"))),
+    }
 }
 
 /// The pixels of the image at `path`: decoded from `data` when the caller hands the file over,
