@@ -215,18 +215,49 @@ mod native {
         }
         tips.into_iter()
             .map(|(tx, ty)| {
-                let mut best = (0.0, 0.0, f64::MAX);
+                // 方向 = 沿尺寸线方向（从尺寸线端点指向尖端）。箭头尖端在尺寸线的延长线上，
+                // 故找「尖端到端点的方向与线段方向共线」的最近端点；尺寸界线垂直于尺寸线，
+                // 其端点不共线，会被排除（否则斜标注/有尺寸界线时方向算错）。
+                let mut best: Option<(f64, f64, f64)> = None;
                 for &(x1, y1, x2, y2) in &segs {
-                    let d1 = (x1 - tx).powi(2) + (y1 - ty).powi(2);
-                    let d2 = (x2 - tx).powi(2) + (y2 - ty).powi(2);
-                    if d1 < best.2 {
-                        best = (x1, y1, d1);
+                    let (sx, sy) = (x2 - x1, y2 - y1);
+                    let slen = (sx * sx + sy * sy).sqrt();
+                    if slen < 1e-6 {
+                        continue;
                     }
-                    if d2 < best.2 {
-                        best = (x2, y2, d2);
+                    let (ux, uy) = (sx / slen, sy / slen);
+                    for (ex, ey) in [(x1, y1), (x2, y2)] {
+                        let (dx, dy) = (tx - ex, ty - ey);
+                        let dlen = (dx * dx + dy * dy).sqrt();
+                        if dlen < 1e-6 {
+                            continue;
+                        }
+                        // 尖端到端点方向与线段方向共线（|cos|≈1）才候选。
+                        let cos = (dx * ux + dy * uy).abs() / dlen;
+                        if cos > 0.99 && best.is_none_or(|b| dlen < b.2) {
+                            best = Some((ex, ey, dlen));
+                        }
                     }
                 }
-                let (dx, dy) = (tx - best.0, ty - best.1);
+                let (ex, ey) = match best {
+                    Some((ex, ey, _)) => (ex, ey),
+                    // 无共线线段（如孤立尖端）：退化为最近端点。
+                    None => {
+                        let mut b = (0.0, 0.0, f64::MAX);
+                        for &(x1, y1, x2, y2) in &segs {
+                            let d1 = (x1 - tx).powi(2) + (y1 - ty).powi(2);
+                            let d2 = (x2 - tx).powi(2) + (y2 - ty).powi(2);
+                            if d1 < b.2 {
+                                b = (x1, y1, d1);
+                            }
+                            if d2 < b.2 {
+                                b = (x2, y2, d2);
+                            }
+                        }
+                        (b.0, b.1)
+                    }
+                };
+                let (dx, dy) = (tx - ex, ty - ey);
                 let len = (dx * dx + dy * dy).sqrt();
                 if len > 1e-9 { (tx, ty, dx / len, dy / len) } else { (tx, ty, 1.0, 0.0) }
             })
@@ -1014,5 +1045,36 @@ mod tests {
         };
         let tips = extract_arrow_tips(&g.encode().unwrap());
         assert_eq!(tips.len(), 1, "属性子类型应被忽略");
+    }
+
+    /// 斜尺寸标注：箭头方向沿尺寸线方向，不受垂直尺寸界线的干扰。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn arrow_tips_follow_oblique_dimension_line() {
+        use acadrust::entities::{ProxyGraphicRecord, ProxyGraphics};
+        let seg = |x1: f64, y1: f64, x2: f64, y2: f64| {
+            let mut d = Vec::with_capacity(52);
+            d.extend_from_slice(&2u32.to_le_bytes());
+            for v in [x1, y1, 0.0_f64, x2, y2, 0.0] {
+                d.extend_from_slice(&v.to_le_bytes());
+            }
+            d
+        };
+        // 斜尺寸线 (100,100)->(400,300)，方向 (0.832,0.555)；尖端在端点外 300mm 处 (649.6,466.5)。
+        // 垂直尺寸界线 (400,300)->(400,600) 会干扰「最近端点」，共线判定应排除它。
+        let (dx, dy) = (0.8320503_f64, 0.5547002_f64);
+        let tip = (400.0 + dx * 300.0, 300.0 + dy * 300.0);
+        let g = ProxyGraphics {
+            records: vec![
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(100.0, 100.0, 400.0, 300.0) },
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(400.0, 300.0, 400.0, 600.0) }, // 尺寸界线（垂直）
+                ProxyGraphicRecord::Unknown { record_type: 6, data: seg(tip.0, tip.1, tip.0, tip.1) }, // 零长度点 = 尖端
+            ],
+        };
+        let tips = extract_arrow_tips(&g.encode().unwrap());
+        assert_eq!(tips.len(), 1);
+        // 方向应沿尺寸线（指向外），不是指向尺寸界线端点（那会是 (0,1)）。
+        assert!((tips[0].2 - dx).abs() < 1e-3, "方向 x 应为 {dx}，实际 {}", tips[0].2);
+        assert!((tips[0].3 - dy).abs() < 1e-3, "方向 y 应为 {dy}，实际 {}", tips[0].3);
     }
 }

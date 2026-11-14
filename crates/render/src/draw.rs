@@ -254,7 +254,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
             // 尺寸标注箭头（类型 6 零长度点 = 箭头尖端）：实心三角形，尖端朝外。
             for (tx, ty, dx, dy) in &t.arrow_tips {
-                let size = 250.0; // 箭头长度 mm
+                let size = 300.0; // 箭头长度 mm（尖端在尺寸线端点外 300mm）
                 let (px, py) = (-dy, dx); // 垂直方向
                 let (bx, by) = (tx - dx * size, ty - dy * size);
                 let pts = vec![
