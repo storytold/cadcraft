@@ -96,7 +96,7 @@ fn drawn(d: &Drawing, h: Handle) -> Vec<Entity> {
         .collect();
     // An attribute draws with its definition's properties, except those set on it.
     let by_block = Common { layer: "0".into(), color: Color::ByBlock, linetype: "ByBlock".into(), lineweight: Lineweight::ByBlock, ..r.clone() };
-    out.extend(ins.attribs.iter().filter(|a| !a.invisible).map(|a| {
+    out.extend(ins.attribs.iter().filter(|a| a.shown()).map(|a| {
         let def = b.entities.iter().find_map(|e| match &e.kind {
             EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag) => Some(&e.common),
             _ => None,

@@ -23,8 +23,8 @@ fn attrib(tag: &str, modes: AttribModes) -> Attrib {
     Attrib { tag: tag.into(), text, invisible: false, constant: false, prompt: String::new(), props: Default::default(), multiline: None, modes }
 }
 
-const ALL: AttribModes = AttribModes { verify: true, preset: true, lock_position: true };
-const LOCKED: AttribModes = AttribModes { verify: false, preset: false, lock_position: true };
+const ALL: AttribModes = AttribModes { verify: true, preset: true, lock_position: true, hidden: false };
+const LOCKED: AttribModes = AttribModes { verify: false, preset: false, lock_position: true, hidden: false };
 
 /// Block TAG with definitions A (every mode) and B (none), and a reference whose A is locked.
 fn drawing() -> Drawing {
