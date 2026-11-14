@@ -377,3 +377,25 @@ fn json_arrays_follow_arrayassociativity() {
     let r = s.execute("arraypolar", &json!({"handles": [h], "center": [10, 0], "count": 4, "associative": true})).unwrap();
     assert_eq!(r["associative"], true);
 }
+
+#[test]
+fn rejected_arrayedit_request_leaves_the_drawing_unchanged() {
+    let mut s = Session::new();
+    let a = rect_array(&mut s);
+    let c = circle(&mut s, 0.0, 5.0);
+    s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [c], "items": [[1, 0, 0]]}})).unwrap();
+    let state = |s: &Session| {
+        let d = s.doc().unwrap();
+        let e = d.model.iter().find(|e| json!(e.handle.hex()) == a).unwrap();
+        let blocks: Vec<String> = d.blocks.keys().cloned().collect();
+        (d.array_params(e).unwrap().replaced.len(), blocks, d.model.len())
+    };
+    let before = state(&s);
+    assert_eq!(before.0, 1);
+    // Reset runs first in the request, but the invalid level count must undo it.
+    assert!(s.execute("arrayedit", &json!({"handle": a, "reset": true, "levels": 0})).is_err());
+    assert_eq!(state(&s), before);
+    // Invalid replace.items must not leave the replacement block behind.
+    assert!(s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [c], "items": 5}})).is_err());
+    assert_eq!(state(&s), before);
+}
