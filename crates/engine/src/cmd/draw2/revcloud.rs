@@ -2,6 +2,7 @@ use super::{
     Accept, Chain, Circle, Ellipse, EntityKind, Handle, Input, Interactive, Line, MAX_GEN, PolyVertex, Polyline, Prompt, Result, Session, Step,
     Value, Vec2, added, bad, bool_or, curves, lwpoly, number, other, point_param, points_param, rect_vertices, shoelace, str_param,
 };
+use cadcraft_doc::RawTag;
 
 // =====================================================================================
 // REVCLOUD
@@ -94,6 +95,38 @@ fn cloud_entity(vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64) -> EntityK
     lwpoly(vs, true)
 }
 
+/// The application name of the xdata that marks a closed polyline as a revision cloud.
+const REVCLOUD_APP: &str = "RevcloudProps";
+
+/// Adds a revision cloud with its `RevcloudProps` xdata (how AutoCAD and other readers tell a
+/// revision cloud from a polyline). Made from object `src`, the cloud takes the object's place
+/// and properties.
+fn add_cloud(s: &mut Session, vs: Vec<PolyVertex>, calligraphy: bool, arc_len: f64, src: Option<Handle>) -> Result<Handle> {
+    let h = s.add_entity(cloud_entity(vs, calligraphy, arc_len))?;
+    let mut common = match src {
+        Some(src) => curves::entity(s, src)?.common,
+        None => curves::entity(s, h)?.common,
+    };
+    let mut keep = true;
+    common.xdata.retain(|t| {
+        if t.code == 1001 {
+            keep = !t.value.trim().eq_ignore_ascii_case(REVCLOUD_APP);
+        }
+        keep
+    });
+    common.xdata.extend([
+        RawTag { code: 1001, value: REVCLOUD_APP.into() },
+        RawTag { code: 1070, value: "0".into() },
+        RawTag { code: 1040, value: arc_len.to_string() },
+    ]);
+    let d = s.doc_mut()?;
+    d.modify_entity(h, |e| e.common = common)?;
+    if let Some(src) = src {
+        d.remove_entity(src);
+    }
+    Ok(h)
+}
+
 pub(super) fn run_revcloud(s: &mut Session, p: &Value) -> Result<Value> {
     let arc_len = p.get("arcLength").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0).unwrap_or_else(|| default_arc_len(s));
     let reverse = bool_or(p, "reverse", false);
@@ -113,13 +146,7 @@ pub(super) fn run_revcloud(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("revcloud", "too many points"));
     }
     let vs = cloud_vertices(&pts, arc_len, per_edge, reverse).ok_or_else(|| bad("revcloud", "the boundary needs an area"))?;
-    let h = s.add_entity(cloud_entity(vs, calligraphy, arc_len))?;
-    if let Some(src) = src {
-        let common = curves::entity(s, src)?.common;
-        let d = s.doc_mut()?;
-        d.modify_entity(h, |e| e.common = common)?;
-        d.remove_entity(src);
-    }
+    let h = add_cloud(s, vs, calligraphy, arc_len, src)?;
     added(h)
 }
 
@@ -151,7 +178,7 @@ impl RevcloudM {
         let b = self.boundary(None);
         match cloud_vertices(&b, self.arc_len, self.kind != CloudKind::Free, false) {
             Some(vs) => {
-                s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;
+                add_cloud(s, vs, self.calligraphy, self.arc_len, None)?;
                 s.echo("Revision cloud finished.");
                 Ok(Step::Done)
             }
@@ -218,11 +245,7 @@ impl Interactive for RevcloudM {
             let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
             let pts = object_outline(s, h)?;
             let vs = cloud_vertices(&pts, self.arc_len, false, false).ok_or_else(|| other("The object has no area."))?;
-            let nh = s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;
-            let common = curves::entity(s, h)?.common;
-            let d = s.doc_mut()?;
-            d.modify_entity(nh, |e| e.common = common)?;
-            d.remove_entity(h);
+            add_cloud(s, vs, self.calligraphy, self.arc_len, Some(h))?;
             s.echo("Revision cloud finished.");
             return Ok(Step::Done);
         }
