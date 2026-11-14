@@ -8,9 +8,11 @@ use serde_json::json;
 use crate::CadApp;
 use crate::theme::Tokens;
 
+/// Render active overlays and the currently open modal or floating dialog window.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
+    crate::lisp_ide::plugin_menu_overlay(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
@@ -24,6 +26,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "hatch" => crate::hatchdlg::dialog(app, ctx, &mut open),
         "aliasedit" => crate::aliasdlg::dialog(app, ctx, &mut open),
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
+        "vbaide" => crate::lisp_ide::dialog(app, ctx, &mut open),
+        "xdedit" => crate::xdedit::dialog(app, ctx, &mut open),
         crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),

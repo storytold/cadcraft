@@ -133,11 +133,25 @@ pub(super) struct LinearM {
     selecting: bool,
     /// Asking for the dimension line angle (Rotated).
     rotating: bool,
+    /// Classic `DIM` subcommand mode (`(command "dim" "hor" p1 p2 at "" "exit")`).
+    classic_mode: bool,
+    pending_at: Option<Vec2>,
+    waiting_exit: bool,
 }
 
 impl LinearM {
     pub(super) fn new(aligned: bool) -> Self {
-        LinearM { aligned, pts: Vec::new(), rotation: None, text: DimText::default(), selecting: false, rotating: false }
+        LinearM {
+            aligned,
+            pts: Vec::new(),
+            rotation: None,
+            text: DimText::default(),
+            selecting: false,
+            rotating: false,
+            classic_mode: false,
+            pending_at: None,
+            waiting_exit: false,
+        }
     }
 }
 
@@ -146,6 +160,12 @@ impl Interactive for LinearM {
         if self.aligned { "DIMALIGNED" } else { "DIMLINEAR" }
     }
     fn prompt(&self, _s: &Session) -> Prompt {
+        if self.waiting_exit {
+            return Prompt::new("Dim:", Accept::TEXT).kw(&["Exit", "Horizontal", "Vertical", "Aligned"]);
+        }
+        if self.pending_at.is_some() {
+            return Prompt::new("Enter dimension text", Accept::TEXT);
+        }
         if self.rotating {
             return Prompt::new("Specify angle of dimension line", Accept::NUMBER);
         }
@@ -156,7 +176,9 @@ impl Interactive for LinearM {
             return Prompt::new("Select object to dimension", Accept::POINT);
         }
         match self.pts.len() {
-            0 => Prompt::new("Specify first extension line origin", Accept::POINT).default("select object"),
+            0 => Prompt::new("Specify first extension line origin", Accept::POINT)
+                .kw(&["Horizontal", "Vertical", "Aligned", "Exit"])
+                .default("select object"),
             1 => Prompt::new("Specify second extension line origin", Accept::POINT).base_opt(self.pts.first().copied()),
             // Once the orientation is forced, only the text options remain.
             _ if self.aligned || self.rotation.is_some() => {
@@ -166,6 +188,41 @@ impl Interactive for LinearM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.waiting_exit {
+            match i {
+                Input::Enter | Input::Cancel => return Ok(Step::Done),
+                Input::Keyword(k) | Input::Text(k) => {
+                    let kl = k.trim().to_ascii_lowercase();
+                    if kl.starts_with("e") {
+                        return Ok(Step::Done);
+                    }
+                    self.waiting_exit = false;
+                    self.pts.clear();
+                    if kl.starts_with("h") {
+                        self.rotation = Some(0.0);
+                    } else if kl.starts_with("v") {
+                        self.rotation = Some(std::f64::consts::FRAC_PI_2);
+                    } else if kl.starts_with("a") {
+                        self.aligned = true;
+                    }
+                    return Ok(Step::Continue);
+                }
+                _ => return Ok(Step::Done),
+            }
+        }
+        if let Some(at) = self.pending_at.take() {
+            if let Input::Text(t) = &i
+                && !t.trim().is_empty()
+            {
+                self.text.text = t.clone();
+            }
+            if let (Some(&a), Some(&b)) = (self.pts.first(), self.pts.get(1)) {
+                let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, ""));
+                add_dim(s, k)?;
+            }
+            self.waiting_exit = true;
+            return Ok(Step::Continue);
+        }
         if self.rotating {
             if let Input::Text(t) = &i {
                 let Some(r) = s.angle_settings().direction(t) else {
@@ -206,6 +263,21 @@ impl Interactive for LinearM {
             return Ok(Step::Continue);
         }
         match (self.pts.len(), i) {
+            (0, Input::Keyword(k)) | (0, Input::Text(k)) => {
+                let kl = k.trim().to_ascii_lowercase();
+                if kl.starts_with("e") {
+                    return Ok(Step::Done);
+                }
+                self.classic_mode = true;
+                if kl.starts_with("h") {
+                    self.rotation = Some(0.0);
+                } else if kl.starts_with("v") {
+                    self.rotation = Some(std::f64::consts::FRAC_PI_2);
+                } else if kl.starts_with("a") {
+                    self.aligned = true;
+                }
+                Ok(Step::Continue)
+            }
             (0, Input::Enter) => {
                 self.selecting = true;
                 Ok(Step::Continue)
@@ -215,6 +287,10 @@ impl Interactive for LinearM {
                 Ok(Step::Continue)
             }
             (_, Input::Point(at)) => {
+                if self.classic_mode {
+                    self.pending_at = Some(at);
+                    return Ok(Step::Continue);
+                }
                 let (Some(&a), Some(&b)) = (self.pts.first(), self.pts.get(1)) else { return Ok(Step::Continue) };
                 let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, ""));
                 add_dim(s, k)?;

@@ -1459,6 +1459,188 @@ menu	Modify	Izmijeni
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Crtež se promijenio. Zatvorite prozor i otvorite ga ponovo.
+	List Xdata	Prikaži XData
+	Edit Xdata	Uredi XData
+	Edit Xdata (XDEDIT)	Uredi XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Uredi XData (XDEDIT)
+	Open visual XData Editor dialog	Otvori vizuelni dijalog XData uređivača
+	📋 Copy Values	📋 Kopiraj vrijednosti
+	Copy XData values (Key,Value) to clipboard	Kopiraj XData vrijednosti (Ključ,Vrijednost) u međuspremnik
+	Click to copy value to clipboard	Kliknite za kopiranje vrijednosti u međuspremnik
+	✓ XData values copied to clipboard	✓ XData vrijednosti kopirane u međuspremnik
+	Selection canceled — previous object kept.	Odabir otkazan — prethodni objekat zadržan.
+	Drag left or right to resize this column	Povucite lijevo ili desno da promijenite širinu kolone
+	XDATA Editor (XDEDIT)	XDATA Uređivač (XDEDIT)
+	No object selected.	Nijedan objekat nije odabran.
+	🎯 Select object in drawing	🎯 Odaberite objekat na crtežu
+	Object: {kind}	Objekat: {kind}
+	Layer: {layer}	Sloj: {layer}
+	Handle: {handle}	Oznaka: {handle}
+	🎯 Select Another Object	🎯 Odaberite drugi objekat
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Privremeno sakrijte uređivač, odaberite drugi objekat na crtežu i otvorite ga u XDEDIT-u
+	Next ▶	Sljedeće ▶
+	Step to the next object with XData in the selection or drawing	Pređite na sljedeći objekat s XData u odabiru ili crtežu
+	◀ Previous	◀ Prethodno
+	Step to the previous object with XData in the selection or drawing	Pređite na prethodni objekat s XData u odabiru ili crtežu
+	📋 Copy JSON	📋 Kopiraj JSON
+	Copy all XData as structured JSON to clipboard	Kopiraj sve XData kao strukturirani JSON u međuspremnik
+	✓ JSON copied to clipboard	✓ JSON kopiran u međuspremnik
+	📋 Copy Text	📋 Kopiraj tekst
+	Copy all XData as text to clipboard	Kopiraj sve XData kao tekst u međuspremnik
+	✓ XData text copied to clipboard	✓ XData tekst kopiran u međuspremnik
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Novi AppID (npr. Lumi_KLIC)
+	+ Add AppID	+ Dodaj AppID
+	🗑 Delete AppID	🗑 Obriši AppID
+	Remove this Application and its XData from the entity	Uklonite ovu aplikaciju i njene XData s objekta
+	Application removed (click Apply to save)	Aplikacija uklonjena (kliknite Primijeni za spremanje)
+	🔍 Filter:	🔍 Filter:
+	Search key or value (e.g. THEMA, DIEPTE)...	Pretraži ključ ili vrijednost (npr. THEMA, DIEPTE)...
+	Key width:	Širina ključa:
+	Drag this value or the column divider ⇔ to resize the Key column	Povucite ovu vrijednost ili razdjelnik kolone ⇔ da promijenite širinu kolone ključa
+	Value width:	Širina vrijednosti:
+	Drag this value or the column divider ⇔ to resize the Value column	Povucite ovu vrijednost ili razdjelnik kolone ⇔ da promijenite širinu kolone vrijednosti
+	Smart Key=Value Columns	Pametne Ključ=Vrijednost kolone
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Podijelite 'KEY=VALUE' ili 'Key: Value' u zasebna polja Ključ i Vrijednost
+	This object currently has no user XData.	Ovaj objekat trenutno nema korisničkih XData.
+	+ Create Lumi_KLIC Application	+ Kreiraj Lumi_KLIC aplikaciju
+	DXF Code	DXF kod
+	Property / Key ⇔	Svojstvo / Ključ ⇔
+	Value (Selectable & Editable) ⇔	Vrijednost (Odabirljivo i Uredivo) ⇔
+	Raw Value (Selectable & Editable) ⇔	Sirova vrijednost (Odabirljivo i Uredivo) ⇔
+	Actions	Radnje
+	Copy value to clipboard	Kopiraj vrijednost u međuspremnik
+	✓ Copied: {val}	✓ Kopirano: {val}
+	Move row up	Pomakni red prema gore
+	Move row down	Pomakni red prema dolje
+	Delete this XData row	Obriši ovaj XData red
+	Add Row:	Dodaj red:
+	Key (e.g. OPMERKING)	Ključ (npr. OPMERKING)
+	+ Add Property	+ Dodaj svojstvo
+	● Unsaved changes	● Nesačuvane izmjene
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Spremno — kliknite '🎯 Odaberite sljedeći objekat' ili '◀ Prethodno / Sljedeće ▶' za promjenu objekta.
+	↺ Revert	↺ Vrati
+	✔ Apply / Save XData	✔ Primijeni / Sačuvaj XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Zapiši izmijenjene XData u objekat (može se poništiti s Ctrl+Z)
+	✔ Save & Select Next Object	✔ Sačuvaj i odaberi sljedeći objekat
+	🎯 Select Next Object	🎯 Odaberi sljedeći objekat
+	Save any changes and directly pick the next object in the drawing	Sačuvaj izmjene i direktno odaberi sljedeći objekat na crtežu
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objekat {idx1}/{total} učitan ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Vraćeno na sačuvane XData objekta
+	✔ XData saved to entity (Undoable)	✔ XData sačuvani u objekat (Poništivo)
+	Error: {err}	Greška: {err}
+	Command & XData Output (select text + Ctrl+C to copy)	Izlaz naredbi i XData (odaberite tekst + Ctrl+C za kopiranje)
+	Close History Window (F2)	Zatvori prozor historije (F2)
+	Open visual XData Editor for selected object	Otvori vizuelni XData uređivač za odabrani objekat
+	Copy All	Kopiraj sve
+	Copy history output to clipboard	Kopiraj izlaz historije u međuspremnik
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ XData objekta su promijenjeni izvan uređivača — kliknite Vrati prije spremanja.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit žičani model
+	.NET Plugin Bridge	.NET Plugin Bridge
+	3D Orbit	3D Orbit
+	3D Views	3D Pogledi
+	Adjust Image...	Prilagodi sliku...
+	Adjust...	Prilagodi...
+	Attach Image...	Priloži sliku...
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Back	Nazad
+	Change Properties	Promijeni svojstva
+	Clip Image	Obreži sliku
+	Frame	Okvir
+	Front	Naprijed
+	Image	Slika
+	Image Frame	Okvir slike
+	Load .NET DLL / LISP Application (NETLOAD)...	Učitaj .NET DLL / LISP aplikaciju (NETLOAD)...
+	Load Application (NETLOAD)...	Učitaj aplikaciju (NETLOAD)...
+	Model Tab	Kartica modela
+	NE Isometric	SI Izometrija
+	NW Isometric	SZ Izometrija
+	Raster Image Reference...	Referenca rasterske slike...
+	SE Isometric	JI Izometrija
+	SW Isometric	JZ Izometrija
+	Top (2D Plan)	Vrh (2D Plan)
+	View Resolution	Rezolucija prikaza
+	.NET command started	.NET naredba pokrenuta
+	0. Empty file (New)	0. Prazna datoteka (Nova)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Osnovna matematika i naredbe
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Geodetska tačka (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET Plugin (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C# Plugin (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Dodano u početni paket (Auto-Load pri pokretanju i po crtežu)
+	Auto-Load	Auto-Load
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP naredbe (kliknite za pokretanje)
+	AutoLISP Editor (.lsp)	AutoLISP Uređivač (.lsp)
+	Bottom	Dno
+	C# Plugin Editor (.cs)	C# Uređivač plugina (.cs)
+	C# source opened	C# izvorni kod otvoren
+	Clear Log	Očisti dnevnik
+	Commands	Naredbe
+	Compact Menu	Kompaktni meni
+	Compilation error	Greška pri kompajliranju
+	Compilation failed (see Console)	Kompajliranje nije uspjelo (pogledajte konzolu)
+	Compilation succeeded	Kompajliranje uspjelo
+	Compile & Load .NET DLL	Kompajliraj i učitaj .NET DLL
+	Console / Output	Konzola / Izlaz
+	Error in	Greška u
+	Error: cadcraft-nethost.exe not found next to the application.	Greška: cadcraft-nethost.exe nije pronađen pored aplikacije.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Izvršite LISP kod ili kompajlirajte VB.NET / C# izvorni kod direktno u .NET DLL
+	Failed to invoke compiler	Pozivanje kompajlera nije uspjelo
+	Failed to load	Učitavanje nije uspjelo
+	Failed to save to	Spremanje nije uspjelo u
+	Failed to start .NET command	Pokretanje .NET naredbe nije uspjelo
+	Failed to write source file	Pisanje izvornog fajla nije uspjelo
+	Hide this Studio window and show the compact floating Plugin Commands menu	Sakrij ovaj Studio prozor i prikaži kompaktni plutajući meni naredbi plugina
+	Load & Run LISP	Učitaj i pokreni LISP
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL učitan
+	NETLOAD error in	NETLOAD greška u
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD nije uspio pokrenuti cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Otvori .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Otvori NETLOAD Studio (VBAIDE)
+	Open Studio	Otvori Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Otvori puni AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Naredbe plugina
+	Plugins	Plugini
+	Quick Expression	Brzi izraz
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Spremno. Otvorite .dll (.NET VB.NET/C#) ili .lsp (AutoLISP) fajl putem NETLOAD-a.
+	Registered commands	Registrovane naredbe
+	Removed from Startup Suite (Auto-Load)	Uklonjeno iz početnog paketa (Auto-Load)
+	Routine started	Rutina pokrenuta
+	Routine started from	Rutina pokrenuta iz
+	Run .NET command	Pokreni .NET naredbu
+	Run command	Pokreni naredbu
+	Save the current source code in the editor to disk	Sačuvaj trenutni izvorni kod iz uređivača na disk
+	Saved to	Sačuvano u
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Odaberite i učitajte .lsp, .dll, .vb ili .cs fajl sa diska
+	Show Floating Command Menu	Prikaži plutajući meni naredbi
+	Template...	Predložak...
+	Toggle Startup Suite (Auto-Load at startup)	Uključi/isključi početni paket (Auto-Load pri pokretanju)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Uključi/isključi početni paket: automatski učitaj ovaj fajl pri pokretanju i u svakom otvorenom crtežu
+	VB.NET Plugin Editor (.vb)	VB.NET Uređivač plugina (.vb)
+	VB.NET source opened	VB.NET izvorni kod otvoren
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe nije pronađen
+	cannot read file	fajl se ne može pročitati
+	e.g. (+ 1 2) or + 1 2	npr. (+ 1 2) ili + 1 2
+	no [CommandMethod] found	[CommandMethod] nije pronađen
+	Edit XData (XDEDIT)	Uredi XData (XDEDIT)
+	📋 Copy All	📋 Kopiraj sve
+	🗑 Clear	🗑 Očisti
+	Error	Greška
+	Font	Font
+	Save Layout as Template	Sačuvaj raspored kao predložak
+	New AppID (e.g. CAD_XDATA)	Novi AppID (npr. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Kreiraj CAD_XDATA aplikaciju
+	Backup copy	Sigurnosna kopija
+	Create backup copy with each save	Kreiraj sigurnosnu kopiju pri svakom snimanju
+	Change	Promijeni
+	Clip Xref	Izreži Xref
+	DView	DPogled
+	Multiple Insert	Višestruko umetanje
+	Raster Images	Rasterske slike
+	Units	Jedinice
+	Xref	Xref
+	Xref Clip Frame	Okvir izrezivanja Xref-a
 
 # ArtCraft feature naming
 	Additional Tools	Dodatni alati

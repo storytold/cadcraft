@@ -632,6 +632,7 @@ dependencies = [
  "muda",
  "objc2-app-kit 0.3.2",
  "pollster 1.0.1",
+ "raw-window-handle",
  "rfd",
  "ron",
  "serde_json",
@@ -698,6 +699,7 @@ dependencies = [
  "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-render",
+ "chrono",
  "craft-docpath",
  "craft-dxf",
  "libc",
@@ -773,6 +775,7 @@ dependencies = [
  "cadcraft-doc",
  "cadcraft-fonts",
  "cadcraft-geom",
+ "image",
  "lyon_tessellation",
  "rayon",
  "serde_json",
@@ -783,6 +786,7 @@ dependencies = [
 name = "cadcraft-ui-egui"
 version = "0.20.1"
 dependencies = [
+ "arboard",
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-engine",
@@ -791,6 +795,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "chrono",
+ "clipboard-win",
  "craft-ui",
  "craft-update",
  "craft-window",

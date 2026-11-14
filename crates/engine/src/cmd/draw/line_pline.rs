@@ -384,6 +384,14 @@ impl Interactive for PlineM {
                     Ok(Step::Continue)
                 }
             },
+            Input::Enter if self.verts.is_empty() => {
+                let p = s.last_point;
+                s.echo(format!("Current line-width is {:.4}", self.start_w));
+                self.begin_segment();
+                self.verts.push(PolyVertex::new(p));
+                self.sync(s, false)?;
+                Ok(Step::Continue)
+            }
             Input::Enter => Ok(Step::Done),
             _ => Err(crate::EngineError::Other("Point or option keyword required.".into())),
         }

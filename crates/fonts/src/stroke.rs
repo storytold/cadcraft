@@ -6,7 +6,7 @@
 //! `i` = 6 (cap height). Strokes are separated by spaces.
 
 pub(crate) const CAP: f64 = 6.0;
-pub(crate) const GAP: f64 = 1.6;
+pub(crate) const GAP: f64 = 1.2;
 
 pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
     let g: (f64, &str) = match c {

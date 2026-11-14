@@ -384,6 +384,51 @@ pub fn entsel(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {
     wait(ctx, GetKind::EntSel, m, None)
 }
 
+/// Optional native file-dialog hook installed by the desktop shell: `(title, default_path, ext, flags) -> Option<path>`.
+pub type FileDialogHook = fn(&str, &str, &str, i32) -> Option<String>;
+static FILE_DIALOG: std::sync::OnceLock<FileDialogHook> = std::sync::OnceLock::new();
+
+/// Install a native file-picker hook for AutoLISP `(getfiled ...)`.
+pub fn set_file_dialog(hook: FileDialogHook) {
+    let _ = FILE_DIALOG.set(hook);
+}
+
+/// `(getfiled title default ext flags)`: open a file dialog when the host provides one, or prompt
+/// for the file path on the command line.
+pub fn getfiled(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {
+    if args.len() < 4 {
+        return Err(args_err(true));
+    }
+    if args.len() > 4 {
+        return Err(args_err(false));
+    }
+    let str_arg = |v: &Value| match v {
+        Value::Str(s) => Ok(s.to_string()),
+        Value::Nil => Ok(String::new()),
+        other => Err(LispError::bad_arg("stringp", other)),
+    };
+    let title = str_arg(&args[0])?;
+    let mut default = str_arg(&args[1])?;
+    let ext = str_arg(&args[2])?;
+    let flags = match &args[3] {
+        Value::Int(i) => *i,
+        other => return Err(LispError::bad_arg("fixnump", other)),
+    };
+    if (default.is_empty() || default == ".")
+        && let Some(dir) = ctx.s.lisp_file_dir.as_deref()
+    {
+        default = dir.to_string();
+    }
+    if let Some(hook) = FILE_DIALOG.get() {
+        return Ok(Flow::Value(match hook(&title, &default, &ext, flags) {
+            Some(p) if !p.is_empty() => Value::str(&p),
+            _ => Value::Nil,
+        }));
+    }
+    let prompt = if title.is_empty() { "Select file: ".to_string() } else { format!("{title}: ") };
+    wait(ctx, GetKind::String { spaces: true }, prompt, None)
+}
+
 /// A second point after the first of `getdist`/`getangle` without a base.
 pub fn with_first(req: &GetRequest, p: [f64; 3]) -> GetRequest {
     GetRequest { first: Some(p), ..req.clone() }
