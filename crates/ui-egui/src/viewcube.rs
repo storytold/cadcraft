@@ -172,7 +172,7 @@ impl Part {
             Part::Cube("top" | "bottom" | "front" | "back" | "left" | "right") => None,
             Part::Cube(name) => Some(name),
             Part::Home => Some("Home: isometric / extents view"),
-            Part::Ring => Some("Compass: drag to orbit around World Z, or click N/E/S/W"),
+            Part::Ring => Some("Compass: drag to orbit around World Z"),
             Part::RollCcw => Some("Roll view 90° counter-clockwise"),
             Part::RollCw => Some("Roll view 90° clockwise"),
             Part::DirTop => Some("Tilt view 90° up"),
@@ -325,7 +325,7 @@ fn hit_beveled_cube(center: Pos2, cam: &Camera3D, p: Pos2) -> Option<&'static st
 /// Paint the 3D Beveled ViewCube, rotating compass ring, roll buttons, directional triangles
 /// and Home button, and handle clicks and orbit drags.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
-    let cam = app.session.state().map(|st| st.camera.with_twist(st.view().twist)).unwrap_or_default();
+    let cam = app.session.state().map(|st| crate::canvas::model_camera(st).with_twist(st.view().twist)).unwrap_or_default();
     let resp = ui.interact(l.bounds, ui.scope_id().with("viewcube"), Sense::click_and_drag());
     let part = resp.hover_pos().and_then(|p| l.part_at_cam(p, &cam));
     let p = ui.painter_at(l.bounds.union(l.pill));
@@ -431,12 +431,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     // 6. ViewCube and Compass Ring Dragging:
     // Storing (start_pos, cam0) at drag start and calculating orbit from cam0 prevents horizon drift
     // and eliminates the gimbal / gumball effect entirely.
-    if resp.drag_started_by(egui::PointerButton::Primary) {
-        let origin = ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos());
-        if let Some(press_pos) = origin {
-            let is_ring = l.part_at_cam(press_pos, &cam) == Some(Part::Ring);
-            app.canvas.viewcube_drag = Some((press_pos, cam, is_ring));
-        }
+    if resp.drag_started_by(egui::PointerButton::Primary)
+        && let Some(press_pos) = ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos())
+    {
+        let is_ring = l.part_at_cam(press_pos, &cam) == Some(Part::Ring);
+        app.canvas.viewcube_drag = Some((press_pos, cam, is_ring));
     }
     if resp.dragged_by(egui::PointerButton::Primary)
         && let Some((start_pos, cam0, is_ring)) = app.canvas.viewcube_drag

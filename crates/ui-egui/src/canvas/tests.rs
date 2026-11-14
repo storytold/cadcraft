@@ -278,3 +278,218 @@ fn shallow_3d_screen_delta_to_world_inverts_to_screen() {
     let roundtrip = xf.to_screen(xf.center + world_offset) - rect.center();
     assert!((roundtrip.x - delta.x).abs() < 1e-4 && (roundtrip.y - delta.y).abs() < 1e-4, "roundtrip={roundtrip:?}");
 }
+
+#[test]
+fn paper_space_and_mspace_ignore_model_3d_camera_and_block_shift_mmb_orbit() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("line", serde_json::json!({ "points": [[0, 0], [100, 100]] })).unwrap();
+    app.run("view.set", serde_json::json!({ "preset": "se_isometric" })).unwrap();
+    let iso_cam = app.session.state().unwrap().camera;
+    assert!(!iso_cam.is_top_plan());
+
+    app.run("layout.set", serde_json::json!({ "name": "Layout1" })).unwrap();
+    assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper("Layout1".into()));
+    let ctx = egui::Context::default();
+    let run_frame = |app: &mut CadApp, mut events: Vec<egui::Event>| {
+        let shift = egui::Modifiers { shift: true, ..Default::default() };
+        events.insert(
+            0,
+            egui::Event::Key {
+                key: egui::Key::F12,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: shift,
+            },
+        );
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    };
+
+    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0))]);
+    assert_eq!(app.canvas.xf.unwrap().cam, cadcraft_geom::Camera3D::TOP);
+
+    // Create a viewport on Layout1, enter MSPACE and drag with Shift+MMB: paper/layout
+    // space must stay at Camera3D::TOP and never tilt Model's stored 3D camera.
+    app.run("mview", serde_json::json!({ "p1": [10.0, 10.0], "p2": [150.0, 120.0] })).unwrap();
+    app.run("mspace", serde_json::json!({})).unwrap();
+    let press = egui::Event::PointerButton {
+        pos: pos2(700.0, 450.0),
+        button: egui::PointerButton::Middle,
+        pressed: true,
+        modifiers: egui::Modifiers { shift: true, ..Default::default() },
+    };
+    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0)), press]);
+    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(760.0, 410.0))]);
+    let release = egui::Event::PointerButton {
+        pos: pos2(760.0, 410.0),
+        button: egui::PointerButton::Middle,
+        pressed: false,
+        modifiers: egui::Modifiers { shift: true, ..Default::default() },
+    };
+    run_frame(&mut app, vec![release]);
+
+    let st = app.session.state().unwrap();
+    assert_eq!(model_camera(st), cadcraft_geom::Camera3D::TOP);
+    assert_eq!(app.canvas.xf.unwrap().cam, cadcraft_geom::Camera3D::TOP);
+    assert_eq!(st.camera, iso_cam);
+}
+
+#[test]
+fn edge_on_view_allows_fully_locked_dynamic_input_click_and_keeps_buffer_on_reject() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("view.set", serde_json::json!({ "preset": "front" })).unwrap();
+    let ctx = egui::Context::default();
+    let run_events = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    };
+    let hover = pos2(700.0, 450.0);
+    run_events(&mut app, vec![egui::Event::PointerMoved(hover)]);
+
+    app.session.cmdline("line").unwrap();
+    app.cmd.buffer = "40,".into();
+    // Clicking when only the first Dynamic Input coordinate is locked stays blocked in an edge-on
+    // view and preserves the partially typed buffer.
+    let click_at = |app: &mut CadApp, pos: Pos2| {
+        run_events(
+            app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run_events(
+            app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    };
+    click_at(&mut app, hover);
+    assert_eq!(app.cmd.buffer, "40,");
+    assert_eq!(app.session.current_prompt().unwrap().base, None);
+
+    // Type the second coordinate and press Tab to lock both values, then click to place (40, 50).
+    run_events(&mut app, vec![egui::Event::PointerMoved(hover), egui::Event::Text("50".into())]);
+    run_events(&mut app, vec![egui::Event::PointerMoved(hover), egui::Event::Text("\t".into())]);
+    click_at(&mut app, hover);
+    assert!(app.cmd.buffer.is_empty(), "placed buffer should be cleared, got {:?}", app.cmd.buffer);
+    assert_eq!(app.session.current_prompt().unwrap().base, Some(Vec2::new(40.0, 50.0)));
+}
+
+#[test]
+fn interactive_3dorbit_drags_anywhere_to_orbit_in_model_space() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.cmdline("3dorbit").unwrap();
+    assert!(app.session.orbit_active());
+
+    let ctx = egui::Context::default();
+    let run_events = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    };
+    // Initial frame so `app.canvas.rect` is populated.
+    run_events(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0))]);
+    let center = app.canvas.rect.unwrap().center();
+
+    let drag_primary = |app: &mut CadApp, start: Pos2, end: Pos2| {
+        run_events(
+            app,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run_events(app, vec![egui::Event::PointerMoved(end)]);
+        run_events(
+            app,
+            vec![
+                egui::Event::PointerMoved(end),
+                egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    };
+    drag_primary(&mut app, center, center + vec2(40.0, -30.0));
+    let orbited = app.session.state().unwrap().camera;
+    assert!(!orbited.is_top_plan(), "primary drag during 3dorbit must orbit camera");
+    assert!(orbited.x.z.abs() < 1e-6, "constrained orbit keeps horizon level");
+
+    // Dragging near the edge also performs constrained orbit (no roll zone).
+    drag_primary(&mut app, center + vec2(320.0, 0.0), center + vec2(260.0, -20.0));
+    let orbited2 = app.session.state().unwrap().camera;
+    assert!((orbited2.z - orbited.z).len() > 0.05, "outer drag also orbits viewing direction");
+    assert!(orbited2.x.z.abs() < 1e-6, "constrained orbit keeps horizon level");
+
+    // Right-click exits 3DORBIT cleanly.
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(center),
+            egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert!(!app.session.orbit_active());
+}

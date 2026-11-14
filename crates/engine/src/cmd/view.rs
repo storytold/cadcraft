@@ -118,15 +118,20 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(concat!(
                 "{daz?: f64 (deg, default 0), del?: f64 (deg, default 0), clamp?: bool (default true: snap within 2° of principal axes), preset?: string (",
                 camera_presets_doc!(),
-                ")}"
+                ")} (interactive menu/command starts the 3D Orbit arcball in Model space)"
             ))
             .noundo()
-            .transparent(),
+            .transparent()
+            .interactive(|s| {
+                require_model_camera(s, "3dorbit")?;
+                Ok(Box::new(OrbitM))
+            }),
         CommandSpec::new("view.roll", "Roll View", run_view_roll)
             .params("{angle?: f64 (deg, default 90; when inPlane is false, snaps world-Z compass heading to the next multiple of max(90, |angle|) in the sign direction of angle; when inPlane is true, rolls by the exact angle), inPlane?: bool (default false: world-Z cardinal step roll; true: continuous in-plane roll around the viewing axis)}")
             .noundo()
             .transparent(),
         CommandSpec::new("plan", "Plan View", |s, _| {
+            require_model_camera(s, "plan")?;
             s.state_mut()?.camera = cadcraft_geom::Camera3D::TOP;
             ok()
         })
@@ -348,6 +353,19 @@ fn run_view_get(s: &mut Session, _: &Value) -> Result<Value> {
     }))
 }
 
+/// Ensure 3D camera operations only run in unlocked Model-tab views; Paper Space layouts and
+/// locked/2D layout viewports keep their sheet and viewport views intact.
+fn require_model_camera(s: &Session, cmd: &str) -> Result<()> {
+    let st = s.state()?;
+    if st.active_viewport().is_some_and(|(_, vp)| vp.locked) {
+        return Err(crate::EngineError::Other("The viewport is locked.".into()));
+    }
+    if !matches!(st.space, Space::Model) {
+        return Err(bad(cmd, "3D camera views are only available in Model space"));
+    }
+    Ok(())
+}
+
 /// Apply a camera operation starting from `st.camera.with_twist(v.twist)` and clear the consumed
 /// view twist when not inside an undoable layout viewport so downstream `with_twist` calls never
 /// re-apply the old twist (for example after rolling or orbiting back to canonical Top).
@@ -366,6 +384,7 @@ fn apply_camera_from_twist(
 /// Execute `3dorbit` (`{daz?, del?, clamp?, preset?}`): orbit the 3D camera or jump to a
 /// [`cadcraft_geom::Camera3D::preset`].
 fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
+    require_model_camera(s, "3dorbit")?;
     if has_param(p, "preset") {
         let preset = str_param(p, "preset").ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
         let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
@@ -381,6 +400,7 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Execute `view.roll` (`{angle?, inPlane?}`): snap world-Z heading to `max(90, |angle|)` steps (`inPlane = false`) or roll in-plane by exact `angle` (`inPlane = true`).
 fn run_view_roll(s: &mut Session, p: &Value) -> Result<Value> {
+    require_model_camera(s, "view.roll")?;
     let angle = f64_opt("view.roll", p, "angle", 90.0)?;
     let in_plane = bool_or(p, "inPlane", false);
     apply_camera_from_twist(s.state_mut()?, |base_cam| {
@@ -422,6 +442,9 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if has_param(p, "up") && !has_dir {
         return Err(bad("view.set", "`up` requires `dir`"));
+    }
+    if has_neighbor || has_preset || has_dir {
+        require_model_camera(s, "view.set")?;
     }
     let new_cam = if has_neighbor {
         let neighbor = str_param(p, "neighbor").ok_or_else(|| bad("view.set", "unknown neighbor direction"))?;
@@ -820,6 +843,38 @@ impl Interactive for PanM {
     }
 }
 
+/// The prompt of interactive `3DORBIT`; [`Session::orbit_active`] recognises the mode by it.
+const ORBIT_PROMPT: &str = "Drag to orbit the view; press Esc or Enter to exit";
+
+/// Interactive modal `3DORBIT` session: lets the UI drag to perform constrained 3D orbit
+/// until Enter, Esc, or right-click ends the command.
+#[derive(Default)]
+struct OrbitM;
+
+impl Interactive for OrbitM {
+    fn name(&self) -> &'static str {
+        "3DORBIT"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new(ORBIT_PROMPT, Accept { enter: true, ..Accept::default() })
+    }
+    fn input(&mut self, _s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+impl Session {
+    /// `3DORBIT` is in its interactive mode: the UI shows the green orbit pivot and turns
+    /// primary drags into horizon-constrained 3D orbit.
+    pub fn orbit_active(&self) -> bool {
+        self.running.as_ref().is_some_and(|r| r.id == "3dorbit")
+            && self.current_prompt().is_some_and(|p| p.message == ORBIT_PROMPT)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1180,9 +1235,58 @@ mod tests {
             assert!(got.is_ok(), "{label}: view.get failed");
             if let Ok(v) = got {
                 assert_eq!(v.get("viewName").and_then(Value::as_str), Some(cam.view_name()), "{label}: viewName");
+                if label == "preset_sw_iso" {
+                    assert_eq!(v.get("viewName").and_then(Value::as_str), Some("SW Isometric"));
+                }
                 assert_arr3_near(json_vec3(&v, "dir"), cam.z, label);
                 assert_arr3_near(json_vec3(&v, "up"), cam.y, label);
             }
         }
+    }
+
+    #[test]
+    fn camera_commands_reject_paper_space_and_locked_viewports() {
+        let mut s = Session::new();
+        assert!(s.execute("layout.set", &json!({ "name": "Layout1" })).is_ok());
+
+        let before = snapshot(&s);
+        for (cmd, args) in [
+            ("3dorbit", json!({ "daz": 15.0 })),
+            ("view.roll", json!({ "angle": 90.0 })),
+            ("plan", json!({})),
+            ("view.set", json!({ "preset": "front" })),
+            ("view.set", json!({ "center": [10.0, 10.0], "height": 30.0, "preset": "front" })),
+        ] {
+            assert!(s.execute(cmd, &args).is_err(), "{cmd} with {args} should reject Paper space");
+            assert_eq!(snapshot(&s), before, "{cmd} must not mutate state on error");
+        }
+        // Pure 2D pan/zoom view.set continues to work in Paper space.
+        assert!(s.execute("view.set", &json!({ "center": [20.0, 30.0], "height": 120.0 })).is_ok());
+
+        // Enter MSPACE and lock the viewport: 3D commands must report locked without mutating state.
+        let r = s.execute("mview", &json!({ "p1": [10.0, 10.0], "p2": [90.0, 70.0] })).unwrap();
+        let h = r["viewports"][0].as_str().unwrap().to_string();
+        assert!(s.execute("mspace", &json!({})).is_ok());
+        assert!(s.execute("viewport.set", &json!({ "handle": h, "locked": true })).is_ok());
+        assert!(s.execute("3dorbit", &json!({ "daz": 15.0 })).is_err());
+        assert!(s.execute("view.roll", &json!({ "angle": 90.0 })).is_err());
+        assert!(s.execute("plan", &json!({})).is_err());
+        assert!(s.execute("view.set", &json!({ "preset": "front" })).is_err());
+        assert!(s.cmdline("3dorbit").is_err());
+    }
+
+    #[test]
+    fn interactive_3dorbit_starts_in_model_space_and_exits_on_enter() {
+        let mut s = Session::new();
+        assert!(!s.orbit_active());
+        assert!(s.cmdline("3dorbit").is_ok());
+        assert!(s.orbit_active(), "expected interactive 3dorbit mode to be active");
+        assert!(s.input(Input::Point(cadcraft_geom::Vec2::ZERO)).is_ok());
+        assert!(s.orbit_active(), "plain click keeps 3dorbit running");
+        assert!(s.input(Input::Enter).is_ok());
+        assert!(!s.orbit_active(), "Enter exits interactive 3dorbit mode");
+
+        assert!(s.execute("layout.set", &json!({ "name": "Layout1" })).is_ok());
+        assert!(s.cmdline("3dorbit").is_err(), "interactive 3dorbit must refuse Paper space");
     }
 }

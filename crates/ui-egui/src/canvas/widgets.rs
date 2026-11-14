@@ -87,10 +87,16 @@ pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
 pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
+    let top_label = crate::tl!("+  |  Top  |  2D Wireframe");
     let label = if cam.is_top_plan() {
-        crate::tl!("+  |  Top  |  2D Wireframe").to_string()
+        top_label.to_string()
     } else {
-        format!("+  |  {}  |  2D Wireframe", cam.view_name())
+        let view_name = crate::i18n::t(cam.view_name());
+        let mut parts = top_label.splitn(3, "  |  ");
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(prefix), Some(_), Some(style)) => format!("{prefix}  |  {view_name}  |  {style}"),
+            _ => format!("+  |  {view_name}  |  2D Wireframe"),
+        }
     };
     p.text(at, egui::Align2::LEFT_TOP, label, crate::theme::small(), t.canvas_ink);
 }

@@ -199,6 +199,8 @@ pub struct CanvasState {
     pan_last: Option<Pos2>,
     /// Start position and initial camera for Shift+MMB 3D orbit (MATCAD `camera.data.startPt` / `cam0`).
     orbit_start: Option<(Pos2, cadcraft_geom::Camera3D)>,
+    /// Start position and initial camera for interactive `3DORBIT` primary drag.
+    orbit_drag: Option<(Pos2, cadcraft_geom::Camera3D)>,
     /// Start position, initial camera and ring flag for ViewCube drag (`move_viewcube.m`).
     pub(crate) viewcube_drag: Option<(Pos2, cadcraft_geom::Camera3D, bool)>,
     /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
@@ -330,6 +332,7 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     });
     handle_scroll_zoom(app, ui, nav, inside);
     handle_button_navigation(app, nav, inside);
+    handle_orbit_drag(app, ui, nav);
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
@@ -381,6 +384,64 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
     }
 }
 
+/// Effective 3D camera for the active drawing space: Paper space (and layout viewports
+/// until per-viewport 3D cameras are introduced) always remain in 2D plan view (`Camera3D::TOP`).
+pub(crate) fn model_camera(st: &cadcraft_engine::DocState) -> cadcraft_geom::Camera3D {
+    if matches!(st.space, cadcraft_doc::Space::Model) { st.camera } else { cadcraft_geom::Camera3D::TOP }
+}
+
+/// Store a new Model-space `camera` after an interactive 3D drag and zero any consumed 2D `twist`
+/// so downstream `with_twist` calls do not apply it a second time.
+pub(crate) fn update_model_camera(st: &mut cadcraft_engine::DocState, new_cam: cadcraft_geom::Camera3D) {
+    st.camera = new_cam;
+    let v = st.view();
+    if v.twist.abs() > 1e-12 {
+        st.set_view_quiet(cadcraft_engine::View { twist: 0.0, ..v });
+    }
+}
+
+/// Paint the small green AutoCAD-style `3DORBIT` pivot sphere at the viewport center.
+fn draw_orbit_pivot(p: &egui::Painter, rect: Rect) {
+    let center = rect.center();
+    p.circle(
+        center,
+        5.5,
+        Color32::from_rgb(0x3a, 0xb5, 0x4a),
+        Stroke::new(1.0, Color32::from_rgb(0x1f, 0x6e, 0x2b)),
+    );
+    p.circle_filled(center + vec2(-1.6, -1.6), 1.8, Color32::from_rgb(0xb8, 0xf2, 0xbf));
+}
+
+fn handle_orbit_drag(app: &mut CadApp, ui: &egui::Ui, nav: &Navigation<'_>) {
+    if !app.session.orbit_active() || !nav.response.dragged_by(egui::PointerButton::Primary) {
+        app.canvas.orbit_drag = None;
+        return;
+    }
+    let Some(curr) = nav.pointer.hover_pos else { return };
+    let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(curr);
+    if app.canvas.orbit_drag.is_none() {
+        let over_cube = app.ui.show_viewcube
+            && app.session.state().is_ok_and(|st| matches!(st.space, cadcraft_doc::Space::Model))
+            && crate::viewcube::Layout::new(nav.rect).bounds.contains(origin);
+        if !nav.rect.contains(origin) || over_canvas_menu(app, origin) || over_cube {
+            return;
+        }
+        if let Ok(st) = app.session.state()
+            && matches!(st.space, cadcraft_doc::Space::Model)
+        {
+            let cam0 = st.camera.with_twist(st.view().twist);
+            app.canvas.orbit_drag = Some((origin, cam0));
+        }
+    }
+    if let Some((start_pos, cam0)) = app.canvas.orbit_drag
+        && let Ok(st) = app.session.state_mut()
+        && matches!(st.space, cadcraft_doc::Space::Model)
+    {
+        let total = curr - start_pos;
+        update_model_camera(st, cam0.orbit(f64::from(total.x) * 0.45, f64::from(-total.y) * 0.45, true));
+    }
+}
+
 fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool) {
     let p = nav.pointer;
     let middle_pressed = nav.response.ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle));
@@ -391,13 +452,16 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
         && let Some(at) = p.hover_pos
     {
         if p.mods.shift {
-            if let Ok(st) = app.session.state_mut() {
-                let (start_pos, cam0) = *app.canvas.orbit_start.get_or_insert((at, st.camera));
+            if let Ok(st) = app.session.state_mut()
+                && matches!(st.space, cadcraft_doc::Space::Model)
+            {
+                let eff = st.camera.with_twist(st.view().twist);
+                let (start_pos, cam0) = *app.canvas.orbit_start.get_or_insert((at, eff));
                 let total = at - start_pos;
                 // In egui screen coordinates, Y increases downwards; in MATCAD figure pixels, Y increases upwards.
                 let daz = f64::from(total.x) * 0.45;
                 let del = f64::from(-total.y) * 0.45;
-                st.camera = cam0.orbit(daz, del, true);
+                update_model_camera(st, cam0.orbit(daz, del, true));
             }
         } else {
             app.canvas.orbit_start = None;
@@ -593,6 +657,9 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
+    if app.session.orbit_active() || app.canvas.orbit_start.is_some() {
+        draw_orbit_pivot(painter, rect);
+    }
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
         draw_ucs_icon(painter, rect, &xf.cam);
@@ -860,7 +927,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let Ok(st) = app.session.state() else { return };
     let view = st.view();
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let cam = app.session.state().map(|s| s.camera).unwrap_or_default();
+    let cam = model_camera(&st);
     let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
     app.canvas.xf = Some(xf);
 
@@ -881,15 +948,21 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Re-read the view after navigation.
     let view = app.session.state().map(|s| s.view()).unwrap_or(view);
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let cam = app.session.state().map(|s| s.camera).unwrap_or_default();
+    let cam = app.session.state().map(model_camera).unwrap_or_default();
     let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
     app.canvas.xf = Some(xf);
     // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
     let (xf_paper, active_vp) = match app.session.state() {
         Ok(st) => {
             let pv = st.paper_view();
-            // Paper space is never twisted.
-            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12), twist: 0.0, cam: st.camera };
+            // Paper space is never twisted and stays in 2D plan view.
+            let xp = Xf {
+                rect,
+                center: pv.center,
+                scale: f64::from(rect.height()) / pv.height.max(1e-12),
+                twist: 0.0,
+                cam: cadcraft_geom::Camera3D::TOP,
+            };
             (if st.mspace.is_some() { xp } else { xf }, st.active_viewport().map(|(_, v)| v))
         }
         Err(_) => (xf, None),
@@ -955,6 +1028,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && pressed_primary
         && !middle_down
         && !cycled
+        && !app.session.orbit_active()
         && let Some(p) = app.canvas.cursor
     {
         if app.session.prompting() {
@@ -962,19 +1036,20 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if mods.ctrl && app.session.running.as_ref().is_some_and(|r| r.id == "grip") {
                 let _ = app.session.input(Input::Keyword("Copy".into()));
             }
-            // Clicking places the point; a value typed into the Dynamic Input boxes is used up.
-            if let Some(f) = dyn_frame
-                && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
-            {
-                app.cmd.buffer.clear();
-            }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
             let point_prompt = app.session.current_prompt().is_some_and(|pr| cadcraft_engine::pointmod::accepts(&pr))
                 && app.session.pending_window.is_none()
                 && !app.session.realtime_zoom_active();
-            if point_prompt && app.canvas.snap.is_none() && xf.cam.is_edge_on_xy() {
+            let parsed_dyn = dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f));
+            let dyn_fully_locked =
+                parsed_dyn.as_ref().is_some_and(|e| app.cmd.second_locked() && e.first_locked().is_some() && e.second_value().is_some());
+            if point_prompt && app.canvas.snap.is_none() && !dyn_fully_locked && xf.cam.is_edge_on_xy() {
                 app.session.echo("Cannot place an unconstrained point on the XY plane in an edge-on view; snap to an object, enter coordinates, or orbit the view.");
             } else {
+                // Clicking places the point; a value typed into the Dynamic Input boxes is used up.
+                if parsed_dyn.is_some() {
+                    app.cmd.buffer.clear();
+                }
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
                     None => app.session.input(Input::Point(p)),
@@ -1000,6 +1075,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if app.session.settings.pickdrag
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
+        && !app.session.orbit_active()
+        && !app.session.realtime_zoom_active()
         && app.canvas.cycle.is_none()
         && app.session.pending_window.is_none()
         && let Some(origin) = ui.input(|i| i.pointer.press_origin())

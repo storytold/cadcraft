@@ -224,7 +224,7 @@ pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Po
     let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
     let gap = pb.unwrap_or(0.0);
     // Along the isometric plane's axes in isometric drafting.
-    let cam = app.session.state().map(|st| st.camera).unwrap_or_default();
+    let cam = app.session.state().map(super::model_camera).unwrap_or_default();
     if !cam.is_top_plan() {
         for axis in [
             cadcraft_geom::Vec3::new(1.0, 0.0, 0.0),

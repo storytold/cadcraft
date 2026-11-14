@@ -151,6 +151,8 @@ impl Camera3D {
     ///   `"bottom_back_right"`, `"bottom_back_left"`.
     pub fn preset(name: &str) -> Option<Self> {
         let n = name.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+        /// True isometric elevation `atan(1 / sqrt(2))` in degrees (`|z.x| = |z.y| = |z.z| = 1 / sqrt(3)`).
+        const ISO_EL_DEG: f64 = 35.264_389_682_754_654;
         // Matches MATCAD applyViewToNamedView.m: rotate canonical Top camera by (az, 90 - el).
         let (az_deg, el_deg): (f64, f64) = match n.as_str() {
             "top" | "plan" => (0.0, 90.0),
@@ -173,14 +175,14 @@ impl Camera3D {
             "left_top" | "top_left" => (90.0, 45.0),
             "left_bottom" | "bottom_left" => (90.0, -45.0),
             // 8 corners / isometrics
-            "top_front_right" | "se_isometric" | "iso_se" | "seiso" | "home" | "iso" => (-45.0, 45.0),
-            "top_front_left" | "sw_isometric" | "iso_sw" | "swiso" => (45.0, 45.0),
-            "top_back_right" | "ne_isometric" | "iso_ne" | "neiso" => (-135.0, 45.0),
-            "top_back_left" | "nw_isometric" | "iso_nw" | "nwiso" => (135.0, 45.0),
-            "bottom_front_right" => (-45.0, -45.0),
-            "bottom_front_left" => (45.0, -45.0),
-            "bottom_back_right" => (-135.0, -45.0),
-            "bottom_back_left" => (135.0, -45.0),
+            "top_front_right" | "se_isometric" | "iso_se" | "seiso" | "home" | "iso" => (-45.0, ISO_EL_DEG),
+            "top_front_left" | "sw_isometric" | "iso_sw" | "swiso" => (45.0, ISO_EL_DEG),
+            "top_back_right" | "ne_isometric" | "iso_ne" | "neiso" => (-135.0, ISO_EL_DEG),
+            "top_back_left" | "nw_isometric" | "iso_nw" | "nwiso" => (135.0, ISO_EL_DEG),
+            "bottom_front_right" => (-45.0, -ISO_EL_DEG),
+            "bottom_front_left" => (45.0, -ISO_EL_DEG),
+            "bottom_back_right" => (-135.0, -ISO_EL_DEG),
+            "bottom_back_left" => (135.0, -ISO_EL_DEG),
             _ => return None,
         };
         Some(Self::TOP.orbit(az_deg, 90.0 - el_deg, true))
@@ -716,7 +718,7 @@ mod tests {
     #[test]
     fn preset_covers_all_26_zones_aliases_and_unknown_names() {
         let d = 0.5_f64.sqrt();
-        let h = 0.5_f64;
+        let iso = (1.0_f64 / 3.0).sqrt();
         let canonical_26 = [
             // 6 main faces
             ("top", Vec3::new(0.0, 0.0, -1.0), "Top"),
@@ -739,14 +741,14 @@ mod tests {
             ("left_top", Vec3::new(d, 0.0, -d), "3D"),
             ("left_bottom", Vec3::new(d, 0.0, d), "3D"),
             // 8 corners
-            ("top_front_right", Vec3::new(-h, h, -d), "3D"),
-            ("top_front_left", Vec3::new(h, h, -d), "3D"),
-            ("top_back_right", Vec3::new(-h, -h, -d), "3D"),
-            ("top_back_left", Vec3::new(h, -h, -d), "3D"),
-            ("bottom_front_right", Vec3::new(-h, h, d), "3D"),
-            ("bottom_front_left", Vec3::new(h, h, d), "3D"),
-            ("bottom_back_right", Vec3::new(-h, -h, d), "3D"),
-            ("bottom_back_left", Vec3::new(h, -h, d), "3D"),
+            ("top_front_right", Vec3::new(-iso, iso, -iso), "SE Isometric"),
+            ("top_front_left", Vec3::new(iso, iso, -iso), "SW Isometric"),
+            ("top_back_right", Vec3::new(-iso, -iso, -iso), "NE Isometric"),
+            ("top_back_left", Vec3::new(iso, -iso, -iso), "NW Isometric"),
+            ("bottom_front_right", Vec3::new(-iso, iso, iso), "3D"),
+            ("bottom_front_left", Vec3::new(iso, iso, iso), "3D"),
+            ("bottom_back_right", Vec3::new(-iso, -iso, iso), "3D"),
+            ("bottom_back_left", Vec3::new(iso, -iso, iso), "3D"),
         ];
 
         assert_eq!(canonical_26.len(), 26);
