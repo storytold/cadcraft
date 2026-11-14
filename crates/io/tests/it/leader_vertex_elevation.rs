@@ -2,9 +2,9 @@
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Common, DimStyle, Drawing, EntityKind, Handle, Leader, Lineweight, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
 use cadcraft_io::{SaveOptions, Version, read, write_with};
+use craft_dxf::Tag;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -93,7 +93,7 @@ fn missing_z_defaults_only_the_corresponding_vertex() -> TestResult {
             expected.push(Vec3::new(p.x, p.y, if has_z { p.z } else { 0.0 }));
         }
         tags.extend([Tag::s(0, "ENDSEC"), Tag::s(0, "EOF")]);
-        let dxf = cadcraft_dxf::write_ascii(&tags);
+        let dxf = craft_dxf::write_ascii(&tags);
         let d = read(dxf.as_bytes(), "missing-z.dxf")?;
         let e = d.entity(Handle(0x10)).ok_or("LEADER missing")?;
         let EntityKind::Leader(l) = &e.kind else { return Err("expected LEADER".into()) };

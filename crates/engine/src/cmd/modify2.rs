@@ -65,7 +65,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{handle (block reference), pick?: [x,y] (nearest nested object; default all), delta? | from,to}")
             .interactive(|_| Ok(Box::new(NcopyM::default()))),
         CommandSpec::new("mocoro", "Move/Copy/Rotate", mocoro::run_mocoro)
-            .menu(&["Tools", "Express Tools", "Move/Copy/Rotate"])
+            .menu(&["Tools", "Additional Tools", "Move/Copy/Rotate"])
             .params("{handles?, base: [x,y], ops: [{move: [x,y]} | {copy: [x,y]} | {rotate: degrees} | {scale: factor} | {base: [x,y]}]} → {handles (copies)}")
             .interactive(|_| Ok(Box::new(mocoro::MocoroM::default()))),
         CommandSpec::new("chspace", "Change Space", run_chspace)
