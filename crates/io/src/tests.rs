@@ -2629,6 +2629,84 @@ fn mirrored_2d_polyline_extrusion_flips_x_and_bulge() {
     assert_eq!(got, vec![(-1.0, 0.0, -1.0), (-3.0, 0.0, 0.0)]);
 }
 
+/// Objects whose normal is 0,0,-1, at OCS height 5 and most of them 2 thick, keep their world height
+/// and the side they extrude to through a save. They are written with no normal (along Z), so an
+/// elevation or a thickness written as read put a polyline or a hatch at Z +5 instead of -5, and
+/// extruded a circle, point, solid or text up instead of down (AutoCAD 2024 opening the saved file,
+/// measured). A line writes its normal, and keeps its thickness as read. The same objects facing up
+/// (no normal, and 0,0,1) keep +5 and +2: only a normal pointing down Z changes the sign.
+#[test]
+fn mirrored_objects_keep_their_world_height_and_thickness_side() {
+    let records = |normal: &str| {
+        format!(
+            "0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n5\n39\n2\n{normal}10\n0\n20\n0\n42\n0.5\n10\n-10\n20\n0\n\
+             0\nPOLYLINE\n8\n0\n66\n1\n70\n0\n10\n0\n20\n0\n30\n5\n{normal}0\nVERTEX\n8\n0\n10\n0\n20\n10\n0\nVERTEX\n8\n0\n10\n-10\n20\n10\n0\nSEQEND\n\
+             0\nCIRCLE\n8\n0\n10\n-10\n20\n5\n30\n5\n40\n5\n39\n2\n{normal}\
+             0\nARC\n8\n0\n10\n-30\n20\n5\n30\n5\n40\n5\n50\n180\n51\n270\n{normal}\
+             0\nPOINT\n8\n0\n10\n-40\n20\n0\n30\n5\n39\n2\n{normal}\
+             0\nSOLID\n8\n0\n10\n50\n20\n0\n30\n5\n11\n60\n21\n0\n31\n5\n12\n50\n22\n5\n32\n5\n13\n60\n23\n5\n33\n5\n39\n2\n{normal}\
+             0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n5\n{normal}2\nSOLID\n70\n1\n71\n0\n91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n\
+             10\n70\n20\n0\n10\n80\n20\n0\n10\n80\n20\n5\n10\n70\n20\n5\n97\n0\n75\n0\n76\n1\n98\n0\n\
+             0\nTEXT\n8\n0\n10\n-90\n20\n0\n30\n5\n40\n2\n1\nA\n39\n2\n{normal}\
+             0\nLINE\n8\n0\n39\n2\n10\n0\n20\n20\n30\n3\n11\n10\n21\n20\n31\n3\n{normal}"
+        )
+    };
+    let (down, up) = ("210\n0\n220\n0\n230\n-1\n", "210\n0\n220\n0\n230\n1\n");
+    let text = format!("0\nSECTION\n2\nENTITIES\n{}{}{}0\nENDSEC\n0\nEOF\n", records(down), records(""), records(up));
+    // Each object's kind, world height and thickness along world Z.
+    let place = |d: &Drawing| -> Vec<(&'static str, f64, f64)> {
+        d.model
+            .iter()
+            .map(|e| {
+                let n = e.common.extrusion.z.signum();
+                let (kind, z) = match &e.kind {
+                    EntityKind::LwPolyline(p) => ("polyline", n * p.elevation),
+                    EntityKind::Circle(c) => ("circle", c.center.z),
+                    EntityKind::Arc(a) => ("arc", a.center.z),
+                    EntityKind::Point(p) => ("point", p.p.z),
+                    EntityKind::Solid(s) => ("solid", s.corners[0].z),
+                    EntityKind::Hatch(h) => ("hatch", n * h.elevation),
+                    EntityKind::Text(t) => ("text", t.insert.z),
+                    EntityKind::Line(l) => ("line", l.a.z),
+                    _ => ("other", f64::NAN),
+                };
+                (kind, z, n * e.common.thickness)
+            })
+            .collect()
+    };
+    let d = read(text.as_bytes(), "m.dxf").unwrap();
+    let mut want = vec![
+        ("polyline", -5.0, -2.0),
+        ("polyline", -5.0, 0.0),
+        ("circle", -5.0, -2.0),
+        ("arc", -5.0, 0.0),
+        ("point", 5.0, -2.0),
+        ("solid", -5.0, -2.0),
+        ("hatch", -5.0, 0.0),
+        ("text", -5.0, -2.0),
+        ("line", 3.0, -2.0),
+    ];
+    let facing_up = [
+        ("polyline", 5.0, 2.0),
+        ("polyline", 5.0, 0.0),
+        ("circle", 5.0, 2.0),
+        ("arc", 5.0, 0.0),
+        ("point", 5.0, 2.0),
+        ("solid", 5.0, 2.0),
+        ("hatch", 5.0, 0.0),
+        ("text", 5.0, 2.0),
+        ("line", 3.0, 2.0),
+    ];
+    want.extend(facing_up);
+    want.extend(facing_up);
+    assert_eq!(place(&d), want, "as read");
+    let out = write(&d, "m.dxf").unwrap();
+    assert_eq!(place(&read(&out, "m.dxf").unwrap()), want, "after a save");
+    let pairs = dxf_pairs(std::str::from_utf8(&out).unwrap());
+    let lines: Vec<_> = dxf_records(&pairs, "LINE").into_iter().map(|l| (group(l, "39"), group(l, "230"))).collect();
+    assert_eq!(lines, [(Some("2.0"), Some("-1.0")), (Some("2.0"), None), (Some("2.0"), None)]);
+}
+
 #[test]
 fn mirrored_hatch_extrusion_flips_boundary() {
     // HATCH boundaries are OCS: the square (1,0)..(3,2) under extrusion (0,0,-1) lies at (-3,0)..(-1,2).
