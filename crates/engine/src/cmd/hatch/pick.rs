@@ -6,7 +6,7 @@ use cadcraft_doc::{EntityKind, Handle, HatchLoop};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
-use super::{HatchSettings, closed_loop, loops_at, loops_from_handles};
+use super::{BOUNDARY_ERROR, HatchSettings, LEFT_OUT, loops_at, loops_from_handles, loops_from_selection, loops_picked};
 use crate::cmd::{bad, points_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -73,13 +73,8 @@ pub(super) fn run_hatchpick(s: &mut Session, p: &Value) -> Result<Value> {
         if hs.len() > MAX_PICKS {
             return Err(bad("hatchpick", format!("at most {MAX_PICKS} objects")));
         }
-        let d = s.doc()?;
-        for h in hs {
-            match d.entity(h) {
-                Some(e) if closed_loop(d, e).is_some() => picks.handles.push(h),
-                _ => return Err(bad("hatchpick", format!("{} is not a closed object", h.hex()))),
-            }
-        }
+        let (loops, _) = loops_from_selection(s, &hs).map_err(|e| bad("hatchpick", e.to_string()))?;
+        picks.handles = hs.into_iter().filter(|h| loops.iter().any(|l| l.sources.contains(h))).collect();
         if picks.points.is_empty() {
             picks.mode = PickMode::Objects;
         }
@@ -102,6 +97,8 @@ enum Pick {
 pub(super) struct HatchPickM {
     mode: Option<PickMode>,
     picks: Vec<Pick>,
+    /// The loops of all the objects picked so far, traced together (for the preview).
+    object_loops: Vec<HatchLoop>,
 }
 
 impl HatchPickM {
@@ -113,6 +110,21 @@ impl HatchPickM {
                 Pick::Objects(hs, _) => hs.len(),
             })
             .sum()
+    }
+    fn objects(&self) -> Vec<Handle> {
+        let mut out: Vec<Handle> = Vec::new();
+        for p in &self.picks {
+            if let Pick::Objects(hs, _) = p {
+                out.extend(hs.iter().copied().filter(|h| !out.contains(h)).collect::<Vec<_>>());
+            }
+        }
+        out
+    }
+    /// Show the picked objects highlighted and trace their loops again.
+    fn objects_changed(&mut self, s: &mut Session) {
+        let all = self.objects();
+        s.set_selection(all.clone());
+        self.object_loops = if all.is_empty() { Vec::new() } else { loops_from_handles(s, &all).unwrap_or_default() };
     }
     fn keep(&self, s: &mut Session, mode: PickMode) {
         let mut out = HatchPicks { mode, ..HatchPicks::default() };
@@ -149,14 +161,48 @@ impl Interactive for HatchPickM {
             return Ok(Step::Continue);
         };
         match (mode, i) {
-            (_, Input::Cancel) => Ok(Step::Cancel),
+            (_, Input::Cancel) => {
+                if mode == PickMode::Objects {
+                    s.set_selection(Vec::new());
+                }
+                Ok(Step::Cancel)
+            }
             (PickMode::Points | PickMode::Objects, Input::Keyword(k)) if k == "Undo" => {
                 if self.picks.pop().is_none() {
                     s.echo("Nothing to undo.");
                 }
+                if mode == PickMode::Objects {
+                    self.objects_changed(s);
+                }
                 Ok(Step::Continue)
             }
-            (PickMode::Points | PickMode::Objects, Input::Enter) => {
+            (PickMode::Objects, Input::Enter) => {
+                let all = self.objects();
+                // Only the objects that bound an area are kept.
+                let mut used: Vec<Handle> = Vec::new();
+                if !all.is_empty() {
+                    match loops_from_selection(s, &all) {
+                        Ok((loops, left_out)) => {
+                            if !left_out.is_empty() {
+                                s.notice(BOUNDARY_ERROR, LEFT_OUT);
+                            }
+                            used = all.into_iter().filter(|h| loops.iter().any(|l| l.sources.contains(h))).collect();
+                        }
+                        Err(e) => {
+                            // Stay: more objects can still close the area.
+                            s.notice(BOUNDARY_ERROR, e.to_string());
+                            return Ok(Step::Continue);
+                        }
+                    }
+                }
+                s.set_selection(Vec::new());
+                self.keep(s, mode);
+                if let Some(p) = s.hatch_picks.as_mut() {
+                    p.handles = used;
+                }
+                Ok(Step::Done)
+            }
+            (PickMode::Points, Input::Enter) => {
                 self.keep(s, mode);
                 Ok(Step::Done)
             }
@@ -165,27 +211,29 @@ impl Interactive for HatchPickM {
                     s.echo(format!("At most {MAX_PICKS} picks."));
                     return Ok(Step::Continue);
                 }
-                match loops_at(s, q) {
+                match loops_picked(s, q) {
                     Ok(l) => {
                         s.echo(format!("Analyzing the selected data... {} loop(s)", l.len()));
                         self.picks.push(Pick::Point(q, l));
                     }
-                    Err(e) => s.echo(e.to_string()),
+                    Err(e) => s.notice(BOUNDARY_ERROR, e.to_string()),
                 }
                 Ok(Step::Continue)
             }
             (PickMode::Objects, Input::Pick(hs)) => {
                 let room = MAX_PICKS.saturating_sub(self.count());
-                let closed: Vec<Handle> = {
-                    let d = s.doc()?;
-                    hs.iter().copied().filter(|h| d.entity(*h).is_some_and(|e| closed_loop(d, e).is_some())).take(room).collect()
-                };
-                let others = hs.len().saturating_sub(closed.len());
-                if !closed.is_empty() {
-                    let loops = loops_from_handles(s, &closed)?;
-                    self.picks.push(Pick::Objects(closed.clone(), loops));
+                let known = self.objects();
+                let new: Vec<Handle> = hs.into_iter().filter(|h| !known.contains(h)).take(room).collect();
+                if !new.is_empty() {
+                    self.picks.push(Pick::Objects(new, Vec::new()));
                 }
-                s.echo(if others == 0 { format!("{} found", closed.len()) } else { format!("{} found, {others} not closed", closed.len()) });
+                self.objects_changed(s);
+                let n = self.objects().len();
+                s.echo(if self.object_loops.is_empty() {
+                    format!("{n} object(s) selected, not enclosing an area yet")
+                } else {
+                    format!("{n} object(s) selected, {} loop(s)", self.object_loops.len())
+                });
                 Ok(Step::Continue)
             }
             (PickMode::Origin, Input::Point(q)) => {
@@ -215,6 +263,7 @@ impl Interactive for HatchPickM {
             .flat_map(|p| match p {
                 Pick::Point(_, l) | Pick::Objects(_, l) => l.iter().cloned(),
             })
+            .chain(self.object_loops.iter().cloned())
             .collect();
         if loops.is_empty() {
             return Vec::new();
