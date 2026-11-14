@@ -88,6 +88,22 @@ fn massprop_self_check_reports_skipped_objects() {
     assert_eq!(sc["implausible"], json!([]));
 }
 
+/// #2433: MASSPROP's report reaches the command history one line per entry. The history shows one
+/// row per entry, so a report kept as one entry of 16 lines showed only its middle line.
+#[test]
+fn massprop_report_is_one_history_entry_per_line() {
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 4.0]);
+    s.set_selection(vec![a]);
+    let before = s.log.len();
+    s.cmdline("massprop").unwrap();
+    let report = &s.log[before..];
+    assert!(report.iter().all(|l| !l.contains('\n')), "{report:?}");
+    assert!(report.iter().any(|l| l.starts_with("Area:") && l.ends_with("40.0000")), "{report:?}");
+    assert!(report.iter().any(|l| l.starts_with("Centroid:")), "{report:?}");
+    assert!(report.iter().any(|l| l.trim_start().starts_with("J:")), "the last line: {report:?}");
+}
+
 /// Make `hd` invisible: it no longer counts towards the drawing extents.
 fn hide(s: &mut Session, hd: Handle) {
     s.doc_mut().unwrap().modify_entity(hd, |e| e.common.visible = false).unwrap();
