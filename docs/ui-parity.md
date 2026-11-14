@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-09 · **Change:** minor (typed command names beside the cursor; previously: WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -108,8 +108,10 @@ box; Tab types the separator; Enter sends a relative entry (DYNPICOORDS = 1 for 
 fills an empty box from the cursor; a plain number stays direct distance entry. Since then: grip
 dimensional input (length and angle fields while a grip is stretched, DYNDIVIS, DYNDIGRIP), lock
 indicators on locked values, and DYNPROMPT (the prompt beside the cursor, Down Arrow for its
-options); distances show in the drawing's UNITS (#867). Missing: DYNDIM (dimension display while
-dimensions are edited).
+options); distances show in the drawing's UNITS (#867). With DYNPROMPT on, a command name typed
+with no command running shows beside the cursor too, with its AutoComplete list (#2127): the
+crosshair holds where typing started, the free pointer can pick a row, and the command line
+stays empty. Missing: DYNDIM (dimension display while dimensions are edited).
 
 ## Grips (≈ 40%)
 
@@ -217,6 +219,7 @@ dimensions are edited).
 | 2026-10-14 | minor | Hatch Edit dialog adds boundaries from picked points or closed objects and removes selected loops |
 | 2026-10-14 | minor | Holding Shift overrides ortho while it is held (on when ORTHOMODE is off, off when it is on), as in AutoCAD |
 | 2026-10-16 | minor | ALIASEDIT opens the Command Aliases dialog (#1381) |
+| 2026-10-25 | minor | Dynamic input (DYNMODE and DYNPROMPT on): a command name typed over the drawing shows beside the cursor with its AutoComplete list, the crosshair holds and a row can be clicked (#2127) |
 | 2026-10-18 | minor | In-window menu bar: once a menu is open, pointing at another title closes it and opens that one (#1567) |
 | 2026-10-13 | minor | Options ▸ Selection adds Select using two clicks only; PICKDRAG 0 disables drag-window creation/completion, 2 preserves clicks or drag, and the preference survives restart; UI pointer and profile regressions |
 | 2026-10-12 | minor | Selected and hovered objects redrawn in the selection colour (text and arrowheads included); Options ▸ Selection laid out as AutoCAD's: Object grouping, Show grips, grip object limit, selection preview, Visual Effect Settings (selection area, preview filter) |
