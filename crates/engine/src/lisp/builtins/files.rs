@@ -77,6 +77,12 @@ pub(super) fn findfile(a: &[Value]) -> R {
     Ok(if file_exists(&p) { Value::Str(p) } else { Value::Nil })
 }
 
+pub(super) fn vl_file_systime(a: &[Value]) -> R {
+    arity(a, 1, 1)?;
+    let p = string(&a[0])?;
+    Ok(file_systime(&p).map_or(Value::Nil, |parts| Value::list(parts.into_iter().map(Value::Int))))
+}
+
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
@@ -134,6 +140,34 @@ fn file_exists(path: &str) -> bool {
 #[cfg(target_arch = "wasm32")]
 fn file_exists(_path: &str) -> bool {
     false
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn file_systime(path: &str) -> Option<[i32; 8]> {
+    use chrono::{Datelike, Timelike};
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let (secs, nanos) = match modified.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => (i64::try_from(d.as_secs()).ok()?, d.subsec_nanos()),
+        Err(e) => {
+            let d = e.duration();
+            let s = i64::try_from(d.as_secs()).ok()?;
+            if d.subsec_nanos() == 0 { (-s, 0) } else { ((-s).checked_sub(1)?, 1_000_000_000 - d.subsec_nanos()) }
+        }
+    };
+    let dt = chrono::DateTime::from_timestamp(secs, nanos)?;
+    let dow = i32::try_from(dt.weekday().num_days_from_sunday()).ok()?;
+    let month = i32::try_from(dt.month()).ok()?;
+    let day = i32::try_from(dt.day()).ok()?;
+    let hour = i32::try_from(dt.hour()).ok()?;
+    let minute = i32::try_from(dt.minute()).ok()?;
+    let second = i32::try_from(dt.second()).ok()?;
+    let millis = i32::try_from((dt.nanosecond() / 1_000_000).min(999)).ok()?;
+    Some([dt.year(), month, dow, day, hour, minute, second, millis])
+}
+
+#[cfg(target_arch = "wasm32")]
+fn file_systime(_path: &str) -> Option<[i32; 8]> {
+    None
 }
 
 #[cfg(all(test, unix))]
