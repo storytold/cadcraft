@@ -322,6 +322,9 @@ fn reset_ui(app: &mut CadApp) {
     let (language, dialog, start_tab) = (app.ui.interface_language, app.ui.dialog.take(), app.ui.start_tab);
     let recent_files = std::mem::take(&mut app.ui.recent_files);
     app.ui = crate::UiState { interface_language: language, dialog, start_tab, recent_files, ..Default::default() };
+    // Where the host has no native menu bar the in-window one is the only menu: the reset must
+    // leave it in place (#1240).
+    app.ui.in_window_menu = !app.native_menus;
     app.ui.system_cursor = app.system_cursor_default;
     app.options = UiOptions::default();
 }
