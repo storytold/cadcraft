@@ -122,10 +122,21 @@ pub(crate) fn export_window(s: &Session, framing: Framing, before: Option<&[(u64
 /// Write `bytes` to `out` through the engine's atomic writer (an exclusively created sibling file
 /// renamed over `out`), so a failed or interrupted write leaves the previous file untouched. An
 /// existing `out` is resolved first: the rename would otherwise replace a symlink with a file and
-/// leave the file it points to (`--in-place` through a link) unchanged.
-pub(crate) fn write_atomic(out: &Path, bytes: &[u8]) -> Result<(), OutputError> {
+/// leave the file it points to (`--in-place` through a link) unchanged. Folders missing above `out`
+/// are created, and the topmost one returned for the caller to report.
+pub(crate) fn write_atomic(out: &Path, bytes: &[u8]) -> Result<Option<std::path::PathBuf>, OutputError> {
     let target = std::fs::canonicalize(out).unwrap_or_else(|_| out.to_path_buf());
-    cadcraft_engine::atomic_write::write_atomic(&target, bytes).map_err(|source| OutputError::Write { path: out.to_path_buf(), source })
+    let folder = cadcraft_engine::atomic_write::missing_folder(&target);
+    cadcraft_engine::atomic_write::write_atomic_making_folders(&target, bytes)
+        .map_err(|source| OutputError::Write { path: out.to_path_buf(), source })?;
+    Ok(folder)
+}
+
+/// Say that `out` went into a folder that didn't exist, so a mistyped path is noticed.
+pub(crate) fn report_new_folder(folder: Option<std::path::PathBuf>, io: &mut Streams) {
+    if let Some(folder) = folder {
+        io.errln(format_args!("created the folder {}, which did not exist", folder.display()));
+    }
 }
 
 pub(crate) fn export(s: &Session, out: &Path, io: &mut Streams) -> Result {
@@ -135,7 +146,8 @@ pub(crate) fn export(s: &Session, out: &Path, io: &mut Streams) -> Result {
 pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io: &mut Streams) -> Result {
     let d = s.doc()?;
     let bytes = cadcraft_io::write_framed(d, out, window)?;
-    write_atomic(out, &bytes)?;
+    let folder = write_atomic(out, &bytes)?;
+    report_new_folder(folder, io);
     io.errln(format_args!("wrote {} ({} bytes)", out.display(), bytes.len()));
     if cadcraft_engine::cmd::file::drops_unknown(out) {
         let lost = cadcraft_engine::cmd::file::not_saved(d);
@@ -150,19 +162,37 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 /// as unknown objects, `Proxy` in `info`), or `None` when there are none.
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut ole = 0usize;
     for e in d.model.iter() {
+        // An OLE2FRAME's frame outline is drawn, so it isn't an undrawn entity; its content is
+        // not, which gets a note of its own.
         if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
+            if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
+                ole = ole.saturating_add(1);
+                continue;
+            }
             let n = types.entry(u.dxf_type.as_str()).or_insert(0);
             *n = n.saturating_add(1);
         }
     }
     let n = types.values().fold(0usize, |a, n| a.saturating_add(*n));
-    if n == 0 {
-        return None;
+    let mut lines = Vec::new();
+    if n > 0 {
+        let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
+        let entities = if n == 1 { "entity" } else { "entities" };
+        lines.push(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")));
     }
-    let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
-    let entities = if n == 1 { "entity" } else { "entities" };
-    Some(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")))
+    if ole > 0 {
+        let objects = if ole == 1 { "object" } else { "objects" };
+        lines.push(format!("{path}: {ole} OLE {objects} shown as the frame only (the OLE content is not drawn)"));
+    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// The reader's notes on what it left out of `path` (a damaged DWG's unreadable object records,
+/// #859), one warning line each; empty for a complete read.
+pub(crate) fn read_note_messages(d: &cadcraft_engine::doc::Drawing, path: &str) -> Vec<String> {
+    d.read_notes.iter().map(|note| format!("{path}: {note}")).collect()
 }
 
 /// The warning for the records of `path` the reader could not place, or `None` when there are none.
@@ -174,4 +204,21 @@ pub(crate) fn skipped_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> 
     let list: Vec<String> = d.skipped_records.iter().map(|(section, n)| format!("{section}: {n}")).collect();
     let records = if n == 1 { "record" } else { "records" };
     Some(format!("{path}: {n} {records} could not be read and are left out ({})", list.join(", ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_note_messages;
+
+    #[test]
+    fn read_notes_become_one_warning_each() {
+        let mut d = cadcraft_engine::doc::Drawing::new_imperial();
+        assert!(read_note_messages(&d, "a.dwg").is_empty());
+        d.read_notes =
+            vec!["DWG: 3 of 10 object records couldn't be read and were left out (LINE × 3); saving over the original file would lose them".into()];
+        assert_eq!(
+            read_note_messages(&d, "a.dwg"),
+            vec!["a.dwg: DWG: 3 of 10 object records couldn't be read and were left out (LINE × 3); saving over the original file would lose them"]
+        );
+    }
 }

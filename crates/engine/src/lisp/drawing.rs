@@ -10,8 +10,8 @@
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::{Entity, Handle, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
+use craft_dxf::Tag;
 
 use super::LispError;
 use super::builtins::args_err;
@@ -64,8 +64,10 @@ fn items(p: &PickSet) -> Vec<Handle> {
 
 /// `(command arg…)`: arguments go to the command line as typed input: a string starts a command
 /// or answers a prompt ("" is Enter), a number or a point is entered, an entity name or a
-/// selection set picks objects, and `pause` waits for the user. A command not finished by the
-/// arguments stays active for the next `command` call. No arguments: cancel the active command.
+/// selection set picks objects (a name, alone or with a point as `entsel` gives it, also answers
+/// a prompt picking one object: [`Session::input_object`]), and `pause` waits for the user. A
+/// command not finished by the arguments stays active for the next `command` call. No
+/// arguments: cancel the active command.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     if a.is_empty() {
         if ctx.s.running.is_some() {
@@ -108,14 +110,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                     }
                 }
             }
-            Value::Ename(h) => feed(ctx.s, Input::Pick(vec![*h])),
+            Value::Ename(h) => named(ctx.s, *h, None),
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
                     feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
-                    feed(ctx.s, Input::Pick(vec![h]));
+                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| Vec2::new(p[0], p[1])));
                 } else {
                     return Err(LispError::bad_arg("command argument", arg));
                 }
@@ -129,6 +131,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn feed(s: &mut Session, input: Input) {
     if s.running.is_some()
         && let Err(e) = s.input(input)
+    {
+        s.echo(e.to_string());
+    }
+}
+
+fn named(s: &mut Session, h: Handle, at: Option<Vec2>) {
+    if s.running.is_some()
+        && let Err(e) = s.input_object(h, at)
     {
         s.echo(e.to_string());
     }
@@ -169,7 +179,12 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
         Value::Nil => serde_json::Value::Null,
         Value::Int(i) => serde_json::json!(i),
         Value::Real(r) => serde_json::json!(r),
-        Value::Str(s) => serde_json::json!(&**s),
+        Value::Str(s) => {
+            // A string is copied whole each time it occurs: it spends the allowance by its length
+            // (one unit per 16 bytes, so about 32 MB in all), shared or not.
+            *budget = budget.checked_sub(s.len() as u64 / 16)?;
+            serde_json::json!(&**s)
+        }
         Value::Cons(_) => {
             let mut arr = Vec::new();
             for x in v.iter() {
@@ -181,10 +196,22 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
     })
 }
 
+/// Angle variables CADCraft reports and takes in degrees, as the SETVAR command shows them, which
+/// AutoLISP's `getvar` and `setvar` give and take in radians, as AutoCAD 2024's do: each of these
+/// set to 30 by the SETVAR command, or to `(/ pi 6)` by `setvar`, reads 0.5235987755982987.
+const RADIAN_VARS: [&str; 6] = ["ANGBASE", "CHAMFERD", "DIMJOGANG", "HPANG", "POLARANG", "SNAPANG"];
+
+fn in_radians(name: &str) -> bool {
+    RADIAN_VARS.iter().any(|v| v.eq_ignore_ascii_case(name.trim()))
+}
+
 pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let name = string(&a[0])?;
-    Ok(Flow::Value(crate::sysvars::get(ctx.s, &name).map(|v| from_json(&v)).unwrap_or_default()))
+    Ok(Flow::Value(match crate::sysvars::get(ctx.s, &name) {
+        Some(serde_json::Value::Number(n)) if in_radians(&name) => Value::Real(n.as_f64().unwrap_or(0.0).to_radians()),
+        v => v.map(|v| from_json(&v)).unwrap_or_default(),
+    }))
 }
 
 /// Set a system variable after bounded JSON conversion, reporting invalid or oversized values as LISP errors.
@@ -194,6 +221,10 @@ pub fn setvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let mut budget: u64 = TO_JSON_BUDGET;
     let Some(json) = to_json_bounded(&a[1], 0, &mut budget) else {
         return Err(LispError::new(format!("AutoCAD variable setting rejected: {} value too large", to_text(&a[0], true))));
+    };
+    let json = match json {
+        serde_json::Value::Number(n) if in_radians(&name) => serde_json::json!(n.as_f64().unwrap_or(0.0).to_degrees()),
+        other => other,
     };
     match crate::sysvars::set(ctx.s, &name, &json) {
         Ok(()) => Ok(Flow::Value(a[1].clone())),
@@ -222,20 +253,20 @@ fn convert_angles(kind: &str, tags: &mut [Tag], f: fn(f64) -> f64) {
             continue;
         }
         let v = match t.value {
-            cadcraft_dxf::Value::Real(r) => r,
-            cadcraft_dxf::Value::Int(i) => i as f64,
+            craft_dxf::Value::Real(r) => r,
+            craft_dxf::Value::Int(i) => i as f64,
             _ => continue,
         };
-        t.value = cadcraft_dxf::Value::Real(f(v));
+        t.value = craft_dxf::Value::Real(f(v));
     }
 }
 
 fn tag_value(t: &Tag) -> Value {
     match &t.value {
-        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Value::str(s),
-        cadcraft_dxf::Value::Real(r) => Value::Real(*r),
-        cadcraft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
-        cadcraft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
+        craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => Value::str(s),
+        craft_dxf::Value::Real(r) => Value::Real(*r),
+        craft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
+        craft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
     }
 }
 
@@ -270,12 +301,16 @@ fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     out
 }
 
+/// The most string bytes an entity list may hold (counted per occurrence, shared or not).
+const MAX_GROUP_TEXT: usize = 32 << 20;
+
 /// An association list back to DXF groups (points split into x, y, z groups). The type
 /// (`0`), the entity name (`-1`), the handle (`5`), the owner (`330`) and the layout (`410`) are
 /// left out: they aren't the entity's to set.
 fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
     let mut kind = None;
     let mut tags = Vec::new();
+    let mut text_left = MAX_GROUP_TEXT;
     for item in list.iter() {
         let Value::Cons(c) = &item else { return Err(LispError::bad_arg("listp", &item)) };
         let Value::Int(code) = c.car else { return Err(LispError::bad_arg("fixnump", &c.car)) };
@@ -297,7 +332,11 @@ fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
             _ => tags.push(match &v {
                 Value::Int(i) => Tag::i(code, i64::from(*i)),
                 Value::Real(r) => Tag::f(code, *r),
-                Value::Str(s) => Tag::s(code, &**s),
+                Value::Str(s) => {
+                    // Each occurrence of a shared string becomes its own copy in the tag.
+                    text_left = text_left.checked_sub(s.len()).ok_or_else(|| LispError::new("out of memory: the entity list holds too much text"))?;
+                    Tag::s(code, &**s)
+                }
                 Value::Ename(h) => Tag::s(code, h.hex()),
                 other => return Err(LispError::bad_arg("DXF group value", other)),
             }),
@@ -1029,7 +1068,7 @@ pub fn rtos(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 fn decimal(v: f64, prec: usize, dimzin: i64) -> String {
-    let mut s = format!("{v:.prec$}");
+    let mut s = crate::units::fixed(v, prec);
     if s.starts_with("-0") && s.trim_start_matches(['-', '0', '.']).is_empty() {
         s = s.trim_start_matches('-').to_string();
     }
@@ -1098,4 +1137,28 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
     candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    /// One 64 KB string occurring many times is charged by its length each time.
+    #[test]
+    fn shared_strings_spend_the_conversion_budgets() {
+        let big = Value::str(&"x".repeat(64 << 10));
+        // 600 x 64 KB is over the 32 MiB an entity list may hold; 100 x 64 KB is not.
+        let list = |n: usize| {
+            let mut items = vec![Value::cons(Value::Int(0), Value::str("TEXT"))];
+            items.extend(std::iter::repeat_n(Value::cons(Value::Int(1), big.clone()), n));
+            Value::list(items)
+        };
+        assert!(list_to_groups(&list(600)).is_err());
+        assert!(list_to_groups(&list(100)).is_ok());
+        // 1,000 x 64 KB is 4,096,000 units of the 2,000,000 SETVAR allows; 100 x 64 KB is not.
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big.clone(); 1_000]), 0, &mut budget).is_none());
+        let mut budget = TO_JSON_BUDGET;
+        assert!(to_json_bounded(&Value::list(vec![big; 100]), 0, &mut budget).is_some());
+    }
 }

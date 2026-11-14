@@ -157,7 +157,7 @@ fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))
+    crate::capped_read::read_capped(std::path::Path::new(path), file::MAX_DRAWING_BYTES).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]

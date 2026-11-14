@@ -48,14 +48,14 @@ Generated-in-code assets are original and have no file to list:
 | `docs/images/ui-apartment.png` | CADCraft contributors | screenshot of CADCraft itself (examples/apartment.dxf) | MIT OR Apache-2.0 | Original; no Autodesk UI |
 | `docs/images/ui-layout.png` | CADCraft contributors | screenshot of CADCraft itself (a layout of examples/apartment.dxf) | MIT OR Apache-2.0 | Original; no Autodesk UI |
 | `docs/images/ui-bracket.png` | CADCraft contributors | screenshot of CADCraft itself (sample drawing generated in code) | MIT OR Apache-2.0 | Original; no Autodesk UI |
-| `docs/brand/artcraft-logo-white.png` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-logo-white.svg` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-logo.png` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-logo.svg` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-mark-black.png` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-mark-black.svg` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-mark.png` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
-| `docs/brand/artcraft-mark.svg` | ArtCraft Team | storytold/craftrules `assets/brand/` | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-logo-white.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-logo-white.svg` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-logo.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-logo.svg` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-mark-black.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-mark-black.svg` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-mark.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
+| `docs/brand/artcraft-mark.svg` | ArtCraft Team | ArtCraft brand kit | ArtCraft brand terms (`docs/brand/LICENSE-brand.txt`) | Trademark, not open source |
 
 ## Interface translations
 
@@ -65,14 +65,17 @@ Generated-in-code assets are original and have no file to list:
 | `crates/ui-egui/src/i18n/de.tsv` | the CADCraft contributors | Original German translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/es.tsv` | @PedroGuille | Original Spanish translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/pt_br.tsv` | @WladmirJunior | Original Brazilian Portuguese translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
+| `crates/ui-egui/src/i18n/bs.tsv` | Nine (@nine-codes) with Claude Code (AI-assisted) | Original Bosnian translations of CADCraft English strings, shared with storytold/craft-i18n `locales/bs/` | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; not yet reviewed by a native speaker |
 | `crates/ui-egui/src/i18n/cs.tsv` | @Losminek (AI-assisted) | Original Czech translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/ru.tsv` | @pechnikov2026-star | Original Russian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/fr.tsv` | @pechnikov2026-star | Original French translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/zh.tsv` | @mayloglog | Original Simplified Chinese translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/sv.tsv` | Erik Holmbom (@holmbom) with Claude Code (AI-assisted) | Original Swedish translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; terminology and the running app reviewed by a native speaker |
-| `crates/ui-egui/src/i18n/it.tsv` | Emanuele Bottelli (AI-assisted) | Original Italian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
+| `crates/ui-egui/src/i18n/it.tsv` | Emanuele Bottelli (AI-assisted); terminology corrections: Andrea Brandi (@starise) with OpenAI Codex (AI-assisted) | Original Italian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; targeted Chamfer terminology review by a native speaker |
 | `crates/ui-egui/src/i18n/ko.tsv` | @huk082 (AI-assisted) | Original Korean translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; no font assets added |
 | `crates/ui-egui/src/i18n/ar.tsv` | @hasan-sdaif | Original Arabic translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/hu.tsv` | @Skaywalker | Original Hungarian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/tr.tsv` | @ogzhnklvz (AI-assisted) | Original Turkish translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; written from the English strings, no other catalog used as a source; the running app reviewed by a native speaker |
 | `crates/ui-egui/src/i18n/el.tsv` | @Camthalion77 with ChatGPT (AI-assisted) | Original Greek translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; independent native proofreading pending |
+| `crates/ui-egui/src/i18n/vi.tsv` | @2ez4gcx with Claude Code (AI-assisted) | Original Vietnamese translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; terminology chosen with a native speaker, full proofreading pending |
+| `crates/ui-egui/src/i18n/ka.tsv` | Davit Matchakhelidze (@devius), native speaker, with Claude Code | Original Georgian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; written from the English strings, no other catalog used as a source; terminology and doubtful strings decided by a native Georgian speaker; no font assets added (the Georgian face comes from craft-fonts) |

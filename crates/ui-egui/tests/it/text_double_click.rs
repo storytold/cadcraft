@@ -73,6 +73,16 @@ fn double_clicked_text_takes_ime_composition_and_commit() {
     let mut h = harness();
     double_click(&mut h, Vec2::new(4.0, 1.2));
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Enter new text");
+    // Without a CJK font (none installed, no craft-fonts) the command line draws 中文 as boxes,
+    // which the harness takes for a bug. The IME path below is the same either way.
+    let drawable = h.ctx.fonts_mut(|view| {
+        [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
+            .into_iter()
+            .all(|family| view.has_glyphs(&egui::FontId::new(12.0, family), "中文"))
+    });
+    if !drawable {
+        h.ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+    }
     // Composition is shown, not saved; the commit is inserted exactly once (#1761).
     h.event(Event::Ime(ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None }));
     h.run_steps(1);
@@ -94,4 +104,28 @@ fn double_click_elsewhere_starts_no_command() {
         double_click(&mut h, at);
         assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), None, "{at:?}");
     }
+}
+
+/// #1081: double-clicking a multileader's text edits it, as for TEXT and MTEXT.
+#[test]
+fn double_click_on_a_multileaders_text_starts_textedit() {
+    let mut h = harness();
+    h.state_mut().run("mleader", json!({ "points": [[16, -10], [20, -5]], "text": "example text" })).unwrap();
+    h.run_steps(3);
+    let at = h
+        .state()
+        .session
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|e| if let EntityKind::MLeader(m) = &e.kind { m.text.as_ref().map(|t| t.insert.xy()) } else { None })
+        .unwrap();
+    double_click(&mut h, at + Vec2::new(1.0, -0.05));
+    let s = &h.state().session;
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("textedit"));
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Enter new text");
+    assert_eq!(p.default.as_deref(), Some("example text"));
+    assert!(s.editing_mtext().is_some(), "the in-place editor opens on it");
 }
