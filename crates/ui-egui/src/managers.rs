@@ -861,8 +861,11 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
         "plotTransparency": page.plot_transparency,
     });
     if let Some(o) = p.as_object_mut() {
-        let device = device_label(page) != "None";
-        let output = cadcraft_engine::cmd::plotters::find_device(&page.device).map_or("pdf", |d| d.output.as_str());
+        // Only a device known here is handed on: another program's (`DWG To PDF.pc3`, read from
+        // its drawing) plots on the page's own sheet, as a page without a device does.
+        let known = cadcraft_engine::cmd::plotters::find_device(&page.device);
+        let device = known.is_some();
+        let output = known.map_or("pdf", |d| d.output.as_str());
         match preview_dpi {
             // The page's own sheet, so a device's paper and printable area show as they plot.
             Some(dpi) => {
@@ -1209,6 +1212,13 @@ mod plot_dialog_tests {
         assert_eq!((p["device"].as_str(), p["paper"].as_str()), (Some("None"), Some(a3)));
         apply_page_change(&mut st.page, "plotStyleTable", &json!("None"));
         assert!(plot_params(&st, None).get("plotStyleTable").is_none());
+        // Another program's device and paper names (read from its drawing) are not sent: the
+        // page's own sheet is plotted.
+        st.page.device = "DWG To PDF.pc3".into();
+        st.page.paper = "ISO full bleed A3 (420.00 x 297.00 MM)".into();
+        let p = plot_params(&st, None);
+        assert_eq!((p["device"].as_str(), p.get("paper")), (Some("None"), None));
+        assert_eq!(p["width"].as_f64(), Some(st.page.width_mm));
     }
 
     #[test]
