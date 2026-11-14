@@ -294,9 +294,11 @@ fn placement(p: &Value) -> Result<Placement> {
     if !(at.x.is_finite() && at.y.is_finite()) {
         return Err(bad(ID, "`at` must be a point"));
     }
+    // `scale` is checked even when `width` takes precedence over it.
+    let scale = number(p, "scale")?;
     let width = match p.get("width") {
         Some(v) => v.as_f64().filter(|w| w.is_finite()).ok_or_else(|| bad(ID, "`width` must be a number"))?,
-        None => number(p, "scale")?.unwrap_or(1.0),
+        None => scale.unwrap_or(1.0),
     };
     if !(width.is_finite() && width > 0.0) {
         return Err(bad(ID, "`scale` and `width` must be greater than zero"));
