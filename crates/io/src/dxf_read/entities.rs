@@ -84,7 +84,7 @@ fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
     let mut elevation = t.fd(38, 0.0);
-    if tilted(c.extrusion, run_points(&verts, elevation, flags & 1 != 0)) {
+    if tilted(c.extrusion, || run_points(&verts, elevation, flags & 1 != 0)) {
         // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
         // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
@@ -238,7 +238,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "HATCH" => {
             let mut k = hatch(tags, &t)?;
             if let EntityKind::Hatch(h) = &mut k
-                && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
+                && tilted(c.extrusion, || h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
             {
                 // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
                 // at its mean height, and the pattern direction and origin projected the same way.
