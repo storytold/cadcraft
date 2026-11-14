@@ -151,6 +151,29 @@ fn a_drawing_file_becomes_a_block_with_its_insbase_and_tables() {
 }
 
 #[test]
+fn expert_two_or_more_redefines_a_file_block_without_asking() {
+    // #2995: with EXPERT 2 or more the "already exists. Redefine it?" question is not asked; it
+    // is answered Yes, so the next INSERT of the same file finishes and the block is redefined
+    // from the file as it is now.
+    hooks();
+    let dir = TempDir::new("insert-file-expert");
+    let bolt = dir.file("bolt.dxf", "10,10");
+    let mut s = Session::new();
+    s.script(&format!("-INSERT {bolt} 0,0 1 1 0\n")).unwrap();
+    s.execute("setvar", &json!({ "name": "EXPERT", "value": 2 })).unwrap();
+    dir.file("bolt.dxf", "0,0");
+    s.script(&format!("-INSERT {bolt} 20,0 1 1 0\n")).unwrap();
+    assert!(s.running.is_none(), "INSERT finished: {}", s.prompt_text());
+    assert_eq!(inserts(&s).len(), 2);
+    assert_eq!(s.doc().unwrap().block("bolt").unwrap().base, Vec3::ZERO, "redefined from the file");
+
+    // EXPERT 1 still asks.
+    s.execute("setvar", &json!({ "name": "EXPERT", "value": 1 })).unwrap();
+    s.cmdline(&format!("-INSERT {bolt}")).unwrap();
+    assert!(s.prompt_text().contains("Redefine"), "{}", s.prompt_text());
+}
+
+#[test]
 fn exploded_json_insert_is_one_undo_step() {
     for params in [json!({ "name": "*B", "at": [5, 5] }), json!({ "name": "B", "at": [5, 5], "explode": true })] {
         let mut s = Session::new();
