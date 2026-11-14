@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 cadcraft-geom = { workspace = true }
+chrono = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
@@ -26,6 +27,10 @@ rstar = { version = "0.13", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# The computer's time zone for vl-file-systime; the web build has no file times, so no clock there.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+chrono = { workspace = true, features = ["clock"] }
 
 [dev-dependencies]
 # Real DXF files for the external reference tests (io is a lower layer).

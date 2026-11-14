@@ -54,14 +54,16 @@ fn gauss(a: f64, b: f64, f: impl Fn(f64) -> f64) -> f64 {
 const MAX_GAUSS_DEPTH: usize = 10;
 
 /// `gauss` over [a, b], halving until the two halves agree with the whole: a fixed panel count
-/// is far off on a tight bend, and the arc-length inverse must agree with the measure.
-fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize) -> f64 {
+/// is far off on a tight bend, and the arc-length inverse must agree with the measure. `floor`
+/// is the smallest size the agreement is measured against, for an integrand that may sum to
+/// about zero (a signed area); 0 for one that can't (a length).
+fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize, floor: f64) -> f64 {
     let m = (a + b) / 2.0;
     let (l, r) = (gauss(a, m, f), gauss(m, b, f));
-    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs() {
+    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs().max(floor) {
         return l + r;
     }
-    adaptive_gauss(a, m, l, f, depth - 1) + adaptive_gauss(m, b, r, f, depth - 1)
+    adaptive_gauss(a, m, l, f, depth - 1, floor) + adaptive_gauss(m, b, r, f, depth - 1, floor)
 }
 
 /// Clamped knots over Bézier pieces meeting at `breaks`, for degree `p`.
@@ -521,13 +523,37 @@ impl Spline {
         out
     }
 
-    /// Arc length of one integration panel, at the speed of `derivative`. The spline is validated
-    /// once by the callers ([`Spline::integrated_length`]/[`Spline::param_at_length`]) before any
-    /// panel is measured, so the derivative is an unchecked one, to avoid re-scanning the knots per
-    /// sample.
-    fn panel_length(&self, a: f64, b: f64, derivative: fn(&Spline, f64) -> Vec2) -> f64 {
-        let speed = |t: f64| derivative(self, t).len();
-        adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+    /// Arc length of one integration panel, at [`Spline::velocity`] (so an overflowing speed shows
+    /// as a non-finite length, not as 0). The spline is validated once by the callers
+    /// ([`Spline::integrated_length`]/[`Spline::param_at_length`]) before any panel is measured,
+    /// to avoid re-scanning the knots per sample.
+    fn panel_length(&self, a: f64, b: f64) -> f64 {
+        let speed = |t: f64| self.velocity(t).len();
+        adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH, 0.0)
+    }
+
+    /// ∫ ((x − o.x) dy − (y − o.y) dx) / 2 from parameter `a` to `b`, `o` being `origin`: the
+    /// signed area the curve sweeps as seen from `origin` (adaptive Gauss–Legendre over each knot
+    /// span, as for the arc length). From the start point, a whole spline's term is the area it
+    /// encloses with the chord back from its end.
+    pub fn area_term_between(&self, a: f64, b: f64, origin: Vec2) -> f64 {
+        if !self.is_valid() || !(a.is_finite() && b.is_finite() && origin.x.is_finite() && origin.y.is_finite()) {
+            return 0.0;
+        }
+        let (lo, hi) = self.domain();
+        let (a, b, sign) = if a <= b { (a, b, 1.0) } else { (b, a, -1.0) };
+        let (a, b) = (a.clamp(lo, hi), b.clamp(lo, hi));
+        let f = |t: f64| {
+            // Validated once above: no per-sample validity scan (it walks the knots).
+            let (p, d) = (self.eval_valid(t, lo, hi) - origin, self.derivative_unchecked(t));
+            (p.x * d.y - p.y * d.x) / 2.0
+        };
+        // A panel sweeping next to no area is judged against the size of the whole curve.
+        let size = self.control.iter().map(|c| c.dist(origin)).fold(0.0, f64::max);
+        let spans = self.length_intervals(lo, hi).len().max(1);
+        let floor = 1e-3 * size * size / spans as f64;
+        let s: f64 = self.length_intervals(a, b).into_iter().map(|(x, y)| adaptive_gauss(x, y, gauss(x, y, f), &f, MAX_GAUSS_DEPTH, floor)).sum();
+        if s.is_finite() { sign * s } else { 0.0 }
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
@@ -558,20 +584,21 @@ impl Spline {
         }
         let (lo, hi) = self.domain();
         let (a, b) = (a.min(b).clamp(lo, hi), a.max(b).clamp(lo, hi));
-        self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y, Spline::velocity)).sum()
+        self.length_intervals(a, b).into_iter().map(|(x, y)| self.panel_length(x, y)).sum()
     }
 
     /// The parameter `len` along the curve from parameter `from` (forward for positive `len`,
-    /// backward for negative), clamped to the domain.
-    pub fn param_at_length(&self, from: f64, len: f64) -> f64 {
+    /// backward for negative), clamped to the domain. `None` when the length along the way
+    /// overflows (where [`Spline::checked_length`] is `None`).
+    pub fn param_at_length(&self, from: f64, len: f64) -> Option<f64> {
         let (lo, hi) = self.domain();
         if !self.is_valid() {
             // Checked before `clamp`: an invalid spline's bounds may be reversed or NaN.
-            return if from.is_finite() { from } else { lo };
+            return Some(if from.is_finite() { from } else { lo });
         }
         let from = if from.is_finite() { from.clamp(lo, hi) } else { lo };
         if !len.is_finite() || len == 0.0 {
-            return from;
+            return Some(from);
         }
         let (a, b, target) = if len > 0.0 { (from, hi, len) } else { (lo, from, -len) };
         let mut ivs = self.length_intervals(a, b);
@@ -580,7 +607,10 @@ impl Spline {
         }
         let mut acc = 0.0;
         for (x0, x1) in ivs {
-            let l = self.panel_length(x0, x1, Spline::derivative_unchecked);
+            let l = self.panel_length(x0, x1);
+            if !(acc + l).is_finite() {
+                return None;
+            }
             if acc + l >= target && l > 0.0 {
                 // Bisect inside this interval, measuring from its near end.
                 let rest = target - acc;
@@ -588,18 +618,18 @@ impl Spline {
                 let (mut s0, mut s1) = (near, far);
                 for _ in 0..60 {
                     let m = (s0 + s1) / 2.0;
-                    let lm = self.panel_length(near.min(m), near.max(m), Spline::derivative_unchecked);
+                    let lm = self.panel_length(near.min(m), near.max(m));
                     if lm < rest {
                         s0 = m;
                     } else {
                         s1 = m;
                     }
                 }
-                return (s0 + s1) / 2.0;
+                return Some((s0 + s1) / 2.0);
             }
             acc += l;
         }
-        if len > 0.0 { hi } else { lo }
+        Some(if len > 0.0 { hi } else { lo })
     }
 }
 
@@ -621,7 +651,7 @@ impl Ellipse {
         let l: f64 = (0..n)
             .map(|i| {
                 let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
-                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH, 0.0)
             })
             .sum();
         if l.is_finite() { l } else { 0.0 }
@@ -913,11 +943,11 @@ mod tests {
         let q = Spline::from_conic_arc(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y * 2.0, 0.0, std::f64::consts::PI).unwrap();
         assert!((q.length() - 2.0 * std::f64::consts::PI).abs() < 1e-6);
         let (lo, hi) = q.domain();
-        let t = q.param_at_length(lo, std::f64::consts::PI);
+        let t = q.param_at_length(lo, std::f64::consts::PI).unwrap();
         assert!(q.eval(t).near(Vec2::new(0.0, 2.0), 1e-6));
-        let t = q.param_at_length(hi, -std::f64::consts::PI / 2.0);
+        let t = q.param_at_length(hi, -std::f64::consts::PI / 2.0).unwrap();
         assert!(q.eval(t).near(Vec2::new(-2f64.sqrt(), 2f64.sqrt()), 1e-6));
-        assert_eq!(q.param_at_length(lo, 1e9), hi);
+        assert_eq!(q.param_at_length(lo, 1e9), Some(hi));
     }
 
     #[test]
@@ -948,11 +978,62 @@ mod tests {
         assert!((s.length() - 26.708_124_545_291_4).abs() < 1e-6, "{}", s.length());
         for frac in [0.25, 0.5, 0.9] {
             let want = s.length() * frac;
-            let t = s.param_at_length(lo, want);
+            let t = s.param_at_length(lo, want).unwrap();
             assert!((s.length_between(lo, t) - want).abs() < 1e-6, "{frac}: {}", s.length_between(lo, t));
-            let t = s.param_at_length(hi, -want);
+            let t = s.param_at_length(hi, -want).unwrap();
             assert!((s.length_between(t, hi) - want).abs() < 1e-6, "{frac}: {}", s.length_between(t, hi));
         }
+    }
+
+    #[test]
+    fn param_at_length_inverts_length_between() {
+        let pts = [(0.0, 0.0), (3.0, 5.0), (7.0, -4.0), (10.0, 1.0)];
+        let s = Spline::from_control(pts.iter().map(|&(x, y)| Vec2::new(x, y)).collect(), 3);
+        let (lo, _) = s.domain();
+        let total = s.length();
+        for frac in [0.25, 0.5, 0.75] {
+            let d = total * frac;
+            let t = s.param_at_length(lo, d).unwrap();
+            assert!((s.length_between(lo, t) - d).abs() < 1e-6 * total, "{frac}");
+        }
+    }
+
+    #[test]
+    fn param_at_length_is_none_when_the_speed_overflows() {
+        let ends = vec![Vec2::new(-1e308, 0.0), Vec2::new(1e308, 0.0)];
+        let huge = Spline { degree: 1, knots: vec![0.0, 0.0, 1.0, 1.0], control: ends, ..Spline::default() };
+        assert_eq!(huge.param_at_length(0.0, 1.0), None);
+        assert_eq!(huge.param_at_length(1.0, -1.0), None);
+    }
+
+    #[test]
+    fn spline_area_term() {
+        let pi = std::f64::consts::PI;
+        // A rational half circle of radius 2 closed by its diameter: half the disc.
+        let q = Spline::from_conic_arc(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y * 2.0, 0.0, pi).unwrap();
+        let (lo, hi) = q.domain();
+        assert!((q.area_term_between(lo, hi, q.eval(lo)) - 2.0 * pi).abs() < 1e-10);
+        // Backwards is the same area turning the other way.
+        assert!((q.area_term_between(hi, lo, q.eval(lo)) + 2.0 * pi).abs() < 1e-10);
+        // The whole circle, seen from its centre or from a point on it.
+        let c = Spline::from_conic_arc(Vec2::new(5.0, -1.0), Vec2::X * 2.0, Vec2::Y * 2.0, 0.0, TAU).unwrap();
+        let (lo, hi) = c.domain();
+        assert!((c.area_term_between(lo, hi, Vec2::new(5.0, -1.0)) - 4.0 * pi).abs() < 1e-10);
+        assert!((c.area_term_between(lo, hi, c.eval(lo)) - 4.0 * pi).abs() < 1e-10);
+        // A cubic and its chord, against a polygon through 200 000 points on it.
+        let s = cubic();
+        let (lo, hi) = s.domain();
+        let pts: Vec<Vec2> = (0..=200_000).map(|i| s.eval(lo + (hi - lo) * i as f64 / 200_000.0)).collect();
+        let want = crate::shoelace(&pts);
+        let got = s.area_term_between(lo, hi, s.eval(lo));
+        assert!((got - want).abs() < 1e-8 * want.abs().max(1.0), "{got} vs {want}");
+        // Split anywhere, the parts add up.
+        let m = lo + (hi - lo) * 0.37;
+        let o = Vec2::new(-3.0, 7.0);
+        assert!((s.area_term_between(lo, m, o) + s.area_term_between(m, hi, o) - s.area_term_between(lo, hi, o)).abs() < 1e-10);
+        // Nothing to measure: zero, not NaN.
+        assert_eq!(s.area_term_between(f64::NAN, hi, o), 0.0);
+        assert_eq!(s.area_term_between(lo, hi, Vec2::new(f64::INFINITY, 0.0)), 0.0);
     }
 
     #[test]
@@ -966,8 +1047,8 @@ mod tests {
         nan.knots[nan.degree] = f64::NAN;
         assert!(!nan.is_valid() && nan.domain().0.is_nan());
         for s in [reversed, nan] {
-            assert_eq!(s.param_at_length(0.5, 1.0), 0.5);
-            assert_eq!(s.param_at_length(0.5, -1.0), 0.5);
+            assert_eq!(s.param_at_length(0.5, 1.0), Some(0.5));
+            assert_eq!(s.param_at_length(0.5, -1.0), Some(0.5));
         }
     }
 

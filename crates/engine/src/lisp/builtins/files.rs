@@ -10,7 +10,32 @@ pub struct LispFile {
     pub writing: bool,
     pub append: bool,
     pub lines: std::collections::VecDeque<String>,
+    /// How far (bytes) `read-char` has read into the first of `lines`.
+    pub pos: usize,
+    /// The last of `lines` had no terminator in the file, so `read-char` gives no 10 after it.
+    pub unterminated: bool,
     pub text: String,
+}
+
+/// The lines of a file's text, ended by LF or CRLF (a lone CR is data), and whether the last of
+/// them had a terminator. `count` is the number of lines (as `str::lines` counts them), so the
+/// queue is allocated exactly once.
+fn split_lines(t: &str, count: usize) -> (std::collections::VecDeque<String>, bool) {
+    // Exact capacity: collecting would grow by doubling and hold unbilled slack.
+    let mut lines = std::collections::VecDeque::with_capacity(count);
+    lines.extend(t.split_inclusive('\n').map(|l| match l.strip_suffix('\n') {
+        Some(l) => l.strip_suffix('\r').unwrap_or(l).to_string(),
+        None => l.to_string(),
+    }));
+    (lines, !t.is_empty() && !t.ends_with('\n'))
+}
+
+impl LispFile {
+    /// Whether the line at the front is the last and has no terminator in the file, so it is
+    /// followed by the end of the file rather than by a line end.
+    pub fn at_unterminated_last(&self) -> bool {
+        self.unterminated && self.lines.len() == 1
+    }
 }
 
 pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -23,7 +48,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
         "a" => (true, true),
         _ => return Err(LispError::new(format!("bad argument value: file mode {mode}"))),
     };
-    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), text: String::new() };
+    let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), pos: 0, unterminated: false, text: String::new() };
     if !writing {
         match read_text_file(&path) {
             Some(t) => {
@@ -32,9 +57,7 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
                 // allocation size, before collecting so many short lines cannot evade the budget.
                 let count = t.lines().count();
                 charge_bytes(t.len().saturating_add(count.saturating_mul(64)))?;
-                // Exact capacity: collecting would grow by doubling and hold unbilled slack.
-                f.lines = std::collections::VecDeque::with_capacity(count);
-                f.lines.extend(t.lines().map(str::to_string));
+                (f.lines, f.unterminated) = split_lines(&t, count);
             }
             None => return Ok(Flow::Value(Value::Nil)),
         }
@@ -60,7 +83,17 @@ pub(super) fn close(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
 pub(super) fn read_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(Value::File(id)) = a.first() else { return Ok(Flow::Value(Value::Nil)) };
-    let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| f.lines.pop_front());
+    // The rest of the line: what `read-char` hasn't read of it yet. Nothing left of an
+    // unterminated last line is the end of the file.
+    let line = ctx.env.files.get_mut(id).filter(|f| !f.writing).and_then(|f| {
+        let last_unterminated = f.at_unterminated_last();
+        let l = f.lines.pop_front()?;
+        let rest = l.get(std::mem::take(&mut f.pos)..).unwrap_or("").to_string();
+        if last_unterminated && rest.is_empty() {
+            return None;
+        }
+        Some(rest)
+    });
     Ok(Flow::Value(line.map(|l| Value::str(&l)).unwrap_or_default()))
 }
 
@@ -127,12 +160,12 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 
 #[cfg(not(target_arch = "wasm32"))]
-fn file_exists(path: &str) -> bool {
+pub fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).is_file()
 }
 
 #[cfg(target_arch = "wasm32")]
-fn file_exists(_path: &str) -> bool {
+pub fn file_exists(_path: &str) -> bool {
     false
 }
 
