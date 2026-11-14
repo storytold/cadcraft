@@ -1626,3 +1626,6 @@ menu	Modify	수정
 	no [CommandMethod] found	[CommandMethod]를 찾을 수 없음
 	Font	글꼴
 	Save Layout as Template	배치를 템플릿으로 저장
+
+# ArtCraft feature naming
+	Additional Tools	추가 도구

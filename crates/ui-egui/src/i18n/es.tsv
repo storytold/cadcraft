@@ -1625,3 +1625,6 @@
 	no [CommandMethod] found	no se encontró ningún [CommandMethod]
 	Font	Fuente
 	Save Layout as Template	Guardar presentación como plantilla
+
+# ArtCraft feature naming
+	Additional Tools	Herramientas adicionales

@@ -1626,3 +1626,6 @@ menu	Modify	Modifikace
 	no [CommandMethod] found	nebyla nalezena žádná metoda [CommandMethod]
 	Font	Písmo
 	Save Layout as Template	Uložit rozvržení jako šablonu
+
+# ArtCraft feature naming
+	Additional Tools	Další nástroje

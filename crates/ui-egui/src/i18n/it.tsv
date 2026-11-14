@@ -1647,3 +1647,6 @@ menu	Modify	Edita
 	no [CommandMethod] found	nessun [CommandMethod] trovato
 	Font	Carattere
 	Save Layout as Template	Salva layout come modello
+
+# ArtCraft feature naming
+	Additional Tools	Strumenti aggiuntivi

@@ -1623,3 +1623,6 @@ menu	View	Προβολή
 	no [CommandMethod] found	δεν βρέθηκε [CommandMethod]
 	Font	Γραμματοσειρά
 	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο
+
+# ArtCraft feature naming
+	Additional Tools	Πρόσθετα εργαλεία

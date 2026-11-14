@@ -1461,3 +1461,6 @@ menu	Modify	Izmijeni
 	The drawing changed. Close the window and open it again.	Crtež se promijenio. Zatvorite prozor i otvorite ga ponovo.
 	New AppID (e.g. CAD_XDATA)	Novi AppID (npr. CAD_XDATA)
 	+ Create CAD_XDATA Application	+ Kreiraj CAD_XDATA aplikaciju
+
+# ArtCraft feature naming
+	Additional Tools	Dodatni alati

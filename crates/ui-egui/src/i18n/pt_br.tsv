@@ -1632,3 +1632,6 @@ menu	View	Exibir
 	cannot read file	não é possível ler o arquivo
 	e.g. (+ 1 2) or + 1 2	ex.: (+ 1 2) ou + 1 2
 	no [CommandMethod] found	nenhum [CommandMethod] encontrado
+
+# ArtCraft feature naming
+	Additional Tools	Ferramentas adicionais

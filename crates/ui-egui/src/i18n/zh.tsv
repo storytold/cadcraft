@@ -1656,3 +1656,6 @@ menu	View	视图
 	cannot read file	无法读取文件
 	e.g. (+ 1 2) or + 1 2	例如 (+ 1 2) 或 + 1 2
 	no [CommandMethod] found	未找到 [CommandMethod]
+
+# ArtCraft feature naming
+	Additional Tools	其他工具

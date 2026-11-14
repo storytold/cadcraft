@@ -1650,3 +1650,6 @@ menu	Modify	Ändra
 	cannot read file	kan inte läsa filen
 	e.g. (+ 1 2) or + 1 2	t.ex. (+ 1 2) eller + 1 2
 	no [CommandMethod] found	ingen [CommandMethod] hittades
+
+# ArtCraft feature naming
+	Additional Tools	Ytterligare verktyg

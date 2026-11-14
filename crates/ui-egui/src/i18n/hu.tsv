@@ -1638,3 +1638,6 @@ menu	View	Nézet
 	no [CommandMethod] found	nem található [CommandMethod]
 	Font	Betűtípus
 	Save Layout as Template	Elrendezés mentése sablonként
+
+# ArtCraft feature naming
+	Additional Tools	További eszközök

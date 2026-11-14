@@ -1640,3 +1640,6 @@ menu	Modify	Hiệu chỉnh
 	Drawing file is write-protected ({info}). Opened read-only.	Tệp bản vẽ được bảo vệ chống ghi ({info}). Đã mở ở chế độ chỉ đọc.
 	in use by {user} on {machine} ({time})	đang được dùng bởi {user} trên {machine} ({time})
 	in use by {user} ({time})	đang được dùng bởi {user} ({time})
+
+# ArtCraft feature naming
+	Additional Tools	Công cụ bổ sung

@@ -1644,3 +1644,6 @@ menu	View	عرض
 	cannot read file	لا يمكن قراءة الملف
 	e.g. (+ 1 2) or + 1 2	مثال: (+ 1 2) أو + 1 2
 	no [CommandMethod] found	لم يتم العثور على [CommandMethod]
+
+# ArtCraft feature naming
+	Additional Tools	أدوات إضافية
