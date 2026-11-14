@@ -1,7 +1,9 @@
 //! #1407: MOVE/COPY carry a Z delta; planar ROTATE/SCALE/MIRROR preserve Z.
-use cadcraft_doc::{Attrib, Block, Common, Entity, EntityKind, Handle, Insert, Space, Text};
+use cadcraft_doc::{
+    Attrib, Block, Common, Entity, EntityKind, Handle, Hatch, HatchLoop, Insert, LwPolyline, MLeader, MText, MultilineAttrib, Space, Text,
+};
 use cadcraft_engine::Session;
-use cadcraft_geom::Vec3;
+use cadcraft_geom::{PolyVertex, Vec2, Vec3};
 use serde_json::{Value, json};
 
 fn h(v: &Value) -> Handle {
@@ -54,6 +56,18 @@ fn move_carries_z_delta() {
 
     // A non-numeric Z is an error, never a silent drop.
     assert!(s.execute("move", &json!({"handles": [a.hex()], "delta": [0, 0, "x"]})).is_err());
+
+    // A null delta leaves Z to from/to, the same source XY comes from.
+    let d = mk_poly(&mut s);
+    s.execute("move", &json!({"handles": [d.hex()], "delta": null, "from": [0, 0, 1], "to": [2, 3, 4]})).unwrap();
+    assert_eq!(poly_z(&s, d)[0], Vec3::new(2.0, 3.0, 3.0));
+
+    // Object form: an absent z is zero, a present non-numeric z is an error.
+    let e = mk_poly(&mut s);
+    s.execute("move", &json!({"handles": [e.hex()], "delta": {"x": 1, "y": 2}})).unwrap();
+    assert_eq!(poly_z(&s, e)[0], Vec3::new(1.0, 2.0, 0.0));
+    assert!(s.execute("move", &json!({"handles": [e.hex()], "delta": {"x": 0, "y": 0, "z": "3"}})).is_err());
+    assert_eq!(poly_z(&s, e)[0], Vec3::new(1.0, 2.0, 0.0), "the refused MOVE changes nothing");
 }
 
 #[test]
@@ -170,5 +184,141 @@ fn move_carries_z_to_text_and_insert_attributes() {
             assert_eq!(i.attribs[0].text.align_pt.unwrap().z, 4.0, "its alignment point keeps the Z delta too");
         }
         k => panic!("not an insert: {k:?}"),
+    }
+}
+
+/// A polyline's and a hatch's elevation is their world Z, so MOVE carries the delta there; a
+/// mirrored plan polyline stores its elevation in the opposite OCS direction.
+#[test]
+fn move_carries_z_to_planar_elevations() {
+    let mut s = Session::new();
+    let pline = |elevation: f64| {
+        EntityKind::LwPolyline(LwPolyline {
+            vertices: vec![PolyVertex::new(Vec2::new(0.0, 0.0)), PolyVertex::new(Vec2::new(10.0, 0.0))],
+            closed: false,
+            const_width: 0.0,
+            elevation,
+            plinegen: false,
+        })
+    };
+    let (a, b, c) = {
+        let d = s.doc_mut().unwrap();
+        let a = d.add(&Space::Model, Common::default(), pline(2.0)).unwrap();
+        let mirrored = Common { extrusion: Vec3::new(0.0, 0.0, -1.0), ..Common::default() };
+        let b = d.add(&Space::Model, mirrored, pline(2.0)).unwrap();
+        let hatch = EntityKind::Hatch(Hatch {
+            pattern: "SOLID".into(),
+            solid: true,
+            loops: vec![HatchLoop {
+                vertices: vec![PolyVertex::new(Vec2::new(0.0, 0.0)), PolyVertex::new(Vec2::new(10.0, 0.0)), PolyVertex::new(Vec2::new(10.0, 10.0))],
+                outer: true,
+                sources: Vec::new(),
+            }],
+            scale: 1.0,
+            angle: 0.0,
+            associative: false,
+            style: 0,
+            elevation: 2.0,
+            gradient: None,
+            origin: Vec2::new(0.0, 0.0),
+            background: None,
+            pattern_lines: Vec::new(),
+        });
+        let c = d.add(&Space::Model, Common::default(), hatch).unwrap();
+        (a, b, c)
+    };
+    s.execute("move", &json!({"handles": [a.hex(), b.hex(), c.hex()], "delta": [0, 0, 3]})).unwrap();
+    let d = s.doc().unwrap();
+    let elevation = |h: Handle| match &d.entity(h).unwrap().kind {
+        EntityKind::LwPolyline(p) => p.elevation,
+        EntityKind::Hatch(x) => x.elevation,
+        k => panic!("not planar: {k:?}"),
+    };
+    assert_eq!(elevation(a), 5.0, "a polyline's elevation is its world Z");
+    assert_eq!(elevation(b), -1.0, "a mirrored plan polyline still rises in world Z: -(-1) = 2 + 3");
+    assert_eq!(elevation(c), 5.0, "a hatch's elevation is its world Z");
+}
+
+/// An attribute's multiline text and a multileader's block content move by `dz` with the rest.
+#[test]
+fn move_carries_z_to_multiline_attributes_and_a_multileader_block() {
+    let mut s = Session::new();
+    let attdef = Attrib {
+        tag: "NOTE".into(),
+        text: Text {
+            insert: Vec3::new(0.0, 0.0, 1.0),
+            align_pt: None,
+            height: 1.0,
+            value: "NOTE".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: Default::default(),
+            valign: Default::default(),
+        },
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: Some(MultilineAttrib {
+            mtext: MText {
+                insert: Vec3::new(0.0, 0.0, 1.0),
+                height: 1.0,
+                width: 0.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "NOTE".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            },
+            read_as: "NOTE".into(),
+        }),
+        modes: Default::default(),
+    };
+    let mleader = EntityKind::MLeader(MLeader {
+        leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0)]],
+        landing: Vec3::new(1.0, 1.0, 0.0),
+        dogleg: 0.5,
+        text: None,
+        style: "Standard".into(),
+        arrow_size: 1.0,
+        spline: false,
+        block: Some(Insert {
+            block: "TITLE".into(),
+            insert: Vec3::new(0.0, 0.0, 1.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            clip: None,
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        }),
+    });
+    let (a, b) = {
+        let d = s.doc_mut().unwrap();
+        let a = d.add(&Space::Model, Common::default(), EntityKind::AttDef(attdef)).unwrap();
+        let b = d.add(&Space::Model, Common::default(), mleader).unwrap();
+        (a, b)
+    };
+    s.execute("move", &json!({"handles": [a.hex(), b.hex()], "delta": [0, 0, 3]})).unwrap();
+    let d = s.doc().unwrap();
+    match &d.entity(a).unwrap().kind {
+        EntityKind::AttDef(x) => {
+            assert_eq!(x.text.insert.z, 4.0);
+            assert_eq!(x.multiline.as_ref().unwrap().mtext.insert.z, 4.0, "multiline text keeps the delta");
+        }
+        k => panic!("not an attdef: {k:?}"),
+    }
+    match &d.entity(b).unwrap().kind {
+        EntityKind::MLeader(x) => {
+            assert_eq!(x.landing.z, 3.0);
+            assert_eq!(x.block.as_ref().unwrap().insert.z, 4.0, "block content keeps the delta");
+        }
+        k => panic!("not a multileader: {k:?}"),
     }
 }

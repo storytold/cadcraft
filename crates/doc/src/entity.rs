@@ -340,6 +340,7 @@ impl EntityKind {
                     }
                 }
                 p.const_width *= s;
+                p.elevation += dz;
             }
             EntityKind::Polyline3d(p) => p.points.iter_mut().for_each(t3),
             EntityKind::Spline(sp) => sp.transform(m),
@@ -360,7 +361,7 @@ impl EntityKind {
             EntityKind::Text(t) => transform_text(t, m, s, rot, mirror, dz),
             EntityKind::AttDef(a) => {
                 transform_text(&mut a.text, m, s, rot, mirror, dz);
-                a.transform_multiline(m);
+                a.transform_multiline_dz(m, dz);
             }
             EntityKind::MText(t) => {
                 t3(&mut t.insert);
@@ -387,7 +388,7 @@ impl EntityKind {
                 }
                 for a in &mut i.attribs {
                     transform_text(&mut a.text, m, s, rot, false, dz);
-                    a.transform_multiline(m);
+                    a.transform_multiline_dz(m, dz);
                 }
                 i.col_spacing *= s;
                 i.row_spacing *= s;
@@ -425,7 +426,7 @@ impl EntityKind {
                 if let Some(b) = &mut ml.block {
                     // Transformed exactly like a block reference.
                     let mut k = EntityKind::Insert(b.clone());
-                    k.transform(m);
+                    k.transform_dz(m, dz);
                     if let EntityKind::Insert(nb) = k {
                         *b = nb;
                     }
@@ -443,6 +444,7 @@ impl EntityKind {
                 h.scale *= s;
                 h.angle = cadcraft_geom::norm_angle(h.angle + rot);
                 h.origin = m.apply(h.origin);
+                h.elevation += dz;
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
             EntityKind::Face3d(f) => f.corners.iter_mut().for_each(t3),

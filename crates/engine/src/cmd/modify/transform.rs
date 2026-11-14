@@ -12,7 +12,18 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
 /// [`transform_entities`] with an additional translation along Z (MOVE/COPY with a Z delta).
 /// Every other caller passes 0 and leaves Z untouched.
 pub(crate) fn transform_entities_dz(s: &mut Session, hs: &[Handle], m: &Mat3, dz: f64, copy: bool) -> Result<Vec<Handle>> {
-    edit_entities(s, hs, copy, |e| e.kind.transform_dz(m, dz))
+    edit_entities(s, hs, copy, |e| {
+        let kdz = entity_dz(e, dz);
+        e.kind.transform_dz(m, kdz);
+    })
+}
+
+/// The Z delta for `e`: an `LwPolyline`'s elevation is stored in its OCS, so a mirrored plan
+/// polyline (extrusion pointing down) moves the other way in world Z.
+fn entity_dz(e: &Entity, dz: f64) -> f64 {
+    let n = e.common.extrusion;
+    let mirrored_plan = n.x.abs() < 1e-9 && n.y.abs() < 1e-9 && n.z < 0.0;
+    if mirrored_plan && matches!(e.kind, cadcraft_doc::EntityKind::LwPolyline(_)) { -dz } else { dz }
 }
 
 /// Scale `hs` by `f` about `base` in 3D, as AutoCAD 2024's SCALE does: about the base point's XY,
@@ -119,17 +130,21 @@ fn dz_of(cmd: &str, v: &Value) -> Result<f64> {
             None | Some(Value::Null) => 0.0,
             Some(z) => z.as_f64().ok_or_else(|| bad(cmd, "`delta` [dx, dy, dz] needs numbers"))?,
         },
-        Value::Object(_) => v.get("z").and_then(Value::as_f64).unwrap_or(0.0),
+        Value::Object(_) => match v.get("z") {
+            None | Some(Value::Null) => 0.0,
+            Some(z) => z.as_f64().ok_or_else(|| bad(cmd, "`delta` z needs a number"))?,
+        },
         _ => 0.0,
     };
     if z.is_finite() { Ok(z) } else { Err(bad(cmd, "the Z offset must be finite")) }
 }
 
-/// MOVE/COPY displacement with an optional Z: `delta[2]`, or `to[2] - from[2]`.
+/// MOVE/COPY displacement with an optional Z: `delta[2]`, or `to[2] - from[2]`. Z comes from the
+/// same source as XY, so a null or invalid `delta` takes both from `from`/`to`.
 fn delta3_of(cmd: &str, p: &Value) -> Result<(Vec2, f64)> {
     let d = delta_of(cmd, p)?;
-    let dz = if let Some(v) = p.get("delta") {
-        dz_of(cmd, v)?
+    let dz = if point_param(p, "delta").is_some() {
+        dz_of(cmd, p.get("delta").unwrap_or(&Value::Null))?
     } else {
         dz_of(cmd, p.get("to").unwrap_or(&Value::Null))? - dz_of(cmd, p.get("from").unwrap_or(&Value::Null))?
     };
