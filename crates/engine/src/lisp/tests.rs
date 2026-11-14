@@ -506,6 +506,17 @@ fn getvar_drawing_and_session_variables() {
     assert_eq!(ok(&mut s, "(getvar \"DWGTITLED\")"), "1");
 }
 
+/// LIMMIN, LIMMAX, SNAPBASE and HPORIGIN read as 2D point lists and INSBASE as a 3D one, not as JSON text (#2988).
+#[test]
+fn getvar_point_variables_are_point_lists() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(getvar \"LIMMIN\")"), "(0.0 0.0)");
+    assert_eq!(ok(&mut s, "(getvar \"LIMMAX\")"), "(12.0 9.0)");
+    assert_eq!(ok(&mut s, "(getvar \"SNAPBASE\")"), "(0.0 0.0)");
+    assert_eq!(ok(&mut s, "(getvar \"INSBASE\")"), "(0.0 0.0 0.0)");
+    assert_eq!(ok(&mut s, "(setvar \"HPORIGIN\" '(3.0 4.0)) (getvar \"HPORIGIN\")"), "(3.0 4.0)");
+}
+
 /// CECOLOR is a string in AutoCAD, whatever it was set from (#1999).
 #[test]
 fn getvar_cecolor_is_a_string() {
