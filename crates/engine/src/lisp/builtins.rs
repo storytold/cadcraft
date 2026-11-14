@@ -193,7 +193,7 @@ static BUILTINS: &[Builtin] = &[
     pure!("DISTANCE", distance),
     pure!("ANGLE", angle),
     pure!("INTERS", inters),
-    pure!("FINDFILE", findfile),
+    ctx!("FINDFILE", findfile),
     pure!("VL-CATCH-ALL-ERROR-P", vl_catch_all_error_p),
     pure!("VL-CATCH-ALL-ERROR-MESSAGE", vl_catch_all_error_message),
     pure!("VL-LOAD-COM", noop),
