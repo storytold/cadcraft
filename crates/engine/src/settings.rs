@@ -71,6 +71,8 @@ pub struct Settings {
     /// FILEDIA: kept for routines that switch file dialogs off around a script; no command reads it yet.
     pub filedia: bool,
     pub pickadd: bool,
+    /// COPYMODE: COPY makes one copy and ends (true, 1), or copies until Enter (false, 0).
+    pub copymode: bool,
     /// PICKDRAG: false = two-click windows (0), true = clicks or dragging (2).
     /// Drag-only mode (1) is not supported yet.
     pub pickdrag: bool,
@@ -168,6 +170,7 @@ impl Default for Settings {
             cmdecho: true,
             filedia: true,
             pickadd: true,
+            copymode: false,
             pickdrag: true,
             pickstyle: 1,
             gripsize: 5.0,

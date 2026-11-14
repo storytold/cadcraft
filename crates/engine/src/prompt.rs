@@ -31,12 +31,13 @@ impl Accept {
 /// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
 /// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
 /// AutoCAD's command line over measured runs, where no prompt was written both ways.
-const NO_OR: [&str; 28] = [
+const NO_OR: [&str; 29] = [
     "Bring to front",
     "Calculate rectangle dimensions based on",
     "Choose mode for selected object conversion",
     "Create annotative block",
     "Enter a configuration option",
+    "Enter a copy mode option",
     "Enter a plotting preference",
     "Enter an annotation option",
     "Enter an option",
