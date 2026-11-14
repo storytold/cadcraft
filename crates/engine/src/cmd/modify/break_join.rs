@@ -4,16 +4,6 @@ use super::{
     Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
 };
 
-/// Gives a rebuilt arc piece its source centre Z, or a rebuilt polyline piece its source elevation.
-fn with_z(mut k: EntityKind, z: f64) -> EntityKind {
-    match &mut k {
-        EntityKind::Arc(a) => a.center.z = z,
-        EntityKind::LwPolyline(p) => p.elevation = z,
-        _ => {}
-    }
-    k
-}
-
 /// Break `h` between two points (or at one point when p1 == p2).
 pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Result<Vec<Handle>> {
     if crate::cmd::curves::is_locked(s, h) {
@@ -44,7 +34,7 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
             let a1 = c.center.xy().angle_to(p1);
             let a2 = c.center.xy().angle_to(p2);
             // AutoCAD removes the CCW portion from the first to the second point.
-            vec![with_z(arc(&Arc::new(c.center.xy(), c.radius, a2, a1)), c.center.z)]
+            vec![arc(&Arc::new(c.center.xy(), c.radius, a2, a1))]
         }
         EntityKind::Arc(a) => {
             let ga = Arc::new(a.center.xy(), a.radius, a.start, a.end);
@@ -55,10 +45,10 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
             }
             let mut v = Vec::new();
             if t1 > 1e-12 {
-                v.push(with_z(arc(&Arc::new(ga.center, ga.radius, ga.start, ga.start + t1)), a.center.z));
+                v.push(arc(&Arc::new(ga.center, ga.radius, ga.start, ga.start + t1)));
             }
             if t2 < ga.sweep() - 1e-12 {
-                v.push(with_z(arc(&Arc::new(ga.center, ga.radius, ga.start + t2, ga.end)), a.center.z));
+                v.push(arc(&Arc::new(ga.center, ga.radius, ga.start + t2, ga.end)));
             }
             v
         }
@@ -81,24 +71,32 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
             };
             let (mut t1, mut t2) = (lp(p1), lp(p2));
             if p.closed {
-                if (t1 - t2).abs() < 1e-9 {
-                    return Err(EngineError::Other("Cannot break a closed polyline at a single point.".into()));
+                let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
+                let tol = 1e-9 * (1.0 + total);
+                if hi - lo < tol {
+                    // One point: the outline opens at its start vertex and splits at the point;
+                    // at the start vertex itself it stays whole and closed.
+                    if lo < tol || lo > total - tol {
+                        return Ok(vec![h]);
+                    }
+                    vec![lwpoly(sub_polyline(&segs, 0.0, lo), false), lwpoly(sub_polyline(&segs, lo, total), false)]
+                } else {
+                    // The stretch between the points that doesn't run through the start vertex
+                    // goes, whichever point came first; what is left runs from the later point
+                    // round through the start vertex to the earlier one.
+                    let doubled: Vec<Segment> = segs.iter().chain(segs.iter()).copied().collect();
+                    vec![lwpoly(sub_polyline(&doubled, hi, lo + total), false)]
                 }
-                // Like a circle: the stretch from the first point to the second, along the
-                // vertices, goes; what is left runs from the second point round to the first.
-                let doubled: Vec<Segment> = segs.iter().chain(segs.iter()).copied().collect();
-                let end = if t1 > t2 { t1 } else { t1 + total };
-                vec![with_z(lwpoly(sub_polyline(&doubled, t2, end), false), p.elevation)]
             } else {
                 if t1 > t2 {
                     std::mem::swap(&mut t1, &mut t2);
                 }
                 let mut v = Vec::new();
                 if t1 > 1e-12 {
-                    v.push(with_z(lwpoly(sub_polyline(&segs, 0.0, t1), false), p.elevation));
+                    v.push(lwpoly(sub_polyline(&segs, 0.0, t1), false));
                 }
                 if t2 < total - 1e-12 {
-                    v.push(with_z(lwpoly(sub_polyline(&segs, t2, total), false), p.elevation));
+                    v.push(lwpoly(sub_polyline(&segs, t2, total), false));
                 }
                 v
             }
