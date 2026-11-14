@@ -130,13 +130,13 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                                 *p += Vec2::new(dy * shear, dy);
                             }
                             let origin = Vec2::new(x + g.dx * k + dy * shear, dy);
-                            let text = shows
+                            let texts = shows
                                 .get(n)
-                                .copied()
+                                .into_iter()
                                 .flatten()
                                 .filter(|c| !c.is_whitespace())
-                                .and_then(|c| ttf::text_glyph_at(&outline, c, origin, h / outline.cap, wf, shear));
-                            out.push_glyph(contours, text);
+                                .filter_map(|c| ttf::text_glyph_at(&outline, *c, origin, h / outline.cap, wf, shear));
+                            out.push_glyph(contours, texts);
                         }
                         let adv = g.advance * k;
                         let (u, o) = flags(g.cluster);
@@ -248,14 +248,15 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
 /// longer one (a hostile run of thousands of stacked marks) take its characters in order.
 const MAX_MATCHED_CLUSTER: usize = 32;
 
-/// The character each glyph of a left-to-right run shows, for output that keeps text as text
+/// The characters each glyph of a left-to-right run shows, for output that keeps text as text
 /// ([`crate::TextGlyph`]). The shaper reorders, splits and substitutes glyphs inside a cluster
 /// (a letter with its marks), so within each cluster a glyph that is a character's own glyph
 /// takes that character first, then the other glyphs take the cluster's remaining characters in
 /// order. Each character is shown once: a glyph left over (the second half of a split Thai sara
-/// am) shows none and is drawn as an outline only.
-fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Option<char>> {
-    let mut out: Vec<Option<char>> = vec![None; glyphs.len()];
+/// am) shows none and is drawn as an outline only; characters left over (a ligature such as ฐ
+/// with sara u below) are all shown by the cluster's last glyph.
+fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Vec<char>> {
+    let mut out: Vec<Vec<char>> = vec![Vec::new(); glyphs.len()];
     let mut i = 0;
     while let Some(cluster) = glyphs.get(i).map(|g| g.cluster) {
         let j = glyphs.iter().skip(i).position(|g| g.cluster != cluster).map_or(glyphs.len(), |n| i + n);
@@ -269,13 +270,16 @@ fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Op
                 let gid = glyphs.get(n).map(|g| g.gid);
                 let own = ids.iter().zip(&free).position(|(id, f)| f.is_some() && *id == gid);
                 if let (Some(p), Some(o)) = (own, out.get_mut(n)) {
-                    *o = free.get_mut(p).and_then(Option::take);
+                    o.extend(free.get_mut(p).and_then(Option::take));
                 }
             }
         }
         let mut rest = free.into_iter().flatten();
-        for o in out.iter_mut().take(j).skip(i).filter(|o| o.is_none()) {
-            *o = rest.next();
+        for o in out.iter_mut().take(j).skip(i).filter(|o| o.is_empty()) {
+            o.extend(rest.next());
+        }
+        if let Some(o) = j.checked_sub(1).and_then(|last| out.get_mut(last)) {
+            o.extend(rest);
         }
         i = j;
     }
@@ -458,17 +462,20 @@ mod tests {
         // A run from index 1: cluster 1 has "ab" (two glyphs), cluster 3 has "cd" and a split
         // character's extra glyph, which shows nothing.
         let gs = Vec::from([1, 1, 3, 3, 3].map(glyph));
-        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![Some('a'), Some('b'), Some('c'), Some('d'), None]);
+        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![vec!['a'], vec!['b'], vec!['c'], vec!['d'], vec![]]);
+        // A ligature (ฐ with sara u below as one glyph) shows every character of its cluster.
+        let gs = Vec::from([1, 3].map(glyph));
+        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![vec!['a', 'b'], vec!['c', 'd']]);
         // Clusters out of order, past the run or past the line show nothing and don't panic.
         let gs = Vec::from([3, 1, usize::MAX, 9].map(glyph));
-        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![None, Some('a'), None, None]);
+        assert_eq!(glyph_chars(&face, &cs, &gs, 5), vec![vec![], vec!['a', 'b', 'c', 'd'], vec![], vec![]]);
         assert!(glyph_chars(&face, &cs, &[], 5).is_empty());
         // A cluster longer than the matching limit still shows each character once, in order.
         let long: Vec<char> = std::iter::once('ก').chain(std::iter::repeat_n('\u{0E48}', MAX_CHARS)).collect();
         let gs: Vec<Glyph> = (0..long.len()).map(|_| glyph(0)).collect();
         let shows = glyph_chars(&face, &long, &gs, long.len());
-        assert_eq!(shows.first(), Some(&Some('ก')));
-        assert!(shows.iter().all(Option::is_some));
+        assert_eq!(shows.first(), Some(&vec!['ก']));
+        assert!(shows.iter().all(|s| s.len() == 1));
     }
 
     /// An installed font with Thai, or `None` (the tests then skip).
