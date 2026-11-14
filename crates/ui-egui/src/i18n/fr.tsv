@@ -544,6 +544,9 @@
 	No plot style tables.	Aucune table de styles de tracé.
 	A built-in table: editing it keeps an edited copy in the drawing.	Table intégrée : sa modification conserve une copie modifiée dans le dessin.
 	Keep an editable copy of this table in the drawing	Conserver une copie modifiable de cette table dans le dessin
+	Show only colors used in the current drawing	Afficher uniquement les couleurs utilisées dans le dessin
+	Hides the plot styles of colors no object uses. Their settings stay in the table.	Masque les styles de tracé des couleurs qu'aucun objet n'utilise. Leurs réglages restent dans la table.
+	No colors used in the drawing.	Aucune couleur n'est utilisée dans le dessin.
 	Layout {name}: {table}	Espace {name} : {table}
 	Grayscale	Niveaux de gris
 	Screening	Trame
