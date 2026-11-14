@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use cadcraft_dxf::{Section, Tag};
+use craft_dxf::{Section, Tag};
 
 /// Named object dictionary entries CADCraft writes itself from its model (plus every key that
 /// starts with `CADCRAFT`): they are read into the model, not kept raw. A change that starts
@@ -71,7 +71,7 @@ fn raw(t: &Tag) -> RawTag {
 /// A kept group with the value type its code has (so binary output encodes it right); text that
 /// doesn't parse as that type stays text.
 fn tag(r: &RawTag) -> Tag {
-    use cadcraft_dxf::{Kind, Value, kind_of};
+    use craft_dxf::{Kind, Value, kind_of};
     let v = r.value.trim();
     let value = match kind_of(r.code) {
         Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Value::Real),
