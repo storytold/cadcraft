@@ -12,8 +12,9 @@
 //!   (`rightClickCommand`: the menu, Enter, or the menu only when the prompt has options).
 //!   `rightClickDefault` and `rightClickEdit` can make a right-click with no command running
 //!   repeat the last command instead of opening the menu.
-//! - **Shift/Ctrl+right-click** ([`snap_entries`]): the object snap menu. Its items type the point
-//!   modifiers and snap overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
+//! - **Shift/Ctrl+right-click** ([`snap_entries`]), or a middle click with MBUTTONPAN 0
+//!   ([`middle_snap_menu`]): the object snap menu. Its items type the point modifiers and snap
+//!   overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
 //!
 //! An item for a command appears only when that command is registered, so the menus pick up
 //! commands as they land. Choosing an item ([`choose`]) starts its command like the menu bar, or
@@ -273,7 +274,7 @@ const FILTERS: &[&str] = &[".X", ".Y", ".Z", ".XY", ".XZ", ".YZ"];
 /// The id of the Osnap Settings item (the Drafting Settings dialog).
 const OSNAP_SETTINGS: &str = "dsettings";
 
-/// The object snap menu (Shift/Ctrl+right-click): Temporary track point, From, Mid Between 2
+/// The object snap menu (Shift/Ctrl+right-click, or a middle click with MBUTTONPAN 0): Temporary track point, From, Mid Between 2
 /// Points, Point Filters, the snap modes, None and Osnap Settings. An item's id is the text it
 /// types; the modifiers are only available at a point prompt.
 pub fn snap_entries(app: &CadApp) -> Vec<Vec<Entry>> {
@@ -341,6 +342,21 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
         Some(id) if snap => choose_snap(app, &id),
         Some(id) => choose(app, &id),
         None => {}
+    }
+}
+
+/// The object snap menu on the middle button (MBUTTONPAN 0), at the pointer. Call it every frame
+/// with whether a middle click on the canvas opens it; it also shows the menu while it is open.
+pub fn middle_snap_menu(app: &mut CadApp, ui: &egui::Ui, open: bool) {
+    let mut clicked = None;
+    egui::Popup::new(egui::Id::unique("cc_middle_snap_menu"), ui.ctx().clone(), egui::PopupAnchor::PointerFixed, ui.layer_id())
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .style(egui::containers::menu::menu_style)
+        .open_memory(open.then_some(egui::SetOpenCommand::Bool(true)))
+        .show(|ui| groups_ui(ui, &snap_entries(app), &mut clicked));
+    if let Some(id) = clicked {
+        choose_snap(app, &id);
     }
 }
 

@@ -334,6 +334,12 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
 }
 
 fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool) {
+    // MBUTTONPAN 0: the middle button opens the object snap menu instead (and with panning goes
+    // the double click's Zoom Extents), so it never moves the view.
+    if !app.session.settings.mbuttonpan {
+        app.canvas.pan_last = None;
+        return;
+    }
     let p = nav.pointer;
     let middle_pressed = nav.response.ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle));
     let focused = nav.response.ctx.input(|i| i.focused);
@@ -950,7 +956,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // Right-click acts as Enter while a command runs (the classic CAD default; held, it opens the
     // command menu); otherwise it opens the shortcut menu (Repeat, Clipboard, …).
-    // Shift/Ctrl+right-click opens the object snap menu.
+    // Shift/Ctrl+right-click opens the object snap menu, and so does a middle click with
+    // MBUTTONPAN 0.
     let idle = !app.session.prompting();
     if inside && pressed_secondary {
         app.canvas.snap_menu = mods.shift || mods.ctrl;
@@ -958,6 +965,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if crate::context_menu::in_command(app, ui, inside, pressed_secondary) {
         let _ = app.session.input(Input::Enter);
     }
+    let middle_clicked = inside && !app.session.settings.mbuttonpan && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle));
+    crate::context_menu::middle_snap_menu(app, ui, middle_clicked);
     // Right-click on a grip with options (polyline vertex, line end…) opens the grip menu.
     if inside && pressed_secondary && idle && !app.canvas.snap_menu {
         app.canvas.grip_menu = grip_at(app, &xf, hover_pos).filter(|g| !grip_options(app, *g).is_empty());
