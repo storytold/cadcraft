@@ -108,6 +108,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "keys",
         "mtext_editor",
         "layers",
+        "managers",
         "bedit",
         "palettes",
         "parametric",
@@ -488,6 +489,42 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             assert_eq!(app.ui.dialog.as_deref(), Some(dialog));
         }
     }
+}
+
+/// The Plot dialog's title, labels, choices and buttons follow the interface language (#3080). The
+/// catalogs had them, but the dialog drew English literals.
+#[test]
+fn plot_dialog_follows_the_interface_language() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.interface_language = Preference::parse("pt-BR").unwrap();
+    app.ui.dialog = Some("plot".into());
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    let text = render(&mut app, &ctx);
+    for source in [
+        "Plot",
+        "Printer/plotter",
+        "Paper size",
+        "Orientation",
+        "Portrait",
+        "Landscape",
+        "Plot area",
+        "Fit to paper",
+        "Plot offset",
+        "Center the plot",
+        "X offset (mm)",
+        "Y offset (mm)",
+        "Scale",
+        "Plot object lineweights",
+        "Plot transparency",
+        "Preview",
+    ] {
+        let shown = tr("pt-BR", source);
+        assert_ne!(shown, source, "pt-BR translates {source:?}");
+        // A whole painted line, so "Plotar" isn't matched inside "Plotar transparência".
+        assert!(text.lines().any(|line| line == shown), "{source:?} as {shown:?} in {text}");
+    }
+    assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
 }
 
 /// The letters of every catalog have glyphs in both UI families. Latin, Cyrillic and Greek come

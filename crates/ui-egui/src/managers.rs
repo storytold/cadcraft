@@ -575,11 +575,11 @@ fn style_label(page: &cadcraft_doc::PageSetup) -> &str {
 
 fn area_label(a: &str) -> &str {
     match a {
-        "layout" => "Layout",
-        "extents" => "Extents",
-        "display" => "Display",
-        "limits" => "Limits",
-        "window" => "Window",
+        "layout" => crate::tl!("Layout"),
+        "extents" => crate::tl!("Extents"),
+        "display" => crate::tl!("Display"),
+        "limits" => crate::tl!("Limits"),
+        "window" => crate::tl!("Window"),
         other => other,
     }
 }
@@ -607,26 +607,32 @@ fn page_rows(
     placement: Option<(&mut bool, &mut [f64; 2], bool)>,
 ) -> Option<(&'static str, Value)> {
     let mut change = None;
-    ui.label("Printer/plotter");
-    craft_ui::ComboBox::from_id_salt(salt.with("device")).selected_text(device_label(page)).width(190.0).show_ui(ui, |ui| {
-        if ui.selectable_label(device_label(page) == "None", "None").on_hover_text("PDF on the paper chosen below").clicked()
-            && device_label(page) != "None"
-        {
-            change = Some(("device", json!("None")));
-        }
-        for dev in choices.devices.iter() {
-            let on = dev.name.eq_ignore_ascii_case(&page.device);
-            if ui.selectable_label(on, &dev.name).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
-                && !on
+    ui.label(crate::tl!("Printer/plotter"));
+    craft_ui::ComboBox::from_id_salt(salt.with("device"))
+        .selected_text(if device_label(page) == "None" { crate::tl!("None") } else { device_label(page) })
+        .width(190.0)
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_label(device_label(page) == "None", crate::tl!("None"))
+                .on_hover_text(crate::tl!("PDF on the paper chosen below"))
+                .clicked()
+                && device_label(page) != "None"
             {
-                change = Some(("device", json!(dev.name)));
+                change = Some(("device", json!("None")));
             }
-        }
-    });
+            for dev in choices.devices.iter() {
+                let on = dev.name.eq_ignore_ascii_case(&page.device);
+                if ui.selectable_label(on, &dev.name).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
+                    && !on
+                {
+                    change = Some(("device", json!(dev.name)));
+                }
+            }
+        });
     ui.end_row();
     // The device's papers, else the standard sizes.
     let device = choices.devices.iter().find(|dv| dv.name.eq_ignore_ascii_case(&page.device));
-    ui.label("Paper size");
+    ui.label(crate::tl!("Paper size"));
     craft_ui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| match device {
         Some(dev) => {
             for p in &dev.papers {
@@ -644,17 +650,17 @@ fn page_rows(
         }
     });
     ui.end_row();
-    ui.label("Orientation");
+    ui.label(crate::tl!("Orientation"));
     ui.horizontal(|ui| {
-        if ui.radio(!page.landscape, "Portrait").clicked() && page.landscape {
+        if ui.radio(!page.landscape, crate::tl!("Portrait")).clicked() && page.landscape {
             change = Some(("landscape", json!(false)));
         }
-        if ui.radio(page.landscape, "Landscape").clicked() && !page.landscape {
+        if ui.radio(page.landscape, crate::tl!("Landscape")).clicked() && !page.landscape {
             change = Some(("landscape", json!(true)));
         }
     });
     ui.end_row();
-    ui.label("Plot area");
+    ui.label(crate::tl!("Plot area"));
     ui.add_enabled_ui(rows.areas.len() > 1, |ui| {
         craft_ui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
             for a in rows.areas {
@@ -667,19 +673,19 @@ fn page_rows(
     ui.end_row();
     ui.label("");
     let mut fit = page.scale_to_fit;
-    if ui.checkbox(&mut fit, "Fit to paper").changed() {
+    if ui.checkbox(&mut fit, crate::tl!("Fit to paper")).changed() {
         change = Some(("scaleToFit", json!(fit)));
     }
     ui.end_row();
     if let Some((center, offset_mm, supported)) = placement {
-        ui.label("Plot offset");
-        ui.add_enabled_ui(supported, |ui| ui.checkbox(center, "Center the plot")).response.on_hover_text(if supported {
-            "Center the plotted model bounds on the printable area"
+        ui.label(crate::tl!("Plot offset"));
+        ui.add_enabled_ui(supported, |ui| ui.checkbox(center, crate::tl!("Center the plot"))).response.on_hover_text(if supported {
+            crate::tl!("Center the plotted model bounds on the printable area")
         } else {
-            "Model-space offset placement is not supported by SVG"
+            crate::tl!("Model-space offset placement is not supported by SVG")
         });
         ui.end_row();
-        for (i, label) in [(0, "X offset (mm)"), (1, "Y offset (mm)")] {
+        for (i, label) in [(0, crate::tl!("X offset (mm)")), (1, crate::tl!("Y offset (mm)"))] {
             let field_label = ui.label(label);
             ui.add_enabled_ui(supported && !*center, |ui| {
                 if let Some(v) = num_field(ui, ("plot_offset", i), offset_mm[i], Some(field_label.id)) {
@@ -687,62 +693,65 @@ fn page_rows(
                 }
             })
             .response
-            .on_hover_text("Distance from the printable area's lower-left corner; values range from −100000 to 100000 mm");
+            .on_hover_text(crate::tl!("Distance from the printable area's lower-left corner; values range from −100000 to 100000 mm"));
             ui.end_row();
         }
         if supported && !*center && offset_mm.iter().any(|v| !v.is_finite() || v.abs() > cadcraft_render::paper::MAX_PLOT_OFFSET_MM) {
             ui.label("");
-            ui.colored_label(Tokens::get().warn, "Offsets must be within ±100000 mm");
+            ui.colored_label(Tokens::get().warn, crate::tl!("Offsets must be within ±100000 mm"));
             ui.end_row();
         }
     }
     if rows.scale {
-        let label = ui.label("Scale");
+        let label = ui.label(crate::tl!("Scale"));
         ui.add_enabled_ui(!page.scale_to_fit, |ui| {
             if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale), Some(label.id)).and_then(|t| parse_ratio(&t)) {
                 change = Some(("scale", json!(v)));
             }
         })
         .response
-        .on_hover_text("Paper units per drawing unit, or a ratio such as 1:50");
+        .on_hover_text(crate::tl!("Paper units per drawing unit, or a ratio such as 1:50"));
         ui.end_row();
     }
     if rows.center {
         ui.label("");
         let mut center = page.center;
-        if ui.checkbox(&mut center, "Center the plot").changed() {
+        if ui.checkbox(&mut center, crate::tl!("Center the plot")).changed() {
             change = Some(("center", json!(center)));
         }
         ui.end_row();
     }
     ui.label("");
     let mut lw = page.lineweights;
-    if ui.checkbox(&mut lw, "Plot object lineweights").changed() {
+    if ui.checkbox(&mut lw, crate::tl!("Plot object lineweights")).changed() {
         change = Some(("lineweights", json!(lw)));
     }
     ui.end_row();
     ui.label("");
     let mut transparency = page.plot_transparency;
     if ui
-        .checkbox(&mut transparency, "Plot transparency")
-        .on_hover_text("Plot objects with their transparency (PLOTTRANSPARENCYOVERRIDE can override it)")
+        .checkbox(&mut transparency, crate::tl!("Plot transparency"))
+        .on_hover_text(crate::tl!("Plot objects with their transparency (PLOTTRANSPARENCYOVERRIDE can override it)"))
         .changed()
     {
         change = Some(("plotTransparency", json!(transparency)));
     }
     ui.end_row();
-    ui.label("Plot style table");
-    craft_ui::ComboBox::from_id_salt(salt.with("styles")).selected_text(style_label(page)).width(190.0).show_ui(ui, |ui| {
-        if ui.selectable_label(style_label(page) == "None", "None").clicked() && style_label(page) != "None" {
-            change = Some(("plotStyleTable", json!("None")));
-        }
-        for name in &choices.styles {
-            let on = name.eq_ignore_ascii_case(&page.plot_style_table);
-            if ui.selectable_label(on, name).clicked() && !on {
-                change = Some(("plotStyleTable", json!(name)));
+    ui.label(crate::tl!("Plot style table"));
+    craft_ui::ComboBox::from_id_salt(salt.with("styles"))
+        .selected_text(if style_label(page) == "None" { crate::tl!("None") } else { style_label(page) })
+        .width(190.0)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(style_label(page) == "None", crate::tl!("None")).clicked() && style_label(page) != "None" {
+                change = Some(("plotStyleTable", json!("None")));
             }
-        }
-    });
+            for name in &choices.styles {
+                let on = name.eq_ignore_ascii_case(&page.plot_style_table);
+                if ui.selectable_label(on, name).clicked() && !on {
+                    change = Some(("plotStyleTable", json!(name)));
+                }
+            }
+        });
     ui.end_row();
     change
 }
@@ -947,77 +956,88 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     set_temp(ctx, PLOT_NOW, false);
     let (mut cancel, mut action, mut pick, mut preview) = (false, None, false, false);
     let center = ctx.content_rect().center();
-    egui::Window::new("Plot").open(open).collapsible(false).resizable(false).pivot(egui::Align2::CENTER_CENTER).default_pos(center).show(ctx, |ui| {
-        egui::Grid::new("plot_target").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-            ui.label("Layout");
-            craft_ui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(ui, |ui| {
-                for n in &targets {
-                    if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
-                        st.page = plot_page(d, n);
-                        st.target = n.clone();
+    egui::Window::new(crate::tl!("Plot"))
+        .id(egui::Id::unique("Plot"))
+        .open(open)
+        .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(center)
+        .show(ctx, |ui| {
+            egui::Grid::new("plot_target").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                ui.label(crate::tl!("Layout"));
+                // Model is the tab's name in the interface language, as the tab bar shows it; the target stays "Model".
+                let shown = |n: &str| if n == "Model" { crate::tl!("Model").to_string() } else { n.to_string() };
+                craft_ui::ComboBox::from_id_salt("plot_layout").selected_text(shown(&st.target)).width(190.0).show_ui(ui, |ui| {
+                    for n in &targets {
+                        if ui.selectable_label(*n == st.target, shown(n)).clicked() && *n != st.target {
+                            st.page = plot_page(d, n);
+                            st.target = n.clone();
+                        }
                     }
-                }
+                });
+                ui.end_row();
             });
-            ui.end_row();
-        });
-        ui.separator();
-        ui.horizontal_top(|ui| {
-            egui::Grid::new("plot_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-                let rows = if model {
-                    PageRows { areas: MODEL_AREAS, scale: true, center: false }
-                } else {
-                    PageRows { areas: &["layout"], scale: false, center: false }
-                };
-                let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
-                if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
-                    apply_page_change(&mut st.page, k, &v);
-                }
-                if model && st.page.plot_area == "window" {
-                    for (i, label) in [(0, "First corner"), (2, "Opposite corner")] {
-                        ui.label(label);
-                        ui.horizontal(|ui| {
-                            for (j, axis) in ["X", "Y"].iter().enumerate() {
-                                let axis_label = ui.label(*axis);
-                                let k = i + j;
-                                if let Some(slot) = st.window.get_mut(k)
-                                    && let Some(v) = num_field(ui, ("plot_window", k), *slot, Some(axis_label.id))
-                                {
-                                    *slot = v;
+            ui.separator();
+            ui.horizontal_top(|ui| {
+                egui::Grid::new("plot_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                    let rows = if model {
+                        PageRows { areas: MODEL_AREAS, scale: true, center: false }
+                    } else {
+                        PageRows { areas: &["layout"], scale: false, center: false }
+                    };
+                    let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
+                    if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
+                        apply_page_change(&mut st.page, k, &v);
+                    }
+                    if model && st.page.plot_area == "window" {
+                        for (i, label) in [(0, crate::tl!("First corner")), (2, crate::tl!("Opposite corner"))] {
+                            ui.label(label);
+                            ui.horizontal(|ui| {
+                                for (j, axis) in ["X", "Y"].iter().enumerate() {
+                                    let axis_label = ui.label(*axis);
+                                    let k = i + j;
+                                    if let Some(slot) = st.window.get_mut(k)
+                                        && let Some(v) = num_field(ui, ("plot_window", k), *slot, Some(axis_label.id))
+                                    {
+                                        *slot = v;
+                                    }
                                 }
-                            }
-                        });
+                            });
+                            ui.end_row();
+                        }
+                        ui.label("");
+                        pick = ui.button(crate::tl!("Window <")).on_hover_text(crate::tl!("Pick the window's corners in the drawing")).clicked();
                         ui.end_row();
                     }
-                    ui.label("");
-                    pick = ui.button("Window <").on_hover_text("Pick the window's corners in the drawing").clicked();
-                    ui.end_row();
+                });
+                sheet_sketch(ui, &st.page, &t);
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if !model
+                    && ui.button(crate::tl!("Apply to Layout")).on_hover_text(crate::tl!("Save these settings in the layout's page setup")).clicked()
+                {
+                    let page = &st.page;
+                    action = Some((
+                        "pagesetup",
+                        json!({
+                            "layout": st.target,
+                            "paper": page.paper,
+                            "landscape": page.landscape,
+                            "scaleToFit": page.scale_to_fit,
+                            "lineweights": page.lineweights,
+                            "plotTransparency": page.plot_transparency,
+                        }),
+                    ));
                 }
-            });
-            sheet_sketch(ui, &st.page, &t);
-        });
-        ui.separator();
-        ui.horizontal(|ui| {
-            if !model && ui.button("Apply to Layout").on_hover_text("Save these settings in the layout's page setup").clicked() {
-                let page = &st.page;
-                action = Some((
-                    "pagesetup",
-                    json!({
-                        "layout": st.target,
-                        "paper": page.paper,
-                        "landscape": page.landscape,
-                        "scaleToFit": page.scale_to_fit,
-                        "lineweights": page.lineweights,
-                        "plotTransparency": page.plot_transparency,
-                    }),
-                ));
-            }
-            preview = ui.button("Preview").on_hover_text("The sheet as these settings plot it").clicked();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                cancel = ui.button("Cancel").clicked();
-                ok |= ui.button("OK").clicked();
+                preview = ui.button(crate::tl!("Preview")).on_hover_text(crate::tl!("The sheet as these settings plot it")).clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    cancel = ui.button(crate::tl!("Cancel")).clicked();
+                    ok |= ui.button(crate::tl!("OK")).clicked();
+                });
             });
         });
-    });
     // The output file type follows the device.
     let ext = choices.devices.iter().find(|dv| dv.name.eq_ignore_ascii_case(&st.page.device)).map_or("pdf", |dv| dv.output.as_str());
     set_temp(ctx, "plot_state", st.clone());
