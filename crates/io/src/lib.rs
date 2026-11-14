@@ -61,6 +61,19 @@ pub enum IoError {
 
 pub type Result<T> = std::result::Result<T, IoError>;
 
+/// Restore CADCraft's public diagnostics after the shared byte bridge supplies generic wording.
+fn cadcraft_dwg_message(message: &str) -> String {
+    message
+        .replace("accepted by this bridge", "CADCraft opens")
+        .replace("types this bridge can't preserve", "types CADCraft doesn't keep")
+        .replace("this bridge writes", "CADCraft writes")
+        .replace("accepted for DWG conversion", "CADCraft converts to DWG")
+}
+
+fn dwg_error(message: String) -> IoError {
+    IoError::Format(cadcraft_dwg_message(&message))
+}
+
 /// How a program runs the DWG reader and writer in a child process (`craft_dwg::worker`).
 pub mod dwg_worker {
     pub use craft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
@@ -82,9 +95,9 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if craft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
+        let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
-        d.read_notes = notes;
+        d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
     }
     let d = match (Format::from_path(name), ext(name).as_str()) {
@@ -146,7 +159,7 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// reads them as that version.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
     let bridge = dxf_write::dwg_bridge(d, version);
-    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
+    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

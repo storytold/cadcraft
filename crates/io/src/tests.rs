@@ -1518,12 +1518,32 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
 
     let limits = craft_dwg::Limits { max_dwg_bytes: 100_000, ..craft_dwg::Limits::DEFAULT };
     let e = craft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
-    assert!(e.starts_with("DWG: the file is 0.") && e.ends_with("MB, larger than the 0.1 MB CADCraft opens"), "{e}");
+    assert!(e.starts_with("DWG: the file is 0.") && e.ends_with("MB, larger than the 0.1 MB accepted by this bridge"), "{e}");
 
     // Lines that aren't even group codes: the size is reported before anything is parsed.
     let text = "not a group code\nx\n".repeat(60);
     let e = craft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
     assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
+}
+
+#[test]
+fn shared_dwg_diagnostics_keep_cadcraft_vocabulary() {
+    assert_eq!(
+        cadcraft_dwg_message("DWG: the file is 0.1 MB, larger than the 0.1 MB accepted by this bridge"),
+        "DWG: the file is 0.1 MB, larger than the 0.1 MB CADCraft opens"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DWG: 2 objects of types this bridge can't preserve were left out (FOO × 2)"),
+        "DWG: 2 objects of types CADCraft doesn't keep were left out (FOO × 2)"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DWG version `AC1015` can't be written (this bridge writes AC1018+)"),
+        "DWG version `AC1015` can't be written (CADCraft writes AC1018+)"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DXF: the input is 1024 MB, larger than the 1024 MB accepted for DWG conversion"),
+        "DXF: the input is 1024 MB, larger than the 1024 MB CADCraft converts to DWG"
+    );
 }
 
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
