@@ -189,12 +189,14 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     let s = &app.session.settings;
     let osmode = over.unwrap_or(s.osmode) | if s.osnaphatch { snap::mode::HATCH } else { 0 };
     let Ok(st) = app.session.state() else { return };
+    let space = st.edit_space();
+    let frozen = st.active_viewport_frozen();
     let hit = match cycle {
         Some(i) => {
-            let cands = cadcraft_engine::pointmod::snap_candidates(&st.doc, &st.edit_space(), raw, ap, osmode, base, deferred);
+            let cands = cadcraft_engine::pointmod::snap_candidates_with_frozen(&st.doc, &space, raw, ap, osmode, base, deferred, frozen);
             cands.get(i % cands.len().max(1)).copied()
         }
-        None => snap::osnap(&st.doc, &st.edit_space(), raw, ap, osmode, base, deferred),
+        None => snap::osnap_with_frozen(&st.doc, &space, raw, ap, osmode, base, deferred, frozen),
     };
     let p = match (hit, app.canvas.snap) {
         (Some(h), _) => {
