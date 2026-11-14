@@ -285,7 +285,7 @@ fn standard_dimassoc_associates_in_dxf_and_dwg() {
     let back = read_dxf(plain.as_bytes()).unwrap();
     assert_standard_assoc(&c, &back, "DXF");
 
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
     let back = read(&dwg, "case.dwg").unwrap();
     assert_standard_assoc(&c, &back, "DWG");
 }

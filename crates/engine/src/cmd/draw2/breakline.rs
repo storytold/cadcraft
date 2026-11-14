@@ -20,7 +20,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("breakline", "Break-line Symbol", run_breakline)
-            .menu(&["Tools", "Express Tools", "Break-line Symbol"])
+            .menu(&["Tools", "Additional Tools", "Break-line Symbol"])
             .params(
                 "{p1, p2, at?: [x,y] (symbol location; default the midpoint), size? (default 1, times DIMSCALE), \
                  extension? (past both points; default 0), block? (a block with two points on Defpoints; default the built-in symbol)} → {handle}",

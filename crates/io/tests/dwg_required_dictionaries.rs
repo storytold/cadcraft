@@ -3,7 +3,7 @@
 //! it as empty ("No data was imported..."), though it reads the same drawing as DXF (and as an
 //! AC1032 DWG) fine. The DWG bridge adds the dictionary AutoCAD writes, with its usual variables,
 //! when the DXF has none.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use std::io::Cursor;
 
@@ -92,7 +92,7 @@ fn an_ac1018_dwg_gets_the_variable_dictionary_autocad_always_writes() {
 #[test]
 fn the_dictionary_keeps_the_drawings_dimassoc_and_hidetext() {
     let dxf = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DIMASSOC\n70\n1\n9\n$HIDETEXT\n70\n0\n0\nENDSEC\n0\nEOF\n";
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1018").expect("write the DWG");
+    let dwg = craft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1018").expect("write the DWG");
     let doc = read_dwg(&dwg);
     let vars = variable_dictionary(&doc).expect("AC1018 DWG: the named object dictionary has an AcDbVariableDictionary");
     assert_eq!(value(&vars, "DIMASSOC"), Some("1"), "DIMASSOC in {vars:?}");
@@ -107,7 +107,7 @@ fn the_dictionary_keeps_the_drawings_dimassoc_and_hidetext() {
 #[test]
 fn impossible_header_values_fall_back_to_the_defaults() {
     let dxf = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$DIMASSOC\n70\n9\n9\n$HIDETEXT\n70\n7\n0\nENDSEC\n0\nEOF\n";
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1018").expect("write the DWG");
+    let dwg = craft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1018").expect("write the DWG");
     let doc = read_dwg(&dwg);
     let vars = variable_dictionary(&doc).expect("AC1018 DWG: the named object dictionary has an AcDbVariableDictionary");
     assert_eq!(value(&vars, "DIMASSOC"), Some("2"), "DIMASSOC in {vars:?}");
@@ -139,7 +139,7 @@ fn a_variable_dictionary_the_drawing_has_is_left_alone() {
     assert!(source.set_drawing_variable("CMLEADERSTYLE", "Notes"));
     let dxf = acadrust::DxfWriter::new(&source).write_to_vec().expect("write a DXF with the dictionary");
 
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(&dxf, "AC1018").expect("write the DWG");
+    let dwg = craft_dwg::dxf_to_dwg_as(&dxf, "AC1018").expect("write the DWG");
     let doc = read_dwg(&dwg);
     let vars = variable_dictionary(&doc).expect("the drawing's dictionary is kept");
     assert_eq!(vars.len(), 1, "{vars:?}");
