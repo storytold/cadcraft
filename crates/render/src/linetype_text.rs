@@ -46,8 +46,10 @@ struct Element {
 }
 
 /// The texts and shapes of `lt` along the polyline `pts`, in the coordinates of `pts`. Empty
-/// when the linetype has none or its scaled pattern is drawn continuous (shorter than
-/// `min_pattern`, or repeating too often).
+/// when the linetype has none, or its scaled pattern is drawn continuous: shorter than
+/// `min_pattern`, or repeating more often than the budget allows (#1069, #1285). At most
+/// [`MAX_TEXTS`] texts and shapes are placed along one run, the first ones: the cap keeps a
+/// hostile scale from placing millions of them.
 pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Shaped> {
     let mut out = Vec::new();
     if pts.len() < 2 || !lt.pattern.iter().any(|e| e.text.as_deref().is_some_and(|t| !t.trim().is_empty()) || e.shape.is_some()) {
@@ -56,7 +58,13 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern || len / total > 50_000.0 {
+    // `apply` draws a run past the dash ceiling as one continuous line (#1285), so its texts and
+    // shapes go with the dashes.
+    if !(total.is_finite() && total > 1e-12 && len.is_finite())
+        || total < min_pattern
+        || len / total > crate::linetype::MAX_DASHES
+        || (min_pattern > 0.0 && len / total > 50_000.0)
+    {
         return out;
     }
     let elements = elements(d, lt, scale);
@@ -225,6 +233,15 @@ mod tests {
         let x = starts(&t);
         assert!(x[0] >= 0.69 && x[0] < 0.75, "{x:?}");
         assert!(x[1] >= 1.64 && x[1] < 1.70, "{x:?}");
+    }
+
+    #[test]
+    fn no_text_past_the_dash_ceiling() {
+        // 2,000,001 repeats of the 0.95-long pattern: `apply` draws the run as one continuous
+        // line there, so its texts go with the dashes (#1285).
+        let d = Drawing::new_imperial();
+        let len = 2_000_001.0 * 0.95;
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(len, 0.0)], &gas(), 1.0, 0.0).is_empty());
     }
 
     #[test]
