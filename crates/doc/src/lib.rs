@@ -9,6 +9,7 @@
 mod array;
 mod constraint;
 mod entity;
+pub mod ext;
 mod extents;
 mod format;
 mod gdt;
@@ -29,6 +30,7 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
+pub use ext::{ExtData, Extensions};
 pub use extents::{
     BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame, ole_frame_accepts,
     ole_frame_transform,
@@ -139,6 +141,8 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// Data other crates keep on the drawing (see [`ext`]); written to files when persisted.
+    pub ext: Extensions,
     /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
     /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
     /// drawing reopens with it. Never set on an open drawing.
@@ -204,6 +208,7 @@ impl Drawing {
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            ext: Extensions::default(),
             portable_fonts: false,
             rasters: Rasters::default(),
         }
