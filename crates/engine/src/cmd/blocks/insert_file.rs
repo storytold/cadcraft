@@ -82,9 +82,11 @@ fn read_drawing(path: &str) -> Result<Drawing> {
     Err(last.unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
 }
 
+/// The bytes of the drawing to insert, held to the automation roots.
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_read(_path).map_err(|e| bad("insert", e))?;
         crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
             .map_err(|e| bad("insert", format!("{_path}: {e}")))
     }

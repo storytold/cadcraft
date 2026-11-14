@@ -39,6 +39,9 @@ impl Session {
             }
             return Err(EngineError::UnknownCommand(name.to_string()));
         };
+        if let Some(why) = crate::file_access::commands::refusal(spec.id) {
+            return Err(EngineError::Disabled(spec.id.into(), why));
+        }
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
             if spec.interactive.is_none() {

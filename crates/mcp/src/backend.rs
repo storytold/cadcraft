@@ -2,9 +2,11 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 
 use cadcraft_engine::Session;
+use cadcraft_engine::file_access::{self, AutomationRoots};
 use serde_json::{Value, json};
 
 /// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
@@ -321,13 +323,19 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
 ];
 
 /// An in-process headless session (no window).
+#[derive(Default)]
 pub struct Headless {
     pub session: Session,
+    /// The folders its methods may read and write (`--automation-read-root`,
+    /// `--automation-write-root`); `None`: anywhere.
+    roots: Option<Arc<AutomationRoots>>,
 }
 
-impl Default for Headless {
-    fn default() -> Self {
-        Headless { session: Session::new() }
+impl Headless {
+    /// Confine the files every method reads and writes to `roots` ([`file_access`]).
+    pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
+        self.roots = roots;
+        self
     }
 }
 
@@ -346,8 +354,9 @@ fn state(s: &Session) -> Value {
     })
 }
 
-impl Backend for Headless {
-    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+impl Headless {
+    /// The reply to one control method; the caller holds it to the roots.
+    fn answer(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         let s = &mut self.session;
         let str_p = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
         match method {
@@ -407,14 +416,14 @@ impl Backend for Headless {
             "engine.commands" => {
                 Ok(Value::Array(cadcraft_engine::command_specs().iter().map(|c| serde_json::to_value(c.info(s)).unwrap_or_default()).collect()))
             }
-            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| e.to_string()),
+            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", p).map_err(|e| e.to_string()),
             "ui.render" => {
                 let w = p.get("width").and_then(Value::as_f64).unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
-                let window = render_window(&p);
+                let window = render_window(p);
                 // `background` and `plot_style` (#803), read as the app reads them.
-                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, &p)?;
+                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p)?;
                 let opts = cadcraft_render::Options {
                     view: window,
                     transparency: s.settings.transparency_display,
@@ -437,6 +446,7 @@ impl Backend for Headless {
                 let mut r =
                     json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
+                    file_access::check_write(&path)?;
                     let file = std::path::Path::new(&path);
                     let folder = cadcraft_engine::atomic_write::missing_folder(file);
                     cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png).map_err(|e| format!("{path}: {e}"))?;
@@ -452,7 +462,7 @@ impl Backend for Headless {
             }
             "app.save" => {
                 let id = if p.get("path").is_some() { "saveas" } else { "qsave" };
-                s.execute(id, &p).map_err(|e| e.to_string())
+                s.execute(id, p).map_err(|e| e.to_string())
             }
             "ui.screenshot" => Err("no UI in headless mode; use render".into()),
             "control.methods" => Ok(HEADLESS_METHODS
@@ -463,9 +473,18 @@ impl Backend for Headless {
             other => Err(format!("unknown method `{other}`; `control.methods` lists them (docs/control-protocol.md)")),
         }
     }
+}
+
+impl Backend for Headless {
+    /// Run one control method inside the roots, if any.
+    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+        let roots = self.roots.clone();
+        file_access::confine(roots.as_ref(), || self.answer(method, &p))
+    }
     fn has_ui(&self) -> bool {
         false
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         "headless CADCraft session".into()
     }

@@ -82,6 +82,7 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the export write (CWE-59).
+        crate::file_access::check_write(path).map_err(|e| bad(cmd, e))?;
         crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
@@ -201,9 +202,11 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
     }))
 }
 
+/// The bytes of the file to import, held to the automation roots.
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_read(_path).map_err(|e| bad("import", e))?;
         crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
             .map_err(|e| bad("import", format!("{_path}: {e}")))
     }

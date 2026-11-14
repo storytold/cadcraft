@@ -79,7 +79,9 @@ impl PlotterStore {
         }
         PlotterStore {
             list: || {
-                let rd = match std::fs::read_dir(dir()?) {
+                let d = dir()?;
+                crate::file_access::check_read(&d)?;
+                let rd = match std::fs::read_dir(d) {
                     Ok(rd) => rd,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
                     Err(e) => return Err(e.to_string()),
@@ -92,6 +94,7 @@ impl PlotterStore {
             },
             read: |n| {
                 let p = file(n)?;
+                crate::file_access::check_read(&p)?;
                 let len = std::fs::metadata(&p).map_err(|e| format!("{n}: {e}"))?.len();
                 if len > cadcraft_doc::MAX_PLOTTER_FILE as u64 {
                     return Err(format!("{n}: the plotter configuration file is too large"));
@@ -100,10 +103,16 @@ impl PlotterStore {
             },
             write: |n, t| {
                 let p = file(n)?;
+                // Checked before the folder it lives in is created. The temporary file sits beside it.
+                crate::file_access::check_write(&p)?;
                 std::fs::create_dir_all(dir()?).map_err(|e| e.to_string())?;
                 crate::atomic_write::write_atomic(&p, t.as_bytes()).map_err(|e| format!("{n}: {e}"))
             },
-            delete: |n| std::fs::remove_file(file(n)?).map_err(|e| format!("{n}: {e}")),
+            delete: |n| {
+                let p = file(n)?;
+                crate::file_access::check_write(&p)?;
+                std::fs::remove_file(p).map_err(|e| format!("{n}: {e}"))
+            },
         }
     }
 }
@@ -547,11 +556,18 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
     Ok(())
 }
 
+/// List, read, change, load, export and delete plotter configurations; any file is held to the automation roots.
 fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "plottermanager";
     let action = str_param(p, "action").unwrap_or("list").trim().to_ascii_lowercase();
     match action.as_str() {
-        "list" => Ok(json!({ "devices": devices().iter().map(summary).collect::<Vec<_>>() })),
+        "list" => {
+            // Under the roots a refused settings folder is an error, not a short list.
+            if crate::file_access::current().is_some() {
+                (store().list)().map_err(|e| bad(cmd, e))?;
+            }
+            Ok(json!({ "devices": devices().iter().map(summary).collect::<Vec<_>>() }))
+        }
         "get" => {
             let n = device_name(cmd, p)?;
             let c = find_device(&n).ok_or_else(|| unknown_device(cmd, &n))?;
@@ -636,6 +652,7 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_path) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
+                        crate::file_access::check_write(_path).map_err(|e| bad(cmd, e))?;
                         std::fs::write(_path, &text).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
                         Ok(json!({ "name": name, "path": _path }))
                     }

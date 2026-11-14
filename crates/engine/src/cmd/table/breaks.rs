@@ -238,6 +238,7 @@ fn read_link(id: &str, file: &std::path::Path) -> Result<String> {
     let path = file.display();
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_read(file).map_err(|e| bad(id, e))?;
         // The limit is enforced on the bytes read, not on reported metadata, so a device or FIFO
         // that misreports its length can't be buffered to EOF.
         let bytes = crate::capped_read::read_capped(file, MAX_LINK_BYTES).map_err(|e| bad(id, format!("{path}: {e}")))?;

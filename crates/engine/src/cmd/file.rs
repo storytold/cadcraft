@@ -224,6 +224,7 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("script", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_SCRIPT_BYTES).map_err(|e| bad("script", format!("{path}: {e}")))?;
             String::from_utf8_lossy(&bytes).into_owned()
@@ -304,6 +305,7 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
             let Some(text_path) = path.to_str() else {
                 return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
             };
+            crate::file_access::check_read(text_path).map_err(|e| bad("open", e))?;
             let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
             read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
@@ -328,6 +330,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     Ok(opened(s, i, true))
 }
 
+/// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
     let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
@@ -338,9 +341,23 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
-        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+        if fonts_stay_inside_the_roots(dir) {
+            cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+        }
     }
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
+}
+
+/// May the font search use `dir`? It holds no record of the automation roots, and a font's name
+/// there can be a link leading out of them, so under the roots every font in the folder must stay
+/// inside.
+fn fonts_stay_inside_the_roots(dir: &std::path::Path) -> bool {
+    crate::file_access::current().is_none()
+        || std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().to_ascii_lowercase().ends_with(".shx") || crate::file_access::check_read(e.path()).is_ok())
+        })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -381,6 +398,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("open", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
@@ -464,6 +482,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_write(path).map_err(|e| bad("save", e))?;
         // A file in a folder still to be made has nothing to back up.
         if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))

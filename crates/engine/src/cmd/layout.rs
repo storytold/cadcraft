@@ -864,6 +864,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 let path = _path;
                 // Exclusively create a fresh temporary file and rename it into place so a planted
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
+                crate::file_access::check_write(path).map_err(|e| bad(cmd, e))?;
                 let folder = super::file::new_folder(path);
                 crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
                 let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });
