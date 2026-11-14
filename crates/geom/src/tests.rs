@@ -103,6 +103,17 @@ fn line_intersections() {
 }
 
 #[test]
+fn line_line_capped_slack_is_a_length_not_a_fraction_of_a_long_segment() {
+    // Crossing 0.5 units before the start of a 1e9-long segment.
+    let long = Line::new(Vec2::new(0.0, 0.0), Vec2::new(1e9, 0.0));
+    let behind = Line::new(Vec2::new(-0.5, -5.0), Vec2::new(-0.5, 5.0));
+    assert!(line_line_capped(&long, &behind).is_none());
+    assert!(line_line_capped(&behind, &long).is_none());
+    let on = Line::new(Vec2::new(0.0, -5.0), Vec2::new(0.0, 5.0));
+    assert!(line_line_capped(&long, &on).is_some());
+}
+
+#[test]
 fn line_circle_hits() {
     let l = Line::new(Vec2::new(-5.0, 0.0), Vec2::new(5.0, 0.0));
     let hits = line_circle(&l, &Circle::new(Vec2::ZERO, 2.0));
