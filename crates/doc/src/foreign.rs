@@ -81,6 +81,9 @@ pub struct Foreign {
     /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
     /// later save must not take it for this one (#2471).
     pub version: Option<String>,
+    /// The file's registered applications (APPID names as read, in file order). Saving writes
+    /// them all back, whether or not any xdata still names them.
+    pub appids: Vec<String>,
 }
 
 impl Foreign {
@@ -99,6 +102,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.appids.is_empty()
     }
 
     /// The entities with a geometry record in the data store: an `ACDSRECORD` naming the entity
