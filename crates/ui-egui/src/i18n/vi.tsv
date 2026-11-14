@@ -1464,6 +1464,182 @@ menu	Modify	Hiệu chỉnh
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+	New AppID (e.g. CAD_XDATA)	AppID mới (ví dụ: CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Tạo ứng dụng CAD_XDATA
+	Copy All	Sao chép tất cả
+	Copy history output to clipboard	Sao chép lịch sử đầu ra vào bộ nhớ tạm
+	Close History Window (F2)	Đóng cửa sổ lịch sử (F2)
+	Edit XData (XDEDIT)	Sửa XData (XDEDIT)
+	Open visual XData Editor for selected object	Mở trình sửa XData trực quan cho đối tượng đã chọn
+	Command & XData Output (select text + Ctrl+C to copy)	Đầu ra Lệnh & XData (chọn văn bản + Ctrl+C để sao chép)
+	List Xdata	Liệt kê Xdata
+	Edit Xdata	Sửa Xdata
+	Edit Xdata (XDEDIT)	Sửa Xdata (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Sửa XData (XDEDIT)
+	Open visual XData Editor dialog	Mở hộp thoại sửa XData trực quan
+	📋 Copy Values	📋 Sao chép giá trị
+	Copy XData values (Key,Value) to clipboard	Sao chép giá trị XData (Khóa,Giá trị) vào bộ nhớ tạm
+	Click to copy value to clipboard	Nhấp để sao chép giá trị vào bộ nhớ tạm
+	✓ XData values copied to clipboard	✓ Đã sao chép giá trị XData vào bộ nhớ tạm
+	Selection canceled — previous object kept.	Đã hủy chọn — giữ nguyên đối tượng trước đó.
+	Drag left or right to resize this column	Kéo sang trái hoặc phải để thay đổi độ rộng cột
+	XDATA Editor (XDEDIT)	Trình sửa XDATA (XDEDIT)
+	No object selected.	Chưa chọn đối tượng nào.
+	🎯 Select object in drawing	🎯 Chọn đối tượng trong bản vẽ
+	Object: {kind}	Đối tượng: {kind}
+	Layer: {layer}	Lớp: {layer}
+	Handle: {handle}	Mã định danh: {handle}
+	🎯 Select Another Object	🎯 Chọn đối tượng khác
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Tạm ẩn trình sửa, chọn đối tượng khác trong bản vẽ và mở trong XDEDIT
+	Next ▶	Tiếp ▶
+	Step to the next object with XData in the selection or drawing	Chuyển sang đối tượng tiếp theo có XData trong vùng chọn hoặc bản vẽ
+	◀ Previous	◀ Trước
+	Step to the previous object with XData in the selection or drawing	Chuyển về đối tượng trước đó có XData trong vùng chọn hoặc bản vẽ
+	📋 Copy JSON	📋 Sao chép JSON
+	Copy all XData as structured JSON to clipboard	Sao chép toàn bộ XData dạng JSON có cấu trúc vào bộ nhớ tạm
+	✓ JSON copied to clipboard	✓ Đã sao chép JSON vào bộ nhớ tạm
+	📋 Copy Text	📋 Sao chép văn bản
+	Copy all XData as text to clipboard	Sao chép toàn bộ XData dạng văn bản vào bộ nhớ tạm
+	✓ XData text copied to clipboard	✓ Đã sao chép văn bản XData vào bộ nhớ tạm
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	AppID mới (ví dụ: Lumi_KLIC)
+	+ Add AppID	+ Thêm AppID
+	🗑 Delete AppID	🗑 Xóa AppID
+	Remove this Application and its XData from the entity	Xóa ứng dụng này và XData của nó khỏi đối tượng
+	Application removed (click Apply to save)	Đã xóa ứng dụng (nhấp Áp dụng để lưu)
+	🔍 Filter:	🔍 Bộ lọc:
+	Search key or value (e.g. THEMA, DIEPTE)...	Tìm khóa hoặc giá trị (ví dụ: THEMA, DIEPTE)...
+	Key width:	Rộng khóa:
+	Drag this value or the column divider ⇔ to resize the Key column	Kéo giá trị này hoặc vạch chia cột ⇔ để đổi độ rộng cột Khóa
+	Value width:	Rộng giá trị:
+	Drag this value or the column divider ⇔ to resize the Value column	Kéo giá trị này hoặc vạch chia cột ⇔ để đổi độ rộng cột Giá trị
+	Smart Key=Value Columns	Cột Khóa=Giá trị thông minh
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Tách 'KHÓA=GIÁ TRỊ' hoặc 'Khóa: Giá trị' thành các trường Khóa và Giá trị riêng biệt
+	This object currently has no user XData.	Đối tượng này hiện chưa có XData người dùng.
+	+ Create Lumi_KLIC Application	+ Tạo ứng dụng Lumi_KLIC
+	DXF Code	Mã DXF
+	Property / Key ⇔	Thuộc tính / Khóa ⇔
+	Value (Selectable & Editable) ⇔	Giá trị (Chọn & Sửa được) ⇔
+	Raw Value (Selectable & Editable) ⇔	Giá trị thô (Chọn & Sửa được) ⇔
+	Actions	Thao tác
+	Copy value to clipboard	Sao chép giá trị vào bộ nhớ tạm
+	✓ Copied: {val}	✓ Đã sao chép: {val}
+	Move row up	Di chuyển hàng lên
+	Move row down	Di chuyển hàng xuống
+	Delete this XData row	Xóa hàng XData này
+	Add Row:	Thêm hàng:
+	Key (e.g. OPMERKING)	Khóa (ví dụ: OPMERKING)
+	+ Add Property	+ Thêm thuộc tính
+	● Unsaved changes	● Thay đổi chưa lưu
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Sẵn sàng — nhấp '🎯 Chọn đối tượng tiếp' hoặc '◀ Trước / Tiếp ▶' để chuyển đối tượng.
+	↺ Revert	↺ Hoàn nguyên
+	✔ Apply / Save XData	✔ Áp dụng / Lưu XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Ghi XData đã sửa vào đối tượng (Có thể hoàn tác bằng Ctrl+Z)
+	✔ Save & Select Next Object	✔ Lưu & Chọn đối tượng tiếp
+	🎯 Select Next Object	🎯 Chọn đối tượng tiếp
+	Save any changes and directly pick the next object in the drawing	Lưu mọi thay đổi và chọn ngay đối tượng tiếp theo trong bản vẽ
+	Object {idx1}/{total} loaded ({kind} — {handle})	Đã tải đối tượng {idx1}/{total} ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Đã hoàn nguyên về XData đã lưu của đối tượng
+	✔ XData saved to entity (Undoable)	✔ Đã lưu XData vào đối tượng (Có thể hoàn tác)
+	Error: {err}	Lỗi: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ XData của đối tượng đã thay đổi bên ngoài — nhấp Hoàn nguyên trước khi lưu.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  Khung dây quỹ đạo 3D
+	.NET Plugin Bridge	Cầu nối Plugin .NET
+	3D Orbit	Quỹ đạo 3D
+	3D Views	Góc nhìn 3D
+	Adjust Image...	Chỉnh ảnh...
+	Adjust...	Điều chỉnh...
+	Attach Image...	Đính kèm ảnh...
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Back	Sau
+	Clip Image	Cắt ảnh
+	Frame	Khung
+	Front	Trước
+	Image	Hình ảnh
+	Image Frame	Khung ảnh
+	Load .NET DLL / LISP Application (NETLOAD)...	Tải ứng dụng .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Tải ứng dụng (NETLOAD)...
+	Model Tab	Thẻ Model
+	NE Isometric	Trục đo Đông Bắc
+	NW Isometric	Trục đo Tây Bắc
+	Raster Image Reference...	Tham chiếu ảnh Raster...
+	SE Isometric	Trục đo Đông Nam
+	SW Isometric	Trục đo Tây Nam
+	Top (2D Plan)	Trên (Mặt bằng 2D)
+	View Resolution	Độ phân giải hiển thị
+	📋 Copy All	📋 Sao chép tất cả
+	🗑 Clear	🗑 Xóa
+	.NET command started	Đã bắt đầu lệnh .NET
+	0. Empty file (New)	0. Tệp trống (Mới)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Toán cơ bản & Lệnh
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Điểm đo khảo sát (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Plugin VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Plugin C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Đã thêm vào Bộ khởi động (Tự động tải khi khởi động & mỗi bản vẽ)
+	Auto-Load	Tự động tải
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	Lệnh AutoLISP (nhấp để chạy)
+	AutoLISP Editor (.lsp)	Trình sửa AutoLISP (.lsp)
+	Bottom	Dưới
+	C# Plugin Editor (.cs)	Trình sửa Plugin C# (.cs)
+	C# source opened	Đã mở mã nguồn C#
+	Clear Log	Xóa nhật ký
+	Commands	Các lệnh
+	Compact Menu	Menu thu gọn
+	Compilation error	Lỗi biên dịch
+	Compilation failed (see Console)	Biên dịch thất bại (xem Bảng điều khiển)
+	Compilation succeeded	Biên dịch thành công
+	Compile & Load .NET DLL	Biên dịch & Tải .NET DLL
+	Console / Output	Bảng điều khiển / Đầu ra
+	Error	Lỗi
+	Error in	Lỗi trong
+	Error: cadcraft-nethost.exe not found next to the application.	Lỗi: Không tìm thấy cadcraft-nethost.exe cạnh ứng dụng.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Chạy mã LISP hoặc biên dịch mã nguồn VB.NET / C# trực tiếp thành .NET DLL
+	Failed to invoke compiler	Không thể gọi trình biên dịch
+	Failed to load	Không thể tải
+	Failed to save to	Không thể lưu vào
+	Failed to start .NET command	Không thể khởi chạy lệnh .NET
+	Failed to write source file	Không thể ghi tệp mã nguồn
+	Hide this Studio window and show the compact floating Plugin Commands menu	Ẩn cửa sổ Studio này và hiện menu Lệnh Plugin nổi thu gọn
+	Load & Run LISP	Tải & Chạy LISP
+	NETLOAD .NET DLL loaded	Đã tải NETLOAD .NET DLL
+	NETLOAD error in	Lỗi NETLOAD trong
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD không thể chạy cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Mở .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Mở NETLOAD Studio (VBAIDE)
+	Open Studio	Mở Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Mở trọn bộ AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Lệnh Plugin
+	Plugins	Plugin
+	Quick Expression	Biểu thức nhanh
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Sẵn sàng. Mở tệp .dll (.NET VB.NET/C#) hoặc .lsp (AutoLISP) qua NETLOAD.
+	Registered commands	Các lệnh đã đăng ký
+	Removed from Startup Suite (Auto-Load)	Đã gỡ khỏi Bộ khởi động (Tự động tải)
+	Routine started	Đã bắt đầu chương trình con
+	Routine started from	Đã bắt đầu chương trình con từ
+	Run .NET command	Chạy lệnh .NET
+	Run command	Chạy lệnh
+	Save the current source code in the editor to disk	Lưu mã nguồn hiện tại trong trình sửa vào đĩa
+	Saved to	Đã lưu vào
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Chọn và tải tệp .lsp, .dll, .vb hoặc .cs từ đĩa
+	Show Floating Command Menu	Hiện menu lệnh nổi
+	Template...	Mẫu...
+	Toggle Startup Suite (Auto-Load at startup)	Bật/tắt Bộ khởi động (Tự động tải khi khởi động)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Bật/tắt Bộ khởi động: tự động tải tệp này khi khởi động và trong mọi bản vẽ mở ra
+	VB.NET Plugin Editor (.vb)	Trình sửa Plugin VB.NET (.vb)
+	VB.NET source opened	Đã mở mã nguồn VB.NET
+	cadcraft-nethost.exe not found	Không tìm thấy cadcraft-nethost.exe
+	cannot read file	không thể đọc tệp
+	e.g. (+ 1 2) or + 1 2	ví dụ: (+ 1 2) hoặc + 1 2
+	no [CommandMethod] found	không tìm thấy [CommandMethod]
+	Drawing File is Write-Protected	Tệp bản vẽ được bảo vệ chống ghi
+	The drawing file '{name}' is currently in use by:	Tệp bản vẽ '{name}' hiện đang được sử dụng bởi:
+	The drawing will be opened in read-only mode. Changes cannot be saved to the original file.	Bản vẽ sẽ được mở ở chế độ chỉ đọc. Không thể lưu các thay đổi vào tệp gốc.
+	Open (Read-Only)	Mở (Chỉ đọc)
+	Drawing file is write-protected ({info}). Opened read-only.	Tệp bản vẽ được bảo vệ chống ghi ({info}). Đã mở ở chế độ chỉ đọc.
+	in use by {user} on {machine} ({time})	đang được dùng bởi {user} trên {machine} ({time})
+	in use by {user} ({time})	đang được dùng bởi {user} ({time})
 
 # ArtCraft feature naming
 	Additional Tools	Công cụ bổ sung
