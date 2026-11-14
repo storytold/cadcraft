@@ -9,7 +9,7 @@ use cadcraft_geom::{Bounds2, Line, Vec2, line_line};
 use serde_json::{Value, json};
 
 use super::helpers::{line, lwpoly, rect_vertices};
-use super::modify::{Edges, extend, trim};
+use super::modify::{CUT_ONCE, Edges, extend, trim};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -31,8 +31,10 @@ fn proj_mode(s: &Session) -> i64 {
 }
 
 /// Whether a trim error says the object meets no cutting edge (a Quick-mode trim then erases it).
+/// A closed polyline cut at one point meets one, and is left as it is.
 fn misses_edges(e: &EngineError) -> bool {
-    e.to_string().contains("intersect")
+    let m = e.to_string();
+    m.contains("intersect") && m != CUT_ONCE
 }
 
 /// Trim or extend `h` at `at`. A Quick-mode (`quick`) trim of an object no cutting edge crosses
@@ -103,7 +105,12 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
             for w in pl.windows(2) {
                 let (Some(p), Some(q)) = (w.first(), w.get(1)) else { continue };
                 let seg = Line::new(*p, *q);
-                let cands = [*p, *q, seg.closest(a)].into_iter().chain(sides.iter().filter_map(|sd| line_line(sd, &seg)));
+                // Kept `tol` inside the segment: a vertex, where two segments meet, is a cut of a
+                // polyline that is one of its own edges, and a pick on a cut trims nothing.
+                let e = (tol / seg.len()).min(0.5);
+                let cands = [seg.at(e), seg.at(1.0 - e), seg.at(seg.param_of(a).clamp(e, 1.0 - e))]
+                    .into_iter()
+                    .chain(sides.iter().filter_map(|sd| line_line(sd, &seg)));
                 for c in cands.filter(|c| inside(*c)) {
                     if best.is_none_or(|b| c.dist(a) < b.dist(a)) {
                         best = Some(c);
@@ -173,7 +180,6 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
     let cmd = if extending { "extend" } else { "trim" };
     let only: Option<Vec<Handle>> =
         p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().and_then(Handle::parse_hex)).collect());
-    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)? };
     let quick = match p.get("mode") {
         None | Some(Value::Null) => false,
         Some(v) => match v.as_str().map(|m| m.trim().to_ascii_lowercase()).as_deref() {
@@ -182,6 +188,7 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
             _ => return Err(bad(cmd, "`mode` must be \"quick\" or \"standard\"")),
         },
     };
+    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)? };
     let key = if extending { "extended" } else { "trimmed" };
     if p.get("fence").is_some_and(|v| !v.is_null()) {
         let pts = points_param(p, "fence")
