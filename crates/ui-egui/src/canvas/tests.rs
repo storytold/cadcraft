@@ -248,3 +248,150 @@ fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
     click_grip(&mut app, (shown, 0), false);
     assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
 }
+
+/// Makes the layer "Hidden" and, on Layout1, two viewports over the model: the first freezes
+/// "Hidden", the second freezes nothing. The app is left in paper space.
+fn viewports_freezing_hidden(app: &mut CadApp) -> (String, String) {
+    app.session.execute("layer.new", &serde_json::json!({ "name": "Hidden" })).unwrap();
+    app.session.execute("layout.set", &serde_json::json!({ "name": "Layout1" })).unwrap();
+    let made = app.session.execute("mview", &serde_json::json!({ "count": 2, "p1": [20, 20], "p2": [220, 120] })).unwrap();
+    let viewport = |i: usize| made["viewports"][i].as_str().unwrap().to_string();
+    let (a, b) = (viewport(0), viewport(1));
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [a], "freeze": ["Hidden"] })).unwrap();
+    (a, b)
+}
+
+/// An app with two model-space lines, the second on the layer "Hidden", and the two viewports of
+/// [`viewports_freezing_hidden`]: (app, the first line, the second line, the viewport that
+/// freezes "Hidden", the viewport that freezes nothing).
+fn lines_in_two_viewports() -> (CadApp, Handle, Handle, String, String) {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for y in [0, 30] {
+        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
+    }
+    let handles = app.session.doc().unwrap().model.handles();
+    let (shown, hidden) = (handles[0], handles[1]);
+    let (a, b) = viewports_freezing_hidden(&mut app);
+    app.session.execute("properties.set", &serde_json::json!({ "handles": [hidden.hex()], "layer": "Hidden" })).unwrap();
+    assert_eq!(app.session.doc().unwrap().entity(hidden).unwrap().common.layer, "Hidden");
+    (app, shown, hidden, a, b)
+}
+
+/// A hot grip whose object is on a layer frozen in the active viewport is not painted there, so
+/// clicking another hot grip must not stretch that object along with it. Through a viewport that
+/// draws the layer both grips stay hot.
+#[test]
+fn clicking_a_hot_grip_leaves_out_objects_the_viewport_does_not_draw() {
+    let (mut app, shown, hidden, a, b) = lines_in_two_viewports();
+    for (viewport, hot) in [(&a, vec![(shown, 0)]), (&b, vec![(shown, 0), (hidden, 0)])] {
+        app.session.execute("mspace", &serde_json::json!({ "handle": viewport })).unwrap();
+        app.session.set_selection(vec![shown, hidden]);
+        app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
+        click_grip(&mut app, (shown, 0), false);
+        assert_eq!(app.canvas.hot_grips, hot);
+        app.session.cancel();
+    }
+    // Frozen in the active viewport while both grips are hot.
+    app.session.set_selection(vec![shown, hidden]);
+    app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    click_grip(&mut app, (shown, 0), false);
+    assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the grip of the line the viewport no longer draws must leave the hot set");
+}
+
+/// The cursor finds no grip of a selected object the viewport does not draw; it finds the grips
+/// of the other selected object there, and both through a viewport that draws both.
+#[test]
+fn the_cursor_finds_no_grip_of_an_object_the_viewport_does_not_draw() {
+    let (mut app, shown, hidden, a, b) = lines_in_two_viewports();
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    let xf = Xf { rect, center: Vec2::new(50.0, 15.0), scale: 2.0, twist: 0.0 };
+    // The start of each line, where its first grip is.
+    let (on_shown, on_hidden) = (Some(xf.to_screen(Vec2::new(0.0, 0.0))), Some(xf.to_screen(Vec2::new(0.0, 30.0))));
+    app.session.execute("mspace", &serde_json::json!({ "handle": a })).unwrap();
+    app.session.set_selection(vec![shown, hidden]);
+    assert_eq!(grip_at(&app, &xf, on_shown), Some((shown, 0)));
+    assert_eq!(grip_at(&app, &xf, on_hidden), None, "a grip of a line the viewport does not draw was hit");
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    app.session.set_selection(vec![shown, hidden]);
+    assert_eq!(grip_at(&app, &xf, on_hidden), Some((hidden, 0)));
+    // Frozen in the active viewport while the line is selected, then thawed again.
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    assert_eq!(app.session.state().unwrap().selection, [shown, hidden], "both lines must still be selected");
+    assert_eq!(grip_at(&app, &xf, on_hidden), None);
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+    assert_eq!(grip_at(&app, &xf, on_hidden), Some((hidden, 0)));
+}
+
+/// The hatch under the cursor, which a double-click edits, is one the viewport draws.
+#[test]
+fn the_cursor_finds_no_hatch_the_viewport_does_not_draw() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let handle = |v: &serde_json::Value| Handle::parse_hex(v.get("handle").unwrap_or(&v["handles"][0]).as_str().unwrap()).unwrap();
+    let square = app.session.execute("pline", &serde_json::json!({ "vertices": [[0, 0], [20, 0], [20, 20], [0, 20]], "closed": true })).unwrap();
+    let hatch = handle(&app.session.execute("hatch", &serde_json::json!({ "handles": [handle(&square).hex()], "pattern": "SOLID" })).unwrap());
+    let (a, b) = viewports_freezing_hidden(&mut app);
+    app.session.execute("properties.set", &serde_json::json!({ "handles": [hatch.hex()], "layer": "Hidden" })).unwrap();
+    let inside = Vec2::new(10.0, 10.0);
+    app.session.execute("mspace", &serde_json::json!({ "handle": a })).unwrap();
+    assert_eq!(hatch_at(&app, inside, 1.0), None, "a hatch the viewport does not draw was found");
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    assert_eq!(hatch_at(&app, inside, 1.0), Some(hatch));
+}
+
+/// The highlight of the selection inside the active viewport leaves out a selected object on a
+/// layer frozen in that viewport, also when the layer is frozen while the object is selected,
+/// and is built again for another viewport although the selection and the drawing are the same.
+#[test]
+fn the_viewport_highlight_leaves_out_objects_the_viewport_does_not_draw() {
+    let (mut app, shown, hidden, a, b) = lines_in_two_viewports();
+    /// The objects `highlight` outlines for the selection of both lines.
+    fn outlined(app: &CadApp, highlight: &mut VpHighlight, both: [Handle; 2]) -> Vec<Handle> {
+        highlight.update(app.session.state().unwrap(), &both, 10.0);
+        highlight.list.prims.iter().map(|p| p.handle).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    }
+    let both = [shown, hidden];
+    let mut highlight = VpHighlight::default();
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    assert_eq!(outlined(&app, &mut highlight, both), both, "this viewport draws both lines");
+    let revision = app.session.state().unwrap().revision;
+    app.session.execute("mspace", &serde_json::json!({ "handle": a })).unwrap();
+    assert_eq!(app.session.state().unwrap().revision, revision, "entering a viewport must not look like a change of the drawing");
+    assert_eq!(outlined(&app, &mut highlight, both), [shown], "a line the viewport does not draw was outlined");
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    assert_eq!(outlined(&app, &mut highlight, both), both, "the list built for the other viewport was reused");
+    // Frozen in the active viewport while the line is selected, then thawed again.
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    assert_eq!(outlined(&app, &mut highlight, both), [shown]);
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+    assert_eq!(outlined(&app, &mut highlight, both), both);
+}
+
+/// Selection cycling's badge beside a resting pointer follows the layers frozen in the active
+/// viewport: over two overlapping lines it shows while the viewport draws both, goes when the
+/// layer of one of them is frozen there, and comes back when the layer is thawed.
+#[test]
+fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for _ in 0..2 {
+        app.run("line", serde_json::json!({ "points": [[0, 0], [100, 0]] })).unwrap();
+    }
+    let on_top = app.session.doc().unwrap().model.handles()[1];
+    let (_, b) = viewports_freezing_hidden(&mut app);
+    app.session.execute("properties.set", &serde_json::json!({ "handles": [on_top.hex()], "layer": "Hidden" })).unwrap();
+    app.session.execute("setvar", &serde_json::json!({ "name": "SELECTIONCYCLING", "value": 1 })).unwrap();
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    let ctx = egui::Context::default();
+    /// Whether the badge shows after a frame with the pointer resting on the two lines.
+    fn badge(app: &mut CadApp, ctx: &egui::Context) -> bool {
+        let (at, on_lines) = (Some(Pos2::new(200.0, 150.0)), Some(Vec2::new(50.0, 0.0)));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| update_hover(app, ui, true, at, on_lines, 2.0));
+        output.textures_delta.clear();
+        app.canvas.cycle_badge
+    }
+    assert!(badge(&mut app, &ctx), "this viewport draws both lines: a click would choose between them");
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "freeze": ["Hidden"] })).unwrap();
+    assert!(!badge(&mut app, &ctx), "the badge stayed for a line the viewport no longer draws");
+    app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
+    assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
+}

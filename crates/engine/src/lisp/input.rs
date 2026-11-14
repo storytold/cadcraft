@@ -141,7 +141,7 @@ impl GetRequest {
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let space = s.state().map(|st| st.edit_space()).map_err(|e| Again::Msg(e.to_string()))?;
                 let d = s.doc().map_err(|e| Again::Msg(e.to_string()))?;
-                match crate::select::pick(d, &space, Vec2::new(p[0], p[1]), ap) {
+                match crate::select::pick_in(d, &space, s.viewport_frozen(), Vec2::new(p[0], p[1]), ap) {
                     Some(h) => Ok(Value::list(vec![Value::Ename(h), Value::point(&p)])),
                     None => Err("Missed, try again.".into()),
                 }

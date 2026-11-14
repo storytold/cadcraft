@@ -591,7 +591,7 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
         "dimStyles": d.dim_styles.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
         "blocks": d.blocks.keys().filter(|k| !k.starts_with('*')).cloned().collect::<Vec<_>>(),
         "layouts": d.layouts.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
-        "selection": st.selection.iter().map(|h| h.hex()).collect::<Vec<_>>(),
+        "selection": st.shown_selection().iter().map(|h| h.hex()).collect::<Vec<_>>(),
         "undo": st.undo.iter().rev().take(20).map(|u| u.label.clone()).collect::<Vec<_>>(),
         "view": { "center": [st.view().center.x, st.view().center.y], "height": st.view().height },
         // Records of the file the drawing came from that the reader could not place.
