@@ -103,3 +103,28 @@ fn default_mode_keeps_drag_selection_available() {
     assert!(h.state().session.pending_window.is_none());
     assert_eq!(h.state().session.selection().len(), 1);
 }
+
+/// #2779: at STRETCH's "Select objects" a drag opens a crossing window, as at any selection
+/// prompt, so the line's end inside it is stretched. Before, the drag opened none and letting go
+/// on the line counted as a click that picked it, so STRETCH moved the whole line like MOVE.
+#[test]
+fn stretch_takes_a_dragged_crossing_window() {
+    let mut h = harness();
+    h.state_mut().session.start("stretch").unwrap();
+    h.run_steps(2);
+    let xf = h.state().canvas.xf.unwrap();
+    // Right to left from empty space round the line's right end, letting go on the line.
+    drag(&mut h, xf.to_screen(Vec2::new(12.0, 1.0)), xf.to_screen(Vec2::new(8.0, 0.0)));
+    assert!(h.state().session.pending_window.is_none());
+    for t in ["", "0,0", "3,0"] {
+        h.state_mut().session.cmdline(t).unwrap();
+    }
+    assert!(h.state().session.running.is_none(), "{}", h.state().session.prompt_text());
+    let d = h.state().session.doc().unwrap();
+    let ends: Vec<(f64, f64, f64, f64)> = d
+        .model
+        .iter()
+        .filter_map(|e| if let cadcraft_engine::doc::EntityKind::Line(l) = &e.kind { Some((l.a.x, l.a.y, l.b.x, l.b.y)) } else { None })
+        .collect();
+    assert_eq!(ends, vec![(0.0, 0.0, 13.0, 0.0)], "the right end stretched, the left end stayed");
+}
