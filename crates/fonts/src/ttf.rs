@@ -723,7 +723,8 @@ pub fn descent_ratio(face: &Face) -> Option<f64> {
 /// (`LiberationSans=715.8;LiberationSans-Bold=715.8`): a substitute keeps the advance widths of
 /// the font it stands in for but not its cap height, so scaling by the substitute's own OS/2
 /// value draws text the size of the substitute, not of the requested font. Each entry names a
-/// PostScript name and its cap height in font units at 1000 per em.
+/// substitute's PostScript name and the cap height to give it, in font units at 1000 per em: the
+/// cap height of the font it replaces, not its own.
 fn cap_height_overrides() -> &'static HashMap<String, f64> {
     static OVERRIDES: OnceLock<HashMap<String, f64>> = OnceLock::new();
     OVERRIDES.get_or_init(|| parse_cap_height_overrides(&std::env::var("CADCRAFT_CAP_HEIGHT").unwrap_or_default()))
