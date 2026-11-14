@@ -2,6 +2,7 @@ use super::{
     Accept, Arc, Circle, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Value, Vec2, added, arc, bad, circle, f64_req, line, number,
     point_param, size_param,
 };
+use crate::snap;
 
 pub(super) fn run_circle(s: &mut Session, p: &Value) -> Result<Value> {
     let c = if let Some(center) = point_param(p, "center") {
@@ -51,6 +52,8 @@ pub(super) fn run_arc(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) struct CircleM {
     mode: u8, // 0 center-radius, 1 = 3P, 2 = 2P, 3 = TTR
     pts: Vec<Vec2>,
+    /// 3P: the circle or arc each point was picked on with a tangent snap, by point.
+    tans: Vec<Option<snap::SnapCurve>>,
     diameter: bool,
     /// The `Ttr` option hands over to the tangent-circle machine.
     delegate: Option<Box<dyn Interactive>>,
@@ -69,18 +72,22 @@ impl Interactive for CircleM {
         match (self.mode, n) {
             (0, 0) => Prompt::new("Specify center point for circle", Accept::POINT).kw(&["3P", "2P", "Ttr (tan tan radius)"]),
             (0, _) if self.diameter => {
-                Prompt::new("Specify diameter of circle", Accept::POINT_OR_NUMBER).base_opt(self.pts.first().copied()).distance()
+                Prompt::new("Specify diameter of circle", Accept::POINT_OR_NUMBER).base_opt(self.pts.first().copied()).distance().deferred()
             }
             (0, _) => {
-                let p =
-                    Prompt::new("Specify radius of circle", Accept::POINT_OR_NUMBER).kw(&["Diameter"]).base_opt(self.pts.first().copied()).distance();
+                let p = Prompt::new("Specify radius of circle", Accept::POINT_OR_NUMBER)
+                    .kw(&["Diameter"])
+                    .base_opt(self.pts.first().copied())
+                    .distance()
+                    .deferred();
                 if last_r > 0.0 { p.default(format!("{last_r:.4}")) } else { p }
             }
             (1, k) => Prompt::new(
                 ["Specify first point on circle", "Specify second point on circle", "Specify third point on circle"].get(k).copied().unwrap_or(""),
                 Accept::POINT,
             )
-            .base_opt(self.pts.last().copied()),
+            .base_opt(self.pts.last().copied())
+            .deferred(),
             (2, k) => Prompt::new(
                 if k == 0 { "Specify first end point of circle's diameter" } else { "Specify second end point of circle's diameter" },
                 Accept::POINT,
@@ -120,7 +127,14 @@ impl Interactive for CircleM {
                         let r = if self.diameter { c.dist(*e) / 2.0 } else { c.dist(*e) };
                         Some(Circle::new(*c, r))
                     }
-                    1 if self.pts.len() == 3 => Circle::from_3_points(self.pts[0], self.pts[1], self.pts[2]),
+                    1 if self.pts.len() == 3 => match self.three_points() {
+                        Some(c) => Some(c),
+                        None => {
+                            self.pts.pop();
+                            self.tans.truncate(self.pts.len());
+                            return Err(crate::EngineError::Other("Circle does not exist.".into()));
+                        }
+                    },
                     2 if self.pts.len() == 2 => Some(Circle::from_2_points(self.pts[0], self.pts[1])),
                     _ => None,
                 };
@@ -129,6 +143,29 @@ impl Interactive for CircleM {
                     return Ok(Step::Done);
                 }
                 Ok(Step::Continue)
+            }
+            // 3P: a point picked with a tangent snap makes the circle tangent to that curve (#1512).
+            Input::Deferred(d) if self.mode == 1 => {
+                let tan = (d.mode == snap::mode::TAN && !matches!(d.curve, snap::SnapCurve::Line { .. })).then_some(d.curve);
+                self.tans.resize(self.pts.len(), None);
+                self.tans.push(tan);
+                self.input(s, Input::Point(d.at))
+            }
+            // A tangent picked for the radius: the circle around the center that touches the
+            // curve, on the side it was picked (#1512).
+            Input::Deferred(d) if self.mode == 0 && self.pts.len() == 1 => {
+                let Some(&c) = self.pts.first() else { return Ok(Step::Continue) };
+                // Around the picked curve's own center the circle would lie on it, not touch it.
+                let concentric =
+                    matches!(d.curve, snap::SnapCurve::Circle { center, .. } | snap::SnapCurve::Arc { center, .. } if center.near(c, 1e-9));
+                let touch = d.curve.perpendiculars(c, d.at).into_iter().filter(|_| !concentric).min_by(|a, b| a.dist(d.at).total_cmp(&b.dist(d.at)));
+                match touch.map(|t| c.dist(t)).filter(|r| *r > 1e-12 && r.is_finite()) {
+                    Some(r) => {
+                        finish_circle(s, Circle::new(c, r))?;
+                        Ok(Step::Done)
+                    }
+                    None => Err(crate::EngineError::Other("No circle around the center is tangent there.".into())),
+                }
             }
             Input::Text(t) if self.mode == 0 && self.pts.len() == 1 => {
                 let v = number(&t).ok_or_else(|| crate::EngineError::Other("Requires numeric distance or second point.".into()))?;
@@ -171,6 +208,38 @@ impl Interactive for CircleM {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+impl CircleM {
+    /// The 3P circle: through the three points, or tangent to the curves picked with TAN.
+    fn three_points(&self) -> Option<Circle> {
+        let [a, b, c] = <[Vec2; 3]>::try_from(self.pts.as_slice()).ok()?;
+        if self.tans.iter().all(Option::is_none) {
+            return Circle::from_3_points(a, b, c);
+        }
+        let tan = |i: usize| self.tans.get(i).copied().flatten();
+        // A plain point is a circle of radius zero to pass through; an arc is solved as its circle.
+        let target = |i: usize, p: Vec2| {
+            let circle = match tan(i) {
+                Some(snap::SnapCurve::Circle { center, radius } | snap::SnapCurve::Arc { center, radius, .. }) => Circle::new(center, radius),
+                _ => Circle::new(p, 0.0),
+            };
+            crate::cmd::curves::TanObj::Circle(circle)
+        };
+        let pts = [a, b, c];
+        // The circle must touch an arc within its sweep, not elsewhere on the arc's circle, and
+        // not be the picked circle itself (which lies on it rather than touching it).
+        let touches = |found: &Circle| {
+            pts.iter().enumerate().all(|(i, p)| {
+                tan(i).is_none_or(|t| {
+                    let same = matches!(target(i, *p), crate::cmd::curves::TanObj::Circle(o)
+                        if o.center.dist(found.center) + (o.radius - found.radius).abs() <= 1e-9 * o.radius);
+                    !same && t.contains(target(i, *p).touch(found))
+                })
+            })
+        };
+        crate::cmd::curves::ttt_where([(target(0, a), a), (target(1, b), b), (target(2, c), c)], touches)
     }
 }
 

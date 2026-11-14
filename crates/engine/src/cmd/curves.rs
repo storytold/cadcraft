@@ -343,6 +343,11 @@ fn eq_variants(o: &TanObj) -> Vec<Eq3> {
 
 /// Circle tangent to three objects, nearest the pick points (Newton on all sign combinations).
 pub fn ttt(objs: [(TanObj, Vec2); 3]) -> Option<Circle> {
+    ttt_where(objs, |_| true)
+}
+
+/// [`ttt`] among the circles `ok` accepts.
+pub fn ttt_where(objs: [(TanObj, Vec2); 3], ok: impl Fn(&Circle) -> bool) -> Option<Circle> {
     let [(o1, p1), (o2, p2), (o3, p3)] = objs;
     let mut starts: Vec<[f64; 3]> = Vec::new();
     let cen = (p1 + p2 + p3) / 3.0;
@@ -379,6 +384,9 @@ pub fn ttt(objs: [(TanObj, Vec2); 3]) -> Option<Circle> {
                         continue;
                     }
                     let c = Circle::new(Vec2::new(x[0], x[1]), x[2]);
+                    if !ok(&c) {
+                        continue;
+                    }
                     let sc = score(&c, &objs);
                     if best.is_none_or(|(b, _)| sc < b - 1e-12) {
                         best = Some((sc, c));

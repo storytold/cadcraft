@@ -70,6 +70,9 @@ fn elliptical_arc_perpendicular_and_tangent_from_a_base_point() {
     let (q, m) = along_quarter(&s, mode::TAN, Some(base)).expect("a tangent point on the arc");
     assert_eq!(m, mode::TAN);
     assert!(on_quarter(q) && Vec2::new(q.x / 16.0, q.y / 4.0).dot(q - base).abs() < 1e-9, "{q:?}");
+    // The same tangent at a prompt that resolves deferred snaps (CIRCLE's 3P points, #1512).
+    let h = snap::osnap(s.doc().unwrap(), &Space::Model, q, 0.3, mode::TAN, Some(base), true).expect("tangent at a deferred prompt");
+    assert!(h.mode == mode::TAN && h.deferred.is_none() && h.point.near(q, 1e-9), "{h:?}");
     // Perpendicular from (10,10): the line from the base runs along the normal.
     let base = Vec2::new(10.0, 10.0);
     let (q, m) = along_quarter(&s, mode::PER, Some(base)).expect("a perpendicular foot on the arc");

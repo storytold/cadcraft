@@ -74,8 +74,9 @@ pub struct Prompt {
     /// Rubber-band origin (for direct distance entry, ortho and polar).
     pub base: Option<Vec2>,
     /// The command resolves deferred tangent/perpendicular snaps ([`Input::Deferred`]) at this
-    /// prompt (a point with no base yet, e.g. the first point of a line). Elsewhere a deferred
-    /// pick arrives as the plain point it was picked at.
+    /// prompt (a point with no base yet, e.g. the first point of a line; with a base, only
+    /// tangents, e.g. a circle's radius). Elsewhere a deferred pick arrives as the plain point it
+    /// was picked at.
     pub deferred: bool,
     /// The base is a rectangle's first corner (ZOOM Window, PLOTWINDOW, RECTANG, ARRAYRECT's unit
     /// cell): ortho does not bend the opposite corner, so the rectangle keeps its area.
