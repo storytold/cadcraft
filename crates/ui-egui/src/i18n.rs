@@ -51,10 +51,12 @@ pub enum Preference {
     Bosnian,
     #[serde(rename = "vi")]
     Vietnamese,
+    #[serde(rename = "fi")]
+    Finnish,
 }
 
 impl Preference {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -75,6 +77,7 @@ impl Preference {
         Self::Georgian,
         Self::Bosnian,
         Self::Vietnamese,
+        Self::Finnish,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -125,6 +128,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Finnish => "fi",
         }
     }
 
@@ -171,6 +175,7 @@ impl Preference {
                     "Vietnamese"
                 }
             }
+            Self::Finnish => "Suomi",
         }
     }
 
@@ -204,6 +209,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Finnish => "fi",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -220,7 +226,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 19] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -279,6 +285,8 @@ pub static LANGUAGES: [Language; 19] = [
     Language {
         code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
     },
+    // Finnish plurals follow the English rule: one (1), other (partitive singular after the number).
+    Language { code: "fi", name: "Suomi", source: include_str!("i18n/fi.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
