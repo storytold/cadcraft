@@ -107,6 +107,7 @@ fn run_dimedit(s: &mut Session, p: &Value) -> Result<Value> {
             dm.user_text_pos = false;
             dm.text_rotation = 0.0;
             dm.overrides.remove("textJust");
+            dm.overrides.remove("textInside");
             true
         })?,
         "new" => {

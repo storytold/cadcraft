@@ -142,6 +142,7 @@ pub(super) fn run_dimtedit(s: &mut Session, p: &Value) -> Result<Value> {
                     dm.user_text_pos = false;
                     dm.text_rotation = 0.0;
                     dm.overrides.remove("textJust");
+                    dm.overrides.remove("textInside");
                 }
                 "angle" => dm.text_rotation = angle.unwrap_or(0.0),
                 "left" | "center" | "right" => {
@@ -152,6 +153,12 @@ pub(super) fn run_dimtedit(s: &mut Session, p: &Value) -> Result<Value> {
                         _ => 0,
                     };
                     dm.overrides.insert("textJust".into(), json!(j));
+                    // DIMJUST only places text that is already between the extension lines; text
+                    // that does not fit goes outside, so Left/Center/Right also keep it inside
+                    // (DIMTIX) or nothing moves (#3114).
+                    if matches!(dm.kind, DimKind::Linear { .. } | DimKind::Aligned) {
+                        dm.overrides.insert("textInside".into(), json!(true));
+                    }
                 }
                 _ => {}
             }

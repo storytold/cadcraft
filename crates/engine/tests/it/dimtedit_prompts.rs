@@ -50,6 +50,29 @@ fn dimtedit_moves_justifies_rotates_and_homes_typed_text() {
     assert_eq!(the_dim(&s).overrides.get("textJust").and_then(|v| v.as_i64()), Some(0));
 }
 
+/// The text position the dimension is drawn with.
+fn text_pos(s: &Session) -> Vec2 {
+    cadcraft_engine::render::dimension_in(s.doc().unwrap(), &the_dim(s)).text_pos
+}
+
+#[test]
+fn center_brings_text_that_does_not_fit_back_between_the_extension_lines() {
+    let mut s = Session::new();
+    // "1.0000" does not fit between extension lines 1 apart: best fit puts it outside (#3114).
+    s.script("dimlinear 0,0 1,0 0.5,1\n").unwrap();
+    assert!(text_pos(&s).x > 1.0, "{:?}", text_pos(&s));
+    s.script("dimtedit 0.5,1 c\n").unwrap();
+    assert!(s.running.is_none());
+    let p = text_pos(&s);
+    assert!((p.x - 0.5).abs() < 1e-9 && (p.y - 1.0).abs() < 1e-9, "Center puts the text mid-line: {p:?}");
+    // Home is the default place again, outside.
+    s.script("dimedit h 0.5,1\n\n").unwrap();
+    assert!(text_pos(&s).x > 1.0, "{:?}", text_pos(&s));
+    s.script("dimtedit 0.5,1 c\n").unwrap();
+    s.script("dimtedit 0.5,1 h\n").unwrap();
+    assert!(text_pos(&s).x > 1.0, "{:?}", text_pos(&s));
+}
+
 #[test]
 fn align_text_angle_menu_entry_asks_for_the_angle() {
     let mut s = Session::new();
