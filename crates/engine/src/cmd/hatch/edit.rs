@@ -29,6 +29,55 @@ fn hatches(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     Ok(out)
 }
 
+/// Most polylines one HATCHGENERATEBOUNDARY call creates.
+const MAX_GENERATED: usize = 10_000;
+
+/// HATCHGENERATEBOUNDARY: a closed polyline around every boundary loop (outer and islands) of
+/// the selected hatches, at each hatch's elevation. The hatches are not changed: an associative
+/// hatch stays linked to its own boundary objects and is not linked to the new polylines.
+pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Value> {
+    let selected = targets(s, p)?;
+    // The polylines go to the current space, so every hatch must be there too.
+    let space = s.space();
+    let mut loops = Vec::new();
+    let mut found = false;
+    // A hatch named twice gets its boundary once.
+    let mut seen = std::collections::HashSet::new();
+    {
+        let d = s.doc()?;
+        for h in selected {
+            let Some(EntityKind::Hatch(x)) = d.entity(h).map(|e| &e.kind) else { continue };
+            if !seen.insert(h) {
+                continue;
+            }
+            found = true;
+            if d.space_of(h).as_ref() != Some(&space) {
+                return Err(bad("hatchgenerateboundary", format!("hatch {} is not in the current space; switch to its layout first", h.hex())));
+            }
+            // Every selected hatch counts: none is left out of a call that succeeds. Compared
+            // against the room left, so a hostile loop count can't overflow the sum.
+            if x.loops.len() > MAX_GENERATED.saturating_sub(loops.len()) {
+                return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
+            }
+            loops.extend(x.loops.iter().map(|l| (l.vertices.clone(), x.elevation)));
+        }
+    }
+    if !found {
+        return Err(bad("hatchgenerateboundary", "select one or more hatches"));
+    }
+    // Everything is checked before anything is added, so a refused call leaves nothing behind.
+    let mut created = Vec::new();
+    for (vs, elevation) in loops {
+        let mut kind = lwpoly(vs, true);
+        if let EntityKind::LwPolyline(pl) = &mut kind {
+            pl.elevation = elevation;
+        }
+        created.push(s.add_entity(kind)?.hex());
+    }
+    let n = created.len();
+    Ok(json!({ "handles": created, "message": format!("{n} boundary polyline(s) created.") }))
+}
+
 fn outline(l: &HatchLoop) -> Vec<Vec2> {
     Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(1e-3)
 }
