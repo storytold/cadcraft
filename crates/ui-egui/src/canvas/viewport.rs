@@ -273,7 +273,8 @@ pub(super) fn viewport_highlight_tolerance(scale: f64) -> f64 {
 /// the hover are kept apart, so moving the cursor over objects doesn't tessellate the selection
 /// again; each is rebuilt only when the drawing, the objects, the zoom band or the layers frozen
 /// in the viewport change. An object on one of those layers is not drawn in the viewport, so it
-/// is not highlighted there either.
+/// is not highlighted there either, and neither are the parts of a block reference on them
+/// ([`cadcraft_render::build_entities_in_viewport`]).
 #[derive(Default)]
 pub(super) struct VpHighlight {
     key: Option<u64>,
@@ -285,18 +286,19 @@ pub(super) struct VpHighlight {
 impl VpHighlight {
     pub(super) fn update(&mut self, st: &cadcraft_engine::DocState, handles: &[Handle], scale: f64) {
         let tolerance = viewport_highlight_tolerance(scale);
+        // Entering another viewport changes what is drawn without changing the drawing.
+        let frozen = st.viewport_frozen();
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            // Entering another viewport changes what is drawn without changing the drawing.
-            let frozen = st.viewport_frozen();
             (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles, frozen, super::list::font_generation())
                 .hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {
             let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).filter(|e| !st.hidden_in_viewport(e)).map(|e| e.as_ref());
-            self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, ..Default::default() });
+            self.list =
+                cadcraft_render::build_entities_in_viewport(&st.doc, ents, &cadcraft_render::Options { tolerance, ..Default::default() }, frozen);
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
         }

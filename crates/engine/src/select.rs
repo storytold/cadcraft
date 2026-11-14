@@ -1,6 +1,6 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, ViewportBounds, entity_bounds};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -8,6 +8,14 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    hit_polylines_in(d, e, &mut ViewportBounds::new(&[]), tol)
+}
+
+/// [`hit_polylines`] through the layout viewport `view`: the parts of a block reference on the
+/// layers frozen in that viewport are not drawn there, so they are not hit, and the box around
+/// the reference is the box around the parts that are drawn ([`bounds_in`]). A clipped
+/// reference's box stays, as [`ViewportBounds`] says.
+fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::Text(_)
         | EntityKind::MText(_)
@@ -19,17 +27,18 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
         | EntityKind::MLeader(_)
         | EntityKind::Image(_) => {
             // Text-like objects are hit inside their box.
-            let b = entity_bounds(d, e, 0);
+            let b = bounds_in(d, e, None, view);
             if b.is_empty() {
                 return Vec::new();
             }
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
             if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
-                let list = cadcraft_render::build_entities(
+                let list = cadcraft_render::build_entities_in_viewport(
                     d,
                     std::iter::once(e),
                     &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
+                    view.frozen(),
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
@@ -93,7 +102,13 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
-    let polys = hit_polylines(d, e, tol);
+    entity_distance_in(d, e, &mut ViewportBounds::new(&[]), p, tol)
+}
+
+/// [`entity_distance`] through the layout viewport `view`: to what that viewport draws of the
+/// entity ([`hit_polylines_in`]).
+fn entity_distance_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, p: Vec2, tol: f64) -> f64 {
+    let polys = hit_polylines_in(d, e, view, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
@@ -183,6 +198,16 @@ pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Boun
     known.unwrap_or_else(|| entity_bounds(d, e, 0))
 }
 
+/// The box a selection made through the layout viewport `view` tests `e` against: the box of
+/// what that viewport draws of it. `known` is the box the spatial index holds, of what the
+/// drawing shows; it stands unless the viewport freezes layers and `e` draws a block (a block
+/// reference, a dimension, a multileader), whose contents on those layers the viewport leaves
+/// out. That box is never larger than `known`, so the index still finds every candidate.
+fn bounds_in<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, view: &mut ViewportBounds<'a>) -> Bounds2 {
+    let draws_a_block = matches!(e.kind, EntityKind::Insert(_) | EntityKind::Dimension(_) | EntityKind::MLeader(_));
+    if draws_a_block && !view.frozen().is_empty() { view.entity_bounds(d, e) } else { bounds_of(d, e, known) }
+}
+
 pub(crate) fn is_infinite(e: &Entity) -> bool {
     matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_))
 }
@@ -235,16 +260,17 @@ pub(crate) fn pick_with(
     aperture: f64,
 ) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
+    let mut view = ViewportBounds::new(frozen);
     // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e, frozen) {
             continue;
         }
         let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        if !infinite && !bounds_in(d, e, known, &mut view).expand(aperture).intersects(&probe) {
             continue;
         }
-        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+        if entity_distance_in(d, e, &mut view, p, aperture / 4.0) <= aperture {
             return Some(e.handle);
         }
     }
@@ -262,9 +288,13 @@ pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, apert
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
+    let mut view = ViewportBounds::new(frozen);
     cands
-        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
-        .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
+        .filter(|(e, known)| {
+            selectable(d, e, frozen)
+                && (is_infinite(e) || bounds_in(d, e, *known, &mut view).expand(aperture).intersects(&probe))
+                && entity_distance_in(d, e, &mut view, p, aperture / 4.0) <= aperture
+        })
         .map(|(e, _)| e.handle)
         .collect()
 }
@@ -311,7 +341,8 @@ pub(crate) fn select_window_with(
 ) -> Vec<Handle> {
     let Some(cands) = candidates(d, space, ix, &bx, crossing, false) else { return Vec::new() };
     let tol = window_tol(&bx);
-    cands.filter(|(e, known)| selectable(d, e, frozen) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
+    let mut view = ViewportBounds::new(frozen);
+    cands.filter(|(e, known)| selectable(d, e, frozen) && in_window_in(d, e, *known, &mut view, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
 }
 
 /// The tessellation tolerance window and crossing tests use for a box.
@@ -322,15 +353,29 @@ pub(crate) fn window_tol(bx: &Bounds2) -> f64 {
 /// Whether a window box (`crossing` false: entirely inside) or a crossing box (inside or
 /// touching its geometry, not just its bounding box) selects `e`.
 pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bounds2, crossing: bool, tol: f64) -> bool {
+    in_window_in(d, e, known, &mut ViewportBounds::new(&[]), bx, crossing, tol)
+}
+
+/// [`in_window`] through the layout viewport `view`: a block reference is inside the box, or
+/// touches it, by the parts that viewport draws ([`bounds_in`], [`hit_polylines_in`]).
+fn in_window_in<'a>(
+    d: &'a Drawing,
+    e: &Entity,
+    known: Option<Bounds2>,
+    view: &mut ViewportBounds<'a>,
+    bx: &Bounds2,
+    crossing: bool,
+    tol: f64,
+) -> bool {
     let infinite = is_infinite(e);
-    let eb = bounds_of(d, e, known);
+    let eb = bounds_in(d, e, known, view);
     if !infinite && bx.contains_box(&eb) {
         return true;
     }
     if !crossing || (!infinite && !eb.intersects(bx)) {
         return false;
     }
-    let polys = hit_polylines(d, e, tol);
+    let polys = hit_polylines_in(d, e, view, tol);
     let hit = polys.iter().any(|pl| {
         if pl.len() == 1 {
             pl.first().is_some_and(|p| bx.contains(*p))
@@ -378,13 +423,14 @@ pub(crate) fn select_fence_with(
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
     let Some(cands) = candidates(d, space, ix, &probe, true, false) else { return Vec::new() };
+    let mut view = ViewportBounds::new(frozen);
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
+        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_in(d, e, known, &mut view).intersects(&probe)) {
             continue;
         }
-        let polys = hit_polylines(d, e, tol);
+        let polys = hit_polylines_in(d, e, &mut view, tol);
         let hit = fence.windows(2).any(|f| {
             let (Some(a), Some(b)) = (f.first(), f.get(1)) else { return false };
             let fl = Line::new(*a, *b);
@@ -415,17 +461,18 @@ pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[
     let Some(cands) = candidates(d, space, &ix, &pb, crossing, false) else { return Vec::new() };
     let edges: Vec<Line> =
         poly.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?))).chain(poly.last().map(|l| Line::new(*l, *first))).collect();
+    let mut view = ViewportBounds::new(frozen);
     let mut out = Vec::new();
     for (e, known) in cands {
         let infinite = is_infinite(e);
         if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
-        let eb = bounds_of(d, e, known);
+        let eb = bounds_in(d, e, known, &mut view);
         if !infinite && if crossing { !eb.intersects(&pb) } else { !pb.contains_box(&eb) } {
             continue;
         }
-        let polys = hit_polylines(d, e, tol);
+        let polys = hit_polylines_in(d, e, &mut view, tol);
         let crosses = polys.iter().any(|pl| {
             pl.windows(2).any(|w| {
                 w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line(f, &Line::new(*p, *q)).is_some()))

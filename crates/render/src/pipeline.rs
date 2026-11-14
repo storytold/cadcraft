@@ -196,6 +196,15 @@ pub(crate) fn with_point_view(d: &Drawing, space: &Space, opts: &Options) -> Opt
 
 /// Build the display list for a set of loose entities (previews, rubber bands).
 pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options) -> DisplayList {
+    build_entities_in_viewport(d, ents, opts, &[])
+}
+
+/// [`build_entities`] as a selection through a layout viewport that freezes the layers in
+/// `frozen` sees them: what is on one of those layers is left out, as the viewport does not draw
+/// it, the parts of a block reference too. Picking through the viewport tests objects against
+/// this, so a part the viewport does not draw is not hit, and the highlight of an object seen
+/// through the viewport is built from it.
+pub fn build_entities_in_viewport<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options, frozen: &[String]) -> DisplayList {
     let ents: Vec<&Entity> = ents.into_iter().collect();
     // Only previews holding points need the model extents for relative point sizes.
     let with_view;
@@ -207,7 +216,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     };
     let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
     for e in ents {
-        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, frozen, &[]), e);
     }
     b.list
 }

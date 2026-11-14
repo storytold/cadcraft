@@ -167,6 +167,7 @@ mod trim_extend_options;
 mod undo_count;
 mod undo_layout_tab;
 mod viewport_clip;
+mod viewport_frozen_block_parts;
 mod viewport_frozen_selection;
 mod vplayer_prompts;
 mod vports;
