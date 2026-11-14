@@ -26,6 +26,9 @@ struct LpmState {
     sort_desc: bool,
     state_name: String,
     state_sel: Option<String>,
+    /// Why the last Delete Layer was refused, shown in an alert until it is dismissed. The
+    /// command line behind the dialog is easy to miss (#2860).
+    not_deleted: Option<String>,
 }
 
 fn rgb32(r: Rgb) -> Color32 {
@@ -411,9 +414,45 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 );
             });
         });
+    not_deleted_alert(ctx, &mut st.not_deleted);
+    let refused = run_actions(app, actions);
+    if refused.is_some() {
+        st.not_deleted = refused;
+    }
     ctx.data_mut(|dd| dd.insert_temp(sid, st));
+}
+
+/// Run the dialog's actions in order. Each one's error is echoed to the command line
+/// ([`CadApp::run`]); a refused Delete Layer's error is also returned, for the alert.
+fn run_actions(app: &mut CadApp, actions: Vec<(&str, Value)>) -> Option<String> {
+    let mut refused = None;
     for (c, p) in actions {
-        let _ = app.run(c, p);
+        if let Err(e) = app.run(c, p)
+            && c == "layer.delete"
+        {
+            refused = Some(e);
+        }
+    }
+    refused
+}
+
+/// The "Layer Not Deleted" alert while `message` holds a refusal; OK, Enter or Escape closes it.
+fn not_deleted_alert(ctx: &egui::Context, message: &mut Option<String>) {
+    let Some(text) = message.as_deref() else { return };
+    let mut close = false;
+    crate::modal::instant(ctx, egui::Id::unique("lpm_not_deleted")).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(RichText::new(crate::tl!("Layer Not Deleted")).strong());
+        ui.add_space(4.0);
+        ui.label(text);
+        ui.add_space(10.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            close = ui.add(egui::Button::new(crate::tl!("OK")).min_size(vec2(84.0, 22.0))).clicked();
+        });
+        close |= ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape));
+    });
+    if close {
+        *message = None;
     }
 }
 
@@ -787,5 +826,41 @@ mod tests {
         }
         let (first, last) = (heights[5], heights[29]);
         assert!(first > 0.0 && first < 700.0 && (last - first).abs() < 0.5, "window height drifted: {heights:?}");
+    }
+
+    /// #2860: Delete Layer on a layer with objects keeps the layer and says why in an alert,
+    /// which stays until OK.
+    #[test]
+    fn a_refused_delete_says_why_in_an_alert() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.run("layer.new", json!({ "name": "Walls", "current": true })).unwrap();
+        app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        app.run("layer.current", json!({ "name": "0" })).unwrap();
+        // The app's fonts: egui's defaults have no ▲ for the sort arrow. The accessibility check is
+        // off because some of the dialog's controls (a combo box, the rows' spin boxes) have no
+        // accessible names yet, which this test is not about.
+        let builder = egui_kittest::Harness::builder()
+            .with_size(vec2(1400.0, 900.0))
+            .with_context_setup(|ctx| crate::theme::install_fonts(ctx, "en"))
+            .with_accessibility_check(false);
+        let mut h = builder.build_ui_state(
+            |ui, app: &mut CadApp| {
+                let mut open = true;
+                dialog(app, ui.ctx(), &mut open);
+            },
+            app,
+        );
+        let selected = LpmState { selected: Some("Walls".into()), ..LpmState::default() };
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lpm_state"), selected));
+        h.run_steps(2);
+        h.get_by_label("Delete Layer").click();
+        h.run_steps(3);
+        let alert = "Layer \"Walls\" was not deleted: it has objects on it.";
+        assert!(h.query_by_label(alert).is_some(), "the alert says why");
+        assert!(h.state().session.state().unwrap().doc.layer("Walls").is_some());
+        h.get_by_label("OK").click();
+        h.run_steps(3);
+        assert!(h.query_by_label(alert).is_none(), "OK closes the alert");
     }
 }
