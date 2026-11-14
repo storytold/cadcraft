@@ -2,6 +2,7 @@ use super::{
     Accept, EntityKind, Input, Interactive, PolyVertex, Prompt, Result, Session, Step, Value, Vec2, added, bad, bool_or, curves, f64_or, lwpoly,
     number, other, point_param, point_req, rect_with_corners, size_param,
 };
+use crate::cmd::reject_unknown_params;
 use crate::last_used::RectangModes;
 
 // =====================================================================================
@@ -53,6 +54,11 @@ fn rect_size(p: &Value, a: Vec2, rot: f64, centered: bool) -> Result<(f64, f64)>
 /// Draws a rectangle from the JSON form: `p1` is a corner, or the centre when `center` is
 /// true, and the size comes from `p2`, `dimensions` or `area` plus `length`/`breadth`.
 pub(crate) fn run_rectang2(s: &mut Session, p: &Value) -> Result<Value> {
+    reject_unknown_params(
+        "rectang",
+        p,
+        &["p1", "p2", "dimensions", "area", "length", "breadth", "rotation", "fillet", "chamfer", "width", "elevation", "thickness", "center"],
+    )?;
     let a = point_req("rectang", p, "p1")?;
     // Centre mode: `p1` is the rectangle's centre, so the rectangle spans it evenly.
     let centered = bool_or(p, "center", false);
