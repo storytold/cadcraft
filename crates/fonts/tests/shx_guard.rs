@@ -71,5 +71,13 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
     shx::set_search_path(&dir.to_string_lossy());
     assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "a font folder or the search path doesn't lift the guard");
     assert!(shx::find("cadcraft-guard-ok.shx").is_some());
+    // The folder falling off the list of drawing folders (the list is short) keeps its guards while a
+    // font folder or the search path still reaches it.
+    for n in 0..40 {
+        shx::add_drawing_dir(&dir.join(format!("other-{n}")));
+    }
+    assert!(!shx::drawing_dirs().contains(&dir));
+    assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "the outside font stays rejected after the eviction");
+    assert!(shx::find("cadcraft-guard-ok.shx").is_some());
     std::fs::remove_dir_all(&dir).unwrap();
 }

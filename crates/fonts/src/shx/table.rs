@@ -33,6 +33,8 @@ const MAX_FONTS: usize = 128;
 const MAX_LOADED_BYTES: usize = 256 << 20;
 /// Most drawing folders and search path entries remembered.
 const MAX_DIRS: usize = 32;
+/// Most folders whose guards are kept.
+const MAX_GUARDED_DIRS: usize = 1024;
 /// Most font map entries.
 const MAX_MAP: usize = 1024;
 
@@ -139,13 +141,19 @@ pub fn add_drawing_dir_guarded(dir: &Path, owner: &str, guard: OpenGuard) {
     add_dir(dir, Some((owner, guard)));
 }
 
-/// Remember `dir`, most recent first, with the guard it is searched under, if any.
+/// Remember `dir`, most recent first, with the guard it is searched under, if any. The folder's
+/// guards are kept after it drops off the list of drawing folders.
 fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
     if dir.as_os_str().is_empty() {
         return;
     }
     let mut t = table();
     if guard.is_none() && t.drawing_dirs.first().is_some_and(|d| d == dir) {
+        return;
+    }
+    // Guards outlive the drawing list: a folder dropped from it can still be reached as a font
+    // folder or on the search path. When there is no room for another, the folder isn't searched.
+    if guard.is_some() && !t.drawing_guards.contains_key(dir) && t.drawing_guards.len() >= MAX_GUARDED_DIRS {
         return;
     }
     t.drawing_dirs.retain(|d| d != dir);
@@ -156,9 +164,6 @@ fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
         guards.retain(|(o, _)| o != owner);
         guards.push((owner.to_string(), guard));
     }
-    // A folder dropped from the list takes its guards with it.
-    let Table { drawing_dirs, drawing_guards, .. } = &mut *t;
-    drawing_guards.retain(|d, _| drawing_dirs.contains(d));
     t.changed();
 }
 
