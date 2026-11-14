@@ -67,6 +67,7 @@ egui = { version = "0.37", default-features = false, features = ["default_fonts"
 # Resizable table columns (About ▸ Contributors / Models); no image loaders.
 egui_extras = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
+wasm-bindgen-test = "0.3.79"
 eframe = { version = "0.37", default-features = false }
 egui-wgpu = "0.37"
 # Monotonic time on native and web (performance.now on wasm).

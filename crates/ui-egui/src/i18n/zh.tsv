@@ -43,6 +43,7 @@
 	Annotation scale	注释比例
 	Apparent Intersection	外观交点
 	Append to current selection set	添加到当前选择集
+	Apply linked file reply	应用关联文件响应
 	Apply to:	应用于:
 	Apply true color	应用真彩色
 	Arc	圆弧
@@ -494,7 +495,9 @@
 	One of the Crafting Apps by the ArtCraft team and community.	由 ArtCraft 团队和社区打造的 Crafting 系列应用之一。
 	Oops	恢复已擦除对象
 	Open (⌘O)	打开 (⌘O)
+	Open Provider File	打开提供方文件
 	Open Sample Drawing	打开示例图形
+	Open linked provider drawing	打开包含关联文件的提供方图形
 	Open sample drawing	打开示例图形
 	Open...	打开...
 	Operator:	运算符:
@@ -611,6 +614,7 @@
 	Redo	重做
 	Redo (⇧⌘Z)	重做 (⇧⌘Z)
 	Redraw	重绘
+	Refresh linked files	刷新关联文件
 	Regen	重生成
 	Regen All	全部重生成
 	Region	面域
