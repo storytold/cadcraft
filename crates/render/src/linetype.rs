@@ -57,7 +57,9 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
         let mut pos = 0.0;
         while seg - pos > remaining {
             guard += 1;
-            if guard > 2_000_000 {
+            // One step per pattern element: the budget must let through every repeat the ceiling
+            // above admits, not stop a multi-element pattern at a smaller fixed count.
+            if (guard as f64) > MAX_DASHES * pattern.len() as f64 {
                 return vec![pts.to_vec()];
             }
             pos += remaining;
@@ -120,8 +122,13 @@ pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<V
     let mut visits: u64 = 0;
     for d in lt.pattern.iter().map(|d| d.length * scale).cycle() {
         visits += 1;
-        if pos >= len || out.len() > 2_000_000 || visits > 4_000_000 {
+        if pos >= len {
             break;
+        }
+        // Past either budget the run is drawn continuous rather than cut short: `wide::dashed`
+        // falls back to the whole run on `None`, but accepts a prefix as complete.
+        if out.len() > 2_000_000 || visits > 4_000_000 {
+            return None;
         }
         if d >= 0.0 {
             out.push((pos, (pos + d).min(len)));
@@ -159,6 +166,28 @@ mod tests {
         let d = apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0);
         assert!(d.iter().all(|r| r.len() == 1));
         assert!(d.len() >= 4);
+    }
+
+    #[test]
+    fn a_multi_element_pattern_is_not_cut_short_by_the_walk_budget() {
+        // 100 elements per repeat (one dash, 99 gaps) over 100,000 repeats: 10,000,000 walk steps,
+        // over the fixed 2,000,000 this used to stop at, but no more repeats than `MAX_DASHES`
+        // admits.
+        let mut pattern = vec![0.1];
+        pattern.extend([-0.1; 99]);
+        let lt = Linetype::simple("MANY", "", &pattern);
+        let d = apply(&[Vec2::ZERO, Vec2::new(1_000_000.0, 0.0)], &lt, 1.0, 0.0);
+        // One dash per repeat, plus the run's last, partial one.
+        assert_eq!(d.len(), 100_001, "the run was drawn as one solid line");
+    }
+
+    #[test]
+    fn ranges_gives_up_rather_than_returning_part_of_a_run() {
+        // Two dashes per repeat: the repeat ceiling admits this run, but the output budget cannot
+        // hold it. `wide::dashed` draws the whole run on `None`; a prefix would leave the rest of
+        // the polyline unpainted (#1285).
+        let lt = Linetype::simple("DOUBLE", "", &[0.5, 0.5]);
+        assert_eq!(ranges(1_100_000.0, &lt, 1.0, 0.0), None);
     }
 
     #[test]
