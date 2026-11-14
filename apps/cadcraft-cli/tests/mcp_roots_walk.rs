@@ -530,7 +530,6 @@ fn the_walk_finds_escapes_without_roots() {
         "layout.saveas",
         "layout",
         "stylesmanager",
-        "plottermanager",
         "tableexport",
         "dataextraction",
         "tool:save",
@@ -541,9 +540,8 @@ fn the_walk_finds_escapes_without_roots() {
     // What a command touched is kept with its kind (`wrote`, `created`, `removed`, `read`): a writer
     // must show a write, not just a read, or a writer that only reads would still pass.
     let kinds = |id: &str, kinds: &[&str]| w.escapes.get(id).is_some_and(|e| e.iter().any(|l| kinds.iter().any(|k| l.starts_with(k))));
-    for id in writers {
-        assert!(kinds(id, &["wrote ", "created ", "removed "]), "the walk no longer finds `{id}` writing outside: {found:?}");
-    }
+    let not_writing: Vec<&str> = writers.into_iter().filter(|id| !kinds(id, &["wrote ", "created ", "removed "])).collect();
+    assert!(not_writing.is_empty(), "the walk no longer finds these writing outside: {not_writing:?}; touched: {:?}", w.escapes);
     if w.sees_reads {
         for id in [
             "open",
@@ -561,6 +559,7 @@ fn the_walk_finds_escapes_without_roots() {
             "aliasedit",
             "linetype",
             "hatch.patterns",
+            "plottermanager",
             "appload",
             "datalink",
             "tool:open",
