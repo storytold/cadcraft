@@ -15,7 +15,7 @@ repository = "https://github.com/storytold/cadcraft"
 cadcraft-geom = { path = "crates/geom" }
 # DXF tags: the shared reader and writer (moved from crates/dxf; craft-libs#791).
 craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "006e4df225fca57e95ead0fb1f91920900798a99" }
-cadcraft-dwg = { path = "crates/dwg" }
+craft-dwg = { git = "https://github.com/storytold/craft-libs", rev = "7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf" }
 cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
 cadcraft-constraints = { path = "crates/constraints" }
