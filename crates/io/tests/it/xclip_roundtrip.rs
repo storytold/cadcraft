@@ -171,3 +171,94 @@ fn hostile_spatial_filters_do_not_panic() {
         let _ = read(bad.as_bytes(), "a.dxf");
     }
 }
+
+/// Verifies that a `SPATIAL_FILTER` with a non-identity boundary transform matrix is preserved
+/// across DXF and DWG round-trips (R2004, R2010, R2018), while a sheared filter stays foreign.
+#[test]
+fn spatial_filter_with_non_identity_boundary_transform_round_trips() {
+    let mut d = Drawing::new_metric();
+    let mut block = Block::new("P");
+    block.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(100.0, 100.0, 0.0) })));
+    d.blocks.insert("P".into(), Arc::new(block));
+    let clip = ClipBoundary::new(vec![Vec2::new(20.0, 20.0), Vec2::new(80.0, 80.0)]);
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Insert(Insert { block: "P".into(), insert: Vec3::new(150.0, 0.0, 0.0), clip: Some(clip), ..Insert::default() }),
+    )
+    .unwrap();
+    let text = String::from_utf8(save(&d, "a.dxf", Version::R2018)).unwrap();
+
+    let mut lines: Vec<String> = text.lines().map(|l| l.trim().to_string()).collect();
+    let at = lines.windows(2).position(|w| w[0] == "0" && w[1] == "SPATIAL_FILTER").unwrap();
+    let end = (at + 2..lines.len()).step_by(2).find(|i| lines[*i] == "0").unwrap();
+
+    let mut g40_indices = Vec::new();
+    for i in (at..end).step_by(2) {
+        if lines[i] == "40" {
+            g40_indices.push(i + 1);
+        }
+    }
+    assert_eq!(g40_indices.len(), 24);
+    // Group 40 stores two 3x4 matrices row by row:
+    // Matrix 1 (elements 0..11): inverse insert transform
+    // Matrix 2 (elements 12..23): boundary transform
+    // Index 15 = Matrix 2 row 0, col 3 (Tx translation)
+    // Index 19 = Matrix 2 row 1, col 3 (Ty translation)
+    lines[g40_indices[15]] = "10.0".to_string();
+    lines[g40_indices[19]] = "5.0".to_string();
+
+    let mutated = lines.join("\r\n") + "\r\n";
+    let loaded = read(mutated.as_bytes(), "a.dxf").unwrap();
+    let loaded_clips = clips(&loaded);
+    let ins_clip = loaded_clips[0].as_ref().expect("clip must be preserved");
+    assert!(ins_clip.points[0].near(Vec2::new(10.0, 15.0), 1e-9));
+    assert!(ins_clip.points[1].near(Vec2::new(70.0, 75.0), 1e-9));
+
+    for v in [Version::R2004, Version::R2010, Version::R2018] {
+        let dxf_back = read(&save(&loaded, "resaved.dxf", v), "resaved.dxf").unwrap();
+        same(&clips(&dxf_back), &clips(&loaded));
+
+        let dwg_back = read(&save(&loaded, "resaved.dwg", v), "resaved.dwg").unwrap();
+        same(&clips(&dwg_back), &clips(&loaded));
+    }
+
+    // Index 13 = Matrix 2 row 0, col 1 (shear term c). A sheared filter cannot be represented
+    // losslessly as a planar 2D clip and must remain in `foreign.objects` untouched.
+    lines[g40_indices[13]] = "0.5".to_string();
+    let sheared_dxf = lines.join("\r\n") + "\r\n";
+    let sheared_loaded = read(sheared_dxf.as_bytes(), "a.dxf").unwrap();
+    assert!(clips(&sheared_loaded)[0].is_none(), "sheared filter must not be converted into a lossy clip");
+    assert!(
+        sheared_loaded.foreign.objects.iter().any(|o| o.kind.eq_ignore_ascii_case("SPATIAL_FILTER")),
+        "sheared SPATIAL_FILTER must be preserved in foreign objects"
+    );
+}
+
+/// Verifies that rotated `INSERT` references with uniform, non-uniform, and mirrored scales
+/// and normal or inverted 2-point block-space `ClipBoundary` rectangles round-trip losslessly
+/// across DXF and DWG (`R2004`, `R2010`, `R2018`) without producing sheared `boundary_xf` matrices.
+#[test]
+fn inverted_rotated_2point_clip_round_trips() {
+    let mut d = Drawing::new_metric();
+    let mut block = Block::new("Plan");
+    block.entities.push(Entity::new(d.new_handle(), EntityKind::Line(Line { a: Vec3::new(-10.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) })));
+    d.blocks.insert(block.name.clone(), Arc::new(block));
+
+    for scale in [Vec3::new(2.0, 2.0, 1.0), Vec3::new(2.0, 3.0, 1.0), Vec3::new(-2.0, 3.0, 1.0)] {
+        for inverted in [false, true] {
+            let clip = ClipBoundary { inverted, ..ClipBoundary::new(vec![Vec2::new(-2.0, -1.0), Vec2::new(2.0, 1.0)]) };
+            let ins =
+                Insert { block: "Plan".into(), insert: Vec3::new(10.0, 20.0, 0.0), scale, rotation: 0.3, clip: Some(clip), ..Insert::default() };
+            d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        }
+    }
+
+    for v in [Version::R2004, Version::R2010, Version::R2018] {
+        let dxf_back = read(&save(&d, "inv_rot.dxf", v), "inv_rot.dxf").unwrap();
+        same(&clips(&dxf_back), &clips(&d));
+
+        let dwg_back = read(&save(&d, "inv_rot.dwg", v), "inv_rot.dwg").unwrap();
+        same(&clips(&dwg_back), &clips(&d));
+    }
+}

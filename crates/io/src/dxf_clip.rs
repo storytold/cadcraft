@@ -3,7 +3,8 @@
 //! The filter holds the boundary vertices in the reference's coordinates (group 70 the count,
 //! 10/20 the vertices), whether clipping is on (71), the front and back clip (72/73, 40/41) and
 //! two 3×4 matrices (group 40, row by row): the inverse of the reference's transform, which takes
-//! the boundary into the block's coordinates, and the boundary's own transform (identity here).
+//! the boundary into the block's coordinates, and the boundary's own transform (composed with
+//! the inverse transform when non-identity, e.g. on clipboard-pasted block references).
 //!
 //! An inverted clip ("Invert clip") is marked as the reference app writes it in a file: the
 //! filter has an extension dictionary whose `ACAD_XREC_ROUNDTRIP` entry is an XRECORD holding
@@ -15,7 +16,7 @@
 //! written. The record goes through DWG as it is.
 //!
 //! Reading takes the planar filters the model can hold out of the kept foreign data and puts them
-//! on the references ([`read`]); others (front/back clipping, a skewed boundary transform) stay
+//! on the references ([`read`]); others (front/back clipping, non-planar extrusion, sheared boundary transform) stay
 //! foreign and are written back untouched. Writing adds the dictionaries and the filter of every
 //! clipped reference to a copy of the drawing's foreign data ([`prepare`]), which the raw-data
 //! writer (#528) then places on the reference.
@@ -164,9 +165,22 @@ fn roundtrip(f: &Foreign, idx: &Index, filter: &ForeignObject) -> Option<Vec<Vec
     (same && boundary.len() >= 2).then_some(boundary)
 }
 
-/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates; with `boundary`, the
-/// clip is inverted and that is its outline (in the filter's coordinates). `None` for anything
-/// the model can't hold as it is (it then stays foreign).
+/// The boundary a planar SPATIAL_FILTER holds, in the block's coordinates.
+///
+/// Per the Autodesk DXF Reference for `SPATIAL_FILTER`:
+/// - Group 40 (first 12 values): 3×4 matrix representing the inverse of the block reference
+///   transformation (maps coordinates from WCS to block local space).
+/// - Group 40 (second 12 values): 3×4 matrix representing the transformation into the coordinate
+///   system of the clip boundary ($WCS \to \text{Boundary}$).
+///
+/// Since boundary vertices (group 10/20) are stored in the clip boundary's coordinate system,
+/// transforming them into the block's local coordinates requires inverting the boundary transform
+/// ($\text{Boundary} \to WCS$) and then applying the inverse block transform ($WCS \to \text{Block}$):
+/// $P_{\text{block}} = M_{\text{inverse}} \times (M_{\text{boundary\_xf}})^{-1} \times P_{\text{boundary}}$.
+/// In code: `boundary_xf.inverse()?.then(inverse)`.
+///
+/// With `boundary`, the clip is inverted and that is its outline (in the filter's coordinates).
+/// Returns `None` for unsupported configurations (e.g. non-planar extrusion, front/back clipping depth).
 fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoundary> {
     let count = usize::try_from(number(&o.tags, 70)? as i64).ok()?;
     if !(2..=MAX_CLIP_VERTICES).contains(&count) {
@@ -180,27 +194,41 @@ fn parse_filter(o: &ForeignObject, boundary: Option<&[Vec2]>) -> Option<ClipBoun
         return None;
     }
     let m: Vec<f64> = o.tags.iter().filter(|t| t.code == 40).map(|t| t.value.trim().parse::<f64>().unwrap_or(f64::NAN)).collect();
-    let (inverse, own) = match m.len() {
+    let (inverse, boundary_xf) = match m.len() {
         24 => (matrix_2d(m.get(..12)?)?, matrix_2d(m.get(12..)?)?),
         // Without matrices the vertices are taken as the block's own.
         0 => (Mat3::IDENTITY, Mat3::IDENTITY),
         _ => return None,
     };
-    if (own.a - 1.0).abs() > 1e-9
-        || own.b.abs() > 1e-9
-        || own.c.abs() > 1e-9
-        || (own.d - 1.0).abs() > 1e-9
-        || own.e.abs() > 1e-9
-        || own.f.abs() > 1e-9
-    {
+    // Reject sheared/skewed boundary transforms that cannot be losslessly represented.
+    // Scale-independent orthogonality check: |u . v| > 1e-4 * |u| * |v|
+    let u_len = (boundary_xf.a * boundary_xf.a + boundary_xf.b * boundary_xf.b).sqrt();
+    let v_len = (boundary_xf.c * boundary_xf.c + boundary_xf.d * boundary_xf.d).sqrt();
+    if u_len <= 1e-9 || v_len <= 1e-9 {
         return None;
     }
-    let own = vertices(&o.tags, count)?;
-    let outline = boundary.unwrap_or(&own);
-    if !(2..=MAX_CLIP_VERTICES).contains(&outline.len()) {
+    let dot = boundary_xf.a * boundary_xf.c + boundary_xf.b * boundary_xf.d;
+    if dot.abs() > 1e-4 * u_len * v_len {
         return None;
     }
-    let points: Vec<Vec2> = outline.iter().map(|p| inverse.apply(*p)).collect();
+    let verts = vertices(&o.tags, count)?;
+    let raw_outline = boundary.unwrap_or(&verts);
+    if !(2..=MAX_CLIP_VERTICES).contains(&raw_outline.len()) {
+        return None;
+    }
+    let net = boundary_xf.inverse()?.then(inverse);
+    // Expand a 2-corner rectangle to 4 corners whenever the net transform from boundary space
+    // to block space introduces rotation, preserving its rotated orientation in block space.
+    let rotated_rect;
+    let net_rotated = net.b.abs() > 1e-9 || net.c.abs() > 1e-9;
+    let outline = match raw_outline {
+        [a, b] if net_rotated => {
+            rotated_rect = vec![*a, Vec2::new(b.x, a.y), *b, Vec2::new(a.x, b.y)];
+            &rotated_rect[..]
+        }
+        other => other,
+    };
+    let points: Vec<Vec2> = outline.iter().map(|p| net.apply(*p)).collect();
     if !points.iter().all(|p| p.is_finite()) {
         return None;
     }
@@ -326,14 +354,21 @@ fn spatial_filter(h: Handle, owner: Handle, clip: &ClipBoundary, to_world: &Mat3
         tags.extend([raw(102, "{ACAD_XDICTIONARY"), raw(360, x.hex()), raw(102, "}")]);
     }
     tags.extend([raw(330, owner.hex()), raw(100, "AcDbFilter"), raw(100, "AcDbSpatialFilter"), raw(70, clip.points.len())]);
+    // A 2-vertex SPATIAL_FILTER defines an axis-aligned rectangle in `boundary_xf` space.
+    // When the reference is rotated, a 2-point block-space rectangle is axis-aligned in a frame
+    // rotated by the reference's angle (`Mat3::rotate(-to_world.rotation())`), which remains
+    // strictly orthogonal even when the reference has non-uniform X/Y scale.
+    let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
+    let boundary_xf = if block_space_rect { Mat3::rotate(-to_world.rotation()) } else { Mat3::IDENTITY };
+    let pts_xf = to_world.then(boundary_xf);
     for p in &clip.points {
-        let q = to_world.apply(*p);
+        let q = pts_xf.apply(*p);
         tags.push(raw(10, q.x));
         tags.push(raw(20, q.y));
     }
     tags.extend([raw(210, 0.0), raw(220, 0.0), raw(230, 1.0), raw(11, 0.0), raw(21, 0.0), raw(31, 0.0)]);
     tags.extend([raw(71, i32::from(clip.enabled)), raw(72, 0), raw(73, 0)]);
-    for v in matrix_values(inverse).into_iter().chain(matrix_values(&Mat3::IDENTITY)) {
+    for v in matrix_values(inverse).into_iter().chain(matrix_values(&boundary_xf)) {
         tags.push(raw(40, v));
     }
     ForeignObject { handle: h, kind: "SPATIAL_FILTER".into(), tags }
@@ -417,7 +452,10 @@ pub(crate) fn prepare(d: &Drawing) -> Option<Drawing> {
             let mut own = dictionary(x, sf);
             own.tags.extend([raw(3, ROUNDTRIP_KEY), raw(360, r.hex())]);
             add(own);
-            let world: Vec<Vec2> = clip.points.iter().map(|p| to_world.apply(*p)).collect();
+            let block_space_rect = clip.points.len() == 2 && (to_world.b.abs() > 1e-9 || to_world.c.abs() > 1e-9);
+            let boundary_xf = if block_space_rect { Mat3::rotate(-to_world.rotation()) } else { Mat3::IDENTITY };
+            let pts_xf = to_world.then(boundary_xf);
+            let world: Vec<Vec2> = clip.points.iter().map(|p| pts_xf.apply(*p)).collect();
             add(roundtrip_record(r, x, &world));
         }
     }
@@ -546,6 +584,167 @@ mod tests {
             f.objects.push(filter.clone());
             assert!(roundtrip(&f, &index(&f), &filter).is_none(), "{count}");
             assert!(parse_filter(&filter, None).is_none(), "{count}");
+        }
+    }
+
+    /// Builds a mock SPATIAL_FILTER [`ForeignObject`] with a 10×10 rectangle boundary:
+    /// (0,0), (10,0), (10,10), (0,10).
+    fn make_test_filter(inverse: &Mat3, own: &Mat3) -> ForeignObject {
+        let mut tags = vec![
+            raw(100, "AcDbFilter"),
+            raw(100, "AcDbSpatialFilter"),
+            raw(70, 4),
+            raw(10, 0.0),
+            raw(20, 0.0),
+            raw(10, 10.0),
+            raw(20, 0.0),
+            raw(10, 10.0),
+            raw(20, 10.0),
+            raw(10, 0.0),
+            raw(20, 10.0),
+            raw(210, 0.0),
+            raw(220, 0.0),
+            raw(230, 1.0),
+            raw(71, 1),
+            raw(72, 0),
+            raw(73, 0),
+        ];
+        for v in matrix_values(inverse).into_iter().chain(matrix_values(own)) {
+            tags.push(raw(40, v));
+        }
+        ForeignObject { handle: Handle(0x100), kind: "SPATIAL_FILTER".into(), tags }
+    }
+
+    /// Baseline check: verifies `parse_filter` accepts filters where the boundary matrix is identity.
+    #[test]
+    fn parse_filter_accepts_identity_boundary_transform() {
+        // Baseline: parse_filter accepts filters where the second matrix is Identity.
+        let filter = make_test_filter(&Mat3::IDENTITY, &Mat3::IDENTITY);
+        let parsed = parse_filter(&filter, None);
+        assert!(parsed.is_some(), "Baseline filter with identity own matrix must be accepted");
+    }
+
+    /// Regression test: verifies `parse_filter` preserves filters with a non-identity translation matrix.
+    #[test]
+    fn parse_filter_preserves_non_identity_boundary_transform() {
+        // WHY:
+        // SPATIAL_FILTER can contain two transformation matrices.
+        // parse_filter previously rejected every non-identity `own` matrix,
+        // causing an otherwise valid clipping definition to be discarded.
+        //
+        // Matrix 2 transforms WCS into boundary coordinates; its inverse transforms
+        // boundary coordinates into WCS, mapping (0..10, 0..10) shifted by (-100, -50).
+
+        let inverse = Mat3::IDENTITY;
+        let own = Mat3::translate(Vec2::new(100.0, 50.0));
+
+        let filter = make_test_filter(&inverse, &own);
+        let parsed = parse_filter(&filter, None);
+
+        assert!(parsed.is_some(), "A valid non-identity boundary transform must not cause the filter to be discarded");
+        let clip = parsed.unwrap();
+        assert_eq!(clip.points.len(), 4);
+        assert!(clip.points[0].near(Vec2::new(-100.0, -50.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-90.0, -50.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-90.0, -40.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(-100.0, -40.0), 1e-9));
+    }
+
+    /// Verifies `boundary_xf.inverse()?.then(inverse)` correctly composes rotation, scaling, and translation.
+    #[test]
+    fn parse_filter_applies_rotation_and_scale_boundary_transform() {
+        let boundary_xf = Mat3::scale(2.0, 2.0).then(Mat3::rotate(std::f64::consts::FRAC_PI_2)).then(Mat3::translate(Vec2::new(50.0, 20.0)));
+        let inverse = Mat3::translate(Vec2::new(-10.0, -5.0));
+
+        let filter = make_test_filter(&inverse, &boundary_xf);
+        let parsed = parse_filter(&filter, None);
+
+        assert!(parsed.is_some(), "Combined scale, rotation, and translation boundary transform must be parsed");
+        let clip = parsed.unwrap();
+        assert_eq!(clip.points.len(), 4);
+        assert!(clip.points[0].near(Vec2::new(-20.0, 20.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-20.0, 15.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-15.0, 15.0), 1e-9));
+        assert!(clip.points[3].near(Vec2::new(-15.0, 20.0), 1e-9));
+    }
+    /// Verifies `parse_filter` rejects sheared boundary matrices to preserve foreign data.
+    #[test]
+    fn parse_filter_rejects_sheared_boundary_transform() {
+        let inverse = Mat3::IDENTITY;
+        // Non-orthogonal shear matrix: (x' = x + 0.5y, y' = y)
+        let shear = Mat3 { a: 1.0, b: 0.0, c: 0.5, d: 1.0, e: 0.0, f: 0.0 };
+        let filter = make_test_filter(&inverse, &shear);
+        assert!(parse_filter(&filter, None).is_none(), "Sheared transforms must be rejected to stay foreign");
+    }
+
+    /// Verifies that an explicit boundary slice (e.g. inverted clip) is transformed correctly.
+    #[test]
+    fn parse_filter_applies_transform_to_inverted_boundary() {
+        let inverse = Mat3::translate(Vec2::new(-10.0, 0.0));
+        let boundary_xf = Mat3::translate(Vec2::new(50.0, 0.0));
+        let filter = make_test_filter(&inverse, &boundary_xf);
+
+        let explicit_boundary = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+        let parsed = parse_filter(&filter, Some(&explicit_boundary));
+        assert!(parsed.is_some());
+        let clip = parsed.unwrap();
+        assert!(clip.inverted);
+        // Explicit boundary points transformed by net: (x - 50 - 10) = x - 60
+        assert_eq!(clip.points.len(), 3);
+        assert!(clip.points[0].near(Vec2::new(-60.0, 0.0), 1e-9));
+        assert!(clip.points[1].near(Vec2::new(-50.0, 0.0), 1e-9));
+        assert!(clip.points[2].near(Vec2::new(-50.0, 10.0), 1e-9));
+    }
+    /// Verifies that small-scale sheared transforms are rejected by the scale-independent guard.
+    #[test]
+    fn parse_filter_rejects_small_scale_sheared_boundary_transform() {
+        // WHY:
+        // A sheared transform with tiny scale factors (e.g. u = (0.001, 0), v = (0.0005, 0.001))
+        // yields a small absolute dot product (5e-7), which would bypass a naive absolute tolerance.
+        // The orthogonality guard is scale-independent (|u . v| > 1e-4 * |u| * |v|) so that
+        // non-orthogonal shears are consistently rejected across all coordinate scales.
+        let inverse = Mat3::IDENTITY;
+        let small_shear = Mat3 { a: 0.001, b: 0.0, c: 0.0005, d: 0.001, e: 0.0, f: 0.0 };
+        let filter = make_test_filter(&inverse, &small_shear);
+        assert!(parse_filter(&filter, None).is_none(), "Small-scale sheared transform must be rejected");
+    }
+
+    /// Verifies that a 2-corner rectangle rotated by 30°, 45°, 60°, or 90° (whether via
+    /// `boundary_xf` or via `inverse` with an unrotated/translated `boundary_xf`) expands
+    /// to an exact 4-corner orthogonal rectangle in block coordinates without collapsing or skewing.
+    #[test]
+    fn parse_filter_expands_rotated_two_corner_boundary() {
+        for deg in [30.0_f64, 45.0, 60.0, 90.0] {
+            let rot = Mat3::rotate(deg.to_radians());
+            let trans = Mat3::translate(Vec2::new(15.0, -10.0));
+            for (inverse, boundary_xf) in [(Mat3::IDENTITY, rot), (rot, Mat3::IDENTITY), (rot, trans)] {
+                let mut tags = vec![
+                    raw(100, "AcDbFilter"),
+                    raw(100, "AcDbSpatialFilter"),
+                    raw(70, 2),
+                    raw(10, 0.0),
+                    raw(20, 0.0),
+                    raw(10, 10.0),
+                    raw(20, 20.0),
+                    raw(210, 0.0),
+                    raw(220, 0.0),
+                    raw(230, 1.0),
+                    raw(71, 1),
+                    raw(72, 0),
+                    raw(73, 0),
+                ];
+                for v in matrix_values(&inverse).into_iter().chain(matrix_values(&boundary_xf)) {
+                    tags.push(raw(40, v));
+                }
+                let filter = ForeignObject { handle: Handle(0x102), kind: "SPATIAL_FILTER".into(), tags };
+                let clip = parse_filter(&filter, None).expect("rotated 2-corner clip must not collapse");
+                assert_eq!(clip.points.len(), 4, "angle {deg}°");
+                let e01 = clip.points[1] - clip.points[0];
+                let e12 = clip.points[2] - clip.points[1];
+                assert!((e01.len() - 10.0).abs() < 1e-9, "width preserved at {deg}°");
+                assert!((e12.len() - 20.0).abs() < 1e-9, "height preserved at {deg}°");
+                assert!(e01.dot(e12).abs() < 1e-9, "right angle preserved at {deg}°");
+            }
         }
     }
 }
