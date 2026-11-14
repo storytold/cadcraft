@@ -388,11 +388,26 @@ impl Session {
                 Outcome::Wait(Need::Pause) => {
                     // The command `command` left running takes the next input; with none
                     // running there is nothing to wait for.
-                    if self.running.is_none() || run.blocking {
+                    if self.running.is_none() {
                         run.machine.resume(Value::Nil);
-                        if run.blocking && self.running.is_some() {
-                            self.cancel();
+                        self.lisp.run = Some(run);
+                        continue;
+                    }
+                    if run.blocking {
+                        let answer = run.inputs.pop_front().unwrap_or(Value::Nil);
+                        let input = match &answer {
+                            Value::Nil => Input::Enter,
+                            Value::Cons(_) if answer.as_point().is_some() => {
+                                let p = answer.as_point().unwrap_or([0.0, 0.0, 0.0]);
+                                Input::Point(cadcraft_geom::Vec2::new(p[0], p[1]))
+                            }
+                            Value::Str(s) if s.is_empty() => Input::Enter,
+                            _ => Input::Text(value::to_text(&answer, false)),
+                        };
+                        if let Err(e) = self.input_to_command(input) {
+                            self.echo(e.to_string());
                         }
+                        run.machine.resume(Value::Nil);
                         self.lisp.run = Some(run);
                         continue;
                     }
