@@ -46,7 +46,7 @@ pub(crate) fn read_entity(tags: &[Tag]) -> Image {
 }
 
 /// Call `f` with each record (`0 TYPE` and the groups after it) of a section, without copying.
-fn each_record<'a>(tags: &'a [Tag], mut f: impl FnMut(&str, &'a [Tag])) {
+pub(crate) fn each_record<'a>(tags: &'a [Tag], mut f: impl FnMut(&str, &'a [Tag])) {
     let mut open: Option<(String, usize)> = None;
     for (i, t) in tags.iter().enumerate() {
         if t.code == 0 {
@@ -61,7 +61,7 @@ fn each_record<'a>(tags: &'a [Tag], mut f: impl FnMut(&str, &'a [Tag])) {
     }
 }
 
-fn key(s: &str) -> String {
+pub(crate) fn key(s: &str) -> String {
     s.trim().to_ascii_uppercase()
 }
 
