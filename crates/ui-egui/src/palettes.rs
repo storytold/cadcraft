@@ -1258,6 +1258,17 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             EntityKind::Tianzheng(t) => {
                 prop_row(ui, "Class", |ui| read_only(ui, &t.class_name));
+                // 墙厚（直墙 2 段双线间距，mm），可编辑走 setThickness；拐角/开洞墙无单一墙厚。
+                if let Some(thickness) = t.thickness() {
+                    prop_row(ui, "墙厚", |ui| {
+                        if let Some(v) = number(edit_field(ui, ui.scope_id().with(("tz_thickness", e.handle)), format!("{thickness:.2}")), &mut bad)
+                            && v > 0.0
+                            && (v - thickness).abs() > 1e-9
+                        {
+                            set = Some(json!({ "handles": ids, "tianzhengGeometry": {"op": "setThickness", "thickness": v} }));
+                        }
+                    });
+                }
                 for (name, value) in &t.fields {
                     if !value.is_empty() {
                         prop_row(ui, name, |ui| {

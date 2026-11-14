@@ -296,6 +296,32 @@ fn set_tianzheng_segments(d: &mut Drawing, handle: cadcraft_doc::Handle, new_seg
     true
 }
 
+/// 保存前把 grips 拖拽等运行时改动的 `segments` 同步回 `graphic_data` + `tags`（落盘走 tags）。
+///
+/// grips 拖拽只改 `doc::Tianzheng.segments`（渲染用），而保存走 `tags` 里的 proxy 数据；
+/// 这里从 segments 重建 graphic_data，与旧值不同才写回，未改的实体不动。
+fn sync_tianzheng_segments(d: &mut Drawing) {
+    use cadcraft_doc::EntityKind;
+    let handles: Vec<cadcraft_doc::Handle> = d
+        .model
+        .iter()
+        .filter(|e| matches!(e.kind, EntityKind::Tianzheng(_)))
+        .map(|e| e.handle)
+        .collect();
+    for h in handles {
+        d.model.modify(h, |entity| {
+            if let EntityKind::Tianzheng(t) = &mut entity.kind
+                && let Some(gd) = &t.graphic_data
+                && let Some(new_gd) = cadcraft_dwg::tianzheng::encode_wall_segments(gd, &t.segments)
+                && &new_gd != gd
+            {
+                t.graphic_data = Some(new_gd.clone());
+                sync_tianzheng_graphics(&mut t.tags, &new_gd);
+            }
+        });
+    }
+}
+
 /// 修改天正墙实体的第 `seg_index` 个几何线段，并把改动写回 graphic_data 和 tags（供保存 DWG）。
 /// 返回是否成功（实体非天正、无 graphic_data、段索引越界、或段数不匹配时返回 false）。
 pub fn set_tianzheng_segment(d: &mut Drawing, handle: cadcraft_doc::Handle, seg_index: usize, seg: (f64, f64, f64, f64, f64, f64)) -> bool {
@@ -532,8 +558,11 @@ fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Un
     // 天正自定义实体靠 proxy class 保身份，只有 AC1027（2013）+ 的 DWG 能写自定义 class；
     // 更早版本 acadrust 只写它认识的 class，proxy 会被整体丢弃。含天正实体时至少存为 2013。
     let version = if has_tianzheng(d) { version.max(Version::R2013) } else { version };
-    let bridge = dxf_write::dwg_bridge(d, version);
-    cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(IoError::Format)
+    // grips 拖拽改了 segments（运行时几何），保存前同步回 graphic_data/tags（一次性 clone）。
+    let mut synced = d.clone();
+    sync_tianzheng_segments(&mut synced);
+    let bridge = dxf_write::dwg_bridge(&synced, version);
+    cadcraft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), synced.foreign.version.as_deref()).map_err(IoError::Format)
 }
 
 /// 图纸里是否有天正自定义实体（决定保存版本至少 2013，见 [`write_dwg`]）。

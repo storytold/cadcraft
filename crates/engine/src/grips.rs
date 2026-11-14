@@ -242,7 +242,16 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         }
         EntityKind::Wipeout(w) => w.set_vertex(index, to)?,
         EntityKind::Unknown(_) => return None,
-        EntityKind::Tianzheng(_) => return None,
+        // 天正墙/管段：grip index 2i=第 i 段起点、2i+1=终点，拖拽改该端点（Z 不变）。
+        EntityKind::Tianzheng(t) => {
+            let seg = *t.segments.get(index / 2)?;
+            t.segments[index / 2] = if index % 2 == 0 {
+                (to.x, to.y, seg.2, seg.3, seg.4, seg.5)
+            } else {
+                (seg.0, seg.1, seg.2, to.x, to.y, seg.5)
+            };
+            return Some(k);
+        }
     }
     Some(k)
 }

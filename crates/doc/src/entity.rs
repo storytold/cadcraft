@@ -117,6 +117,27 @@ pub struct Tianzheng {
     pub arrow_tips: Vec<(f64, f64, f64, f64)>,
 }
 
+impl Tianzheng {
+    /// 直墙（2 段平行双线）的墙厚 = 双线垂直间距（mm）；非 2 段墙（拐角/开洞）返回 `None`。
+    ///
+    /// 与 `cadcraft_io::set_tianzheng_thickness` 的墙厚定义一致（两段中点的法向投影距离）。
+    pub fn thickness(&self) -> Option<f64> {
+        if self.segments.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.segments[0], self.segments[1]);
+        let (ax, ay) = (a.3 - a.0, a.4 - a.1);
+        let len = (ax * ax + ay * ay).sqrt();
+        if len < 1e-6 {
+            return None;
+        }
+        let (nx, ny) = (-ay / len, ax / len);
+        let (max, may) = ((a.0 + a.3) / 2.0, (a.1 + a.4) / 2.0);
+        let (mbx, mby) = ((b.0 + b.3) / 2.0, (b.1 + b.4) / 2.0);
+        Some(((mbx - max) * nx + (mby - may) * ny).abs())
+    }
+}
+
 impl Unknown {
     /// Whether this is an OLE2FRAME (the type name is matched without regard to case).
     pub fn is_ole_frame(&self) -> bool {
@@ -703,7 +724,12 @@ impl EntityKind {
             EntityKind::Table(t) => vec![t.insert.xy()],
             EntityKind::Tolerance(t) => vec![t.insert.xy()],
             EntityKind::Unknown(_) => Vec::new(),
-            EntityKind::Tianzheng(_) => Vec::new(),
+            // 天正墙/管段几何：每个 segment 的起点、终点作为 grip 点（index 2i=起点、2i+1=终点）。
+            EntityKind::Tianzheng(t) => t
+                .segments
+                .iter()
+                .flat_map(|(x1, y1, _, x2, y2, _)| [Vec2::new(*x1, *y1), Vec2::new(*x2, *y2)])
+                .collect(),
         }
     }
 }
@@ -734,6 +760,38 @@ mod grip_tests {
         for bad in ["+1A", "-1A", "", "+", "1 A"] {
             assert_eq!(Handle::parse_hex(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn tianzheng_thickness_is_double_line_distance() {
+        let wall = |segments: Vec<(f64, f64, f64, f64, f64, f64)>| Tianzheng {
+            class_name: "TCH_WALL".into(),
+            fields: vec![],
+            raw_data: None,
+            handle_bits: 0,
+            tags: vec![],
+            dxf_type: String::new(),
+            segments,
+            graphic_data: None,
+            texts: vec![],
+            circles: vec![],
+            polys: vec![],
+            arrow_tips: vec![],
+        };
+        // 直墙：两条平行竖线，间距 240mm（方向相反，起点不对应）。
+        let t = wall(vec![
+            (137026.8, 4505.9, 0.0, 137026.8, 10135.9, 0.0),
+            (136786.8, 10135.9, 0.0, 136786.8, 4505.9, 0.0),
+        ]);
+        assert!((t.thickness().unwrap() - 240.0).abs() < 1e-6);
+        // 拐角/开洞墙（3+ 段）无单一墙厚。
+        let mut t2 = wall(vec![
+            (0.0, 0.0, 0.0, 0.0, 100.0, 0.0),
+            (0.0, 100.0, 0.0, 100.0, 100.0, 0.0),
+            (100.0, 100.0, 0.0, 100.0, 0.0, 0.0),
+        ]);
+        t2.segments.push((200.0, 0.0, 0.0, 200.0, 100.0, 0.0));
+        assert!(t2.thickness().is_none());
     }
 
     #[test]
