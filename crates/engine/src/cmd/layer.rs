@@ -322,9 +322,20 @@ fn run_laymcur(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "message": format!("{l} is now the current layer.") }))
 }
 
+/// In the Block Editor, construction geometry keeps its layer until it is reverted to ordinary
+/// geometry (outside the editor the mark changes nothing).
+fn construction_layer_check(s: &Session, cmd: &str, handles: &[cadcraft_doc::Handle]) -> Result<()> {
+    let d = s.doc()?;
+    if handles.iter().any(|h| d.entity(*h).is_some_and(|e| d.is_editor_construction(e))) {
+        return Err(bad(cmd, "revert construction geometry before changing its layer"));
+    }
+    Ok(())
+}
+
 fn run_laymch(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let layer = str_param(p, "layer").ok_or_else(|| bad("laymch", "`layer` is required"))?.to_string();
+    construction_layer_check(s, "laymch", &hs)?;
     let d = s.doc_mut()?;
     d.ensure_layer(&layer);
     for h in &hs {
@@ -335,6 +346,7 @@ fn run_laymch(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_laycur(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
+    construction_layer_check(s, "laycur", &hs)?;
     let d = s.doc_mut()?;
     let cur = d.header.str("CLAYER", "0");
     for h in &hs {

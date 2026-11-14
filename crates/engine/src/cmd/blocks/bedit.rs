@@ -35,7 +35,8 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn editing(s: &Session) -> std::result::Result<(), String> {
+/// Whether the Block Editor is open: the enabled check the Block Editor commands share, with the reason when it is not.
+pub(super) fn editing(s: &Session) -> std::result::Result<(), String> {
     match s.state() {
         Ok(st) if st.block_edit.is_some() => Ok(()),
         Ok(_) => Err("The Block Editor is not open.".into()),

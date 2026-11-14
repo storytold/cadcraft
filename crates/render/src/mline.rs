@@ -1,6 +1,7 @@
 //! Multilines: each element in its style colour and linetype (ByLayer and ByBlock elements
 //! follow the multiline's own), caps and joints in the multiline's properties, and the fill.
 
+use super::draw::construction_style;
 use super::{Builder, Ctx, Ink, fill, ink, linetype, resolve_common};
 use cadcraft_color::Color;
 use cadcraft_doc::{Entity, MLine};
@@ -34,6 +35,8 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
                 c.linetype = lt.to_string();
             }
             let (rgb, w, lt, scale, _, _) = resolve_common(ctx, &c, b.plotting);
+            // Construction geometry in the Block Editor: every element takes the editor's look.
+            let (rgb, lt) = construction_style(ctx, e, (rgb, lt));
             let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
                 Some(over) => over,
                 None => lt,
@@ -48,7 +51,8 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
     let own = resolve_common(ctx, &e.common, b.plotting);
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
-        None => own.2,
+        // The caps too (`rgb` is the editor's gray already).
+        None => construction_style(ctx, e, (rgb, own.2)).1,
     };
     for s in &g.caps {
         let mut pts = Vec::new();

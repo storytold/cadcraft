@@ -130,6 +130,14 @@ pub struct Drawing {
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
+    /// Construction display in the active Block Editor, kept with its undo snapshots.
+    /// This session-only choice is not written by the drawing codecs.
+    pub block_construction_hidden: bool,
+    /// This is the Block Editor's own drawing (BEDIT), not a drawing a user works on or a file
+    /// holds. Only here does construction geometry get the editor's treatment (gray dashed
+    /// display, locked color, layer and linetype); anywhere else its mark is data an ordinary
+    /// object carries, as AutoCAD shows and edits it. Session-only; never written to a file.
+    pub block_editor: bool,
     /// What reading the file left out (a DWG's object records the reader couldn't decode), told
     /// to the user when the drawing opens. Never written to a file.
     pub read_notes: Vec<String>,
@@ -201,6 +209,8 @@ impl Drawing {
             scales: imperial_scales(),
             handseed: 0x100,
             hidden_objects: BTreeSet::new(),
+            block_construction_hidden: false,
+            block_editor: false,
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
@@ -376,7 +386,17 @@ impl Drawing {
     /// Effective visibility of an entity (its own flag, its layer on/thawed, not hidden by object
     /// isolation).
     pub fn is_visible(&self, e: &Entity) -> bool {
-        e.common.visible && self.layer(&e.common.layer).is_none_or(Layer::visible) && !self.is_hidden_object(e.handle)
+        e.common.visible
+            && self.layer(&e.common.layer).is_none_or(Layer::visible)
+            && !self.is_hidden_object(e.handle)
+            && !(self.block_construction_hidden && e.common.is_construction())
+    }
+
+    /// Whether `e` is construction geometry as the Block Editor treats it: marked as such, in the
+    /// editor's own drawing. Outside the editor the mark changes nothing about how the object is
+    /// shown or edited (AutoCAD draws, plots and edits it like any other object).
+    pub fn is_editor_construction(&self, e: &Entity) -> bool {
+        self.block_editor && e.common.is_construction()
     }
 
     /// Whether ISOLATEOBJECTS / HIDEOBJECTS hid `h` for this session.
@@ -387,7 +407,10 @@ impl Drawing {
     /// Whether an entity counts in the extents: as AutoCAD 2024 counts it for ZOOM Extents and
     /// EXTMIN/EXTMAX, on a layer that is off too, but not on a frozen one.
     pub fn in_extents(&self, e: &Entity) -> bool {
-        e.common.visible && self.layer(&e.common.layer).is_none_or(|l| !l.frozen) && !self.is_hidden_object(e.handle)
+        e.common.visible
+            && self.layer(&e.common.layer).is_none_or(|l| !l.frozen)
+            && !self.is_hidden_object(e.handle)
+            && !(self.block_construction_hidden && e.common.is_construction())
     }
 
     /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).

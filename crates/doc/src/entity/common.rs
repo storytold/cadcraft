@@ -131,7 +131,41 @@ pub struct RawTag {
     pub value: String,
 }
 
+/// The extended data application name AutoCAD's BCONSTRUCTION marks construction geometry with.
+const CONSTRUCTION_APP: &str = "ACAD_BCONSTRUCTION";
+
 impl Common {
+    /// Whether the construction application's own group carries its enabled marker.
+    pub fn is_construction(&self) -> bool {
+        let app = self.xdata.iter().position(|t| t.code == 1001 && t.value.trim().eq_ignore_ascii_case(CONSTRUCTION_APP));
+        let Some(at) = app else { return false };
+        self.xdata
+            .iter()
+            .skip(at + 1)
+            .take_while(|t| t.code != 1001)
+            .find(|t| t.code == 1070)
+            .is_some_and(|t| t.value.trim().parse::<i16>().is_ok_and(|value| value == 1))
+    }
+
+    /// Replace only the construction application's groups, preserving other applications.
+    pub fn set_construction(&mut self, on: bool) {
+        let mut kept = Vec::new();
+        let mut own = false;
+        for t in std::mem::take(&mut self.xdata) {
+            if t.code == 1001 {
+                own = t.value.trim().eq_ignore_ascii_case(CONSTRUCTION_APP);
+            }
+            if !own {
+                kept.push(t);
+            }
+        }
+        if on {
+            self.xdata.push(RawTag { code: 1001, value: CONSTRUCTION_APP.into() });
+            self.xdata.push(RawTag { code: 1070, value: "1".into() });
+        }
+        self.xdata.extend(kept);
+    }
+
     /// Whether "Match orientation to layout" is on for this annotative object (AutoCAD's
     /// `AcadAnnoPO` xdata = 1). AutoCAD draws such text upright and ignores its stored rotation.
     /// The object's own `AcadAnnotative` xdata never reaches [`Common::xdata`] (the reader drops

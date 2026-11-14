@@ -785,7 +785,8 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 }
                 *budget -= 1;
                 // Objects on layer 0 take the reference's layer, which is visible.
-                if !be.common.visible
+                if be.common.is_construction()
+                    || !be.common.visible
                     || (be.common.layer != "0" && (!d.is_visible(be) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&be.common.layer))))
                 {
                     continue;

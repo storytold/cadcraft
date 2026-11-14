@@ -85,6 +85,17 @@ fn moved(store: &EntityStore, m: &Mat3) -> EntityStore {
     out
 }
 
+/// Construction geometry is visible while the Block Editor is open and is saved invisible
+/// (`visible` false, group 60), as AutoCAD does: that is what keeps it out of the block's
+/// references and out of a drawing saved from `<Current Drawing>`. Only marked objects change.
+fn set_construction_visible(store: &mut EntityStore, visible: bool) {
+    let marked: Vec<cadcraft_doc::Handle> =
+        store.iter().filter(|e| e.common.is_construction() && e.common.visible != visible).map(|e| e.handle).collect();
+    for h in marked {
+        store.modify(h, |e| e.common.visible = visible);
+    }
+}
+
 /// Whether any object of `store` refers to block `name`, directly or through nested blocks of `d`.
 fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
     let mut todo: Vec<String> = store.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.block.clone()) } else { None }).collect();
@@ -103,8 +114,11 @@ fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
 }
 
 impl BlockEdit {
-    /// The editor's objects in block coordinates, ready to be the block's: unchanged objects are
-    /// the block's own, the others are moved back from the editor's origin to the base point.
+    /// The editor's objects in block coordinates, ready to be the block's. An object whose own
+    /// data (`kind`: its geometry and content) the editor left as it was keeps the block's,
+    /// number for number, with the editor's general properties: a change of color, layer or
+    /// extended data (BCONSTRUCTION) moves nothing, so it must not send the coordinates through
+    /// `x - base + base`. The others are moved back from the editor's origin to the base point.
     fn block_objects(&self, editor: &Drawing) -> EntityStore {
         if self.base == Vec2::ZERO {
             return editor.model.clone();
@@ -112,19 +126,17 @@ impl BlockEdit {
         let (to_editor, back) = (Mat3::translate(-self.base), Mat3::translate(self.base));
         let mut out = EntityStore::new();
         for e in editor.model.iter() {
-            let unchanged = self.original.get(e.handle).filter(|o| {
-                let mut shown = (***o).clone();
-                shown.kind.transform(&to_editor);
-                shown == **e
+            let unmoved = self.original.get(e.handle).filter(|o| {
+                let mut shown = o.kind.clone();
+                shown.transform(&to_editor);
+                shown == e.kind
             });
-            match unchanged {
-                Some(o) => out.push((**o).clone()),
-                None => {
-                    let mut e = (**e).clone();
-                    e.kind.transform(&back);
-                    out.push(e);
-                }
+            let mut e = (**e).clone();
+            match unmoved {
+                Some(o) => e.kind = o.kind.clone(),
+                None => e.kind.transform(&back),
             }
+            out.push(e);
         }
         out
     }
@@ -137,7 +149,13 @@ impl BlockEdit {
             if !name.eq_ignore_ascii_case(CURRENT_DRAWING) {
                 return Err(EngineError::Other("The current drawing can't be saved as a block from the Block Editor; use WBLOCK or BLOCK.".into()));
             }
-            return Ok(editor.clone());
+            let mut d = editor.clone();
+            set_construction_visible(&mut d.model, false);
+            d.hidden_objects = self.host.doc.hidden_objects.clone();
+            d.block_construction_hidden = self.host.doc.block_construction_hidden;
+            // The composed drawing is the drawing again, not the editor's.
+            d.block_editor = self.host.doc.block_editor;
+            return Ok(d);
         }
         if refers_to(editor, &editor.model, name) {
             return Err(EngineError::Other(format!("Block \"{name}\" can't contain a reference to itself.")));
@@ -155,6 +173,9 @@ impl BlockEdit {
         d.constraints = host.constraints.clone();
         d.vports = host.vports.clone();
         d.hidden_objects = host.hidden_objects.clone();
+        d.block_construction_hidden = host.block_construction_hidden;
+        // The composed drawing is the drawing again (the host's), not the editor's.
+        d.block_editor = host.block_editor;
         let entities = self.block_objects(editor);
         // The edited block's properties (the editor's definition, else the drawing's): the objects
         // are placed for its base point, also when saved under another name (BSAVEAS).
@@ -170,6 +191,8 @@ impl BlockEdit {
         }
         b.base.x = self.base.x;
         b.base.y = self.base.y;
+        let mut entities = entities;
+        set_construction_visible(&mut entities, false);
         b.entities = entities;
         d.blocks.insert(key, Arc::new(b));
         Ok(d)
@@ -230,6 +253,12 @@ impl DocState {
         }
         if name.trim().eq_ignore_ascii_case(CURRENT_DRAWING) {
             let host = Box::new(self.clone());
+            {
+                let d = Arc::make_mut(&mut self.doc);
+                d.block_construction_hidden = false;
+                d.block_editor = true;
+                set_construction_visible(&mut d.model, true);
+            }
             let editor = self.doc.clone();
             self.enter_block_editor(BlockEdit {
                 name: CURRENT_DRAWING.into(),
@@ -253,10 +282,13 @@ impl DocState {
         let base = block.base.xy();
         let mut d = (*self.doc).clone();
         d.model = if base == Vec2::ZERO { block.entities.clone() } else { moved(&block.entities, &Mat3::translate(-base)) };
+        set_construction_visible(&mut d.model, true);
         // The drawing's own groups, constraints and hidden objects stay with it.
         d.groups.clear();
         d.constraints.clear();
         d.hidden_objects.clear();
+        d.block_construction_hidden = false;
+        d.block_editor = true;
         let host = Box::new(self.clone());
         let editor = Arc::new(d);
         self.doc = editor.clone();

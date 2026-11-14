@@ -272,7 +272,7 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
 /// `off_counts`: a layer turned off counts too, as in the drawing's extents ([`extent_bounds`]).
 fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool) -> bool {
     // Attribute definitions are not drawn in an insert (its attribs are, see below).
-    !matches!(e.kind, EntityKind::AttDef(_)) && e.common.visible && layer_counts(d, &e.common.layer, off_counts)
+    !matches!(e.kind, EntityKind::AttDef(_)) && !e.common.is_construction() && e.common.visible && layer_counts(d, &e.common.layer, off_counts)
 }
 
 /// Whether what lies on `layer` inside an insert counts: layer "0" takes the insert's layer, which
