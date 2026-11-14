@@ -78,6 +78,7 @@ mod layout_prompts;
 mod leader_command;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lisp_corpus;
+mod lisp_findfile;
 mod lisp_undo_in_routine;
 mod malformed_handles;
 mod matchprop;
