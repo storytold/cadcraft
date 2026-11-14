@@ -7,6 +7,7 @@ use super::{
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
     Vec3, Viewport, Wipeout, records,
 };
+use crate::dxf_ext::text;
 use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
@@ -466,10 +467,10 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
             if in_entity {
                 break;
             }
-            in_entity = t.str() == "AcDbEntity";
+            in_entity = text(t) == Some("AcDbEntity");
         } else if in_entity {
             match t.code {
-                390 => return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned(),
+                390 => return rx.pstyles.get(&text(t).unwrap_or_default().trim().to_ascii_uppercase()).cloned(),
                 380 => by_block = t.i64() == 1,
                 _ => {}
             }
