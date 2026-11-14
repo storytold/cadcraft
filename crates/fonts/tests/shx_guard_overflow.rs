@@ -27,6 +27,8 @@ fn guards_past_the_limit_apply_to_every_folder() {
             Arc::new(|file: &Path| !file.file_name().is_some_and(|n| n.to_string_lossy().contains("bad"))),
         );
     }
+    // A later folder with the same owner and a guard that allows everything doesn't lift the others.
+    shx::add_drawing_dir_guarded(&dir.join("last-drawings"), "session", Arc::new(|_: &Path| true));
     shx::set_font_dirs(vec![dir.clone()]);
     assert!(shx::find("cadcraft-overflow-bad.shx").is_none(), "refused by a guard given past the limit");
     assert!(shx::find("cadcraft-overflow-ok.shx").is_some());

@@ -35,6 +35,10 @@ const MAX_LOADED_BYTES: usize = 256 << 20;
 const MAX_DIRS: usize = 32;
 /// Most folders whose guards are kept.
 const MAX_GUARDED_DIRS: usize = 1024;
+/// Most guards kept past [`MAX_GUARDED_DIRS`], each applying to every folder searched.
+const MAX_OVERFLOW_GUARDS: usize = 4096;
+/// The owner of the guard that refuses every file once the overflow guards are used up.
+const CLOSED: &str = "closed";
 /// Most font map entries.
 const MAX_MAP: usize = 1024;
 
@@ -161,9 +165,22 @@ fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
     t.drawing_dirs.insert(0, dir.to_path_buf());
     t.drawing_dirs.truncate(MAX_DIRS);
     if let Some((owner, guard)) = guard {
-        let guards = if no_room { &mut t.overflow_guards } else { t.drawing_guards.entry(dir.to_path_buf()).or_default() };
-        guards.retain(|(o, _)| o != owner);
-        guards.push((owner.to_string(), guard));
+        if no_room {
+            // Every overflow guard stays: none may be replaced by another folder's. When even these
+            // run out, everything is refused from then on.
+            let kept = &mut t.overflow_guards;
+            if !kept.iter().any(|(_, g)| Arc::ptr_eq(g, &guard)) {
+                if kept.len() < MAX_OVERFLOW_GUARDS {
+                    kept.push((owner.to_string(), guard));
+                } else if !kept.iter().any(|(o, _)| o == CLOSED) {
+                    kept.push((CLOSED.to_string(), Arc::new(|_: &Path| false)));
+                }
+            }
+        } else {
+            let guards = t.drawing_guards.entry(dir.to_path_buf()).or_default();
+            guards.retain(|(o, _)| o != owner);
+            guards.push((owner.to_string(), guard));
+        }
     }
     t.changed();
 }
