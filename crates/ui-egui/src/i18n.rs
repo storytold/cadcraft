@@ -51,10 +51,12 @@ pub enum Preference {
     Bosnian,
     #[serde(rename = "vi")]
     Vietnamese,
+    #[serde(rename = "nb")]
+    Norwegian,
 }
 
 impl Preference {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -75,6 +77,7 @@ impl Preference {
         Self::Georgian,
         Self::Bosnian,
         Self::Vietnamese,
+        Self::Norwegian,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -103,6 +106,7 @@ impl Preference {
         }
     }
 
+    /// The BCP 47 code saved in the preferences and matched by `locale_language`.
     pub fn code(self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -125,9 +129,11 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Norwegian => "nb",
         }
     }
 
+    /// The language's name in itself, shown in the Interface Language picker.
     pub fn name(self) -> &'static str {
         match self {
             Self::Auto => t("Auto (system language)"),
@@ -171,9 +177,11 @@ impl Preference {
                     "Vietnamese"
                 }
             }
+            Self::Norwegian => "Norsk",
         }
     }
 
+    /// The preference a saved code names; `None` for an unknown or obsolete code.
     pub fn parse(code: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.code() == code)
     }
@@ -183,6 +191,7 @@ impl Preference {
         saved.and_then(Self::parse).unwrap_or_default()
     }
 
+    /// The catalog code to draw in: the chosen language, or the first supported system locale for Auto.
     pub fn resolve(self, locales: &[String]) -> &'static str {
         match self {
             Self::English => "en",
@@ -204,6 +213,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Norwegian => "nb",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -220,7 +230,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 19] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -279,12 +289,19 @@ pub static LANGUAGES: [Language; 19] = [
     Language {
         code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
     },
+    // Norwegian Bokmål plurals follow the English rule: one (1), other.
+    Language { code: "nb", name: "Norsk", source: include_str!("i18n/nb.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
 /// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
+/// `no`, `nb` and `nn` all select `nb`, since Windows, macOS and browsers report Bokmål
+/// as `nb` while POSIX locales use `no` or `nn`.
 pub fn locale_language(tag: &str) -> Option<&'static str> {
     let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
+    // Norwegian is reported as `nb` by Windows, macOS and browsers, but as `no` (or `nn`
+    // for Nynorsk) by POSIX locales; all three select the same catalog.
+    let primary = if ["no", "nb", "nn"].iter().any(|p| p.eq_ignore_ascii_case(primary)) { "nb" } else { primary };
     LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
 }
 
@@ -293,6 +310,7 @@ thread_local! {
     static CURRENT: Cell<&'static str> = const { Cell::new("en") };
 }
 
+/// Draws with `language` and restores the previous one even when the closure unwinds.
 pub fn with_language<R>(language: &'static str, draw: impl FnOnce() -> R) -> R {
     struct Restore(&'static str);
     impl Drop for Restore {
@@ -327,14 +345,17 @@ fn parse(source: &str) -> (Catalog<'_>, Vec<String>) {
     (entries, errors)
 }
 
+/// The parsed catalog for `language`, or `None` for English and for a language with no rows.
 fn catalog(language: &str) -> Option<&'static Catalog<'static>> {
     LANGUAGES.iter().find(|l| l.code == language && !l.source.is_empty()).map(|l| l.catalog.get_or_init(|| parse(l.source).0))
 }
 
+/// The translation of `source` in `language`, or `source` itself when the catalog lacks it.
 pub fn tr<'a>(language: &str, source: &'a str) -> &'a str {
     catalog(language).and_then(|c| c.get(&("", source))).copied().unwrap_or(source)
 }
 
+/// [`tr`] in the language the interface is drawn in.
 pub fn t(source: &str) -> &str {
     CURRENT.with(|l| tr(l.get(), source))
 }
@@ -345,6 +366,7 @@ pub fn tr_menu<'a>(language: &str, source: &'a str) -> &'a str {
     catalog(language).and_then(|c| c.get(&("menu", source))).copied().unwrap_or_else(|| tr(language, source))
 }
 
+/// [`tr_menu`] in the language the interface is drawn in.
 pub fn menu(source: &str) -> &str {
     CURRENT.with(|l| tr_menu(l.get(), source))
 }
@@ -390,7 +412,7 @@ pub fn plural_pt(n: u64) -> usize {
     usize::from(n > 1)
 }
 
-/// Korean uses the same count form for every integer.
+/// Korean and Hungarian keep one count form for every integer.
 fn plural_ko(_n: u64) -> usize {
     0
 }
@@ -408,6 +430,7 @@ pub fn plural_arabic(n: u64) -> usize {
     }
 }
 
+/// English integer plurals: one for exactly 1, other for every other count.
 fn plural_en(n: u64) -> usize {
     usize::from(n != 1)
 }
@@ -421,6 +444,7 @@ pub fn plural_cs(n: u64) -> usize {
     }
 }
 
+/// A count phrased by the catalog's `@plural` row, with `{n}` filled in.
 pub fn count(n: u64, one: &str, other: &str) -> String {
     let language = CURRENT.get();
     let source = catalog(language).and_then(|c| c.get(&("@plural", one))).copied();
@@ -446,8 +470,8 @@ macro_rules! tf {
 #[cfg(test)]
 mod tests;
 
-/// `name` lowercased with the Latin accents that occur in language names folded away, so a
-/// byte-wise sort reads alphabetically. Other scripts are left as they are.
+/// The picker order key: `name` lowercased with the Latin accents that occur in language
+/// names folded away, so Čeština sorts under C. Other scripts are left as they are.
 fn name_sort_key(name: &str) -> String {
     name.chars()
         .flat_map(char::to_lowercase)
