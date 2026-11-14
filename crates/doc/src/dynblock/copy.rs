@@ -54,6 +54,16 @@ fn owned_subtree(d: &Drawing, root: Handle) -> Vec<Handle> {
     out
 }
 
+/// [`owned_subtree`], refused when it reaches [`MAX_COPIED`]: a copy of only part of it would keep
+/// pointing at the original's objects.
+fn whole_subtree(d: &Drawing, root: Handle) -> Result<Vec<Handle>, String> {
+    let out = owned_subtree(d, root);
+    if out.len() >= MAX_COPIED {
+        return Err(format!("The dynamic block has {MAX_COPIED} or more objects; it can't be copied."));
+    }
+    Ok(out)
+}
+
 /// The handle `h` names, as `map` has it.
 fn mapped(map: &HashMap<Handle, Handle>, value: &str) -> Option<Handle> {
     Handle::parse_hex(value).and_then(|h| map.get(&h)).copied()
@@ -166,20 +176,22 @@ fn rename_in_xdata(xdata: &mut [RawTag], name: &str, guid: &str) {
 /// original's with new handles, and its own true name and GUID. What `to` had of dynamic data goes
 /// first (a block replaced by one that isn't dynamic keeps none). Returns the handles the objects
 /// of `store` got, by their old ones; nothing changes when `from` has no dynamic data or is `to`.
-pub fn copy_definition(d: &mut Drawing, from: &str, to: &str, store: &mut EntityStore) -> HashMap<Handle, Handle> {
+/// Refused, changing nothing, when `from` has too many objects to copy whole.
+pub fn copy_definition(d: &mut Drawing, from: &str, to: &str, store: &mut EntityStore) -> Result<HashMap<Handle, Handle>, String> {
     let (from_name, to_name) = (from.trim().to_ascii_uppercase(), to.trim().to_ascii_uppercase());
     let key = |n: &str| ("BLOCK_RECORD".to_string(), n.to_string());
     if from_name == to_name {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
+    let source = d.foreign.records.get(&key(&from_name)).cloned();
+    let owned = match source.as_ref().and_then(|s| s.xdict) {
+        Some(xdict) if dynamic_block(d, from).is_some() => Some(whole_subtree(d, xdict)?),
+        _ => None,
+    };
     remove_definition(d, &to_name);
-    if dynamic_block(d, from).is_none() {
-        return HashMap::new();
-    }
-    let Some(source) = d.foreign.records.get(&key(&from_name)).cloned() else { return HashMap::new() };
-    let Some(xdict) = source.xdict else { return HashMap::new() };
+    let (Some(source), Some(owned)) = (source, owned) else { return Ok(HashMap::new()) };
+    let Some(xdict) = source.xdict else { return Ok(HashMap::new()) };
     let graph = dict_entry(d, xdict, "ACAD_ENHANCEDBLOCK");
-    let owned = owned_subtree(d, xdict);
     let owned_set: HashSet<Handle> = owned.iter().copied().collect();
     let mut map: HashMap<Handle, Handle> = owned.iter().map(|h| (*h, d.new_handle())).collect();
     let old_record = d.foreign.targets.iter().find(|(_, (k, n))| k == "BLOCK_RECORD" && *n == from_name).map(|(h, _)| *h);
@@ -209,5 +221,5 @@ pub fn copy_definition(d: &mut Drawing, from: &str, to: &str, store: &mut Entity
     f.entities.extend(extras);
     let made = store.iter().filter_map(|e| Some((e.handle, *map.get(&e.handle)?))).collect();
     *store = entities;
-    made
+    Ok(made)
 }
