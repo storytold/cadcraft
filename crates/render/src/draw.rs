@@ -43,9 +43,10 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
-    // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
-    // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// A top-level annotative object draws at the view's annotation scale: a viewport's scale for
+/// model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
+/// Whether it was drawn (or hidden) here.
+fn annotative_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) -> bool {
     if ctx.depth == 0 && cadcraft_doc::is_annotative(e) {
         let mode = if ctx.top == VIEWPORT_CONTENT {
             cadcraft_doc::anno_draw(e, 1.0 / ctx.xf.scale_factor().max(1e-12), ctx.d.anno_all_visible())
@@ -53,14 +54,22 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             ctx.d.anno_draw(e)
         };
         match mode {
-            cadcraft_doc::AnnoDraw::Hidden => return,
+            cadcraft_doc::AnnoDraw::Hidden => return true,
             cadcraft_doc::AnnoDraw::Scaled(f) => {
                 let mut scaled = cadcraft_doc::anno_scaled(e, f);
                 scaled.common.anno_scales.clear();
-                return entity_parts(b, ctx, &scaled);
+                entity_parts(b, ctx, &scaled);
+                return true;
             }
             cadcraft_doc::AnnoDraw::Plain => {}
         }
+    }
+    false
+}
+
+fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
+    if annotative_parts(b, ctx, e) {
+        return;
     }
     let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
     if !visible {
@@ -74,6 +83,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         Some(over) => over,
         None => lt,
     };
+    let lt = if b.opts.continuous { None } else { lt };
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
     // Stroke a polyline with the entity's linetype.
@@ -378,7 +388,7 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
 
 /// Draw a polyline with a linetype (None: continuous).
 pub(crate) fn stroke_with(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64, pts: &[Vec2]) {
-    match lt.filter(|_| b.opts.linetypes) {
+    match lt.filter(|_| !b.opts.continuous && b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {
