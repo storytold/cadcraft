@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use cadcraft_doc::fields::{self, FieldKind};
 use cadcraft_doc::{Common, Drawing, EntityKind, MText, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
+use craft_dxf::Tag;
 
 /// One FIELD object: evaluator, code (children as `%<\_FldIdx n>%`), the child handles, the
 /// variable name for an `AcVar`, the format and the value (`real`: stored as a real).
@@ -285,7 +285,7 @@ fn drawing_with(texts: &[&str]) -> Drawing {
 }
 
 fn write_tags(d: &Drawing) -> Vec<Tag> {
-    cadcraft_dxf::parse(&cadcraft_io::write(d, "out.dxf").unwrap()).unwrap()
+    craft_dxf::parse(&cadcraft_io::write(d, "out.dxf").unwrap()).unwrap()
 }
 
 fn reread(d: &Drawing) -> Drawing {
@@ -295,7 +295,7 @@ fn reread(d: &Drawing) -> Drawing {
 type Rec = (String, Vec<Tag>);
 
 fn objects(tags: &[Tag]) -> Vec<Rec> {
-    cadcraft_dxf::records(tags)
+    craft_dxf::records(tags)
 }
 
 fn handle_of(t: &[Tag]) -> String {
@@ -413,7 +413,7 @@ fn list_tags(recs: &[Rec]) -> Vec<Tag> {
 /// The hand-written file, read and saved again: the field objects stay as they were.
 #[test]
 fn sample_saves_unchanged() {
-    let sample = cadcraft_dxf::parse(&hand_written()).unwrap();
+    let sample = craft_dxf::parse(&hand_written()).unwrap();
     assert_eq!(canonical(&sample).len(), 8 + 6 + 1);
     let d = cadcraft_io::read(&hand_written(), "sample.dxf").unwrap();
     let saved = write_tags(&d);
@@ -454,7 +454,7 @@ fn sample_reads_as_field_codes() {
 fn written_fields_have_the_layout_of_the_sample() {
     let d = drawing_with(&[DATE_CODE, TWO_CODE, EXPR_CODE]);
     let saved = write_tags(&d);
-    let sample = cadcraft_dxf::parse(&hand_written()).unwrap();
+    let sample = craft_dxf::parse(&hand_written()).unwrap();
     assert_eq!(summary(&saved), summary(&sample));
     let mut shown = mtext_groups(&saved);
     shown.sort();
@@ -585,9 +585,8 @@ fn field_with_empty_value_roundtrips() {
 fn r2000_keeps_the_code() {
     let d = drawing_with(&[DATE_CODE]);
     let bytes =
-        cadcraft_io::write_with(&d, "out.dxf", &cadcraft_io::SaveOptions { version: Some(cadcraft_dxf::Version::R2000), ..Default::default() })
-            .unwrap();
-    let tags = cadcraft_dxf::parse(&bytes).unwrap();
+        cadcraft_io::write_with(&d, "out.dxf", &cadcraft_io::SaveOptions { version: Some(craft_dxf::Version::R2000), ..Default::default() }).unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
     assert_eq!(mtext_groups(&tags), [DATE_CODE]);
     check_structure(&tags, 0);
 }

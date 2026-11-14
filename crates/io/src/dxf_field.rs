@@ -25,7 +25,7 @@ use std::sync::Arc;
 use cadcraft_doc::fields::{self, split_value, with_value};
 use cadcraft_doc::foreign::{Foreign, ForeignObject};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag};
-use cadcraft_dxf::Tag;
+use craft_dxf::Tag;
 
 /// Upper bound on FIELD objects of one text.
 const MAX_NODES: usize = 1_000;
@@ -341,7 +341,7 @@ fn value_record(t: &mut Vec<RawTag>, n: &Node) {
     match n.value.as_deref() {
         None => t.extend([rt(93, "3"), rt(90, "0")]),
         Some(v) => match (n.evaluator, v.trim().parse::<f64>().ok().filter(|x| x.is_finite())) {
-            ("AcExpr", Some(x)) => t.extend([rt(93, "4"), rt(90, "2"), rt(140, cadcraft_dxf::format_real(x))]),
+            ("AcExpr", Some(x)) => t.extend([rt(93, "4"), rt(90, "2"), rt(140, craft_dxf::format_real(x))]),
             _ => t.extend([rt(93, "4"), rt(90, "4"), rt(1, v)]),
         },
     }
