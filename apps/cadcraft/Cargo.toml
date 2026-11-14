@@ -55,7 +55,11 @@ muda = { version = "0.21", default-features = false }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }
 # The same winit eframe uses (the storytold fork, patched in the workspace): its opt-in that turns
 # AppKit's terminate (Cmd+Q, Dock Quit) into a close request, so unsaved changes are asked about.
-winit = { version = "0.30", default-features = false }
+# `rwh_06`: the window handle a file dialog shown as a sheet attaches to (src/sheet.rs).
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
+# Waits for the answer of a file dialog shown as a sheet (src/sheet.rs). MIT OR Apache-2.0, already
+# in Cargo.lock through eframe.
+pollster = "1"
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -1492,3 +1492,6 @@ menu	View	ხედი
 	The current file is kept as {name} until the next save.	მიმდინარე ფაილი შემდეგ შენახვამდე შენარჩუნდება სახელით {name}.
 	This format can't keep these objects yet: {objects}.	ეს ფორმატი ამ ობიექტებს ჯერ ვერ ინახავს: {objects}.
 	{count} more types	კიდევ {count} ტიპი
+
+# ArtCraft feature naming
+	Additional Tools	დამატებითი ხელსაწყოები
