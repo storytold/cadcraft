@@ -89,7 +89,10 @@ reached", malformed source is a reader error, and every built-in checks its argu
 Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` returns is what a
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angles (groups 50–58)
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
-filters take radians too.
+filters take radians too. A block reference's list doesn't hold its attributes, and `entmod` of
+it keeps them and their values. `entlast` and `entnext` see every change a routine makes, its
+own `entmake`, `entmod` and `entdel` included. `(getvar "HANDSEED")` is the next handle the
+drawing gives out, in hex.
 
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK
