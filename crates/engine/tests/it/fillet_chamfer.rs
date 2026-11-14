@@ -121,3 +121,15 @@ fn json_chamfer_angle_and_trim() {
     s.execute("chamfer", &json!({ "h1": hs[0], "p1": [5, 0], "h2": hs[1], "p2": [10, 5], "length": 2, "angle": 45, "trim": false })).unwrap();
     assert_eq!(lines(&s), vec![((0.0, 0.0), (12.0, 0.0)), ((8.0, 0.0), (10.0, 2.0)), ((10.0, -2.0), (10.0, 12.0))]);
 }
+
+#[test]
+fn json_fillet_refuses_a_bad_radius() {
+    let mut s = corner(false);
+    let hs: Vec<_> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    let before = lines(&s);
+    for radius in [json!(-1), json!(-1e-15)] {
+        let res = s.execute("fillet", &json!({ "h1": hs[0], "h2": hs[1], "radius": radius }));
+        assert!(res.is_err(), "negative fillet radius accepted: {res:?}");
+    }
+    assert_eq!(lines(&s), before);
+}
