@@ -3,7 +3,7 @@
 //! handle instead of replacing the file's own object (#913).
 #![cfg(not(target_arch = "wasm32"))]
 
-use cadcraft_doc::{Common, Drawing, EntityKind, Handle, Line, Space};
+use cadcraft_doc::{Common, DimKind, Dimension, Drawing, Entity, EntityKind, Handle, Line, Space};
 use cadcraft_geom::Vec3;
 
 const TOP: &str = "FFFFFFFFFFFFFFFF";
@@ -132,4 +132,82 @@ fn a_save_does_not_give_a_structural_record_an_objects_handle() {
 
     let r = cadcraft_io::read_dxf(&bytes).unwrap();
     assert!(r.entity(Handle::parse_hex(object).unwrap()).is_some(), "the file's object is gone");
+}
+
+/// A CADCraft-marked file with a handle-less block entity and an `ENTITIES` record that names
+/// the handle the reader would give it. The marker means the reader skips the handle pre-scan,
+/// so the two sections must still reserve against each other.
+fn marked_file_with_handle_less_block_entity() -> String {
+    "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$HANDSEED\n5\n1000\n0\nENDSEC\n\
+     0\nSECTION\n2\nBLOCKS\n\
+     0\nBLOCK\n8\n0\n2\n*MODEL_SPACE\n70\n0\n10\n0.0\n20\n0.0\n30\n0.0\n3\n*MODEL_SPACE\n1\n\n\
+     0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n1.0\n21\n0.0\n31\n0.0\n\
+     0\nENDBLK\n8\n0\n\
+     0\nENDSEC\n\
+     0\nSECTION\n2\nENTITIES\n\
+     0\nLINE\n5\n100\n8\n0\n10\n10.0\n20\n0.0\n30\n0.0\n11\n11.0\n21\n0.0\n31\n0.0\n\
+     0\nENDSEC\n\
+     0\nSECTION\n2\nOBJECTS\n\
+     0\nXRECORD\n5\n300\n100\nAcDbXrecord\n3\nCADCRAFT_HANDSEED\n1\n1000\n\
+     0\nENDSEC\n0\nEOF\n"
+        .to_string()
+}
+
+#[test]
+fn a_marked_files_sections_reserve_handles_against_each_other() {
+    // The block entity has no handle of its own, so the reader gives it one; a later ENTITIES
+    // record must not be given the same handle, or one entity silently replaces the other.
+    let d = read(&marked_file_with_handle_less_block_entity());
+    assert_eq!(d.model.len(), 2, "one entity replaced the other");
+    let handles = distinct(&d);
+    let unique: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+    assert_eq!(unique.len(), handles.len(), "duplicate handles: {handles:?}");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 0.0)), "the block entity is gone");
+    assert!(d.model.iter().any(|e| matches!(e.kind, EntityKind::Line(ref l) if l.a.x == 10.0)), "the ENTITIES line is gone");
+}
+
+#[test]
+fn generated_geometry_never_takes_a_handle_an_object_holds() {
+    // The drawing's own handles sit in the reserved band and the seed is at the top of the
+    // range, so the writer's structural numbering wraps into the band. Every other band handle
+    // is taken, so without a check the generated dimension block's entities land on an occupied
+    // one: the saved file would repeat a handle.
+    let mut d = Drawing::new_imperial();
+    d.handseed = u64::MAX - 1;
+    {
+        let model = d.space_mut(&Space::Model).unwrap();
+        for i in 0..200u64 {
+            let handle = Handle(cadcraft_doc::HANDLE_LIMIT + 1 + 2 * i);
+            model.push(Entity { handle, common: Common::default(), kind: line(i as f64, 0.0) });
+        }
+        model.push(Entity {
+            handle: Handle(0x200),
+            common: Common::default(),
+            kind: EntityKind::Dimension(Dimension {
+                kind: DimKind::Linear { rotation: 0.0 },
+                defpt: Vec3::new(0.0, 1.0, 0.0),
+                text_mid: Vec3::new(1.0, 1.0, 0.0),
+                p13: Vec3::ZERO,
+                p14: Vec3::new(2.0, 0.0, 0.0),
+                p15: Vec3::ZERO,
+                p16: Vec3::ZERO,
+                text: String::new(),
+                style: "Standard".into(),
+                measurement: 2.0,
+                text_rotation: 0.0,
+                user_text_pos: false,
+                block: None,
+                insertion_point: Vec3::ZERO,
+                overrides: serde_json::Map::new(),
+                assoc: Vec::new(),
+                marks: Default::default(),
+            }),
+        });
+    }
+    let bytes = cadcraft_io::write(&d, "generated.dxf").unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
+    let after_header = tags.iter().position(|t| t.code == 2 && t.str() == "TABLES").unwrap();
+    let written: Vec<String> = tags[after_header..].iter().filter(|t| t.code == 5 || t.code == 105).map(|t| t.str().to_string()).collect();
+    let unique: std::collections::HashSet<&String> = written.iter().collect();
+    assert_eq!(unique.len(), written.len(), "the save repeats a handle");
 }

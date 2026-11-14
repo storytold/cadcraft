@@ -1095,11 +1095,11 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         block(&mut w, (n, &b.description), h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
-    // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
+    // Generated geometry entities (dimension, arrowhead and table blocks) need handles; take
+    // them from the writer's allocator, which skips the drawing's own handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
         for e in ents.iter_mut().filter(|e| e.handle.0 == 0) {
-            e.handle = Handle(w.next);
-            w.next = w.next.saturating_add(1);
+            e.handle = Handle(w.next_handle());
         }
     }
     for (n, h, ents) in &dim_defs {

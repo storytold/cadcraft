@@ -102,11 +102,27 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
     // a polygon mesh) would otherwise get handles that records further on still have. A file
     // CADCraft wrote names its own next handle, above which its rebuilt records are numbered
-    // (#495), so it is left to that.
+    // (#495), so for it only the entity records are reserved.
     let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
-    for t in secs.iter().filter(|_| !ours).flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
-        if let Some(h) = Handle::parse_hex(t.str().trim()) {
-            d.bump_handseed(h);
+    if ours {
+        // Its table and object records are numbered above its seed and rebuilt on save (#495),
+        // so only its entities are reserved. Reading is section by section: an entity that has
+        // no handle, or repeats one within its section, gets a fresh handle, and that must not
+        // be one an entity of a later section still names. `BLOCK` and `ENDBLK` are structural
+        // records, not entities, and are left out so they don't move the saved seed.
+        for (kind, tags) in secs.iter().filter(|s| s.name == "BLOCKS" || s.name == "ENTITIES").flat_map(|s| records(&s.tags)) {
+            if matches!(kind.as_str(), "BLOCK" | "ENDBLK") {
+                continue;
+            }
+            if let Some(h) = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(t.str().trim())) {
+                d.bump_handseed(h);
+            }
+        }
+    } else {
+        for t in secs.iter().flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
+            if let Some(h) = Handle::parse_hex(t.str().trim()) {
+                d.bump_handseed(h);
+            }
         }
     }
     let mut skipped = std::collections::BTreeMap::new();
