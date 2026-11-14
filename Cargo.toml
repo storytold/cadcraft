@@ -18,6 +18,7 @@ craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "006e4df225
 craft-dwg = { git = "https://github.com/storytold/craft-libs", rev = "7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf" }
 cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
+cadcraft-collab = { path = "crates/collab" }
 cadcraft-constraints = { path = "crates/constraints" }
 cadcraft-fonts = { path = "crates/fonts" }
 cadcraft-render = { path = "crates/render" }
