@@ -59,7 +59,8 @@ fn mlines_and_styles_survive_save_and_reopen() {
     let back = cadcraft_io::read_dxf(saved.as_bytes()).unwrap();
     let [a, b] = mlines(&back).try_into().unwrap();
     // The geometry as drawn is the same, breaks included.
-    assert_eq!(a.def, wall());
+    // The description lives in the style table (checked below), not copied into every multiline.
+    assert_eq!(a.def, MLineStyle { description: String::new(), ..wall() });
     assert_eq!(
         (a.style.as_str(), a.justification, a.scale, a.closed, a.no_start_caps, a.no_end_caps),
         ("Wall", MLineJust::Zero, 2.0, false, false, true)
@@ -101,7 +102,7 @@ fn mlines_and_styles_survive_save_and_reopen() {
     // Saving again is stable.
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&back).as_bytes()).unwrap();
     assert_eq!(mlines(&again).len(), 2);
-    assert_eq!(mlines(&again)[0].def, wall());
+    assert_eq!(mlines(&again)[0].def, MLineStyle { description: String::new(), ..wall() });
 }
 
 /// A multiline as another program writes it: style `Duo` (offsets 0.25 and -0.25, the first red)
