@@ -252,18 +252,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let tris = fill::triangulate_evenodd(&[pts]);
                 b.tris(ctx, rgb, &tris);
             }
-            // 尺寸标注箭头（类型 6 零长度点 = 箭头尖端）：实心三角形，尖端朝外。
+            // 尺寸/引线箭头（类型 6 零长度点 = 尖端）：天正建筑标记 = 45° 斜线，
+            // 从尖端向尺寸线内侧倾斜（方向 -d+n，长度 = 箭头尺寸 300mm）。
             for (tx, ty, dx, dy) in &t.arrow_tips {
-                let size = 300.0; // 箭头长度 mm（尖端在尺寸线端点外 300mm）
-                let (px, py) = (-dy, dx); // 垂直方向
-                let (bx, by) = (tx - dx * size, ty - dy * size);
-                let pts = vec![
-                    Vec2::new(*tx, *ty),
-                    Vec2::new(bx + px * size * 0.5, by + py * size * 0.5),
-                    Vec2::new(bx - px * size * 0.5, by - py * size * 0.5),
-                ];
-                let tris = fill::triangulate_evenodd(&[pts]);
-                b.tris(ctx, rgb, &tris);
+                let size = 300.0;
+                let s = std::f64::consts::FRAC_1_SQRT_2;
+                let (sx, sy) = ((-dx - dy) * s, (-dy + dx) * s);
+                stroke(b, &[Vec2::new(*tx, *ty), Vec2::new(tx + sx * size, ty + sy * size)]);
             }
             // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 type 38 的方向余弦还原。
             if b.opts.text {
