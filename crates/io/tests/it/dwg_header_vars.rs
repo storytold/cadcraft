@@ -102,3 +102,70 @@ fn a_current_layer_in_other_case_resolves_to_the_layer() {
     let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     assert_eq!(r.header.str("CLAYER", "?"), "Survey_\u{c4}");
 }
+
+/// A drawing with every USERI and USERR set, including the ends of the 16-bit integer range.
+fn user_vars() -> Drawing {
+    let mut d = Drawing::new_metric();
+    for (i, v) in [42, -7, 0, i64::from(i16::MAX), i64::from(i16::MIN)].into_iter().enumerate() {
+        d.header.set_i64(&format!("USERI{}", i + 1), v);
+    }
+    for (i, v) in [1.5, -0.25, 0.0, 1234.5678, 1e-3].into_iter().enumerate() {
+        d.header.set_f64(&format!("USERR{}", i + 1), v);
+    }
+    d
+}
+
+/// Asserts that `r`, a drawing read back from `name` format, has the USERI and USERR values of
+/// [`user_vars`].
+fn check_user_vars(name: &str, r: &Drawing) {
+    let d = user_vars();
+    for i in 1..=5 {
+        let (iv, rv) = (format!("USERI{i}"), format!("USERR{i}"));
+        assert_eq!(r.header.i64(&iv, -99999), d.header.i64(&iv, -99999), "{name}: ${iv}");
+        let (got, want) = (r.header.f64(&rv, -99999.0), d.header.f64(&rv, -99999.0));
+        assert!((got - want).abs() < 1e-9, "{name}: ${rv} read back as {got}, not {want}");
+    }
+}
+
+/// USERI1-5 and USERR1-5 (values a drawing keeps for scripts and LISP) survive saving as DXF or
+/// DWG and reopening: they were not written to the DXF header, and the DWG reader's DXF text left
+/// them out (#2989).
+#[test]
+fn user_variables_round_trip_through_dxf() {
+    let r = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&user_vars()).as_bytes()).unwrap();
+    check_user_vars("DXF", &r);
+}
+
+/// The DWG half of [`user_variables_round_trip_through_dxf`]: write DWG, read it back.
+#[test]
+#[ignore = "Needs storytold/craft-libs#1285: the DWG reader leaves USERI/USERR out of its DXF header"]
+fn user_variables_round_trip_through_dwg() {
+    let dwg = cadcraft_io::write(&user_vars(), "x.dwg").unwrap();
+    let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    check_user_vars("DWG", &r);
+}
+
+/// A USERI outside the 16-bit range DXF and DWG hold is left out of the file, not written as an
+/// invalid value that would stop a reader or wrap around.
+#[test]
+fn an_out_of_range_user_integer_is_not_written() {
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("USERI1", 100_000);
+    let dxf = cadcraft_io::write_dxf(&d);
+    assert!(!dxf.contains("$USERI1"), "{dxf}");
+    let r = cadcraft_io::read(&cadcraft_io::write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
+    assert_eq!(r.header.i64("USERI1", 0), 0);
+}
+
+/// Each header variable is written once, so a variable listed twice in the writer's table (for
+/// example after two changes add it) is caught here rather than in another program.
+#[test]
+fn each_header_variable_is_written_once() {
+    let dxf = cadcraft_io::write_dxf(&user_vars());
+    let header = dxf.split("ENDSEC").next().unwrap_or_default();
+    let mut seen = std::collections::BTreeSet::new();
+    for name in header.lines().map(str::trim).filter(|l| l.starts_with('$')) {
+        assert!(seen.insert(name), "{name} is written twice");
+    }
+    assert!(seen.contains("$USERI1") && seen.contains("$USERR5"), "{seen:?}");
+}

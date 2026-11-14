@@ -46,6 +46,17 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("INSUNITS", 70),
     ("MEASUREMENT", 70),
     ("PSLTSCALE", 70),
+    // Values a drawing keeps for scripts and LISP (#2989).
+    ("USERI1", 70),
+    ("USERI2", 70),
+    ("USERI3", 70),
+    ("USERI4", 70),
+    ("USERI5", 70),
+    ("USERR1", 40),
+    ("USERR2", 40),
+    ("USERR3", 40),
+    ("USERR4", 40),
+    ("USERR5", 40),
     // The model view the drawing is saved at, as DXF keeps it in HEADER (the `*ACTIVE` VPORT
     // record below repeats it). Written so a drawing opened on its saved view saves it back.
     ("VIEWCTR", -2),
@@ -123,7 +134,8 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                 }
             }
             (c @ (62 | 70 | 290 | 370), v) => {
-                if let Some(i) = v.as_i64() {
+                // USERI1-5 are 16-bit in DXF and DWG; a larger value would be an invalid file.
+                if let Some(i) = v.as_i64().filter(|i| !name.starts_with("USERI") || i16::try_from(*i).is_ok()) {
                     w.s(9, format!("${name}"));
                     w.i(c, i);
                 }
