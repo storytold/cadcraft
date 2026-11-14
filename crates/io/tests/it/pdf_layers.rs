@@ -150,6 +150,9 @@ fn viewport_contents_keep_their_layers() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        ucs: None,
+        ucs_per_viewport: false,
+        extra: Vec::new(),
         twist: 0.0,
     };
     d.add(&paper, Common { layer: "Viewports".into(), ..Default::default() }, EntityKind::Viewport(vp)).unwrap();

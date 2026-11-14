@@ -586,6 +586,41 @@ pub(crate) fn read_layer_colors(tags: &[Tag]) -> Vec<(String, Color)> {
     names.as_chunks::<2>().0.iter().filter_map(|[name, color]| Some((name.clone(), Color::parse(color)?))).collect()
 }
 
+/// A viewport's named and base UCS as CADCraft xdata: `1000 VPUCS`, `1002 {`, `1000 named`,
+/// `1000 base` (empty for none), `1002 }`. Groups 345 and 346 say the same, but the DWG bridge
+/// drops them.
+pub(crate) fn ucs_xdata(named: Option<&str>, base: Option<&str>) -> Vec<Tag> {
+    vec![Tag::s(1000, "VPUCS"), Tag::s(1002, "{"), Tag::s(1000, named.unwrap_or_default()), Tag::s(1000, base.unwrap_or_default()), Tag::s(1002, "}")]
+}
+
+/// The named and base UCS written by [`ucs_xdata`]; `(None, None)` for files from other writers.
+pub(crate) fn read_ucs_names(tags: &[Tag]) -> (Option<String>, Option<String>) {
+    let list = xdata_list(xdata(tags, APP), "VPUCS");
+    let mut names = list.iter().filter(|t| t.code == 1000).map(Tag::str).map(|s| Some(s).filter(|s| !s.trim().is_empty()));
+    (names.next().flatten(), names.next().flatten())
+}
+
+/// A copy of a viewport's unmodelled groups ([`cadcraft_doc::Viewport::extra`]) that aren't
+/// references, as CADCraft xdata: `1000 VPEXTRA`, `1002 {`, then per group `1000 code` and
+/// `1000 value`, `1002 }`. The groups themselves are in the record; the DWG bridge drops some
+/// of them (the plot style sheet, shade plot and lighting), and this copy brings them back.
+pub(crate) fn extra_xdata(extra: &[cadcraft_doc::RawTag]) -> Vec<Tag> {
+    let mut v = vec![Tag::s(1000, "VPEXTRA"), Tag::s(1002, "{")];
+    for t in extra.iter().filter(|t| !crate::dxf_raw::is_pointer(t.code)) {
+        v.push(Tag::s(1000, t.code.to_string()));
+        v.push(Tag::s(1000, t.value.clone()));
+    }
+    v.push(Tag::s(1002, "}"));
+    v
+}
+
+/// The groups written by [`extra_xdata`]; empty for files from other writers, bad pairs skipped.
+pub(crate) fn read_extra(tags: &[Tag]) -> Vec<(i32, String)> {
+    let list = xdata_list(xdata(tags, APP), "VPEXTRA");
+    let items: Vec<String> = list.iter().take(MAX_XDATA_ITEMS * 2).filter(|t| t.code == 1000).map(Tag::str).collect();
+    items.as_chunks::<2>().0.iter().filter_map(|[code, value]| Some((code.trim().parse::<i32>().ok()?, value.clone()))).collect()
+}
+
 const POINT_NAMES: [&str; 5] = ["defpt", "p13", "p14", "p15", "p16"];
 
 /// Associativity links from CADCraft xdata; malformed links are skipped.

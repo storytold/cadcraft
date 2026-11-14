@@ -42,11 +42,19 @@ pub struct ForeignExtra {
     pub color_book: Option<(String, String)>,
     /// Other unmodelled property groups (material 347, shadow mode 284).
     pub props: Vec<RawTag>,
+    /// Unmodelled groups of the record's own last subclass, written just before its xdata. Filled
+    /// on save from the entity itself ([`crate::Viewport::extra`]), so that copies keep them.
+    pub tail: Vec<RawTag>,
 }
 
 impl ForeignExtra {
     pub fn is_empty(&self) -> bool {
-        self.xdict.is_none() && self.reactors.is_empty() && self.xdata.is_empty() && self.color_book.is_none() && self.props.is_empty()
+        self.xdict.is_none()
+            && self.reactors.is_empty()
+            && self.xdata.is_empty()
+            && self.color_book.is_none()
+            && self.props.is_empty()
+            && self.tail.is_empty()
     }
 }
 
