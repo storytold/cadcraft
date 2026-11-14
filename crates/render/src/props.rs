@@ -9,11 +9,27 @@ pub(crate) fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
     resolve_common(ctx, &e.common, plotting)
 }
 
+/// The layer an object with properties `c` is drawn on: layer "0" inside a block takes the block
+/// reference's layer.
+pub(crate) fn effective_layer<'a>(ctx: &'a Ctx, c: &'a cadcraft_doc::Common) -> &'a str {
+    if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() }
+}
+
+/// Whether a block reference that [`resolve`] finds hidden still shows the objects of its block
+/// that are on layers of their own: it is hidden only because its layer is off (or not plotted,
+/// when plotting). As in AutoCAD, the objects on layer 0 take the reference's layer and stay
+/// hidden, the others (attributes too) are drawn when their own layer is on. A frozen layer (also
+/// frozen in the viewport) or an invisible reference hides everything.
+pub(crate) fn contents_outlive_layer(ctx: &Ctx, e: &Entity) -> bool {
+    let c = &e.common;
+    let layer_name = effective_layer(ctx, c);
+    c.visible && !ctx.d.layer(layer_name).is_some_and(|l| l.frozen) && !ctx.frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name))
+}
+
 /// [`resolve`] for an object's properties `c`.
 pub(crate) fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool) -> Resolved {
     let d = ctx.d;
-    // Layer "0" inside a block takes the insert's layer.
-    let layer_name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
+    let layer_name = effective_layer(ctx, c);
     let layer = d.layer(layer_name);
     let visible =
         c.visible && layer.is_none_or(|l| l.visible() && (!plotting || l.plot)) && !ctx.frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name));
