@@ -17,6 +17,11 @@ fn fresh_dir() -> PathBuf {
     dir
 }
 
+/// The lower-case file name of `file`, so a guard never reads the test folder's own name.
+fn name(file: &Path) -> String {
+    file.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+}
+
 /// Every candidate the search opens in a guarded folder goes to the guard first, whatever its name
 /// or how the search finds it, and a font the guard refuses is skipped while the others are used.
 #[test]
@@ -32,9 +37,10 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
     let log = asked.clone();
     shx::add_drawing_dir_guarded(
         &dir,
+        "first",
         Arc::new(move |file: &Path| {
             log.lock().unwrap().push(file.to_path_buf());
-            !file.to_string_lossy().to_ascii_lowercase().contains("bad")
+            !name(file).contains("bad")
         }),
     );
     assert!(shx::find("cadcraft-guard-ok.shx").is_some());
@@ -48,8 +54,16 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
         let want = dir.join(file).to_string_lossy().to_ascii_lowercase();
         assert!(asked.iter().any(|a| a.to_string_lossy().to_ascii_lowercase() == want), "the guard was asked about {file}: {asked:?}");
     }
-    // The guard goes with the folder: added again without one, the folder is searched freely.
+    // The folder added again without a guard (another session in the process) keeps its guard.
     shx::add_drawing_dir(&dir);
-    assert!(shx::find("cadcraft-guard-bad.shx").is_some());
+    assert!(shx::find("cadcraft-guard-bad.shx").is_none());
+    // Another owner's guard is required as well: a font is opened only when every owner allows it.
+    shx::add_drawing_dir_guarded(&dir, "second", Arc::new(|file: &Path| !name(file).contains("ok")));
+    assert!(shx::find("cadcraft-guard-ok.shx").is_none(), "refused by the second owner");
+    assert!(shx::find("cadcraft-guard-mixed.shx").is_some(), "allowed by both");
+    // An owner giving its guard again replaces its own, and the other's stays.
+    shx::add_drawing_dir_guarded(&dir, "second", Arc::new(|_: &Path| true));
+    assert!(shx::find("cadcraft-guard-ok.shx").is_some());
+    assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "the first owner's guard still holds");
     std::fs::remove_dir_all(&dir).unwrap();
 }

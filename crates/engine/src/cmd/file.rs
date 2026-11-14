@@ -346,10 +346,11 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
             None => cadcraft_fonts::shx::add_drawing_dir(&dir),
             // The folder holds no record of the roots, and a font's name there can be a link leading
             // out of them: the search asks the roots about each file before it opens one.
-            Some(roots) => cadcraft_fonts::shx::add_drawing_dir_guarded(
-                &dir,
-                std::sync::Arc::new(move |font| roots.check(font, crate::file_access::Access::Read).is_ok()),
-            ),
+            Some(roots) => {
+                let owner = format!("{:?}|{:?}", roots.read_root(), roots.write_root());
+                let guard = std::sync::Arc::new(move |font: &std::path::Path| roots.check(font, crate::file_access::Access::Read).is_ok());
+                cadcraft_fonts::shx::add_drawing_dir_guarded(&dir, &owner, guard);
+            }
         }
     }
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })

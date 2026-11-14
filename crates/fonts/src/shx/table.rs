@@ -43,8 +43,8 @@ struct Table {
     loaded_bytes: usize,
     provider: Option<Arc<dyn FontProvider>>,
     drawing_dirs: Vec<PathBuf>,
-    /// The guards of the drawing folders that have one.
-    drawing_guards: HashMap<PathBuf, OpenGuard>,
+    /// The guards of the drawing folders that have any, by the owner that gave each one.
+    drawing_guards: HashMap<PathBuf, Vec<(String, OpenGuard)>>,
     font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
@@ -129,33 +129,34 @@ pub fn add_drawing_dir(dir: &Path) {
 }
 
 /// Like [`add_drawing_dir`], with every file the search would open in `dir` put to `guard` first,
-/// whatever its name and however it is found in the folder: a font the guard refuses is skipped. The
-/// guard stays with the folder until the folder is added again.
-pub fn add_drawing_dir_guarded(dir: &Path, guard: OpenGuard) {
-    add_dir(dir, Some(guard));
+/// whatever its name and however it is found in the folder: a font the guard refuses is skipped.
+///
+/// The table is shared by the whole process, so a folder keeps the guard of every `owner` that gave
+/// one (an owner giving it again replaces its own) and a font is opened only when all of them allow
+/// it. Adding the folder without a guard never removes one. Fonts found are kept for every caller,
+/// so owners with different rules shouldn't share a process.
+pub fn add_drawing_dir_guarded(dir: &Path, owner: &str, guard: OpenGuard) {
+    add_dir(dir, Some((owner, guard)));
 }
 
-/// Remember `dir`, most recent first, with the guard it is searched under (none: unrestricted).
-fn add_dir(dir: &Path, guard: Option<OpenGuard>) {
+/// Remember `dir`, most recent first, with the guard it is searched under, if any.
+fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
     if dir.as_os_str().is_empty() {
         return;
     }
     let mut t = table();
-    if guard.is_none() && t.drawing_dirs.first().is_some_and(|d| d == dir) && !t.drawing_guards.contains_key(dir) {
+    if guard.is_none() && t.drawing_dirs.first().is_some_and(|d| d == dir) {
         return;
     }
     t.drawing_dirs.retain(|d| d != dir);
     t.drawing_dirs.insert(0, dir.to_path_buf());
     t.drawing_dirs.truncate(MAX_DIRS);
-    match guard {
-        Some(g) => {
-            t.drawing_guards.insert(dir.to_path_buf(), g);
-        }
-        None => {
-            t.drawing_guards.remove(dir);
-        }
+    if let Some((owner, guard)) = guard {
+        let guards = t.drawing_guards.entry(dir.to_path_buf()).or_default();
+        guards.retain(|(o, _)| o != owner);
+        guards.push((owner.to_string(), guard));
     }
-    // A folder dropped from the list takes its guard with it.
+    // A folder dropped from the list takes its guards with it.
     let Table { drawing_dirs, drawing_guards, .. } = &mut *t;
     drawing_guards.retain(|d, _| drawing_dirs.contains(d));
     t.changed();
@@ -236,9 +237,10 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let drawing = t.drawing_dirs.iter().map(|d| (d.clone(), t.drawing_guards.get(d).cloned()));
-        let dirs: Vec<(PathBuf, Option<OpenGuard>)> =
-            drawing.chain(t.font_dirs.iter().chain(t.search_path.iter()).map(|d| (d.clone(), None))).collect();
+        let guards = |d: &PathBuf| t.drawing_guards.get(d).map(|g| g.iter().map(|(_, g)| g.clone()).collect()).unwrap_or_default();
+        let drawing = t.drawing_dirs.iter().map(|d| (d.clone(), guards(d)));
+        let dirs: Vec<(PathBuf, Vec<OpenGuard>)> =
+            drawing.chain(t.font_dirs.iter().chain(t.search_path.iter()).map(|d| (d.clone(), Vec::new()))).collect();
         (t.provider.clone(), dirs, t.generation)
     };
     let font = provider
@@ -298,13 +300,13 @@ pub fn installed() -> Vec<String> {
 
 /// The file `name` (a lower-case key) in the first of `dirs` that has it, whatever the case of
 /// its name: lower-case, upper-case, else any other case found in the directory (`Simplex.shx`
-/// on a case-sensitive file system). A folder's guard is asked about each candidate before anything
-/// opens it, so a link is judged by where it leads.
+/// on a case-sensitive file system). Each of a folder's guards is asked about each candidate before
+/// anything opens it, so a link is judged by where it leads.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_from(dirs: &[(PathBuf, Option<OpenGuard>)], name: &str) -> Option<Vec<u8>> {
-    for (d, guard) in dirs {
+fn read_from(dirs: &[(PathBuf, Vec<OpenGuard>)], name: &str) -> Option<Vec<u8>> {
+    for (d, guards) in dirs {
         let read = |file: &Path| -> Option<Vec<u8>> {
-            if guard.as_ref().is_some_and(|g| !g(file)) {
+            if !guards.iter().all(|g| g(file)) {
                 return None;
             }
             read_file(file)
@@ -341,6 +343,6 @@ fn read_file(file: &Path) -> Option<Vec<u8>> {
 
 /// On the web there are no folders to search.
 #[cfg(target_arch = "wasm32")]
-fn read_from(_dirs: &[(PathBuf, Option<OpenGuard>)], _name: &str) -> Option<Vec<u8>> {
+fn read_from(_dirs: &[(PathBuf, Vec<OpenGuard>)], _name: &str) -> Option<Vec<u8>> {
     None
 }
