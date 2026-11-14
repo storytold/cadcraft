@@ -5,6 +5,7 @@ mod breaks;
 mod cells;
 pub(crate) mod formula;
 
+pub use cells::cell_under;
 pub(crate) use cells::{recalc, tablestyle_cell_style};
 
 use cadcraft_doc::{EntityKind, Handle, Table, TableCell};

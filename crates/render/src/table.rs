@@ -160,6 +160,62 @@ pub fn table_geometry(d: &Drawing, t: &Table) -> TableGeom {
     g
 }
 
+/// A cell's text as placed, with the width it wraps at, for editing the cell in place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditableCellText {
+    pub text: TableText,
+    /// The cell's text area width, inside the horizontal margins.
+    pub width: f64,
+}
+
+/// The text box of cell (`row`, `col`), also when the cell is empty: a double-click there opens
+/// the in-place editor on it (#3136). `None` outside the table's grid.
+pub fn table_cell_text(d: &Drawing, t: &Table, row: usize, col: usize) -> Option<EditableCellText> {
+    let st = table_style_of(d, t);
+    if row >= t.row_heights.len().min(10_000) || col >= t.col_widths.len().min(10_000) {
+        return None;
+    }
+    // A broken table draws the row in the first part that has it (a repeated label row in each);
+    // the box is in that part.
+    let part = t.parts().into_iter().find(|p| p.rows.contains(&row))?;
+    let size = |v: f64| if v.is_finite() && v > 0.0 { v } else { 0.0 };
+    let h = |r: usize| size(t.row_heights.get(r).copied().unwrap_or(0.0));
+    let w = |c: usize| size(t.col_widths.get(c).copied().unwrap_or(0.0));
+    let top: f64 = part.rows.iter().take_while(|r| **r != row).map(|r| h(*r)).sum();
+    let left: f64 = (0..col).map(w).sum();
+    let (cw, rh) = (w(col), h(row));
+    let k = style_scale(&st, t);
+    let mut cs = st.cell_style(t.cell_style_name(row, col));
+    cs.text_height *= k;
+    cs.margin_h *= k;
+    cs.margin_v *= k;
+    let attach = cs.align.clamp(1, 9);
+    let x = match (attach - 1) % 3 {
+        0 => left + cs.margin_h,
+        1 => left + cw / 2.0,
+        _ => left + cw - cs.margin_h,
+    };
+    let y = match (attach - 1) / 3 {
+        0 => top + cs.margin_v,
+        1 => top + rh / 2.0,
+        _ => top + rh - cs.margin_v,
+    };
+    let cell = t.cells.get(row).and_then(|r| r.get(col));
+    Some(EditableCellText {
+        text: TableText {
+            row,
+            col,
+            at: part.origin + Vec2::new(x, -y),
+            attach,
+            height: cell.and_then(|c| c.text_height).filter(|h| h.is_finite() && *h > 0.0).map_or(cs.text_height, |h| h * k),
+            color: cs.text_color,
+            style: cs.text_style.clone(),
+            text: cell.map(|c| c.text.clone()).unwrap_or_default(),
+        },
+        width: (cw - 2.0 * cs.margin_h).max(0.0),
+    })
+}
+
 /// One part of a broken table as a table of its own: its rows (with their cell styles) at
 /// `origin`; merges are cut at the part's edge.
 fn part_table(t: &Table, rows: &[usize], origin: Vec2) -> Table {
@@ -457,5 +513,75 @@ mod budget_tests {
         rows.push(101);
         let part = part_table(&t, &rows, Vec2::ZERO);
         assert_eq!(part.cells[0][0].merged, Some((99, 1)));
+    }
+}
+
+#[cfg(test)]
+mod cell_text_tests {
+    use super::*;
+    use cadcraft_doc::{TableBreak, TableCell};
+
+    fn table(rows: usize) -> Table {
+        Table {
+            col_widths: vec![2.0, 3.0],
+            row_heights: vec![1.0; rows],
+            cells: vec![vec![TableCell::default(); 2]; rows],
+            title: true,
+            header: true,
+            ..Table::default()
+        }
+    }
+
+    /// The box a cell is edited in is the box the table draws its text in (#3136).
+    #[test]
+    fn a_cells_text_box_matches_the_drawn_text() {
+        let d = Drawing::default();
+        let mut t = table(5);
+        t.cells[0][1].text = "a".into();
+        t.cells[4][0].text = "bc".into();
+        let g = table_geometry(&d, &t);
+        for (row, col) in [(0, 1), (4, 0)] {
+            let edited = table_cell_text(&d, &t, row, col).expect("cell");
+            let drawn = g.texts.iter().find(|x| x.row == row && x.col == col).expect("drawn text");
+            assert_eq!(&edited.text, drawn, "cell {row},{col}");
+            assert!(edited.width > 0.0);
+        }
+    }
+
+    /// An empty cell has a box too: a double-click on it opens the editor.
+    #[test]
+    fn an_empty_cell_has_its_style_box() {
+        let d = Drawing::default();
+        let t = table(3);
+        let cell = table_cell_text(&d, &t, 2, 1).expect("cell");
+        assert!(cell.text.text.is_empty());
+        // Row 2 is a data row: its text starts at the left margin and is centred down the row,
+        // which is 2..5 wide and 2..3 down.
+        assert_eq!(cell.text.attach, 4);
+        assert!((cell.text.at.x - (2.0 + 0.06)).abs() < 1e-12, "{}", cell.text.at.x);
+        assert!((cell.text.at.y + 2.5).abs() < 1e-12, "{}", cell.text.at.y);
+        assert_eq!(cell.text.height, 0.18);
+        assert!((cell.width - (3.0 - 2.0 * 0.06)).abs() < 1e-12);
+    }
+
+    /// A broken table edits the row in the part that shows it.
+    #[test]
+    fn a_broken_tables_cell_box_is_in_its_part() {
+        let d = Drawing::default();
+        let mut t = table(8);
+        t.breaks = Some(TableBreak { enabled: true, height: 4.0, spacing: 1.0, ..TableBreak::default() });
+        t.cells[6][0].text = "x".into();
+        let g = table_geometry(&d, &t);
+        let edited = table_cell_text(&d, &t, 6, 0).expect("cell");
+        let drawn = g.texts.iter().find(|x| x.row == 6 && x.col == 0).expect("drawn text");
+        assert_eq!(&edited.text, drawn);
+    }
+
+    #[test]
+    fn a_cell_outside_the_grid_has_no_box() {
+        let d = Drawing::default();
+        let t = table(2);
+        assert_eq!(table_cell_text(&d, &t, 2, 0), None);
+        assert_eq!(table_cell_text(&d, &t, 0, 2), None);
     }
 }

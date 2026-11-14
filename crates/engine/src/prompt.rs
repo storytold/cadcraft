@@ -287,8 +287,9 @@ pub trait Interactive: Send {
         None
     }
     /// The multiline text being typed (MTEXT, once its box is known, with empty contents) or edited
-    /// (TEXTEDIT on an MTEXT or a multileader's text, with its contents): where the UI places its
-    /// in-place editor and with which height, width, justification and starting text.
+    /// (TEXTEDIT on an MTEXT or a multileader's text, or TABLEDIT on a table cell, with its
+    /// contents): where the UI places its in-place editor and with which height, width,
+    /// justification and starting text.
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }

@@ -3,7 +3,8 @@
 //! underline, overline, colour, alignment, lists, tabs) and a ruler for the paragraph's indents
 //! and tab stops. The text and its formats live in the engine's
 //! [`cadcraft_engine::mtext_edit::Formatted`]; this file only draws and forwards edits. TEXTEDIT
-//! (and so a double-click) on an existing MTEXT opens it here with its contents (#842).
+//! (and so a double-click) on an existing MTEXT opens it here with its contents (#842), as does
+//! TABLEDIT on a table cell, whose text is MTEXT contents too (#3136).
 
 use std::sync::Arc;
 
@@ -98,8 +99,8 @@ fn color32(c: MTextColor) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
 
-/// Show the editor while MTEXT, or TEXTEDIT on an MTEXT, collects its text; clears its state
-/// when neither is running.
+/// Show the editor while MTEXT, TEXTEDIT on an MTEXT, or TABLEDIT on a table cell, collects its
+/// text; clears its state when none is running.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mtext = app.session.editing_mtext();
     let asking = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point);
@@ -171,14 +172,15 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         Done::Ok => {
             ctx.data_mut(|d| d.remove::<State>(state_id()));
             // The editor holds the whole contents: one input, then Enter ends MTEXT's text entry.
-            // Emptied while editing an existing MTEXT: it keeps its text (Enter), as TEXTEDIT
-            // keeps it for an empty answer, and for one left unchanged (no undo step).
-            let textedit = app.session.running.as_ref().is_some_and(|r| r.id == "textedit");
+            // Emptied while editing an existing object (MTEXT, or a table cell, #3136): it keeps
+            // its text (Enter), as TEXTEDIT keeps it for an empty answer, and for one left
+            // unchanged (no undo step).
+            let in_place = app.session.running.as_ref().is_some_and(|r| r.id == "textedit" || r.id == "tabledit");
             let contents = st.fmt.to_contents();
-            let unchanged = textedit && Formatted::leaves_unchanged(&mt.contents, Some(mt.height), &contents);
+            let unchanged = in_place && Formatted::leaves_unchanged(&mt.contents, Some(mt.height), &contents);
             if !st.fmt.is_empty() && !unchanged {
                 let _ = app.session.input(cadcraft_engine::Input::Text(contents));
-            } else if textedit {
+            } else if in_place {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);
             }
             if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {

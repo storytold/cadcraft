@@ -35,6 +35,7 @@ mod shortcuts_checked;
 mod status_bar_toggles;
 mod style_dialogs;
 mod system_cursor;
+mod table_double_click;
 mod text_double_click;
 mod toolsets_gear;
 mod toolsets_parametric;

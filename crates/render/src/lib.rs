@@ -374,7 +374,9 @@ fn image_clip(i: &cadcraft_doc::Image, place: impl Fn(Vec2) -> Vec2) -> Option<V
 }
 
 mod table;
-pub use table::{MAX_LAYOUT_CELLS, TableFill, TableGeom, TableLine, TableText, table_covered, table_geometry, table_style_of};
+pub use table::{
+    EditableCellText, MAX_LAYOUT_CELLS, TableFill, TableGeom, TableLine, TableText, table_cell_text, table_covered, table_geometry, table_style_of,
+};
 
 mod blocks;
 mod dim_draw;

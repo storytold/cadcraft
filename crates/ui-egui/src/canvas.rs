@@ -34,7 +34,7 @@ use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{OnlyList, PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
-use pick::{edit_text_at, hatch_at, wheel_zoom_points};
+use pick::{edit_table_cell_at, edit_text_at, hatch_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
 use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
@@ -620,6 +620,16 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         && app.session.running.is_none()
         && let Some(hp) = hover
         && edit_text_at(app, xf.to_world(hp))
+    {
+        return None;
+    }
+
+    // Double-click a table cell to edit it in place, as in AutoCAD: TABLEDIT on that cell (#3136).
+    if inside
+        && double
+        && app.session.running.is_none()
+        && let Some(hp) = hover
+        && edit_table_cell_at(app, xf.to_world(hp))
     {
         return None;
     }
