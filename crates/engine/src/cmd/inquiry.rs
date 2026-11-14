@@ -848,12 +848,12 @@ impl Walk<'_> {
     /// not, so a hostile grid of a generous definition cannot wander past the budget.
     fn reference(&mut self, e: &Entity, level: u32, m: cadcraft_geom::Mat3, owner: &str) {
         let EntityKind::Insert(i) = &e.kind else { return };
-        let Some(def) = self.d.block(&i.block).cloned() else { return };
         // A nested reference's own attributes sit where the reference sits: their points are the
         // coordinates of the block holding the reference, the insert's own placement already
         // included. So they take `m` alone, not the reference's full placement, and they are
-        // collected once, wherever the grid would repeat them (the renderer draws the set once,
-        // too). A top-level one's are the space's own texts, already collected.
+        // collected once per placed copy of the reference (the renderer draws the set once per
+        // copy, too — and draws it even when the definition is missing, which only the contents
+        // miss). A top-level one's are the space's own texts, already collected.
         if level >= 1 {
             for a in i.attribs.iter().filter(|a| !a.invisible) {
                 self.work += 1;
@@ -881,6 +881,7 @@ impl Walk<'_> {
                 self.place(h, &m);
             }
         }
+        let Some(def) = self.d.block(&i.block).cloned() else { return };
         let jt = i.transform(def.base.xy());
         for row in 0..i.rows.max(1) {
             for col in 0..i.cols.max(1) {
@@ -1055,7 +1056,8 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
         if is_anonymous(d, name) {
             *anonymous = anonymous.saturating_add(copies);
         }
-        *placed.entry(name.to_string()).or_default() += copies;
+        let p = placed.entry(name.to_string()).or_default();
+        *p = p.saturating_add(copies);
         for (k, v) in x.expand(name, cadcraft_doc::MAX_BLOCK_DEPTH.saturating_sub(1)).iter() {
             if d.block(k).is_none() {
                 *missing = missing.saturating_add(copies.saturating_mul(*v));
@@ -1064,7 +1066,8 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
             if is_anonymous(d, k) {
                 *anonymous = anonymous.saturating_add(copies.saturating_mul(*v));
             }
-            *placed.entry(k.clone()).or_default() += copies.saturating_mul(*v);
+            let p = placed.entry(k.clone()).or_default();
+            *p = p.saturating_add(copies.saturating_mul(*v));
         }
     }
     let mut x = count::Expander::new(d);
@@ -1113,33 +1116,34 @@ fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut tally = |e: &cadcraft_doc::Entity, weight: u64| {
         let EntityKind::Unknown(u) = &e.kind else { return };
         match u.dxf_type.to_ascii_uppercase().as_str() {
-            "ACAD_PROXY_ENTITY" => acad_proxy += weight,
-            "OLE2FRAME" => ole_frames += weight,
-            "ARC_DIMENSION" => arc_dimensions += weight,
-            _ => other_unknowns += weight,
+            "ACAD_PROXY_ENTITY" => acad_proxy = acad_proxy.saturating_add(weight),
+            "OLE2FRAME" => ole_frames = ole_frames.saturating_add(weight),
+            "ARC_DIMENSION" => arc_dimensions = arc_dimensions.saturating_add(weight),
+            _ => other_unknowns = other_unknowns.saturating_add(weight),
         }
         let Some(f) = proxy::frames(&u.tags) else {
             // A proxy without any graphics data can neither be read nor judged.
-            no_graphics += weight;
+            no_graphics = no_graphics.saturating_add(weight);
             return;
         };
         if f.drawable > 0 {
-            with_drawable += weight;
+            with_drawable = with_drawable.saturating_add(weight);
         } else if f.records == 0 && f.unparsed > 0 {
             // The graphics bytes are there, but not one frame of them parses: neither drawable
             // nor a clean "no graphics", so the report names them on their own.
-            unparsed_graphics += weight;
+            unparsed_graphics = unparsed_graphics.saturating_add(weight);
         }
         let app = d.foreign.proxy_class(&u.tags).unwrap_or_default().to_string();
         let t = classes.entry((u.dxf_type.clone(), app)).or_default();
-        t.count += weight;
+        t.count = t.count.saturating_add(weight);
         if f.drawable > 0 {
-            t.with_drawable += weight;
+            t.with_drawable = t.with_drawable.saturating_add(weight);
         }
         t.records = t.records.saturating_add(f.records.saturating_mul(weight));
         t.unparsed = t.unparsed.saturating_add(f.unparsed.saturating_mul(weight));
         for (k, v) in f.histogram {
-            *t.histogram.entry(k).or_default() += v.saturating_mul(weight);
+            let h = t.histogram.entry(k).or_default();
+            *h = h.saturating_add(v.saturating_mul(weight));
         }
     };
     for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {

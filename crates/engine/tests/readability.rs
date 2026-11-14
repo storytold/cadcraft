@@ -700,3 +700,81 @@ fn a_multiline_attribute_reports_its_formatted_contents_as_raw() {
     assert_eq!(a["raw"], json!("line1\\Pline2"), "{}", a);
     assert_eq!(a["text"], json!("line1 line2"), "{}", a);
 }
+
+#[test]
+fn nested_reference_attributes_draw_even_without_a_definition() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        // "Holder" places "Ghost", which the drawing does not define; the reference carries the
+        // attribute itself. The renderer still draws the set (only the contents go missing), so
+        // the walk reports it too.
+        let mut holder = block("Holder");
+        holder.entities.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x730),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Ghost".into(),
+                insert: Vec3::new(10.0, 0.0, 0.0),
+                attribs: vec![attrib("ROOM", [15.0, 0.0], "P1")],
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert("Holder".into(), Arc::new(holder));
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x731),
+            EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Holder".into(), insert: Vec3::new(100.0, 0.0, 0.0), ..Default::default() }),
+        ));
+    }
+    let r = s.execute("texts", &json!({ "scope": "nested" })).unwrap();
+    let hits = r["texts"].as_array().unwrap();
+    let a = hits.iter().find(|h| h["type"] == "Attribute").unwrap();
+    // The stored Holder-local point through the model's placement alone.
+    assert_eq!(a["at"], json!([115.0, 0.0]), "{}", a);
+    assert_eq!(a["source"], json!("block:Holder"), "{}", a);
+}
+
+#[test]
+fn saturated_reference_weights_do_not_overflow_the_tallies() {
+    let mut s = Session::new();
+    {
+        let d = s.doc_mut().unwrap();
+        let mut leaf = block("Leaf");
+        leaf.entities.push(unknown(
+            Handle(0x740),
+            "ACAD_PROXY_ENTITY",
+            vec![tag(0, "ACAD_PROXY_ENTITY"), tag(91, "500")],
+        ));
+        d.blocks.insert("Leaf".into(), Arc::new(leaf));
+        let mut wide = block("Wide");
+        wide.entities.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x741),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Leaf".into(),
+                insert: Vec3::ZERO,
+                cols: 100_000,
+                rows: 100_000,
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert("Wide".into(), Arc::new(wide));
+        // Two references reach "Leaf": 100,000 x 100,000 through "Wide", and one direct. The
+        // first saturates the placed weight; the second must not overflow the tally on top of it.
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x742),
+            EntityKind::Insert(cadcraft_engine::doc::Insert {
+                block: "Wide".into(),
+                insert: Vec3::ZERO,
+                cols: 100_000,
+                rows: 100_000,
+                ..Default::default()
+            }),
+        ));
+        d.model.push(cadcraft_engine::doc::Entity::new(
+            Handle(0x743),
+            EntityKind::Insert(cadcraft_engine::doc::Insert { block: "Leaf".into(), insert: Vec3::ZERO, ..Default::default() }),
+        ));
+    }
+    // No overflow panic; the saturated weight is the report's honest ceiling.
+    let r = s.execute("drawing.readability", &json!({})).unwrap();
+    assert_eq!(r["proxy"]["acadProxy"], json!(u64::MAX), "{}", r["proxy"]);
+}
