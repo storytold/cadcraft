@@ -1090,3 +1090,35 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+#[test]
+fn vl_file_systime_returns_modified_time_or_nil() {
+    let mut s = session();
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let missing = std::env::temp_dir().join(format!("cadcraft-missing-{}-{nanos}.txt", std::process::id()));
+    let missing_str = missing.to_string_lossy().replace('\\', "/");
+    assert_eq!(ok(&mut s, &format!("(vl-file-systime \"{missing_str}\")")), "nil");
+
+    let file = std::env::temp_dir().join(format!("cadcraft-systime-{}-{nanos}.txt", std::process::id()));
+    std::fs::write(&file, "hello").unwrap();
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let dur = modified.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let dt = chrono::DateTime::from_timestamp(i64::try_from(dur.as_secs()).unwrap(), dur.subsec_nanos()).unwrap();
+    use chrono::{Datelike, Timelike};
+    let expected = format!(
+        "({} {} {} {} {} {} {} {})",
+        dt.year(),
+        dt.month(),
+        dt.weekday().num_days_from_sunday(),
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        (dt.nanosecond() / 1_000_000).min(999),
+    );
+    let file_str = file.to_string_lossy().replace('\\', "/");
+    let res = ok(&mut s, &format!("(vl-file-systime \"{file_str}\")"));
+    std::fs::remove_file(&file).ok();
+
+    assert_eq!(res, expected);
+}

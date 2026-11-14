@@ -52,7 +52,7 @@ mod wcmatch;
 use args::R;
 pub use args::args_err;
 pub use files::{LispFile, read_text_file};
-use files::{close, findfile, open, read_line, write_line};
+use files::{close, findfile, open, read_line, vl_file_systime, write_line};
 pub use functions::catch_all_error;
 use functions::{
     apply, autoload, boundp, eval_fn, exit, load, mapcar, noop, set, ver, vl_catch_all_apply, vl_catch_all_error_message, vl_catch_all_error_p,
@@ -194,6 +194,7 @@ static BUILTINS: &[Builtin] = &[
     pure!("ANGLE", angle),
     pure!("INTERS", inters),
     pure!("FINDFILE", findfile),
+    pure!("VL-FILE-SYSTIME", vl_file_systime),
     pure!("VL-CATCH-ALL-ERROR-P", vl_catch_all_error_p),
     pure!("VL-CATCH-ALL-ERROR-MESSAGE", vl_catch_all_error_message),
     pure!("VL-LOAD-COM", noop),
