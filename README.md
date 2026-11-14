@@ -357,10 +357,16 @@ RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs g
 
 #### Community packages
 
-These packages are maintained by community members, not by the CADCraft team.
+These packages are maintained by community members, not by the CADCraft team, and the project
+does not review them. An overlay's ebuilds run as root when you install a package, so read the
+ebuild before you emerge it.
 
 On Gentoo, the [::snakebyte overlay](https://github.com/switch87/snakebyte-overlay) packages the
-Linux release as `media-gfx/cadcraft-bin` (prebuilt) and `media-gfx/cadcraft` (built from source):
+Linux release as `media-gfx/cadcraft-bin` (prebuilt) and `media-gfx/cadcraft` (built from source).
+`cadcraft-bin` downloads `cadcraft-<ver>-linux-x86_64.tar.gz` from this repository's releases, and
+Portage refuses the file unless it matches the overlay's `Manifest`. To check that it is the
+release's own file, run `sha256sum` on it in your `DISTDIR` and compare with the release's
+`SHA256SUMS.txt`.
 
 ```sh
 eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
