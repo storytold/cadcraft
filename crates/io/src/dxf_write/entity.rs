@@ -344,7 +344,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
 fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Insert(i) = &e.kind {
         w.s(0, "INSERT");
-        common(w, e, owner, paper, "AcDbBlockReference");
+        // A reference repeated in rows or columns (MINSERT, groups 70/71) is an AcDbMInsertBlock;
+        // readers that go by the marker draw only the first copy of an AcDbBlockReference.
+        let array = i.cols > 1 || i.rows > 1;
+        common(w, e, owner, paper, if array { "AcDbMInsertBlock" } else { "AcDbBlockReference" });
         if !i.attribs.is_empty() {
             w.i(66, 1);
         }
@@ -354,7 +357,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
         w.f(42, i.scale.y);
         w.f(43, i.scale.z);
         w.f(50, i.rotation.to_degrees());
-        if i.cols > 1 || i.rows > 1 {
+        if array {
             w.i(70, i64::from(i.cols));
             w.i(71, i64::from(i.rows));
             w.f(44, i.col_spacing);
