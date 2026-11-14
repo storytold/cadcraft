@@ -516,3 +516,41 @@ fn next_name_skips_names_in_use() {
     });
     assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d2");
 }
+
+#[test]
+fn a_fix_over_a_huge_component_is_refused_before_its_dense_factorisation() {
+    assert!(!super::qr_too_large(1_000, 1_000));
+    assert!(super::qr_too_large(3_000, 3_000));
+    assert!(super::qr_too_large(usize::MAX, 2));
+}
+
+#[test]
+fn a_spent_work_allowance_refuses_a_constraint_and_leaves_the_drawing() {
+    let mut d = Drawing::default();
+    let l = line(&mut d, (0.0, 0.0), (10.0, 0.01));
+    let before = d.clone();
+    let c = con(ConstraintKind::Horizontal, &[w(l)]);
+    assert!(matches!(add_within(&mut d, c.clone(), &SolveOptions::default(), &mut 0.0), Err(SolveError::TooLarge)));
+    assert_eq!(d, before);
+    let mut plenty = 1e9;
+    assert!(add_within(&mut d, c, &SolveOptions::default(), &mut plenty).is_ok());
+    assert!(plenty < 1e9, "the solve was charged");
+    let (_, stopped) = autoconstrain_report(&mut d, &[l], &InferOptions::default());
+    assert!(!stopped, "a small command never spends its allowance");
+}
+
+#[test]
+fn skipped_conflict_probes_do_not_spend_the_allowance() {
+    let mut d = Drawing::default();
+    let b = line(&mut d, (0.0, 0.0), (3.0, 4.0));
+    ok(&mut d, con(ConstraintKind::Fix, &[w(b)]));
+    let candidate = || con(ConstraintKind::Vertical, &[w(b)]);
+    // The whole cost of the conflicting candidate: its solve and its probes.
+    let mut rich = 1e12;
+    assert!(matches!(add_within(&mut d.clone(), candidate(), &SolveOptions::default(), &mut rich), Err(SolveError::Conflict { .. })));
+    let total = 1e12 - rich;
+    // Enough for the solve but not the probes: they are skipped, and what is left stays positive.
+    let mut work = total * 0.6;
+    assert!(matches!(add_within(&mut d, candidate(), &SolveOptions::default(), &mut work), Err(SolveError::Conflict { .. })));
+    assert!(work > 0.0 && work < total * 0.6, "{work} of {total}");
+}
