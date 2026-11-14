@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds_cached};
+use cadcraft_doc::{Block, BlockBoundsCache, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, TextStyle};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{AABB, RTree};
@@ -36,7 +36,10 @@ struct ChunkIx {
     serial: u32,
     key: usize,
     ents: Vec<Arc<Entity>>,
+    /// Selection bounds for each entity in the chunk (drawn geometry, tight lines).
     bounds: Vec<Bounds2>,
+    /// Bounds indexed in the R-tree (includes insertion points for snap candidate discovery).
+    tree_bounds: Vec<Bounds2>,
     /// Local indices of xlines and rays (unbounded; always candidates for pick and crossing).
     infinite: Vec<u32>,
 }
@@ -46,21 +49,22 @@ impl ChunkIx {
         let mut infinite = Vec::new();
         // One block-bounds cache for the chunk: references to the same block measure it once.
         let mut cache = BlockBoundsCache::default();
-        let bounds = items
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
-                    infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
-                }
-                entity_bounds_cached(d, e, 0, &mut cache)
-            })
-            .collect();
+        let mut bounds = Vec::with_capacity(items.len());
+        let mut tree_bounds = Vec::with_capacity(items.len());
+        for (i, e) in items.iter().enumerate() {
+            if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
+                infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
+            }
+            let sel_b = crate::select::select_bounds_cached(d, e, None, &mut cache);
+            let snap_b = crate::select::snap_bounds(d, e, Some(sel_b));
+            bounds.push(sel_b);
+            tree_bounds.push(snap_b);
+        }
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ChunkIx { serial, key, ents: items.to_vec(), bounds, infinite }
+        ChunkIx { serial, key, ents: items.to_vec(), bounds, tree_bounds, infinite }
     }
     fn items(&self) -> impl Iterator<Item = Item> + '_ {
-        self.bounds.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| {
+        self.tree_bounds.iter().enumerate().filter(|(_, b)| !b.is_empty()).map(|(i, b)| {
             GeomWithData::new(Rectangle::from_corners([b.min.x, b.min.y], [b.max.x, b.max.y]), (self.serial, u32::try_from(i).unwrap_or(u32::MAX)))
         })
     }
@@ -71,6 +75,7 @@ impl ChunkIx {
 pub struct SpatialIndex {
     store: EntityStore,
     blocks: BTreeMap<String, Arc<Block>>,
+    text_styles: Vec<TextStyle>,
     dim_styles: Vec<DimStyle>,
     dimscale: f64,
     /// Annotation scale factor and ANNOALLVISIBLE: annotative objects measure at that scale.
@@ -161,6 +166,7 @@ impl SpatialIndex {
         SpatialIndex {
             store: store.clone(),
             blocks: d.blocks.clone(),
+            text_styles: d.text_styles.clone(),
             dim_styles: d.dim_styles.clone(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno: anno_key(d),
@@ -178,6 +184,7 @@ impl SpatialIndex {
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
             && self.dim_styles == d.dim_styles
+            && self.text_styles == d.text_styles
             && self.anno == anno_key(d)
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
     }
@@ -609,5 +616,48 @@ mod tests {
             }
             prev = inc;
         }
+    }
+
+    #[test]
+    fn spatial_index_indexes_wrapped_lines_of_mtext() {
+        let mut d = Drawing::new_imperial();
+        for i in 0..MIN_INDEXED {
+            d.add(&Space::Model, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: v3(i as f64 * 10.0 + 1000.0, 1000.0), angle: 0.0 }))
+                .unwrap();
+        }
+        let mtext = cadcraft_doc::MText {
+            insert: v3(0.0, 0.0),
+            height: 5.0,
+            width: 50.0,
+            contents: "FIRST LINE SECOND LINE".into(),
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        let mtext_h = d.add(&Space::Model, Common::default(), EntityKind::MText(mtext)).unwrap();
+        assert!(index(&d, &Space::Model).is_some(), "spatial index must be active with > 256 entities");
+
+        // The second wrapped line is around y = -11. It must be found in picking through the spatial index.
+        let pick_line2 = select::pick(&d, &Space::Model, Vec2::new(5.0, -11.0), 0.5);
+        assert_eq!(pick_line2, Some(mtext_h), "picking second wrapped line must find MText via spatial index");
+
+        // Crossing window on the second wrapped line must select the MText.
+        let cross_line2 = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
+        assert_eq!(
+            select::select_window(&d, &Space::Model, cross_line2, true),
+            vec![mtext_h],
+            "crossing window on second line must select via spatial index"
+        );
+
+        // Normal window covering only the first line must not select the 2-line MText.
+        let line1_only = Bounds2::new(Vec2::new(-5.0, -7.0), Vec2::new(60.0, 2.0));
+        assert!(select::select_window(&d, &Space::Model, line1_only, false).is_empty(), "normal window covering only line 1 must not select");
+
+        // Normal window covering both lines must select the MText.
+        let both_lines = Bounds2::new(Vec2::new(-5.0, -25.0), Vec2::new(60.0, 2.0));
+        assert_eq!(select::select_window(&d, &Space::Model, both_lines, false), vec![mtext_h], "normal window covering all lines must select");
     }
 }
