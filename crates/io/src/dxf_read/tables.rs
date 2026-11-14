@@ -33,9 +33,9 @@ pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
                 [x, y, z] if x.code == 10 => HVal::Point(Vec3::new(x.f64(), y.f64(), z.f64())),
                 [x, y] if x.code == 10 => HVal::Point(Vec3::new(x.f64(), y.f64(), 0.0)),
                 [v] => match &v.value {
-                    cadcraft_dxf::Value::Real(r) => HVal::Real(*r),
-                    cadcraft_dxf::Value::Int(n) => HVal::Int(*n),
-                    cadcraft_dxf::Value::Bool(b) => HVal::Int(i64::from(*b)),
+                    craft_dxf::Value::Real(r) => HVal::Real(*r),
+                    craft_dxf::Value::Int(n) => HVal::Int(*n),
+                    craft_dxf::Value::Bool(b) => HVal::Int(i64::from(*b)),
                     other => HVal::Str(other.as_str()),
                 },
                 _ => continue,

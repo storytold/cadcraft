@@ -247,3 +247,21 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
 }
+
+/// A hot grip whose object was hidden since (HIDEOBJECTS, a layer turned off) is no longer
+/// painted, so clicking another hot grip must not stretch the hidden object along with it.
+#[test]
+fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for y in [0, 30] {
+        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
+    }
+    let handles = app.session.doc().unwrap().model.handles();
+    let (shown, hidden) = (handles[0], handles[1]);
+    app.session.set_selection(vec![shown, hidden]);
+    app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
+    app.run("hideobjects", serde_json::json!({ "handles": [hidden.hex()] })).unwrap();
+    app.session.set_selection(vec![shown, hidden]);
+    click_grip(&mut app, (shown, 0), false);
+    assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
+}
