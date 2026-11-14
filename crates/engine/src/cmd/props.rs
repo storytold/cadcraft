@@ -3,6 +3,7 @@
 
 mod change;
 mod chprop;
+mod dash_style;
 mod dash_units;
 mod matchprop;
 mod rename;
@@ -55,6 +56,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Format", "Text Style..."])
             .alias(&["st"])
             .params("{name, font?, bigFont?, height?, widthFactor?, oblique? (degrees), backwards?, upsideDown?, vertical?, annotative?, current?} → styles"),
+        CommandSpec::new("-style", "Text Style", run_style)
+            .params("(as STYLE)")
+            .interactive(|_| Ok(Box::new(dash_style::DashStyle::default()))),
         CommandSpec::new("style.list", "List Text Styles", run_style_list).params("{} → text styles").noundo(),
         CommandSpec::new("style.rename", "Rename Text Style", run_style_rename).params("{from, to}"),
         CommandSpec::new("style.delete", "Delete Text Style", run_style_delete).params("{name} (not Standard, the current style or one in use)"),
