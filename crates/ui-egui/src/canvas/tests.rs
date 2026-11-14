@@ -247,6 +247,8 @@ fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
     app.session.set_selection(vec![shown, hidden]);
     click_grip(&mut app, (shown, 0), false);
     assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
+}
+
 /// Verifies that command object-selection prompts draw only the pickbox square while idle and
 /// point prompts draw the crosshair lines.
 #[test]
