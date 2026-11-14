@@ -514,6 +514,7 @@
 	Match Layer	도면층 일치
 	Match Properties	특성 일치
 	Measure	길이 분할
+	Quick Measure	빠른 측정
 	Measure Distance	거리 측정
 	Measure Geometry	형상 측정
 	Merge Cells	셀 병합

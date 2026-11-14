@@ -273,6 +273,7 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     let inside = p.hover_pos.is_some_and(|at| nav.rect.contains(at) && ui.ctx().layer_id_at(at) == Some(ui.layer_id()) && nav.response.hovered());
     let on_menu = p.hover_pos.is_some_and(|at| over_canvas_menu(app, at));
     app.session.ctrl_down = p.mods.ctrl;
+    app.session.shift_down = p.mods.shift;
     ui.input(|i| {
         for event in &i.raw.events {
             if let egui::Event::MouseWheel { unit, .. } = event {
@@ -649,6 +650,7 @@ fn update_canvas_cursor(
     hover: Option<Pos2>,
 ) -> (Option<Vec2>, Option<crate::dyninput::Frame>) {
     let raw_world = hover.filter(|_| inside).map(|p| xf.to_world(p));
+    app.session.pointer = raw_world;
     let dyn_frame = crate::cmdline::dyn_frame(app);
     if let Some(w) = raw_world {
         let mut eff = effective_point(app, w, xf, ui.ctx());

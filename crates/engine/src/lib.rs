@@ -118,6 +118,16 @@ pub struct Session {
     /// change behavior on Ctrl — currently only ARC's "hold Ctrl to switch direction" — read
     /// this instead of receiving modifiers through `Input`, which stays free of UI state.
     pub ctrl_down: bool,
+    /// Whether Shift is held right now (from the UI, as `ctrl_down`): MEASUREGEOM Quick's
+    /// Shift+click adds an area to the ones measured.
+    pub shift_down: bool,
+    /// The point under the mouse before snaps and tracking move it (from the UI, overwritten
+    /// every frame; `None` when the mouse is off the drawing): MEASUREGEOM Quick measures there,
+    /// so a snap to an edge doesn't carry a click out of the area it was made in.
+    pub pointer: Option<Vec2>,
+    /// A token typed at the command line (or read from a script) is being taken: its point is
+    /// the one typed, not one near the mouse.
+    pub(crate) typing: bool,
     /// Origin of the point currently being fed by `input_snapped`; never reused by typed points.
     picked_viewport: Option<snap::ViewportPoint>,
     /// The last drawing comparison (COMPARE), drawn over the drawing it was made for.
@@ -189,6 +199,9 @@ impl Session {
             cursor: Vec2::ZERO,
             cursor_deferred: None,
             ctrl_down: false,
+            shift_down: false,
+            pointer: None,
+            typing: false,
             picked_viewport: None,
             compare: None,
             tracking: snap::tracking::Tracker::default(),
