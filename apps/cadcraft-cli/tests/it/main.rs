@@ -2,6 +2,7 @@ mod cli;
 mod drafting_spacing;
 mod help;
 mod mcp_connect;
+mod script_end;
 mod skipped_records;
 mod undrawn_entities;
 mod usage;
