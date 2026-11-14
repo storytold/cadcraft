@@ -1,3 +1,4 @@
+use super::draw::clip_infinite;
 use super::{Bounds2, CadApp, Shape, Stroke, Tokens, Vec2, Xf};
 
 /// Grid spacing adapted to the zoom: multiply the unit until lines are at least `min_px` apart.
@@ -34,14 +35,20 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let unit = if s.gridunit.x == 0.0 { s.snapunit.x } else { s.gridunit.x };
         let minor = adaptive(unit, xf.scale, 8.0);
         let major = minor * major_n;
+        // Keep the visible grid's checked ranges in the snap frame, then map its lines through
+        // the UCS and the view (including its twist); the painter clips them to the viewport.
+        let space = app.session.space();
+        let (origin, angle) = app.session.doc().map(|d| cadcraft_engine::snap::grid_frame_in(d, &space)).unwrap_or((Vec2::ZERO, 0.0));
+        let gb = Bounds2::from_points(wb.corners().map(|p| (p - origin).rotate(-angle)));
+        let world = |p: Vec2| origin + p.rotate(angle);
         let mut lines = Vec::new();
-        if let Some(((x0, x1), (y0, y1))) = grid_index_ranges(&wb, minor) {
-            // World-aligned lines across the visible box (the painter clips them to the rect).
+        if let Some(((x0, x1), (y0, y1))) = grid_index_ranges(&gb, minor) {
+            // Snap-frame lines across the visible box.
             for i in x0..=x1 {
                 let x = i as f64 * minor;
                 let is_major = (x / major).round() * major - x == 0.0 || ((x / major) - (x / major).round()).abs() < 1e-6;
                 lines.push(Shape::line_segment(
-                    [xf.to_screen(Vec2::new(x, wb.min.y)), xf.to_screen(Vec2::new(x, wb.max.y))],
+                    [xf.to_screen(world(Vec2::new(x, gb.min.y))), xf.to_screen(world(Vec2::new(x, gb.max.y)))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
@@ -49,19 +56,20 @@ pub(super) fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
                 let y = j as f64 * minor;
                 let is_major = ((y / major) - (y / major).round()).abs() < 1e-6;
                 lines.push(Shape::line_segment(
-                    [xf.to_screen(Vec2::new(wb.min.x, y)), xf.to_screen(Vec2::new(wb.max.x, y))],
+                    [xf.to_screen(world(Vec2::new(gb.min.x, y))), xf.to_screen(world(Vec2::new(gb.max.x, y)))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
         }
         p.extend(lines);
     }
-    // Axes through the origin.
-    if (wb.min.y..=wb.max.y).contains(&0.0) {
-        p.line_segment([xf.to_screen(Vec2::new(wb.min.x, 0.0)), xf.to_screen(Vec2::new(wb.max.x, 0.0))], Stroke::new(1.0, t.axis_x));
-    }
-    if (wb.min.x..=wb.max.x).contains(&0.0) {
-        p.line_segment([xf.to_screen(Vec2::new(0.0, wb.min.y)), xf.to_screen(Vec2::new(0.0, wb.max.y))], Stroke::new(1.0, t.axis_y));
+    // The current UCS's X and Y axes through its origin.
+    let u = app.session.input_ucs();
+    let o = u.origin.xy();
+    for (dir, color) in [(u.x.xy(), t.axis_x), (u.y.xy(), t.axis_y)] {
+        if let Some(seg) = clip_infinite(xf, o, dir, false) {
+            p.line_segment(seg, Stroke::new(1.0, color));
+        }
     }
 }
 
@@ -78,7 +86,9 @@ fn draw_iso_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         }
         d *= 5.0;
     }
-    let (origin, angle) = app.session.doc().map(cadcraft_engine::snap::grid_frame).unwrap_or((Vec2::ZERO, 0.0));
+    // In the current UCS (SNAPBASE from its origin, SNAPANG from its X axis).
+    let space = app.session.space();
+    let (origin, angle) = app.session.doc().map(|d| cadcraft_engine::snap::grid_frame_in(d, &space)).unwrap_or((Vec2::ZERO, 0.0));
     let lines = iso::grid_lines(xf.world_bounds(), d, origin, angle, s.gridmajor);
     p.extend(
         lines.into_iter().map(|l| {
