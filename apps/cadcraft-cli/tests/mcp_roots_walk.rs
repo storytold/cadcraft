@@ -94,6 +94,14 @@ impl Server {
         Some(reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string())
     }
 
+    /// Like [`Self::tool`] for a call that must work: an error reply, or a result flagged as an
+    /// error, fails the test.
+    fn tool_ok(&mut self, name: &str, arguments: Value) -> String {
+        let reply = self.request("tools/call", json!({"name": name, "arguments": arguments})).expect("the server answered");
+        assert!(reply.get("error").is_none() && reply["result"]["isError"] != true, "{name} should have worked: {reply}");
+        reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    }
+
     /// Run an engine command through the `execute` tool.
     fn execute(&mut self, command: &str, params: Value) -> Option<String> {
         self.tool("execute", json!({"command": command, "params": params}))
@@ -584,7 +592,7 @@ fn a_drawing_cannot_reach_files_it_names_outside_the_roots() {
     let opened = server.tool("open", json!({"path": s(&host)})).unwrap();
     let images = server.execute("image", json!({})).unwrap();
     let xrefs = server.execute("xref", json!({})).unwrap();
-    server.tool("render", json!({})).unwrap();
+    server.tool_ok("render", json!({}));
     let touched = f.touched();
     assert!(touched.is_empty(), "{touched:?}\nopen: {opened}\nimage: {images}\nxref: {xrefs}");
     assert!(images.contains("canary.png") && !images.contains("\"Loaded\""), "the image stays unloaded: {images}");
@@ -615,8 +623,8 @@ fn a_font_linked_beside_a_drawing_is_not_followed_out() {
     f.reset();
     std::fs::write(f.outside.join("walkfont.shx"), b"AutoCAD-86 shapes 1.0").unwrap();
     f.watch();
-    server.tool("open", json!({"path": s(&host)})).unwrap();
-    server.tool("render", json!({})).unwrap();
+    server.tool_ok("open", json!({"path": s(&host)}));
+    server.tool_ok("render", json!({}));
     let touched = f.touched();
     assert!(touched.is_empty(), "{touched:?}");
 }
@@ -681,8 +689,8 @@ fn a_font_beside_a_drawing_inside_the_roots_is_used() {
     let before = std::fs::metadata(&font).unwrap().accessed().unwrap();
     let roots = vec!["--automation-read-root".into(), s(&f.base.join("in")), "--automation-write-root".into(), s(&f.base.join("out"))];
     let mut server = Server::start(&roots, &f.outside.join("cwd"), &f.outside.join("config"));
-    server.tool("open", json!({"path": s(&host)})).unwrap();
-    server.tool("render", json!({})).unwrap();
+    server.tool_ok("open", json!({"path": s(&host)}));
+    server.tool_ok("render", json!({}));
     if f.sees_reads {
         assert_ne!(std::fs::metadata(&font).unwrap().accessed().unwrap(), before, "the font was read");
     }
@@ -714,8 +722,8 @@ fn a_font_link_leading_out_does_not_cost_the_fonts_beside_it() {
     std::fs::write(f.outside.join("walkbad.shx"), b"AutoCAD-86 shapes 1.0").unwrap();
     std::os::unix::fs::symlink(f.outside.join("walkbad.shx"), f.base.join("in/walkbad.shx")).unwrap();
     f.watch();
-    server.tool("open", json!({"path": s(&host)})).unwrap();
-    server.tool("render", json!({})).unwrap();
+    server.tool_ok("open", json!({"path": s(&host)}));
+    server.tool_ok("render", json!({}));
     let touched = f.touched();
     assert!(touched.is_empty(), "{touched:?}");
     if f.sees_reads {

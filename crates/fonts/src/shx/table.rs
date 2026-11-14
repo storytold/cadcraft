@@ -225,7 +225,7 @@ pub fn generation() -> u64 {
 /// The SHX font file a style or linetype names, if CADCraft can find and read it.
 pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     let mut k = key(name)?;
-    let (provider, dirs, generation) = {
+    let (provider, folders, guarded, generation) = {
         let t = table();
         // The font map renames once (a map can't loop).
         if let Some(to) = t.map.iter().find(|(from, _)| *from == k).and_then(|(_, to)| key(to)) {
@@ -237,12 +237,20 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         if let Some(r) = t.resolved.get(&k) {
             return r.clone();
         }
-        let guards = |d: &PathBuf| t.drawing_guards.get(d).map(|g| g.iter().map(|(_, g)| g.clone()).collect()).unwrap_or_default();
-        let drawing = t.drawing_dirs.iter().map(|d| (d.clone(), guards(d)));
-        let dirs: Vec<(PathBuf, Vec<OpenGuard>)> =
-            drawing.chain(t.font_dirs.iter().chain(t.search_path.iter()).map(|d| (d.clone(), Vec::new()))).collect();
-        (t.provider.clone(), dirs, t.generation)
+        let folders: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
+        let guarded: Vec<(PathBuf, Vec<OpenGuard>)> =
+            t.drawing_guards.iter().map(|(d, g)| (d.clone(), g.iter().map(|(_, g)| g.clone()).collect())).collect();
+        (t.provider.clone(), folders, guarded, t.generation)
     };
+    // A guard belongs to the folder, however the search reaches it: a font folder or the search path
+    // naming the same folder as a drawing's is held to the same guards.
+    let dirs: Vec<(PathBuf, Vec<OpenGuard>)> = folders
+        .into_iter()
+        .map(|d| {
+            let guards = guarded.iter().filter(|(g, _)| same_folder(g, &d)).flat_map(|(_, g)| g.iter().cloned()).collect();
+            (d, guards)
+        })
+        .collect();
     let font = provider
         .and_then(|p| p.load(&k))
         .or_else(|| read_from(&dirs, &k))
@@ -266,6 +274,11 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     t.loaded_bytes += size;
     t.resolved.insert(k, font.clone());
     font
+}
+
+/// Do `a` and `b` name the same folder, as spelled or once the file system has resolved them?
+fn same_folder(a: &Path, b: &Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// Most directory entries looked at for a font file whose name differs only in case.

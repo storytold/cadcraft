@@ -54,6 +54,7 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
         let want = dir.join(file).to_string_lossy().to_ascii_lowercase();
         assert!(asked.iter().any(|a| a.to_string_lossy().to_ascii_lowercase() == want), "the guard was asked about {file}: {asked:?}");
     }
+    drop(asked);
     // The folder added again without a guard (another session in the process) keeps its guard.
     shx::add_drawing_dir(&dir);
     assert!(shx::find("cadcraft-guard-bad.shx").is_none());
@@ -65,5 +66,10 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
     shx::add_drawing_dir_guarded(&dir, "second", Arc::new(|_: &Path| true));
     assert!(shx::find("cadcraft-guard-ok.shx").is_some());
     assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "the first owner's guard still holds");
+    // The same folder named as a font folder or on the search path is held to its guards too.
+    shx::set_font_dirs(vec![dir.clone()]);
+    shx::set_search_path(&dir.to_string_lossy());
+    assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "a font folder or the search path doesn't lift the guard");
+    assert!(shx::find("cadcraft-guard-ok.shx").is_some());
     std::fs::remove_dir_all(&dir).unwrap();
 }
