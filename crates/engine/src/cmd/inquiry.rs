@@ -13,6 +13,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod arcs;
 mod loops;
+mod proxy;
 mod regions;
 mod shapes;
 mod usage;
@@ -49,6 +50,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("time", "Time", run_time).menu(&["Tools", "Inquiry", "Time"]).noundo(),
         CommandSpec::new("status", "Status", run_status).menu(&["Tools", "Inquiry", "Status"]).noundo(),
         CommandSpec::new("drawing.inspect", "Inspect Drawing", run_inspect).params("{entities?: bool, limit?: n}").noundo(),
+        CommandSpec::new("drawing.readability", "Drawing Readability", run_readability)
+            .params("{} → {modelEntities, layoutEntities, blockDefs, anonymousDefs, anonymousRefs, missingBlockRefs, \
+                     proxy: {acadProxy, ole2Frame, arcDimension, other, withDrawable, classes: [{class, app?, count, drawable, records, unparsed, drawableChunks}]}, \
+                     textsInModel, textsInLayouts, textsInBlocks (per placed reference), textsInBlockDefs (per definition), \
+                     unreachable: [{kind, code, count, reason, …missingBlock: blockNames, handles (≤256), layers, insertPointsBBox}], \
+                     truncated, selfCheck, message}")
+            .noundo(),
         CommandSpec::new("entities", "Query Entities", run_entities)
             .params("{type?, layer?, selected?: bool (default false; true = current selection in active space), window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit?, offset?} → {count (all matches), returned, offset, entities}")
             .noundo(),
@@ -56,7 +64,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
         CommandSpec::new("loops", "Implied Loops", loops::run).params(loops::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
-            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
+            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), \
+                     scope?: \"space\" (default) | \"nested\" (also the texts inside the blocks the space's references draw, \
+                     once per placed copy; attribute definitions are not drawn, a reference's own attributes are), \
+                     limit? (default 200), offset?} \
+                     → {count (all matches), returned, offset, truncated, texts: [{handle, type, layer, raw (as stored, format codes intact), \
+                     text (as drawn: formatting and %% codes removed), at, height, rotation (degrees), style, tag? (attributes), \
+                     source: \"space\" | \"block:<name>\", depth (0 in the space, 1 inside a placed reference, deeper in a nested block)}]}")
             .noundo(),
         CommandSpec::new("countlist", "Count List", count::run_countlist)
             .params("{space?: all (default)|current|model|<layout>, nested?: bool} → per-block counts, as COUNT")
@@ -559,8 +573,18 @@ fn run_status(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({ "message": msg }))
 }
 
-fn entity_summary(e: &cadcraft_doc::Entity) -> Value {
-    json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "transparency": super::props::transparency_value(e.common.transparency), "geometry": e.kind })
+/// An entity as the query commands report it. An unmodelled entity with graphics data carries a
+/// `proxy` object: its class and the frames of its graphics cache, counted by type — what tells a
+/// proxy that draws nothing (transforms and state only) from one with real content.
+pub(super) fn entity_summary(d: &cadcraft_doc::Drawing, e: &cadcraft_doc::Entity) -> Value {
+    let mut v = json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "transparency": super::props::transparency_value(e.common.transparency), "geometry": e.kind });
+    if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind
+        && let Some(p) = proxy::summary(d, u)
+        && let Some(o) = v.as_object_mut()
+    {
+        o.insert("proxy".into(), p);
+    }
+    v
 }
 
 fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -569,10 +593,16 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
     let space = st.space.clone();
     let ext = d.extents(&space);
-    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
-            *counts.entry(e.kind.type_name()).or_default() += 1;
+            // An unmodelled entity counts under its own DXF name (ACAD_PROXY_ENTITY, OLE2FRAME,
+            // ARC_DIMENSION, …), not all together as "Proxy".
+            let ty = match &e.kind {
+                cadcraft_doc::EntityKind::Unknown(u) => u.dxf_type.clone(),
+                _ => e.kind.type_name().to_string(),
+            };
+            *counts.entry(ty).or_default() += 1;
         }
     }
     let mut out = json!({
@@ -602,7 +632,7 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "entities", true)
         && let (Some(o), Some(store)) = (out.as_object_mut(), d.space(&space))
     {
-        o.insert("entities".into(), Value::Array(store.iter().take(limit).map(|e| entity_summary(e)).collect()));
+        o.insert("entities".into(), Value::Array(store.iter().take(limit).map(|e| entity_summary(d, e)).collect()));
     }
     Ok(out)
 }
@@ -645,14 +675,302 @@ fn run_entities(s: &mut Session, p: &Value) -> Result<Value> {
         .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
         .filter(|e| window.as_ref().is_none_or(|w| crate::select::in_window(d, e, None, w, crossing, tol)))
         .collect();
-    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| entity_summary(e)).collect();
+    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| entity_summary(d, e)).collect();
     // `count` is every match; `returned` is this page of them (`offset`, `limit`).
     Ok(json!({ "count": matches.len(), "returned": page.len(), "offset": offset, "entities": page }))
+}
+
+/// One readable text, wherever it is drawn from: its content as stored (`raw`) and as drawn
+/// (`text`), where and how it is drawn, and where it came from (`source` "space", or the block a
+/// reference drew it from; `depth` 0 in the space itself, 1 inside a placed reference, deeper in a
+/// block that block holds).
+#[derive(Clone)]
+struct TextHit {
+    handle: Handle,
+    ty: &'static str,
+    layer: String,
+    raw: String,
+    text: String,
+    at: Vec3,
+    height: f64,
+    rotation: f64,
+    style: String,
+    tag: Option<String>,
+    source: String,
+    depth: u32,
+}
+
+/// `s` as drawn: its `%%d`-style control codes become the characters they stand for.
+fn plain_text(s: &str) -> String {
+    cadcraft_fonts::decode_controls(s).into_iter().map(|(c, _, _)| c).collect()
+}
+
+/// A text as it is stored: format codes (`\P`, `%%c`, …) intact.
+fn raw_text(s: &str) -> String {
+    s.to_string()
+}
+
+impl TextHit {
+    /// The hit as TEXTS reports it.
+    fn json(&self) -> Value {
+        let mut v = json!({
+            "handle": self.handle.hex(), "type": self.ty, "layer": self.layer,
+            "raw": self.raw, "text": self.text,
+            "at": [self.at.x, self.at.y], "height": self.height,
+            "rotation": self.rotation.to_degrees(), "style": self.style,
+            "source": self.source, "depth": self.depth,
+        });
+        if let (Some(t), Some(o)) = (&self.tag, v.as_object_mut()) {
+            o.insert("tag".into(), json!(t));
+        }
+        v
+    }
+}
+
+/// The readable texts `e` holds in the space itself: a text, a multiline text, a multileader's,
+/// and the visible attributes of a block reference (an attribute definition is not drawn — only a
+/// reference's own attributes are, and those live on the reference).
+fn texts_of(e: &Entity) -> Vec<TextHit> {
+    let hit = |ty: &'static str, raw: String, text: String, at: Vec3, height: f64, rotation: f64, style: &str, tag: Option<String>| TextHit {
+        handle: e.handle,
+        ty,
+        layer: e.common.layer.clone(),
+        raw,
+        text,
+        at,
+        height,
+        rotation,
+        style: style.to_string(),
+        tag,
+        source: "space".into(),
+        depth: 0,
+    };
+    match &e.kind {
+        EntityKind::Text(t) => vec![hit("Text", raw_text(&t.value), plain_text(&t.value), t.insert, t.height, t.rotation, &t.style, None)],
+        EntityKind::MText(t) => {
+            vec![hit("MText", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None)]
+        }
+        EntityKind::Insert(i) => i
+            .attribs
+            .iter()
+            .filter(|a| !a.invisible)
+            .map(|a| {
+                // A multiline attribute keeps its formatted contents apart; the raw reading is
+                // the stored string, codes intact, until the value was edited past them.
+                let raw = match &a.multiline {
+                    Some(m) if m.read_as == a.text.value => m.mtext.contents.clone(),
+                    _ => raw_text(&a.text.value),
+                };
+                hit(
+                    "Attribute",
+                    raw,
+                    plain_text(&a.text.value),
+                    a.text.insert,
+                    a.text.height,
+                    a.text.rotation,
+                    &a.text.style,
+                    Some(a.tag.clone()),
+                )
+            })
+            .collect(),
+        EntityKind::MLeader(m) => match &m.text {
+            Some(t) => {
+                vec![hit("MLeader", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None)]
+            }
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// How far the texts a block reference tree can draw may go: past this many levels of nested
+/// references the walk stops and says so (the drawing's own cap on nesting, `MAX_BLOCK_DEPTH`,
+/// bounds it too).
+const MAX_TEXT_DEPTH: u32 = 32;
+
+/// Text hits the walk gives up collecting (a hostile drawing of self-nesting blocks); the counts
+/// past it are partial, and the result says so.
+const MAX_TEXT_HITS: usize = 250_000;
+
+/// What the nested walk over a space's block references found: the texts its references draw,
+/// and whether it had to give up, with why (a reference to a block the drawing does not define
+/// draws nothing; DRAWING.READABILITY counts those separately).
+struct NestedTexts {
+    hits: Vec<TextHit>,
+    truncated: bool,
+    depth_capped: bool,
+}
+
+/// The nested walk's state: the drawing, the filter a hit passes, and the guards.
+struct Walk<'a> {
+    d: &'a cadcraft_doc::Drawing,
+    keep: &'a dyn Fn(&TextHit) -> bool,
+    out: Vec<TextHit>,
+    truncated: bool,
+    depth_capped: bool,
+    work: u64,
+}
+
+impl Walk<'_> {
+    /// A text transformed from the block it is drawn in into the space: its point through `m`, its
+    /// size by the transform's scale, its direction along the transformed baseline.
+    fn moved(mut t: TextHit, m: &cadcraft_geom::Mat3) -> TextHit {
+        let at = m.apply(Vec2::new(t.at.x, t.at.y));
+        t.at = Vec3::new(at.x, at.y, t.at.z);
+        t.height *= m.scale_factor();
+        t.rotation = m.apply_vec(Vec2::new(t.rotation.cos(), t.rotation.sin())).angle();
+        t
+    }
+
+    /// A hit transformed into the space first, then kept when it passes the filter — a window
+    /// filter speaks space coordinates, and the hit it is given does not yet. Past the collection
+    /// cap the walk gives up (and says so) rather than grow without bound.
+    fn place(&mut self, h: TextHit, world: &cadcraft_geom::Mat3) {
+        self.work += 1;
+        if self.work > MAX_TEXT_HITS as u64 {
+            self.truncated = true;
+            return;
+        }
+        if self.out.len() >= MAX_TEXT_HITS {
+            self.truncated = true;
+            return;
+        }
+        let h = Self::moved(h, world);
+        if (self.keep)(&h) {
+            self.out.push(h);
+        }
+    }
+
+    /// One block reference, at `level` (the depth it sits at: a top-level one is 0), placed by `m`
+    /// out of the coordinates of `owner` (the space, or the block holding it): the copies a MINSERT
+    /// grid places, the reference's own attributes (a top-level one's are the space's texts,
+    /// already collected), and its block's objects one deeper. Every visit is charged, drawn or
+    /// not, so a hostile grid of a generous definition cannot wander past the budget.
+    fn reference(&mut self, e: &Entity, level: u32, m: cadcraft_geom::Mat3, owner: &str) {
+        let EntityKind::Insert(i) = &e.kind else { return };
+        // A nested reference's own attributes sit where the reference sits: their points are the
+        // coordinates of the block holding the reference, the insert's own placement already
+        // included. So they take `m` alone, not the reference's full placement, and they are
+        // collected once per placed copy of the reference (the renderer draws the set once per
+        // copy, too — and draws it even when the definition is missing, which only the contents
+        // miss). A top-level one's are the space's own texts, already collected.
+        if level >= 1 {
+            for a in i.attribs.iter().filter(|a| !a.invisible) {
+                self.work += 1;
+                if self.work > MAX_TEXT_HITS as u64 {
+                    self.truncated = true;
+                    return;
+                }
+                let h = TextHit {
+                    handle: e.handle,
+                    ty: "Attribute",
+                    layer: e.common.layer.clone(),
+                    raw: match &a.multiline {
+                        Some(m) if m.read_as == a.text.value => m.mtext.contents.clone(),
+                        _ => raw_text(&a.text.value),
+                    },
+                    text: plain_text(&a.text.value),
+                    at: a.text.insert,
+                    height: a.text.height,
+                    rotation: a.text.rotation,
+                    style: a.text.style.clone(),
+                    tag: Some(a.tag.clone()),
+                    source: format!("block:{owner}"),
+                    depth: level,
+                };
+                self.place(h, &m);
+            }
+        }
+        let Some(def) = self.d.block(&i.block).cloned() else { return };
+        let jt = i.transform(def.base.xy());
+        for row in 0..i.rows.max(1) {
+            for col in 0..i.cols.max(1) {
+                self.work += 1;
+                if self.work > MAX_TEXT_HITS as u64 {
+                    self.truncated = true;
+                    return;
+                }
+                // The grid's offsets run along the reference's own axes, in the coordinates of the
+                // block holding it, not scaled with it.
+                let off = Vec2::new(f64::from(col) * i.col_spacing, f64::from(row) * i.row_spacing);
+                let off = Vec2::new(off.x * i.rotation.cos() - off.y * i.rotation.sin(), off.x * i.rotation.sin() + off.y * i.rotation.cos());
+                let world = m.then_before(cadcraft_geom::Mat3::translate(off)).then_before(jt);
+                let source = format!("block:{}", def.name);
+                for inner in def.entities.iter() {
+                    self.work += 1;
+                    if self.work > MAX_TEXT_HITS as u64 {
+                        self.truncated = true;
+                        return;
+                    }
+                    if let EntityKind::Insert(_) = &inner.kind {
+                        if level + 1 > MAX_TEXT_DEPTH.min(cadcraft_doc::MAX_BLOCK_DEPTH as u32) {
+                            self.depth_capped = true;
+                            continue;
+                        }
+                        self.reference(inner, level + 1, world, &def.name);
+                    } else {
+                        for h in texts_in_definition(inner, &source, level + 1) {
+                            self.place(h, &world);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The texts the block references of `store` draw, one set per placed copy, transformed into the
+/// space's coordinates — what the sheet shows beyond the space's own objects. Attribute
+/// definitions are not drawn by a reference, so they never appear; the attributes a reference
+/// carries itself do, at the depth the reference sits at.
+fn nested_texts(d: &cadcraft_doc::Drawing, store: &cadcraft_doc::EntityStore, keep: &dyn Fn(&TextHit) -> bool) -> NestedTexts {
+    let mut w = Walk { d, keep, out: Vec::new(), truncated: false, depth_capped: false, work: 0 };
+    for e in store.iter() {
+        if matches!(&e.kind, EntityKind::Insert(_)) {
+            w.reference(e, 0, cadcraft_geom::Mat3::IDENTITY, "space");
+        }
+    }
+    NestedTexts { hits: w.out, truncated: w.truncated, depth_capped: w.depth_capped }
+}
+
+/// The texts an entity of a block definition holds (attribute definitions excluded: a reference
+/// does not draw them), tagged with the definition they sit in.
+fn texts_in_definition(e: &Entity, source: &str, depth: u32) -> Vec<TextHit> {
+    let hit = |ty: &'static str, raw: String, text: String, at: Vec3, height: f64, rotation: f64, style: &str| TextHit {
+        handle: e.handle,
+        ty,
+        layer: e.common.layer.clone(),
+        raw,
+        text,
+        at,
+        height,
+        rotation,
+        style: style.to_string(),
+        tag: None,
+        source: source.to_string(),
+        depth,
+    };
+    match &e.kind {
+        EntityKind::Text(t) => vec![hit("Text", raw_text(&t.value), plain_text(&t.value), t.insert, t.height, t.rotation, &t.style)],
+        EntityKind::MText(t) => {
+            vec![hit("MText", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style)]
+        }
+        EntityKind::MLeader(m) => match &m.text {
+            Some(t) => {
+                vec![hit("MLeader", raw_text(&t.contents), cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style)]
+            }
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
 }
 
 /// TEXTS: the readable text of the space's texts, multiline texts, block attributes and
 /// multileaders, with where they are, filtered by content, layer and a window around their
 /// insertion points. Read-only (FIND selects and can replace; this only reports).
+///
+/// `scope: "nested"` also reads the texts inside the blocks the space's references draw, once per
+/// placed copy — the number of them on the sheet, not the number of definitions that hold them.
 fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "texts";
     let given = |k: &str| p.get(k).filter(|v| !v.is_null());
@@ -666,6 +984,11 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let contains = text("contains")?;
     let layer = text("layer")?;
+    let scope = match p.get("scope").and_then(Value::as_str).unwrap_or("space") {
+        "space" => false,
+        "nested" => true,
+        other => return Err(bad(CMD, format!("`scope` must be \"space\" or \"nested\", got {other:?}"))),
+    };
     let window = given("window")
         .map(|w| {
             let corners: Option<Vec<Vec2>> = w.as_array().filter(|a| a.len() == 2).and_then(|a| a.iter().map(point_value).collect());
@@ -678,51 +1001,350 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = count("limit", 200)?;
     let offset = count("offset", 0)?;
     let st = s.state()?;
-    let Some(store) = st.doc.space(&st.space) else { return Ok(json!({ "count": 0, "returned": 0, "offset": offset, "texts": [] })) };
-    let mut found: Vec<Value> = Vec::new();
+    let Some(store) = st.doc.space(&st.space) else {
+        return Ok(json!({ "count": 0, "returned": 0, "offset": offset, "truncated": false, "texts": [] }));
+    };
+    let keep = |h: &TextHit| -> bool {
+        !h.text.trim().is_empty()
+            && layer.as_ref().is_none_or(|l| h.layer.to_lowercase() == *l)
+            && contains.as_ref().is_none_or(|c| h.text.trim().to_lowercase().contains(c.as_str()))
+            && window.as_ref().is_none_or(|w| w.contains(Vec2::new(h.at.x, h.at.y)))
+    };
+    let mut found: Vec<TextHit> = Vec::new();
     for e in store.iter() {
-        if layer.as_ref().is_some_and(|l| e.common.layer.to_lowercase() != *l) {
-            continue;
-        }
-        let mut push = |ty: &str, value: String, at: cadcraft_geom::Vec3, height: f64, rotation: f64, style: &str, tag: Option<&str>| {
-            let value = value.trim().to_string();
-            if value.is_empty()
-                || contains.as_ref().is_some_and(|c| !value.to_lowercase().contains(c.as_str()))
-                || window.as_ref().is_some_and(|w| !w.contains(Vec2::new(at.x, at.y)))
-            {
-                return;
-            }
-            let mut v = json!({
-                "handle": e.handle.hex(), "type": ty, "layer": e.common.layer, "text": value,
-                "at": [at.x, at.y], "height": height, "rotation": rotation.to_degrees(), "style": style,
-            });
-            if let (Some(t), Some(o)) = (tag, v.as_object_mut()) {
-                o.insert("tag".into(), json!(t));
-            }
-            found.push(v);
-        };
-        match &e.kind {
-            EntityKind::Text(t) => push("Text", t.value.clone(), t.insert, t.height, t.rotation, &t.style, None),
-            EntityKind::MText(t) => push("MText", cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None),
-            EntityKind::Insert(i) => {
-                for a in i.attribs.iter().filter(|a| !a.invisible) {
-                    push("Attribute", a.text.value.clone(), a.text.insert, a.text.height, a.text.rotation, &a.text.style, Some(&a.tag));
-                }
-            }
-            EntityKind::MLeader(m) => {
-                if let Some(t) = &m.text {
-                    push("MLeader", cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None);
-                }
-            }
-            _ => {}
-        }
+        found.extend(texts_of(e).into_iter().filter(|h| keep(h)));
+    }
+    let mut truncated = false;
+    if scope {
+        let n = nested_texts(&st.doc, store, &keep);
+        found.extend(n.hits);
+        // A depth-capped walk is as partial as a hit-capped one: say so either way.
+        truncated = n.truncated || n.depth_capped;
     }
     let n = found.len();
-    let page: Vec<Value> = found.into_iter().skip(offset).take(limit).collect();
-    Ok(json!({ "count": n, "returned": page.len(), "offset": offset, "texts": page }))
+    let page: Vec<Value> = found.iter().skip(offset).take(limit).map(TextHit::json).collect();
+    Ok(json!({ "count": n, "returned": page.len(), "offset": offset, "truncated": truncated, "texts": page }))
 }
 
 mod count;
+
+/// DRAWING.READABILITY: what a reader can and cannot reach in this drawing — the counts behind
+/// "read everything before concluding the drawing lacks it" (#1440's discipline, for the whole
+/// drawing rather than one analysis): the entities, the block definitions (anonymous ones
+/// included) and how far references reach, the proxies and whether their graphics draw anything,
+/// the texts in the spaces against the ones inside blocks, and what stays out of reach, with the
+/// reason.
+fn run_readability(s: &mut Session, _p: &Value) -> Result<Value> {
+    let st = s.state()?;
+    let d = &st.doc;
+    let model_entities = d.model.len();
+    let layout_entities: usize = d.layouts.iter().map(|l| l.entities.len()).sum();
+    let block_defs = d.blocks.len();
+    let anonymous_defs = d.blocks.values().filter(|b| b.anonymous || b.name.starts_with('*')).count();
+    let block_entities: usize = d.blocks.values().map(|b| b.entities.len()).sum();
+
+    // References as placed copies (a MINSERT grid counts per cell), nested ones included: the
+    // anonymous ones the drawing reaches through, and the ones that point at no definition.
+    fn is_anonymous(d: &cadcraft_doc::Drawing, name: &str) -> bool {
+        d.block(name).is_some_and(|b| b.anonymous || b.name.starts_with('*'))
+    }
+    fn count_refs(d: &cadcraft_doc::Drawing, x: &mut count::Expander, name: &str, copies: u64, anonymous: &mut u64, missing: &mut u64, placed: &mut std::collections::BTreeMap<String, u64>) {
+        if d.block(name).is_none() {
+            *missing = missing.saturating_add(copies);
+            return;
+        }
+        if is_anonymous(d, name) {
+            *anonymous = anonymous.saturating_add(copies);
+        }
+        let p = placed.entry(name.to_string()).or_default();
+        *p = p.saturating_add(copies);
+        for (k, v) in x.expand(name, cadcraft_doc::MAX_BLOCK_DEPTH.saturating_sub(1)).iter() {
+            if d.block(k).is_none() {
+                *missing = missing.saturating_add(copies.saturating_mul(*v));
+                continue;
+            }
+            if is_anonymous(d, k) {
+                *anonymous = anonymous.saturating_add(copies.saturating_mul(*v));
+            }
+            let p = placed.entry(k.clone()).or_default();
+            *p = p.saturating_add(copies.saturating_mul(*v));
+        }
+    }
+    let mut x = count::Expander::new(d);
+    let mut anonymous_refs = 0u64;
+    let mut missing_refs = 0u64;
+    // The definitions a placed reference reaches, with the copies they are placed in: the proxy
+    // tallies below weigh a definition's unmodelled entities by them.
+    let mut placed: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    // The missing references as placed, for the entry that says what they are: which block, which
+    // entities place one, on which layers, and the envelope of their insertion points — the
+    // definition is missing, so its placed extent is unknowable; where its points sit says how
+    // much of the sheet the unread content covers (nested-only missing references have no placed
+    // entity of their own and keep to the count).
+    let mut missing_at: Vec<(String, Handle, String, &cadcraft_doc::Insert)> = Vec::new();
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
+        if let EntityKind::Insert(i) = &e.kind {
+            let name = x.canonical(&i.block);
+            if d.block(&name).is_none() {
+                missing_at.push((name.clone(), e.handle, e.common.layer.clone(), i));
+            }
+            let copies = u64::from(i.cols.max(1)) * u64::from(i.rows.max(1));
+            count_refs(d, &mut x, &name, copies, &mut anonymous_refs, &mut missing_refs, &mut placed);
+        }
+    }
+
+    // The proxies of the spaces: by class, and whether their graphics cache draws anything.
+    #[derive(Default)]
+    struct ClassTally {
+        count: u64,
+        with_drawable: u64,
+        records: u64,
+        unparsed: u64,
+        histogram: BTreeMap<String, u64>,
+    }
+    let mut classes: BTreeMap<(String, String), ClassTally> = BTreeMap::new();
+    let mut acad_proxy = 0u64;
+    let mut ole_frames = 0u64;
+    let mut arc_dimensions = 0u64;
+    let mut other_unknowns = 0u64;
+    let mut with_drawable = 0u64;
+    let mut no_graphics = 0u64;
+    let mut unparsed_graphics = 0u64;
+    // One unmodelled entity, `weight` placed copies of it: a definition's entities count once per
+    // placed instance of the definition (weighted by the expansion above), since an unmodelled
+    // entity inside a placed block shows just as little as one in the space.
+    let mut tally = |e: &cadcraft_doc::Entity, weight: u64| {
+        let EntityKind::Unknown(u) = &e.kind else { return };
+        match u.dxf_type.to_ascii_uppercase().as_str() {
+            "ACAD_PROXY_ENTITY" => acad_proxy = acad_proxy.saturating_add(weight),
+            "OLE2FRAME" => ole_frames = ole_frames.saturating_add(weight),
+            "ARC_DIMENSION" => arc_dimensions = arc_dimensions.saturating_add(weight),
+            _ => other_unknowns = other_unknowns.saturating_add(weight),
+        }
+        let Some(f) = proxy::frames(&u.tags) else {
+            // A proxy without any graphics data can neither be read nor judged.
+            no_graphics = no_graphics.saturating_add(weight);
+            return;
+        };
+        if f.drawable > 0 {
+            with_drawable = with_drawable.saturating_add(weight);
+        } else if f.records == 0 && f.unparsed > 0 {
+            // The graphics bytes are there, but not one frame of them parses: neither drawable
+            // nor a clean "no graphics", so the report names them on their own.
+            unparsed_graphics = unparsed_graphics.saturating_add(weight);
+        }
+        let app = d.foreign.proxy_class(&u.tags).unwrap_or_default().to_string();
+        let t = classes.entry((u.dxf_type.clone(), app)).or_default();
+        t.count = t.count.saturating_add(weight);
+        if f.drawable > 0 {
+            t.with_drawable = t.with_drawable.saturating_add(weight);
+        }
+        t.records = t.records.saturating_add(f.records.saturating_mul(weight));
+        t.unparsed = t.unparsed.saturating_add(f.unparsed.saturating_mul(weight));
+        for (k, v) in f.histogram {
+            let h = t.histogram.entry(k).or_default();
+            *h = h.saturating_add(v.saturating_mul(weight));
+        }
+    };
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
+        tally(e, 1);
+    }
+    for (name, weight) in &placed {
+        if let Some(b) = d.block(name) {
+            for e in b.entities.iter() {
+                tally(e, *weight);
+            }
+        }
+    }
+
+    // The texts: in the spaces themselves, and inside the blocks their references draw.
+    let texts_in_model: usize = d.model.iter().map(|e| texts_of(e).len()).sum();
+    let texts_in_layouts: usize = d.layouts.iter().flat_map(|l| l.entities.iter()).map(|e| texts_of(e).len()).sum();
+    let texts_in_block_defs: usize = d.blocks.values().flat_map(|b| b.entities.iter()).map(|e| texts_in_definition(e, "", 1).len()).sum();
+    let keep_all = |_: &TextHit| true;
+    let walk = nested_texts(d, &d.model, &keep_all);
+    // The reference expansion can give up too (its work or depth cap): the counts it fed are
+    // partial then, like the text walk's.
+    let (exp_truncated, exp_depth_capped) = x.gave_up();
+    let mut texts_in_blocks = walk.hits.len();
+    let (mut truncated, mut depth_capped) = (walk.truncated || exp_truncated, walk.depth_capped || exp_depth_capped);
+    for l in &d.layouts {
+        let w = nested_texts(d, &l.entities, &keep_all);
+        texts_in_blocks += w.hits.len();
+        truncated |= w.truncated;
+        depth_capped |= w.depth_capped;
+    }
+
+    // What stays out of reach, and why. `code` is the machine-readable name (`reason` is for
+    // people): a pipeline decides on it without parsing English.
+    let mut unreachable: Vec<Value> = Vec::new();
+    let mut check = SelfCheck::new();
+    check.found((model_entities + layout_entities) as u64);
+    check.analyzed((model_entities + layout_entities) as u64);
+    let out_of_reach = |list: &mut Vec<Value>, check: &mut SelfCheck, kind: &str, code: &str, count: u64, reason: &str| {
+        if count > 0 {
+            list.push(json!({ "kind": kind, "code": code, "count": count, "reason": reason }));
+            check.skip(kind, reason, count);
+        }
+    };
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "missingBlock",
+        "MISSING_BLOCK",
+        missing_refs,
+        "placed copies of a reference to a block the drawing does not define",
+    );
+    if let Some(entry) = unreachable.last_mut().and_then(Value::as_object_mut).filter(|_| !missing_at.is_empty()) {
+        // How many handles the entry lists: enough to place and cross-check every reference of a
+        // whole title-block run, without an entry per reference bloating a huge drawing's report.
+        const MAX_HANDLES: usize = 256;
+        let mut names: Vec<&str> = missing_at.iter().map(|(n, _, _, _)| n.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        let mut layers: Vec<&str> = missing_at.iter().map(|(_, _, l, _)| l.as_str()).collect();
+        layers.sort_unstable();
+        layers.dedup();
+        let handles: Vec<String> = missing_at.iter().map(|(_, h, _, _)| h.hex()).take(MAX_HANDLES).collect();
+        let mut x0 = f64::INFINITY;
+        let mut y0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for (_, _, _, i) in &missing_at {
+            // The placed copies: the grid's lattice, whose extremes sit at its corners.
+            let (c_last, r_last) = (i.cols.max(1) - 1, i.rows.max(1) - 1);
+            for c in [0, c_last] {
+                for r in [0, r_last] {
+                    let off = Vec2::new(f64::from(c) * i.col_spacing, f64::from(r) * i.row_spacing);
+                    let p = Vec2::new(
+                        i.insert.x + off.x * i.rotation.cos() - off.y * i.rotation.sin(),
+                        i.insert.y + off.x * i.rotation.sin() + off.y * i.rotation.cos(),
+                    );
+                    x0 = x0.min(p.x);
+                    y0 = y0.min(p.y);
+                    x1 = x1.max(p.x);
+                    y1 = y1.max(p.y);
+                }
+            }
+        }
+        entry.insert("blockNames".into(), json!(names));
+        entry.insert("handles".into(), json!(handles));
+        entry.insert("layers".into(), json!(layers));
+        // The insertion points' envelope, named for what it is: the block's own extent is
+        // unknowable without its definition.
+        entry.insert("insertPointsBBox".into(), json!({ "min": [x0, y0], "max": [x1, y1] }));
+    }
+    let xref_not_loaded = d.blocks.values().filter(|b| b.xref_path.is_some() && b.entities.is_empty()).count() as u64;
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "xrefNotLoaded",
+        "XREF_NOT_LOADED",
+        xref_not_loaded,
+        "an external reference whose drawing is not loaded",
+    );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyDrawable",
+        "PROXY_DRAWABLE",
+        with_drawable,
+        "proxy graphics that draw; kept as raw records, not as entities",
+    );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyNoGraphics",
+        "PROXY_NO_GRAPHICS",
+        no_graphics,
+        "a proxy without graphics data: neither readable nor drawable",
+    );
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "proxyUnparsed",
+        "PROXY_UNPARSED",
+        unparsed_graphics,
+        "a proxy with graphics data, but not one frame of it parses",
+    );
+    out_of_reach(&mut unreachable, &mut check, "ole2Frame", "OLE2_FRAME", ole_frames, "an embedded OLE picture");
+    let skipped_records: usize = d.skipped_records.values().sum();
+    out_of_reach(
+        &mut unreachable,
+        &mut check,
+        "skippedRecords",
+        "SKIPPED_RECORDS",
+        skipped_records as u64,
+        "records the file reader could not place",
+    );
+    if truncated {
+        check.cap("textHits", MAX_TEXT_HITS as u64);
+    }
+    if depth_capped {
+        check.cap("textDepth", u64::from(MAX_TEXT_DEPTH));
+    }
+    if exp_truncated {
+        check.cap("blockRefs", count::MAX_WORK);
+    }
+    if exp_depth_capped {
+        check.cap("blockDepth", cadcraft_doc::MAX_BLOCK_DEPTH as u64);
+    }
+
+    let message = format!(
+        "{} entities ({} in model space), {} block definitions ({} anonymous, {} entities), {} anonymous references ({} to a missing definition)\n\
+         proxies: {} ACAD_PROXY_ENTITY, {} OLE2FRAME, {} ARC_DIMENSION, {} other; {} with drawable graphics, {} without any\n\
+         texts: {} in the spaces ({} in model space), {} inside blocks per placed reference, {} per definition\n\
+         out of reach: {}",
+        model_entities + layout_entities,
+        model_entities,
+        block_defs,
+        anonymous_defs,
+        block_entities,
+        anonymous_refs,
+        missing_refs,
+        acad_proxy,
+        ole_frames,
+        arc_dimensions,
+        other_unknowns,
+        with_drawable,
+        no_graphics,
+        texts_in_model + texts_in_layouts,
+        texts_in_model,
+        texts_in_blocks,
+        texts_in_block_defs,
+        if unreachable.is_empty() { "nothing".to_string() } else { format!("{} kind(s)", unreachable.len()) },
+    );
+    Ok(json!({
+        "modelEntities": model_entities,
+        "layoutEntities": layout_entities,
+        "blockDefs": block_defs,
+        "anonymousDefs": anonymous_defs,
+        "blockEntities": block_entities,
+        "anonymousRefs": anonymous_refs,
+        "missingBlockRefs": missing_refs,
+        "proxy": {
+            "acadProxy": acad_proxy,
+            "ole2Frame": ole_frames,
+            "arcDimension": arc_dimensions,
+            "other": other_unknowns,
+            "withDrawable": with_drawable,
+            "noGraphics": no_graphics,
+            "unparsed": unparsed_graphics,
+            "classes": classes.iter().map(|((class, app), t)| json!({
+                "class": class, "app": app, "count": t.count, "drawable": t.with_drawable,
+                "records": t.records, "unparsed": t.unparsed, "drawableChunks": t.histogram,
+            })).collect::<Vec<_>>(),
+        },
+        "textsInModel": texts_in_model,
+        "textsInLayouts": texts_in_layouts,
+        "textsInBlocks": texts_in_blocks,
+        "textsInBlockDefs": texts_in_block_defs,
+        "unreachable": unreachable,
+        "truncated": truncated,
+        "selfCheck": check.to_json(),
+        "message": message,
+    }))
+}
 
 #[derive(Default)]
 pub(super) struct DistM {

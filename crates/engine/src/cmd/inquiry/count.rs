@@ -15,7 +15,7 @@ use super::SelfCheck;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Merges done while expanding nested references; a hostile file stops here (and says so).
-const MAX_WORK: u64 = 5_000_000;
+pub(super) const MAX_WORK: u64 = 5_000_000;
 /// Top-level objects reported (and highlighted) per count.
 const MAX_HANDLES: usize = 100_000;
 
@@ -109,7 +109,7 @@ fn copies(i: &Insert) -> u64 {
 
 /// Nested block references per block definition, memoised by (block, levels left) so shared and
 /// cyclic definitions don't expand exponentially.
-struct Expander<'a> {
+pub(super) struct Expander<'a> {
     d: &'a Drawing,
     memo: HashMap<(String, usize), Rc<BTreeMap<String, u64>>>,
     work: u64,
@@ -120,15 +120,19 @@ struct Expander<'a> {
 
 impl<'a> Expander<'a> {
     /// An expander that has not traversed any block yet.
-    fn new(d: &'a Drawing) -> Self {
+    pub(super) fn new(d: &'a Drawing) -> Self {
         Expander { d, memo: HashMap::new(), work: 0, truncated: false, depth_capped: false }
     }
+    /// Whether the expansion had to give something up: (its work cap hit, its depth cap hit).
+    pub(super) fn gave_up(&self) -> (bool, bool) {
+        (self.truncated, self.depth_capped)
+    }
     /// The definition's own name for a referenced block (names are case-insensitive).
-    fn canonical(&self, name: &str) -> String {
+    pub(super) fn canonical(&self, name: &str) -> String {
         self.d.block(name).map_or_else(|| name.to_string(), |b| b.name.clone())
     }
     /// References inside block `name` and its nested blocks, `levels` deep: name → copies.
-    fn expand(&mut self, name: &str, levels: usize) -> Rc<BTreeMap<String, u64>> {
+    pub(super) fn expand(&mut self, name: &str, levels: usize) -> Rc<BTreeMap<String, u64>> {
         let key = (name.to_ascii_lowercase(), levels);
         if let Some(m) = self.memo.get(&key) {
             return m.clone();

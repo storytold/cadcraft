@@ -79,8 +79,23 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["pu", "-purge"])
             .params("{type?: all|blocks|dimstyles|groups|layers|linetypes|mleaderstyles|tablestyles|textstyles|zerolength|emptytext (default all: every named type), names?: \"A*,B\" (default *)} → purged")
             .interactive(|_| Ok(Box::new(purge::PurgeM::default()))),
-        CommandSpec::new("blocks.list", "List Blocks", run_list).enabled(has_doc).noundo(),
+        CommandSpec::new("blocks.list", "List Blocks", run_list)
+            .params("{includeAnonymous?: bool (default false: the `*`-named definitions a drawing makes for its own objects stay hidden)} → {blocks: [{name, entities, base, description, dynamic, anonymous, refs (references in every space and definition)}]}")
+            .enabled(has_doc)
+            .noundo(),
         battman::battman_spec(),
+        CommandSpec::new("blockdef.entities", "Block Definition Entities", run_blockdef_entities)
+            .params("{name} | {insert: handle (a block reference: its definition)} , type?, layer?, limit? (default 500), offset? \
+                     → {count, returned, offset, block: {name, base, anonymous, entities}, insert?: {handle, at, scale, rotation}, entities: [...]}: \
+                     the definition's own objects, read-only — anonymous definitions (*U…) too, which the Block Editor refuses")
+            .enabled(has_doc)
+            .noundo(),
+        CommandSpec::new("attribs", "Attribute States", run_attribs)
+            .params("{handle (a block reference)} | {block: name (every reference of it, in the model space and the layouts)} , tag? (one tag) \
+                     → {count, references: [{handle, block, attribs: [{tag, defined (the definition declares it), present (the reference shows it), \
+                     value (null: declared but not on the reference; \"\": set to empty; else the value), constant, invisible, source: \"definition\" | \"instance\"}]}]}")
+            .enabled(has_doc)
+            .noundo(),
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
         burst::burst_spec(),
@@ -442,16 +457,189 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
+/// Direct references to each block, from every space and every definition: `name` → how many
+/// block references point at it (a MINSERT grid counts per cell, nested references where they
+/// sit). Anonymous definitions are referenced too — a reader reaches them by name, which is what
+/// this count is for.
+fn reference_counts(d: &cadcraft_doc::Drawing) -> std::collections::BTreeMap<String, u64> {
+    let mut refs: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let count = |i: &Insert, refs: &mut std::collections::BTreeMap<String, u64>| {
+        let name = d.block(&i.block).map_or_else(|| i.block.clone(), |b| b.name.clone());
+        let copies = u64::from(i.cols.max(1)).saturating_mul(u64::from(i.rows.max(1)));
+        let v = refs.entry(name).or_default();
+        *v = v.saturating_add(copies);
+    };
+    let stores = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));
+    for e in stores {
+        if let EntityKind::Insert(i) = &e.kind {
+            count(i, &mut refs);
+        } else if let Some(name) = referenced_block(e) {
+            // A dimension's or multileader's block content is a reference too: a definition only
+            // they name is in use, not unused.
+            let name = d.block(&name).map_or_else(|| name, |b| b.name.clone());
+            let v = refs.entry(name).or_default();
+            *v = v.saturating_add(1);
+        }
+    }
+    refs
+}
+
+fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    let include_anonymous = bool_or(p, "includeAnonymous", false);
     // One object index for the whole listing: rebuilding it per block multiplies the block count
     // by the drawing's kept object count (CWE-407).
     let objects = cadcraft_doc::dynblock::ObjectIndex::new(d);
+    let refs = reference_counts(d);
     let block = |b: &Block| {
         let dynamic = cadcraft_doc::dynblock::is_dynamic_block_in(d, &objects, &b.name);
-        json!({"name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y], "description": b.description, "dynamic": dynamic})
+        json!({
+            "name": b.name, "entities": b.entities.len(), "base": [b.base.x, b.base.y],
+            "description": b.description, "dynamic": dynamic,
+            "anonymous": b.anonymous, "refs": refs.get(&b.name).copied().unwrap_or(0),
+        })
     };
-    Ok(json!({ "blocks": d.blocks.values().filter(|b| !b.anonymous).map(|b| block(b)).collect::<Vec<_>>() }))
+    let blocks = d.blocks.values().filter(|b| include_anonymous || !b.anonymous).map(|b| block(b)).collect::<Vec<_>>();
+    Ok(json!({ "count": blocks.len(), "blocks": blocks }))
+}
+
+/// An entity anywhere in the drawing: in a space ([`cadcraft_doc::Drawing::entity`]), or inside a
+/// block definition — `blockdef.entities` reports the handles of a definition's own entities, and
+/// a reference there (an attributed insert of its own) is a fair subject for `attribs` too.
+fn entity_anywhere(d: &cadcraft_doc::Drawing, h: Handle) -> Option<&std::sync::Arc<Entity>> {
+    d.entity(h).or_else(|| d.blocks.values().flat_map(|b| b.entities.iter()).find(|e| e.handle == h))
+}
+
+/// BLOCKDEF.ENTITIES: a block definition's own objects, read-only — including the anonymous ones
+/// (`*U…`) the Block Editor refuses to open. Given a reference's handle (`insert`), the
+/// definition it shows, with where the reference places it.
+fn run_blockdef_entities(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "blockdef.entities";
+    let given = |k: &str| p.get(k).filter(|v| !v.is_null());
+    let count = |k: &str, default: usize| -> Result<usize> {
+        given(k).map_or(Ok(default), |v| {
+            v.as_u64().map(|n| usize::try_from(n).unwrap_or(usize::MAX)).ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number, 0 or more")))
+        })
+    };
+    let ty = given("type").map(|v| v.as_str().map(str::to_ascii_lowercase).ok_or_else(|| bad(CMD, "`type` must be a string"))).transpose()?;
+    let layer = given("layer").map(|v| v.as_str().map(str::to_ascii_lowercase).ok_or_else(|| bad(CMD, "`layer` must be a string"))).transpose()?;
+    let limit = count("limit", 500)?;
+    let offset = count("offset", 0)?;
+    let d = s.doc()?;
+    let (name, insert) = if let Some(v) = given("insert") {
+        let h = v
+            .as_str()
+            .and_then(Handle::parse_hex)
+            .or_else(|| v.as_u64().map(Handle))
+            .ok_or_else(|| bad(CMD, format!("`insert`: {v} is not an object handle")))?;
+        let e = entity_anywhere(d, h).ok_or_else(|| bad(CMD, format!("no object {}", h.hex())))?;
+        let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, "`insert` must be a block reference")) };
+        (
+            i.block.clone(),
+            Some(json!({ "handle": h.hex(), "at": [i.insert.x, i.insert.y], "scale": [i.scale.x, i.scale.y], "rotation": i.rotation.to_degrees() })),
+        )
+    } else if let Some(v) = given("name") {
+        (v.as_str().ok_or_else(|| bad(CMD, "`name` must be a string"))?.to_string(), None)
+    } else {
+        return Err(bad(CMD, "`name` or `insert` is required"));
+    };
+    let block = d.block(&name).ok_or_else(|| bad(CMD, format!("Block \"{name}\" not found.")))?;
+    let matches: Vec<_> = block
+        .entities
+        .iter()
+        .filter(|e| ty.as_ref().is_none_or(|t| e.kind.type_name().to_ascii_lowercase() == *t || e.kind.dxf_name().to_ascii_lowercase() == *t))
+        .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
+        .collect();
+    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| super::inquiry::entity_summary(d, e)).collect();
+    let mut out = json!({
+        "count": matches.len(), "returned": page.len(), "offset": offset,
+        "block": { "name": block.name, "base": [block.base.x, block.base.y], "anonymous": block.anonymous, "entities": block.entities.len() },
+        "entities": page,
+    });
+    if let (Some(i), Some(o)) = (insert, out.as_object_mut()) {
+        o.insert("insert".into(), i);
+    }
+    Ok(out)
+}
+
+/// ATTRIBS: the attributes of a block reference (or of every reference of a block) as three
+/// states, not two — a tag the definition declares but the reference does not carry (value `null`)
+/// reads differently from one set to the empty string, and both from one the definition never
+/// declared (defined false: an instance attribute past its definition's sync).
+fn run_attribs(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "attribs";
+    let given = |k: &str| p.get(k).filter(|v| !v.is_null());
+    let tag_filter = given("tag").map(|v| v.as_str().map(str::to_string).ok_or_else(|| bad(CMD, "`tag` must be a string"))).transpose()?;
+    let d = s.doc()?;
+    let refs: Vec<Handle> = if let Some(v) = given("handle") {
+        let h = v
+            .as_str()
+            .and_then(Handle::parse_hex)
+            .or_else(|| v.as_u64().map(Handle))
+            .ok_or_else(|| bad(CMD, format!("`handle`: {v} is not an object handle")))?;
+        vec![h]
+    } else if let Some(v) = given("block") {
+        let name = v.as_str().ok_or_else(|| bad(CMD, "`block` must be a string"))?;
+        d.model
+            .iter()
+            .chain(d.layouts.iter().flat_map(|l| l.entities.iter()))
+            .filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(name)))
+            .map(|e| e.handle)
+            .collect()
+    } else {
+        return Err(bad(CMD, "`handle` or `block` is required"));
+    };
+    let mut out: Vec<Value> = Vec::new();
+    for h in refs {
+        let Some(e) = entity_anywhere(d, h) else { return Err(bad(CMD, format!("no object {}", h.hex()))) };
+        let EntityKind::Insert(i) = &e.kind else { return Err(bad(CMD, format!("object {} is not a block reference", h.hex()))) };
+        let def = d.block(&i.block);
+        let attdefs: Vec<&Attrib> = def
+            .map(|b| b.entities.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a) } else { None }).collect())
+            .unwrap_or_default();
+        let mut attribs: Vec<Value> = Vec::new();
+        for a in &attdefs {
+            let tag_matches = tag_filter.as_ref().is_none_or(|t| a.tag.eq_ignore_ascii_case(t));
+            if !tag_matches {
+                continue;
+            }
+            let instance = i.attribs.iter().find(|x| x.tag.eq_ignore_ascii_case(&a.tag));
+            let (value, source) = if a.constant {
+                // A constant attribute is the definition's own value; references don't carry it.
+                (a.text.value.clone(), "definition")
+            } else {
+                match instance {
+                    Some(x) => (x.text.value.clone(), "instance"),
+                    None => (String::new(), "none"),
+                }
+            };
+            let present = source != "none";
+            // An instance attribute carries its own visibility: a definition redefined since does
+            // not say what the reference shows.
+            let invisible = instance.map(|x| x.invisible).unwrap_or(a.invisible);
+            attribs.push(json!({
+                "tag": a.tag, "defined": true, "present": present,
+                "value": if present { json!(value) } else { Value::Null },
+                "constant": a.constant, "invisible": invisible, "source": source,
+            }));
+        }
+        for x in &i.attribs {
+            let tag_matches = tag_filter.as_ref().is_none_or(|t| x.tag.eq_ignore_ascii_case(t));
+            if !tag_matches || attdefs.iter().any(|a| a.tag.eq_ignore_ascii_case(&x.tag)) {
+                continue;
+            }
+            // The reference carries a tag its definition no longer declares.
+            attribs.push(json!({
+                "tag": x.tag, "defined": false, "present": true, "value": x.text.value,
+                "constant": x.constant, "invisible": x.invisible, "source": "instance",
+            }));
+        }
+        if attribs.is_empty() {
+            continue;
+        }
+        out.push(json!({ "handle": h.hex(), "block": i.block, "attribs": attribs }));
+    }
+    Ok(json!({ "count": out.len(), "references": out }))
 }
 
 /// A dynamic block's parameters and actions as read from the file (null for a block that has
