@@ -167,6 +167,8 @@ fn services() -> Services {
         start_pick: None,
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| file_dialog(&Pick::Lisp(dir.into())).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        // IMAGEATTACH: raster images.
+        pick_image: Some(Box::new(|| file_dialog(&Pick::Image).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
@@ -186,6 +188,10 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
         Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
         Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+        Pick::Image => vec![
+            (i18n::t("Raster images (PNG, JPEG, BMP, TIFF)"), vec!["png", "jpg", "jpeg", "bmp", "tif", "tiff"]),
+            (i18n::t("All files"), vec!["*"]),
+        ],
     }
 }
 

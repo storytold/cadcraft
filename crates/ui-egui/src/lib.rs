@@ -237,6 +237,9 @@ pub struct Services {
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
     pub pick_lisp: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Pick a raster image file for IMAGEATTACH ([`Pick::Image`]). `None` where there is no
+    /// native file dialog: IMAGEATTACH then asks for the file name at the command line.
+    pub pick_image: Option<Box<dyn Fn() -> Option<String>>>,
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
@@ -245,13 +248,15 @@ pub struct Services {
 }
 
 /// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
-/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one), or
+/// IMAGEATTACH's raster image picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pick {
     Open,
     Save(String),
     Lisp(String),
     Pgp(String),
+    Image,
 }
 
 /// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
@@ -466,6 +471,7 @@ impl CadApp {
             Pick::Save(_) => self.services.pick_save.is_some(),
             Pick::Lisp(_) => self.services.pick_lisp.is_some(),
             Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+            Pick::Image => self.services.pick_image.is_some(),
         };
         if !available {
             return None;
@@ -498,6 +504,7 @@ impl CadApp {
             Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
             Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
             Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+            Pick::Image => self.services.pick_image.as_ref().and_then(|f| f()),
         };
         Some(match path {
             Some(path) => then(self, path),

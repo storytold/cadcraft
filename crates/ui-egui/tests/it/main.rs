@@ -14,6 +14,7 @@ mod drafting_spacing;
 mod file_tab_titles;
 mod gpu_viewport_stencil;
 mod hidden_command_line;
+mod image_attach_picker;
 mod instant_modals;
 mod lisp_files;
 mod measure_distance_snapping;

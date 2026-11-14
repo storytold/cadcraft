@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 use crate::docking::Panel;
 use crate::{CadApp, Pick};
 
-/// XREF typed or chosen from a menu opens this palette; XATTACH there asks for the file first
-/// (with the host's file picker, where there is one). JSON calls (with parameters) run the
-/// engine's commands as they are.
+/// XREF typed or chosen from a menu opens this palette; XATTACH and IMAGEATTACH there ask for the
+/// file first (with the host's file picker, where there is one). JSON calls (with parameters) run
+/// the engine's commands as they are.
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !params.is_null() {
         return None;
@@ -28,6 +28,35 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
                 // path is attacker-controlled (the file picker returns whatever the user
                 // selected), and `cmdline` interprets command syntax, so a name like `'closeall`
                 // would run an engine command instead of naming the file (CWE-74).
+                app.session.input(cadcraft_engine::Input::Text(path)).map_err(|e| e.to_string())?;
+                Ok(Value::Null)
+            })
+        }
+        // IMAGEATTACH asks for the image with the host's file picker and then for its place at
+        // the command line; cancelling the picker attaches nothing. Without a picker the command
+        // asks for the file name. With no file system to read an image from (the web) it says
+        // so instead of asking for a name it could not read.
+        "imageattach" => {
+            if app.services.no_file_system {
+                // Short lines: the command history shows each on one row, however narrow.
+                for line in [
+                    "IMAGEATTACH: no file system here to read an image from.",
+                    "Attach the image in the desktop app,",
+                    "or with IMAGEATTACH's JSON form and the file's `data`.",
+                ] {
+                    app.session.echo(line.to_string());
+                }
+                app.set_status("IMAGEATTACH: no file system here; see the command history");
+                return Some(Ok(Value::Null));
+            }
+            // As XATTACH: the picker may answer in a later frame (a macOS sheet), and then starts
+            // the command.
+            app.services.pick_image.as_ref()?;
+            let was_prompting = app.session.prompting();
+            app.pick_then(Pick::Image, move |app, picked| {
+                let path = relative_to_host(app, &picked);
+                app.start_after_pick("imageattach", was_prompting)?;
+                // The picked name as literal text, as for XATTACH above (CWE-74).
                 app.session.input(cadcraft_engine::Input::Text(path)).map_err(|e| e.to_string())?;
                 Ok(Value::Null)
             })
