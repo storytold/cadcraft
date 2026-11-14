@@ -3662,18 +3662,38 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }
 
-/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
-/// wrote them for pattern fills only.
+/// A solid or gradient HATCH goes from its pattern type (76) straight to its seed points (98), as
+/// AutoCAD 2024 writes it, even one read with an angle, scale and double flag: AutoCAD 2024 refuses
+/// a file whose solid HATCH has any of 52, 41 or 77 there ("Error: expected group code 98", the
+/// whole drawing discarded; measured). A pattern fill keeps all three.
 #[test]
-fn solid_hatch_keeps_angle_scale_and_double_flag() {
+fn solid_and_gradient_hatches_have_no_pattern_groups() {
     let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
 91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
 75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
-    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let (mut d, _) = gradient_sample();
+    for e in read_dxf(src.as_bytes()).unwrap().model.iter() {
+        d.add(&Space::Model, e.common.clone(), e.kind.clone()).unwrap();
+    }
+    let mut pattern = hatches(&d)[0].clone();
+    (pattern.pattern, pattern.solid, pattern.gradient, pattern.angle, pattern.scale) = ("ANSI31".into(), false, None, 30f64.to_radians(), 2.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(pattern)).unwrap();
+    let out = write_dxf(&d);
     let pairs = dxf_pairs(&out);
-    let h = dxf_records(&pairs, "HATCH")[0];
+    let records = dxf_records(&pairs, "HATCH");
+    let (solid, pattern): (Vec<&[(String, String)]>, Vec<_>) = records.into_iter().partition(|h| group(h, "70") == Some("1"));
+    assert_eq!((solid.len(), pattern.len()), (4, 1), "three from the sample, one read");
+    for h in solid {
+        let after = h.iter().position(|p| p.0 == "76").and_then(|k| h.get(k + 1)).map(|p| p.0.as_str());
+        assert_eq!(after, Some("98"), "{h:?}");
+        for code in ["52", "41", "77", "78"] {
+            assert_eq!(group(h, code), None, "group {code}: {h:?}");
+        }
+    }
+    let h = pattern[0];
     let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+    assert!(group(h, "78").is_some(), "{h:?}");
 }
