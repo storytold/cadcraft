@@ -298,7 +298,15 @@ impl Ellipse {
         let mb = ma * self.ratio;
         norm_angle((y / mb.max(EPS)).atan2(x / ma))
     }
+    /// The point of the ellipse (or elliptical arc) nearest to `p`: exact (see [`crate::ellipse_arc_closest_param`]),
+    /// falling back to the tessellated curve only for a degenerate ellipse.
     pub fn closest(&self, p: Vec2) -> Vec2 {
+        if let Some(t) = crate::ellipse_arc_closest_param(self, p) {
+            let q = self.at_param(t);
+            if q.is_finite() {
+                return q;
+            }
+        }
         let mut pts = Vec::new();
         self.tessellate(self.major.len() * 1e-3, &mut pts);
         nearest_on_polyline(&pts, p).unwrap_or(self.center)
