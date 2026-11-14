@@ -429,7 +429,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         return;
     };
     let title = if st.edit.is_empty() { crate::tl!("Hatch and Gradient") } else { crate::tl!("Hatch Edit") };
-    let mut action = Action::None;
+    // Esc cancels, as the Cancel button does.
+    let mut action = if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { Action::Cancel } else { Action::None };
     egui::Window::new(title).id(egui::Id::unique("hatch_dialog")).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
