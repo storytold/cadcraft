@@ -8,6 +8,7 @@ mod dxf_raw;
 /// XCLIP boundaries as SPATIAL_FILTER objects.
 mod dxf_clip;
 mod dxf_ext;
+mod dxf_field;
 mod dxf_image;
 mod dxf_mleader;
 mod dxf_read;
@@ -157,9 +158,24 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
+///
+/// A drawing with field texts and no kept version (a new one, or one from a DXF without
+/// `$ACADVER`) or a kept version older than AutoCAD 2010 gets FIELD objects in the groups of
+/// AutoCAD 2010 ([`dxf_field::OBJECT_VERSION`]), and the bridge reads the drawing as that: read as
+/// R2000, acadrust drops a FIELD's flags, cached value and format (#551). The bridge's text is
+/// ASCII with `\U+XXXX` escapes, which this acadrust decodes for every version; a newer one that
+/// does not (acadrust#213, CADCraft #2851) would leave the escapes in non-ASCII field text.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
     let bridge = dxf_write::dwg_bridge(d, version);
-    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
+    // Field objects are written in the groups of AutoCAD 2010, so a drawing that has them is read
+    // as at least that. Kept groups from a newer file stay as that version; older ones are read
+    // as AutoCAD 2010 only when fields are written, which the other kept objects read the same.
+    let fields = version >= Version::R2004 && dxf_field::writes_fields(d);
+    let kept = match d.foreign.version.as_deref() {
+        Some(v) if !fields || Version::for_acadver(v).is_some_and(|k| k >= Version::R2010) => Some(v),
+        _ => fields.then_some(dxf_field::OBJECT_VERSION),
+    };
+    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), kept).map_err(dwg_error)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

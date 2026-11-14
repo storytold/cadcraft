@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 mod mline;
 pub use mline::*;
 
+/// Fields (`%<\AcVar Date>%` …) in text values.
+pub mod fields;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     pub handle: Handle,
