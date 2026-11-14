@@ -16,6 +16,9 @@ pub(super) const UNIFONT: &[u8] = b"AutoCAD-86 unifont 1.0\r\n\x1a";
 pub(super) const MAX_FILE_BYTES: usize = 32 << 20;
 /// Most escape ranges in a big font (lead bytes: at most 256).
 const MAX_RANGES: usize = 256;
+/// Longest shape name looked for: big font records may overlap, and each one searched to its
+/// end made the work the product of the record count and length.
+pub(super) const MAX_NAME: usize = 1024;
 
 /// A checked little-endian reader.
 struct Rd<'a> {
@@ -75,11 +78,11 @@ impl Font {
     }
 
     /// Add the record of shape `number` at `start..end` of `data`: a NUL-terminated name, then
-    /// the program. Shape 0 is the font record. A record without a name terminator is dropped;
-    /// the first record of a number wins.
+    /// the program. Shape 0 is the font record. A record without a name terminator (within
+    /// [`MAX_NAME`] bytes) is dropped; the first record of a number wins.
     fn record(&mut self, data: &[u8], number: u16, start: usize, end: usize) {
         let Some(bytes) = data.get(start..end) else { return };
-        let Some(nul) = bytes.iter().position(|b| *b == 0) else { return };
+        let Some(nul) = bytes.iter().take(MAX_NAME + 1).position(|b| *b == 0) else { return };
         let name = (start, start + nul);
         let program = (start + nul + 1, end);
         if number == 0 {
