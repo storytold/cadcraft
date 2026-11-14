@@ -379,6 +379,9 @@ fn main() -> eframe::Result {
                 app.ui = ui;
             }
             app.set_system_cursor_default(vars.system_cursor == Switch::On);
+            // macOS: CADCRAFT_NO_NATIVE_MENU=1 keeps the menus inside the window.
+            #[cfg(target_os = "macos")]
+            app.set_native_menus(vars.no_native_menu != Switch::On);
             if let Some(error) = &workspace_error {
                 eprintln!("CADCraft workspace: {error}");
                 app.set_status(error);

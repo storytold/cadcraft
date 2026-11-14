@@ -281,6 +281,9 @@ pub struct CadApp {
     pub system_animations: Option<bool>,
     /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
     pub system_cursor_default: bool,
+    /// Whether the host has a native menu bar: off where the menus stay in the window
+    /// ([`Self::set_native_menus`]).
+    pub native_menus: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -379,6 +382,7 @@ impl CadApp {
             system_languages: Vec::new(),
             system_animations: None,
             system_cursor_default: false,
+            native_menus: cfg!(target_os = "macos"),
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
@@ -720,6 +724,15 @@ impl CadApp {
         self.system_cursor_default = on;
         if on {
             self.ui.system_cursor = true;
+        }
+    }
+
+    /// Tell the interface whether the host has a native menu bar. Where it has none, the
+    /// in-window menu is the only menu, so it is shown and a reset keeps it.
+    pub fn set_native_menus(&mut self, on: bool) {
+        self.native_menus = on;
+        if !on {
+            self.ui.in_window_menu = true;
         }
     }
 
@@ -1399,5 +1412,39 @@ mod tests {
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
         assert_eq!(ui.save_format, SaveFormat::Dwg);
+    }
+
+    #[test]
+    fn options_reset_brings_the_interface_back() {
+        // Hiding the interface (View/Window toggles) can leave no way back — on Windows the
+        // in-window menu bar is the only menu there is. Options > Reset must restore it (#1240).
+        let mut a = app();
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("ui.toggle.menubar", json!({ "on": cfg!(target_os = "macos") })).unwrap();
+        a.start("ui.hidepalettes");
+        assert!(!a.ui.show_toolbar && !a.ui.show_palettes && !a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, cfg!(target_os = "macos"), "the test did not hide the menu bar");
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert!(a.ui.show_palettes, "the palettes are still hidden");
+        assert!(a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, !cfg!(target_os = "macos"), "the menu bar did not come back");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_menu_where_the_host_has_no_native_one() {
+        // With CADCRAFT_NO_NATIVE_MENU=1 the menus stay in the window: the host reports no native
+        // menu bar, so the in-window one is the only menu and the reset must leave it (#1240).
+        let mut a = app();
+        a.set_native_menus(false);
+        assert!(a.ui.in_window_menu, "the host's setting did not show the in-window menu");
+        a.run("ui.toggle.menubar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.in_window_menu, "the only menu bar did not come back");
+        // Beside a native menu bar, the reset returns to the platform default.
+        a.set_native_menus(true);
+        a.run("ui.toggle.menubar", json!({ "on": true })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(!a.ui.in_window_menu, "the in-window menu is not the default beside a native one");
     }
 }
