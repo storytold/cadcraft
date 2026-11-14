@@ -1,7 +1,7 @@
 use super::{
-    Accept, Chain, EntityKind, Handle, Input, Interactive, LwPolyline, MAX_GEN, PolyVertex, Prompt, Result, SelOutcome, SelectPhase, Session, Spline,
-    Step, Value, Vec2, as_lwpoly, bad, bool_or, curves, f64_or, f64_req, json, line, number, other, pedit_vertex, point_req, set_kind, str_param,
-    targets,
+    Accept, Chain, Entity, EntityKind, Handle, Input, Interactive, LwPolyline, MAX_GEN, PolyVertex, Prompt, Result, SelOutcome, SelectPhase, Session,
+    Spline, Step, Value, Vec2, Vec3, as_lwpoly, bad, bool_or, curves, f64_or, f64_req, json, line, number, other, pedit_vertex, point_req,
+    polyline_of, set_kind, set_polyline, str_param, targets,
 };
 
 /// Fit curve: a tangent-continuous pair of arcs (biarc) per segment through every vertex,
@@ -106,7 +106,21 @@ pub(crate) fn spline_vertices(vs: &[PolyVertex], closed: bool, segs: usize) -> V
 }
 
 /// Join connected lines/arcs/open polylines onto the ends of polyline `h` (kept in place).
-pub(crate) fn pedit_join(s: &mut Session, h: Handle, others: &[Handle], fuzz: f64) -> Result<usize> {
+///
+/// As AutoCAD 2024 joins (measured), none facing the other way: an arc or a polyline whose normal
+/// points down Z where the polyline's points up, or the other way round; a line counts as facing
+/// up. Multiple's Join (`same_height` false) takes them at any height (lines at Z 5 and Z 0 join).
+///
+/// PEDIT's own Join takes only objects in one plane with the polyline: the plane the polyline and
+/// every line picked share, when they share one, else the polyline's own. So a sloped line joins
+/// only when the polyline and all the lines picked lie in one plane (a vertical one for a sloped
+/// line continuing a straight polyline in plan), and then no arc or polyline joins, as those lie
+/// flat; otherwise only objects at the polyline's height join (a line, arc or polyline at Z 0
+/// stays off one at Z 5). Ends meet within `fuzz` in plan and within 1e-6 in height, which `fuzz`
+/// doesn't widen. After a sloped line the chain's end is at the line's far end, so the next object
+/// meets it there; AutoCAD's polyline then lies in the lines' plane, CADCraft's keeps the source's
+/// elevation and runs through the objects' points seen from above.
+pub(crate) fn pedit_join(s: &mut Session, h: Handle, others: &[Handle], fuzz: f64, same_height: bool) -> Result<usize> {
     let e = curves::entity(s, h)?;
     let mut base = as_lwpoly(&e.kind).ok_or_else(|| other("Select a polyline."))?;
     if base.closed {
@@ -114,46 +128,88 @@ pub(crate) fn pedit_join(s: &mut Session, h: Handle, others: &[Handle], fuzz: f6
     }
     let mut chain = Chain::of(&EntityKind::LwPolyline(base.clone())).unwrap_or_default();
     let tol = fuzz.max(1e-6);
-    let mut pool: Vec<(Handle, Chain)> = Vec::new();
-    for o in others {
-        if *o == h {
+    // Which way an object faces, and its two ends' world heights.
+    let down = |e: &Entity| !matches!(e.kind, EntityKind::Line(_)) && e.common.extrusion.z < 0.0;
+    let heights = |e: &Entity| match &e.kind {
+        EntityKind::Line(l) => (l.a.z, l.b.z),
+        // An arc's centre is in world coordinates.
+        EntityKind::Arc(a) => (a.center.z, a.center.z),
+        // A polyline's elevation runs along its normal.
+        EntityKind::LwPolyline(p) => {
+            let z = if down(e) { -p.elevation } else { p.elevation };
+            (z, z)
+        }
+        _ => (0.0, 0.0),
+    };
+    // Two ends meet: in plan within the fuzz distance, and for PEDIT's own Join at the same height.
+    let at = |p: Vec2, ph: f64, q: Vec2, qh: f64| p.near(q, tol) && (!same_height || (ph - qh).abs() < 1e-6);
+    let picked: Vec<(Handle, Entity)> = others.iter().filter(|o| **o != h).filter_map(|o| Some((*o, curves::entity(s, *o).ok()?))).collect();
+    // The plane PEDIT's own Join works in (AutoCAD 2024, measured): the polyline's points, with a
+    // point off the chord of an arc segment, which lies flat, and the ends of every line picked.
+    let z0 = heights(&e).0;
+    let mut pts: Vec<Vec3> = base.vertices.iter().map(|v| Vec3::new(v.p.x, v.p.y, z0)).collect();
+    if let Some(w) = base.vertices.windows(2).find(|w| w[0].bulge.abs() > 1e-12) {
+        let (a, b) = (w[0].p, w[1].p);
+        let off = (a + b) * 0.5 + Vec2::new(a.y - b.y, b.x - a.x);
+        pts.push(Vec3::new(off.x, off.y, z0));
+    }
+    let lines: Vec<(Vec3, Vec3)> =
+        picked.iter().filter_map(|(_, oe)| if let EntityKind::Line(l) = &oe.kind { Some((l.a, l.b)) } else { None }).collect();
+    pts.extend(lines.iter().flat_map(|(a, b)| [*a, *b]));
+    let shared = coplanar(&pts);
+    // That plane is the polyline's own, flat, when every line is at its height.
+    let level = lines.iter().all(|(a, b)| (a.z - z0).abs() < 1e-6 && (b.z - z0).abs() < 1e-6);
+    let mut pool: Vec<(Handle, Chain, (f64, f64))> = Vec::new();
+    for (o, oe) in &picked {
+        if down(oe) != down(&e) {
             continue;
         }
-        let Ok(oe) = curves::entity(s, *o) else { continue };
-        let ok = matches!(&oe.kind, EntityKind::Line(_) | EntityKind::Arc(_)) || matches!(&oe.kind, EntityKind::LwPolyline(p) if !p.closed);
+        let line = matches!(oe.kind, EntityKind::Line(_));
+        let (ah, bh) = heights(oe);
+        // A sloped line lies in no flat plane, and an arc or a polyline in no other.
+        let off_plane = if shared && !level { !line } else { (ah - bh).abs() >= 1e-6 };
+        if same_height && off_plane {
+            continue;
+        }
+        let ok = line || matches!(&oe.kind, EntityKind::Arc(_)) || matches!(&oe.kind, EntityKind::LwPolyline(p) if !p.closed);
         if ok && let Some(c) = Chain::of(&oe.kind) {
-            pool.push((*o, c));
+            pool.push((*o, c, (ah, bh)));
         }
     }
+    let (mut st_h, mut en_h) = heights(&e);
     let mut joined = Vec::new();
     while let (Some(st), Some(en)) = (chain.start(), chain.end()) {
-        let Some(i) = pool
-            .iter()
-            .position(|(_, c)| c.start().zip(c.end()).is_some_and(|(a, b)| a.near(en, tol) || b.near(en, tol) || a.near(st, tol) || b.near(st, tol)))
-        else {
+        let meets = |c: &Chain, (ah, bh): (f64, f64)| {
+            c.start().zip(c.end()).is_some_and(|(a, b)| at(a, ah, en, en_h) || at(b, bh, en, en_h) || at(a, ah, st, st_h) || at(b, bh, st, st_h))
+        };
+        let Some(i) = pool.iter().position(|(_, c, z)| meets(c, *z)) else {
             break;
         };
-        let (oh, c) = pool.remove(i);
+        let (oh, c, (ah, bh)) = pool.remove(i);
         let (Some(a), Some(b)) = (c.start(), c.end()) else { continue };
-        if a.near(en, tol) {
+        if at(a, ah, en, en_h) {
             chain.segs.extend(c.segs);
-        } else if b.near(en, tol) {
+            en_h = bh;
+        } else if at(b, bh, en, en_h) {
             chain.segs.extend(c.reversed().segs);
-        } else if b.near(st, tol) {
+            en_h = ah;
+        } else if at(b, bh, st, st_h) {
             let mut v = c.segs;
             v.extend(chain.segs);
             chain.segs = v;
+            st_h = ah;
         } else {
             let mut v = c.reversed().segs;
             v.extend(chain.segs);
             chain.segs = v;
+            st_h = bh;
         }
         joined.push(oh);
     }
     if joined.is_empty() {
         return Ok(0);
     }
-    chain.closed = chain.start().zip(chain.end()).is_some_and(|(a, b)| a.near(b, tol)) && chain.segs.len() > 1;
+    chain.closed = chain.start().zip(chain.end()).is_some_and(|(a, b)| at(a, st_h, b, en_h)) && chain.segs.len() > 1;
     base.vertices = chain.vertices();
     base.closed = chain.closed;
     let d = s.doc_mut()?;
@@ -164,14 +220,29 @@ pub(crate) fn pedit_join(s: &mut Session, h: Handle, others: &[Handle], fuzz: f6
     Ok(joined.len())
 }
 
+/// Whether the points `pts` lie in one plane, to within 1e-6 (points in a line always do).
+fn coplanar(pts: &[Vec3]) -> bool {
+    let Some(&p0) = pts.first() else { return true };
+    let far = |a: &&Vec3, b: &&Vec3| (**a - p0).len().total_cmp(&(**b - p0).len());
+    let Some(&p1) = pts.iter().max_by(far) else { return true };
+    let d = p1 - p0;
+    // The normal from the point farthest off the line p0 p1, for the least rounding.
+    let Some(n) = pts.iter().map(|p| d.cross(*p - p0)).max_by(|a, b| a.len().total_cmp(&b.len())) else { return true };
+    if n.len() <= 1e-6 * d.len() {
+        return true;
+    }
+    let n = n.normalized();
+    pts.iter().all(|p| n.dot(*p - p0).abs() < 1e-6)
+}
+
 pub(super) fn pedit_apply(s: &mut Session, h: Handle, opt: &str, p: &Value) -> Result<Value> {
     let e = curves::entity(s, h)?;
     if curves::is_locked(s, h) {
         return Err(other("The object is on a locked layer."));
     }
-    let mut pl = match &e.kind {
-        EntityKind::LwPolyline(pl) => pl.clone(),
-        EntityKind::Line(_) | EntityKind::Arc(_) if bool_or(p, "convert", true) => as_lwpoly(&e.kind).ok_or_else(|| other("Cannot convert."))?,
+    let (mut pl, normal) = match &e.kind {
+        EntityKind::LwPolyline(pl) => (pl.clone(), e.common.extrusion),
+        EntityKind::Line(_) | EntityKind::Arc(_) if bool_or(p, "convert", true) => polyline_of(&e).ok_or_else(|| other("Cannot convert."))?,
         _ => return Err(other("Object selected is not a polyline.")),
     };
     match opt {
@@ -197,14 +268,14 @@ pub(super) fn pedit_apply(s: &mut Session, h: Handle, opt: &str, p: &Value) -> R
         "reverse" | "r" => pl.vertices = curves::reverse_vertices(&pl.vertices, pl.closed),
         "ltypegen" | "l" => pl.plinegen = bool_or(p, "on", !pl.plinegen),
         "join" | "j" => {
-            set_kind(s, h, EntityKind::LwPolyline(pl))?;
+            set_polyline(s, h, pl, normal)?;
             let others: Vec<Handle> = p
                 .get("handles2")
                 .or_else(|| p.get("join"))
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(curves::handle_value).collect())
                 .unwrap_or_default();
-            let n = pedit_join(s, h, &others, f64_or(p, "fuzz", 0.0))?;
+            let n = pedit_join(s, h, &others, f64_or(p, "fuzz", 0.0), true)?;
             return Ok(json!({ "handle": h.hex(), "joined": n }));
         }
         "vertex" | "e" => {
@@ -254,7 +325,7 @@ pub(super) fn pedit_apply(s: &mut Session, h: Handle, opt: &str, p: &Value) -> R
         }
         _ => return Err(bad("pedit", "unknown option")),
     }
-    set_kind(s, h, EntityKind::LwPolyline(pl))?;
+    set_polyline(s, h, pl, normal)?;
     Ok(json!({ "handle": h.hex() }))
 }
 
@@ -468,10 +539,9 @@ impl Interactive for PeditM {
                     return Ok(Step::Done);
                 }
                 let h = self.h.ok_or_else(|| other("No object."))?;
-                let k = curves::entity(s, h)?.kind;
-                let pl = as_lwpoly(&k).ok_or_else(|| other("Cannot convert."))?;
+                let (pl, normal) = polyline_of(&curves::entity(s, h)?).ok_or_else(|| other("Cannot convert."))?;
                 self.original = Some(pl.vertices.clone());
-                set_kind(s, h, EntityKind::LwPolyline(pl))?;
+                set_polyline(s, h, pl, normal)?;
                 self.phase = PPhase::Main;
                 Ok(Step::Continue)
             }
@@ -544,7 +614,7 @@ impl Interactive for PeditM {
                 SelOutcome::Done(hs) => {
                     let h = self.h.ok_or_else(|| other("No polyline."))?;
                     self.snapshot(s);
-                    let n = pedit_join(s, h, &hs, 0.0)?;
+                    let n = pedit_join(s, h, &hs, 0.0, true)?;
                     s.echo(format!("{n} segments added to polyline"));
                     s.set_selection(vec![h]);
                     self.phase = PPhase::Main;
