@@ -179,13 +179,74 @@ fn json_execute_and_errors() {
     assert_eq!(s.state().unwrap().undo.len(), 1);
 }
 
+/// A drawing is opened on the view it was saved at, as every other reader opens it. Fitting the
+/// extents instead showed a drawing whose extents are dominated by far-off geometry at a view
+/// hundreds of thousands of times its content: sub-pixel, and `ZOOM Extents` fits the same box
+/// (#1602). The extents are still the fallback for a drawing that stores no view.
+#[test]
+fn a_drawing_opens_on_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    for (a, b) in [([0.0, 0.0], [100.0, 60.0]), ([5e6, 5e6], [5e6 + 100.0, 5e6 + 60.0])] {
+        let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::new(a[0], a[1], 0.0), b: cadcraft_geom::Vec3::new(b[0], b[1], 0.0) };
+        d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    }
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    s.open_drawing(d.clone(), "saved-view.dxf", None);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
+
+    // No stored view: the extents, as before. They are what makes this drawing unusable without
+    // the stored one -- the fit is more than a hundred thousand times taller than the detail.
+    let mut plain = d.clone();
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    s.open_drawing(plain, "no-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+
+    // A stored view that cannot be shown is no view at all.
+    let mut broken = d;
+    broken.header.set("VIEWSIZE", cadcraft_doc::HVal::Real(0.0));
+    let mut s = Session::new();
+    s.open_drawing(broken, "broken-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
+/// Resolving a drawing's xrefs after OPEN refits the view only for a drawing that stores none:
+/// one saved at a view keeps it, xref or not (#1626 review).
+#[test]
+fn a_drawing_with_an_xref_keeps_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(5e6, 5e6, 0.0) };
+    d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    let mut xref = cadcraft_doc::Block::new("XR");
+    xref.xref_path = Some("missing-xref.dxf".into());
+    d.blocks.insert("XR".into(), std::sync::Arc::new(xref));
+    let mut plain = d.clone();
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    let i = s.open_drawing(d, "saved-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0, twist: 0.0 });
+
+    // With no stored view, the xrefs' pass still frames the drawing.
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    let i = s.open_drawing(plain, "no-view.dxf", None);
+    crate::cmd::blocks::xref::after_open(&mut s, i);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
 #[test]
 fn move_with_pickfirst_and_window_selection() {
     let mut s = Session::new();
     s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
     s.execute("line", &json!({"points": [[5, 5], [6, 5]]})).unwrap();
     s.viewport_px = (1000.0, 1000.0);
-    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0 });
+    s.state_mut().unwrap().set_view(View { center: Vec2::new(3.0, 3.0), height: 10.0, twist: 0.0 });
     // Window selection from left to right picks only the first line.
     s.cmdline("move").unwrap();
     s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
@@ -1488,5 +1549,15 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
             assert!(r.is_err(), "SETVAR {name} {text} was accepted");
             assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
         }
+    }
+}
+
+#[test]
+fn additional_tools_keeps_compatible_command_ids() {
+    assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
+    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt"] {
+        let command = crate::cmd::find_command(id).expect("existing command id");
+        assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
+        assert!(!command.menu.contains(&"Express Tools"));
     }
 }

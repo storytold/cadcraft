@@ -36,6 +36,7 @@
 	> Greater than	> Większe niż
 	A built-in table: editing it keeps an edited copy in the drawing.	Tabela wbudowana: edycja zapisuje w rysunku zmienioną kopię.
 	A drawing opened from a file keeps that file's format.	Rysunek otwarty z pliku zachowuje format tego pliku.
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Twój skrót ma pierwszeństwo przed skrótem CADCrafta. Zmiany działają od razu i zostają zapamiętane.
 	A variable name starts with a letter and has only letters, digits and _	Nazwa zmiennej zaczyna się od litery i zawiera tylko litery, cyfry i _
 	About	O programie
 	About CADCraft	O programie CADCraft
@@ -49,10 +50,12 @@
 	Add/Delete Scales...	Dodaj/usuń skale...
 	Add: Pick points	Dodaj: wskaż punkty
 	Add: Select objects	Dodaj: wybierz obiekty
+	Additional Tools	Dodatkowe narzędzia
 	Additional angles	Dodatkowe kąty
 	Add…	Dodaj…
 	Alias	Alias
 	Alias file: {file}	Plik aliasów: {file}
+	Aliases are saved in your CADCraft profile and survive restarts.	Aliasy są zapisywane w Twoim profilu CADCrafta i zostają po ponownym uruchomieniu.
 	Align	Wyrównaj
 	Align Multileaders	Wyrównaj multiodnośniki
 	Align Text	Wyrównaj tekst
@@ -104,6 +107,7 @@
 	Automatic save file location	Lokalizacja plików autozapisu
 	Axis, End	Oś, koniec
 	B	B
+	Back to CADCraft's shortcut	Przywróć skrót CADCrafta
 	Base	Punkt bazowy
 	Baseline	Od bazy
 	Batch Publish	Publikowanie wsadowe
@@ -179,6 +183,7 @@
 	Click to set new origin	Kliknij, aby ustawić nowy początek
 	Clip	Przytnij obwiednią
 	Clip Viewport	Przytnij rzutnię
+	Clip Xref	Przytnij odnośnik zewnętrzny (Xref)
 	Clipboard	Schowek
 	Close	Zamknij
 	Close All	Zamknij wszystko
@@ -206,6 +211,7 @@
 	Command History	Historia poleceń
 	Command Line	Wiersz poleceń
 	Command Line History Lines	Liczba wierszy historii wiersza poleceń
+	Command Mode	Tryb polecenia
 	Command Reference	Spis poleceń
 	Command line history	Historia wiersza poleceń
 	Commits	Commity
@@ -242,6 +248,7 @@
 	Creates a user parameter	Tworzy parametr użytkownika
 	Crosshair size	Rozmiar celownika
 	Crossing selection color:	Kolor wskazania przecinającego:
+	Ctrl+Enter to apply	Ctrl+Enter, aby zastosować
 	Ctrl+Enter to finish	Ctrl+Enter, aby zakończyć
 	Current Scale Only	Tylko bieżąca skala
 	Current layer	Bieżąca warstwa
@@ -254,6 +261,7 @@
 	Cut with Base Point	Wytnij z punktem bazowym
 	Cyan	Cyjan
 	Cylinder	Walec
+	DView	Widok dynamiczny
 	DWG	DWG
 	DWG Reference...	Odniesienie DWG...
 	DXF	DXF
@@ -265,6 +273,7 @@
 	Decimal Degrees	Stopnie dziesiętne
 	Decimeters	Decymetry
 	Default	Domyślny
+	Default Mode	Tryb domyślny
 	Default Save Format	Domyślny format zapisu
 	Default Save Version	Domyślna wersja zapisu
 	Default save version	Domyślna wersja zapisu
@@ -344,14 +353,17 @@
 	Dynamic Input	Wprowadzanie dynamiczne
 	Dynamic Input (F12)	Wprowadzanie dynamiczne (F12)
 	E	E
+	ENTER	ENTER
 	Edit	Edycja
 	Edit Array	Edytuj szyk
 	Edit Attributes...	Edytuj atrybuty...
 	Edit Block Definition	Edytuj definicję bloku
 	Edit Command Aliases (PGP)...	Edytuj aliasy poleceń (PGP)...
+	Edit Mode	Tryb edycji
 	Edit Multileader	Edytuj multiodnośnik
 	Edit Reference In-Place	Edytuj odniesienie w miejscu
 	Edit Table Cell	Edytuj komórkę tabeli
+	Edit Text	Edytuj tekst
 	Edit Text...	Edytuj tekst...
 	Edit…	Edytuj…
 	Elevation	Poziom
@@ -432,8 +444,8 @@
 	Extend	Wydłuż
 	Extension	Przedłużenie
 	Extents	Zakres
-	External Reference	Odniesienie zewnętrzne
-	External References	Odniesienia zewnętrzne
+	External Reference	Odnośnik zewnętrzny
+	External References	Odnośniki zewnętrzne
 	Extrude	Wyciągnij
 	Feet	Stopy
 	File	Plik
@@ -532,7 +544,11 @@
 	Imperial (inches)	Calowe (cale)
 	Implied Loops	Kontury domniemane
 	Import	Importuj
+	Import and replace	Importuj i zastąp
 	Import...	Importuj...
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	Import: tutaj nie ma okna wyboru pliku; uruchom ALIASEDIT z zawartością pliku w parametrze text.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	Import pliku zastąpi Twoje aliasy ({n}) oraz wszystkie niezastosowane jeszcze zmiany.
+	Import…	Importuj…
 	In	Powiększ
 	In-window Menu Bar	Pasek menu w oknie
 	Inches	Cale
@@ -582,7 +598,10 @@
 	Join us on Discord	Dołącz do nas na Discordzie
 	Justify	Wyjustuj
 	Keep an editable copy of this table in the drawing	Zachowaj w rysunku edytowalną kopię tej tabeli
+	Keep my aliases	Zachowaj moje aliasy
 	Keep the system cursor visible over the drawing area	Pozostaw kursor systemowy widoczny nad obszarem rysunku
+	Keyboard Shortcuts	Skróty klawiaturowe
+	Keyboard Shortcuts...	Skróty klawiaturowe...
 	Kilometers	Kilometry
 	Landscape	Pozioma
 	Language	Język
@@ -652,6 +671,7 @@
 	Lock viewport	Zablokuj rzutnię
 	Lock/Unlock	Zablokuj/odblokuj edycję
 	Loft	Wyciągnij przez przekroje
+	Longer click duration:	Czas dłuższego kliknięcia:
 	Ltscale	Skala linii
 	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Bez powiązań z Autodesk, Inc.
 	MODEL	MODEL
@@ -711,6 +731,7 @@
 	Named Views...	Nazwane widoki...
 	Nanometers	Nanometry
 	Nearest	Bliski
+	Needs Ctrl, Alt or a function key	Wymaga Ctrl, Alt lub klawisza funkcyjnego
 	New	Nowy
 	New (metric)	Nowy (metryczny)
 	New CTB	Nowa CTB
@@ -733,8 +754,9 @@
 	No alias file loaded. REINIT replaces these aliases with a file's.	Nie wczytano pliku aliasów. REINIT zastępuje te aliasy aliasami z pliku.
 	No blocks defined in this drawing.	W tym rysunku nie zdefiniowano żadnych bloków.
 	No contributor data was built into this copy.	Ta kopia nie zawiera danych o współtwórcach.
-	No external references are attached.	Nie dołączono żadnych odniesień zewnętrznych.
+	No external references are attached.	Nie dołączono żadnych odnośników zewnętrznych.
 	No model credits were built into this copy.	Ta kopia nie zawiera informacji o modelach.
+	No objects selected and no command running:	Brak zaznaczonych obiektów i aktywnego polecenia:
 	No plot style tables.	Brak tabel stylów wydruku.
 	No saved layer states	Brak zapisanych stanów warstw
 	No selection	Brak wyboru
@@ -762,6 +784,7 @@
 	Object snap marker size	Rozmiar znacznika przyciągania do obiektów
 	Object type:	Typ obiektu:
 	Objects on locked layers	Obiekty na zablokowanych warstwach
+	Objects selected and no command running:	Zaznaczone obiekty, brak aktywnego polecenia:
 	Oblique	Ukośny
 	Off	Wył.
 	Offset	Odsunięcie
@@ -774,7 +797,7 @@
 	Open (⌘O)	Otwórz (⌘O)
 	Open Recent	Otwórz ostatnie
 	Open Sample Drawing	Otwórz przykładowy rysunek
-	Open Xref	Otwórz odniesienie zewnętrzne
+	Open Xref	Otwórz odnośnik zewnętrzny (Xref)
 	Open a drawing first.	Najpierw otwórz rysunek.
 	Open and Save	Otwieranie i zapis
 	Open in Block Editor	Otwórz w edytorze bloków
@@ -864,6 +887,7 @@
 	Position Y	Położenie Y
 	Position Z	Położenie Z
 	Precision	Dokładność
+	Press the keys	Naciśnij klawisze
 	Preview	Podgląd
 	Previous	Poprzedni
 	Previous Change	Poprzednia zmiana
@@ -894,6 +918,8 @@
 	Radians	Radiany
 	Radius	Promień
 	Raster Image	Obraz rastrowy
+	Raster Image Reference...	Odniesienie do obrazu rastrowego...
+	Raster Images	Obrazy rastrowe
 	Ray	Półprosta
 	Read-only	Tylko do odczytu
 	Real name	Imię i nazwisko
@@ -935,8 +961,10 @@
 	Rename Layout	Zmień nazwę arkusza
 	Rename Text Style	Zmień nazwę stylu tekstu
 	Rename...	Zmień nazwę...
+	Repeat last command	Powtórz ostatnie polecenie
 	Repeat {command}	Powtórz {command}
 	Replace Block...	Zastąp blok...
+	Replaces the shortcut of {commands}	Zastępuje skrót poleceń: {commands}
 	Requires a point (x,y, @dx,dy or @d<a).	Wymagany jest punkt (x,y, @dx,dy lub @d<a).
 	Reset Palettes	Resetuj palety
 	Reset Panel Layout	Resetuj układ paneli
@@ -950,8 +978,11 @@
 	Revision Cloud	Chmurka rewizyjna
 	Revolve	Obrót bryły
 	Right	W prawo
+	Right-Click Customization	Dostosowanie prawego przycisku
+	Right-Click Customization...	Dostosowanie prawego przycisku...
 	Rotate	Obróć
 	Rotation	Obrót
+	Run ALIASEDIT with the file's contents using its text parameter.	Uruchom ALIASEDIT z zawartością pliku w parametrze text.
 	Run Script...	Uruchom skrypt...
 	S	S
 	SVG drawings (SVG, SVGZ)	Rysunki SVG (SVG, SVGZ)
@@ -1077,6 +1108,9 @@
 	Shape	Kształt
 	Share	Udostępnij
 	Sheet Books to PDF...	Zestawy arkuszy do PDF...
+	Shortcut Menu	Menu podręczne
+	Shortcut Menu: always enabled	Menu podręczne: zawsze włączone
+	Shortcut Menu: enabled when command options are present	Menu podręczne: włączone, gdy polecenie ma opcje
 	Show	Pokaż
 	Show All	Pokaż wszystko
 	Show All Constraint Bars	Pokaż wszystkie paski więzów
@@ -1290,6 +1324,7 @@
 	Thaw All Layers	Odblokuj wszystkie warstwy
 	Thaw Layer	Odblokuj warstwę
 	The aperture is how near the cursor must come to a point for an object snap to find it.	Apertura określa, jak blisko punktu musi znaleźć się kursor, aby przyciąganie do obiektów go wykryło.
+	The drawing changed. Close the window and open it again.	Rysunek się zmienił. Zamknij okno i otwórz je ponownie.
 	There is nothing here yet.	Nic tu jeszcze nie ma.
 	Thickness	Grubość
 	This drawing	Ten rysunek
@@ -1316,7 +1351,9 @@
 	Turn Off Layer	Wyłącz warstwę
 	Turn On Layer	Włącz warstwę
 	Turn Quick Properties off (QPMODE)	Wyłącz szybkie właściwości (QPMODE)
+	Turn on time-sensitive right-click	Włącz prawy przycisk zależny od czasu
 	Turned off, a right-click while a command runs always opens the shortcut menu.	Gdy wyłączone, prawy przycisk w trakcie polecenia zawsze otwiera menu podręczne.
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Gdy wyłączone, prawy przycisk w trakcie polecenia działa tak, jak ustawiono w Dostosowaniu prawego przycisku dla trybu polecenia.
 	Type	Typ
 	Type a command	Wpisz polecenie
 	Type an alias name.	Wpisz nazwę aliasu.
@@ -1389,6 +1426,8 @@
 	WCS	GUW
 	When a command is active	Gdy polecenie jest aktywne
 	When no command is active	Gdy żadne polecenie nie jest aktywne
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	W trakcie polecenia szybkie kliknięcie to Enter, a dłuższe otwiera menu podręczne.
+	While a command runs:	W trakcie polecenia:
 	White	Biały
 	Width factor	Współczynnik szerokości
 	Window	Okno
@@ -1401,8 +1440,10 @@
 	X	X
 	X offset (mm)	Przesunięcie X (mm)
 	Xline	Linia konstrukcyjna
-	Xref and Block In-place Editing	Edycja odniesień zewnętrznych i bloków w miejscu
-	Xrefs	Odniesienia zewnętrzne
+	Xref	Odnośnik zewnętrzny (Xref)
+	Xref Clip Frame	Ramka przycięcia odnośnika zewnętrznego (Xref)
+	Xref and Block In-place Editing	Edycja odnośników zewnętrznych (Xref) i bloków w miejscu
+	Xrefs	Odnośniki zewnętrzne (Xref)
 	Y	Y
 	Y offset (mm)	Przesunięcie Y (mm)
 	Yards	Jardy
@@ -1423,6 +1464,7 @@
 	built-in	wbudowany
 	contains authoring elements. Open in Block Editor?	zawiera elementy definicji bloku dynamicznego. Otworzyć w edytorze bloków?
 	error	błąd
+	milliseconds	milisekund
 	min	min
 	objects	obiektów
 	overrides built-in	zastępuje wbudowany
@@ -1432,6 +1474,7 @@
 	{kind} (constraint {id})	{kind} (więz {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Więz {kind} {name} = {expression}  (kliknij dwukrotnie, aby edytować)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	{n} more warnings; see the command line.	Więcej ostrzeżeń: {n}; zobacz wiersz poleceń.
 	ƒx  New User Parameter	ƒx  Nowy parametr użytkownika
 	ΔLOC	ΔLOC
 	−Bin	−Bin

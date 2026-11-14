@@ -205,7 +205,8 @@ fn binary_dxf_honours_the_code_page() {
     let read = |b: &[u8]| text_of(&cadcraft_io::read_dxf(b).unwrap());
     assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xCF\xF0\xE8\xE2\xE5\xF2")), "Привет");
     assert_eq!(read(&bin("AC1018", "ANSI_932", b"\x95\x5C\\U+00E9")), "表é");
-    // A short Cyrillic string that is also valid UTF-8 (D1 B2) is still read in the code page.
+    // A short Cyrillic string that is also valid UTF-8 (D1 B2) is still read in the code page:
+    // a pre-R2007 binary file has no way to escape to UTF-8, so its strings are never read as it.
     assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "СІ");
     assert_eq!(read(&bin("AC1021", "ANSI_1251", "Привет".as_bytes())), "Привет");
     assert_eq!(read(&bin("AC1015", "ANSI_1361", b"Caf\xE9")), "Café");
@@ -247,7 +248,7 @@ fn hostile_multibyte_never_panics() {
 #[test]
 fn pre_2007_dwg_text_decodes_through_the_bridge() {
     let dxf = ascii_dxf("AC1015", "ANSI_1251", b"\xD1\xEB\xEE\xE9", b"\xC1\xEB\xEE\xEA", b"\xCF\xF0\xE8\xE2\xE5\xF2");
-    let dwg = cadcraft_dwg::dxf_to_dwg(&dxf).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg(&dxf).unwrap();
     let d = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     assert_eq!(names(&d), ("Слой".into(), "Блок".into(), "Привет".into()));
 }

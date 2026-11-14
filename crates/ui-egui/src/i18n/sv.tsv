@@ -1480,3 +1480,9 @@ menu	Modify	Ändra
 	The current file is kept as {name} until the next save.	Den aktuella filen sparas som {name} till nästa sparande.
 	This format can't keep these objects yet: {objects}.	Det här formatet kan ännu inte behålla följande objekt: {objects}.
 	{count} more types	{count} typer till
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+
+# ArtCraft feature naming
+	Additional Tools	Ytterligare verktyg

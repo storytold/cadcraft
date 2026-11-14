@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0 };
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
@@ -229,4 +229,22 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
+}
+
+/// A hot grip whose object was hidden since (HIDEOBJECTS, a layer turned off) is no longer
+/// painted, so clicking another hot grip must not stretch the hidden object along with it.
+#[test]
+fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for y in [0, 30] {
+        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
+    }
+    let handles = app.session.doc().unwrap().model.handles();
+    let (shown, hidden) = (handles[0], handles[1]);
+    app.session.set_selection(vec![shown, hidden]);
+    app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
+    app.run("hideobjects", serde_json::json!({ "handles": [hidden.hex()] })).unwrap();
+    app.session.set_selection(vec![shown, hidden]);
+    click_grip(&mut app, (shown, 0), false);
+    assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
 }

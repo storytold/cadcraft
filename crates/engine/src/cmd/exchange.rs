@@ -55,11 +55,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["printpdf", "pdfb"])
             .params("{path?: \"DIR/NAME^NAME2.pdf\" (default: the drawing's file; a `^` splits the name into one book name per row of frames; else returns base64 `data` per book), names?: [book names], frameHeight?: mm (default 297), unit?: mm per drawing unit (default 1)} → {books: [{name, pages, bytes, path? | data}], skipped}: closed polylines of the frame height in model space are sheet frames; each row (same lower edge, bottom to top) is one PDF, its frames left to right one page each on the paper (ISO A-series, either orientation) they match")
             .noundo(),
-        CommandSpec::new("attach", "Attach", |_, _| {
-            Err(EngineError::Other("ATTACH is not available yet: raster images and PDF/DWF/DGN underlays can't be shown yet".into()))
+        CommandSpec::new("attach", "Attach", |s, p| match str_param(p, "path").map(extension) {
+            Some(e) if super::image::is_image_ext(&e) => super::image::run_imageattach(s, p),
+            _ => Err(EngineError::Other("ATTACH is not available yet for this file: only raster images (PNG, JPEG, BMP, TIFF; see IMAGEATTACH) can be attached, PDF/DWF/DGN underlays can't be shown yet".into())),
         })
-        .params("not available yet")
-        .noundo(),
+        .params("{path: image file, …} as IMAGEATTACH; other file types are not available yet"),
         CommandSpec::new("share", "Share", |_, _| {
             Err(EngineError::Other("SHARE is not available yet: there is no online service to share through; EXPORT or PUBLISH the drawing and send the file".into()))
         })
@@ -204,7 +204,8 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("import", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("import", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("import", "paths are not available on the web; pass `data`"))
@@ -642,6 +643,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     }
 

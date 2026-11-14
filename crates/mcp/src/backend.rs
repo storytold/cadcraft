@@ -1,7 +1,7 @@
 //! Where MCP tool calls end up: a control-channel method call.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use cadcraft_engine::Session;
@@ -76,9 +76,17 @@ impl Remote {
     /// The per-session token for this port, read (and cached) from the owner-only token file. A
     /// missing file is not fatal here: the request is sent without a token and the server replies
     /// with an authentication error the user can act on.
+    ///
+    /// The desktop app listens only on `127.0.0.1:PORT`, so the token goes only to that exact
+    /// peer: a name that also resolves elsewhere (`localhost` → `::1`, where another local account
+    /// may listen on the same port) must not be handed the desktop's credential (CWE-522).
     fn token(&mut self) -> Option<&str> {
+        let port = port_of(&self.addr)?;
+        let peer = self.conn.as_ref().and_then(|(_, s)| s.peer_addr().ok());
+        if peer != Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
+            return None;
+        }
         if self.token.is_none()
-            && let Some(port) = port_of(&self.addr)
             && let Ok(t) = crate::control_token::read(port)
         {
             self.token = Some(t);
@@ -207,6 +215,14 @@ fn is_read_only(method: &str) -> bool {
 
 impl Remote {
     /// Put the current token (if any) on `req`, replacing the one it carries.
+    /// Connect if needed, put the token for the peer actually connected to on `req`, and send it.
+    fn sign_and_send(&mut self, req: &mut Value) -> Result<String, (std::io::Error, bool)> {
+        if self.conn.is_none() {
+            self.reach().map_err(|e| (e, false))?;
+        }
+        self.set_token(req);
+        self.roundtrip(&req.to_string())
+    }
     fn set_token(&mut self, req: &mut Value) {
         let token = self.token().map(str::to_string);
         if let Some(obj) = req.as_object_mut() {
@@ -219,7 +235,7 @@ impl Remote {
     /// Send `req` and parse the reply, refreshing the token before a safe retry after a transport
     /// error. A mutation that may have reached the server is never resent automatically.
     fn exchange(&mut self, method: &str, req: &mut Value) -> Result<Value, String> {
-        let reply = match self.roundtrip(&req.to_string()) {
+        let reply = match self.sign_and_send(req) {
             Ok(r) => r,
             Err((e, sent)) => {
                 self.token = None;
@@ -232,8 +248,7 @@ impl Remote {
                     ));
                 }
                 // A restarted server may have rotated its token before dropping the old socket.
-                self.set_token(req);
-                self.roundtrip(&req.to_string()).map_err(|(e, _)| {
+                self.sign_and_send(req).map_err(|(e, _)| {
                     self.token = None;
                     self.conn = None;
                     format!("CADCraft at {}: {e}", self.addr)
@@ -256,14 +271,12 @@ impl Backend for Remote {
         let id = self.next_id;
         self.next_id += 1;
         let mut req = json!({"id": id, "method": method, "params": params});
-        self.set_token(&mut req);
         let mut v = self.exchange(method, &mut req)?;
         // The token is read before `--launch` opens the app, which then writes a new one (#2087); the
         // file can also be left over from an earlier session. Once, so a wrong token can't loop.
         if unauthorized(&v) && v.get("state").and_then(Value::as_str) == Some("not-run") {
             self.token = None;
             self.conn = None;
-            self.set_token(&mut req);
             v = self.exchange(method, &mut req)?;
         }
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -300,7 +313,7 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
     ("engine.execute", "{command, params}", "Run any command with JSON parameters. Never opens a dialog."),
     ("engine.commands", "", "Every command: id, label, menu path, shortcut, aliases, params doc, enabled."),
     ("drawing.inspect", "{entities?, limit?}", "Drawing summary and entities with handles and geometry."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Render the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?, window?, background?, plot_style?}", "Render the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("control.methods", "", "This list."),
@@ -400,7 +413,14 @@ impl Backend for Headless {
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
                 let window = render_window(&p);
-                let opts = cadcraft_render::Options { view: window, transparency: s.settings.transparency_display, ..Default::default() };
+                // `background` and `plot_style` (#803), read as the app reads them.
+                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, &p)?;
+                let opts = cadcraft_render::Options {
+                    view: window,
+                    transparency: s.settings.transparency_display,
+                    plot_style_table: look.plot_style_table.clone(),
+                    ..Default::default()
+                };
                 let list = cadcraft_render::build(&st.doc, &st.space, &opts);
                 let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
                 let side = |k: &str| p.get(k).and_then(Value::as_f64).map(|x| x as u32);
@@ -413,8 +433,7 @@ impl Backend for Headless {
                     cadcraft_render::raster::View { center: v.center, scale: f64::from(h) / v.height.max(1e-12), width: w, height: h }
                 };
                 let (w, h) = (view.width, view.height);
-                let png =
-                    cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
+                let png = cadcraft_render::raster::render_png(&list, &view, &look.raster()).ok_or("render failed")?;
                 let mut r =
                     json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
@@ -587,6 +606,24 @@ mod tests {
                 seen += 1;
             }
         })
+    }
+
+    /// A listener on another loopback address with the desktop's port (here `::1`) never receives
+    /// the desktop's token.
+    #[test]
+    fn token_is_not_sent_to_another_loopback_listener() {
+        let Ok(listener) = TcpListener::bind("[::1]:0") else { return };
+        let addr = listener.local_addr().unwrap();
+        crate::control_token::issue(addr.port()).unwrap();
+        let server = fake_app(listener, move |req, _| {
+            assert!(req.get("token").is_none(), "token leaked to {addr}");
+            json!({"ok": true, "result": "x"})
+        });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("ping", json!({}));
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("x")));
+        assert_eq!(server.join().unwrap(), 1);
     }
 
     /// `--launch` reads the token before it opens the app, so the first request carries the token
