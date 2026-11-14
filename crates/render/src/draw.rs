@@ -253,14 +253,18 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.tris(ctx, rgb, &tris);
             }
             // 尺寸/引线箭头（类型 6 零长度点 = 尖端）：天正建筑标记 = 45° 斜线。
-            // 尖端在尺寸线端点外 300mm，建筑标记斜线从尺寸线端点（尖端往回 300mm）
-            // 向尺寸线内侧 45° 倾斜（方向 -d+n）。
+            // 尖端在尺寸线端点外 300mm，斜线从尺寸线端点（尖端往回 300mm）向内侧 45°。
+            // 法线统一朝上（y 分量 ≥ 0），两端斜线关于尺寸线对称：右端左上、左端右上。
             for (tx, ty, dx, dy) in &t.arrow_tips {
+                let (tx, ty, dx, dy) = (*tx, *ty, *dx, *dy);
                 let size = 300.0;
                 let s = std::f64::consts::FRAC_1_SQRT_2;
-                // 尺寸线端点（斜线起点，在尺寸线上）。
                 let (ox, oy) = (tx - dx * size, ty - dy * size);
-                let (sx, sy) = ((-dx - dy) * s, (-dy + dx) * s);
+                let (nx, ny) = {
+                    let (a, b) = (-dy, dx);
+                    if b < 0.0 { (-a, -b) } else { (a, b) }
+                };
+                let (sx, sy) = ((-dx + nx) * s, (-dy + ny) * s);
                 stroke(b, &[Vec2::new(ox, oy), Vec2::new(ox + sx * size, oy + sy * size)]);
             }
             // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 type 38 的方向余弦还原。
