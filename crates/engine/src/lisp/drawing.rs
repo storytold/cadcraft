@@ -433,7 +433,7 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 const MAX_TEXT_STYLES: usize = 100_000;
 
 /// `entmake` of a STYLE list (2 name, 70 flags, 40 height, 41 width factor, 50 oblique angle in
-/// degrees, 71 generation flags, 3 font file, 4 big font): add a text style to the table. nil
+/// radians, as in every entity list, 71 generation flags, 3 font file, 4 big font): add a text style to the table. nil
 /// for a name that is empty, invalid or already in use, and for numbers that aren't usable.
 fn make_style(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
     let group = |code: i32| tags.iter().find(|t| t.code == code);
@@ -450,7 +450,7 @@ fn make_style(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
         big_font: group(4).map(|t| t.str().trim().to_string()).unwrap_or_default(),
         height: num(40, 0.0),
         width_factor: num(41, 1.0),
-        oblique: num(50, 0.0).to_radians(),
+        oblique: num(50, 0.0),
         backwards: gen_flags & 2 != 0,
         upside_down: gen_flags & 4 != 0,
         vertical: flags & 4 != 0,

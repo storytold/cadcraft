@@ -9,7 +9,7 @@ fn session() -> Session {
 }
 
 const MAKE: &str = r#"(setq r (entmake '((0 . "STYLE") (100 . "AcDbSymbolTableRecord") (100 . "AcDbTextStyleTableRecord")
-    (2 . "MyStyle") (70 . 0) (40 . 2.5) (41 . 0.8) (50 . 15.0) (71 . 2) (42 . 2.5) (3 . "arial.ttf") (4 . ""))))"#;
+    (2 . "MyStyle") (70 . 0) (40 . 2.5) (41 . 0.8) (50 . 0.2617993877991494) (71 . 2) (42 . 2.5) (3 . "arial.ttf") (4 . ""))))"#;
 
 #[test]
 fn entmake_style_creates_the_text_style() {
@@ -19,7 +19,7 @@ fn entmake_style_creates_the_text_style() {
     let d = s.doc().unwrap();
     let st = d.text_style("MyStyle").expect("style was made");
     assert_eq!((st.height, st.width_factor, st.font.as_str(), st.backwards), (2.5, 0.8, "arial.ttf", true));
-    assert!((st.oblique - 15f64.to_radians()).abs() < 1e-9);
+    assert!((st.oblique - 0.2617993877991494).abs() < 1e-12);
     assert_eq!(d.text_styles.len(), before + 1);
     // A second make of the same name (any case) or an empty name makes nothing.
     s.cmdline("(setq r2 (entmake '((0 . \"STYLE\") (2 . \"mystyle\") (70 . 0))))").unwrap();
