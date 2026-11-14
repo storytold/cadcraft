@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use cadcraft_doc::{Drawing, EntityKind};
-use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_io::{SaveOptions, Version, read_dxf, write_dxf, write_with};
+use craft_dxf::{Tag, records, sections};
 
 /// DXF text from lines of `code value` (the value may be empty).
 fn dxf(src: &str) -> String {
@@ -570,7 +570,7 @@ struct Out {
 
 impl Out {
     fn new(text: &str) -> Out {
-        let tags = cadcraft_dxf::parse(text.as_bytes()).expect("parse written DXF");
+        let tags = craft_dxf::parse(text.as_bytes()).expect("parse written DXF");
         let mut recs = Vec::new();
         for s in sections(&tags) {
             for (k, t) in records(&s.tags) {
@@ -908,7 +908,7 @@ fn class_records_have_instance_counts_from_2004_only() {
     // Binary files the same way: none at R2000, the count at 2018.
     let acme = |version: Version| {
         let bytes = write_with(&d, "x.dxf", &SaveOptions { version: Some(version), binary: true }).expect("save binary");
-        let tags = cadcraft_dxf::parse(&bytes).expect("parse binary");
+        let tags = craft_dxf::parse(&bytes).expect("parse binary");
         let class = sections(&tags)
             .into_iter()
             .filter(|sec| sec.name == "CLASSES")

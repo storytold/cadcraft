@@ -1225,33 +1225,56 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         return;
     }
     let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut classes = 0;
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();
         if kind != "CLASS" {
             *counts.entry(kind.to_ascii_uppercase()).or_default() += 1;
+        } else {
+            classes += 1;
         }
     }
 
-    let mut start = 0;
-    while start < tags.len() {
-        if tags.get(start).is_none_or(|t| t.code != 0 || t.str() != "CLASS") {
-            start += 1;
+    // One pass into a new list: inserting each missing count in place shifted every later tag,
+    // quadratic in the number of CLASS records.
+    // Tags move by value (no clone); the old and new buffers coexist while it runs. At most one
+    // group 91 is added per CLASS record, so that is all the room the new list needs beyond the old one.
+    let old = std::mem::take(tags);
+    tags.reserve(old.len() + classes);
+    let mut it = old.into_iter();
+    let mut pending = it.next();
+    while let Some(t) = pending.take() {
+        if t.code != 0 || t.str() != "CLASS" {
+            tags.push(t);
+            pending = it.next();
             continue;
         }
-        let end = tags[start + 1..].iter().position(|t| t.code == 0).map_or(tags.len(), |i| start + 1 + i);
-        let name = tags[start + 1..end].iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
+        let mut record = vec![t];
+        for n in it.by_ref() {
+            if n.code == 0 {
+                pending = Some(n);
+                break;
+            }
+            record.push(n);
+        }
+        let name = record.iter().skip(1).find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
         let count = counts.get(&name).copied().unwrap_or(0);
-        let inserted = if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 91) {
-            tags[start + 1 + i] = Tag::i(91, count);
-            false
-        } else if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 90) {
-            tags.insert(start + 2 + i, Tag::i(91, count));
-            true
-        } else {
-            false
-        };
-        // Inserting the group shifts the next record's start by one.
-        start = end + usize::from(inserted);
+        // The first 91 gets the count; without one, a 91 goes in after the first 90.
+        let mut added = record.iter().skip(1).any(|t| t.code == 91);
+        let mut replaced = false;
+        for (i, t) in record.into_iter().enumerate() {
+            let code = t.code;
+            if i > 0 && code == 91 && !replaced {
+                tags.push(Tag::i(91, count));
+                replaced = true;
+                continue;
+            }
+            tags.push(t);
+            if i > 0 && code == 90 && !added {
+                tags.push(Tag::i(91, count));
+                added = true;
+            }
+        }
     }
 }
 
@@ -1277,5 +1300,33 @@ fn mark_xrefs(tags: &mut [Tag], d: &Drawing) {
             (1, Some(Some((p, _)))) => *t = Tag::s(1, p),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod class_count_tests {
+    use super::*;
+
+    fn record(kind: &str, name: &str, extra: &[Tag]) -> Vec<Tag> {
+        let mut r = vec![Tag::s(0, kind), Tag::s(1, name), Tag::i(90, 0)];
+        r.extend_from_slice(extra);
+        r
+    }
+
+    /// The first 91 gets the count, a CLASS without one gets it after its 90, in one pass over many records.
+    #[test]
+    fn counts_are_set_and_added_in_one_pass() {
+        let mut tags = record("CLASS", "FOO", &[]);
+        tags.extend(record("CLASS", "BAR", &[Tag::i(91, 7), Tag::i(91, 8)]));
+        for i in 0..50_000 {
+            tags.extend(record("CLASS", &format!("X{i}"), &[]));
+        }
+        tags.push(Tag::s(0, "FOO"));
+        let started = std::time::Instant::now();
+        add_class_instance_counts(&mut tags, Version::R2018);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(&tags[..4], &[Tag::s(0, "CLASS"), Tag::s(1, "FOO"), Tag::i(90, 0), Tag::i(91, 1)]);
+        assert_eq!(&tags[4..9], &[Tag::s(0, "CLASS"), Tag::s(1, "BAR"), Tag::i(90, 0), Tag::i(91, 0), Tag::i(91, 8)]);
+        assert_eq!(tags.iter().filter(|t| t.code == 91).count(), 50_003);
     }
 }

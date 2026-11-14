@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Layer, LayerState, Lineweight};
-use cadcraft_dxf::Tag;
+use craft_dxf::Tag;
 
 use crate::dxf_ext::{transparency_from_dxf, transparency_to_dxf};
 
