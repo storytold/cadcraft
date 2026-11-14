@@ -158,6 +158,33 @@ fn a_landscape_page_gets_the_papers_margins_back() {
 }
 
 #[test]
+/// A page set up on a landscape device paper keeps its printable area when a later PAGESETUP only
+/// changes the orientation: no paper is copied, so the retained margins turn to the new sheet
+/// instead of being saved against the wrong axes (#1266).
+fn an_orientation_only_pagesetup_turns_the_retained_margins() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "pdf"})).unwrap();
+    let paper = json!({"name": "Banner", "width": 400, "height": 200, "margins": [150, 0, 150, 0]});
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": paper})).unwrap();
+    // The landscape page carries the margins on its 400 mm sides: 150 mm left and right.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "Banner Printer", "paper": "Banner", "landscape": true})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.width_mm, page.height_mm, page.margins_mm), (200.0, 400.0, [150.0, 0.0, 150.0, 0.0]));
+
+    // A second command changes only the orientation. The paper is not copied and no margins are
+    // given, so the retained margins turn to the 200 x 400 portrait sheet: 150 mm top and bottom,
+    // leaving the same 100 x 200 mm printable area rather than falling back to the whole sheet.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": false})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.paper.as_str(), page.margins_mm), ("Banner", [0.0, 150.0, 0.0, 150.0]));
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    let mm = |v: f64| v * sheet.unit_mm;
+    assert_eq!((mm(sheet.size.x), mm(sheet.size.y)), (200.0, 400.0));
+    assert_eq!((mm(sheet.printable.min.x), mm(sheet.printable.min.y)), (0.0, 150.0));
+    assert_eq!((mm(sheet.printable.max.x), mm(sheet.printable.max.y)), (200.0, 250.0));
+}
+
+#[test]
 /// PLOT and EXPORTPDF hand the hook the device's output, resolution, paper and margins, and a
 /// layout plots with its own page setup; unknown devices and papers are refused.
 fn plot_uses_the_device() {

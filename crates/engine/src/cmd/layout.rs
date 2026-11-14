@@ -683,13 +683,20 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     // The standard size the layout had before this call, so that resubmitting it (the Plot
     // dialog's Apply to Layout always sends `paper`) keeps the layout's paper units.
     let old_paper = cadcraft_render::paper_size(&page.paper).map(|ps| ps.name);
+    let turned = p.get("landscape").and_then(Value::as_bool).filter(|l| *l != page.landscape);
     // The orientation first: a paper taken from a device turns its margins to the sheet the page
     // names when `page_device` copies them.
-    if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
+    if let Some(l) = turned {
         page.landscape = l;
     }
     // A plotter's own papers (with their printable areas) come first.
     let device_paper = super::plotters::page_device(cmd, p, &mut page)?;
+    // A page that keeps its paper keeps its margins, and the margins are measured against the
+    // sheet's axes: turning the orientation turns them too (#1266). Explicit margins are already
+    // on the new sheet's axes.
+    if turned.is_some() && !device_paper && p.get("margins").is_none() {
+        page.margins_mm = super::plotters::portrait_margins(page.margins_mm);
+    }
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
         let n = paper.as_str().ok_or_else(|| bad(cmd, "`paper` must be a paper name"))?;
         let ps = cadcraft_render::paper_size(n).ok_or_else(|| {
