@@ -37,8 +37,6 @@ const MAX_DIRS: usize = 32;
 const MAX_GUARDED_DIRS: usize = 1024;
 /// Most guards kept past [`MAX_GUARDED_DIRS`], each applying to every folder searched.
 const MAX_OVERFLOW_GUARDS: usize = 4096;
-/// The owner of the guard that refuses every file once the overflow guards are used up.
-const CLOSED: &str = "closed";
 /// Most font map entries.
 const MAX_MAP: usize = 1024;
 
@@ -53,6 +51,8 @@ struct Table {
     drawing_guards: HashMap<PathBuf, Vec<(String, OpenGuard)>>,
     /// Guards given once [`MAX_GUARDED_DIRS`] folders had one: they apply to every folder searched.
     overflow_guards: Vec<(String, OpenGuard)>,
+    /// The overflow guards ran out: every file is refused from then on.
+    overflow_closed: bool,
     font_dirs: Vec<PathBuf>,
     search_path: Vec<PathBuf>,
     map: Vec<(String, String)>,
@@ -172,8 +172,8 @@ fn add_dir(dir: &Path, guard: Option<(&str, OpenGuard)>) {
             if !kept.iter().any(|(_, g)| Arc::ptr_eq(g, &guard)) {
                 if kept.len() < MAX_OVERFLOW_GUARDS {
                     kept.push((owner.to_string(), guard));
-                } else if !kept.iter().any(|(o, _)| o == CLOSED) {
-                    kept.push((CLOSED.to_string(), Arc::new(|_: &Path| false)));
+                } else {
+                    t.overflow_closed = true;
                 }
             }
         } else {
@@ -263,7 +263,10 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         let folders: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
         let guarded: Vec<(PathBuf, Vec<OpenGuard>)> =
             t.drawing_guards.iter().map(|(d, g)| (d.clone(), g.iter().map(|(_, g)| g.clone()).collect())).collect();
-        let overflow: Vec<OpenGuard> = t.overflow_guards.iter().map(|(_, g)| g.clone()).collect();
+        let mut overflow: Vec<OpenGuard> = t.overflow_guards.iter().map(|(_, g)| g.clone()).collect();
+        if t.overflow_closed {
+            overflow.push(Arc::new(|_: &Path| false));
+        }
         (t.provider.clone(), folders, (guarded, overflow), t.generation)
     };
     // A guard belongs to the folder, however the search reaches it: a font folder or the search path
