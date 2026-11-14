@@ -64,6 +64,8 @@ thread_local! {
     static STRING_BYTES: Cell<(u64, u64)> = const { Cell::new((0, STRING_BUDGET)) };
     /// The running slice's cap on live cons cells.
     static CELL_LIMIT: Cell<usize> = const { Cell::new(MAX_CELLS) };
+    /// Work done inside the current machine step: list cells walked, steps of synchronous callbacks.
+    static WORK: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Start a slice of a run on this thread: it fails when more than `limit` cells are alive.
@@ -74,6 +76,16 @@ pub fn set_cell_limit(limit: usize) {
 /// Too many cons cells are alive: the error that stops the run.
 pub fn check_cells() -> Result<(), LispError> {
     if live_cells() > CELL_LIMIT.with(Cell::get) { Err(LispError::quit("out of memory: too many list cells")) } else { Ok(()) }
+}
+
+/// Count `n` units of work done inside one machine step ([`super::eval::Machine::run`] charges them as steps).
+pub fn charge_work(n: u64) {
+    WORK.with(|c| c.set(c.get().saturating_add(n)));
+}
+
+/// The work counted since the last call.
+pub fn take_work() -> u64 {
+    WORK.with(|c| c.replace(0))
 }
 
 /// Start a slice of a run on this thread: it has made `used` bytes of its `budget`.
@@ -262,7 +274,10 @@ impl Value {
         loop {
             match v {
                 Value::Nil => return true,
-                Value::Cons(c) => v = c.cdr.clone(),
+                Value::Cons(c) => {
+                    charge_work(1);
+                    v = c.cdr.clone();
+                }
                 _ => return false,
             }
         }
@@ -318,6 +333,7 @@ impl Iterator for ListIter {
     fn next(&mut self) -> Option<Value> {
         match std::mem::take(&mut self.next) {
             Value::Cons(c) => {
+                charge_work(1);
                 self.next = c.cdr.clone();
                 Some(c.car.clone())
             }

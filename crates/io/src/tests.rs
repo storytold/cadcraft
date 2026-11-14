@@ -2915,10 +2915,73 @@ fn svg_shapes_become_entities_in_millimetres() {
     let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
     assert!((c.radius - 2.0).abs() < 1e-9 && (c.center.x - 10.0).abs() < 1e-9 && (c.center.y - 5.0).abs() < 1e-9, "{c:?}");
     let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
-    let major = Vec2::new(e.major.x - e.center.x, e.major.y - e.center.y);
+    let major = Vec2::new(e.major.x, e.major.y);
     assert!((major.len() - 4.0).abs() < 1e-9 && (e.ratio - 0.5).abs() < 1e-9, "{e:?}");
     let l = first(&d, |k| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None });
     assert!((l.a.y - 10.0).abs() < 1e-9 && (l.b.y).abs() < 1e-9, "{l:?}");
+}
+
+#[test]
+fn svg_ellipse_major_axis_is_relative_to_its_centre() {
+    // Away from the origin: the major axis was stored as the absolute point centre + axis.
+    let svg = format!("{SVG_PAGE}<ellipse cx=\"15\" cy=\"2\" rx=\"2\" ry=\"1\"/><circle cx=\"15\" cy=\"2\" r=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "ellipse.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse", "Circle"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    assert!((e.center - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{e:?}");
+    assert!((e.major.x.abs() - 2.0).abs() < 1e-9 && e.major.y.abs() < 1e-9 && e.major.z == 0.0, "{e:?}");
+    assert!((e.ratio - 0.5).abs() < 1e-9, "{e:?}");
+    let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
+    assert!((c.center - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9 && (c.radius - 1.0).abs() < 1e-9, "{c:?}");
+}
+
+#[test]
+fn svg_rotated_ellipse_keeps_its_turn() {
+    // The page maps SVG (x, y) to (x, 10 - y); undo that, then rotate by -30°, to get back to the ellipse's own frame.
+    let svg = format!("{SVG_PAGE}<ellipse cx=\"0\" cy=\"0\" rx=\"20\" ry=\"10\" transform=\"rotate(30)\"/></svg>");
+    let d = read(svg.as_bytes(), "rotated.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    assert!((major.len() - 20.0).abs() < 1e-9 && (e.ratio - 0.5).abs() < 1e-9, "{e:?}");
+    let (s, c) = 30f64.to_radians().sin_cos();
+    let want = Vec2::new(20.0 * c, -20.0 * s);
+    assert!((major - want).len() < 1e-9 || (major + want).len() < 1e-9, "{e:?}");
+    let (ux, uy) = (e.center.x + major.x, 10.0 - (e.center.y + major.y));
+    let (x, y) = (c * ux + s * uy, -s * ux + c * uy);
+    assert!(((x / 20.0).powi(2) + (y / 10.0).powi(2) - 1.0).abs() < 1e-9, "{e:?}");
+}
+
+#[test]
+fn svg_sheared_circle_has_the_axes_of_its_image() {
+    // matrix(1 0 1 1 0 0) is B = [[1, 1], [0, 1]]; the page then flips Y at one millimetre per unit.
+    let svg = format!("{SVG_PAGE}<circle r=\"1\" transform=\"matrix(1 0 1 1 0 0)\"/></svg>");
+    let d = read(svg.as_bytes(), "sheared.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    let s_max = ((3.0 + 5f64.sqrt()) / 2.0).sqrt();
+    let s_min = ((3.0 - 5f64.sqrt()) / 2.0).sqrt();
+    assert!((major.len() - s_max).abs() < 1e-9 * s_max, "{e:?}");
+    assert!((e.ratio - s_min / s_max).abs() < 1e-9, "{e:?}");
+    let (ux, uy) = (major.x, -major.y);
+    let pre = Vec2::new(ux - uy, uy);
+    assert!((pre.len() - 1.0).abs() < 1e-9, "B⁻¹·major = {pre:?}, {e:?}");
+    assert!(major.x.abs() > 1e-3 && major.y.abs() > 1e-3, "{e:?}");
+}
+
+#[test]
+fn svg_tiny_sheared_circle_has_the_axes_of_its_image() {
+    // Columns (1, 0.5)·1e-6 and (1, -0.5)·1e-6: far from orthogonal, though their dot product is tiny.
+    let svg = format!("{SVG_PAGE}<circle r=\"1\" transform=\"matrix(1e-6 0.5e-6 1e-6 -0.5e-6 0 0)\"/></svg>");
+    let d = read(svg.as_bytes(), "tiny.svg").unwrap();
+    assert_eq!(kinds(&d), ["Ellipse"]);
+    let e = first(&d, |k| if let EntityKind::Ellipse(e) = k { Some(e.clone()) } else { None });
+    let major = Vec2::new(e.major.x, e.major.y);
+    assert!(major.y.abs() <= 1e-9 * major.x.abs(), "{e:?}");
+    let want = 2f64.sqrt() * 1e-6;
+    assert!((major.len() - want).abs() < 1e-9 * want, "{e:?}");
+    assert!((e.ratio - 0.5).abs() < 1e-9, "{e:?}");
 }
 
 #[test]
@@ -3099,6 +3162,59 @@ fn svg_hostile_input_errors_without_panicking() {
     }
     let deep = read(deep.as_bytes(), "a.svg");
     assert!(deep.is_err(), "200 nested groups are refused, not walked");
+}
+
+#[test]
+fn svg_coordinates_that_overflow_are_left_out() {
+    // Every number is finite; relative steps and transforms overflow them to infinity or NaN.
+    let svg = format!(
+        "{SVG_PAGE}<path d=\"M1e308 0 l1e308 0\"/><rect x=\"1e308\" width=\"1e308\" height=\"1\"/>\
+         <g transform=\"scale(1e308)\"><line x1=\"1e308\" y1=\"0\" x2=\"1\" y2=\"1\"/><circle r=\"1e308\"/></g>\
+         <g transform=\"scale(1e308,1)\"><ellipse rx=\"1e308\" ry=\"1\"/><path d=\"M0 0 C1e308 0 1 1 2 2\"/></g>\
+         <line x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"/></svg>"
+    );
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Line"]);
+    assert_eq!(d.read_notes, ["SVG: 6 shapes were left out as invalid: their coordinates or size are too large to represent"]);
+}
+
+#[test]
+fn svg_shapes_whose_extents_overflow_are_left_out() {
+    // A finite centre and radius whose sum overflows; the same scale on smaller values stays
+    // representable.
+    let svg = format!("{SVG_PAGE}<g transform=\"scale(1e308)\"><circle cx=\"1\" cy=\"0\" r=\"1\"/><circle cx=\"0.5\" cy=\"0\" r=\"0.5\"/></g></svg>");
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Circle"]);
+    let c = first(&d, |k| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None });
+    assert!((c.radius - 5e307).abs() < 1e293, "{}", c.radius);
+    assert_eq!(d.read_notes, ["SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent"]);
+}
+
+/// A shape too large to represent is invalid, not something CADCraft doesn't read yet: it gets a
+/// note of its own.
+#[test]
+fn svg_too_large_shapes_are_noted_apart_from_unread_content() {
+    let svg = format!("{SVG_PAGE}<text x=\"0\" y=\"5\">one</text><path d=\"M1e308 0 l1e308 0\"/><line x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"/></svg>");
+    let d = read(svg.as_bytes(), "huge.svg").unwrap();
+    assert_eq!(kinds(&d), ["Line"]);
+    assert_eq!(
+        d.read_notes,
+        [
+            "SVG: CADCraft doesn't read these yet, so they were left out: 1 text",
+            "SVG: 1 shape was left out as invalid: its coordinates or size are too large to represent"
+        ]
+    );
+}
+
+#[test]
+fn svg_shapes_left_out_still_count_against_the_vertex_budget() {
+    // Each arc flattens to 10,000 chords under the non-uniform scale, and the doubled translation
+    // overflows to infinity, so each is left out; 820 of them make more than the 8,000,000 vertices
+    // a file may generate.
+    let arcs = "A1e9 1e9 0 0 1 2e9 0 A1e9 1e9 0 0 1 0 0 ".repeat(410);
+    let svg = format!("{SVG_PAGE}<g transform=\"translate(1e308 0) translate(1e308 0) scale(2 1)\"><path d=\"M0 0 {arcs}\"/></g></svg>");
+    let err = read(svg.as_bytes(), "huge.svg").err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("SVG: too much generated geometry"), "{err}");
 }
 
 #[test]

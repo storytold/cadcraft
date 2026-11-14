@@ -126,6 +126,9 @@ pub struct LispState {
     /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
     /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
     pub(crate) callback_used: u64,
+    /// Work synchronous callbacks did inside the running step, already counted in `callback_used`:
+    /// the step is charged it without charging the enclosing callback a second time.
+    pub(crate) callback_work: u64,
     /// The `callback_used` value the callback running now (and so every one it calls) must not
     /// pass: the lowest of its own and its callers' allowances.
     pub(crate) callback_ceiling: Option<u64>,
@@ -359,6 +362,14 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // The work the slice did, which one step can take far past the slice. After a panic
+            // `used` is still the previous slice's; the run ends with the error anyway.
+            run.steps = run.steps.saturating_add(run.machine.used);
+            if run.blocking && run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_)) {
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -371,13 +382,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }
