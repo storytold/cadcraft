@@ -13,7 +13,7 @@ cadcraft-geom = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
-cadcraft-dwg = { workspace = true }
+craft-dwg = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-fonts = { workspace = true }
 thiserror = { workspace = true }
@@ -29,7 +29,7 @@ tiny-skia = { workspace = true }
 # Reads plotted PDFs back.
 craft-pdf = { workspace = true, features = ["read"] }
 
-# Inspect DWG output only where cadcraft-dwg builds its native bridge. An unconditional
+# Inspect DWG output only where craft-dwg builds its native bridge. An unconditional
 # dev-dependency also builds acadrust during --all-targets, breaking FreeBSD aarch64 (#2526).
 [target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dev-dependencies]
 acadrust = "0.6.6"
