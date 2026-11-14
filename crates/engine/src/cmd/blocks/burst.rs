@@ -12,7 +12,7 @@ use crate::{Result, Session};
 
 pub(super) fn burst_spec() -> CommandSpec {
     CommandSpec::new("burst", "Explode Attributes to Text", run_burst)
-        .menu(&["Tools", "Express Tools", "Explode Attributes to Text"])
+        .menu(&["Tools", "Additional Tools", "Explode Attributes to Text"])
         .params("{handles?} (block references; other objects are left alone) → {handles}")
         .interactive(|_| Ok(Box::new(SelectRun::new("burst", "BURST"))))
 }
