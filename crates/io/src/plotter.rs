@@ -113,8 +113,10 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
     let mut pm = raster::render(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))?;
     if placed {
-        // PDF clips a placed plot to the printable area: blank the rest of the sheet.
-        raster::blank_outside_printable(&mut pm, &sheet.printable, k);
+        // PDF clips a placed plot to the printable area, and a window plot to the window (#3087):
+        // blank the rest of the sheet.
+        let area = pdf::plot_area(&sheet.printable, window.as_ref().map(|w| (w, from, s, to)));
+        raster::blank_outside_printable(&mut pm, &area, k);
     }
     pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
 }
@@ -320,6 +322,25 @@ mod tests {
         let png = plot(&d, &Space::Paper("L1".into()), &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
         // The line 3 units left of the window lands about 1.7 mm from the sheet edge, in the margin.
         assert!(!inked(&png, 0.0, 9.0, 105.0), "the margin stays blank");
+    }
+
+    /// A model-space window plot shows only what lies inside the window, even where the window's
+    /// shape leaves paper to spare beside it (#3087). The window (0,0)-(60,100) fitted on A4
+    /// landscape with 10 mm margins is 190 mm tall and 114 mm wide, from x = 91.5 to 205.5 mm; a
+    /// line 10 units left of it would land at x = 72.5 mm, inside the printable area.
+    #[test]
+    fn png_clips_a_model_window_plot_to_the_window() {
+        let mut d = Drawing::new_metric();
+        let mut line = |a: (f64, f64), b: (f64, f64)| {
+            d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap();
+        };
+        line((0.0, 50.0), (60.0, 50.0));
+        line((-10.0, 0.0), (-10.0, 100.0));
+        let o = json!({"output": "png", "resolution": 100, "width": 210, "height": 297, "landscape": true, "margins": [10, 10, 10, 10],
+            "window": [[0, 0], [60, 100]]});
+        let png = plot(&d, &Space::Model, &o).unwrap();
+        assert!(inked(&png, 100.0, 200.0, 105.0), "the line inside the window is drawn");
+        assert!(!inked(&png, 69.0, 76.0, 105.0), "the line outside the window is clipped away");
     }
 
     /// A layout with `window`/`scale` saved (any values, hostile ones included).
