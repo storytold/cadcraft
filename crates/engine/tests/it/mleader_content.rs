@@ -138,3 +138,26 @@ fn mleader_sizes_ignore_dimscale() {
     assert_eq!(t.height, 5.0);
     assert!((t.insert.x - (30.0 + st.dogleg + st.landing_gap)).abs() < 1e-9, "{}", t.insert.x);
 }
+
+/// SCALE scales the whole multileader, as AutoCAD does: its arrowhead and dogleg with its text,
+/// so the text stays clear of the dogleg (#3133). MOVE and ROTATE leave both sizes alone.
+#[test]
+fn scale_scales_a_multileaders_arrowhead_and_dogleg() {
+    let mut s = Session::new();
+    let h = s.execute("mleader", &json!({"points": [[0, 0], [10, 10]], "text": "LABEL"})).unwrap()["handle"].clone();
+    let before = last_mleader(&s);
+    assert!(before.arrow_size > 0.0 && before.dogleg > 0.0, "{before:?}");
+    s.execute("scale", &json!({"handles": [h], "base": [0, 0], "factor": 0.5})).unwrap();
+    let m = last_mleader(&s);
+    assert!((m.arrow_size - before.arrow_size * 0.5).abs() < 1e-12, "arrow {} from {}", m.arrow_size, before.arrow_size);
+    assert!((m.dogleg - before.dogleg * 0.5).abs() < 1e-12, "dogleg {} from {}", m.dogleg, before.dogleg);
+    let (t0, t) = (before.text.unwrap(), m.text.clone().unwrap());
+    assert!((t.height - t0.height * 0.5).abs() < 1e-12);
+    // The text stays past the end of the dogleg, not over it.
+    let end = m.landing.x + m.dogleg;
+    assert!(t.insert.x > end - 1e-9, "text at {} over the dogleg ending at {end}", t.insert.x);
+    s.execute("move", &json!({"handles": [h], "from": [0, 0], "to": [3, 4]})).unwrap();
+    s.execute("rotate", &json!({"handles": [h], "base": [0, 0], "angle": 30})).unwrap();
+    let r = last_mleader(&s);
+    assert!((r.arrow_size - m.arrow_size).abs() < 1e-12 && (r.dogleg - m.dogleg).abs() < 1e-12, "{r:?}");
+}
