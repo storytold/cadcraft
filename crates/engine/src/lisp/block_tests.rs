@@ -234,3 +234,40 @@ fn a_definition_that_isnt_added_leaves_no_layer() {
     assert_eq!(ok(&mut s, ENDBLK), "\"EB\"");
     assert!(has(&s, "PARTS"), "the block's layer exists once it is added");
 }
+
+/// entnext walks entmade block entities in order through the cached successor index, and a
+/// redefinition (same drawing, same block name) is not served from the stale index.
+#[test]
+fn entnext_walks_entmade_blocks_and_sees_a_redefinition() {
+    let mut s = session();
+    let walk = r#"(progn (setq e (cdr (assoc -2 (tblsearch "BLOCK" "EB"))) types nil)
+      (while e (setq types (cons (cdr (assoc 0 (entget e))) types) e (entnext e)))
+      (reverse types))"#;
+    for code in [BLOCK_EB, LINE, CIRCLE, ENDBLK] {
+        ok(&mut s, code);
+    }
+    assert_eq!(ok(&mut s, walk), "(\"LINE\" \"CIRCLE\")");
+    assert_eq!(ok(&mut s, walk), "(\"LINE\" \"CIRCLE\")", "second walk from the cache");
+    for code in [BLOCK_EB, CIRCLE, LINE, LINE, ENDBLK] {
+        ok(&mut s, code);
+    }
+    assert_eq!(ok(&mut s, walk), "(\"CIRCLE\" \"LINE\" \"LINE\")");
+}
+
+/// entget and handent reach every entity of an entmade block through the cached index, and a
+/// redefinition shows the new entities, not the old ones.
+#[test]
+fn entget_and_handent_reach_every_block_entity_also_after_a_redefinition() {
+    let mut s = session();
+    let walk = r#"(progn (setq e (cdr (assoc -2 (tblsearch "BLOCK" "EB"))) r nil)
+      (while e (setq r (cons (list (cdr (assoc 0 (entget e))) (equal (handent (cdr (assoc 5 (entget e)))) e)) r) e (entnext e)))
+      (reverse r))"#;
+    for code in [BLOCK_EB, LINE, CIRCLE, LINE, ENDBLK] {
+        ok(&mut s, code);
+    }
+    assert_eq!(ok(&mut s, walk), "((\"LINE\" T) (\"CIRCLE\" T) (\"LINE\" T))");
+    for code in [BLOCK_EB, CIRCLE, ENDBLK] {
+        ok(&mut s, code);
+    }
+    assert_eq!(ok(&mut s, walk), "((\"CIRCLE\" T))");
+}
