@@ -42,10 +42,11 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
     assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "a font the guard refuses is skipped");
     assert!(shx::find("cadcraft-guard-badmixed.shx").is_none(), "also one found by looking through the folder");
     let asked = asked.lock().unwrap();
-    for file in
-        ["cadcraft-guard-ok.shx", "CADCRAFT-GUARD-OK.SHX", "cadcraft-guard-bad.shx", "CadCraft-Guard-Mixed.SHX", "CadCraft-Guard-Badmixed.SHX"]
-    {
-        assert!(asked.contains(&dir.join(file)), "the guard was asked about {file}: {asked:?}");
+    // The guard saw each font's file under the spelling the search tried (a file system that
+    // ignores case answers the first one, so only the letters are compared).
+    for file in ["cadcraft-guard-ok.shx", "cadcraft-guard-bad.shx", "cadcraft-guard-mixed.shx", "cadcraft-guard-badmixed.shx"] {
+        let want = dir.join(file).to_string_lossy().to_ascii_lowercase();
+        assert!(asked.iter().any(|a| a.to_string_lossy().to_ascii_lowercase() == want), "the guard was asked about {file}: {asked:?}");
     }
     // The guard goes with the folder: added again without one, the folder is searched freely.
     shx::add_drawing_dir(&dir);

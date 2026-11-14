@@ -221,7 +221,7 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     let files: Vec<PathBuf> = files.into_iter().filter(allowed).collect();
     let outside = files.len() < looked_for;
     #[cfg(not(target_arch = "wasm32"))]
-    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p))).filter(allowed);
+    let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| files.iter().find_map(|p| case_insensitive(p).filter(allowed)));
     #[cfg(target_arch = "wasm32")]
     let found: Option<PathBuf> = None;
     found.ok_or(if outside { Missing::OutsideRoots } else { refused.map_or(Missing::NotFound, Missing::Refused) })
@@ -238,6 +238,11 @@ const MAX_CASE_SCAN: usize = 10_000;
 #[cfg(not(target_arch = "wasm32"))]
 fn case_insensitive(p: &Path) -> Option<PathBuf> {
     use std::path::Component;
+    // Under the automation roots a place is probed only when the roots allow it, or when it lies on
+    // the way to `p` as it was spelled (which was checked): a name corrected to another case could be
+    // a link leading out, and looking inside it would look outside the roots.
+    let mut corrected = false;
+    let probe = |q: &Path, corrected: bool| (!corrected && p.starts_with(q)) || crate::file_access::check_read(q).is_ok();
     let mut out = PathBuf::new();
     for c in p.components() {
         let Component::Normal(name) = c else {
@@ -245,6 +250,9 @@ fn case_insensitive(p: &Path) -> Option<PathBuf> {
             continue;
         };
         let exact = out.join(name);
+        if !probe(&exact, corrected) {
+            return None;
+        }
         if exact.exists() {
             out = exact;
             continue;
@@ -260,6 +268,10 @@ fn case_insensitive(p: &Path) -> Option<PathBuf> {
             return None;
         }
         out.push(hit.file_name());
+        corrected = true;
+        if !probe(&out, corrected) {
+            return None;
+        }
     }
     out.is_file().then_some(out)
 }
@@ -611,6 +623,32 @@ mod tests {
         assert_eq!(candidates("a.dxf", None, false), (vec![], None));
         assert_eq!(candidates("a.dxf", None, true), (vec![PathBuf::from("a.dxf")], None));
         assert_eq!(find("", Some(&host), false), Err(Missing::NotFound));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_name_corrected_to_a_link_out_of_the_roots_is_not_looked_inside() {
+        use crate::file_access::{AutomationRoots, confine};
+        let base = std::env::temp_dir().join(format!("cc-xref-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["in/sub", "outside"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        std::fs::write(base.join("outside/target.dxf"), "x").unwrap();
+        std::fs::write(base.join("in/Mixed.dxf"), "x").unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), base.join("in/Alias")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/sub/Mixed.dxf")).unwrap();
+        let roots = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
+        confine(Some(&roots), || {
+            // `alias` isn't there but `Alias` is, a link out: the probe stops before looking in it.
+            assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), None);
+            // A match that leaves the roots doesn't end the search: the next candidate is tried.
+            let host = base.join("in/host.dxf");
+            let found = find("sub/mixed.dxf", Some(&host), true).unwrap();
+            assert_eq!(found, base.join("in/Mixed.dxf"));
+        });
+        assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Some(base.join("in/Alias/target.dxf")), "without roots the link is followed");
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

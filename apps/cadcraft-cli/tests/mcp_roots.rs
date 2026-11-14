@@ -102,6 +102,7 @@ fn run_env(args: &[&str], calls: &[(&str, Value)], env: &[(&str, &str)]) -> (Out
         .map(|(i, (name, arguments))| {
             let id = (i + 2) as u64;
             let reply = replies.iter().find(|v| v["id"] == id).unwrap_or_else(|| panic!("no reply to {name} {arguments}: {replies:?}"));
+            assert!(reply.get("error").is_none() && reply["result"].is_object(), "{name} {arguments} got an error reply, not a tool result: {reply}");
             let result = &reply["result"];
             Tool { error: result["isError"] == true, text: result["content"][0]["text"].as_str().unwrap_or_default().to_string() }
         })
