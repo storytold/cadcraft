@@ -101,6 +101,8 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
+    /// Camera preset activated by clicking the ViewCube Home button ("top", "sw_isometric", ...).
+    pub viewcube_home_preset: String,
     pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
@@ -199,6 +201,7 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
+            viewcube_home_preset: "top".into(),
             show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,

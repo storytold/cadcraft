@@ -226,17 +226,14 @@ pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Po
     // Along the isometric plane's axes in isometric drafting.
     let cam = app.session.state().map(super::model_camera).unwrap_or_default();
     if !cam.is_top_plan() {
-        for axis in [
-            cadcraft_geom::Vec3::new(1.0, 0.0, 0.0),
-            cadcraft_geom::Vec3::new(0.0, 1.0, 0.0),
-            cadcraft_geom::Vec3::new(0.0, 0.0, 1.0),
-        ] {
+        for (_, axis, col) in super::axis_colors() {
             let uv = cam.project_point(axis, Vec2::ZERO);
             let raw = vec2(uv.x as f32, -(uv.y as f32));
             if raw.length() > 0.08 {
                 let dir = raw.normalized();
-                p.line_segment([at - dir * len, at - dir * gap], st);
-                p.line_segment([at + dir * gap, at + dir * len], st);
+                let axis_st = Stroke::new(1.0, col);
+                p.line_segment([at - dir * len, at - dir * gap], axis_st);
+                p.line_segment([at + dir * gap, at + dir * len], axis_st);
             }
         }
     } else if app.session.settings.isodraft {

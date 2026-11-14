@@ -191,3 +191,76 @@ fn view_save_and_restore_keep_the_twist() {
     s.execute("view.set", &json!({ "center": [0, 0], "height": 5, "twist": 15 })).unwrap();
     assert!(near(twist_deg(&s), 15.0));
 }
+
+#[test]
+fn zoom_fits_camera_projected_bounds_when_rolled_or_orbited() {
+    // CodeRabbit regression case: a 100 x 0 horizontal segment in a 2:1 viewport (1600 x 800),
+    // rolled 90° via camera roll (view.twist == 0), stands vertically on screen (0 x 100).
+    // Fitting unprojected world bounds gave height = 100 / 2.0 = 50 (clipping half the line).
+    let mut s = Session::new();
+    s.viewport_px = (1600.0, 800.0);
+    s.execute("limits", &json!({ "min": [0, 0], "max": [100, 0] })).unwrap();
+    s.execute("line", &json!({ "points": [[0, 0], [100, 0]] })).unwrap();
+    s.execute("view.roll", &json!({ "angle": 90.0, "inPlane": true })).unwrap();
+    assert_eq!(view(&s).twist, 0.0);
+
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    assert!(near(view(&s).height, 105.0), "extents height {}", view(&s).height);
+
+    s.execute("zoom", &json!({ "mode": "window", "p1": [0, 0], "p2": [100, 0] })).unwrap();
+    assert!(near(view(&s).height, 100.0), "window height {}", view(&s).height);
+
+    s.execute("zoom", &json!({ "mode": "all" })).unwrap();
+    assert!(view(&s).height >= 100.0, "all height {} should not clip rolled horizontal segment", view(&s).height);
+
+    s.execute("selectall", &json!({})).unwrap();
+    s.execute("zoom", &json!({ "mode": "object" })).unwrap();
+    assert!(view(&s).height >= 100.0, "object height {} should fit rolled horizontal segment", view(&s).height);
+}
+
+#[test]
+fn zoom_extents_and_window_fit_isometric_and_edge_on_views() {
+    use cadcraft_engine::geom::{Bounds2, Camera3D};
+
+    let mut s = Session::new();
+    s.viewport_px = (1600.0, 800.0);
+    let b = Bounds2::new(Vec2::ZERO, Vec2::new(200.0, 100.0));
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [200, 100] })).unwrap();
+
+    // Isometric view: all 4 projected corners of `b` stay inside the fitted viewport.
+    s.execute("view.set", &json!({ "preset": "se_isometric" })).unwrap();
+    s.execute("zoom", &json!({ "mode": "window", "p1": [0, 0], "p2": [200, 100] })).unwrap();
+    let st = s.state().unwrap();
+    let v = st.view();
+    let aspect = s.viewport_px.0 / s.viewport_px.1;
+    let half_h = v.height * 0.5 + 1e-6;
+    let half_w = half_h * aspect;
+    for corner in b.corners() {
+        let uv = st.camera.project_xy(corner, v.center);
+        assert!(uv.x.abs() <= half_w && uv.y.abs() <= half_h, "iso corner {corner:?} clipped at uv={uv:?} (half=({half_w}, {half_h}))");
+    }
+
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    let v_ext = view(&s);
+    assert!(near(v_ext.height, v.height * 1.05), "extents should add 5% margin over tight iso fit: ext={} vs win={}", v_ext.height, v.height);
+
+    // Edge-on Front view: height collapses to 0, width = 200 -> height = 200 / aspect = 100 (or 105 with 5% margin).
+    s.execute("view.set", &json!({ "preset": "front" })).unwrap();
+    s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+    assert!(near(view(&s).height, 105.0), "front extents height {}", view(&s).height);
+    assert!((view(&s).center - Vec2::new(100.0, 50.0)).len() < 1e-9);
+
+    // Exact inverse consistency for off-origin boxes under arbitrary roll/orbit cameras.
+    let off = Bounds2::new(Vec2::new(-30.0, 15.0), Vec2::new(140.0, 95.0));
+    for cam in [
+        Camera3D::TOP.roll_in_plane(37.0),
+        Camera3D::preset("sw_isometric").unwrap(),
+        Camera3D::TOP.orbit(33.0, 56.0, true),
+    ] {
+        let (center, pw, ph) = View::projected_box(off, cam, 0.0);
+        let projected = Bounds2::from_points(off.corners().map(|p| cam.project_xy(p, Vec2::ZERO)));
+        assert!(near(pw, projected.width()) && near(ph, projected.height()));
+        let round_trip = cam.project_xy(center, Vec2::ZERO);
+        assert!((round_trip - projected.center()).len() < 1e-9, "round_trip={round_trip:?} projected={:?}", projected.center());
+    }
+}

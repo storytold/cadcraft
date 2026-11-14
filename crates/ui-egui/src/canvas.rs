@@ -400,6 +400,14 @@ pub(crate) fn update_model_camera(st: &mut cadcraft_engine::DocState, new_cam: c
     }
 }
 
+pub(super) fn axis_colors() -> [(&'static str, cadcraft_geom::Vec3, Color32); 3] {
+    [
+        ("X", cadcraft_geom::Vec3::new(1.0, 0.0, 0.0), Color32::from_rgb(0xe0, 0x45, 0x45)),
+        ("Y", cadcraft_geom::Vec3::new(0.0, 1.0, 0.0), Color32::from_rgb(0x3b, 0xb5, 0x4a)),
+        ("Z", cadcraft_geom::Vec3::new(0.0, 0.0, 1.0), Color32::from_rgb(0x3a, 0x82, 0xf6)),
+    ]
+}
+
 /// Paint the small green AutoCAD-style `3DORBIT` pivot sphere at the viewport center.
 fn draw_orbit_pivot(p: &egui::Painter, rect: Rect) {
     let center = rect.center();
@@ -668,7 +676,7 @@ fn paint_pointer_overlay(
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect, &xf.cam);
+    viewport_label(painter, rect, &xf.cam, app.session.orbit_active());
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.

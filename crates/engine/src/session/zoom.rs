@@ -23,8 +23,9 @@ impl Session {
         let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
         let st = self.state_mut()?;
         let aspect = st.zoom_aspect(w / h.max(1.0));
+        let cam = st.zoom_camera();
         let twist = st.zoom_frame().twist;
-        let (center, bw, bh) = View::twisted_box(ext, twist);
+        let (center, bw, bh) = View::projected_box(ext, cam, twist);
         let height = bh.max(bw / aspect.max(1e-6)).max(1e-6) * 1.05;
         st.set_zoom_frame(View { center, height, twist });
         Ok(())

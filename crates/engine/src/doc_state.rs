@@ -120,6 +120,16 @@ impl DocState {
     pub fn edit_space(&self) -> Space {
         if self.active_viewport().is_some() { Space::Model } else { self.space.clone() }
     }
+    /// The effective 3D camera used for zooming/fitting the active view: the Model-space camera
+    /// when editing Model space directly, else Top plan view for Paper space (and MSPACE
+    /// viewports until per-viewport 3D cameras are introduced).
+    pub fn zoom_camera(&self) -> cadcraft_geom::Camera3D {
+        if matches!(self.space, Space::Model) && self.mspace.is_none() {
+            self.camera
+        } else {
+            cadcraft_geom::Camera3D::TOP
+        }
+    }
     /// The active MSPACE viewport, if it still exists in the current layout.
     pub fn active_viewport(&self) -> Option<(Handle, cadcraft_doc::Viewport)> {
         let h = self.mspace?;

@@ -160,9 +160,10 @@ fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
     let (w, h) = s.viewport_px;
     let st = s.state_mut()?;
     let aspect = st.zoom_aspect(w / h.max(1.0));
-    // A twisted view fits the box the bounds make on screen.
+    // A twisted or 3D view fits the box the bounds make on screen.
+    let cam = st.zoom_camera();
     let twist = st.zoom_frame().twist;
-    let (center, bw, bh) = View::twisted_box(b, twist);
+    let (center, bw, bh) = View::projected_box(b, cam, twist);
     let height = bh.max(bw / aspect.max(1e-6)).max(1e-9);
     st.set_zoom_frame(View { center, height, twist });
     Ok(())
@@ -246,7 +247,8 @@ fn factor_height(s: &Session, p: &Value, cur: f64) -> Result<f64> {
         let lim = s.zoom_limits()?;
         let (w, h) = s.viewport_px;
         let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-6);
-        return Ok(lim.height().max(lim.width() / aspect).max(1e-9) / f);
+        let (_, bw, bh) = View::projected_box(lim, st.zoom_camera(), st.zoom_frame().twist);
+        return Ok(bh.max(bw / aspect).max(1e-9) / f);
     }
     Ok(cur / f)
 }

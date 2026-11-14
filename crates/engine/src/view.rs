@@ -20,14 +20,23 @@ impl Default for View {
 }
 
 impl View {
+    /// Box `b` (world XY) as a view with camera `cam` and `twist` shows it on screen: the world
+    /// XY centre to place at the viewport centre, and the projected box's width and height in
+    /// drawing units.
+    pub fn projected_box(b: Bounds2, cam: cadcraft_geom::Camera3D, twist: f64) -> (Vec2, f64, f64) {
+        let eff = cam.with_twist(twist);
+        if eff.is_top_plan() {
+            return (b.center(), b.width(), b.height());
+        }
+        let r = Bounds2::from_points(b.corners().map(|p| eff.project_xy(p, Vec2::ZERO)));
+        let center = eff.try_unproject_to_xy(r.center(), Vec2::ZERO).unwrap_or_else(|| b.center());
+        (center, r.width(), r.height())
+    }
+
     /// Box `b` (world) as a view turned by `twist` shows it: the world centre of the box it
     /// makes on screen, and that box's width and height (`b`'s own when there is no twist).
     pub fn twisted_box(b: Bounds2, twist: f64) -> (Vec2, f64, f64) {
-        if twist == 0.0 || !twist.is_finite() {
-            return (b.center(), b.width(), b.height());
-        }
-        let r = Bounds2::from_points(b.corners().map(|p| p.rotate(twist)));
-        (r.center().rotate(-twist), r.width(), r.height())
+        Self::projected_box(b, cadcraft_geom::Camera3D::TOP, twist)
     }
 }
 

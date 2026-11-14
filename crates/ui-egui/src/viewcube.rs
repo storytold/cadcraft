@@ -470,7 +470,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
                 let _ = app.run("view.set", json!({"preset": preset}));
             }
             Some(Part::Home) => {
-                let _ = app.run("zoom.extents", json!({}));
+                activate_home_view(app);
             }
             Some(Part::RollCcw) => {
                 let _ = app.run("view.roll", json!({"angle": 90.0, "inPlane": true}));
@@ -529,6 +529,33 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         });
     }
     ucs_menu(app, egui::Popup::menu(&pill));
+}
+
+/// Reset the camera to the configured ViewCube Home preset (default `"top"`) and fit the drawing
+/// extents to the viewport.
+fn activate_home_view(app: &mut CadApp) {
+    let raw = app.ui.viewcube_home_preset.trim();
+    let preset = if Camera3D::preset(raw).is_some() { raw.to_owned() } else { "top".to_owned() };
+    if let Ok(st) = app.session.state()
+        && matches!(st.space, cadcraft_doc::Space::Model)
+        && st.mspace.is_none()
+    {
+        let v = st.view();
+        if v.twist.abs() > 1e-12 {
+            let _ = app.run(
+                "view.set",
+                json!({
+                    "center": [v.center.x, v.center.y],
+                    "height": v.height,
+                    "twist": 0.0,
+                    "preset": preset,
+                }),
+            );
+        } else {
+            let _ = app.run("view.set", json!({"preset": preset}));
+        }
+    }
+    let _ = app.run("zoom.extents", json!({}));
 }
 
 /// A small house, drawn in code.
@@ -997,9 +1024,13 @@ mod tests {
                         && mesh.vertices.iter().all(|v| (v.pos - l.center).length() < 35.0)
                     {
                         text_meshes += 1;
+                        assert!(
+                            mesh.vertices.iter().any(|v| v.uv.x > 0.0 && v.uv.y > 0.0),
+                            "Text mesh should sample glyph UVs, not only origin"
+                        );
                         for v in &mesh.vertices {
                             assert!(
-                                v.uv.x > 0.0 && v.uv.x <= 1.0 && v.uv.y >= 0.0 && v.uv.y <= 1.0,
+                                v.uv.x >= 0.0 && v.uv.x <= 1.0 && v.uv.y >= 0.0 && v.uv.y <= 1.0,
                                 "UV must be normalized in [0, 1]: {:?}",
                                 v.uv
                             );
@@ -1189,5 +1220,34 @@ mod tests {
         let displayed = st.camera.with_twist(st.view().twist);
         assert!(st.view().twist.abs() < 1e-12, "twist should be consumed cleanly, got {}", st.view().twist);
         assert!(displayed.is_top_plan(), "90° CW ring drag from 90° twisted Top should land on canonical Top: {displayed:?}");
+    }
+
+    #[test]
+    fn home_button_uses_configured_preset_and_fits_extents() {
+        let (mut app, ctx) = app_and_ctx();
+        assert_eq!(app.ui.viewcube_home_preset, "top");
+        let l = Layout::new(canvas(&app));
+        let top_fitted = view(&app);
+
+        // 1. Default "top": switch to SE isometric + twist + zoomed view, click Home -> restores Top & fits extents.
+        let _ = app.run("view.set", json!({"preset": "se_isometric"}));
+        let _ = app.run("view.set", json!({"center": [0.0, 0.0], "height": 50.0, "twist": 30.0}));
+        click(&mut app, &ctx, l.home.center(), egui::PointerButton::Primary);
+        assert!(app.session.state().is_ok());
+        if let Ok(st) = app.session.state() {
+            assert_eq!(st.camera, Camera3D::TOP);
+            assert!(st.view().twist.abs() < 1e-12);
+        }
+        assert_eq!(view(&app), top_fitted);
+
+        // 2. Configured "sw_isometric": from Front view, click Home -> switches to SW Isometric & fits extents.
+        app.ui.viewcube_home_preset = "sw_isometric".into();
+        let _ = app.run("view.set", json!({"preset": "front"}));
+        click(&mut app, &ctx, l.home.center(), egui::PointerButton::Primary);
+        assert!(app.session.state().is_ok());
+        if let Ok(st) = app.session.state() {
+            assert_eq!(Some(st.camera), Camera3D::preset("sw_isometric"));
+            assert!(st.view().twist.abs() < 1e-12);
+        }
     }
 }
