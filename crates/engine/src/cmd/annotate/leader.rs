@@ -42,8 +42,13 @@ pub(super) struct LeaderM {
 }
 
 /// What follows the leader.
-enum Annotation {
+pub(super) enum Annotation {
     Text(Vec<String>),
+    /// QLEADER's text: its lines and its width.
+    Quick {
+        lines: Vec<String>,
+        width: f64,
+    },
     /// A copy of a text or multiline text: its contents, height, width and style.
     Copy(MText),
     None,
@@ -263,13 +268,13 @@ pub(super) fn json_leader(s: &mut Session, pts: &[Vec2], text: Option<&str>) -> 
 }
 
 /// Draw the leader through `pts` and its annotation, as AutoCAD 2024 places them; their handles.
-fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: bool, ann: Annotation) -> Result<Vec<Handle>> {
+pub(super) fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: bool, ann: Annotation) -> Result<Vec<Handle>> {
     let (Some(&end), Some(&before)) = (pts.last(), pts.len().checked_sub(2).and_then(|i| pts.get(i))) else { return Ok(Vec::new()) };
     let z = sizes(s);
     // The side the leader runs to: right unless its last segment runs left.
     let dir = if end.x < before.x { -1.0 } else { 1.0 };
     let mut vertices = pts.to_vec();
-    if let Annotation::Text(_) | Annotation::Copy(_) = ann {
+    if let Annotation::Text(_) | Annotation::Quick { .. } | Annotation::Copy(_) = ann {
         let d = end - before;
         // A copied text is centred on its line, and with DIMTAD on that line is above the leader:
         // the leader ends half the text height lower.
@@ -301,6 +306,23 @@ fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: bool, ann: Ann
                 insert: v3(end + Vec2::new(dir * z.gap, lift)),
                 height: z.text,
                 width: 0.0,
+                attach,
+                rotation: 0.0,
+                style: z.text_style,
+                contents: lines.join("\\P"),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            }))?)
+        }
+        Annotation::Quick { lines, width } => {
+            // The middle of the first line level with the end on the right, of the last line on
+            // the left, whatever DIMTAD.
+            let (attach, lift) = if dir > 0.0 { (1, z.text / 2.0) } else { (9, -z.text / 2.0) };
+            Some(s.add_entity(EntityKind::MText(MText {
+                insert: v3(end + Vec2::new(dir * z.gap, lift)),
+                height: z.text,
+                width,
                 attach,
                 rotation: 0.0,
                 style: z.text_style,

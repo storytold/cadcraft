@@ -122,6 +122,7 @@ mod purge_mlinestyles;
 mod purge_prompts;
 mod qdim;
 mod qdim_modes;
+mod qleader;
 mod query_entities;
 mod quickcalc;
 mod recent_commands;
