@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params("{tag, prompt?, default?, at, height?, invisible?, justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR, style? (default the current text style)}")
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -400,21 +400,79 @@ fn insert_json(s: &mut Session, p: &Value, cmd: &str, grid: Grid) -> Result<Valu
     Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
 }
 
-fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
-    let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+/// The current text style (TEXTSTYLE).
+fn current_text_style(s: &Session) -> String {
+    s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into())
+}
+
+/// A text style's name as the table spells it, with the width factor and oblique angle an
+/// attribute definition takes from it (the renderer uses the entity's own values). `None` when
+/// the drawing has no such style.
+fn style_values(s: &Session, name: &str) -> Result<Option<(String, f64, f64)>> {
+    Ok(s.doc()?.text_style(name).map(|t| (t.name.clone(), t.width_factor, t.oblique)))
+}
+
+/// The current text style (TEXTSTYLE) with its width factor and oblique angle.
+fn current_style_values(s: &Session) -> (String, f64, f64) {
+    let name = current_text_style(s);
+    style_values(s, &name).ok().flatten().unwrap_or((name, 1.0, 0.0))
+}
+
+/// A justification code as `-ATTDEF` takes it, typed or in `justify`. Align and Fit run between
+/// two baseline points; `attdef` has one, so it can't express them.
+fn attdef_justify(code: &str) -> Result<(HAlign, VAlign)> {
+    let j = super::draw::justify(code.trim()).ok_or_else(|| bad("attdef", "unknown justification"))?;
+    if matches!(j.0, HAlign::Aligned | HAlign::Fit) {
+        return Err(bad("attdef", "Align and Fit need two points, which attdef doesn't take yet; use L, C, R, M or TL … BR"));
+    }
+    Ok(j)
+}
+
+/// The named text style with its width factor and oblique angle, or the error both the JSON form
+/// and the typed `Style` option give for a style the drawing doesn't have.
+fn resolve_style(s: &Session, name: &str) -> Result<(String, f64, f64)> {
+    style_values(s, name)?.ok_or_else(|| bad("attdef", format!("no text style \"{name}\"")))
+}
+
+/// An optional string parameter: absent or null is `None`, a string is `Some`, anything else is
+/// an error rather than being ignored.
+fn opt_str_param<'a>(cmd: &str, p: &'a Value, key: &str) -> Result<Option<&'a str>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(v)) => Ok(Some(v)),
+        Some(v) => Err(bad(cmd, format!("`{key}` must be a string, got {v}"))),
+    }
+}
+
+/// An attribute definition at `at` with justification `j` (as TEXT: any but Left keeps `at` as
+/// its alignment point) in text style `style`.
+#[allow(clippy::too_many_arguments)]
+fn attdef_kind(
+    tag: &str,
+    prompt: &str,
+    default: &str,
+    at: Vec2,
+    height: f64,
+    invisible: bool,
+    j: (HAlign, VAlign),
+    style: (String, f64, f64),
+) -> EntityKind {
+    let (halign, valign) = j;
+    let (style, width_factor, oblique) = style;
+    let left = halign == HAlign::Left && valign == VAlign::Baseline;
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
             insert: v3(at),
-            align_pt: None,
+            align_pt: if left { None } else { Some(v3(at)) },
             height,
             value: default.into(),
             rotation: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
+            width_factor,
+            oblique,
             style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
+            halign,
+            valign,
         },
         invisible,
         constant: false,
@@ -432,7 +490,14 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let at = point_req("attdef", p, "at")?;
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
+    // Justification and text style as TEXT and MTEXT take them (#1658).
+    let j = attdef_justify(opt_str_param("attdef", p, "justify")?.unwrap_or("L"))?;
+    let style = match opt_str_param("attdef", p, "style")? {
+        Some(n) => resolve_style(s, n)?,
+        None => current_style_values(s),
+    };
+    let (prompt, default) = (str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""));
+    let k = attdef_kind(tag, prompt, default, at, h, bool_or(p, "invisible", false), j, style);
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
