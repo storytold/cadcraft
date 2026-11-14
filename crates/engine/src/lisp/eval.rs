@@ -93,6 +93,15 @@ pub enum Frame {
         f: Value,
         args: Vec<Value>,
     },
+    /// A `command` argument was evaluated: it goes to the command line before the next one in
+    /// `rest` is evaluated, as in AutoLISP (an `(entlast)` after LINE's closing "" is the line).
+    Command {
+        rest: Value,
+    },
+    /// After a `pause` in `command`: evaluate the arguments still in `rest`.
+    CommandRest {
+        rest: Value,
+    },
 }
 
 /// Special forms: their arguments are not evaluated first.
@@ -284,6 +293,15 @@ impl Machine {
         if !matches!(f, Value::Subr(_) | Value::Func(_)) {
             return Err(LispError::new(format!("bad function: {}", to_text(&f, true))));
         }
+        // `command` feeds each argument before it evaluates the next; `vl-cmdf`, `command-s` and
+        // `apply` take them all evaluated (through `call`).
+        if let Value::Subr(b) = &f
+            && b.name == "COMMAND"
+            && matches!(args, Value::Cons(_))
+        {
+            self.command_next(args);
+            return Ok(());
+        }
         match args {
             Value::Cons(c) => {
                 self.stack.push(Frame::Args { f, rest: c.cdr.clone(), done: Vec::new() });
@@ -385,8 +403,30 @@ impl Machine {
             },
             Frame::Catch => self.state = State::Ret(v),
             Frame::Resume { f, args } => self.state = State::Call(f, args),
+            Frame::Command { rest } => match super::drawing::command(ctx, vec![v])? {
+                Flow::Value(_) => self.command_next(rest),
+                // A `pause`: the user answers, then the rest is evaluated and fed.
+                flow => {
+                    if !rest.is_nil() {
+                        self.stack.push(Frame::CommandRest { rest });
+                    }
+                    self.flow(flow);
+                }
+            },
+            Frame::CommandRest { rest } => self.command_next(rest),
         }
         Ok(())
+    }
+
+    /// Evaluate the next `command` argument in `rest`; with none left, `command` returns nil.
+    fn command_next(&mut self, rest: Value) {
+        match rest {
+            Value::Cons(c) => {
+                self.stack.push(Frame::Command { rest: c.cdr.clone() });
+                self.state = State::Eval(c.car.clone());
+            }
+            _ => self.state = State::Ret(Value::Nil),
+        }
     }
 
     /// Evaluate the forms of `body` in turn; `last` is the value when there are none.

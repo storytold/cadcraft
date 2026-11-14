@@ -404,6 +404,23 @@ fn entity_lists_round_trip() {
     assert_eq!(ok(&mut s, "(handent \"ZZZZZZ\")"), "nil");
 }
 
+/// `command` passes each argument to the command line before it evaluates the next, so an
+/// `(entlast)` after LINE's closing "" is the new line (#2983). `vl-cmdf` evaluates them all first.
+#[test]
+fn command_evaluates_each_argument_after_the_previous_one_ran() {
+    let mut s = session();
+    let code = "(command \"_.-layer\" \"_m\" \"L1\" \"\") (setvar \"CLAYER\" \"0\") \
+                (command \"_.line\" '(0 0) '(10 0) \"\" \"_.chprop\" (entlast) \"\" \"_la\" \"L1\" \"\") \
+                (cdr (assoc 8 (entget (entlast))))";
+    assert_eq!(ok(&mut s, code), "\"L1\"");
+    assert!(s.running.is_none(), "CHPROP finished");
+    // An argument may also see a variable an earlier command changed.
+    assert_eq!(ok(&mut s, "(command \"_.-layer\" \"_m\" \"L2\" \"\" (setq c (getvar \"CLAYER\"))) c"), "\"L2\"");
+    // `vl-cmdf` evaluates every argument before any runs.
+    let code = "(vl-cmdf \"_.line\" '(0 0) '(0 10) \"\" (setq e (entlast))) (cdr (assoc 11 (entget e)))";
+    assert_eq!(ok(&mut s, code), "(10.0 0.0 0.0)");
+}
+
 #[test]
 fn entity_lists_hold_angles_in_radians() {
     let mut s = session();
