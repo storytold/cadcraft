@@ -60,6 +60,63 @@ pub struct Unknown {
     pub tags: Vec<RawTag>,
 }
 
+/// 天正文字（从 proxy graphics 类型 38 图元提取），含插入点、内容和尺寸。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TianzhengText {
+    /// 插入点 x（建筑坐标 mm）。
+    pub x: f64,
+    /// 插入点 y（建筑坐标 mm）。
+    pub y: f64,
+    /// 文字内容。
+    pub text: String,
+    /// 文字高度（mm）。
+    pub height: f64,
+    /// 宽度因子。
+    pub width_factor: f64,
+    /// 旋转角（弧度，逆时针为正）。
+    pub rotation: f64,
+}
+
+/// 天正（Tangent）自定义实体，从 DWG 解析出的字段。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Tianzheng {
+    /// 天正 DXF 类名，如 `TCH_WALL`。
+    pub class_name: String,
+    /// 解析出的字段（字段名 → 值），如 `("T20s14", "填充墙")`。
+    pub fields: Vec<(String, String)>,
+    /// 原始 DWG 位流（round-trip 写回用；DXF 打开时为 None）。
+    #[serde(default, skip)]
+    pub raw_data: Option<Vec<u8>>,
+    /// handle 流的 bit 数（raw_data 定位 text 流需要）。
+    #[serde(default)]
+    pub handle_bits: i64,
+    /// 原 `Unknown` 实体的 DXF 记录（含 310 代理数据），保存时按原样回写。
+    #[serde(default, skip)]
+    pub tags: Vec<RawTag>,
+    /// 原 `Unknown` 实体的 DXF 类型名（如 `ACAD_PROXY_ENTITY`），保存时按原样回写。
+    #[serde(default)]
+    pub dxf_type: String,
+    /// 墙的几何线段（`(x1,y1,z1,x2,y2,z2)`，建筑坐标），从 proxy graphics 类型 6 图元提取；
+    /// 非墙实体或 binary 格式（几何在加密固定字段）为空。
+    #[serde(default, skip)]
+    pub segments: Vec<(f64, f64, f64, f64, f64, f64)>,
+    /// 原始 proxy graphics 字节（几何回写用；几何不在 graphics 里时为 None）。
+    #[serde(default, skip)]
+    pub graphic_data: Option<Vec<u8>>,
+    /// 天正文字（标注/轴号/标高等，从 proxy graphics 类型 38 图元提取）。
+    #[serde(default, skip)]
+    pub texts: Vec<TianzhengText>,
+    /// 天正圆（类型 2 图元）：`(x, y, z, radius)`，圆心 + 半径。
+    #[serde(default, skip)]
+    pub circles: Vec<(f64, f64, f64, f64)>,
+    /// 天正填充多边形（类型 9 图元）：每个是闭合顶点列表。
+    #[serde(default, skip)]
+    pub polys: Vec<Vec<(f64, f64, f64)>>,
+    /// 尺寸标注箭头尖端（类型 6 零长度点）：`(x, y, dx, dy)`，尖端 + 归一化方向。
+    #[serde(default, skip)]
+    pub arrow_tips: Vec<(f64, f64, f64, f64)>,
+}
+
 impl Unknown {
     /// Whether this is an OLE2FRAME (the type name is matched without regard to case).
     pub fn is_ole_frame(&self) -> bool {
@@ -101,6 +158,7 @@ pub enum EntityKind {
     Table(Table),
     Tolerance(crate::Tolerance),
     Unknown(Unknown),
+    Tianzheng(Tianzheng),
 }
 
 /// A primitive the entity decomposes into, for snapping, selection, trimming and rendering.
@@ -156,6 +214,7 @@ impl EntityKind {
             EntityKind::Table(_) => "Table",
             EntityKind::Tolerance(_) => "Tolerance",
             EntityKind::Unknown(_) => "Proxy",
+            EntityKind::Tianzheng(_) => "Tangent Entity",
         }
     }
     /// DXF entity type name.
@@ -192,6 +251,7 @@ impl EntityKind {
             EntityKind::Table(_) => "ACAD_TABLE",
             EntityKind::Tolerance(_) => "TOLERANCE",
             EntityKind::Unknown(u) => u.dxf_type.as_str(),
+            EntityKind::Tianzheng(t) => t.class_name.as_str(),
         }
     }
 
@@ -265,6 +325,7 @@ impl EntityKind {
             EntityKind::Table(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Tolerance(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Unknown(_) => Vec::new(),
+            EntityKind::Tianzheng(_) => Vec::new(),
         }
     }
 
@@ -478,6 +539,7 @@ impl EntityKind {
             }
             EntityKind::Unknown(u) if u.is_ole_frame() => crate::ole_frame_transform(&mut u.tags, m),
             EntityKind::Unknown(_) => {}
+            EntityKind::Tianzheng(_) => {}
         }
     }
 
@@ -563,9 +625,10 @@ impl EntityKind {
             EntityKind::Image(i) => z(&mut i.insert),
             EntityKind::Table(t) => z(&mut t.insert),
             EntityKind::Tolerance(t) => z(&mut t.insert),
-            EntityKind::Spline(_) | EntityKind::Region(_) | EntityKind::Wipeout(_) | EntityKind::Unknown(_) => {}
+            EntityKind::Spline(_) | EntityKind::Region(_) | EntityKind::Wipeout(_) | EntityKind::Unknown(_) | EntityKind::Tianzheng(_) => {}
         }
     }
+
 
     /// Grip points (editable defining points), in display order.
     pub fn grips(&self) -> Vec<Vec2> {
@@ -640,6 +703,7 @@ impl EntityKind {
             EntityKind::Table(t) => vec![t.insert.xy()],
             EntityKind::Tolerance(t) => vec![t.insert.xy()],
             EntityKind::Unknown(_) => Vec::new(),
+            EntityKind::Tianzheng(_) => Vec::new(),
         }
     }
 }

@@ -69,6 +69,8 @@ pub use worker::{WORKER_ARG, crash_worker_for_test, decode, encode_as, encode_ke
 #[cfg(not(no_dwg_bridge))]
 mod proxy_transport;
 
+pub mod tianzheng;
+
 #[cfg(not(no_dwg_bridge))]
 mod native {
     use std::io::{Cursor, Write};

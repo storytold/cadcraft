@@ -242,6 +242,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         }
         EntityKind::Wipeout(w) => w.set_vertex(index, to)?,
         EntityKind::Unknown(_) => return None,
+        EntityKind::Tianzheng(_) => return None,
     }
     Some(k)
 }

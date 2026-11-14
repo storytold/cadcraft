@@ -233,6 +233,58 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
+        // 天正墙：segments 是墙的双线（每段 = 起点/终点，建筑坐标 mm），从 proxy graphics
+        // 类型 6 图元提取。画成普通线段（z 忽略，天正墙是 2D）。
+        EntityKind::Tianzheng(t) => {
+            for (x1, y1, _, x2, y2, _) in &t.segments {
+                stroke(b, &[Vec2::new(*x1, *y1), Vec2::new(*x2, *y2)]);
+            }
+            // 天正圆（类型 2 图元：圆心 + 半径，柱子/圆洞）。
+            for (x, y, _, r) in &t.circles {
+                let c = cadcraft_geom::Circle::new(Vec2::new(*x, *y), *r);
+                let mut pts = Vec::new();
+                c.tessellate(tol, &mut pts);
+                stroke(b, &pts);
+            }
+            // 天正填充多边形（类型 9 图元：闭合顶点列表，柱截面/填充）。
+            for poly in &t.polys {
+                let pts: Vec<Vec2> = poly.iter().map(|(x, y, _)| Vec2::new(*x, *y)).collect();
+                let tris = fill::triangulate_evenodd(&[pts]);
+                b.tris(ctx, rgb, &tris);
+            }
+            // 尺寸标注箭头（类型 6 零长度点 = 箭头尖端）：实心三角形，尖端朝外。
+            for (tx, ty, dx, dy) in &t.arrow_tips {
+                let size = 250.0; // 箭头长度 mm
+                let (px, py) = (-dy, dx); // 垂直方向
+                let (bx, by) = (tx - dx * size, ty - dy * size);
+                let pts = vec![
+                    Vec2::new(*tx, *ty),
+                    Vec2::new(bx + px * size * 0.5, by + py * size * 0.5),
+                    Vec2::new(bx - px * size * 0.5, by - py * size * 0.5),
+                ];
+                let tris = fill::triangulate_evenodd(&[pts]);
+                b.tris(ctx, rgb, &tris);
+            }
+            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 type 38 的方向余弦还原。
+            if b.opts.text {
+                for tx in &t.texts {
+                    let text = cadcraft_doc::Text {
+                        insert: cadcraft_geom::Vec3::new(tx.x, tx.y, 0.0),
+                        align_pt: None,
+                        height: tx.height,
+                        value: tx.text.clone(),
+                        rotation: tx.rotation,
+                        width_factor: tx.width_factor,
+                        oblique: 0.0,
+                        style: "Standard".into(),
+                        halign: cadcraft_doc::HAlign::Left,
+                        valign: cadcraft_doc::VAlign::Baseline,
+                    };
+                    let (sh, _) = place_text_entity(ctx.d, &text, &tx.text);
+                    b.shaped(ctx, rgb, lw, &sh);
+                }
+            }
+        }
         kind => {
             for prim in kind.prims() {
                 match prim {

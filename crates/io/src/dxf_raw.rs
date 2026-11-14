@@ -399,6 +399,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     let mut types: HashSet<String> = f.objects.iter().map(|o| up(&o.kind)).collect();
     types.extend(all_entities(d).filter_map(|e| match &e.kind {
         EntityKind::Unknown(u) => Some(up(&u.dxf_type)),
+        EntityKind::Tianzheng(t) => Some(up(&t.dxf_type)),
         _ => None,
     }));
     // A proxy's class is the one its group 91 numbers in the file's CLASSES: keep it too, and the
@@ -409,6 +410,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     let proxy_tags = f.objects.iter().filter(|o| is_proxy(&o.kind)).map(|o| &o.tags);
     let proxy_tags = proxy_tags.chain(all_entities(d).filter_map(|e| match &e.kind {
         EntityKind::Unknown(u) if is_proxy(&u.dxf_type) => Some(&u.tags),
+        EntityKind::Tianzheng(t) if is_proxy(&t.dxf_type) => Some(&t.tags),
         _ => None,
     }));
     for tags in proxy_tags {
@@ -443,6 +445,9 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         if let EntityKind::Unknown(u) = &e.kind {
             note(&u.tags);
         }
+        if let EntityKind::Tianzheng(t) = &e.kind {
+            note(&t.tags);
+        }
     }
     for r in &refs {
         if let (Some(h), Some(k), false) = (handle(r), ids.get(r), kept.contains(r)) {
@@ -472,6 +477,7 @@ fn file_version(secs: &[Section]) -> Option<String> {
 fn entity_types(drawing: &Drawing) -> HashMap<String, bool> {
     let mut types = HashMap::new();
     for entity in all_entities(drawing) {
+        types.entry(entity.handle.hex()).or_insert(matches!(entity.kind, EntityKind::Unknown(_) | EntityKind::Tianzheng(_)));
         types.entry(entity.handle.hex()).or_insert(matches!(entity.kind, EntityKind::Unknown(_)));
     }
     types
@@ -904,9 +910,9 @@ fn entity_extra<'a>(f: &'a Foreign, xd: &XdataOf, h: Handle) -> Option<Cow<'a, F
     }
 }
 
-/// Every Unknown entity's handle (upper case).
+/// Every Unknown or Tianzheng entity's handle (upper case).
 fn unknown_handles(d: &Drawing) -> HashSet<String> {
-    all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_))).map(|e| e.handle.hex()).collect()
+    all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_) | EntityKind::Tianzheng(_))).map(|e| e.handle.hex()).collect()
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
@@ -1188,6 +1194,13 @@ fn plan_unknown(
                     let t = unknown_entity(u, e, &owner, paper);
                     if !t.is_empty() {
                         pending.push((sec.to_string(), t));
+                    }
+                }
+                EntityKind::Tianzheng(t) => {
+                    let u = Unknown { dxf_type: t.dxf_type.clone(), tags: t.tags.clone() };
+                    let tt = unknown_entity(&u, e, &owner, paper);
+                    if !tt.is_empty() {
+                        pending.push((sec.to_string(), tt));
                     }
                 }
                 _ => {

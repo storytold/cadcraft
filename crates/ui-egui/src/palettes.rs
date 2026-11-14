@@ -1256,6 +1256,242 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+            EntityKind::Tianzheng(t) => {
+                prop_row(ui, "Class", |ui| read_only(ui, &t.class_name));
+                for (name, value) in &t.fields {
+                    if !value.is_empty() {
+                        prop_row(ui, name, |ui| {
+                            if let Some(v) = edit_field(ui, ui.scope_id().with(("tz", e.handle, name)), value.clone()) {
+                                set = Some(json!({ "handles": ids, "tianzhengField": name, "tianzhengValue": v }));
+                            }
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    } else if let Some(dims) = sel
+        .iter()
+        .map(|h| match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Dimension(dm)) => Some(dm),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        // Several dimensions: every property of one dimension, `*VARIES*` where they differ; an
+        // edit applies to all of them.
+        group(ui, "Geometry");
+        let shared = |key: &'static str, f: &dyn Fn(&cadcraft_doc::Dimension, &cadcraft_doc::DimStyle) -> String| -> String {
+            memo.get(key, || {
+                let vals: Vec<String> = dims
+                    .iter()
+                    .map(|dm| {
+                        let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+                        f(dm, &st)
+                    })
+                    .collect();
+                match vals.first() {
+                    Some(v0) if vals.iter().all(|v| v == v0) => shown_part(v0),
+                    _ => VARIES.into(),
+                }
+            })
+        };
+        let text = shared("dim.text", &|dm, _| dm.text.clone());
+        prop_row(ui, "Text override", |ui| {
+            if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", ids)), text.clone()) {
+                set = Some(json!({ "handles": ids, "textOverride": s }));
+            }
+        });
+        let style = shared("dim.style", &|dm, _| dm.style.clone());
+        prop_row(ui, "Dim style", |ui| {
+            if let Some(n) = pick_menu(ui, &style, d.dim_styles.iter().map(|st| st.name.clone())) {
+                set = Some(json!({ "handles": ids, "dimStyle": n }));
+            }
+        });
+        let numbers = [
+            ("Text height", "textHeight", shared("dim.text_height", &|_, st| lenx(st.text_height))),
+            ("Arrow size", "arrowSize", shared("dim.arrow_size", &|_, st| lenx(st.arrow_size))),
+            ("Dim scale overall", "dimScale", shared("dim.scale", &|_, st| realx(st.scale))),
+        ];
+        for (label, key, shown) in numbers {
+            prop_row(ui, label, |ui| {
+                if let Some(f) = number(edit_field(ui, ui.scope_id().with((key, ids)), shown), &mut bad) {
+                    set = Some(json!({ "handles": ids, key: f }));
+                }
+            });
+        }
+        let precision = shared("dim.precision", &|_, st| st.decimals.to_string());
+        prop_row(ui, "Precision", |ui| {
+            if let Some(n) = pick_menu(ui, &precision, (0..=8).map(|n: u8| n.to_string())).and_then(|n| n.parse::<u8>().ok()) {
+                set = Some(json!({ "handles": ids, "precision": n }));
+            }
+        });
+    } else if sel.iter().filter_map(|h| d.entity(*h)).all(|x| std::mem::discriminant(&x.kind) == std::mem::discriminant(&e.kind)) {
+        // Several objects of one type: the properties of one object, `*VARIES*` where they differ.
+        // Edits apply to all of them; positions are shown but stay read-only, since typing one
+        // would move every object to the same place.
+        group(ui, "Geometry");
+        let shared = |key: &'static str, f: &dyn Fn(&EntityKind) -> Option<String>| -> String {
+            memo.get(key, || {
+                let vals: Vec<Option<String>> = sel.iter().filter_map(|h| d.entity(*h)).map(|x| f(&x.kind)).collect();
+                match vals.first() {
+                    Some(Some(v0)) if vals.iter().all(|v| v.as_ref() == Some(v0)) => shown_part(v0),
+                    _ => VARIES.into(),
+                }
+            })
+        };
+        let deg = |v: f64| real(angles.shown(v).to_degrees());
+        let degx = |v: f64| exact(deg(v), angles.shown(v).to_degrees());
+        match &e.kind {
+            EntityKind::Line(_) => {
+                let line = |k: &EntityKind| if let EntityKind::Line(l) = k { Some(l.clone()) } else { None };
+                for (label, value) in [
+                    ("Start X", shared("line.ax", &|k| line(k).map(|l| lenx(l.a.x)))),
+                    ("Start Y", shared("line.ay", &|k| line(k).map(|l| lenx(l.a.y)))),
+                    ("End X", shared("line.bx", &|k| line(k).map(|l| lenx(l.b.x)))),
+                    ("End Y", shared("line.by", &|k| line(k).map(|l| lenx(l.b.y)))),
+                    ("Delta X", shared("line.dx", &|k| line(k).map(|l| lenx(l.b.x - l.a.x)))),
+                    ("Delta Y", shared("line.dy", &|k| line(k).map(|l| lenx(l.b.y - l.a.y)))),
+                ] {
+                    prop_row(ui, label, |ui| read_only(ui, &value));
+                }
+                num(ui, "Length", "length", shared("line.length", &|k| line(k).map(|l| lenx((l.b.xy() - l.a.xy()).len()))), &mut set, &mut bad, ids);
+                num(
+                    ui,
+                    "Angle",
+                    "angle",
+                    shared("line.angle", &|k| line(k).map(|l| realx((l.b.xy() - l.a.xy()).angle().to_degrees()))),
+                    &mut set,
+                    &mut bad,
+                    ids,
+                );
+            }
+            EntityKind::Circle(_) => {
+                let circle = |k: &EntityKind| if let EntityKind::Circle(c) = k { Some(c.clone()) } else { None };
+                prop_row(ui, "Center X", |ui| read_only(ui, &shared("circle.cx", &|k| circle(k).map(|c| lenx(c.center.x)))));
+                prop_row(ui, "Center Y", |ui| read_only(ui, &shared("circle.cy", &|k| circle(k).map(|c| lenx(c.center.y)))));
+                num(ui, "Radius", "radius", shared("circle.radius", &|k| circle(k).map(|c| lenx(c.radius))), &mut set, &mut bad, ids);
+                num(ui, "Diameter", "diameter", shared("circle.diameter", &|k| circle(k).map(|c| lenx(c.radius * 2.0))), &mut set, &mut bad, ids);
+                num(
+                    ui,
+                    "Circumference",
+                    "circumference",
+                    shared("circle.circumference", &|k| circle(k).map(|c| lenx(c.radius * std::f64::consts::TAU))),
+                    &mut set,
+                    &mut bad,
+                    ids,
+                );
+                num(
+                    ui,
+                    "Area",
+                    "area",
+                    shared("circle.area", &|k| circle(k).map(|c| realx(c.radius * c.radius * std::f64::consts::PI))),
+                    &mut set,
+                    &mut bad,
+                    ids,
+                );
+            }
+            EntityKind::Arc(_) => {
+                let arc = |k: &EntityKind| if let EntityKind::Arc(a) = k { Some(a.clone()) } else { None };
+                num(ui, "Radius", "radius", shared("arc.radius", &|k| arc(k).map(|a| lenx(a.radius))), &mut set, &mut bad, ids);
+                num(ui, "Start angle", "startAngle", shared("arc.start", &|k| arc(k).map(|a| realx(a.start.to_degrees()))), &mut set, &mut bad, ids);
+                num(ui, "End angle", "endAngle", shared("arc.end", &|k| arc(k).map(|a| realx(a.end.to_degrees()))), &mut set, &mut bad, ids);
+            }
+            EntityKind::Text(_) => {
+                let contents = shared("text.value", &|k| if let EntityKind::Text(t) = k { Some(t.value.clone()) } else { None });
+                prop_row(ui, "Contents", |ui| {
+                    if let Some(s) = edit_field(ui, ui.scope_id().with(("txt", ids)), contents.clone()) {
+                        set = Some(json!({ "handles": ids, "text": s }));
+                    }
+                });
+                let height = shared("text.height", &|k| if let EntityKind::Text(t) = k { Some(lenx(t.height)) } else { None });
+                num(ui, "Height", "height", height, &mut set, &mut bad, ids);
+                let rotation = shared("text.rotation", &|k| if let EntityKind::Text(t) = k { Some(degx(t.rotation)) } else { None });
+                num(ui, "Rotation", "rotation", rotation, &mut set, &mut bad, ids);
+                let width_factor = shared("text.width_factor", &|k| if let EntityKind::Text(t) = k { Some(realx(t.width_factor)) } else { None });
+                num(ui, "Width factor", "widthFactor", width_factor, &mut set, &mut bad, ids);
+            }
+            EntityKind::MText(_) => {
+                let contents = shared("mtext.contents", &|k| if let EntityKind::MText(t) = k { Some(t.contents.clone()) } else { None });
+                prop_row(ui, "Contents", |ui| {
+                    if let Some(s) = edit_field(ui, ui.scope_id().with(("mtxt", ids)), contents.clone()) {
+                        set = Some(json!({ "handles": ids, "text": s }));
+                    }
+                });
+                let height = shared("mtext.height", &|k| if let EntityKind::MText(t) = k { Some(lenx(t.height)) } else { None });
+                num(ui, "Text height", "height", height, &mut set, &mut bad, ids);
+                let width = shared("mtext.width", &|k| if let EntityKind::MText(t) = k { Some(lenx(t.width)) } else { None });
+                num(ui, "Defined width", "width", width, &mut set, &mut bad, ids);
+            }
+            EntityKind::LwPolyline(_) => {
+                // Only Length and Area need the vertices; the other rows read one field.
+                let geom = |p: &cadcraft_doc::LwPolyline| cadcraft_geom::Polyline { vertices: p.vertices.clone(), closed: p.closed };
+                let width = shared("poly.width", &|k| if let EntityKind::LwPolyline(p) = k { Some(lenx(p.const_width)) } else { None });
+                num(ui, "Global width", "width", width, &mut set, &mut bad, ids);
+                let length = shared("poly.length", &|k| if let EntityKind::LwPolyline(p) = k { Some(lenx(geom(p).len())) } else { None });
+                prop_row(ui, "Length", |ui| read_only(ui, &length));
+                let area = shared("poly.area", &|k| {
+                    if let EntityKind::LwPolyline(p) = k { Some(if p.closed { real(geom(p).area().abs()) } else { String::new() }) } else { None }
+                });
+                prop_row(ui, "Area", |ui| read_only(ui, &area));
+                let closed = shared("poly.closed", &|k| {
+                    if let EntityKind::LwPolyline(p) = k { Some(if p.closed { "Yes" } else { "No" }.to_string()) } else { None }
+                });
+                // Kept untranslated, so a change of language does not show stale text.
+                let closed = if closed == VARIES { closed } else { crate::i18n::t(&closed).to_string() };
+                prop_row(ui, "Closed", |ui| {
+                    if let Some(n) = pick_menu(ui, &closed, ["Yes", "No"].map(|s| crate::i18n::t(s).to_string())) {
+                        set = Some(json!({ "handles": ids, "closed": n == crate::i18n::t("Yes") }));
+                    }
+                });
+            }
+            EntityKind::Hatch(_) => {
+                let pattern = shared("hatch.pattern", &|k| if let EntityKind::Hatch(h) = k { Some(h.pattern.clone()) } else { None });
+                prop_row(ui, "Pattern", |ui| {
+                    ui.menu_button(pattern.clone(), |ui| {
+                        if let Some(name) = patterns::menu(ui, &pattern) {
+                            set = Some(json!({ "handles": ids, "pattern": name }));
+                            ui.close();
+                        }
+                    });
+                });
+                let scale = shared("hatch.scale", &|k| if let EntityKind::Hatch(h) = k { Some(realx(h.scale)) } else { None });
+                num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
+                let angle = shared("hatch.angle", &|k| if let EntityKind::Hatch(h) = k { Some(realx(h.angle.to_degrees())) } else { None });
+                num(ui, "Angle", "angle", angle, &mut set, &mut bad, ids);
+            }
+            EntityKind::Insert(_) => {
+                // A dynamic block reference shows its dynamic block's name, as with one reference;
+                // its anonymous blocks (`*U12`) differ from one reference to the next.
+                let name = memo.get("insert.name", || {
+                    let names: Vec<String> = sel
+                        .iter()
+                        .filter_map(|h| match d.entity(*h).map(|x| &x.kind) {
+                            Some(EntityKind::Insert(i)) => Some(custom_properties(ui, app, *h).map_or_else(|| i.block.clone(), |(n, _)| n)),
+                            _ => None,
+                        })
+                        .collect();
+                    match names.first() {
+                        Some(n0) if names.iter().all(|n| n == n0) => n0.clone(),
+                        _ => VARIES.to_string(),
+                    }
+                });
+                let position = |key: &'static str, f: fn(&cadcraft_doc::Insert) -> f64| {
+                    shared(key, &|k| if let EntityKind::Insert(i) = k { Some(len(f(i))) } else { None })
+                };
+                for (label, value) in [
+                    ("Name", name),
+                    ("Position X", position("insert.x", |i| i.insert.x)),
+                    ("Position Y", position("insert.y", |i| i.insert.y)),
+                    ("Position Z", position("insert.z", |i| i.insert.z)),
+                ] {
+                    prop_row(ui, label, |ui| read_only(ui, &value));
+                }
+                let rotation = shared("insert.rotation", &|k| if let EntityKind::Insert(i) = k { Some(degx(i.rotation)) } else { None });
+                num(ui, "Rotation", "rotation", rotation, &mut set, &mut bad, ids);
+                let scale = shared("insert.scale", &|k| if let EntityKind::Insert(i) = k { Some(realx(i.scale.x)) } else { None });
+                num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
+            }
             _ => {}
         }
     } else if let Some(dims) = sel

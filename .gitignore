@@ -9,3 +9,15 @@
 *.swp
 /apps/cadcraft-web/dist/
 /.claude/worktrees/
+
+# 本地构建产物 / 下载 / 调查数据（不进 git）
+/bin/
+/dl/
+/out/
+/investigation.cany/
+/capture/
+/inbox/
+/build-activity.log
+/feed.json
+/craft.json
+/usage.json
