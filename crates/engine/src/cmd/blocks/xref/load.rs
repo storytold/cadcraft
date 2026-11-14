@@ -226,7 +226,14 @@ pub(crate) fn find(path: &str, host: Option<&Path>, chosen: bool) -> Result<Path
     #[cfg(not(target_arch = "wasm32"))]
     let found = files.iter().find(|p| p.is_file()).cloned().or_else(|| {
         files.iter().find_map(|p| {
-            let c = case_insensitive(p)?;
+            let c = match case_insensitive(p) {
+                Ok(Some(c)) => c,
+                Ok(None) => return None,
+                Err(()) => {
+                    refused_match = true;
+                    return None;
+                }
+            };
             let ok = allowed(&c);
             refused_match |= !ok;
             ok.then_some(c)
@@ -246,9 +253,10 @@ const MAX_CASE_SCAN: usize = 10_000;
 /// The existing file `p` names when its letters' case is ignored, on file systems that don't
 /// ignore it themselves. Drawings made on Windows often store a reference as `PLAN.DWG` for
 /// `Plan.dwg`; Windows finds it, and so should Linux. Each missing component is matched against
-/// its folder's entries; an exact match always wins, and an ambiguous one finds nothing.
+/// its folder's entries; an exact match always wins, and an ambiguous one finds nothing. `Err` when
+/// the automation roots refuse a place it would have to look in.
 #[cfg(not(target_arch = "wasm32"))]
-fn case_insensitive(p: &Path) -> Option<PathBuf> {
+fn case_insensitive(p: &Path) -> Result<Option<PathBuf>, ()> {
     use std::path::Component;
     // Under the automation roots a place is probed only when the roots allow it, or when it lies on
     // the way to `p` as it was spelled (which was checked): a name corrected to another case could be
@@ -263,29 +271,26 @@ fn case_insensitive(p: &Path) -> Option<PathBuf> {
         };
         let exact = out.join(name);
         if !probe(&exact, corrected) {
-            return None;
+            return Err(());
         }
         if exact.exists() {
             out = exact;
             continue;
         }
-        let want = name.to_str()?.to_lowercase();
-        let mut hits = std::fs::read_dir(if out.as_os_str().is_empty() { Path::new(".") } else { &out })
-            .ok()?
-            .take(MAX_CASE_SCAN)
-            .flatten()
-            .filter(|e| e.file_name().to_str().is_some_and(|n| n.to_lowercase() == want));
-        let hit = hits.next()?;
+        let Some(want) = name.to_str().map(str::to_lowercase) else { return Ok(None) };
+        let Ok(entries) = std::fs::read_dir(if out.as_os_str().is_empty() { Path::new(".") } else { &out }) else { return Ok(None) };
+        let mut hits = entries.take(MAX_CASE_SCAN).flatten().filter(|e| e.file_name().to_str().is_some_and(|n| n.to_lowercase() == want));
+        let Some(hit) = hits.next() else { return Ok(None) };
         if hits.next().is_some() {
-            return None;
+            return Ok(None);
         }
         out.push(hit.file_name());
         corrected = true;
         if !probe(&out, corrected) {
-            return None;
+            return Err(());
         }
     }
-    out.is_file().then_some(out)
+    Ok(out.is_file().then_some(out))
 }
 
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
@@ -661,7 +666,7 @@ mod tests {
         let roots = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
         confine(Some(&roots), || {
             // `alias` isn't there but `Alias` is, a link out: the probe stops before looking in it.
-            assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), None);
+            assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Err(()));
             // A match that leaves the roots doesn't end the search: the next candidate is tried.
             let host = base.join("in/host.dxf");
             let found = find("sub/mixed.dxf", Some(&host), true).unwrap();
@@ -671,7 +676,7 @@ mod tests {
             std::os::unix::fs::symlink(base.join("outside/target.dxf"), base.join("in/lone/Only.dxf")).unwrap();
             assert_eq!(find("lone/only.dxf", Some(&host), true), Err(Missing::OutsideRoots));
         });
-        assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Some(base.join("in/Alias/target.dxf")), "without roots the link is followed");
+        assert_eq!(case_insensitive(&base.join("in/alias/target.dxf")), Ok(Some(base.join("in/Alias/target.dxf"))), "without roots the link is followed");
         std::fs::remove_dir_all(&base).unwrap();
     }
 
