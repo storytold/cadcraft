@@ -119,10 +119,17 @@ impl DocState {
     }
     /// The active MSPACE viewport, if it still exists in the current layout.
     pub fn active_viewport(&self) -> Option<(Handle, cadcraft_doc::Viewport)> {
+        self.active_viewport_ref().map(|(h, v)| (h, v.clone()))
+    }
+    /// Layers frozen in the active MSPACE viewport, if any.
+    pub fn active_viewport_frozen(&self) -> &[String] {
+        self.active_viewport_ref().map_or(&[], |(_, v)| &v.frozen_layers)
+    }
+    fn active_viewport_ref(&self) -> Option<(Handle, &cadcraft_doc::Viewport)> {
         let h = self.mspace?;
         let e = self.doc.space(&self.space)?.get(h)?;
         match &e.kind {
-            cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v.clone())),
+            cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v)),
             _ => None,
         }
     }

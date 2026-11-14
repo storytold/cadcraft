@@ -122,10 +122,25 @@ pub fn snap_name(m: u32) -> &'static str {
 /// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
 /// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    snap_candidates_with_frozen(d, space, cursor, aperture, osmode, base, deferred, &[])
+}
+
+/// [`snap_candidates`] skipping entities (and block leaves) on `frozen` layers in `space`.
+#[allow(clippy::too_many_arguments)]
+pub fn snap_candidates_with_frozen(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+    frozen: &[String],
+) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
+    let osnap = |m: u32| crate::snap::osnap_with_frozen(d, space, cursor, aperture, m, base, deferred, frozen);
     let extra = osmode & mode::HATCH;
     let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
     per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
@@ -342,12 +357,15 @@ impl Session {
                 Frame::Snap { mode } => {
                     // Snap the point with this mode alone, within the aperture.
                     let prompt = self.current_prompt();
-                    let space = self.space();
+                    let (doc, space, frozen) = {
+                        let st = self.state()?;
+                        (st.doc.clone(), st.edit_space(), st.active_viewport_frozen().to_vec())
+                    };
                     let aperture = self.pixel_size() * self.settings.aperture.max(1.0);
                     let hatch = if self.settings.osnaphatch { mode::HATCH } else { 0 };
                     let base = prompt.as_ref().and_then(|q| q.base);
                     let deferred = prompt.as_ref().is_some_and(|q| q.deferred);
-                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
+                    let hit = crate::snap::osnap_with_frozen(&doc, &space, p, aperture, mode | hatch, base, deferred, &frozen);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
                         Some(h) => p = h.point,
