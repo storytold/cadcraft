@@ -701,7 +701,7 @@ fn hebrew_language_catalog_and_preference_roundtrip() {
     let source = "Layers displayed: {shown} of {total}.   Current layer: {layer}";
     assert_eq!(placeholders(source), placeholders(tr("he", source)));
     assert_eq!(tr("he", "A new untranslated feature"), "A new untranslated feature");
-    for (n, category) in [(0, 3), (1, 0), (2, 1), (3, 3), (10, 2), (20, 2), (101, 3)] {
+    for (n, category) in [(0, 2), (1, 0), (2, 1), (3, 2), (10, 2), (20, 2), (101, 2)] {
         assert_eq!(plural_he(n), category);
     }
 }

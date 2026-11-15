@@ -276,8 +276,8 @@ pub static LANGUAGES: [Language; 21] = [
         code: "ar", name: "العربية", source: include_str!("i18n/ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new()
     },
     // Hebrew interface: initial source-backed catalog is partial, with English fallback.
-    // Cardinal forms: one, two, many, other.
-    Language { code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 4, catalog: OnceLock::new() },
+    // Current CLDR integer cardinal forms: one, two, other.
+    Language { code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 3, catalog: OnceLock::new() },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
@@ -421,17 +421,15 @@ fn plural_ko(_n: u64) -> usize {
     0
 }
 
-/// Hebrew cardinal forms: one (1), two (2), many (10, 20… except 0),
-/// other (remaining integers). Order matches @plural columns.
+/// Hebrew integer cardinal forms (current CLDR): one (1), two (2), other (0, 3, 10, 20…).
+/// The runtime uses integers only; decimal operands require a separate implementation.
 pub fn plural_he(n: u64) -> usize {
     if n == 1 {
         0
     } else if n == 2 {
         1
-    } else if n != 0 && n % 10 == 0 {
-        2
     } else {
-        3
+        2
     }
 }
 
