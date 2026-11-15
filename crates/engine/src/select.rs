@@ -721,10 +721,8 @@ pub fn select_fence_in_orbit(d: &Drawing, space: &Space, frozen: &[String], orbi
                 pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| cadcraft_geom::line_line(&fl, &Line::new(*p, *q)).is_some()))
             })
         });
-        if hit {
-            if d.entity(ent.handle).is_some_and(|e| selectable(d, e, frozen)) {
-                out.push(ent.handle);
-            }
+        if hit && d.entity(ent.handle).is_some_and(|e| selectable(d, e, frozen)) {
+            out.push(ent.handle);
         }
     }
     out
@@ -768,10 +766,8 @@ pub fn select_polygon_in_orbit(d: &Drawing, space: &Space, frozen: &[String], or
         } else {
             !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
         };
-        if hit {
-            if d.entity(ent.handle).is_some_and(|e| selectable(d, e, frozen)) {
-                out.push(ent.handle);
-            }
+        if hit && d.entity(ent.handle).is_some_and(|e| selectable(d, e, frozen)) {
+            out.push(ent.handle);
         }
     }
     out

@@ -724,7 +724,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(
-                        RichText::new(format!("📂 {}", crate::tl!("Open .lsp / .vb / .cs")))
+                        RichText::new(crate::tl!("Open .lsp / .vb / .cs"))
                             .strong()
                             .color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)),
                     )
@@ -734,7 +734,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     do_open_file = true;
                 }
                 if ui
-                    .button(format!("💾 {}", crate::tl!("Save")))
+                    .button(crate::tl!("Save"))
                     .on_hover_text(crate::tl!("Save the current source code in the editor to disk"))
                     .clicked()
                 {
@@ -762,9 +762,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 }
                 if let Some(fp) = &ide.file_path {
                     let pin_label = if cur_file_pinned {
-                        RichText::new(format!("📌 ✓ {}", crate::tl!("Auto-Load"))).strong().color(egui::Color32::from_rgb(0x4e, 0xc9, 0x6f))
+                        RichText::new(format!("✓ {}", crate::tl!("Auto-Load"))).strong().color(egui::Color32::from_rgb(0x4e, 0xc9, 0x6f))
                     } else {
-                        RichText::new(format!("📌 {}", crate::tl!("Auto-Load")))
+                        RichText::new(crate::tl!("Auto-Load"))
                     };
                     if ui
                         .button(pin_label)
@@ -856,9 +856,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 for dll in &ide.loaded_dlls {
                     let dll_pinned = startup_list_snapshot.iter().any(|p| p.eq_ignore_ascii_case(&dll.path));
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(format!("🧩 .NET DLL {}:", dll.name)).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)))
+                        ui.label(RichText::new(format!(".NET DLL {}:", dll.name)).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)))
                             .on_hover_text(&dll.path);
-                        let pin_btn = if dll_pinned { "📌 ✓" } else { "📌" };
+                        let pin_btn = if dll_pinned { "✓" } else { "Pin" };
                         if ui.small_button(pin_btn).on_hover_text(crate::tl!("Toggle Startup Suite (Auto-Load at startup)")).clicked() {
                             toggle_startup_path = Some(dll.path.clone());
                         }
@@ -1028,7 +1028,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// Compact floating menu window (`🧩 Plugin Commands`) shown on the drawing canvas when the
+/// Compact floating menu window (`Plugin Commands`) shown on the drawing canvas when the
 /// large NETLOAD Studio is hidden in the background and at least one `.NET` DLL or AutoLISP routine is loaded.
 pub fn plugin_menu_overlay(app: &mut CadApp, ctx: &egui::Context) {
     if app.ui.dialog.as_deref() == Some("vbaide") {
@@ -1055,14 +1055,14 @@ pub fn plugin_menu_overlay(app: &mut CadApp, ctx: &egui::Context) {
         .as_ref()
         .map(|ide| {
             if ide.loaded_dlls.len() == 1 && ide.commands.is_empty() {
-                format!("🧩 {}", ide.loaded_dlls[0].name)
+                ide.loaded_dlls[0].name.clone()
             } else if ide.loaded_dlls.is_empty() && !ide.commands.is_empty() {
-                format!("📜 {}", ide.file_name)
+                ide.file_name.clone()
             } else {
-                format!("🧩 {}", crate::tl!("Plugin Commands"))
+                crate::tl!("Plugin Commands").to_string()
             }
         })
-        .unwrap_or_else(|| format!("🧩 {}", crate::tl!("Plugin Commands")));
+        .unwrap_or_else(|| crate::tl!("Plugin Commands").to_string());
 
     egui::Window::new(window_title)
         .id(egui::Id::unique("cc_plugin_mini_menu"))
@@ -1094,7 +1094,7 @@ pub fn plugin_menu_overlay(app: &mut CadApp, ctx: &egui::Context) {
             if ide.loaded_code.is_some() && !ide.commands.is_empty() {
                 if !ide.loaded_dlls.is_empty() {
                     ui.separator();
-                    ui.label(RichText::new(format!("📜 {}", ide.file_name)).strong().size(11.5).color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
+                    ui.label(RichText::new(ide.file_name.clone()).strong().size(11.5).color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
                 }
                 ui.horizontal_wrapped(|ui| {
                     for cmd in &ide.commands {
@@ -1111,14 +1111,14 @@ pub fn plugin_menu_overlay(app: &mut CadApp, ctx: &egui::Context) {
             ui.separator();
             ui.horizontal(|ui| {
                 if ui
-                    .small_button(format!("📂 {}", crate::tl!("Open .lsp / .vb / .cs")))
+                    .small_button(crate::tl!("Open .lsp / .vb / .cs"))
                     .on_hover_text(crate::tl!("Select and load a .lsp, .dll, .vb, or .cs file from disk"))
                     .clicked()
                 {
                     do_netload = true;
                 }
                 if ui
-                    .small_button(format!("🛠 {}", crate::tl!("Open Studio")))
+                    .small_button(crate::tl!("Open Studio"))
                     .on_hover_text(crate::tl!("Open the full AutoLISP / VB.NET / C# & NETLOAD Studio"))
                     .clicked()
                 {
@@ -1126,7 +1126,7 @@ pub fn plugin_menu_overlay(app: &mut CadApp, ctx: &egui::Context) {
                 }
                 if let Some(fp) = &ide.file_path {
                     let pin_txt =
-                        if cur_file_pinned { format!("📌 ✓ {}", crate::tl!("Auto-Load")) } else { format!("📌 {}", crate::tl!("Auto-Load")) };
+                        if cur_file_pinned { format!("✓ {}", crate::tl!("Auto-Load")) } else { crate::tl!("Auto-Load").to_string() };
                     if ui
                         .small_button(pin_txt)
                         .on_hover_text(crate::tl!("Toggle Startup Suite: automatically load this file at startup and in every opened drawing"))
@@ -1194,7 +1194,7 @@ fn run_lisp_command_from_ui(app: &mut CadApp, cmd: &str) {
     }
 }
 
-/// Top menu-bar dropdown (`🧩 Plugins`) for quick access to loaded `.NET` DLL and AutoLISP commands.
+/// Top menu-bar dropdown (`Plugins`) for quick access to loaded `.NET` DLL and AutoLISP commands.
 pub fn plugin_menubar_item(app: &mut CadApp, ui: &mut egui::Ui) {
     let mut do_netload = false;
     let mut do_open_studio = false;
@@ -1205,20 +1205,20 @@ pub fn plugin_menubar_item(app: &mut CadApp, ui: &mut egui::Ui) {
     let plugin_count =
         app.lisp_ide.as_ref().map_or(0, |ide| ide.loaded_dlls.len() + usize::from(ide.loaded_code.is_some() && !ide.commands.is_empty()));
     let label = if plugin_count > 0 {
-        RichText::new(format!("🧩 {} ({plugin_count})", crate::tl!("Plugins"))).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff))
+        RichText::new(format!("{} ({plugin_count})", crate::tl!("Plugins"))).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff))
     } else {
-        RichText::new(format!("🧩 {}", crate::tl!("Plugins")))
+        RichText::new(crate::tl!("Plugins"))
     };
 
     ui.menu_button(label, |ui| {
         if ui
-            .button(RichText::new(format!("📂 {}...", crate::tl!("Open .lsp / .vb / .cs"))).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)))
+            .button(RichText::new(format!("{}...", crate::tl!("Open .lsp / .vb / .cs"))).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)))
             .clicked()
         {
             do_netload = true;
             ui.close();
         }
-        if ui.button(format!("🛠 {}...", crate::tl!("Open NETLOAD Studio (VBAIDE)"))).clicked() {
+        if ui.button(format!("{}...", crate::tl!("Open NETLOAD Studio (VBAIDE)"))).clicked() {
             do_open_studio = true;
             ui.close();
         }
@@ -1236,7 +1236,7 @@ pub fn plugin_menubar_item(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             for dll in &ide.loaded_dlls {
                 ui.separator();
-                ui.label(RichText::new(format!("🧩 {}", dll.name)).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
+                ui.label(RichText::new(&dll.name).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
                 for cmd in &dll.commands {
                     if ui.button(RichText::new(format!("▶ {cmd}")).monospace().strong().color(egui::Color32::from_rgb(0x4e, 0xc9, 0x6f))).clicked()
                     {
@@ -1247,7 +1247,7 @@ pub fn plugin_menubar_item(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             if ide.loaded_code.is_some() && !ide.commands.is_empty() {
                 ui.separator();
-                ui.label(RichText::new(format!("📜 {}", ide.file_name)).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
+                ui.label(RichText::new(ide.file_name.clone()).strong().color(egui::Color32::from_rgb(0x38, 0xb6, 0xff)));
                 for cmd in &ide.commands {
                     if ui.button(RichText::new(format!("▶ {cmd}")).monospace().strong().color(egui::Color32::from_rgb(0x4e, 0xc9, 0x6f))).clicked()
                     {

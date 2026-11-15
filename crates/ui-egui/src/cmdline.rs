@@ -1318,12 +1318,12 @@ mod autocomplete_tests {
         assert!(app.cmdline("clear").is_none());
         assert!(app.session.log.is_empty());
 
-        let cls = suggestions("cls");
+        let cls = suggestions("cls", &|_| false);
         assert!(!cls.is_empty());
         assert_eq!(cls[0].id, "CLEAR");
         assert_eq!(cls[0].display, "CLS (CLEAR)");
 
-        let cle = suggestions("cle");
+        let cle = suggestions("cle", &|_| false);
         assert!(!cle.is_empty());
         assert_eq!(cle[0].id, "CLEAR");
         assert_eq!(cle[0].display, "CLEAR");

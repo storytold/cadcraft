@@ -787,7 +787,7 @@ pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String
     }
 }
 
-/// Render the top application menu bar, including the `.NET` / AutoLISP `🧩 Plugins` dropdown.
+/// Render the top application menu bar, including the `.NET` / AutoLISP `Plugins` dropdown.
 pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let tree = tree(app);
