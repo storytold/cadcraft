@@ -183,6 +183,9 @@ impl Interactive for SelectRun {
         self.sel.single = self.single.is_some() && !self.repeat;
         Ok(Step::Continue)
     }
+    fn is_removing_selection(&self) -> bool {
+        self.sel.removing
+    }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.single {
             // A repeating run keeps asking for the next object, whatever selection keywords were typed.

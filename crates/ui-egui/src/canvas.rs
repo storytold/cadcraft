@@ -4,6 +4,7 @@
 use cadcraft_color::Rgb;
 use cadcraft_doc::Handle;
 use cadcraft_engine::Input;
+use cadcraft_engine::SelectionOverlayUv;
 use cadcraft_engine::snap::{self, SnapHit};
 use cadcraft_geom::{Bounds2, Mat3, Vec2};
 use cadcraft_render::{DisplayList, Kind};
@@ -26,7 +27,10 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{
+    HlCache, dashed_polygon, dashed_polyline, dashed_rect, draw_drag_gpu, draw_highlight_layer, draw_list_gpu, list_mesh_key,
+    selection_area_fill,
+};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -73,6 +77,15 @@ impl Xf {
     pub fn screen_uv_at(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
         Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale)
+    }
+    /// Convert a camera-plane UV offset (world units relative to `target()`) to screen coordinates.
+    pub fn screen_uv_to_screen(&self, uv: Vec2) -> Pos2 {
+        let c = self.rect.center();
+        pos2(c.x + (uv.x * self.scale) as f32, c.y - (uv.y * self.scale) as f32)
+    }
+    /// Camera/view projection matching `self` for engine picking and selection.
+    pub fn pick_projection(&self) -> cadcraft_engine::select::PickProjection {
+        cadcraft_engine::select::PickProjection::from_view(self.cam, self.center, self.target_z, self.twist)
     }
     /// A world offset from `center` in the screen's frame (y up): turned by the 3D camera or view twist.
     fn turn(&self, v: Vec2) -> Vec2 {
@@ -242,11 +255,12 @@ pub struct CanvasState {
     drag_slot: crate::gpu::MeshSlot,
     drag_origin: Vec2,
     /// The selection highlight on the GPU (see [`draw_highlight_gpu`]).
-    hl_key: Option<u64>,
-    hl_slot: crate::gpu::MeshSlot,
-    hl_origin: Vec2,
-    /// Selected infinite lines (clipped and drawn on the CPU each frame).
-    hl_infinite: Vec<usize>,
+    hl: HlCache,
+    /// Live selection preview candidates (rollover, window/crossing, polygon, fence, stretch).
+    pub preview_handles: Vec<Handle>,
+    pub preview_action: cadcraft_engine::PreviewAction,
+    preview_hl: HlCache,
+    preview_key: Option<u64>,
     /// The selection and hover highlights inside the active MSPACE viewport (see [`VpHighlight`]).
     vp_sel: VpHighlight,
     vp_hover: VpHighlight,
@@ -746,7 +760,14 @@ struct CanvasPaint<'a> {
     raw_world: Option<Vec2>,
 }
 
-fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
+fn paint_content_highlights(
+    frame: &mut CanvasPaint<'_>,
+    bg: Rgb,
+    sel: &[Handle],
+    preview_look: Look,
+    selection_look: Option<Look>,
+    selection_overlay: Option<&SelectionOverlayUv>,
+) {
     let app = &mut *frame.app;
     let painter = frame.painter;
     let xf_paper = frame.xf_paper;
@@ -785,6 +806,25 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             draw_list(painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
         }
     }
+    // Paint the translucent selection window/polygon fill beneath highlights so glowing entities keep full contrast.
+    if let Some(overlay) = selection_overlay {
+        draw_selection_area_fill(painter, &xf, &app.session.settings, overlay);
+    }
+    let (effective_sel, preview_handles, preview_color, preview_look): (std::borrow::Cow<'_, [Handle]>, Vec<Handle>, Color32, Look) = {
+        let c = &app.canvas;
+        if c.cycle.is_some() || c.hover_cycle.is_some() {
+            (std::borrow::Cow::Borrowed(sel), c.hover.filter(|h| !sel.contains(h)).into_iter().collect(), t.selection, preview_look)
+        } else if c.preview_action == cadcraft_engine::PreviewAction::Remove && !c.preview_handles.is_empty() {
+            let rm: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| sel.contains(h)).collect();
+            let kept: Vec<Handle> = sel.iter().copied().filter(|h| !rm.contains(h)).collect();
+            let dim_remove = Color32::from_rgba_unmultiplied(t.selection.r(), t.selection.g(), t.selection.b(), 95);
+            let remove_look = Look { width: 1.5, glow: false, bright_core: false, ..preview_look };
+            (std::borrow::Cow::Owned(kept), rm, dim_remove, remove_look)
+        } else {
+            let add: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| !sel.contains(h)).collect();
+            (std::borrow::Cow::Borrowed(sel), add, t.selection, preview_look)
+        }
+    };
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
         let r = viewport_screen_bounds(rect, &xf_paper, vp, None).0;
@@ -804,59 +844,81 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             let visible = viewport_screen_bounds(rect, &xf_paper, vp, active_clip.as_ref()).1;
             let clipped = painter.with_clip_rect(visible);
             let c = &mut app.canvas;
-            if let Some(h) = c.hover
-                && !sel.contains(&h)
-            {
-                c.vp_hover.update(st, &[h], scale);
-                let list = &c.vp_hover.list;
-                draw_highlight(&clipped, &xf, list, &(0..list.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
-            }
+            let has_gpu = c.gpu.is_some();
+            let stencil = if masked { crate::gpu::Stencil::Inside } else { crate::gpu::Stencil::Off };
             if let Some(look) = selection_look
-                && !sel.is_empty()
+                && !effective_sel.is_empty()
             {
-                c.vp_sel.update(st, sel, scale);
+                c.vp_sel.update(st, &effective_sel, scale);
                 let list = &c.vp_sel.list;
-                let all = || (0..list.prims.len()).collect::<Vec<_>>();
-                if c.gpu.is_some() {
-                    // Shares the GPU highlight layer with the layout's own selection; the high bit
-                    // keeps this list's generations apart from the layout list's.
-                    let list_id = c.vp_sel.list_gen | 1 << 63;
-                    let stencil = if masked { crate::gpu::Stencil::Inside } else { crate::gpu::Stencil::Off };
-                    let hl = (&mut c.hl_key, &c.hl_slot, &mut c.hl_origin, &mut c.hl_infinite);
-                    draw_highlight_gpu(&clipped, &xf, list, list_id, all, sel, t.selection, look, hl, stencil);
-                    draw_highlight(&clipped, &xf, list, &c.hl_infinite, t.selection, look);
-                } else {
-                    draw_highlight(&clipped, &xf, list, &all(), t.selection, look);
-                }
-            }
-        }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
-        if let Some(h) = *hover
-            && !sel.contains(&h)
-        {
-            draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);
-        }
-        if let Some(look) = selection_look {
-            if gpu.is_some() && !sel.is_empty() {
-                let list_id = *list_gen;
-                let hl = (hl_key, &*hl_slot, hl_origin, &mut *hl_infinite);
-                draw_highlight_gpu(
-                    painter,
+                let list_id = c.vp_sel.list_gen | 1 << 63;
+                draw_highlight_layer(
+                    &clipped,
                     &xf,
                     list,
                     list_id,
-                    || prim_index.prims(list_id, list, sel),
-                    sel,
+                    || (0..list.prims.len()).collect(),
+                    &effective_sel,
                     t.selection,
                     look,
-                    hl,
-                    crate::gpu::Stencil::Off,
+                    has_gpu,
+                    &mut c.hl,
+                    crate::gpu::LAYER_HIGHLIGHT,
+                    stencil,
                 );
-                draw_highlight(painter, &xf, list, hl_infinite, t.selection, look);
-            } else {
-                draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, sel), t.selection, look);
+            }
+            if !preview_handles.is_empty() {
+                c.vp_hover.update(st, &preview_handles, scale);
+                let list = &c.vp_hover.list;
+                let list_id = c.vp_hover.list_gen | 1 << 62;
+                draw_highlight_layer(
+                    &clipped,
+                    &xf,
+                    list,
+                    list_id,
+                    || (0..list.prims.len()).collect(),
+                    &preview_handles,
+                    preview_color,
+                    preview_look,
+                    has_gpu,
+                    &mut c.preview_hl,
+                    crate::gpu::LAYER_PREVIEW,
+                    stencil,
+                );
             }
         }
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, gpu, hl, preview_hl, .. } = &mut app.canvas {
+        let has_gpu = gpu.is_some();
+        if let Some(look) = selection_look {
+            draw_highlight_layer(
+                painter,
+                &xf,
+                list,
+                *list_gen,
+                || prim_index.prims(*list_gen, list, &effective_sel),
+                &effective_sel,
+                t.selection,
+                look,
+                has_gpu,
+                hl,
+                crate::gpu::LAYER_HIGHLIGHT,
+                crate::gpu::Stencil::Off,
+            );
+        }
+        draw_highlight_layer(
+            painter,
+            &xf,
+            list,
+            *list_gen,
+            || prim_index.prims(*list_gen, list, &preview_handles),
+            &preview_handles,
+            preview_color,
+            preview_look,
+            has_gpu,
+            preview_hl,
+            crate::gpu::LAYER_PREVIEW,
+            crate::gpu::Stencil::Off,
+        );
     }
 }
 
@@ -887,7 +949,9 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
-    if app.session.orbit_active() || app.canvas.orbit_start.is_some() || app.canvas.viewcube_drag.is_some() {
+    if !app.session.settings.orbit_free_camera
+        && (app.session.orbit_active() || app.canvas.orbit_start.is_some() || app.canvas.viewcube_drag.is_some())
+    {
         let pivot = app.canvas.active_orbit_pivot().unwrap_or_else(|| app.session.resolve_orbit_pivot(None, 0.0));
         draw_orbit_pivot(painter, xf.to_screen_3d(pivot));
     }
@@ -897,15 +961,20 @@ fn paint_pointer_overlay(
     let (ov_full, ov_clip) = overlay_bounds.unwrap_or((rect, rect));
     let in_mspace = frame.active_vp.is_some();
     let show_viewport_overlays = !in_mspace || (ov_clip.width() >= 1.0 && ov_clip.height() >= 1.0);
+    let bg_at = |pt: Pos2| {
+        paper_rect.map_or(t.canvas, |pr| if pr.contains(pt) { t.paper } else { surround })
+    };
     if app.ui.show_ucs_icon && show_viewport_overlays {
         draw_ucs_icon(painter, ov_full, ov_clip, &xf.cam);
         crate::viewcube::ucs_icon_in(app, ui, ov_full, ov_clip);
     }
     if app.ui.show_viewcube && (sheet.is_none() || (in_mspace && show_viewport_overlays)) {
-        draw_viewcube(app, ui, ov_full, ov_clip);
+        let vc_bg = bg_at(crate::viewcube::Layout::for_viewport(ov_full, ov_clip).center);
+        draw_viewcube(app, ui, ov_full, ov_clip, vc_bg);
     }
     if show_viewport_overlays {
-        viewport_label(painter, ov_clip, &xf.cam, app.session.orbit_active());
+        let label_bg = bg_at(ov_clip.left_top() + vec2(12.0, 10.0));
+        viewport_label(painter, ov_clip, &xf.cam, app.session.orbit_active(), label_bg);
     }
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
@@ -1019,7 +1088,7 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         && double
         && app.session.running.is_none()
         && let Some(hp) = hover
-        && edit_text_at(app, xf.to_world(hp))
+        && edit_text_at(app, xf.to_world(hp), xf.screen_uv_at(hp), &xf.pick_projection())
     {
         return None;
     }
@@ -1031,7 +1100,7 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         && double
         && app.session.running.is_none()
         && let Some(hp) = hover
-        && let Some(h) = hatch_at(app, xf.to_world(hp), scale)
+        && let Some(h) = hatch_at(app, xf.screen_uv_at(hp), &xf.pick_projection(), scale)
     {
         app.session.set_selection(vec![h]);
         crate::hatchdlg::open_edit(app);
@@ -1091,22 +1160,169 @@ fn update_canvas_cursor(
     (raw_world, dyn_frame)
 }
 
-fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option<Pos2>, raw_world: Option<Vec2>, scale: f64) {
-    // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
-    // prompts, or no command with PICKFIRST on; SELECTIONPREVIEW says in which of those it shows.
+fn draw_selection_area_fill(
+    painter: &egui::Painter,
+    xf: &Xf,
+    settings: &cadcraft_engine::Settings,
+    overlay: &SelectionOverlayUv,
+) {
+    match overlay {
+        SelectionOverlayUv::Box { a_uv, b_uv, crossing } => {
+            let corners = [*a_uv, Vec2::new(b_uv.x, a_uv.y), *b_uv, Vec2::new(a_uv.x, b_uv.y)].map(|q| xf.screen_uv_to_screen(q));
+            if let Some(fill) = selection_area_fill(settings, *crossing) {
+                painter.add(Shape::convex_polygon(corners.to_vec(), fill, Stroke::NONE));
+            }
+        }
+        SelectionOverlayUv::Polygon { pts_uv, crossing } => {
+            if pts_uv.len() >= 3
+                && let Some(fill) = selection_area_fill(settings, *crossing)
+            {
+                let tris = cadcraft_render::triangulate_evenodd(&[pts_uv.clone()]);
+                let mut mesh = egui::Mesh::default();
+                for tri in tris.chunks_exact(3) {
+                    let i = mesh.vertices.len() as u32;
+                    for q in tri {
+                        mesh.colored_vertex(xf.screen_uv_to_screen(*q), fill);
+                    }
+                    mesh.add_triangle(i, i + 1, i + 2);
+                }
+                if !mesh.vertices.is_empty() {
+                    painter.add(Shape::mesh(mesh));
+                }
+            }
+        }
+        SelectionOverlayUv::Fence { .. } => {}
+    }
+}
+
+fn draw_selection_area_border(painter: &egui::Painter, xf: &Xf, t: &Tokens, overlay: &SelectionOverlayUv) {
+    let stroke_for = |crossing| Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
+    match overlay {
+        SelectionOverlayUv::Box { a_uv, b_uv, crossing } => {
+            let corners = [*a_uv, Vec2::new(b_uv.x, a_uv.y), *b_uv, Vec2::new(a_uv.x, b_uv.y)].map(|q| xf.screen_uv_to_screen(q));
+            let st = stroke_for(*crossing);
+            if *crossing {
+                painter.extend(dashed_polygon(painter.clip_rect(), &corners, st, 5.0, 3.0));
+            } else {
+                let mut pts = corners.to_vec();
+                pts.push(corners[0]);
+                painter.add(Shape::line(pts, st));
+            }
+        }
+        SelectionOverlayUv::Polygon { pts_uv, crossing } => {
+            let screen: Vec<Pos2> = pts_uv.iter().map(|q| xf.screen_uv_to_screen(*q)).collect();
+            let st = stroke_for(*crossing);
+            if *crossing {
+                painter.extend(dashed_polygon(painter.clip_rect(), &screen, st, 5.0, 3.0));
+            } else if screen.len() >= 2 {
+                let mut closed = screen;
+                closed.push(closed[0]);
+                painter.add(Shape::line(closed, st));
+            }
+        }
+        SelectionOverlayUv::Fence { pts_uv } => {
+            let screen: Vec<Pos2> = pts_uv.iter().map(|q| xf.screen_uv_to_screen(*q)).collect();
+            let st = stroke_for(true);
+            painter.extend(dashed_polyline(painter.clip_rect(), &screen, st, 5.0, 3.0));
+        }
+    }
+}
+
+fn requires_xy_plane_snap(app: &CadApp, xf: &Xf, point_prompt: bool, dyn_fully_locked: bool) -> bool {
+    point_prompt && app.canvas.snap.is_none() && !dyn_fully_locked && xf.cam.is_edge_on_xy() && app.session.select_mode.is_none()
+}
+
+fn overlay_cache_signature(overlay: Option<&cadcraft_engine::SelectionOverlayUv>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match overlay {
+        None => 0u8.hash(&mut h),
+        Some(cadcraft_engine::SelectionOverlayUv::Box { a_uv, b_uv, crossing }) => {
+            (1u8, a_uv.x.to_bits(), a_uv.y.to_bits(), b_uv.x.to_bits(), b_uv.y.to_bits(), crossing).hash(&mut h);
+        }
+        Some(cadcraft_engine::SelectionOverlayUv::Polygon { pts_uv, crossing }) => {
+            (2u8, pts_uv.len(), crossing).hash(&mut h);
+            for p in pts_uv {
+                (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+            }
+        }
+        Some(cadcraft_engine::SelectionOverlayUv::Fence { pts_uv }) => {
+            (3u8, pts_uv.len()).hash(&mut h);
+            for p in pts_uv {
+                (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+fn update_hover(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, hover_pos: Option<Pos2>) {
+    // The cursor picks objects (pick box, rollover highlight) or previews active selection areas
+    // (Window, Crossing, WP, CP, Fence, Stretch); SELECTIONPREVIEW controls when it shows.
     let selecting = app.session.previews_selection();
-    if inside && selecting && app.session.pending_window.is_none() {
-        if hover_pos != app.canvas.hover_at
-            && let (Some(w), Ok(st)) = (raw_world, app.session.state())
-        {
-            let filter = app.session.settings.previewfilter;
-            app.canvas.hover = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
-                .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
+    let shift = ui.input(|i| i.modifiers.shift);
+    let proj = xf.pick_projection();
+    if inside
+        && selecting
+        && let (Some(hp), Ok(st)) = (hover_pos, app.session.state())
+    {
+        let uv = xf.screen_uv_at(hp);
+        let overlay = app.session.selection_overlay_uv(uv, &proj);
+        let drag_below_threshold = app.canvas.drag_window
+            && app.session.pending_window.is_some_and(|pw| hp.distance(xf.to_screen_3d(pw.corner_3d)) < 3.0);
+        let cache_key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let v = st.view();
+            let s = &app.session.settings;
+            let cmd_id = app.session.running.as_ref().map(|r| r.id.as_str());
+            let prompt_msg = app.session.current_prompt().map(|p| p.message.clone());
+            let mode_sig = app.session.select_mode.as_ref().map(|m| (m.kind as u8, m.pts.len()));
+            (
+                (hp.x.to_bits(), hp.y.to_bits(), st.uid, st.revision),
+                (xf.center.x.to_bits(), xf.center.y.to_bits(), xf.scale.to_bits(), v.target_z.to_bits(), v.twist.to_bits()),
+                (
+                    (st.camera.x.x.to_bits(), st.camera.x.y.to_bits(), st.camera.x.z.to_bits()),
+                    (st.camera.y.x.to_bits(), st.camera.y.y.to_bits(), st.camera.y.z.to_bits()),
+                    (st.camera.z.x.to_bits(), st.camera.z.y.to_bits(), st.camera.z.z.to_bits()),
+                    (st.camera.up.x.to_bits(), st.camera.up.y.to_bits(), st.camera.up.z.to_bits()),
+                ),
+                (cmd_id, prompt_msg, mode_sig, app.session.pending_window.is_some(), drag_below_threshold),
+                overlay_cache_signature(overlay.as_ref()),
+                &st.selection,
+                (shift, s.selectionpreview, s.previewfilter, s.selectionpreviewlimit, s.pickbox.to_bits(), s.pickadd, s.pickstyle),
+            )
+                .hash(&mut h);
+            h.finish()
+        };
+        if app.canvas.preview_key != Some(cache_key) {
+            if drag_below_threshold {
+                app.canvas.hover = None;
+                app.canvas.preview_handles.clear();
+                app.canvas.preview_action = cadcraft_engine::PreviewAction::Add;
+            } else {
+                let ap = app.session.settings.pickbox.max(1.0) * 1.5 / xf.scale.max(1e-12);
+                let preview = app.session.preview_selection_uv(uv, ap, shift, &proj);
+                app.canvas.preview_handles = preview.handles;
+                app.canvas.preview_action = preview.action;
+                app.canvas.hover = if overlay.is_none()
+                    && app.session.select_mode.is_none()
+                    && app.session.pending_window.is_none()
+                {
+                    app.canvas.preview_handles.first().copied()
+                } else {
+                    None
+                };
+            }
             app.canvas.hover_at = hover_pos;
+            app.canvas.preview_key = Some(cache_key);
         }
     } else {
         app.canvas.hover = None;
         app.canvas.hover_at = None;
+        app.canvas.preview_handles.clear();
+        app.canvas.preview_action = cadcraft_engine::PreviewAction::Add;
+        app.canvas.preview_key = None;
     }
     // The open selection cycling list highlights the object of the row under the pointer.
     if app.canvas.cycle.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -1116,9 +1332,9 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         app.canvas.hover = hover_pos.and_then(|hp| c.row_at(hp));
         app.canvas.hover_at = None;
     }
-    shift_space_cycle(app, ui, hover_pos.filter(|_| inside), raw_world);
+    shift_space_cycle(app, ui, xf, hover_pos.filter(|_| inside));
     if inside && hover_pos != app.canvas.cycle_badge_at {
-        app.canvas.cycle_badge = raw_world.is_some_and(|w| app.session.cycling_badge(w));
+        app.canvas.cycle_badge = hover_pos.is_some_and(|hp| app.session.cycling_badge_at(xf.screen_uv_at(hp), &proj));
         app.canvas.cycle_badge_at = hover_pos;
     } else if !inside {
         app.canvas.cycle_badge = false;
@@ -1156,10 +1372,11 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
                 let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
-                if app.canvas.snap.is_none() && context.xf.cam.is_edge_on_xy() {
+                if requires_xy_plane_snap(app, &context.xf, true, false) {
                     app.session.echo("Cannot place an unconstrained point on the XY plane in an edge-on view; snap to an object, enter coordinates, or orbit the view.");
                     continue;
                 }
+                app.session.set_pending_pick(context.xf.screen_uv_at(*pos), context.xf.pick_projection());
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
                     None => app.session.input(Input::Point(w)),
@@ -1220,7 +1437,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let PointerInput { hover_pos, mods, middle_down, pressed_primary, pressed_secondary, dbl_primary, .. } = pointer;
     // Re-read the view after navigation, handle double-click transitions, and refresh transforms
     // in the same frame so layout <-> MSPACE switches paint immediately without a blank frame.
-    let (mut view, mut scale, mut xf, mut xf_paper, mut active_vp, mut active_clip) = compute_canvas_xforms(app, rect);
+    let (mut view, scale, mut xf, mut xf_paper, mut active_vp, mut active_clip) = compute_canvas_xforms(app, rect);
     let Some(dc) = handle_double_click(
         app,
         DoubleClickContext {
@@ -1237,7 +1454,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
     if dc.switched_viewport {
-        (view, scale, xf, xf_paper, active_vp, active_clip) = compute_canvas_xforms(app, rect);
+        (view, _, xf, xf_paper, active_vp, active_clip) = compute_canvas_xforms(app, rect);
     }
     let hatch_dialog = dc.hatch_dialog || dc.switched_viewport;
 
@@ -1278,7 +1495,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.hover_cycle = None;
         app.canvas.cycle_key = Some(key);
     }
-    let cycled = pressed_primary && !middle_down && cycle_click(app, &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
+    let cycled = pressed_primary && !middle_down && cycle_click(app, &xf, hover_pos, inside, mods.shift);
     // Clicks.
     if inside
         && pressed_primary
@@ -1287,6 +1504,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && !app.session.orbit_active()
         && let Some(p) = app.canvas.cursor
     {
+        let click_uv = hover_pos.map(|hp| xf.screen_uv_at(hp));
+        let proj = xf.pick_projection();
         if app.session.prompting() {
             // Ctrl held while picking the point of a grip edit makes copies (the Copy option).
             if mods.ctrl && app.session.running.as_ref().is_some_and(|r| r.id == "grip") {
@@ -1299,12 +1518,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             let parsed_dyn = dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f));
             let dyn_fully_locked =
                 parsed_dyn.as_ref().is_some_and(|e| app.cmd.second_locked() && e.first_locked().is_some() && e.second_value().is_some());
-            if point_prompt && app.canvas.snap.is_none() && !dyn_fully_locked && xf.cam.is_edge_on_xy() {
+            if requires_xy_plane_snap(app, &xf, point_prompt, dyn_fully_locked) {
                 app.session.echo("Cannot place an unconstrained point on the XY plane in an edge-on view; snap to an object, enter coordinates, or orbit the view.");
             } else {
                 // Clicking places the point; a value typed into the Dynamic Input boxes is used up.
                 if parsed_dyn.is_some() {
                     app.cmd.buffer.clear();
+                }
+                if let Some(uv) = click_uv {
+                    app.session.set_pending_pick(uv, proj);
                 }
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
@@ -1318,8 +1540,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
             click_grip(app, g, mods.shift);
-        } else if let Err(e) = app.session.idle_click(raw_world.unwrap_or(p), mods.shift) {
-            app.session.echo(e.to_string());
+        } else {
+            let uv = click_uv.unwrap_or_else(|| proj.project(p));
+            if let Err(e) = app.session.idle_click_at(raw_world.unwrap_or(p), uv, &proj, mods.shift) {
+                app.session.echo(e.to_string());
+            }
         }
     }
     // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
@@ -1340,15 +1565,22 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && grip_at(app, &xf, Some(origin)).is_none()
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {
-        app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
+        app.canvas.drag_window = app.session.begin_window_at(xf.to_world(origin), xf.screen_uv_at(origin), &xf.pick_projection());
     }
     if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
         app.canvas.drag_window = false;
         if app.session.pending_window.is_some()
             && let Some(end) = ui.input(|i| i.pointer.interact_pos())
         {
-            let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
+            let end_uv = xf.screen_uv_at(end);
+            let proj = xf.pick_projection();
+            let end_w = xf.to_world(end);
+            app.session.set_pending_pick(end_uv, proj);
+            let done = if app.session.prompting() {
+                app.session.input(Input::Point(end_w))
+            } else {
+                app.session.idle_click_at(end_w, end_uv, &proj, mods.shift)
+            };
             if let Err(e) = done {
                 app.session.echo(e.to_string());
             }
@@ -1375,7 +1607,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         crate::context_menu::show(app, &resp);
     }
 
-    update_hover(app, ui, inside, hover_pos, raw_world, scale);
+    update_hover(app, ui, &xf, inside, hover_pos);
 
     paint_canvas(CanvasPaint {
         app,
@@ -1417,7 +1649,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         raw_world,
     } = frame;
     let scale = xf.scale;
-    let selecting = app.session.previews_selection();
+    let selecting = app.session.previews_selection()
+        && app.session.pending_window.is_none()
+        && app.session.select_mode.is_none()
+        && app.session.current_prompt().is_none_or(|p| !p.corner);
     painter.rect_filled(rect, 0.0, t.canvas);
     let t0 = crate::now_ms();
     let mut views = vec![(xf_paper.world_bounds(), 1.0 / xf_paper.scale)];
@@ -1471,6 +1706,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
     }
     let sel = app.session.selection();
+    let cursor_uv = hover_pos.map(|hp| xf.screen_uv_at(hp)).or_else(|| raw_world.map(|w| xf.pick_projection().project(w)));
+    let selection_overlay = cursor_uv.and_then(|uv| app.session.selection_overlay_uv(uv, &xf.pick_projection()));
     // How the object under the cursor and the selected ones are highlighted (PREVIEWEFFECT,
     // HIGHLIGHT, SELECTIONEFFECT); with HIGHLIGHT off only their grips show.
     let (preview_look, selection_look) = (Look::preview(&app.session.settings), Look::selection(&app.session.settings));
@@ -1497,6 +1734,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         &sel,
         preview_look,
         selection_look,
+        selection_overlay.as_ref(),
     );
     app.canvas.draw_ms = crate::now_ms() - t0;
     compare::paint(app, ui.ctx(), painter, &xf_paper, rect);
@@ -1581,22 +1819,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             draw_list(painter, &xf, &list, bg, false);
         }
     }
-    // Pending selection window.
-    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
-        // The world box it selects (turned in a twisted view).
-        let corners = [pw.corner, Vec2::new(c.x, pw.corner.y), c, Vec2::new(pw.corner.x, c.y)].map(|q| xf.to_screen(q));
-        let crossing = app.session.window_is_crossing(pw.corner, c);
-        if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
-            painter.add(Shape::convex_polygon(corners.to_vec(), fill, Stroke::NONE));
-        }
-        let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
-        if crossing {
-            painter.extend(dashed_polygon(painter.clip_rect(), &corners, st, 5.0, 3.0));
-        } else {
-            let mut pts = corners.to_vec();
-            pts.push(corners[0]);
-            painter.add(Shape::line(pts, st));
-        }
+    // Pending window or typed selection mode (W/C/BOX/WP/CP/F) rubberband border in screen/camera-UV space.
+    if let Some(overlay) = selection_overlay.as_ref() {
+        draw_selection_area_border(painter, &xf, &t, overlay);
     }
     paint_pointer_overlay(
         &mut CanvasPaint {

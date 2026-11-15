@@ -32,7 +32,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }
-        viewport_label(&p, *r, &Camera3D::TOP, false);
+        viewport_label(&p, *r, &Camera3D::TOP, false, t.canvas);
     }
     let p = ui.painter();
     for (r, tile) in tiles {
@@ -104,28 +104,33 @@ pub(super) fn viewport_label_text(cam: &Camera3D, orbit_active: bool) -> String 
 
 /// Paint the top-left viewport label showing the active view name (`Top`, `SW Isometric`, etc.)
 /// and visual style (`2D Wireframe` vs. `Wireframe`), clipped inside `rect`.
-pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D, orbit_active: bool) {
-    let t = Tokens::get();
+pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D, orbit_active: bool, bg: Color32) {
+    let ink = if crate::theme::luminance(bg) > 0.5 { Color32::from_rgb(0x47, 0x50, 0x5c) } else { Tokens::DARK.canvas_ink };
     let p = p.with_clip_rect(rect);
     let min_dim = rect.width().min(rect.height());
     let pad_x = (min_dim * 0.06).clamp(4.0, 10.0);
     let pad_y = (min_dim * 0.05).clamp(3.0, 8.0);
     let at = pos2(rect.left() + pad_x, rect.top() + pad_y);
-    p.text(at, egui::Align2::LEFT_TOP, viewport_label_text(cam, orbit_active), crate::theme::small(), t.canvas_ink);
+    p.text(at, egui::Align2::LEFT_TOP, viewport_label_text(cam, orbit_active), crate::theme::small(), ink);
 }
 
 /// Paint the interactive 3D ViewCube widget and the WCS coordinate-system pill beneath it,
 /// scaled to `vp_full` and clipped inside `vp_clip`.
-pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, vp_full: Rect, vp_clip: Rect) {
+pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, vp_full: Rect, vp_clip: Rect, bg: Color32) {
     let l = crate::viewcube::Layout::for_viewport(vp_full, vp_clip);
-    crate::viewcube::show(app, ui, &l);
+    crate::viewcube::show_with_bg(app, ui, &l, bg);
+    let pal = crate::viewcube::ViewCubePalette::for_background(bg);
     let p = ui.painter_at(l.clip);
     // WCS pill: the label and a down chevron, drawn as lines rather than a "⌄" glyph that a UI
     // font may lack (it showed as a box, #1541).
     let ps = l.scale.clamp(0.55, 1.0);
     let pill = l.pill;
-    p.rect_filled(pill, 8.0 * ps, Color32::from_rgb(0x48, 0x50, 0x5c));
-    let ink = Tokens::DARK.canvas_ink;
+    let radius = 8.0 * ps;
+    p.rect_filled(pill, radius, pal.wcs_bg);
+    if let Some(border) = pal.wcs_border {
+        p.rect_stroke(pill, radius, Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    }
+    let ink = pal.wcs_ink;
     let mut font = crate::theme::small();
     font.size = (font.size * ps).clamp(7.0, font.size);
     let label = p.layout_no_wrap(crate::tl!("WCS").to_string(), font, ink);

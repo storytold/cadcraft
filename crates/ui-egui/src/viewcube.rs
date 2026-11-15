@@ -83,7 +83,7 @@ impl Layout {
     pub fn for_viewport(viewport_full: Rect, viewport_clip: Rect) -> Self {
         let s = viewport_scale(viewport_full);
         let clip = viewport_clip;
-        let center = pos2(clip.right() - 116.0 * s, clip.top() + 112.0 * s);
+        let center = pos2(clip.right() - 92.0 * s, clip.top() + 100.0 * s);
         let ring = RING_RADIUS * s;
         let ring_outer = ring + (RING_THICKNESS * s) * 0.5;
         let r_inner = ring_outer + ROLL_ARROW_GAP * s;
@@ -93,7 +93,7 @@ impl Layout {
         let (ccw_poly, ccw_outer, ccw_inner, ccw_head) = mirror_arrow_data(center, &cw_poly, &cw_outer, &cw_inner, &cw_head);
         let roll_cw = poly_bounding_rect(&cw_poly);
         let roll_ccw = poly_bounding_rect(&ccw_poly);
-        let bounds_radius = 108.0 * s;
+        let bounds = Rect::from_min_max(center - vec2(104.0 * s, 98.0 * s), center + vec2(88.0 * s, 88.0 * s));
         let pill_scale = s.clamp(0.55, 1.0);
         let pill_y = ring + 13.5 * s + 12.5 * pill_scale;
         Layout {
@@ -118,7 +118,7 @@ impl Layout {
             ccw_inner,
             ccw_head,
             pill: Rect::from_center_size(center + vec2(0.0, pill_y), vec2(56.0 * pill_scale, 16.0 * pill_scale)),
-            bounds: Rect::from_center_size(center, vec2(2.0 * bounds_radius, 2.0 * bounds_radius)),
+            bounds,
         }
     }
 
@@ -349,9 +349,97 @@ fn hit_beveled_cube(center: Pos2, cam: &Camera3D, scale: f32, p: Pos2) -> Option
     None
 }
 
+/// Surface-adapted colour palette for the ViewCube, compass ring, Home icon and WCS pill.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewCubePalette {
+    pub is_light: bool,
+    pub ring_fill: Color32,
+    pub ring_hover: Color32,
+    pub ring_outer_edge: Color32,
+    pub ring_inner_edge: Color32,
+    pub compass_text: Color32,
+    pub arrow_fill: Color32,
+    pub arrow_hover: Color32,
+    pub arrow_edge: Color32,
+    pub cube_edge: Color32,
+    pub cube_hover: Color32,
+    pub face_shade_base: f32,
+    pub face_shade_range: f32,
+    pub bevel_shade_base: f32,
+    pub bevel_shade_range: f32,
+    pub home_hover_bg: Color32,
+    pub home_stroke: Color32,
+    pub home_hover_stroke: Color32,
+    pub wcs_bg: Color32,
+    pub wcs_border: Option<Color32>,
+    pub wcs_ink: Color32,
+}
+
+impl ViewCubePalette {
+    /// Choose ViewCube colours suited to the canvas/paper colour `bg` behind the overlay.
+    pub fn for_background(bg: Color32) -> Self {
+        let is_light = crate::theme::luminance(bg) > 0.5;
+        if is_light {
+            Self {
+                is_light: true,
+                ring_fill: Color32::from_rgb(0xdc, 0xe1, 0xe8),
+                ring_hover: Color32::from_rgb(0xb8, 0xcd, 0xe4),
+                ring_outer_edge: Color32::from_rgb(0xb2, 0xba, 0xc6),
+                ring_inner_edge: Color32::from_rgb(0xc2, 0xca, 0xd4),
+                compass_text: Color32::from_rgb(0x2c, 0x33, 0x3d),
+                arrow_fill: Color32::from_rgb(0xce, 0xd5, 0xdf),
+                arrow_hover: Color32::from_rgb(0x6e, 0xa8, 0xe5),
+                arrow_edge: Color32::from_rgb(0x90, 0x99, 0xa8),
+                cube_edge: Color32::from_rgb(0x7c, 0x85, 0x93),
+                cube_hover: Color32::from_rgb(0x6e, 0xa8, 0xe5),
+                face_shade_base: 196.0,
+                face_shade_range: 36.0,
+                bevel_shade_base: 172.0,
+                bevel_shade_range: 32.0,
+                home_hover_bg: Color32::from_rgb(0xdc, 0xe3, 0xec),
+                home_stroke: Color32::from_rgb(0x55, 0x5e, 0x6b),
+                home_hover_stroke: Color32::from_rgb(0x1f, 0x26, 0x30),
+                wcs_bg: Color32::from_rgb(0xdc, 0xe1, 0xe8),
+                wcs_border: Some(Color32::from_rgb(0xb2, 0xba, 0xc6)),
+                wcs_ink: Color32::from_rgb(0x2c, 0x33, 0x3d),
+            }
+        } else {
+            Self {
+                is_light: false,
+                ring_fill: Color32::from_rgb(0x48, 0x50, 0x5c),
+                ring_hover: Color32::from_rgb(0x5c, 0x67, 0x7c),
+                ring_outer_edge: Color32::from_rgb(0x5c, 0x65, 0x72),
+                ring_inner_edge: Color32::from_rgb(0x38, 0x3d, 0x46),
+                compass_text: Color32::from_rgb(0xd2, 0xd6, 0xdc),
+                arrow_fill: Color32::from_rgb(0x4a, 0x52, 0x60),
+                arrow_hover: Color32::from_rgb(0x6e, 0xa8, 0xe5),
+                arrow_edge: Color32::from_rgb(0x6e, 0x76, 0x86),
+                cube_edge: Color32::from_rgb(0x52, 0x56, 0x5e),
+                cube_hover: Color32::from_rgb(0x6e, 0xa8, 0xe5),
+                face_shade_base: 130.0,
+                face_shade_range: 45.0,
+                bevel_shade_base: 105.0,
+                bevel_shade_range: 35.0,
+                home_hover_bg: Tokens::DARK.control_hover,
+                home_stroke: Tokens::DARK.text_dim,
+                home_hover_stroke: Tokens::DARK.text,
+                wcs_bg: Color32::from_rgb(0x48, 0x50, 0x5c),
+                wcs_border: None,
+                wcs_ink: Tokens::DARK.canvas_ink,
+            }
+        }
+    }
+}
+
 /// Paint the 3D Beveled ViewCube, rotating compass ring, roll buttons, directional triangles
 /// and Home button, and handle clicks and orbit drags.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
+    show_with_bg(app, ui, l, Tokens::get().canvas);
+}
+
+/// Paint the 3D Beveled ViewCube adapted to the background surface colour `bg`.
+pub fn show_with_bg(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout, bg: Color32) {
+    let pal = ViewCubePalette::for_background(bg);
     let cam = app.session.state().map(|st| crate::canvas::model_camera(st).with_twist(st.view().twist)).unwrap_or_default();
     let s = l.scale;
     let interact_rect = l.bounds.intersect(l.clip);
@@ -360,16 +448,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     let p = ui.painter_at(l.bounds.union(l.pill).intersect(l.clip));
 
     // 1. Rotating Compass Ring (always robust at all camera angles, ported from MATCAD synchronize_viewcube.m).
-    let ring_col = if part == Some(Part::Ring) { Color32::from_rgb(0x5c, 0x67, 0x7c) } else { Color32::from_rgb(0x48, 0x50, 0x5c) };
+    let ring_col = if part == Some(Part::Ring) { pal.ring_hover } else { pal.ring_fill };
     let ring_w = (RING_THICKNESS * s).max(1.5);
     let edge_w = (s * 1.0).clamp(0.6, 1.0);
     p.circle_stroke(l.center, l.ring, Stroke::new(ring_w, ring_col));
-    p.circle_stroke(l.center, l.ring + ring_w * 0.5, Stroke::new(edge_w, Color32::from_rgb(0x5c, 0x65, 0x72)));
-    p.circle_stroke(l.center, l.ring - ring_w * 0.5, Stroke::new(edge_w, Color32::from_rgb(0x38, 0x3d, 0x46)));
+    p.circle_stroke(l.center, l.ring + ring_w * 0.5, Stroke::new(edge_w, pal.ring_outer_edge));
+    p.circle_stroke(l.center, l.ring - ring_w * 0.5, Stroke::new(edge_w, pal.ring_inner_edge));
 
     let dir_xy = cam.compass_dir_xy();
     let f = egui::FontId::proportional((13.5 * s).clamp(6.5, 13.5));
-    let lc = Color32::from_rgb(0xd2, 0xd6, 0xdc);
+    let lc = pal.compass_text;
     for (label, wx, wy) in [("N", 0.0_f64, 1.0_f64), ("E", 1.0, 0.0), ("S", 0.0, -1.0), ("W", -1.0, 0.0)] {
         let u = wx * dir_xy.y - wy * dir_xy.x;
         let v = wx * dir_xy.x + wy * dir_xy.y;
@@ -380,30 +468,23 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     // 2. 4 Directional Navigation Triangles (visible only in orthogonal main views, rotating with the cube, ported from MATCAD).
     if cam.is_orthogonal() {
         let (dir_top, dir_bottom, dir_left, dir_right) = l.dir_triangles(&cam);
-        let arr_col = Color32::from_rgb(0x4a, 0x52, 0x60);
-        let arr_hover = Color32::from_rgb(0x6e, 0xa8, 0xe5);
-        let arr_edge = Color32::from_rgb(0x6e, 0x76, 0x86);
         for (tri, is_hot) in [
             (&dir_top, part == Some(Part::DirTop)),
             (&dir_bottom, part == Some(Part::DirBottom)),
             (&dir_left, part == Some(Part::DirLeft)),
             (&dir_right, part == Some(Part::DirRight)),
         ] {
-            let fill = if is_hot { arr_hover } else { arr_col };
-            p.add(Shape::convex_polygon(tri.to_vec(), fill, Stroke::new(edge_w, arr_edge)));
+            let fill = if is_hot { pal.arrow_hover } else { pal.arrow_fill };
+            p.add(Shape::convex_polygon(tri.to_vec(), fill, Stroke::new(edge_w, pal.arrow_edge)));
         }
     }
 
     // 3. Curved 90° Roll Arrows (CCW top-left and CW top-right outside the ring, ported from MATCAD).
-    let arr_col = Color32::from_rgb(0x4a, 0x52, 0x60);
-    let arr_hover = Color32::from_rgb(0x6e, 0xa8, 0xe5);
-    let arr_edge = Color32::from_rgb(0x6e, 0x76, 0x86);
+    let ccw_fill = if part == Some(Part::RollCcw) { pal.arrow_hover } else { pal.arrow_fill };
+    paint_curved_arrow(&p, &l.ccw_poly, &l.ccw_outer, &l.ccw_inner, &l.ccw_head, ccw_fill, Stroke::new(edge_w, pal.arrow_edge));
 
-    let ccw_fill = if part == Some(Part::RollCcw) { arr_hover } else { arr_col };
-    paint_curved_arrow(&p, &l.ccw_poly, &l.ccw_outer, &l.ccw_inner, &l.ccw_head, ccw_fill, Stroke::new(edge_w, arr_edge));
-
-    let cw_fill = if part == Some(Part::RollCw) { arr_hover } else { arr_col };
-    paint_curved_arrow(&p, &l.cw_poly, &l.cw_outer, &l.cw_inner, &l.cw_head, cw_fill, Stroke::new(edge_w, arr_edge));
+    let cw_fill = if part == Some(Part::RollCw) { pal.arrow_hover } else { pal.arrow_fill };
+    paint_curved_arrow(&p, &l.cw_poly, &l.cw_outer, &l.cw_inner, &l.cw_head, cw_fill, Stroke::new(edge_w, pal.arrow_edge));
 
     // 4. 3D Beveled Cube Quads (26 interactive zones).
     let hot_part = match part {
@@ -412,16 +493,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         _ => None,
     };
     let quads = project_cube_quads(l.center, &cam, s);
-    let edge_stroke = Stroke::new((0.9 * s).clamp(0.5, 0.9), Color32::from_rgb(0x52, 0x56, 0x5e));
+    let edge_stroke = Stroke::new((0.9 * s).clamp(0.5, 0.9), pal.cube_edge);
     for q in &quads {
         let is_hot = hot_part == Some(q.part);
         let base: u8 = if q.is_main_face {
-            (130.0 + 45.0 * q.shade) as u8
+            (pal.face_shade_base + pal.face_shade_range * q.shade) as u8
         } else {
-            (105.0 + 35.0 * q.shade) as u8
+            (pal.bevel_shade_base + pal.bevel_shade_range * q.shade) as u8
         };
         let fill = if is_hot {
-            Color32::from_rgb(0x6e, 0xa8, 0xe5)
+            pal.cube_hover
         } else {
             Color32::from_rgb(base, base.saturating_add(4), base.saturating_add(10))
         };
@@ -442,7 +523,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     }
 
     // 5. Home button at the top-left.
-    paint_home(&p, l.home, part == Some(Part::Home), s);
+    paint_home(&p, l.home, part == Some(Part::Home), s, &pal);
 
     let resp = if part.is_some() {
         resp.on_hover_cursor(CursorIcon::PointingHand)
@@ -594,12 +675,11 @@ fn activate_home_view(app: &mut CadApp) {
 }
 
 /// A small house, drawn in code.
-fn paint_home(p: &egui::Painter, r: Rect, hot: bool, scale: f32) {
-    let t = Tokens::get();
+fn paint_home(p: &egui::Painter, r: Rect, hot: bool, scale: f32, pal: &ViewCubePalette) {
     if hot {
-        p.rect_filled(r, 3.0 * scale, t.control_hover);
+        p.rect_filled(r, 3.0 * scale, pal.home_hover_bg);
     }
-    let st = Stroke::new((1.3 * scale).clamp(0.7, 1.3), if hot { t.text } else { t.text_dim });
+    let st = Stroke::new((1.3 * scale).clamp(0.7, 1.3), if hot { pal.home_hover_stroke } else { pal.home_stroke });
     let c = r.center();
     let pt = |dx: f32, dy: f32| c + vec2(dx * scale, dy * scale);
     let roof = [pt(-6.5, 0.5), pt(0.0, -6.0), pt(6.5, 0.5)];
@@ -1331,5 +1411,34 @@ mod tests {
         assert!((l_tiny.scale - (35.0 / 120.0)).abs() < 1e-4, "tiny viewport must clamp to 35px minimum scale");
         assert!(tiny.contains(l_tiny.center));
         assert_eq!(l_tiny.part_at(pos2(tiny.left() - 5.0, tiny.top() - 5.0)), None, "points outside viewport clip must not hit ViewCube");
+    }
+
+    #[test]
+    fn viewcube_palette_adapts_to_light_and_dark_backgrounds() {
+        let dark = ViewCubePalette::for_background(Color32::from_rgb(0x1e, 0x23, 0x2a));
+        assert!(!dark.is_light);
+        assert_eq!(dark.ring_fill, Color32::from_rgb(0x48, 0x50, 0x5c));
+        assert_eq!(dark.compass_text, Color32::from_rgb(0xd2, 0xd6, 0xdc));
+        assert_eq!(dark.wcs_border, None);
+
+        let light = ViewCubePalette::for_background(Color32::WHITE);
+        assert!(light.is_light);
+        assert!(crate::theme::luminance(light.compass_text) < 0.35, "compass text must stay dark on white paper");
+        assert!(crate::theme::luminance(light.ring_fill) > 0.65, "compass ring must be subtle light grey on white paper");
+        assert!(crate::theme::luminance(light.home_stroke) < 0.45, "home icon must stay legible on white paper");
+        assert!(light.wcs_border.is_some());
+        assert!(crate::theme::luminance(light.wcs_ink) < 0.35);
+    }
+
+    #[test]
+    fn viewcube_bounds_contain_all_interactive_parts_near_corner() {
+        let vp = Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0));
+        let l = Layout::for_viewport(vp, vp);
+        assert!(vp.contains_rect(l.bounds));
+        assert!(l.bounds.contains_rect(l.home));
+        assert!(l.bounds.contains_rect(l.face));
+        assert!(l.bounds.contains_rect(l.roll_cw));
+        assert!(l.bounds.contains_rect(l.roll_ccw));
+        assert!(vp.right() - l.center.x < 100.0, "ViewCube should sit closer to the right border");
     }
 }

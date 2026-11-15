@@ -226,7 +226,7 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     assert!(arch(c.len()) != arch(c.x) && arch(c.len()) != arch(c.y), "{c:?}");
     assert!(text.contains(&arch(c.len())), "no {} in:\n{text}", arch(c.len()));
     // Without the value boxes (a window corner pending) the tooltip shows the distance too.
-    app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
+    app.session.pending_window = Some(cadcraft_engine::PendingWindow::new(Vec2::ZERO, true));
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
 }
@@ -916,4 +916,230 @@ fn mmb_pan_in_front_view_moves_target_z_vertically() {
         "pure vertical MMB pan in Front view must keep XY center unchanged, got {:?}",
         v1.center
     );
+}
+
+#[test]
+fn front_view_hover_and_click_pick_entities_across_depth() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("line", serde_json::json!({ "points": [[0, -300], [10, -300]] })).unwrap();
+    app.run("line", serde_json::json!({ "points": [[20, 400], [30, 400]] })).unwrap();
+    let handles = app.session.doc().unwrap().model.handles();
+    let (h_back, h_front) = (handles[0], handles[1]);
+    app.run("view.set", serde_json::json!({ "preset": "front", "center": [15.0, 0.0], "height": 40.0 })).unwrap();
+
+    let ctx = egui::Context::default();
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(pos2(500.0, 400.0))]);
+    let xf = app.canvas.xf.unwrap();
+    let sp_back = xf.to_screen(Vec2::new(5.0, -300.0));
+    let sp_front = xf.to_screen(Vec2::new(25.0, 400.0));
+
+    // Hovering and clicking h_back (Y = -300) picks it in edge-on Front view.
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(sp_back)]);
+    assert_eq!(app.canvas.hover, Some(h_back));
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(sp_back),
+            egui::Event::PointerButton { pos: sp_back, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+            egui::Event::PointerButton { pos: sp_back, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+        ],
+    );
+    assert_eq!(app.session.selection(), vec![h_back]);
+
+    // Hovering and clicking h_front (Y = +400) also picks it accurately.
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(sp_front)]);
+    assert_eq!(app.canvas.hover, Some(h_front));
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(sp_front),
+            egui::Event::PointerButton { pos: sp_front, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+            egui::Event::PointerButton { pos: sp_front, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+        ],
+    );
+    assert_eq!(app.session.selection(), vec![h_back, h_front]);
+}
+
+#[test]
+fn front_view_window_crossing_and_wp_fence_select_and_render() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("line", serde_json::json!({ "points": [[0, -200], [10, -200]] })).unwrap();
+    app.run("line", serde_json::json!({ "points": [[20, 300], [30, 300]] })).unwrap();
+    let handles = app.session.doc().unwrap().model.handles();
+    let (h_left, _h_right) = (handles[0], handles[1]);
+    app.run("view.set", serde_json::json!({ "preset": "front", "center": [15.0, 0.0], "height": 40.0 })).unwrap();
+
+    let ctx = egui::Context::default();
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(pos2(500.0, 400.0))]);
+    let xf = app.canvas.xf.unwrap();
+
+    // Drag left-to-right Window around h_left (U in [-17..-3], V in [-5..+5]); vertical span must survive edge-on unproject!
+    let p_a = xf.screen_uv_to_screen(Vec2::new(-17.0, 5.0));
+    let p_b = xf.screen_uv_to_screen(Vec2::new(-3.0, -5.0));
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(p_a),
+            egui::Event::PointerButton { pos: p_a, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+        ],
+    );
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(p_b)]);
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerButton { pos: p_b, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
+    );
+    assert_eq!(app.session.selection(), vec![h_left]);
+    app.session.set_selection(Vec::new());
+
+    // Start ERASE -> WP (concave WPolygon) around h_right (U in [4..16], V in [-4..+4]), render overlay & commit.
+    app.start("erase");
+    app.session.input(cadcraft_engine::Input::Keyword("WP".into())).unwrap();
+    let poly_uvs = [Vec2::new(4.0, 4.0), Vec2::new(10.0, 1.5), Vec2::new(16.0, 4.0), Vec2::new(16.0, -4.0), Vec2::new(4.0, -4.0)];
+    for &uv in &poly_uvs {
+        let sp = xf.screen_uv_to_screen(uv);
+        drive_canvas_events(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(sp),
+                egui::Event::PointerButton { pos: sp, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+                egui::Event::PointerButton { pos: sp, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+            ],
+        );
+    }
+    assert!(app.session.select_mode.is_some());
+    app.session.input(cadcraft_engine::Input::Enter).unwrap();
+    app.session.input(cadcraft_engine::Input::Enter).unwrap();
+    let remaining = app.session.doc().unwrap().model.handles();
+    assert_eq!(remaining, vec![h_left]);
+}
+
+#[test]
+fn live_selection_preview_highlights_window_polygon_and_shift_remove() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("line", serde_json::json!({ "points": [[0, -200], [10, -200]] })).unwrap();
+    app.run("line", serde_json::json!({ "points": [[20, 300], [30, 300]] })).unwrap();
+    let handles = app.session.doc().unwrap().model.handles();
+    let (h_left, h_right) = (handles[0], handles[1]);
+    app.run("view.set", serde_json::json!({ "preset": "front", "center": [15.0, 0.0], "height": 40.0 })).unwrap();
+
+    let ctx = egui::Context::default();
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(pos2(500.0, 400.0))]);
+    let xf = app.canvas.xf.unwrap();
+
+    // Drag a left-to-right PendingWindow in Front view and check live preview_handles BEFORE release.
+    let p_a = xf.screen_uv_to_screen(Vec2::new(-17.0, 5.0));
+    let p_b = xf.screen_uv_to_screen(Vec2::new(-3.0, -5.0));
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(p_a),
+            egui::Event::PointerButton { pos: p_a, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+        ],
+    );
+    // Tiny < 3px movement during press-drag stays below drag threshold.
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(p_a + vec2(1.0, 0.0))]);
+    assert!(app.canvas.preview_handles.is_empty(), "sub-3px drag must not flash preview");
+
+    // Drag across h_left updates preview_handles immediately.
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(p_b)]);
+    assert_eq!(app.canvas.preview_handles, vec![h_left]);
+    assert_eq!(app.canvas.preview_action, cadcraft_engine::PreviewAction::Add);
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerButton { pos: p_b, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
+    );
+    assert_eq!(app.session.selection(), vec![h_left]);
+
+    // Shift + idle window over both lines shows PreviewAction::Remove only for already-selected h_left.
+    let p_all_a = xf.screen_uv_to_screen(Vec2::new(-17.0, 5.0));
+    let p_all_b = xf.screen_uv_to_screen(Vec2::new(17.0, -5.0));
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(p_all_a),
+            egui::Event::PointerButton { pos: p_all_a, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::SHIFT },
+            egui::Event::PointerButton { pos: p_all_a, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::SHIFT },
+        ],
+    );
+    assert!(app.session.pending_window.is_some());
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::ModifiersChanged(egui::Modifiers::SHIFT), egui::Event::PointerMoved(p_all_b)]);
+    assert_eq!(app.canvas.preview_action, cadcraft_engine::PreviewAction::Remove);
+    assert_eq!(app.canvas.preview_handles, vec![h_left]);
+    // Finish removal, then release Shift in the following frame (as a real user does).
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerButton { pos: p_all_b, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::SHIFT },
+            egui::Event::PointerButton { pos: p_all_b, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::SHIFT },
+        ],
+    );
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert!(app.session.selection().is_empty(), "Shift+window must remove h_left");
+
+    // ERASE -> WP live polygon preview updates as vertices form a closed region over h_right.
+    app.start("erase");
+    app.session.input(cadcraft_engine::Input::Keyword("WP".into())).unwrap();
+    let v0 = xf.screen_uv_to_screen(Vec2::new(4.0, 5.0));
+    let v1 = xf.screen_uv_to_screen(Vec2::new(16.0, 5.0));
+    let v2 = xf.screen_uv_to_screen(Vec2::new(16.0, -5.0));
+    let v3_cursor = xf.screen_uv_to_screen(Vec2::new(4.0, -5.0));
+    for v in [v0, v1, v2] {
+        drive_canvas_events(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(v),
+                egui::Event::PointerButton { pos: v, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+                egui::Event::PointerButton { pos: v, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+            ],
+        );
+    }
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(v3_cursor)]);
+    assert_eq!(app.canvas.preview_handles, vec![h_right], "polygon preview highlights inside-polygon entity dynamically");
+    app.session.input(cadcraft_engine::Input::Cancel).unwrap();
+}
+
+#[test]
+fn orbit_pivot_marker_hidden_in_free_camera_and_shown_when_disabled() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.cmdline("3dorbit").unwrap();
+    let ctx = egui::Context::default();
+    let has_pivot_circle = |shapes: &[egui::epaint::ClippedShape]| {
+        shapes.iter().any(|cs| {
+            matches!(
+                &cs.shape,
+                egui::Shape::Circle(c) if c.fill == Color32::from_rgb(0x3a, 0xb5, 0x4a)
+            )
+        })
+    };
+    let render_frame = |app: &mut CadApp| {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+            focused: true,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        std::mem::take(&mut out.shapes)
+    };
+
+    assert!(app.session.settings.orbit_free_camera);
+    let free_shapes = render_frame(&mut app);
+    assert!(!has_pivot_circle(&free_shapes), "free camera mode hides the green orbit pivot dot");
+
+    app.run("setvar", serde_json::json!({ "name": "ORBITFREECAM", "value": 0 })).unwrap();
+    let autocad_shapes = render_frame(&mut app);
+    assert!(has_pivot_circle(&autocad_shapes), "non-free camera mode shows the green orbit pivot dot");
 }

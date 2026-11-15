@@ -110,6 +110,26 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn is_selecting_objects(&self) -> bool {
+        self.broken.get().is_none() && catch_unwind(AssertUnwindSafe(|| self.inner.is_selecting_objects())).unwrap_or(false)
+    }
+    fn is_removing_selection(&self) -> bool {
+        self.broken.get().is_none() && catch_unwind(AssertUnwindSafe(|| self.inner.is_removing_selection())).unwrap_or(false)
+    }
+    fn custom_selection_overlay_uv(
+        &self,
+        s: &Session,
+        cursor_uv: Vec2,
+        proj: &crate::select::PickProjection,
+    ) -> Option<crate::SelectionOverlayUv> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.custom_selection_overlay_uv(s, cursor_uv, proj))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
     fn display_only(&self, s: &Session) -> Option<crate::prompt::DisplayOnly> {
         if self.broken.get().is_some() {
             return None;

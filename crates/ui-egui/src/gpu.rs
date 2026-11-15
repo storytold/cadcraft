@@ -244,50 +244,91 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
 /// the callback's `dash` dashes the lines) outlined. A wipeout is always outlined, since filling it
 /// would hide the drawing; infinite lines are left to the CPU (they are clipped per frame).
 pub fn build_highlight_mesh(list: &DisplayList, prims: &[usize], origin: Vec2, color: [u8; 4], width: f32, dashed: bool) -> MeshData {
+    build_highlight_mesh_styled(list, prims, origin, color, width, dashed, false, false)
+}
+
+/// Stratified `(premultiplied_rgba, width_pt)` passes shared by GPU and CPU highlight paths.
+pub fn highlight_passes(color: [u8; 4], width: f32, glow: bool, bright_core: bool) -> Vec<([u8; 4], f32)> {
+    if !glow {
+        return vec![(color, width)];
+    }
+    if bright_core {
+        vec![
+            (translucent(color, 0.22), width + 2.4),
+            (translucent(color, 0.85), width),
+            (translucent(brighten(color, 0.42), 0.85), (width * 0.5).max(0.9)),
+        ]
+    } else {
+        vec![(translucent(color, 0.18), width + 2.0), (color, width)]
+    }
+}
+
+/// [`build_highlight_mesh`] with optional multi-pass halo glow and bright core highlight.
+#[allow(clippy::too_many_arguments)]
+pub fn build_highlight_mesh_styled(
+    list: &DisplayList,
+    prims: &[usize],
+    origin: Vec2,
+    color: [u8; 4],
+    width: f32,
+    dashed: bool,
+    glow: bool,
+    bright_core: bool,
+) -> MeshData {
     let mut m = MeshData::default();
-    for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
-        let pts = list.points(prim);
-        match prim.kind {
-            Kind::Polyline => {
-                let mut run = 0.0;
-                for s in pts.windows(2) {
-                    if let [a, b] = s {
-                        push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), color, width, run as f32);
-                        run += a.dist(*b);
-                    }
-                }
-            }
-            Kind::Point => {
-                if let Some(q) = pts.first() {
-                    let p = rel(*q, origin);
-                    push_instance(&mut m.quads, p, p, color, 3.0, 0.0);
-                }
-            }
-            Kind::Tris if !dashed => {
-                let fill = translucent(color, HIGHLIGHT_FILL_ALPHA);
-                for t in pts.as_chunks::<3>().0 {
-                    for q in t {
-                        push_vertex(&mut m.tris, rel(*q, origin), fill);
-                    }
-                }
-            }
-            Kind::Tris | Kind::Mask => {
-                for line in list.fill_outlines(prim) {
+    let passes = highlight_passes(color, width, glow, bright_core);
+    for &(pass_col, pass_w) in &passes {
+        let pt_w = if glow { (pass_w + 1.0).max(3.0) } else { 3.0 };
+        for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
+            let pts = list.points(prim);
+            match prim.kind {
+                Kind::Polyline => {
                     let mut run = 0.0;
-                    for s in line.windows(2) {
+                    for s in pts.windows(2) {
                         if let [a, b] = s {
-                            push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), color, width, run as f32);
+                            push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), pass_col, pass_w, run as f32);
                             run += a.dist(*b);
                         }
                     }
                 }
+                Kind::Point => {
+                    if let Some(q) = pts.first() {
+                        let p = rel(*q, origin);
+                        push_instance(&mut m.quads, p, p, pass_col, pt_w, 0.0);
+                    }
+                }
+                Kind::Tris if !dashed => {}
+                Kind::Tris | Kind::Mask => {
+                    for line in list.fill_outlines(prim) {
+                        let mut run = 0.0;
+                        for s in line.windows(2) {
+                            if let [a, b] = s {
+                                push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), pass_col, pass_w, run as f32);
+                                run += a.dist(*b);
+                            }
+                        }
+                    }
+                }
+                Kind::Infinite { .. } => {}
+                Kind::Image { .. } => {
+                    let mut run = 0.0;
+                    for (a, b) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+                        push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), pass_col, pass_w, run as f32);
+                        run += a.dist(*b);
+                    }
+                }
             }
-            Kind::Infinite { .. } => {}
-            Kind::Image { .. } => {
-                let mut run = 0.0;
-                for (a, b) in pts.iter().zip(pts.iter().cycle().skip(1)) {
-                    push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), color, width, run as f32);
-                    run += a.dist(*b);
+        }
+    }
+    if !dashed {
+        let fill_alpha = if glow && bright_core { 0.52 } else { HIGHLIGHT_FILL_ALPHA };
+        let fill = translucent(color, fill_alpha);
+        for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
+            if matches!(prim.kind, Kind::Tris) {
+                for t in list.points(prim).as_chunks::<3>().0 {
+                    for q in t {
+                        push_vertex(&mut m.tris, rel(*q, origin), fill);
+                    }
                 }
             }
         }
@@ -325,8 +366,8 @@ pub struct CanvasCallback {
     pub scale: f32,
     /// Canvas rect centre in points.
     pub center: [f32; 2],
-    /// Which buffers to draw: [`LAYER_DRAWING`], [`LAYER_DRAG`], [`LAYER_HIGHLIGHT`] or
-    /// [`LAYER_VIEWPORT`].
+    /// Which buffers to draw: [`LAYER_DRAWING`], [`LAYER_DRAG`], [`LAYER_HIGHLIGHT`],
+    /// [`LAYER_VIEWPORT`] or [`LAYER_PREVIEW`].
     pub layer: usize,
     /// Affine transform applied to the origin-relative positions before `offset`: the linear
     /// part (a, b, c, d as in `Mat3`) and the translation. [`IDENTITY_XFORM`] for the drawing.
@@ -359,6 +400,8 @@ pub const LAYER_HIGHLIGHT: usize = 2;
 pub const LAYER_VIEWPORT: usize = 3;
 /// The outline of the active viewport when it is clipped (stencil only, see [`Stencil`]).
 pub const LAYER_MASK: usize = 4;
+/// The live selection preview highlight (hover, window, polygon, fence).
+pub const LAYER_PREVIEW: usize = 5;
 
 /// Opacity of filled areas in the selection and hover highlight: see-through, so the lines and
 /// text on (and under) a highlighted hatch stay visible, as the reference app's dot pattern does.
@@ -369,6 +412,14 @@ fn translucent(c: [u8; 4], alpha: f32) -> [u8; 4] {
     let a = alpha.clamp(0.0, 1.0);
     let m = |v: u8| (f32::from(v) * a).round() as u8;
     [m(c[0]), m(c[1]), m(c[2]), m(c[3])]
+}
+
+/// Premultiplied `c` brightened toward white at its current alpha (`0.0` = unchanged, `1.0` = white).
+fn brighten(c: [u8; 4], mix: f32) -> [u8; 4] {
+    let k = mix.clamp(0.0, 1.0);
+    let a = f32::from(c[3]);
+    let l = |v: u8| (f32::from(v) + (a - f32::from(v)) * k).round().clamp(0.0, 255.0) as u8;
+    [l(c[0]), l(c[1]), l(c[2]), c[3]]
 }
 pub const IDENTITY_XFORM: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
@@ -600,7 +651,7 @@ impl Resources {
                 quad: pipeline("cad_clip_quads", "vs_quad", TriangleList, instance_layout(), Stencil::Inside),
             }),
             linear_out: target.format.is_srgb(),
-            layers: (0..=LAYER_MASK).map(|_| layer()).collect(),
+            layers: (0..=LAYER_PREVIEW).map(|_| layer()).collect(),
         }
     }
 }
@@ -991,5 +1042,27 @@ mod tests {
         assert_eq!(batch_ranges([4, 4], 4..8), vec![(1, 0..4)]);
         assert!(batch_ranges([4, 4], 3..3).is_empty());
         assert!(batch_ranges([], 0..5).is_empty());
+    }
+
+    #[test]
+    fn glow_passes_layer_outer_halo_then_body_then_bright_core() {
+        let base = [0x4a, 0x8f, 0xff, 0xff];
+        let plain = highlight_passes(base, 1.5, false, false);
+        assert_eq!(plain, vec![(base, 1.5)]);
+
+        let sel = highlight_passes(base, 1.6, true, false);
+        assert_eq!(sel.len(), 2);
+        assert!(sel[0].1 > sel[1].1 && sel[0].0[3] < sel[1].0[3]);
+        assert_eq!(sel[1], (base, 1.6));
+
+        let preview = highlight_passes(base, 1.8, true, true);
+        assert_eq!(preview.len(), 3);
+        assert!(preview[0].1 > preview[1].1 && preview[1].1 > preview[2].1);
+        assert!(preview[2].0[0] > base[0] && preview[2].0[1] > base[1], "bright core lightens selection blue");
+
+        let l = list();
+        let mesh = build_highlight_mesh_styled(&l, &[0], Vec2::ZERO, base, 1.8, false, true, true);
+        // One two-segment polyline emitted across three glow/core passes -> 6 quad instances.
+        assert_eq!(mesh.quad_instances(), 6);
     }
 }

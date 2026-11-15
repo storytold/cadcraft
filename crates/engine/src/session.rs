@@ -11,7 +11,7 @@ mod cmdline;
 mod execute;
 mod files;
 mod interactive;
-mod picking;
+pub(crate) mod picking;
 mod zoom;
 
 pub(crate) use picking::group_10;

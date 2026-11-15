@@ -1,5 +1,5 @@
 use super::grips::grip_at;
-use super::{CadApp, Handle, Pos2, Rect, Stroke, Tokens, Vec2, Xf, pos2, vec2};
+use super::{CadApp, Handle, Pos2, Rect, Stroke, Tokens, Xf, pos2, vec2};
 
 /// The objects under a click that selection cycling lets the user choose between: where the click
 /// was, each object with its row's label (type and layer), Shift held, and the rows as drawn.
@@ -20,7 +20,7 @@ impl CycleList {
 /// A click while selection cycling's list is open picks the row under it (anywhere else just
 /// closes the list); otherwise a click over overlapping objects that a pick would choose between
 /// opens the list (SELECTIONCYCLING 2). True when the click was used up here.
-pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world: Option<Vec2>, shift: bool) -> bool {
+pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, inside: bool, shift: bool) -> bool {
     // Only where a click picks objects; a click that places a point goes through.
     let picks = app.session.click_picks();
     if let Some((_, hs, i)) = app.canvas.hover_cycle.take()
@@ -39,11 +39,11 @@ pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world:
         }
         return true;
     }
-    let (Some(hp), Some(w)) = (hover, world) else { return false };
+    let Some(hp) = hover.filter(|_| inside) else { return false };
     if crate::dyngrips::at(app, xf, hover).is_some() || grip_at(app, xf, hover).is_some() {
         return false;
     }
-    let hs = app.session.cycling_candidates(w);
+    let hs = app.session.cycling_candidates_at(xf.screen_uv_at(hp), &xf.pick_projection());
     let Ok(d) = app.session.doc() else { return false };
     let items: Vec<_> =
         hs.into_iter().filter_map(|h| d.entity(h).map(|e| (h, crate::i18n::t(e.kind.type_name()).to_string(), e.common.layer.clone()))).collect();
@@ -57,9 +57,9 @@ pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world:
 /// Shift+Space over overlapping objects highlights the next one under the cursor, and a click
 /// picks the highlighted one, whether selection cycling is on or not; moving the cursor off the
 /// pick box where it started ends it.
-pub(super) fn shift_space_cycle(app: &mut CadApp, ui: &egui::Ui, hover: Option<Pos2>, world: Option<Vec2>) {
+pub(super) fn shift_space_cycle(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, hover: Option<Pos2>) {
     let pick_px = (app.session.settings.pickbox.max(1.0) * 1.5) as f32;
-    let (Some(hp), Some(w)) = (hover, world) else {
+    let Some(hp) = hover else {
         app.canvas.hover_cycle = None;
         return;
     };
@@ -73,7 +73,7 @@ pub(super) fn shift_space_cycle(app: &mut CadApp, ui: &egui::Ui, hover: Option<P
         let next = match app.canvas.hover_cycle.take() {
             _ if app.canvas.cycle.is_some() => None,
             Some((a, hs, i)) => Some((a, hs, i + 1)),
-            None => Some((hp, app.session.pick_candidates(w), 1)).filter(|(_, hs, _)| hs.len() > 1),
+            None => Some((hp, app.session.pick_candidates_at(xf.screen_uv_at(hp), &xf.pick_projection()), 1)).filter(|(_, hs, _)| hs.len() > 1),
         };
         if next.is_some() || app.canvas.cycle.is_some() {
             // Space is Enter at the command line; this one only steps the highlight.

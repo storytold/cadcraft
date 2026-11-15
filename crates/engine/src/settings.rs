@@ -108,6 +108,9 @@ pub struct Settings {
     /// PREVIEWFILTER bits: objects the cursor never highlights: 1 on locked layers, 2 xrefs,
     /// 4 tables, 8 multiline text, 16 hatches, 32 in groups.
     pub previewfilter: u8,
+    /// SELECTIONPREVIEWLIMIT: maximum number of objects highlighted in a window/polygon/fence
+    /// preview (0: no limit).
+    pub selectionpreviewlimit: u32,
     /// GRIPS: selected objects show their grips (0 off; AutoCAD's 2, more grips on polylines,
     /// shows them as 1 does).
     pub grips: u8,
@@ -135,9 +138,13 @@ pub struct Settings {
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
     /// (default: 1).
     pub attreq: bool,
-    /// ORBITAUTOTARGET: automatically picks a 3D orbit pivot from ray-hit / selection / scene
-    /// extents instead of fixing the target at the viewport centre (default: true).
+    /// ORBITAUTOTARGET: automatically picks a 3D orbit pivot instead of fixing the target at the
+    /// viewport centre (default: true).
     pub orbitautotarget: bool,
+    /// ORBITFREECAM: 1 (default, MATCAD mode) orbits freely around the projected cursor point on
+    /// the camera target plane unless the drag starts on an object; 0 (AutoCAD mode) falls back to
+    /// selection / overall scene extents centre.
+    pub orbit_free_camera: bool,
 }
 
 impl Default for Settings {
@@ -192,7 +199,8 @@ impl Default for Settings {
             selectioneffect: 1,
             selectionpreview: 3,
             previeweffect: 2,
-            previewfilter: 3,
+            previewfilter: 1,
+            selectionpreviewlimit: 2000,
             grips: 1,
             gripobjlimit: 100,
             selectionarea: true,
@@ -206,6 +214,7 @@ impl Default for Settings {
             auditctl: false,
             attreq: true,
             orbitautotarget: true,
+            orbit_free_camera: true,
         }
     }
 }

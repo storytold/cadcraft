@@ -94,13 +94,20 @@ impl Session {
         best.map(|(pt, _, _)| pt)
     }
 
-    /// Resolve the 3D orbit pivot using the hybrid MATCAD + AutoCAD `ORBITAUTOTARGET` priority:
-    /// 1. `ORBITAUTOTARGET == false` → `view.target()`
-    /// 2. 3D mouse raycast hit on a visible entity (`click_uv` + `hit_tol`, MATCAD style)
-    /// 3. Visible selection 3D extents centre (AutoCAD `ORBITAUTOTARGET`)
-    /// 4. Entire scene extents fitting with 1.25× margin in viewport (AutoCAD `FUN_180007a60`)
-    /// 5. Ray intersection on target plane `(view.target(), cam.z)` (`findCameraRotationCenter.m`),
-    ///    or `view.target()` when `click_uv` is `None`.
+    /// Resolve the 3D orbit pivot according to `ORBITAUTOTARGET` and `ORBITFREECAM`:
+    /// - `ORBITAUTOTARGET == false` → always `view.target()`
+    /// - `ORBITFREECAM == true` (default, MATCAD mode):
+    ///   - Canvas drag (`click_uv = Some(uv)`):
+    ///     1. 3D raycast hit on a visible entity (`ray_hit_3d`)
+    ///     2. Projected cursor point on the target plane (`cam.ray_at_target(uv, target).0`)
+    ///   - ViewCube / no cursor (`click_uv = None`):
+    ///     1. Visible selection 3D extents centre (if explicitly selected)
+    ///     2. `view.target()`
+    /// - `ORBITFREECAM == false` (AutoCAD object/scene-centre mode):
+    ///   1. 3D raycast hit (`click_uv = Some(uv)`)
+    ///   2. Visible selection 3D extents centre
+    ///   3. Entire scene extents fitting with 1.25× margin in viewport
+    ///   4. Projected cursor point on target plane (or `view.target()` when `click_uv = None`)
     pub fn resolve_orbit_pivot(&self, click_uv: Option<Vec2>, hit_tol: f64) -> Vec3 {
         let Ok(st) = self.state() else { return Vec3::ZERO };
         let v = st.view();
@@ -115,6 +122,11 @@ impl Session {
         {
             return hit;
         }
+        if self.settings.orbit_free_camera
+            && let Some(uv) = click_uv
+        {
+            return cam.ray_at_target(uv, target).0;
+        }
         let half_h = v.height * 0.5;
         let aspect = (self.viewport_px.0 / self.viewport_px.1.max(1.0)).max(1e-6);
         let half_w = half_h * aspect;
@@ -125,16 +137,18 @@ impl Session {
                     return box_center_3d(sel_xy, sel_z);
                 }
             }
-            let edit_space = st.edit_space();
-            let ext = d.extents(&edit_space);
-            if !ext.is_empty() {
-                let scene_z = space_z_range(d, &edit_space);
-                let c2 = ext.center();
-                let exp = Bounds2::new(c2 + (ext.min - c2) * 1.25, c2 + (ext.max - c2) * 1.25);
-                let cz = (scene_z.0 + scene_z.1) * 0.5;
-                let exp_z = (cz + (scene_z.0 - cz) * 1.25, cz + (scene_z.1 - cz) * 1.25);
-                if box_fits_viewport(exp, exp_z, cam, target, half_w, half_h) {
-                    return box_center_3d(ext, scene_z);
+            if !self.settings.orbit_free_camera {
+                let edit_space = st.edit_space();
+                let ext = d.extents(&edit_space);
+                if !ext.is_empty() {
+                    let scene_z = space_z_range(d, &edit_space);
+                    let c2 = ext.center();
+                    let exp = Bounds2::new(c2 + (ext.min - c2) * 1.25, c2 + (ext.max - c2) * 1.25);
+                    let cz = (scene_z.0 + scene_z.1) * 0.5;
+                    let exp_z = (cz + (scene_z.0 - cz) * 1.25, cz + (scene_z.1 - cz) * 1.25);
+                    if box_fits_viewport(exp, exp_z, cam, target, half_w, half_h) {
+                        return box_center_3d(ext, scene_z);
+                    }
                 }
             }
         }
@@ -463,29 +477,42 @@ mod tests {
         };
         // View centered at (0, 0, 0) with height 200 so the entire scene fits cleanly with 1.25x buffer.
         s.state_mut().expect("state").set_view_quiet(View::plan(Vec2::ZERO, 200.0, 0.0));
+        assert!(s.settings.orbit_free_camera, "ORBITFREECAM must default to true (MATCAD mode)");
 
-        // 1) Cursor on line 1 (15, 10, 12) → hits 3D object directly (MATCAD primary).
+        // 1) ORBITFREECAM = 1 (default): Cursor on line 1 (15, 10, 12) → hits 3D object directly.
         let uv_on_line1 = Vec2::new(15.0, 10.0);
         let p_ray = s.resolve_orbit_pivot(Some(uv_on_line1), 1.0);
         assert!((p_ray - Vec3::new(15.0, 10.0, 12.0)).len() < 1e-9, "got {p_ray:?}");
 
-        // 2) Cursor in empty space + active visible selection → selection 3D extents centre.
+        // 2) ORBITFREECAM = 1: Cursor in empty space stays free on target plane, even with selection or fitting scene.
+        s.set_selection(vec![h1]);
+        let p_free_sel = s.resolve_orbit_pivot(Some(Vec2::new(-40.0, -40.0)), 1.0);
+        assert!((p_free_sel - Vec3::new(-40.0, -40.0, 0.0)).len() < 1e-9, "got {p_free_sel:?}");
+        // ViewCube (click_uv = None) with explicit selection uses selection centre; without selection uses view.target().
+        let p_vc_sel = s.resolve_orbit_pivot(None, 0.0);
+        assert!((p_vc_sel - Vec3::new(15.0, 10.0, 12.0)).len() < 1e-9, "got {p_vc_sel:?}");
+        s.set_selection(Vec::new());
+        let p_vc_free = s.resolve_orbit_pivot(None, 0.0);
+        assert_eq!(p_vc_free, Vec3::ZERO);
+
+        // 3) ORBITFREECAM = 0 (AutoCAD object/scene centre): falls back to selection & scene extents.
+        s.execute("setvar", &json!({ "name": "ORBITFREECAM", "value": 0 })).expect("setvar ORBITFREECAM");
         s.set_selection(vec![h1]);
         let p_sel = s.resolve_orbit_pivot(Some(Vec2::new(-40.0, -40.0)), 1.0);
         assert!((p_sel - Vec3::new(15.0, 10.0, 12.0)).len() < 1e-9, "got {p_sel:?}");
 
-        // 3) Clear selection, whole scene fits with 1.25x → overall scene extents centre ((10..60, 10..50, 0..12) → (35, 30, 6)).
+        // Clear selection, whole scene fits with 1.25x → overall scene extents centre ((10..60, 10..50, 0..12) → (35, 30, 6)).
         s.set_selection(Vec::new());
         let p_scene = s.resolve_orbit_pivot(Some(Vec2::new(-40.0, -40.0)), 1.0);
         assert!((p_scene - Vec3::new(35.0, 30.0, 6.0)).len() < 1e-9, "got {p_scene:?}");
 
-        // 4) Zoomed tightly in (1.25x scene outside viewport) + empty space click → target plane ray intersection.
+        // Zoomed tightly in (1.25x scene outside viewport) + empty space click → target plane ray intersection.
         s.state_mut().expect("state").set_view_quiet(View::plan(Vec2::ZERO, 10.0, 0.0));
         let p_plane = s.resolve_orbit_pivot(Some(Vec2::new(2.0, -3.0)), 0.5);
         assert!((p_plane - Vec3::new(2.0, -3.0, 0.0)).len() < 1e-9, "got {p_plane:?}");
 
-        // 5) ORBITAUTOTARGET = 0 → always returns view.target().
-        s.execute("setvar", &json!({ "name": "ORBITAUTOTARGET", "value": 0 })).expect("setvar");
+        // 4) ORBITAUTOTARGET = 0 → always returns view.target().
+        s.execute("setvar", &json!({ "name": "ORBITAUTOTARGET", "value": 0 })).expect("setvar ORBITAUTOTARGET");
         let p_off = s.resolve_orbit_pivot(Some(uv_on_line1), 1.0);
         assert_eq!(p_off, Vec3::ZERO);
     }

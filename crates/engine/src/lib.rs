@@ -64,6 +64,7 @@ pub use doc_state::{DocState, Snapshot};
 pub use error::{EngineError, Result};
 pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
+pub use session::picking::{PreviewAction, SelectionOverlayUv, SelectionPreview};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
 
@@ -153,6 +154,9 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// Transient camera-plane UV coordinate and projection set by the canvas before dispatching
+    /// a cursor click or drag, so 3D/edge-on picking matches the visual projection.
+    pending_cursor_uv: Option<(Vec2, select::PickProjection)>,
 }
 
 impl Default for Session {
@@ -207,6 +211,7 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             pick_hint: None,
+            pending_cursor_uv: None,
         }
     }
 

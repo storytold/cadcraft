@@ -222,6 +222,26 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         }
         ui.end_row();
 
+        let orbit_caption = ui.label(crate::tl!("3D Orbit pivot (ORBITFREECAM)"));
+        let current_free = app.session.settings.orbit_free_camera;
+        let mut free_cam = current_free;
+        let orbit_text = if free_cam {
+            crate::tl!("Free camera (object hit / target plane)")
+        } else {
+            crate::tl!("Object / scene centre (AutoCAD)")
+        };
+        let orbit_combo = craft_ui::ComboBox::from_id_salt("options_orbit_freecam")
+            .selected_text(orbit_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut free_cam, true, crate::tl!("Free camera (object hit / target plane)"));
+                ui.selectable_value(&mut free_cam, false, crate::tl!("Object / scene centre (AutoCAD)"));
+            });
+        orbit_combo.response.labelled_by(orbit_caption.id);
+        if free_cam != current_free {
+            changes.insert("ORBITFREECAM".into(), json!(i32::from(free_cam)));
+        }
+        ui.end_row();
+
         let history_caption = ui.label(crate::tl!("Command line history"));
         let mut lines = app.ui.history_lines;
         if ui.add(egui::DragValue::new(&mut lines).range(0..=crate::cmdline::MAX_LINES)).labelled_by(history_caption.id).changed() {

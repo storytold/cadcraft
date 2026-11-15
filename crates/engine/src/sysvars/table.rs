@@ -201,10 +201,14 @@ fn set_header(s: &mut Session, name: &str, kind: Kind, v: &Value, bad: impl Fn(S
     Ok(())
 }
 
+/// Iterate all built-in table and dimension variable names.
+pub(super) fn names() -> impl Iterator<Item = &'static str> {
+    SETTINGS.iter().map(|(n, _, _)| *n).chain(HEADER.iter().map(|(n, _, _)| *n)).chain(cadcraft_doc::DIMVARS.iter().map(|(n, _)| *n))
+}
+
 /// Add the table variables and the dimension variables of the current style to a `SETVAR ?` list.
 pub(super) fn list(s: &Session, m: &mut serde_json::Map<String, Value>) {
-    let names = SETTINGS.iter().map(|(n, _, _)| *n).chain(HEADER.iter().map(|(n, _, _)| *n));
-    for n in names.chain(cadcraft_doc::DIMVARS.iter().map(|(n, _)| *n)) {
+    for n in names() {
         if !m.contains_key(n)
             && let Some(v) = super::get(s, n)
         {

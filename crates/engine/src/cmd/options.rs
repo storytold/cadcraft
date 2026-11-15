@@ -35,6 +35,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "QPMODE",
     "SELECTIONEFFECT",
     "SELECTIONPREVIEW",
+    "SELECTIONPREVIEWLIMIT",
     "PREVIEWEFFECT",
     "PREVIEWFILTER",
     "GRIPS",
@@ -53,6 +54,8 @@ pub const PROFILE_VARS: &[&str] = &[
     "PICKDRAG",
     "MAXARRAY",
     "MEASUREINIT",
+    "ORBITAUTOTARGET",
+    "ORBITFREECAM",
 ];
 
 /// The most profile entries [`restore`] reads (a saved profile is untrusted input).
@@ -147,6 +150,8 @@ pub fn reset(s: &mut Session) {
     st.pickadd = d.pickadd;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
+    st.orbitautotarget = d.orbitautotarget;
+    st.orbit_free_camera = d.orbit_free_camera;
 }
 
 fn run_options(s: &mut Session, p: &Value) -> Result<Value> {

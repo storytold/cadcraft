@@ -113,7 +113,7 @@ fn selection_preview_follows_its_bits() {
 fn selection_tab_variables_have_autocads_defaults_ranges_and_are_saved() {
     let mut s = Session::new();
     for (name, v) in [
-        ("PREVIEWFILTER", json!(3)),
+        ("PREVIEWFILTER", json!(1)),
         ("GRIPS", json!(1)),
         ("GRIPOBJLIMIT", json!(100)),
         ("SELECTIONAREA", json!(1)),

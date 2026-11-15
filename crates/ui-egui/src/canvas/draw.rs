@@ -68,12 +68,26 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 /// [`dashed_rect`] for any closed outline (a selection window turned in a twisted view): each
 /// edge from one corner to the next, the last back to the first.
 pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_segments(clip, corners, true, stroke, dash, gap)
+}
+
+/// Dashed open polyline (e.g. a `Fence` selection path).
+pub(super) fn dashed_polyline(clip: Rect, pts: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_segments(clip, pts, false, stroke, dash, gap)
+}
+
+fn dashed_segments(clip: Rect, pts: &[Pos2], closed: bool, stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    if pts.len() < 2 {
+        return Vec::new();
+    }
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1));
-    for (a, b) in edges {
+    let count = if closed { pts.len() } else { pts.len() - 1 };
+    for i in 0..count {
+        let a = pts[i];
+        let b = pts[(i + 1) % pts.len()];
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
             dashes(&[pos(p), pos(q)], v(a).dist(p), stroke, dash, gap, &mut out);
@@ -150,6 +164,43 @@ pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb,
     p.extend(shapes);
 }
 
+/// GPU highlight buffer cache for one highlight layer (`LAYER_HIGHLIGHT` or `LAYER_PREVIEW`).
+#[derive(Default)]
+pub(super) struct HlCache {
+    key: Option<u64>,
+    slot: crate::gpu::MeshSlot,
+    origin: Vec2,
+    infinite: Vec<usize>,
+}
+
+/// Draw `handles` highlighted as `look` in `color`, using GPU batching when available and falling
+/// back to CPU primitives otherwise (and for infinite lines, which are clipped per frame).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_highlight_layer(
+    p: &egui::Painter,
+    xf: &Xf,
+    list: &DisplayList,
+    list_gen: u64,
+    prims: impl FnOnce() -> Vec<usize>,
+    handles: &[Handle],
+    color: Color32,
+    look: Look,
+    gpu: bool,
+    hl: &mut HlCache,
+    layer: usize,
+    stencil: crate::gpu::Stencil,
+) {
+    if handles.is_empty() {
+        return;
+    }
+    if gpu {
+        draw_highlight_gpu(p, xf, list, list_gen, prims, handles, color, look, hl, layer, stencil);
+        draw_highlight(p, xf, list, &hl.infinite, color, look);
+    } else {
+        draw_highlight(p, xf, list, &prims(), color, look);
+    }
+}
+
 /// Draw the selection highlight (as `look` says) through the GPU: its vertex data is
 /// rebuilt only when the display list, the selection or the vertex origin changes. Dashing every
 /// selected line and tessellating it as egui shapes each frame made large selections sluggish.
@@ -165,38 +216,59 @@ pub(super) fn draw_highlight_gpu(
     sel: &[Handle],
     color: Color32,
     look: Look,
-    hl: (&mut Option<u64>, &crate::gpu::MeshSlot, &mut Vec2, &mut Vec<usize>),
+    hl: &mut HlCache,
+    layer: usize,
     stencil: crate::gpu::Stencil,
 ) {
-    let (hl_key, hl_slot, hl_origin, hl_infinite) = hl;
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (list_gen, sel, origin.x.to_bits(), origin.y.to_bits(), color.to_array(), look.width.to_bits(), look.dashed).hash(&mut h);
+        (
+            list_gen,
+            layer,
+            sel,
+            origin.x.to_bits(),
+            origin.y.to_bits(),
+            color.to_array(),
+            look.width.to_bits(),
+            look.dashed,
+            look.glow,
+            look.bright_core,
+        )
+            .hash(&mut h);
         h.finish()
     };
-    if *hl_key != Some(key) {
+    if hl.key != Some(key) {
         let prims = prims();
-        let mesh = crate::gpu::build_highlight_mesh(list, &prims, origin, color.to_array(), look.width, look.dashed);
-        *hl_infinite = prims.into_iter().filter(|&i| list.prims.get(i).is_some_and(|p| matches!(p.kind, Kind::Infinite { .. }))).collect();
-        if let Ok(mut slot) = hl_slot.lock() {
+        let mesh = crate::gpu::build_highlight_mesh_styled(
+            list,
+            &prims,
+            origin,
+            color.to_array(),
+            look.width,
+            look.dashed,
+            look.glow,
+            look.bright_core,
+        );
+        hl.infinite = prims.into_iter().filter(|&i| list.prims.get(i).is_some_and(|p| matches!(p.kind, Kind::Infinite { .. }))).collect();
+        if let Ok(mut slot) = hl.slot.lock() {
             *slot = Some(mesh);
         }
-        *hl_key = Some(key);
-        *hl_origin = origin;
+        hl.key = Some(key);
+        hl.origin = origin;
     }
-    let o = *hl_origin;
+    let o = hl.origin;
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
         crate::gpu::CanvasCallback {
             key,
-            slot: hl_slot.clone(),
+            slot: hl.slot.clone(),
             offset: [(o.x - xf.center.x) as f32, (o.y - xf.center.y) as f32],
             scale: xf.scale as f32,
             center: [center.x, center.y],
-            layer: crate::gpu::LAYER_HIGHLIGHT,
+            layer,
             xform: xf.gpu_xform(o, Mat3::IDENTITY),
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
@@ -322,22 +394,35 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
     p.extend(shapes);
 }
 
-/// How a highlight is drawn: lines `width` points wide, and either solid with fills filled or
-/// dashed with fills outlined.
+/// How a highlight is drawn: lines `width` points wide, either glowing (`glow`, with an optional
+/// `bright_core` inner highlight) with fills tinted, or `dashed` with fills outlined.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Look {
     pub width: f32,
     pub dashed: bool,
+    pub glow: bool,
+    pub bright_core: bool,
 }
 
 impl Look {
+    pub(crate) const fn plain(width: f32, dashed: bool) -> Self {
+        Self { width, dashed, glow: false, bright_core: false }
+    }
     /// Selected objects (HIGHLIGHT, SELECTIONEFFECT); `None`: not highlighted.
     pub(crate) fn selection(s: &cadcraft_engine::Settings) -> Option<Look> {
-        s.highlight.then_some(Look { width: 1.5, dashed: s.selectioneffect == 0 })
+        s.highlight.then_some(if s.selectioneffect == 0 {
+            Look::plain(1.5, true)
+        } else {
+            Look { width: 1.6, dashed: false, glow: true, bright_core: false }
+        })
     }
-    /// The object under the cursor (PREVIEWEFFECT: 0 dashed, 1 thicker, 2 both).
+    /// Live preview under the cursor or inside a selection window/polygon (PREVIEWEFFECT & SELECTIONEFFECT).
     pub(crate) fn preview(s: &cadcraft_engine::Settings) -> Look {
-        Look { width: if s.previeweffect == 0 { 1.0 } else { 2.0 }, dashed: s.previeweffect != 1 }
+        if s.selectioneffect != 0 && s.previeweffect != 0 {
+            Look { width: 1.8, dashed: false, glow: true, bright_core: true }
+        } else {
+            Look::plain(if s.previeweffect == 0 { 1.0 } else { 2.0 }, s.previeweffect != 1)
+        }
     }
 }
 
@@ -345,56 +430,71 @@ impl Look {
 /// [`PrimIndex::prims`], [`prims_of`], or all of a [`VpHighlight`] list), redrawn in `color` as `look` says. A wipeout is always
 /// outlined, since filling it would hide the drawing under it.
 pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, prims: &[usize], color: Color32, look: Look) {
-    let stroke = Stroke::new(look.width, color);
-    let screen_line = |pts: Vec<Pos2>, along: f64, out: &mut Vec<Shape>| {
-        if look.dashed {
-            dashes(&pts, along, stroke, 6.0, 4.0, out);
-        } else {
-            out.push(Shape::line(pts, stroke));
-        }
-    };
-    // Only the part of an outline in view (#2299).
-    let line = |pts: &[Vec2], out: &mut Vec<Shape>| {
-        for (run, along) in visible_runs(xf, pts) {
-            screen_line(run, along, out);
-        }
-    };
+    let passes = crate::gpu::highlight_passes(color.to_array(), look.width, look.glow, look.bright_core);
     let mut shapes = Vec::new();
-    let mut fill = egui::Mesh::default();
-    let fill_color = color.gamma_multiply(crate::gpu::HIGHLIGHT_FILL_ALPHA);
-    for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
-        let pts = list.points(prim);
-        match prim.kind {
-            Kind::Polyline => line(pts, &mut shapes),
-            Kind::Infinite { ray } => {
-                if let (Some(b), Some(d)) = (pts.first(), pts.get(1))
-                    && let Some(seg) = clip_infinite(xf, *b, *d, ray)
-                {
-                    screen_line(seg.to_vec(), 0.0, &mut shapes);
-                }
+    for (pass_col, pass_w) in passes {
+        let pass_color = Color32::from_rgba_premultiplied(pass_col[0], pass_col[1], pass_col[2], pass_col[3]);
+        let stroke = Stroke::new(pass_w, pass_color);
+        let screen_line = |pts: Vec<Pos2>, along: f64, out: &mut Vec<Shape>| {
+            if look.dashed {
+                dashes(&pts, along, stroke, 6.0, 4.0, out);
+            } else {
+                out.push(Shape::line(pts, stroke));
             }
-            Kind::Point => {
-                if let Some(q) = pts.first() {
-                    shapes.push(Shape::circle_stroke(xf.to_screen(*q), 3.0, Stroke::new(1.0, color)));
-                }
+        };
+        // Only the part of an outline in view (#2299).
+        let line = |pts: &[Vec2], out: &mut Vec<Shape>| {
+            for (run, along) in visible_runs(xf, pts) {
+                screen_line(run, along, out);
             }
-            Kind::Tris if !look.dashed => {
-                for q in pts.as_chunks::<3>().0.iter().flatten() {
+        };
+        let pt_r = if look.glow { (pass_w * 0.5 + 0.5).max(1.5) } else { 1.5 };
+        for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
+            let pts = list.points(prim);
+            match prim.kind {
+                Kind::Polyline => line(pts, &mut shapes),
+                Kind::Infinite { ray } => {
+                    if let (Some(b), Some(d)) = (pts.first(), pts.get(1))
+                        && let Some(seg) = clip_infinite(xf, *b, *d, ray)
+                    {
+                        screen_line(seg.to_vec(), 0.0, &mut shapes);
+                    }
+                }
+                Kind::Point => {
+                    if let Some(q) = pts.first() {
+                        if look.glow {
+                            shapes.push(Shape::circle_filled(xf.to_screen(*q), pt_r, pass_color));
+                        } else {
+                            shapes.push(Shape::circle_stroke(xf.to_screen(*q), 3.0, Stroke::new(1.0, pass_color)));
+                        }
+                    }
+                }
+                Kind::Tris if !look.dashed => {}
+                Kind::Tris | Kind::Mask => {
+                    for outline in list.fill_outlines(prim) {
+                        line(&outline, &mut shapes);
+                    }
+                }
+                Kind::Image { .. } => line(&pts.iter().chain(pts.first()).copied().collect::<Vec<_>>(), &mut shapes),
+            }
+        }
+    }
+    if !look.dashed {
+        let mut fill = egui::Mesh::default();
+        let fill_alpha = if look.glow && look.bright_core { 0.52 } else { crate::gpu::HIGHLIGHT_FILL_ALPHA };
+        let fill_color = color.gamma_multiply(fill_alpha);
+        for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
+            if matches!(prim.kind, Kind::Tris) {
+                for q in list.points(prim).as_chunks::<3>().0.iter().flatten() {
                     let i = fill.vertices.len() as u32;
                     fill.colored_vertex(xf.to_screen(*q), fill_color);
                     fill.indices.push(i);
                 }
             }
-            Kind::Tris | Kind::Mask => {
-                for outline in list.fill_outlines(prim) {
-                    line(&outline, &mut shapes);
-                }
-            }
-            Kind::Image { .. } => line(&pts.iter().chain(pts.first()).copied().collect::<Vec<_>>(), &mut shapes),
         }
-    }
-    if !fill.is_empty() {
-        shapes.push(Shape::mesh(fill));
+        if !fill.is_empty() {
+            shapes.push(Shape::mesh(fill));
+        }
     }
     p.extend(shapes);
 }
@@ -458,7 +558,7 @@ mod highlight_stability_tests {
         for kind in [Kind::Tris, Kind::Mask] {
             list.prims.first_mut().unwrap().kind = kind;
             for width in [1.0, 1.5, 2.0] {
-                let look = Look { width, dashed: true };
+                let look = Look::plain(width, true);
                 let expected = dash_positions(&frame(&list, look, pos2(320.0, 190.0)));
                 assert!(!expected.is_empty());
                 for i in 0..32 {
@@ -475,7 +575,7 @@ mod highlight_stability_tests {
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
                 let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0, target_z: 0.0, cam: cadcraft_geom::Camera3D::TOP };
-                draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
+                draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look::plain(2.0, true));
             });
             h.run_steps(3);
             h.event(egui::Event::PointerMoved(pos2(250.0, 190.0)));
@@ -524,7 +624,7 @@ mod zoomed_highlight_tests {
     fn dashes_of(list: &DisplayList, xf: &Xf) -> Vec<[Pos2; 2]> {
         let ctx = egui::Context::default();
         let input = egui::RawInput { screen_rect: Some(SCREEN), ..Default::default() };
-        let mut output = ctx.run_ui(input, |ui| draw_highlight(ui.painter(), xf, list, &[0], Color32::LIGHT_BLUE, Look { width: 1.0, dashed: true }));
+        let mut output = ctx.run_ui(input, |ui| draw_highlight(ui.painter(), xf, list, &[0], Color32::LIGHT_BLUE, Look::plain(1.0, true)));
         output.textures_delta.clear();
         output
             .shapes
@@ -621,5 +721,25 @@ mod zoomed_highlight_tests {
         assert_eq!(dashed_rect(SCREEN, small, stroke, 4.0, 4.0).len(), 10 + 5 + 10 + 5);
         // Off screen, nothing.
         assert!(dashed_rect(SCREEN, small.translate(egui::vec2(5000.0, 0.0)), stroke, 4.0, 4.0).is_empty());
+    }
+
+    #[test]
+    fn look_selection_and_preview_use_glow_when_selectioneffect_enabled() {
+        let mut s = cadcraft_engine::Settings::default();
+        let sel = Look::selection(&s).unwrap();
+        let prev = Look::preview(&s);
+        assert!((sel.glow, sel.bright_core, sel.dashed) == (true, false, false));
+        assert!((prev.glow, prev.bright_core, prev.dashed) == (true, true, false));
+
+        s.previeweffect = 0;
+        let prev_dashed = Look::preview(&s);
+        assert!((prev_dashed.glow, prev_dashed.bright_core, prev_dashed.dashed) == (false, false, true));
+
+        s.selectioneffect = 0;
+        s.previeweffect = 2;
+        let sel_legacy = Look::selection(&s).unwrap();
+        let prev_legacy = Look::preview(&s);
+        assert!((sel_legacy.glow, sel_legacy.dashed) == (false, true));
+        assert!((prev_legacy.glow, prev_legacy.dashed) == (false, true));
     }
 }
