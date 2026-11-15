@@ -1,6 +1,8 @@
 //! TABLE heights inherit from the table style unless the file records a cell override.
 #![cfg(not(target_arch = "wasm32"))]
 
+// FreeBSD ARM64 has no native DWG bridge (#2526), but the DXF regression still applies.
+
 use cadcraft_doc::{Common, Drawing, EntityKind, Space, Table, TableCell, TableStyle};
 
 fn drawing() -> Drawing {
@@ -42,6 +44,7 @@ fn check(d: &Drawing) {
 }
 
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn table_cell_heights_keep_inheritance_through_dwg() {
     let bytes = cadcraft_io::write(&drawing(), "height.dwg").unwrap();
     // A style record can be present for metadata without overriding its text height.
@@ -68,11 +71,13 @@ fn table_cell_heights_keep_inheritance_through_dxf() {
 
 // ---- cells with their own style record (review on #2588) ----
 
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 use acadrust::entities::table::{CellContent, CellStyle, CellStylePropertyFlags};
 
 /// Write the drawing as a DWG, edit its first cell through acadrust (`edit`), write it again as a
 /// DWG (or, with `as_dxf`, as a DXF by acadrust's writer) and read it with CADCraft. Returns the first cell's
 /// text height override.
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn first_cell_height(as_dxf: bool, edit: impl FnOnce(&mut acadrust::entities::table::TableCell)) -> Option<f64> {
     let bytes = cadcraft_io::write(&drawing(), "height.dwg").unwrap();
     let mut doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(bytes)).read().unwrap();
@@ -100,6 +105,7 @@ fn first_cell_height(as_dxf: bool, edit: impl FnOnce(&mut acadrust::entities::ta
         .unwrap()
 }
 
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn styled(height: f64, flags: CellStylePropertyFlags) -> CellStyle {
     let mut s = CellStyle::new();
     s.text_height = height;
@@ -108,12 +114,14 @@ fn styled(height: f64, flags: CellStylePropertyFlags) -> CellStyle {
 }
 
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn a_cell_style_with_the_text_height_flag_keeps_its_height() {
     let h = first_cell_height(false, |c| c.style = Some(styled(0.5, CellStylePropertyFlags::TEXT_HEIGHT)));
     assert_eq!(h, Some(0.5));
 }
 
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn content_with_format_override_bit_128_keeps_its_own_height() {
     // acadrust writes the content's height as group 144 and the style's as 140; they differ here
     // so the result shows which one CADCraft honoured.
@@ -131,6 +139,7 @@ fn content_with_format_override_bit_128_keeps_its_own_height() {
 /// Only the first content's override stands for the cell: a later content's height must not
 /// replace the first content's inherited one (review on #2588).
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn a_later_contents_height_does_not_replace_the_first_contents() {
     let h = first_cell_height(false, |c| {
         c.style = Some(styled(0.18, CellStylePropertyFlags::NONE));
@@ -147,6 +156,7 @@ fn a_later_contents_height_does_not_replace_the_first_contents() {
 /// Bit 128 with an unusable content height copies nothing, so the writer's default style height
 /// is still cleared (review on #2588).
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn bit_128_with_an_invalid_height_still_clears_the_default() {
     for bad in [0.0, -1.0, f64::NAN] {
         let h = first_cell_height(false, |c| {
@@ -162,12 +172,14 @@ fn bit_128_with_an_invalid_height_still_clears_the_default() {
 }
 
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn a_cell_with_no_style_record_inherits_the_table_style() {
     assert_eq!(first_cell_height(false, |c| c.style = None), None);
 }
 
 /// A style record with a height and neither override is not an override, through DWG.
 #[test]
+#[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn a_style_height_without_an_override_is_cleared() {
     assert_eq!(first_cell_height(false, |c| c.style = Some(styled(0.18, CellStylePropertyFlags::NONE))), None);
 }

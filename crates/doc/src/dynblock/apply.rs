@@ -674,6 +674,10 @@ fn apply(
 /// Associative hatches of block `b` whose loop is one closed polyline of the block take its
 /// outline again (it may have been stretched).
 fn refill_hatches(b: &mut Block) {
+    // Each loop gets its own copy of the outline, so many small loops on one big outline multiply it;
+    // past this many vertices in all, the remaining loops keep the outline they have.
+    const MAX_REFILLED_VERTICES: usize = 4_000_000;
+    let mut budget = MAX_REFILLED_VERTICES;
     let outlines: HashMap<Handle, Vec<cadcraft_geom::PolyVertex>> = b
         .entities
         .iter()
@@ -689,7 +693,9 @@ fn refill_hatches(b: &mut Block) {
                 for l in &mut hh.loops {
                     if let [s] = l.sources.as_slice()
                         && let Some(vs) = outlines.get(s)
+                        && let Some(left) = budget.checked_sub(vs.len())
                     {
+                        budget = left;
                         l.vertices.clone_from(vs);
                     }
                 }

@@ -5,6 +5,8 @@
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
+/// XCLIP boundaries as SPATIAL_FILTER objects.
+mod dxf_clip;
 mod dxf_ext;
 mod dxf_image;
 mod dxf_mleader;
@@ -14,6 +16,8 @@ mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
 pub mod plotter;
+/// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
+pub mod raster;
 /// Open → save → reopen comparison and the real-file corpus harness (gaps FF1, FF5).
 pub mod roundtrip;
 pub mod svg;
@@ -27,7 +31,7 @@ use cadcraft_geom::Bounds2;
 use std::path::{Path, PathBuf};
 
 pub use cadcraft_doc::Format;
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
@@ -57,11 +61,24 @@ pub enum IoError {
 
 pub type Result<T> = std::result::Result<T, IoError>;
 
-/// How a program runs the DWG reader and writer in a child process (`cadcraft_dwg::worker`).
+/// Restore CADCraft's public diagnostics after the shared byte bridge supplies generic wording.
+fn cadcraft_dwg_message(message: &str) -> String {
+    message
+        .replace("accepted by this bridge", "CADCraft opens")
+        .replace("types this bridge can't preserve", "types CADCraft doesn't keep")
+        .replace("this bridge writes", "CADCraft writes")
+        .replace("accepted for DWG conversion", "CADCraft converts to DWG")
+}
+
+fn dwg_error(message: String) -> IoError {
+    IoError::Format(cadcraft_dwg_message(&message))
+}
+
+/// How a program runs the DWG reader and writer in a child process (`craft_dwg::worker`).
 pub mod dwg_worker {
-    pub use cadcraft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
+    pub use craft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
     #[cfg(all(not(target_arch = "wasm32"), not(all(target_os = "freebsd", target_arch = "aarch64"))))]
-    pub use cadcraft_dwg::{crash_worker_for_test, use_worker};
+    pub use craft_dwg::{crash_worker_for_test, use_worker};
 }
 
 fn ext(name: impl AsRef<Path>) -> String {
@@ -77,10 +94,10 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// [`read`], also returning the DXF rendition a DWG was read through (`None` for other files),
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
-    if cadcraft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
+    if craft_dwg::is_dwg(bytes) {
+        let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
-        d.read_notes = notes;
+        d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
     }
     let d = match (Format::from_path(name), ext(name).as_str()) {
@@ -110,10 +127,10 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
             // Before 2007 the text is in the code page the header declares.
             let code_page = dxf_write::code_page(d, version);
             Ok(match (opts.binary, version.utf8()) {
-                (true, true) => cadcraft_dxf::write_binary(&tags, true),
-                (true, false) => cadcraft_dxf::write_binary_in(&tags, &code_page),
-                (false, true) => cadcraft_dxf::write_ascii_as(&tags, true).into_bytes(),
-                (false, false) => cadcraft_dxf::write_ascii_in(&tags, &code_page),
+                (true, true) => craft_dxf::write_binary(&tags, true),
+                (true, false) => craft_dxf::write_binary_in(&tags, &code_page),
+                (false, true) => craft_dxf::write_ascii_as(&tags, true).into_bytes(),
+                (false, false) => craft_dxf::write_ascii_in(&tags, &code_page),
             })
         }
         // The DWG bridge reads our R2000 DXF and writes the DWG at the version asked for. Without
@@ -128,18 +145,21 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
 /// [`write_with`], also returning what the file leaves out of the drawing: for a DWG, how many
 /// records of each DXF type the DWG writer can't write (other programs' custom entities and
 /// objects); for other formats, nothing.
-pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
+pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
     let name = name.as_ref();
     if matches!(Format::from_path(name), Some(Format::Dwg)) && !opts.binary {
         return write_dwg(d, opts.version.unwrap_or_else(|| save_version(d).max(Version::R2004)));
     }
-    write_with(d, name, opts).map(|b| (b, cadcraft_dwg::Unwritten::new()))
+    write_with(d, name, opts).map(|b| (b, craft_dwg::Unwritten::new()))
 }
 
 /// The DWG bridge reads our R2000 DXF and writes the DWG at `version`, in the DWG worker when
-/// there is one.
-fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, cadcraft_dwg::Unwritten)> {
-    cadcraft_dwg::encode_noted(dxf_write::dwg_bridge(d, version).as_bytes(), version.code()).map_err(IoError::Format)
+/// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
+/// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
+/// reads them as that version.
+fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
+    let bridge = dxf_write::dwg_bridge(d, version);
+    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

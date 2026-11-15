@@ -143,6 +143,7 @@ fn named_styles_by_layer_by_block_and_name() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     d.add(&Space::Model, Common { plot_style: "Thick".into(), ..Default::default() }, ins).unwrap();
     let l = build_plot(&d, &Space::Model, &with_table(PlotStyleTable::builtin("default.stb").unwrap()));
