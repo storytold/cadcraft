@@ -38,24 +38,14 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use cadcraft_geom::Vec2;
 
-pub use craft_shx::{ShxError, compile};
+use craft_shx::Record;
+pub use craft_shx::{ShxError, ShxKind, compile};
 pub use table::{
     FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, installed, register, search_path, set_font_dirs,
     set_font_map, set_provider, set_search_path,
 };
 pub use text::ShxText;
 pub(crate) use text::{shape, width};
-
-/// The kind of SHX file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShxKind {
-    /// A shape file or a text font with single-byte character codes (`shapes 1.0/1.1`).
-    Shapes,
-    /// A big font: double-byte character codes after an escape (lead) byte.
-    BigFont,
-    /// A Unicode font: shape numbers are Unicode code points.
-    Unifont,
-}
 
 /// A shape's program run into polylines, in font units (pen starts at the origin).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -64,13 +54,6 @@ pub struct ShxGlyph {
     pub strokes: Vec<Vec<Vec2>>,
     /// Where the pen ends: the advance to the next character.
     pub advance: Vec2,
-}
-
-/// One shape record: where its name and program are in [`ShxFont::data`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Record {
-    name: (usize, usize),
-    program: (usize, usize),
 }
 
 /// Glyphs cached per font, keyed by (shape, vertical).
