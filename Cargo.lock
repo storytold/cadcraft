@@ -759,6 +759,8 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "clap",
+ "craft-jsonrpc",
+ "craft-mcp",
  "getrandom 0.4.3",
  "libc",
  "log",
@@ -1187,6 +1189,23 @@ dependencies = [
  "unicode-bidi",
  "windows-registry",
  "writeable",
+]
+
+[[package]]
+name = "craft-jsonrpc"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b6222158fbc2a628f27d2c1fff9f648cd194404c#b6222158fbc2a628f27d2c1fff9f648cd194404c"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "craft-mcp"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b6222158fbc2a628f27d2c1fff9f648cd194404c#b6222158fbc2a628f27d2c1fff9f648cd194404c"
+dependencies = [
+ "craft-jsonrpc",
+ "serde_json",
 ]
 
 [[package]]
