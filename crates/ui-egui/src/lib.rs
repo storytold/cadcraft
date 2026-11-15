@@ -1046,7 +1046,7 @@ impl CadApp {
     /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
     /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || self.lock_prompt.is_some() || !self.recovery.items.is_empty()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'

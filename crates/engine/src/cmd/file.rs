@@ -353,7 +353,7 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(ref p) = path
-            && is_drawing_file(p)
+            && is_lockable_drawing(p)
         {
             let path_buf = std::path::Path::new(p);
             match crate::drawing_lock::try_acquire_lock(path_buf) {
@@ -470,7 +470,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if is_drawing_file(path) {
+    if is_lockable_drawing(path) {
         let is_same_file = s.state().ok().and_then(|st| st.path.as_deref()) == Some(path);
         if !is_same_file {
             let path_buf = std::path::Path::new(path);
@@ -768,23 +768,25 @@ fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&st
     if !is_same_file || st.lock.is_none() {
         // Drop previous lock and acquire lock for the saved path
         st.lock = None;
-        let path_buf = std::path::Path::new(path);
-        match crate::drawing_lock::try_acquire_lock(path_buf) {
-            crate::drawing_lock::LockResult::Acquired(guard) => {
-                st.lock = Some(std::sync::Arc::new(guard));
-                st.read_only = false;
-                st.lock_info = None;
-                st.lock_holder = None;
-            }
-            crate::drawing_lock::LockResult::AlreadyLocked(info) => {
-                st.read_only = true;
-                st.lock_info = Some(info.description());
-                st.lock_holder = Some(info);
-            }
-            crate::drawing_lock::LockResult::Failed(err) => {
-                st.read_only = true;
-                st.lock_info = Some(err);
-                st.lock_holder = None;
+        if is_lockable_drawing(path) {
+            let path_buf = std::path::Path::new(path);
+            match crate::drawing_lock::try_acquire_lock(path_buf) {
+                crate::drawing_lock::LockResult::Acquired(guard) => {
+                    st.lock = Some(std::sync::Arc::new(guard));
+                    st.read_only = false;
+                    st.lock_info = None;
+                    st.lock_holder = None;
+                }
+                crate::drawing_lock::LockResult::AlreadyLocked(info) => {
+                    st.read_only = true;
+                    st.lock_info = Some(info.description());
+                    st.lock_holder = Some(info);
+                }
+                crate::drawing_lock::LockResult::Failed(err) => {
+                    st.read_only = true;
+                    st.lock_info = Some(err);
+                    st.lock_holder = None;
+                }
             }
         }
     }
@@ -977,6 +979,11 @@ pub fn drops_unknown(path: impl AsRef<std::path::Path>) -> bool {
 /// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
 fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path).is_some_and(Format::is_drawing)
+}
+
+/// Whether `path` is an AutoCAD drawing (.dwg) that uses AutoCAD .dwl/.dwl2 lock files.
+fn is_lockable_drawing(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path) == Some(Format::Dwg)
 }
 
 /// Whether `path` is a DXF file.
