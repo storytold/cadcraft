@@ -1197,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "craft-shx"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=3c5007339754def577b3c5274f523d96384a35c4#3c5007339754def577b3c5274f523d96384a35c4"
+source = "git+https://github.com/storytold/craft-libs?rev=2f2d1d84e3a36b3f93e81507aeff3f0da97a7162#2f2d1d84e3a36b3f93e81507aeff3f0da97a7162"
 
 [[package]]
 name = "craft-ui"
