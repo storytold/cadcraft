@@ -698,6 +698,11 @@ fn hebrew_language_catalog_and_preference_roundtrip() {
     assert_eq!(locale_language("he-IL"), Some("he"));
     assert_eq!(tr("he", "Block Editor"), "עורך בלוקים");
     assert_eq!(tr("he", "Layer Properties Manager"), "מנהל מאפייני שכבות");
+    assert_eq!(tr("he", "File"), "קובץ");
+    assert_eq!(tr("he", "Edit"), "עריכה");
+    assert_eq!(tr("he", "Save"), "שמור");
+    assert_eq!(tr("he", "Open..."), "פתח...");
+    assert_eq!(tr("he", "Select All"), "בחר הכול");
     let source = "Layers displayed: {shown} of {total}.   Current layer: {layer}";
     assert_eq!(placeholders(source), placeholders(tr("he", source)));
     assert_eq!(tr("he", "A new untranslated feature"), "A new untranslated feature");

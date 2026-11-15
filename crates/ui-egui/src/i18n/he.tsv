@@ -3,22 +3,46 @@
 # UTF-8: context<TAB>English source<TAB>Hebrew translation.
 # Partial AI-assisted draft; native speaker and RTL layout reviews are pending.
 # No proprietary localization table or font assets copied; command IDs and drawing data unchanged.
+	About CADCraft	אודות CADCraft
+	Angle	זווית
+	Apply	החל
+	Auto (system language)	אוטומטי (שפת המערכת)
 	Block Attribute Manager...	מנהל מאפייני בלוקים...
 	Block Editor	עורך בלוקים
+	Blocks	בלוקים
+	Cancel	ביטול
+	Chamfer	קיטום פינות
+	Circle	מעגל
+	Close	סגור
 	Close All Other Drawings	סגור את כל השרטוטים האחרים
 	Command Aliases	כינויים לפקודות
 	Command History	היסטוריית פקודות
+	Continue	המשך
+	Copy	העתק
 	Copy Full File Path	העתק את נתיב הקובץ המלא
 	Copy Nested Objects	העתק אובייקטים מקוננים
 	Copy with Base Point	העתק עם נקודת בסיס
 	Create backup copy with each save	צור עותק גיבוי בכל שמירה
 	Current layer	שכבה נוכחית
+	Cut	גזור
+	Default	ברירת מחדל
+	Delete	מחק
+	Dimension	מידות
 	Dimension Break	קטיעת קו מידה
 	Dimension Edit	עריכת מידות
 	Dimension Style Override	דריסת סגנון מידות
+	Distance	מרחק
+	Draw	שרטוט
 	Drawing Recovery Manager...	מנהל שחזור שרטוטים...
 	Drawing Template (DWT)	תבנית שרטוט (DWT)
+	Edit	עריכה
+	Erase	מחק
+	Export	ייצוא
 	Export to PDF...	ייצוא ל־PDF...
+	Export...	ייצוא...
+	Extend	הארכה
+	File	קובץ
+	Fillet	עיגול פינות
 	Freeze in new viewports	הקפא בחלונות תצוגה חדשים
 	Freeze/Thaw in the current viewport	הקפא/בטל הקפאה בחלון התצוגה הנוכחי
 	Grid snap	הצמדה לרשת
@@ -37,11 +61,14 @@
 	Hatch Edit	עריכת מילוי בתבנית
 	Hatch Patterns	תבניות מילוי
 	Hatch...	מילוי בתבנית...
+	Help	עזרה
 	Hide All Constraint Bars	הסתר את כל סרגלי האילוצים
 	Hide All Dynamic Dimensions	הסתר את כל המידות הדינמיות
 	ID Point	זיהוי נקודה
+	Import	ייבוא
 	Index color: {index}	צבע אינדקס: {index}
 	Infer Constraints	הסק אילוצים
+	Insert	הוספה
 	Insert Block	הוסף בלוק
 	Insert Column	הוסף עמודה
 	Insert Row	הוסף שורה
@@ -53,6 +80,7 @@
 	Insertion Z	קואורדינטת Z של נקודת ההכנסה
 	Inspect Constraints	בדוק אילוצים
 	Inspect Drawing	בדוק שרטוט
+	Interface Language	שפת הממשק
 	Isolate Layer	בודד שכבה
 	Isolate Objects	בודד אובייקטים
 	Isometric Drafting	שרטוט איזומטרי
@@ -121,20 +149,56 @@
 	Mid Between 2 Points	אמצע בין שתי נקודות
 	Midpoint	נקודת אמצע
 	Mirror	שיקוף
+	Model	מודל
 	Model background	רקע המודל
 	Model Space (in viewport)	מרחב המודל (בחלון התצוגה)
+	Modify	שינוי
+	Move	הזז
+	New	חדש
 	New from Template...	חדש מתבנית...
+	No	לא
 	No saved layer states	אין מצבי שכבות שמורים
+	Object	אובייקט
 	Object snap aperture	תחום קליטת הצמדה לאובייקט
 	Object snap marker size	גודל סמן הצמדה לאובייקט
 	Object Snap Tracking Settings	הגדרות מעקב הצמדה לאובייקט
+	Offset	היסט
+	OK	אישור
+	Open	פתח
 	Open and Save	פתיחה ושמירה
+	Open...	פתח...
+	Options	אפשרויות
+	Pan	הסטת תצוגה
+	Paste	הדבק
 	Paste to Original Coordinates	הדבק בקואורדינטות המקוריות
 	Plot Preview	תצוגה מקדימה של הדפסה
 	Plot style table	טבלת סגנונות הדפסה
 	Polar angle measurement	מדידת זווית קוטבית
+	Polyline	קו רב־מקטעי
+	Print	הדפס
+	Print...	הדפסה...
+	Properties	מאפיינים
+	Rectangle	מלבן
+	Redo	בצע שוב
+	Replace	החלף
+	Rotate	סובב
+	Save	שמור
+	Save As	שמירה בשם
+	Save As...	שמירה בשם...
 	Save new drawings as	שמור שרטוטים חדשים בתור
+	Scale	שינוי קנה מידה
+	Select All	בחר הכול
 	Select objects first, then choose a command	בחר תחילה אובייקטים, ואז בחר פקודה
 	Show command prompting near the crosshairs	הצג הנחיות לפקודה ליד סמן הכוונת
+	Snap	הצמדה
 	Snap, grid, polar tracking and Dynamic Input:	הצמדה, רשת, מעקב קוטבי וקלט דינמי:
+	Text	טקסט
+	Tools	כלים
+	Trim	חיתוך
+	Undo	בטל פעולה
 	Units Conversion	המרת יחידות
+	View	תצוגה
+	Window	חלון
+	Yes	כן
+	Zoom In	הגדל תצוגה
+	Zoom Out	הקטן תצוגה
