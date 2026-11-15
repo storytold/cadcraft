@@ -1,0 +1,140 @@
+# CADCraft Hebrew interface catalog — original translations from CADCraft English source.
+# License: MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+# UTF-8: context<TAB>English source<TAB>Hebrew translation.
+# Partial AI-assisted draft; native speaker and RTL layout reviews are pending.
+# No proprietary localization table or font assets copied; command IDs and drawing data unchanged.
+	Block Attribute Manager...	מנהל מאפייני בלוקים...
+	Block Editor	עורך בלוקים
+	Close All Other Drawings	סגור את כל השרטוטים האחרים
+	Command Aliases	כינויים לפקודות
+	Command History	היסטוריית פקודות
+	Copy Full File Path	העתק את נתיב הקובץ המלא
+	Copy Nested Objects	העתק אובייקטים מקוננים
+	Copy with Base Point	העתק עם נקודת בסיס
+	Create backup copy with each save	צור עותק גיבוי בכל שמירה
+	Current layer	שכבה נוכחית
+	Dimension Break	קטיעת קו מידה
+	Dimension Edit	עריכת מידות
+	Dimension Style Override	דריסת סגנון מידות
+	Drawing Recovery Manager...	מנהל שחזור שרטוטים...
+	Drawing Template (DWT)	תבנית שרטוט (DWT)
+	Export to PDF...	ייצוא ל־PDF...
+	Freeze in new viewports	הקפא בחלונות תצוגה חדשים
+	Freeze/Thaw in the current viewport	הקפא/בטל הקפאה בחלון התצוגה הנוכחי
+	Grid snap	הצמדה לרשת
+	Grid spacing	מרווחי הרשת
+	Grip Edit	עריכה באמצעות נקודות אחיזה
+	Grip Mirror	שיקוף באמצעות נקודות אחיזה
+	Grip Option	אפשרויות נקודת אחיזה
+	Grip Rotate	סיבוב באמצעות נקודות אחיזה
+	Grip Scale	שינוי קנה מידה באמצעות נקודות אחיזה
+	Grip size	גודל נקודות האחיזה
+	Grip Stretch	מתיחה באמצעות נקודות אחיזה
+	Group Edit	עריכת קבוצה
+	Group Options	אפשרויות קבוצה
+	Group Selection	בחירת קבוצה
+	Hatch	מילוי בתבנית
+	Hatch Edit	עריכת מילוי בתבנית
+	Hatch Patterns	תבניות מילוי
+	Hatch...	מילוי בתבנית...
+	Hide All Constraint Bars	הסתר את כל סרגלי האילוצים
+	Hide All Dynamic Dimensions	הסתר את כל המידות הדינמיות
+	ID Point	זיהוי נקודה
+	Index color: {index}	צבע אינדקס: {index}
+	Infer Constraints	הסק אילוצים
+	Insert Block	הוסף בלוק
+	Insert Column	הוסף עמודה
+	Insert Row	הוסף שורה
+	Insert tab	הוסף תו טאב
+	Insert Table Formula	הוסף נוסחה לטבלה
+	Insert this block	הוסף בלוק זה
+	Insertion X	קואורדינטת X של נקודת ההכנסה
+	Insertion Y	קואורדינטת Y של נקודת ההכנסה
+	Insertion Z	קואורדינטת Z של נקודת ההכנסה
+	Inspect Constraints	בדוק אילוצים
+	Inspect Drawing	בדוק שרטוט
+	Isolate Layer	בודד שכבה
+	Isolate Objects	בודד אובייקטים
+	Isometric Drafting	שרטוט איזומטרי
+	Isometric Plane	מישור איזומטרי
+	Isometric snap	הצמדה איזומטרית
+	Jogged Linear	מידה קווית עם קיטוע
+	Language	שפה
+	Layer	שכבה
+	Layer contains objects (double-click to make current)	השכבה מכילה אובייקטים (לחיצה כפולה להגדרתה כשכבה הנוכחית)
+	Layer Delete	מחיקת שכבה
+	Layer is empty (double-click to make current)	השכבה ריקה (לחיצה כפולה להגדרתה כשכבה הנוכחית)
+	Layer Match	התאמת שכבה
+	Layer Merge	מיזוג שכבות
+	Layer Off	כיבוי שכבה
+	Layer Properties	מאפייני שכבה
+	Layer Properties Manager	מנהל מאפייני שכבות
+	Layer Properties Manager — current viewport	מנהל מאפייני שכבות — חלון התצוגה הנוכחי
+	Layer State	מצב שכבה
+	Layer States Manager...	מנהל מצבי שכבות...
+	Layer Tools	כלי שכבות
+	Layers	שכבות
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	שכבות מוצגות: {shown} מתוך {total}.   שכבה נוכחית: {layer}
+	Layers Palette	חלונית שכבות
+	Layout	פריסה
+	Layout list	רשימת פריסות
+	Layout paper	נייר הפריסה
+	Leader	קו מוביל
+	Leaders Only	קווים מובילים בלבד
+	Left	שמאל
+	Length	אורך
+	Length X	אורך בציר X
+	Length Y	אורך בציר Y
+	Lengthen	הארכה
+	Line	קו
+	Linear	קווי
+	Lines of Command History	שורות בהיסטוריית הפקודות
+	Linetype	סוג קו
+	Linetype scale	קנה מידה של סוג הקו
+	Linetype Scale	קנה מידה של סוג הקו
+	Linetype...	סוג קו...
+	Lineweight	עובי קו
+	Lineweight...	עובי קו...
+	List Blocks	הצג רשימת בלוקים
+	List Dimension Styles	הצג רשימת סגנונות מידות
+	List Groups	הצג רשימת קבוצות
+	List Layer States	הצג רשימת מצבי שכבות
+	List Layouts	הצג רשימת פריסות
+	List System Variables	הצג רשימת משתני מערכת
+	List Text Styles	הצג רשימת סגנונות טקסט
+	Load all	טען הכול
+	Load...	טעינה...
+	Loaded linetypes	סוגי קווים שנטענו
+	Lock	נעילה
+	Lock Layer	נעל שכבה
+	Lock viewport	נעל חלון תצוגה
+	Lock/Unlock	נעילה/ביטול נעילה
+	Loft	יצירת גוף באמצעות חתכי מעבר
+	Make Current	הגדר כנוכחי
+	Make Object's Layer Current	הגדר את שכבת האובייקט כשכבה הנוכחית
+	Match Layer	התאמת שכבה
+	Match Properties	התאמת מאפיינים
+	Measure	מדידה
+	Measure Distance	מדידת מרחק
+	Measure Geometry	מדידת גאומטריה
+	Merge Cells	מיזוג תאים
+	Mid Between 2 Points	אמצע בין שתי נקודות
+	Midpoint	נקודת אמצע
+	Mirror	שיקוף
+	Model background	רקע המודל
+	Model Space (in viewport)	מרחב המודל (בחלון התצוגה)
+	New from Template...	חדש מתבנית...
+	No saved layer states	אין מצבי שכבות שמורים
+	Object snap aperture	תחום קליטת הצמדה לאובייקט
+	Object snap marker size	גודל סמן הצמדה לאובייקט
+	Object Snap Tracking Settings	הגדרות מעקב הצמדה לאובייקט
+	Open and Save	פתיחה ושמירה
+	Paste to Original Coordinates	הדבק בקואורדינטות המקוריות
+	Plot Preview	תצוגה מקדימה של הדפסה
+	Plot style table	טבלת סגנונות הדפסה
+	Polar angle measurement	מדידת זווית קוטבית
+	Save new drawings as	שמור שרטוטים חדשים בתור
+	Select objects first, then choose a command	בחר תחילה אובייקטים, ואז בחר פקודה
+	Show command prompting near the crosshairs	הצג הנחיות לפקודה ליד סמן הכוונת
+	Snap, grid, polar tracking and Dynamic Input:	הצמדה, רשת, מעקב קוטבי וקלט דינמי:
+	Units Conversion	המרת יחידות

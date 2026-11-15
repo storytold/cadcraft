@@ -43,6 +43,8 @@ pub enum Preference {
     Swedish,
     #[serde(rename = "ar")]
     Arabic,
+    #[serde(rename = "he")]
+    Hebrew,
     #[serde(rename = "hu")]
     Hungarian,
     #[serde(rename = "tr")]
@@ -55,7 +57,7 @@ pub enum Preference {
     Vietnamese,
 }
 impl Preference {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -72,6 +74,7 @@ impl Preference {
         Self::Korean,
         Self::Swedish,
         Self::Arabic,
+        Self::Hebrew,
         Self::Hungarian,
         Self::Turkish,
         Self::Georgian,
@@ -123,6 +126,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Hebrew => "he",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Georgian => "ka",
@@ -155,6 +159,7 @@ impl Preference {
             }
             Self::Swedish => "Svenska",
             Self::Arabic => "العربية",
+            Self::Hebrew => "עברית",
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
             // Georgian letters come from the craft-fonts Georgian face; a build without it shows
@@ -204,6 +209,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Hebrew => "he",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Georgian => "ka",
@@ -225,7 +231,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 20] = [
+pub static LANGUAGES: [Language; 21] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
@@ -269,6 +275,9 @@ pub static LANGUAGES: [Language; 20] = [
     Language {
         code: "ar", name: "العربية", source: include_str!("i18n/ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new()
     },
+    // Hebrew interface: initial source-backed catalog is partial, with English fallback.
+    // Cardinal forms: one, two, many, other.
+    Language { code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 4, catalog: OnceLock::new() },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
@@ -412,8 +421,22 @@ fn plural_ko(_n: u64) -> usize {
     0
 }
 
+/// Hebrew cardinal forms: one (1), two (2), many (10, 20… except 0),
+/// other (remaining integers). Order matches @plural columns.
+pub fn plural_he(n: u64) -> usize {
+    if n == 1 {
+        0
+    } else if n == 2 {
+        1
+    } else if n != 0 && n % 10 == 0 {
+        2
+    } else {
+        3
+    }
+}
+
 /// Arabic integer plurals (CLDR `ar`): zero (0), one (1), two (2), few (3–10, 103–110),
-/// many (11–99) — the same rule pdfcraft uses, so the sibling apps agree.
+/// many (11–99); the same rule as in the sibling PdfCraft application.
 pub fn plural_arabic(n: u64) -> usize {
     match (n, n % 100) {
         (0, _) => 0,

@@ -508,7 +508,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "he", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -685,5 +685,23 @@ fn polish_plural_forms() {
     for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
     {
         assert_eq!(plural_pl(n), expected, "n={n}");
+    }
+}
+
+/// The partial Hebrew UI catalog retains exact English keys, placeholders, and locale IDs.
+#[test]
+fn hebrew_language_catalog_and_preference_roundtrip() {
+    assert_eq!(Preference::parse("he"), Some(Preference::Hebrew));
+    assert_eq!(Preference::Hebrew.name(), "עברית");
+    assert_eq!(Preference::Hebrew.resolve(&[]), "he");
+    assert_eq!(Preference::restore(Some("he")), Preference::Hebrew);
+    assert_eq!(locale_language("he-IL"), Some("he"));
+    assert_eq!(tr("he", "Block Editor"), "עורך בלוקים");
+    assert_eq!(tr("he", "Layer Properties Manager"), "מנהל מאפייני שכבות");
+    let source = "Layers displayed: {shown} of {total}.   Current layer: {layer}";
+    assert_eq!(placeholders(source), placeholders(tr("he", source)));
+    assert_eq!(tr("he", "A new untranslated feature"), "A new untranslated feature");
+    for (n, category) in [(0, 3), (1, 0), (2, 1), (3, 3), (10, 2), (20, 2), (101, 3)] {
+        assert_eq!(plural_he(n), category);
     }
 }
