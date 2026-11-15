@@ -21,7 +21,7 @@ fn harness() -> Harness<'static, CadApp> {
     .unwrap();
     session.open_drawing(d, "Colours", None);
     let mut app = CadApp::new(session, Services::default());
-    app.ui.dialog = Some("stylesmanager".into());
+    app.run("stylesmanager", serde_json::Value::Null).unwrap();
     let mut h = Harness::builder()
         .with_size(vec2(1400.0, 900.0))
         // The table's colour and lineweight controls are label-less by design; this test only

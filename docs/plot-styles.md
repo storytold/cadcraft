@@ -83,7 +83,8 @@ prints as `Normal`. A colour-dependent table ignores the property.
 - `stylesmanager {action, …}` manages the tables: `list`, `get`, `new` (`kind`, `from`), `set`
   (`style: {name, …fields}`, `removeStyle`, `description`), `delete`, `load` (`path` or `text`)
   and `save` (`path`, or returns `text`). Typed or chosen from **File ▸ Plot Styles...**, it
-  opens the Plot Style Manager dialog.
+  opens the dockable Plot Style Manager palette, which also sets the current layout's table and
+  **Display plot styles** and can hide the colours no object uses.
 
 ## Table files
 
