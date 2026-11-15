@@ -27,7 +27,7 @@ fn opening_drawing_creates_dwl_and_dwl2_and_closing_removes_them() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let dwg = dir.join("test_plan.dxf");
+    let dwg = dir.join("test_plan.dwg");
     std::fs::write(&dwg, minimal_dxf()).unwrap();
 
     let mut s = Session::new();
@@ -64,7 +64,7 @@ fn existing_lock_opens_drawing_read_only_and_qsave_is_blocked() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let dwg = dir.join("shared_plan.dxf");
+    let dwg = dir.join("shared_plan.dwg");
     std::fs::write(&dwg, minimal_dxf()).unwrap();
 
     // Plant an existing .dwl file as if opened by colleague "bob" on "ENGINEERING-PC"
@@ -94,7 +94,7 @@ fn existing_lock_opens_drawing_read_only_and_qsave_is_blocked() {
     assert!(msg.contains("SAVEAS"), "qsave error must instruct to use SAVEAS: {msg}");
 
     // SAVEAS to a new file should succeed and acquire a new lock on the new file
-    let new_dwg = dir.join("my_copy.dxf");
+    let new_dwg = dir.join("my_copy.dwg");
     let saveas_res = s.execute("saveas", &json!({ "path": new_dwg.to_string_lossy() }));
     assert!(saveas_res.is_ok(), "SAVEAS must succeed for read-only drawing: {saveas_res:?}");
 
@@ -102,7 +102,7 @@ fn existing_lock_opens_drawing_read_only_and_qsave_is_blocked() {
     assert!(!st_after.read_only, "new drawing after SAVEAS must no longer be read-only");
     assert!(dwl_path(&new_dwg).is_file(), "new file must have its own lock");
 
-    // Original lock files for shared_plan.dxf must still remain untouched
+    // Original lock files for shared_plan.dwg must still remain untouched
     assert!(dwl.is_file(), "original dwl file must not be modified by another user's session");
     assert_eq!(std::fs::read_to_string(&dwl).unwrap(), "bob\nENGINEERING-PC\nFriday, October 30, 2026 8:00:00 PM\n");
 
@@ -119,10 +119,10 @@ fn saveas_to_already_locked_file_is_blocked() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    let my_dwg = dir.join("my_plan.dxf");
+    let my_dwg = dir.join("my_plan.dwg");
     std::fs::write(&my_dwg, minimal_dxf()).unwrap();
 
-    let locked_target = dir.join("colleague_plan.dxf");
+    let locked_target = dir.join("colleague_plan.dwg");
     std::fs::write(&locked_target, minimal_dxf()).unwrap();
     std::fs::write(dwl_path(&locked_target), "alice\nPC-ALICE\nFriday\n").unwrap();
 
