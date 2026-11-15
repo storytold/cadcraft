@@ -815,16 +815,18 @@ fn paint_content_highlights(
     }
     let (effective_sel, preview_handles, preview_color, preview_look): (std::borrow::Cow<'_, [Handle]>, Vec<Handle>, Color32, Look) = {
         let c = &app.canvas;
+        let sel_set: std::collections::HashSet<Handle> = sel.iter().copied().collect();
         if c.cycle.is_some() || c.hover_cycle.is_some() {
-            (std::borrow::Cow::Borrowed(sel), c.hover.filter(|h| !sel.contains(h)).into_iter().collect(), t.selection, preview_look)
+            (std::borrow::Cow::Borrowed(sel), c.hover.filter(|h| !sel_set.contains(h)).into_iter().collect(), t.selection, preview_look)
         } else if c.preview_action == cadcraft_engine::PreviewAction::Remove && !c.preview_handles.is_empty() {
-            let rm: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| sel.contains(h)).collect();
-            let kept: Vec<Handle> = sel.iter().copied().filter(|h| !rm.contains(h)).collect();
+            let rm: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| sel_set.contains(h)).collect();
+            let rm_set: std::collections::HashSet<Handle> = rm.iter().copied().collect();
+            let kept: Vec<Handle> = sel.iter().copied().filter(|h| !rm_set.contains(h)).collect();
             let dim_remove = Color32::from_rgba_unmultiplied(t.selection.r(), t.selection.g(), t.selection.b(), 95);
             let remove_look = Look { width: 1.5, glow: false, bright_core: false, ..preview_look };
             (std::borrow::Cow::Owned(kept), rm, dim_remove, remove_look)
         } else {
-            let add: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| !sel.contains(h)).collect();
+            let add: Vec<Handle> = c.preview_handles.iter().copied().filter(|h| !sel_set.contains(h)).collect();
             (std::borrow::Cow::Borrowed(sel), add, t.selection, preview_look)
         }
     };
@@ -969,7 +971,7 @@ fn paint_pointer_overlay(
     };
     if app.ui.show_ucs_icon && show_viewport_overlays {
         draw_ucs_icon(painter, ov_full, ov_clip, &xf.cam);
-        crate::viewcube::ucs_icon_in(app, ui, ov_full, ov_clip);
+        crate::viewcube::ucs_icon_with_camera(app, ui, ov_full, ov_clip, &xf.cam);
     }
     if app.ui.show_viewcube && (sheet.is_none() || (in_mspace && show_viewport_overlays)) {
         let vc_bg = bg_at(crate::viewcube::Layout::for_viewport(ov_full, ov_clip).center);
@@ -1291,8 +1293,18 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, hover_po
             let prompt_msg = app.session.current_prompt().map(|p| p.message.clone());
             let mode_sig = app.session.select_mode.as_ref().map(|m| (m.kind as u8, m.pts.len()));
             (
-                (hp.x.to_bits(), hp.y.to_bits(), st.uid, st.revision),
-                (xf.center.x.to_bits(), xf.center.y.to_bits(), xf.scale.to_bits(), v.target_z.to_bits(), v.twist.to_bits()),
+                (hp.x.to_bits(), hp.y.to_bits(), uv.x.to_bits(), uv.y.to_bits(), st.uid, st.revision),
+                (
+                    xf.rect.min.x.to_bits(),
+                    xf.rect.min.y.to_bits(),
+                    xf.rect.max.x.to_bits(),
+                    xf.rect.max.y.to_bits(),
+                    xf.center.x.to_bits(),
+                    xf.center.y.to_bits(),
+                    xf.scale.to_bits(),
+                    v.target_z.to_bits(),
+                    v.twist.to_bits(),
+                ),
                 (
                     (st.camera.x.x.to_bits(), st.camera.x.y.to_bits(), st.camera.x.z.to_bits()),
                     (st.camera.y.x.to_bits(), st.camera.y.y.to_bits(), st.camera.y.z.to_bits()),

@@ -876,7 +876,8 @@ impl SelectMode {
     }
     /// [`SelectMode::select_projected`] through a layout viewport that freezes the layers in `frozen`.
     pub fn select_projected_in(&self, d: &Drawing, space: &Space, frozen: &[String], proj: &PickProjection) -> Option<Vec<Handle>> {
-        if proj.is_plan_axis_aligned() {
+        let use_uv = proj.is_plan_axis_aligned() && self.pts_3d.len() != self.pts.len();
+        if use_uv {
             return self.select_in(d, space, frozen);
         }
         let uvs = self.uv_points(proj);

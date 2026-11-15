@@ -680,6 +680,7 @@ fn viewcube_drag_rigidly_orbits_selected_3d_object_pivot() {
 
     let rect = app.canvas.rect.unwrap();
     let xf0 = app.canvas.xf.unwrap();
+    let cam0 = app.session.state().unwrap().camera;
     let pivot = Vec3::new(80.0, 40.0, 30.0);
     let pivot_screen0 = xf0.to_screen_3d(pivot);
     let cube_center = crate::viewcube::Layout::new(rect).center;
@@ -711,6 +712,8 @@ fn viewcube_drag_rigidly_orbits_selected_3d_object_pivot() {
         ],
     );
 
+    let cam1 = app.session.state().unwrap().camera;
+    assert_ne!(cam1, cam0, "ViewCube drag must rotate the camera");
     let xf1 = app.canvas.xf.unwrap();
     let pivot_screen1 = xf1.to_screen_3d(pivot);
     assert!(

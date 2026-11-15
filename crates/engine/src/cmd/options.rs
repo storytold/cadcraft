@@ -142,6 +142,7 @@ pub fn reset(s: &mut Session) {
     st.osnaphatch = d.osnaphatch;
     st.lwdisplay = d.lwdisplay;
     st.qpmode = d.qpmode;
+    st.selectionpreviewlimit = d.selectionpreviewlimit;
     st.pickbox = d.pickbox;
     st.aperture = d.aperture;
     st.gripsize = d.gripsize;

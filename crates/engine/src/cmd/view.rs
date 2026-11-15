@@ -673,7 +673,7 @@ impl Interactive for ZoomM {
                 if st.view_history.last() == Some(&b.screen) {
                     st.view_history.pop();
                 }
-                st.set_zoom_frame(View::plan(b.center, b.height, b.frame.twist));
+                st.set_zoom_frame(View { center: b.center, height: b.height, ..b.frame });
                 return Ok(Step::Done);
             }
             (ZoomStage::Dynamic(mut b), Input::Point(p)) => {

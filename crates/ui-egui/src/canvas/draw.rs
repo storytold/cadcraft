@@ -30,21 +30,25 @@ const CLIP_MARGIN: f32 = 16.0;
 fn visible_runs(xf: &Xf, pts: &[Vec2]) -> Vec<(Vec<Pos2>, f64)> {
     let vis = xf.world_bounds().expand(f64::from(CLIP_MARGIN) / xf.scale);
     let mut runs: Vec<(Vec<Pos2>, f64)> = Vec::new();
-    // World length before the current segment; whether the last run reaches its start.
+    // Projected screen length before the current segment; whether the last run reaches its start.
     let (mut along, mut open) = (0.0, false);
     for w in pts.windows(2) {
         let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
+        let sa = xf.to_screen(a);
+        let sb = xf.to_screen(b);
         match cadcraft_render::clip::clip_segment(a, b, &vis) {
             Some((p, q)) => {
+                let sp = xf.to_screen(p);
+                let sq = xf.to_screen(q);
                 match runs.last_mut() {
-                    Some((run, _)) if open && p == a => run.push(xf.to_screen(q)),
-                    _ => runs.push((vec![xf.to_screen(p), xf.to_screen(q)], (along + a.dist(p)) * xf.scale)),
+                    Some((run, _)) if open && p == a => run.push(sq),
+                    _ => runs.push((vec![sp, sq], along + f64::from(sa.distance(sp)))),
                 }
                 open = q == b;
             }
             None => open = false,
         }
-        along += a.dist(b);
+        along += f64::from(sa.distance(sb));
     }
     runs
 }
@@ -676,6 +680,35 @@ mod zoomed_highlight_tests {
             for (g, e) in got.iter().zip(&expected) {
                 assert!(g.iter().zip(e).all(|(a, b)| a.distance(*b) < 1e-3), "centre {x}: {g:?} vs {e:?}");
             }
+        }
+    }
+
+    #[test]
+    fn clipped_dashes_keep_phase_under_foreshortened_3d_camera() {
+        // Vertical world line y = 0..1000 viewed at ~60 deg pitch (`|cam.z.y| = sin 60, cam.z.z = -0.5`):
+        // screen length is foreshortened by 0.5 relative to world XY length.
+        let list = line(Vec2::new(0.0, 0.0), Vec2::new(0.0, 1000.0));
+        let cam = cadcraft_geom::Camera3D::from_dir_up(cadcraft_geom::Vec3::new(0.0, 0.75_f64.sqrt(), -0.5), cadcraft_geom::Vec3::Z);
+        let xf = Xf { rect: SCREEN, center: Vec2::new(0.0, 500.0), scale: 1.0, twist: 0.0, target_z: 0.0, cam };
+        let whole = Shape::dashed_line(
+            &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(0.0, 1000.0))],
+            Stroke::new(1.0, Color32::LIGHT_BLUE),
+            6.0,
+            4.0,
+        );
+        let on_screen = |p: &[Pos2; 2]| p.iter().all(|q| SCREEN.contains(*q));
+        let expected: Vec<[Pos2; 2]> = whole
+            .iter()
+            .filter_map(|s| match s {
+                Shape::LineSegment { points, .. } => Some(*points).filter(on_screen),
+                _ => None,
+            })
+            .collect();
+        let got: Vec<[Pos2; 2]> = dashes_of(&list, &xf).into_iter().filter(on_screen).collect();
+        assert!(!expected.is_empty());
+        assert_eq!(got.len(), expected.len());
+        for (g, e) in got.iter().zip(&expected) {
+            assert!(g.iter().zip(e).all(|(a, b)| a.distance(*b) < 1e-2), "foreshortened: {g:?} vs {e:?}");
         }
     }
 

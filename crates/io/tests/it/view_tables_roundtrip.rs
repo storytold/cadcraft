@@ -73,8 +73,12 @@ fn foreign_paper_view_and_hostile_twist() {
     assert_eq!(again.views, d.views);
 }
 
+fn tile_with_grid(min: (f64, f64), max: (f64, f64), center: (f64, f64), height: f64, grid: bool) -> VportTile {
+    VportTile { min: Vec2::new(min.0, min.1), max: Vec2::new(max.0, max.1), center: Vec2::new(center.0, center.1), height, aspect: 0.75, twist: 0.0, grid }
+}
+
 fn tile(min: (f64, f64), max: (f64, f64), center: (f64, f64), height: f64) -> VportTile {
-    VportTile { min: Vec2::new(min.0, min.1), max: Vec2::new(max.0, max.1), center: Vec2::new(center.0, center.1), height, aspect: 0.75, twist: 0.0, grid: true }
+    tile_with_grid(min, max, center, height, true)
 }
 
 #[test]
@@ -83,7 +87,10 @@ fn tiled_viewports_and_saved_configurations_round_trip() {
     d.header.set("SNAPBASE", cadcraft_doc::HVal::Point(cadcraft_doc::geom::Vec3::new(1.0, 2.0, 0.0)));
     let active = VportConfig {
         name: VportConfig::ACTIVE.into(),
-        tiles: vec![tile((0.5, 0.0), (1.0, 1.0), (5.0, 5.0), 10.0), tile((0.0, 0.0), (0.5, 1.0), (-3.0, 4.0), 2.5)],
+        tiles: vec![
+            tile_with_grid((0.5, 0.0), (1.0, 1.0), (5.0, 5.0), 10.0, false),
+            tile_with_grid((0.0, 0.0), (0.5, 1.0), (-3.0, 4.0), 2.5, true),
+        ],
     };
     let quad = VportConfig {
         name: "Quad".into(),
@@ -99,10 +106,19 @@ fn tiled_viewports_and_saved_configurations_round_trip() {
     assert_eq!(r.vports, d.vports);
     // The first *ACTIVE record still carries the snap base.
     assert_eq!(r.header.point("SNAPBASE").map(|p| p.xy()), Some(Vec2::new(1.0, 2.0)));
-    // No tiling: one *ACTIVE record, read back as no configuration.
+    // No tiling with default grid=true and twist=0: one *ACTIVE record, read back as no configuration.
     let mut single = Drawing::new_imperial();
     single.vports = vec![VportConfig { name: VportConfig::ACTIVE.into(), tiles: vec![tile((0.0, 0.0), (1.0, 1.0), (0.0, 0.0), 1.0)] }];
     assert!(round_trip(&single).vports.is_empty());
+    // Single *ACTIVE with grid=false keeps the explicit grid setting across round trips.
+    let mut single_no_grid = Drawing::new_imperial();
+    single_no_grid.vports = vec![VportConfig {
+        name: VportConfig::ACTIVE.into(),
+        tiles: vec![tile_with_grid((0.0, 0.0), (1.0, 1.0), (0.0, 0.0), 1.0, false)],
+    }];
+    let rr = round_trip(&single_no_grid);
+    assert_eq!(rr.vports.len(), 1);
+    assert!(!rr.vports[0].tiles[0].grid);
 }
 
 /// VPORT records with corners outside 0..1, no area (or turned around), or an unusable view

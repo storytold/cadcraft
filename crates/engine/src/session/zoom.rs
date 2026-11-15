@@ -70,7 +70,7 @@ impl Session {
         let (ray_o, ray_d) = cam.ray_at_target(uv, target);
         let mut best: Option<(Vec3, f64, f64)> = None; // (hit_pt, perp_dist, depth)
         for e in store.iter() {
-            if !d.is_visible(e) {
+            if !st.shows(e) {
                 continue;
             }
             if let Some((pt, perp, depth)) = entity_ray_hit_3d(d, e, cam, target, uv, ray_o, ray_d, hit_tol) {
@@ -131,8 +131,9 @@ impl Session {
         let aspect = (self.viewport_px.0 / self.viewport_px.1.max(1.0)).max(1e-6);
         let half_w = half_h * aspect;
         if let Ok(d) = self.doc() {
-            if !st.selection.is_empty() {
-                let (sel_xy, sel_z) = selection_bounds_3d(d, &st.selection);
+            let shown_sel = st.shown_selection();
+            if !shown_sel.is_empty() {
+                let (sel_xy, sel_z) = selection_bounds_3d(d, &shown_sel);
                 if !sel_xy.is_empty() && box_overlaps_viewport(sel_xy, sel_z, cam, target, half_w, half_h) {
                     return box_center_3d(sel_xy, sel_z);
                 }
@@ -198,7 +199,7 @@ fn z_range_points<'a>(pts: impl Iterator<Item = &'a Vec3>) -> (f64, f64) {
     if lo <= hi { (lo, hi) } else { (0.0, 0.0) }
 }
 
-fn entity_z_range(e: &Entity) -> (f64, f64) {
+fn entity_z_range(d: &Drawing, e: &Entity, depth: usize) -> (f64, f64) {
     match &e.kind {
         EntityKind::Line(l) => z_range_points([l.a, l.b].iter()),
         EntityKind::Point(p) => (p.p.z, p.p.z),
@@ -210,6 +211,32 @@ fn entity_z_range(e: &Entity) -> (f64, f64) {
         EntityKind::Solid(s) | EntityKind::Trace(s) => z_range_points(s.corners.iter()),
         EntityKind::Face3d(f) => z_range_points(f.corners.iter()),
         EntityKind::PolyfaceMesh(m) => z_range_points(m.vertices.iter()),
+        EntityKind::Insert(ins) => {
+            let mut lo = if ins.insert.z.is_finite() { ins.insert.z } else { 0.0 };
+            let mut hi = lo;
+            if depth < cadcraft_doc::MAX_BLOCK_DEPTH
+                && let Some(blk) = d.block(&ins.block)
+            {
+                let base_z = if blk.base.z.is_finite() { blk.base.z } else { 0.0 };
+                let sz = if ins.scale.z.is_finite() { ins.scale.z } else { 1.0 };
+                for be in blk.entities.iter().filter(|be| !matches!(be.kind, EntityKind::AttDef(_)) && d.is_visible(be)) {
+                    let (blo, bhi) = entity_z_range(d, be, depth + 1);
+                    let z0 = ins.insert.z + (blo - base_z) * sz;
+                    let z1 = ins.insert.z + (bhi - base_z) * sz;
+                    if z0.is_finite() && z1.is_finite() {
+                        lo = lo.min(z0.min(z1));
+                        hi = hi.max(z0.max(z1));
+                    }
+                }
+            }
+            for a in &ins.attribs {
+                if !a.invisible && a.text.insert.z.is_finite() {
+                    lo = lo.min(a.text.insert.z);
+                    hi = hi.max(a.text.insert.z);
+                }
+            }
+            (lo, hi)
+        }
         _ => (0.0, 0.0),
     }
 }
@@ -245,7 +272,7 @@ pub(crate) fn selection_bounds_3d(d: &Drawing, handles: &[super::Handle]) -> (Bo
             continue;
         }
         xy = xy.union(&eb);
-        zr = union_z(zr, entity_z_range(e), any);
+        zr = union_z(zr, entity_z_range(d, e, 0), any);
         any = true;
     }
     (xy, zr)
@@ -256,7 +283,7 @@ pub(crate) fn space_z_range(d: &Drawing, space: &Space) -> (f64, f64) {
     let mut zr = (0.0, 0.0);
     let mut any = false;
     for e in store.iter().filter(|e| d.is_visible(e)) {
-        zr = union_z(zr, entity_z_range(e), any);
+        zr = union_z(zr, entity_z_range(d, e, 0), any);
         any = true;
     }
     zr
@@ -398,15 +425,15 @@ fn entity_ray_hit_3d(
         | EntityKind::Region(_)
         | EntityKind::MLine(_)
         | EntityKind::Wipeout(_) => {
-            let z = entity_z_range(e).0;
+            let z = entity_z_range(d, e, 0).0;
             for prim in e.kind.prims() {
                 prim_hit_3d(&mut best, &prim, z, cam, target, uv, hit_tol);
             }
         }
         _ => {
-            // Complex annotations/inserts/hatches live on Z = 0 and reuse 2D picking logic.
+            // Complex annotations/inserts/hatches live on Z = 0 and reuse 2D picking logic along the cursor ray through `target`.
             if !cam.is_edge_on_xy()
-                && let Some(w) = cam.try_unproject_to_plane(uv, Vec3::ZERO, Vec3::Z)
+                && let Some(w) = cadcraft_geom::intersect_ray_plane(ray_o, ray_d, Vec3::ZERO, Vec3::Z)
                 && select::entity_distance(d, e, w.xy(), (hit_tol * 0.25).max(1e-6)) <= hit_tol
             {
                 let p = Vec3::new(w.x, w.y, 0.0);

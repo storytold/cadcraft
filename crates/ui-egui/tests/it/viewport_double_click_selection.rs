@@ -111,6 +111,7 @@ fn seamless_double_click_switches_paper_vp1_vp2_without_blank_frame() {
             for pressed in [true, false] {
                 h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
                 h.run_steps(1);
+                assert!(h.state().canvas.list.is_some(), "canvas.list must remain populated after every event frame");
             }
         }
     };
@@ -198,6 +199,7 @@ fn viewcube_fits_inside_active_viewport_and_scales_with_paper_zoom() {
             for pressed in [true, false] {
                 h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
                 h.run_steps(1);
+                assert!(h.state().canvas.list.is_some(), "canvas.list must remain populated after every event frame");
             }
         }
         h.run_steps(2);

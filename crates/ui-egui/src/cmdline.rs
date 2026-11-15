@@ -102,7 +102,9 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions_for(Some(&app.session), &app.cmd.buffer).first() {
+    } else if show_suggestions(&app.session)
+        && let Some(s) = suggestions_for(Some(&app.session), &app.cmd.buffer).first()
+    {
         app.cmd.buffer = s.id.clone();
     }
 }

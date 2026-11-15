@@ -288,8 +288,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     }
     // One *Active viewport is no tiling: its single tile is not a configuration to switch to. Its
     // view was kept in the HEADER pair as it was read (see `vport_record`), and the record stays
-    // only for its view twist (see `cadcraft_engine::DocState`).
-    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
+    // when its view twist or grid flag differs from the implicit default.
+    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0 || !t.grid));
 }
 
 fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {

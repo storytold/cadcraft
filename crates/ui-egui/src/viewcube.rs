@@ -635,7 +635,7 @@ pub fn show_with_bg(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout, bg: Color32
         let _ = app.run(id, params);
     }
     // The WCS pill (painted by the canvas) opens the coordinate-system menu.
-    let pill = ui.interact(l.pill, ui.scope_id().with("viewcube_wcs"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
+    let pill = ui.interact(l.pill.intersect(l.clip), ui.scope_id().with("viewcube_wcs"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
     let pill_target = pill.hovered().then_some((TipTarget::Wcs, "Coordinate system"));
     if let Some(tip) = delayed_tip(&pill, pill_target, app.canvas.viewcube_drag.is_some()) {
         egui::Tooltip::for_enabled(&pill).show(|ui| {
@@ -995,6 +995,25 @@ pub fn ucs_arms_in(viewport_full: Rect, viewport_clip: Rect) -> [Rect; 2] {
     ]
 }
 
+/// Projected screen-space arm segments `[origin, tip]` of the UCS icon for `cam`.
+pub(crate) fn ucs_arm_segments(viewport_full: Rect, viewport_clip: Rect, cam: &Camera3D) -> Vec<(Pos2, Pos2)> {
+    let s = ucs_arm_scale(viewport_full);
+    let o = pos2(viewport_clip.left() + 36.0 * s, viewport_clip.bottom() - 34.0 * s);
+    if cam.is_top_plan() {
+        let arm = 60.0 * s;
+        return vec![(o, o + vec2(arm, 0.0)), (o, o + vec2(0.0, -arm))];
+    }
+    let arm_3d = 56.0 * s;
+    [Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::Z]
+        .into_iter()
+        .filter_map(|axis| {
+            let uv = cam.project_point(axis, Vec2::ZERO);
+            let dir = vec2(uv.x as f32, -(uv.y as f32));
+            (dir.length() >= 0.08).then(|| (o, o + dir * arm_3d))
+        })
+        .collect()
+}
+
 /// Make the UCS icon clickable: hovering highlights it, a click (either button) opens the
 /// coordinate-system menu.
 pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
@@ -1003,19 +1022,42 @@ pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
 
 /// Make the UCS icon clickable within an active viewport's screen bounds.
 pub fn ucs_icon_in(app: &mut CadApp, ui: &mut egui::Ui, viewport_full: Rect, viewport_clip: Rect) {
+    let cam = app.canvas.xf.map_or(Camera3D::TOP, |xf| xf.cam);
+    ucs_icon_with_camera(app, ui, viewport_full, viewport_clip, &cam);
+}
+
+/// Make the UCS icon clickable using the projected arm segments of `cam`.
+pub fn ucs_icon_with_camera(app: &mut CadApp, ui: &mut egui::Ui, viewport_full: Rect, viewport_clip: Rect, cam: &Camera3D) {
     let t = Tokens::get();
     let s = ucs_arm_scale(viewport_full);
-    let [x, y] = ucs_arms_in(viewport_full, viewport_clip);
-    let rx = ui.interact(x, ui.scope_id().with("ucs_x"), Sense::click_and_drag());
-    let ry = ui.interact(y, ui.scope_id().with("ucs_y"), Sense::click_and_drag());
-    let resp = (rx | ry).on_hover_cursor(CursorIcon::PointingHand).on_hover_text("CADCross / UCS icon: World Coordinate System");
+    let hit_pad = 8.0 * s;
+    let arms = ucs_arm_segments(viewport_full, viewport_clip, cam);
+    let mut resp: Option<egui::Response> = None;
+    for (i, (a, _b)) in arms.iter().enumerate() {
+        let rect = if cam.is_top_plan() {
+            if i == 0 {
+                Rect::from_min_max(*a + vec2(-hit_pad, -hit_pad), *a + vec2(80.0 * s, hit_pad))
+            } else {
+                Rect::from_min_max(*a + vec2(-hit_pad, -82.0 * s), *a + vec2(hit_pad, hit_pad))
+            }
+        } else {
+            Rect::from_two_pos(*a, arms[i].1).expand(hit_pad)
+        }
+        .intersect(viewport_clip);
+        let r = ui.interact(rect, ui.scope_id().with(("ucs_arm", i)), Sense::click_and_drag());
+        resp = Some(match resp {
+            Some(prev) => prev | r,
+            None => r,
+        });
+    }
+    let Some(resp) = resp else { return };
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("CADCross / UCS icon: World Coordinate System");
     if resp.hovered() {
-        let o = pos2(viewport_clip.left() + 36.0 * s, viewport_clip.bottom() - 34.0 * s);
         let st = Stroke::new((2.0 * s).clamp(1.2, 2.0), t.hover);
         let p = ui.painter_at(viewport_clip);
-        let len = 60.0 * s;
-        p.line_segment([o, o + vec2(len, 0.0)], st);
-        p.line_segment([o, o + vec2(0.0, -len)], st);
+        for (a, b) in &arms {
+            p.line_segment([*a, *b], st);
+        }
     }
     let open = (resp.clicked() || resp.secondary_clicked()).then_some(egui::SetOpenCommand::Bool(true));
     ucs_menu(app, egui::Popup::menu(&resp).open_memory(open).at_pointer_fixed());
@@ -1233,6 +1275,17 @@ mod tests {
         click(&mut app, &ctx, l.pill.center(), egui::PointerButton::Primary);
         assert!(menu_shown(&ctx), "WCS menu");
         assert!(app.session.pending_window.is_none());
+
+        // In SE Isometric the X arm projects diagonally down-right; clicking near its tip opens the menu.
+        let (mut iso_app, iso_ctx) = app_and_ctx();
+        iso_app.run("view.set", json!({ "preset": "top_front_right" })).unwrap();
+        let _ = frame(&mut iso_app, &iso_ctx, Vec::new());
+        let rect = canvas(&iso_app);
+        let cam = iso_app.session.state().unwrap().camera;
+        let x_arm = ucs_arm_segments(rect, rect, &cam)[0];
+        let near_tip = x_arm.0 + (x_arm.1 - x_arm.0) * 0.85;
+        click(&mut iso_app, &iso_ctx, near_tip, egui::PointerButton::Primary);
+        assert!(menu_shown(&iso_ctx), "SE Isometric projected X arm opens UCS menu");
     }
 
     #[test]

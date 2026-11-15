@@ -30,8 +30,12 @@ fn options_json_reports_sets_and_resets_the_profile() {
     assert_eq!((now["PICKBOX"].clone(), now["APERTURE"].clone()), (json!(6.0), json!(10.0)));
 
     // Reset, then apply in the same call.
+    s.execute("setvar", &json!({"name": "SELECTIONPREVIEWLIMIT", "value": 42})).unwrap();
     let r = s.execute("options", &json!({"reset": true, "APERTURE": 15})).unwrap();
-    assert_eq!((r["PICKBOX"].clone(), r["GRIPSIZE"].clone(), r["APERTURE"].clone()), (json!(3.0), json!(5.0), json!(15.0)));
+    assert_eq!(
+        (r["PICKBOX"].clone(), r["GRIPSIZE"].clone(), r["APERTURE"].clone(), r["SELECTIONPREVIEWLIMIT"].clone()),
+        (json!(3.0), json!(5.0), json!(15.0), json!(2000)),
+    );
 }
 
 #[test]

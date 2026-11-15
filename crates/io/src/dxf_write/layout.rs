@@ -77,13 +77,10 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
     // through the aspect the record is written with: a drawing 100 wide and 10 tall otherwise got
     // a view 11 tall, which shows a sliver of it, and a horizontal line got 1e-6 (#1602).
     const ASPECT: f64 = 1.6;
-    // An untiled view's twist: the lone `*Active` tile the editor keeps for it.
-    let twist = d
-        .vports
-        .iter()
-        .find(|c| c.is_active() && c.tiles.len() == 1)
-        .and_then(|c| c.tiles.first())
-        .map_or(0.0, |t| cadcraft_geom::norm_angle(t.twist));
+    // An untiled view's twist and grid flag: the lone `*Active` tile the editor keeps for them.
+    let lone = d.vports.iter().find(|c| c.is_active() && c.tiles.len() == 1).and_then(|c| c.tiles.first());
+    let twist = lone.map_or(0.0, |t| cadcraft_geom::norm_angle(t.twist));
+    let grid = lone.is_none_or(|t| t.grid);
     let (center, height) = match d.header.saved_view() {
         Some(v) => v,
         None if ext.is_empty() => (Vec2::new(6.0, 4.5), 9.0),
@@ -95,7 +92,7 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
             (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
         }
     };
-    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist, grid: true };
+    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist, grid };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     // The first `*ACTIVE` record is the one a reader takes the view from, so it carries the saved
     // view while keeping its own place on the screen and the tiles after it unchanged. Writing

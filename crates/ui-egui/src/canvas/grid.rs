@@ -92,7 +92,9 @@ fn plane_bounds(xf: &Xf, clip_rect: Rect, plane: GridPlane) -> Bounds2 {
         return Bounds2::from_points(corners.map(|p| xf.to_world(p)));
     }
     let target = xf.target();
-    let center_uv = Vec2::new(target.dot(u_axis), target.dot(v_axis));
+    let center_ray = xf.cam.ray_at_target(xf.screen_uv_at(clip_rect.center()), target);
+    let center_uv = intersect_ray_plane(center_ray.0, center_ray.1, Vec3::ZERO, normal)
+        .map_or_else(|| Vec2::new(target.dot(u_axis), target.dot(v_axis)), |p| Vec2::new(p.dot(u_axis), p.dot(v_axis)));
     let diag = f64::from(clip_rect.width().hypot(clip_rect.height())) / xf.scale.max(1e-12);
     let cap = diag * 3.0;
     let capped = Bounds2::new(center_uv - Vec2::new(cap, cap), center_uv + Vec2::new(cap, cap));
@@ -322,5 +324,17 @@ mod grid_range_tests {
             assert!(plan.show_axes, "{view_name}: axes must remain visible");
             assert!(plan.minor.is_some(), "{view_name}: orthogonal grid lines must be planned");
         }
+    }
+
+    #[test]
+    fn off_center_viewport_retains_visible_grid_bounds() {
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0));
+        // Small Front viewport sitting 450px right of full canvas center.
+        let off_center = Rect::from_min_size(Pos2::new(900.0, 350.0), vec2(100.0, 100.0));
+        let cam = Camera3D::preset("front").unwrap();
+        let xf = Xf { rect: full, center: Vec2::ZERO, scale: 1.0, twist: 0.0, target_z: 0.0, cam };
+        let wb = super::plane_bounds(&xf, off_center, super::GridPlane::Xz);
+        let center_x = f64::from(off_center.center().x - full.center().x);
+        assert!(wb.min.x <= center_x && wb.max.x >= center_x, "off-center X bounds {wb:?} must cover {center_x}");
     }
 }
