@@ -370,6 +370,7 @@ impl<'a> Builder<'a> {
             styles: self.styles,
             named: self.named,
             shared_budget: self.shared_budget,
+            shared_dashes: self.shared_dashes,
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,

@@ -279,7 +279,7 @@ mod tests {
         let mut lt = gas();
         lt.pattern[1].text = Some("MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM".into());
         // 0.95 per repeat over 9,000: about 9,500 repeats, under the 50,000 the run is drawn for.
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(9_000.0, 0.0)], &lt, 1.0, 0.0);
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(9_000.0, 0.0)], &lt, 1.0, 0.0, None);
         let points: usize =
             t.iter().map(|s| s.strokes.iter().map(Vec::len).sum::<usize>() + s.glyphs.iter().flatten().map(Vec::len).sum::<usize>()).sum();
         assert!(!t.is_empty() && t.len() < MAX_TEXTS, "{}", t.len());
