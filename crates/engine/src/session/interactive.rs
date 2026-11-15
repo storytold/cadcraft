@@ -345,8 +345,10 @@ impl Session {
     }
 
     pub(crate) fn feed(&mut self, input: Option<Input>) -> Result<()> {
-        let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
-        let wants_work = self.prompt_wants_work_point();
+        let (base, wants_work) = match &input {
+            Some(Input::Point(_)) => (self.current_prompt().and_then(|p| p.base), self.prompt_wants_work_point()),
+            _ => (None, false),
+        };
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
             Some(Input::Cancel) => {

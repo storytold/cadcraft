@@ -30,7 +30,7 @@ fn options_reach_every_layer_property() {
     s.cmdline("-LAYER").unwrap();
     assert!(
         s.prompt_text().contains(
-            "[?/Make/Set/New/Rename/ON/OFF/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/Description/rEconcile]"
+            "[?/Make/Set/New/Rename/ON/OFf/Color/Ltype/LWeight/TRansparency/MATerial/Plot/Freeze/Thaw/LOck/Unlock/stAte/Description/rEconcile/FILter]"
         ),
         "{}",
         s.prompt_text()
