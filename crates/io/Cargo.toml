@@ -25,6 +25,7 @@ craft-pdf = { workspace = true, features = ["write"] }
 quick-xml = { workspace = true }
 
 [dev-dependencies]
+tiff = "0.11"
 image = { workspace = true }
 tiny-skia = { workspace = true }
 # Reads plotted PDFs back.
