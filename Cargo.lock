@@ -1135,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=451a390542fbde0519cbb8ade3a3325cf02d97be#451a390542fbde0519cbb8ade3a3325cf02d97be"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 
 [[package]]
 name = "craft-docpath"
@@ -1192,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "craft-mime"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=451a390542fbde0519cbb8ade3a3325cf02d97be#451a390542fbde0519cbb8ade3a3325cf02d97be"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 dependencies = [
  "chrono",
  "craft-codepage",
