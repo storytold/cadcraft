@@ -169,6 +169,25 @@ impl StretchM {
         s.set_selection(self.objs.clone());
     }
 
+    /// Select with a window from `corner` to `p`, clicked corner to corner or dragged. Dragged
+    /// leftwards on screen it is a crossing window, which selects what it touches and stretches
+    /// the vertices inside it; rightwards it selects what lies inside, which then moves whole. Either
+    /// way the window marks the area whose vertices move.
+    fn window(&mut self, s: &mut Session, corner: Vec2, p: Vec2) -> Result<()> {
+        let bx = cadcraft_geom::Bounds2::new(corner, p);
+        let space = s.space();
+        let crossing = s.window_is_crossing(corner, p);
+        let mut hs = crate::select::select_window(s.doc()?, &space, bx, crossing);
+        if !self.removing {
+            if crossing {
+                add_mline_vertex_hits(s.doc()?, &space, &StretchArea::Box(bx), &mut hs);
+            }
+            self.windows.push(StretchArea::Box(bx));
+        }
+        self.add(s, hs, false);
+        Ok(())
+    }
+
     /// Select with a typed mode that has its points. With too few (a fence of one point, a polygon
     /// of two) the mode is dropped.
     fn finish_mode(&mut self, s: &mut Session, m: SelectMode) -> Result<()> {
@@ -223,19 +242,15 @@ impl StretchM {
                 _ => {}
             }
         }
+        // A press-and-drag opened a window at "Select objects" (`Prompt::windows`): the point
+        // where it ends closes it, wherever the drag started (on an object too, as with
+        // PICKDRAG 2). Anything else drops it.
+        let dragged = s.pending_window.take().filter(|pw| pw.during_command).map(|pw| pw.corner);
         match i {
-            Input::Point(p) => match self.corner.take() {
+            Input::Point(p) => match dragged.or_else(|| self.corner.take()) {
                 Some(c) => {
-                    let bx = cadcraft_geom::Bounds2::new(c, p);
-                    let space = s.space();
-                    let mut hs = crate::select::select_window(s.doc()?, &space, bx, p.x < c.x);
-                    if !self.removing {
-                        if p.x < c.x {
-                            add_mline_vertex_hits(s.doc()?, &space, &StretchArea::Box(bx), &mut hs);
-                        }
-                        self.windows.push(StretchArea::Box(bx));
-                    }
-                    self.add(s, hs, false);
+                    self.corner = None;
+                    self.window(s, c, p)?;
                 }
                 None => {
                     let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
@@ -320,7 +335,8 @@ impl Interactive for StretchM {
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            // A press-and-drag here opens a window that STRETCH takes (#2779).
+            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT).windows(),
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),

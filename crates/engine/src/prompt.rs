@@ -102,6 +102,13 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The command selects objects itself with windows at this prompt (STRETCH's "Select
+    /// objects", whose windows also mark the vertices that move): a press-and-drag opens a
+    /// selection window here as at a [`Accept::SELECT`] prompt ([`crate::Session::begin_window`]),
+    /// and the command takes it from [`crate::Session::pending_window`] at the point where the
+    /// drag ends (#2779).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub windows: bool,
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -152,6 +159,11 @@ impl Prompt {
     pub fn corner(mut self, p: Vec2) -> Self {
         self.base = Some(p);
         self.corner = true;
+        self
+    }
+    /// A press-and-drag opens a selection window the command takes (the `windows` field).
+    pub fn windows(mut self) -> Self {
+        self.windows = true;
         self
     }
     /// Asks for a distance from the base (the `distance` field).
