@@ -47,9 +47,12 @@ struct Element {
 
 /// The texts and shapes of `lt` along the polyline `pts`, in the coordinates of `pts`. Empty
 /// when the linetype has none or its scaled pattern is drawn continuous (shorter than
-/// `min_pattern`, or repeating too often). At most [`MAX_TEXTS`] texts and shapes are placed
-/// along one run, the first ones: the cap keeps a hostile scale from placing millions of them.
-pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Shaped> {
+/// `min_pattern`, or repeating too often), or the plot's shared dash budget is too low for the
+/// repeats this run would add — the texts read what is left of the budget without consuming it:
+/// a run keeps its texts or drops them with its dashes. At most [`MAX_TEXTS`] texts and shapes
+/// are placed along one run, the first ones: the cap keeps a hostile scale from placing millions
+/// of them.
+pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: Option<&crate::linetype::DashBudget>) -> Vec<Shaped> {
     let mut out = Vec::new();
     if pts.len() < 2 || !lt.pattern.iter().any(|e| e.text.as_deref().is_some_and(|t| !t.trim().is_empty()) || e.shape.is_some()) {
         return out;
@@ -69,6 +72,13 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     let elements = elements(d, lt, scale);
     if elements.is_empty() {
         return out;
+    }
+    if let Some(b) = budget {
+        // The repeats this run adds, one element each, against what is left of the plot's budget.
+        let repeats = (len / total) as usize + 1;
+        if b.remaining() < repeats.saturating_mul(elements.len()) {
+            return out;
+        }
     }
     let mut walk = Walk { pts, i: 0, start: 0.0 };
     let mut points_left = MAX_TEXT_POINTS;
@@ -226,7 +236,7 @@ mod tests {
     #[test]
     fn one_text_per_repeat_at_the_end_of_its_element() {
         let d = Drawing::new_imperial();
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0);
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0, None);
         // Pattern 0.95 long: anchors at 0.7 and 1.65.
         assert_eq!(t.len(), 2);
         let x = starts(&t);
@@ -240,15 +250,26 @@ mod tests {
         // line there, so its texts go with the dashes (#1285).
         let d = Drawing::new_imperial();
         let len = 2_000_001.0 * 0.95;
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(len, 0.0)], &gas(), 1.0, 0.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(len, 0.0)], &gas(), 1.0, 0.0, None).is_empty());
     }
 
     #[test]
     fn no_text_when_drawn_continuous() {
         let d = Drawing::new_imperial();
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0, None).is_empty());
         let plain = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0, None).is_empty());
+    }
+
+    #[test]
+    fn no_text_past_the_plot_dash_budget() {
+        // A spent budget leaves no room for the repeats this run would add: no texts.
+        let d = Drawing::new_imperial();
+        let budget = crate::linetype::DashBudget::new(0);
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0, Some(&budget)).is_empty());
+        // Room enough: the texts come.
+        let budget = crate::linetype::DashBudget::new(1_000_000);
+        assert_eq!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 0.0, Some(&budget)).len(), 2);
     }
 
     /// A long label repeated along a long run stops at the point allowance, well before MAX_TEXTS.
@@ -288,26 +309,26 @@ mod tests {
         register_shapes();
         let d = Drawing::new_imperial();
         // An unnamed shape-file style reads as its file name (DXF); scale 0.1 per vector unit.
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("cadcraft-render-lt.shx"), 1.0, 0.0);
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("cadcraft-render-lt.shx"), 1.0, 0.0, None);
         assert_eq!(t.len(), 2);
         let x = starts(&t);
         assert!((x[0] - 0.7).abs() < 1e-9 && (x[1] - 1.65).abs() < 1e-9, "{x:?}");
         let ys = t[0].strokes.iter().flatten().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.y), b.max(p.y)));
         assert!((ys.0).abs() < 1e-9 && (ys.1 - 0.2).abs() < 1e-9, "{ys:?}");
         // Along a vertical line the shape turns with it; absolute rotation keeps it level.
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(0.0, 2.0)], &fence("cadcraft-render-lt.shx"), 2.0, 0.0);
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(0.0, 2.0)], &fence("cadcraft-render-lt.shx"), 2.0, 0.0, None);
         assert_eq!(t.len(), 1);
         let xs = t[0].strokes.iter().flatten().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)));
         assert!((xs.0 + 0.4).abs() < 1e-9 && xs.1.abs() < 1e-9, "{xs:?}");
         // A named style whose font is the shape file.
         let mut d = Drawing::new_imperial();
         d.text_styles.push(cadcraft_doc::TextStyle { name: "SHAPES".into(), font: "cadcraft-render-lt.shx".into(), ..Default::default() });
-        assert_eq!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("SHAPES"), 1.0, 0.0).len(), 2);
+        assert_eq!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("SHAPES"), 1.0, 0.0, None).len(), 2);
         // A shape file that isn't found, or a shape it lacks, draws nothing.
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("cadcraft-no-such-file.shx"), 1.0, 0.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &fence("cadcraft-no-such-file.shx"), 1.0, 0.0, None).is_empty());
         let mut lt = fence("cadcraft-render-lt.shx");
         lt.pattern[1].shape = Some(131);
-        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &lt, 1.0, 0.0).is_empty());
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &lt, 1.0, 0.0, None).is_empty());
     }
 
     #[test]
@@ -320,7 +341,7 @@ mod tests {
         let mut lt = fence("cadcraft-render-big.shx");
         lt.pattern[1].shape = Some(131);
         // 3,000 repeats would hold about 3 million points.
-        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2850.0, 0.0)], &lt, 1.0, 0.0);
+        let t = texts(&d, &[Vec2::ZERO, Vec2::new(2850.0, 0.0)], &lt, 1.0, 0.0, None);
         let points: usize = t.iter().map(point_count).sum();
         assert!(!t.is_empty() && t.len() < 3000 && points <= MAX_POINTS, "{} shapes, {points} points", t.len());
     }
@@ -361,7 +382,7 @@ mod tests {
         }
         let pts = [Vec2::ZERO, Vec2::ZERO, Vec2::new(1e6, 0.0), Vec2::new(1e6, 0.0)];
         for scale in [f64::NAN, 0.0, -1.0, 1e-9, 1e300] {
-            let t = texts(&d, &pts, &lt, scale, 0.0);
+            let t = texts(&d, &pts, &lt, scale, 0.0, None);
             assert!(t.len() <= MAX_TEXTS);
         }
     }

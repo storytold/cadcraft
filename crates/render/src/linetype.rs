@@ -8,11 +8,45 @@ use cadcraft_geom::Vec2;
 /// vectors in memory: past this budget the line is drawn continuous instead (#1285).
 pub const MAX_DASHES: f64 = 2_000_000.0;
 
+/// A dash budget shared by every line of one plot or export: each dash the linetype expansion
+/// produces costs one unit, and once `max` is spent the remaining lines are drawn continuous. A
+/// plot has no zoom to fall back on, so its bound is a dash count across the whole plot rather
+/// than the per-line [`MAX_DASHES`]; a display build passes no budget and keeps the per-line
+/// fallbacks (#1285).
+pub struct DashBudget {
+    spent: std::sync::atomic::AtomicUsize,
+    max: usize,
+}
+
+impl DashBudget {
+    /// A budget of `max` dashes in all.
+    pub fn new(max: usize) -> Self {
+        Self { spent: std::sync::atomic::AtomicUsize::new(0), max }
+    }
+    /// The units left in the budget (a snapshot: parts of a build run side by side, and an
+    /// approximate read is what a budget is for).
+    pub fn remaining(&self) -> usize {
+        self.max.saturating_sub(self.spent.load(std::sync::atomic::Ordering::Relaxed))
+    }
+    /// Take `n` units; false once the budget is spent (the line is drawn continuous).
+    fn take(&self, n: usize) -> bool {
+        self.spent.fetch_add(n, std::sync::atomic::Ordering::Relaxed) < self.max
+    }
+}
+
+/// Upper bound on the dashes one plot or export expands in all, shared by its lines (see
+/// [`DashBudget`]). The 50,001-period line of #1069 stays dashed with room to spare; past the
+/// bound the remaining lines keep their shape as continuous runs instead of expanding a
+/// pathological dash count.
+pub const MAX_PLOT_DASHES: usize = 2_000_000;
+
 /// Split `pts` into dashes. Dots come back as single-point runs. When the scaled pattern is
 /// shorter than `min_pattern` (sub-pixel), the polyline is returned whole; a display build
 /// (`min_pattern` above 0) also returns it whole when the pattern would repeat too often (see
-/// [`ranges`]), and so does a run whose expansion would emit more than [`MAX_DASHES`] dashes.
-pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Vec<Vec2>> {
+/// [`ranges`]), and so does a run whose expansion would emit more than [`MAX_DASHES`] dashes. A
+/// plot passes the dash budget its lines share: once it is spent, the polyline is returned whole
+/// (continuous).
+pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: Option<&DashBudget>) -> Vec<Vec<Vec2>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     if pts.len() < 2 || total <= 1e-12 || total < min_pattern {
@@ -70,6 +104,10 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
             let p = a + dir * pos;
             if on {
                 cur.push(p);
+                // One dash less of the plot's budget; past it this line keeps its shape whole.
+                if budget.is_some_and(|b| !b.take(1)) {
+                    return vec![pts.to_vec()];
+                }
                 out.push(std::mem::take(&mut cur));
                 if out.len() > max_runs {
                     return vec![pts.to_vec()];
@@ -78,6 +116,9 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
             idx = (idx + 1) % pattern.len();
             let n = pattern.get(idx).copied().unwrap_or(0.0);
             if n == 0.0 {
+                if budget.is_some_and(|b| !b.take(1)) {
+                    return vec![pts.to_vec()];
+                }
                 out.push(vec![p]);
                 if out.len() > max_runs {
                     return vec![pts.to_vec()];
@@ -99,7 +140,12 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
             cur.push(b);
         }
     }
+    // The final partial dash costs the budget too: a line that reaches the dash ceiling with it
+    // is drawn continuous, at the same point the walk above falls back (#1285).
     if cur.len() >= 2 {
+        if budget.is_some_and(|b| !b.take(1)) || out.len() >= max_runs {
+            return vec![pts.to_vec()];
+        }
         out.push(cur);
     }
     out
@@ -108,8 +154,8 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
 /// The dashes of the pattern along a run of length `len`, as (start, end) distances; a dot has
 /// start == end. Laid out like [`apply`]. `None` when the run is drawn continuous: the scaled
 /// pattern is shorter than `min_pattern`, or, in a display build (`min_pattern` above 0), it
-/// would repeat too often (see [`apply`]).
-pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<Vec<(f64, f64)>> {
+/// would repeat too often (see [`apply`]), or the plot's shared dash budget is spent.
+pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, budget: Option<&DashBudget>) -> Option<Vec<(f64, f64)>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     if !(len.is_finite() && len > 0.0) || total <= 1e-12 || total < min_pattern {
@@ -141,6 +187,9 @@ pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<V
             return None;
         }
         if d >= 0.0 {
+            if budget.is_some_and(|b| !b.take(1)) {
+                return None;
+            }
             out.push((pos, (pos + d).min(len)));
         }
         pos += d.abs();
@@ -156,14 +205,14 @@ mod tests {
     #[test]
     fn an_all_gap_pattern_draws_nothing_without_spinning() {
         let lt = Linetype::simple("GAPS", "", &[-0.001, -0.002]);
-        assert_eq!(ranges(1.0, &lt, 1.0, 0.0), Some(Vec::new()));
-        assert!(apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0).is_empty());
+        assert_eq!(ranges(1.0, &lt, 1.0, 0.0, None), Some(Vec::new()));
+        assert!(apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0, None).is_empty());
     }
 
     #[test]
     fn dashes_split_line() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 0.0, None);
         // 3.0 / 0.75 = 4 patterns → 4 dashes.
         assert_eq!(d.len(), 4);
         assert!((d[0][1].x - 0.5).abs() < 1e-9);
@@ -173,7 +222,7 @@ mod tests {
     #[test]
     fn dots_are_single_points() {
         let lt = Linetype::simple("DOT", "", &[0.0, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0, None);
         assert!(d.iter().all(|r| r.len() == 1));
         assert!(d.len() >= 4);
     }
@@ -186,7 +235,7 @@ mod tests {
         let mut pattern = vec![0.1];
         pattern.extend([-0.1; 99]);
         let lt = Linetype::simple("MANY", "", &pattern);
-        let d = apply(&[Vec2::ZERO, Vec2::new(1_000_000.0, 0.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(1_000_000.0, 0.0)], &lt, 1.0, 0.0, None);
         // One dash per repeat, plus the run's last, partial one.
         assert_eq!(d.len(), 100_001, "the run was drawn as one solid line");
     }
@@ -203,11 +252,11 @@ mod tests {
         }
         let lt = Linetype::simple("MANY", "", &pattern);
         let pts = [Vec2::ZERO, Vec2::new(5.0e6, 0.0)];
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 1, "the run did not fall back to one continuous run");
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, None).len(), 1, "the run did not fall back to one continuous run");
         // The same pattern over 10,000 repeats (about 250,000 dashes) fits the output budget and
         // still emits dashes: the budget counts dashes, not pattern elements.
         let fits = [Vec2::ZERO, Vec2::new(5.0e4, 0.0)];
-        assert!(apply(&fits, &lt, 1.0, 0.0).len() > 1_000, "a run under the budget was drawn continuous");
+        assert!(apply(&fits, &lt, 1.0, 0.0, None).len() > 1_000, "a run under the budget was drawn continuous");
     }
 
     #[test]
@@ -216,20 +265,20 @@ mod tests {
         // hold it. `wide::dashed` draws the whole run on `None`; a prefix would leave the rest of
         // the polyline unpainted (#1285).
         let lt = Linetype::simple("DOUBLE", "", &[0.5, 0.5]);
-        assert_eq!(ranges(1_100_000.0, &lt, 1.0, 0.0), None);
+        assert_eq!(ranges(1_100_000.0, &lt, 1.0, 0.0, None), None);
     }
 
     #[test]
     fn tiny_pattern_is_continuous() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 10.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 10.0, None);
         assert_eq!(d.len(), 1);
     }
 
     #[test]
     fn dash_continues_across_vertices() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(0.3, 0.0), Vec2::new(0.3, 1.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(0.3, 0.0), Vec2::new(0.3, 1.0)], &lt, 1.0, 0.0, None);
         assert_eq!(d[0].len(), 3); // the first dash turns the corner
     }
 
@@ -240,11 +289,11 @@ mod tests {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         let len = 50_001.0 * 0.75;
         let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 50_001);
-        assert_eq!(ranges(len, &lt, 1.0, 0.0).expect("the pattern applies").len(), 50_001);
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, None).len(), 50_001);
+        assert_eq!(ranges(len, &lt, 1.0, 0.0, None).expect("the pattern applies").len(), 50_001);
         // With a level of detail (a display build) the fallback stays.
-        assert_eq!(apply(&pts, &lt, 1.0, 1e-9).len(), 1);
-        assert!(ranges(len, &lt, 1.0, 1e-9).is_none());
+        assert_eq!(apply(&pts, &lt, 1.0, 1e-9, None).len(), 1);
+        assert!(ranges(len, &lt, 1.0, 1e-9, None).is_none());
     }
 
     #[test]
@@ -254,9 +303,39 @@ mod tests {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         let len = 1_000_000_000.0;
         let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 1);
-        assert!(ranges(len, &lt, 1.0, 0.0).is_none());
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, None).len(), 1);
+        assert!(ranges(len, &lt, 1.0, 0.0, None).is_none());
         // One period past the ceiling is continuous too; the boundary is not off by one.
-        assert!(ranges((MAX_DASHES + 1.0) * 0.75, &lt, 1.0, 0.0).is_none());
+        assert!(ranges((MAX_DASHES + 1.0) * 0.75, &lt, 1.0, 0.0, None).is_none());
+    }
+
+    #[test]
+    fn the_final_partial_dash_respects_the_dash_ceiling() {
+        // CodeRabbit's boundary: two dashes per 2.0 of length, so a line of 2,000,000.25 emits
+        // 2,000,000 full dashes and then one partial dash. The final push used to skip the
+        // check, so the line came out with 2,000,001 dashes instead of one continuous run.
+        let lt = Linetype::simple("QUAD", "", &[0.5, -0.5, 0.5, -0.5]);
+        let pts = [Vec2::ZERO, Vec2::new(2_000_000.25, 0.0)];
+        let d = apply(&pts, &lt, 1.0, 0.0, None);
+        assert_eq!(d.len(), 1, "the run fell back to one continuous line at the ceiling");
+        assert_eq!(d[0], pts.to_vec());
+    }
+
+    #[test]
+    fn a_plot_dash_budget_draws_the_first_lines_dashed_and_the_rest_continuous() {
+        let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
+        let pts = [Vec2::ZERO, Vec2::new(3750.0, 0.0)]; // 5,000 dashes
+        let budget = DashBudget::new(6_000);
+        // The first line's dashes fit the budget.
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, Some(&budget)).len(), 5_000);
+        assert_eq!(budget.remaining(), 1_000);
+        // The next line takes what is left and then falls back to a continuous run.
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, Some(&budget)).len(), 1);
+        // With room in the budget a wide line's dashes come back as ranges too.
+        let budget = DashBudget::new(MAX_PLOT_DASHES);
+        assert_eq!(ranges(3750.0, &lt, 1.0, 0.0, Some(&budget)).map(|d| d.len()), Some(5_000));
+        // Once spent, the wide line is drawn continuous (the caller fills the whole band).
+        let budget = DashBudget::new(10);
+        assert_eq!(ranges(3750.0, &lt, 1.0, 0.0, Some(&budget)), None);
     }
 }

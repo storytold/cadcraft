@@ -70,10 +70,17 @@ fn edges(x: &Sample) -> (Vec2, Vec2) {
 /// Triangles for the dashes of a wide polyline drawn with `lt` at `scale`, a line across the band
 /// for each dot, and the centre line of each dash. With PLINEGEN the pattern runs along the whole
 /// polyline; otherwise it restarts at every vertex. A pattern shorter than `min_pattern` fills
-/// the whole band.
-pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> (Vec<Vec2>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
-    let mut budget = MAX_TESSELLATED_POINTS;
-    let mut runs = segments(p, tol, &mut budget);
+/// the whole band; a spent plot dash budget does too (the run keeps its shape).
+pub fn dashed(
+    p: &LwPolyline,
+    tol: f64,
+    lt: &Linetype,
+    scale: f64,
+    min_pattern: f64,
+    budget: Option<&linetype::DashBudget>,
+) -> (Vec<Vec2>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
+    let mut tess_budget = MAX_TESSELLATED_POINTS;
+    let mut runs = segments(p, tol, &mut tess_budget);
     if p.plinegen && runs.len() > 1 {
         let mut whole: Vec<Sample> = Vec::new();
         for run in runs {
@@ -87,7 +94,7 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
     let mut centres = Vec::new();
     for run in &runs {
         let len = run.last().map(|x| x.s).unwrap_or(0.0);
-        let dashes = linetype::ranges(len, lt, scale, min_pattern).unwrap_or_else(|| vec![(0.0, len)]);
+        let dashes = linetype::ranges(len, lt, scale, min_pattern, budget).unwrap_or_else(|| vec![(0.0, len)]);
         for (a, b) in dashes {
             if b - a <= 1e-12 {
                 if let Some(x) = at(run, a) {

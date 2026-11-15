@@ -114,6 +114,8 @@ pub(crate) fn build_space_within(d: &Drawing, space: &Space, opts: &Options, plo
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
     let points = std::sync::atomic::AtomicUsize::new(0);
+    // A plot's lines share one dash budget; a display build falls back per line instead.
+    let dashes = plotting.then(|| crate::linetype::DashBudget::new(crate::linetype::MAX_PLOT_DASHES));
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -121,9 +123,11 @@ pub(crate) fn build_space_within(d: &Drawing, space: &Space, opts: &Options, plo
         styles: styler.as_ref(),
         named: None,
         shared_budget: None,
+        shared_dashes: dashes.as_ref(),
         transparency: 0,
         points: &points,
         max_points,
+    };
     };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
@@ -171,7 +175,11 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     use rayon::prelude::*;
     let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
+<<<<<<< HEAD
     let (opts, plotting, points, max_points) = (b.opts, b.plotting, b.points, b.max_points);
+=======
+    let (opts, plotting, shared_dashes) = (b.opts, b.plotting, b.shared_dashes);
+>>>>>>> b86061e2 (render: the final dash respects the ceiling, and a plot's lines share one dash budget)
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
@@ -182,9 +190,14 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
                 styles: None,
                 named: None,
                 shared_budget: Some(&budget),
+<<<<<<< HEAD
                 transparency: 0,
                 points,
                 max_points,
+=======
+                shared_dashes,
+                transparency: 0,
+>>>>>>> b86061e2 (render: the final dash respects the ceiling, and a plot's lines share one dash budget)
             };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
@@ -237,7 +250,10 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
+<<<<<<< HEAD
     let points = std::sync::atomic::AtomicUsize::new(0);
+=======
+>>>>>>> b86061e2 (render: the final dash respects the ceiling, and a plot's lines share one dash budget)
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -245,9 +261,14 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
         styles: None,
         named: None,
         shared_budget: None,
+<<<<<<< HEAD
         transparency: 0,
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
+=======
+        shared_dashes: None,
+        transparency: 0,
+>>>>>>> b86061e2 (render: the final dash respects the ceiling, and a plot's lines share one dash budget)
     };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);

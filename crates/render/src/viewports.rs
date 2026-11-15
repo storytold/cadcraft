@@ -78,9 +78,11 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         styles: styler.as_ref(),
         named: None,
         shared_budget: None,
+        shared_dashes: None,
         transparency: 0,
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
+    };
     };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
@@ -132,6 +134,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         styles: b.styles,
         named: None,
         shared_budget: Some(&budget),
+        shared_dashes: b.shared_dashes,
         transparency: 0,
         points: b.points,
         max_points: b.max_points,
@@ -157,6 +160,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         styles: None,
                         named: None,
                         shared_budget: Some(&budget),
+                        shared_dashes: None,
                         transparency: 0,
                         points,
                         max_points,
