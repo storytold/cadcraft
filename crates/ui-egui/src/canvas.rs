@@ -176,6 +176,9 @@ pub struct CanvasState {
     pub build_ms: f64,
     pub draw_ms: f64,
     hover_at: Option<Pos2>,
+    /// The layers frozen in the active viewport when the object and the cycling badge under the
+    /// cursor were last worked out ([`cadcraft_engine::DocState::viewport_frozen`]).
+    hover_frozen: Vec<String>,
     /// Constraint glyphs for the parametric overlay (cached per drawing revision).
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
@@ -695,12 +698,22 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
     // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
     // prompts, or no command with PICKFIRST on; SELECTIONPREVIEW says in which of those it shows.
     let selecting = app.session.previews_selection();
+    // What the cursor is over also depends on the layers frozen in the active viewport, and those
+    // can change while the pointer rests (VPLAYER, undo, another viewport made the active one).
+    let refrozen = match app.session.state() {
+        Ok(st) if st.viewport_frozen() != app.canvas.hover_frozen.as_slice() => {
+            app.canvas.hover_frozen = st.viewport_frozen().to_vec();
+            true
+        }
+        _ => false,
+    };
     if inside && selecting && app.session.pending_window.is_none() {
-        if hover_pos != app.canvas.hover_at
+        if (hover_pos != app.canvas.hover_at || refrozen)
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
             let filter = app.session.settings.previewfilter;
-            app.canvas.hover = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
+            let ap = app.session.settings.pickbox.max(1.0) * 1.5 / scale;
+            app.canvas.hover = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, ap)
                 .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
             app.canvas.hover_at = hover_pos;
         }
@@ -717,7 +730,7 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         app.canvas.hover_at = None;
     }
     shift_space_cycle(app, ui, hover_pos.filter(|_| inside), raw_world);
-    if inside && hover_pos != app.canvas.cycle_badge_at {
+    if inside && (hover_pos != app.canvas.cycle_badge_at || refrozen) {
         app.canvas.cycle_badge = raw_world.is_some_and(|w| app.session.cycling_badge(w));
         app.canvas.cycle_badge_at = hover_pos;
     } else if !inside {
@@ -1104,7 +1117,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h)
-                && st.doc.is_visible(e)
+                && st.shows(e)
             {
                 let grips = e.kind.grips();
                 let count = grips.len();
