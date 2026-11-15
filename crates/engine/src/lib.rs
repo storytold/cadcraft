@@ -50,7 +50,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, SelectWindow, Step};
 
 mod doc_state;
 mod error;
@@ -130,6 +130,9 @@ pub struct Session {
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
     pub pending_window: Option<PendingWindow>,
+    /// The window or polygon the last pick at a command's "Select objects" was made with (`None`
+    /// for single picks, fences, All, Last…); see [`Session::take_pick_area`].
+    pick_area: Option<select::PickArea>,
     /// A selection mode typed at "Select objects" (W, C, F, WP, CP) collecting its points.
     pub select_mode: Option<select::SelectMode>,
     /// SIngle typed at "Select objects": the next selection ends the prompt.
@@ -196,6 +199,7 @@ impl Session {
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
             pending_window: None,
+            pick_area: None,
             select_mode: None,
             select_single: false,
             untitled_counter: 0,
