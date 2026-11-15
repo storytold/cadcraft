@@ -185,6 +185,41 @@ fn an_orientation_only_pagesetup_turns_the_retained_margins() {
 }
 
 #[test]
+/// Asymmetric retained margins turn with an orientation-only PAGESETUP in the direction the page
+/// turns — a portrait page turning landscape re-measures them on the landscape axes, and turning
+/// back restores the stored margins — so the printable area does not depend on how the
+/// orientation was reached (#1266).
+fn an_orientation_turn_turns_asymmetric_margins_the_way_the_page_turns() {
+    let mut s = session();
+    // A page setup's default orientation is landscape, so the page is named portrait first.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "landscape": false, "margins": [10, 20, 30, 80]})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!((page.width_mm, page.height_mm, page.margins_mm), (210.0, 297.0, [10.0, 20.0, 30.0, 80.0]));
+
+    // Portrait to landscape: the margins turn the way `set_paper` turns a device paper's, so the
+    // 10 mm left margin becomes the landscape sheet's 80 mm top margin and the printable area is
+    // the same rectangle on the turned sheet.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": true})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!(page.margins_mm, [80.0, 10.0, 20.0, 30.0], "the margins turn to the landscape axes");
+
+    // Landscape back to portrait restores the margins the page was set up with.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": false})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!(page.margins_mm, [10.0, 20.0, 30.0, 80.0], "the round trip keeps the margins");
+
+    // A landscape page turns the other way when it goes portrait: the margins are re-measured on
+    // the portrait sheet's axes, and turning back gives them the landscape reading again.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": true, "margins": [1, 2, 3, 4]})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": false})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!(page.margins_mm, [2.0, 3.0, 4.0, 1.0], "the landscape margins turn back to the portrait axes");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "landscape": true})).unwrap();
+    let page = s.doc().unwrap().layout("Layout1").unwrap().page.clone();
+    assert_eq!(page.margins_mm, [1.0, 2.0, 3.0, 4.0], "the second turn restores the landscape margins");
+}
+
+#[test]
 /// PLOT and EXPORTPDF hand the hook the device's output, resolution, paper and margins, and a
 /// layout plots with its own page setup; unknown devices and papers are refused.
 fn plot_uses_the_device() {

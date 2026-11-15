@@ -695,7 +695,8 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     // sheet's axes: turning the orientation turns them too (#1266). Explicit margins are already
     // on the new sheet's axes.
     if turned.is_some() && !device_paper && p.get("margins").is_none() {
-        page.margins_mm = super::plotters::portrait_margins(page.margins_mm);
+        page.margins_mm =
+            if page.landscape { super::plotters::landscape_margins(page.margins_mm) } else { super::plotters::portrait_margins(page.margins_mm) };
     }
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
         let n = paper.as_str().ok_or_else(|| bad(cmd, "`paper` must be a paper name"))?;

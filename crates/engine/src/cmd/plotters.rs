@@ -217,7 +217,7 @@ fn device_paper<'a>(dev: &'a PlotterConfig, name: &str) -> Option<&'a DevicePape
 
 /// A paper's stored portrait margins on the landscape sheet: the sheet's axes swap, so left and
 /// right become bottom and top (#1266).
-fn landscape_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
+pub(crate) fn landscape_margins([l, b, r, t]: [f64; 4]) -> [f64; 4] {
     [t, l, b, r]
 }
 
