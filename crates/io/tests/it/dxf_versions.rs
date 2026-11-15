@@ -62,7 +62,7 @@ fn opts(version: Version, binary: bool) -> SaveOptions {
 }
 
 fn acadver(bytes: &[u8]) -> String {
-    let tags = cadcraft_dxf::parse(bytes).unwrap();
+    let tags = craft_dxf::parse(bytes).unwrap();
     tags.windows(2).find(|w| w[0].code == 9 && w[0].str() == "$ACADVER").map(|w| w[1].str()).unwrap_or_default()
 }
 
@@ -85,7 +85,7 @@ fn dxf_at_every_version_reads_back_the_same() {
             let bytes = write_with(&d, "x.dxf", &opts(v, binary)).unwrap();
             let what = format!("{v} binary={binary}");
             assert_eq!(acadver(&bytes), v.code(), "{what}");
-            assert_eq!(cadcraft_dxf::is_binary(&bytes), binary, "{what}");
+            assert_eq!(craft_dxf::is_binary(&bytes), binary, "{what}");
             let raw = bytes.windows("图号".len()).any(|w| w == "图号".as_bytes());
             assert_eq!(raw, v.utf8(), "{what}: UTF-8 text from 2007, the code page before");
             if !v.utf8() {
@@ -109,11 +109,11 @@ fn class_records_follow_the_version() {
     let d = sample();
     for v in Version::ALL {
         for binary in [false, true] {
-            let tags = cadcraft_dxf::parse(&write_with(&d, "x.dxf", &opts(v, binary)).unwrap()).unwrap();
-            let classes: Vec<Vec<i32>> = cadcraft_dxf::sections(&tags)
+            let tags = craft_dxf::parse(&write_with(&d, "x.dxf", &opts(v, binary)).unwrap()).unwrap();
+            let classes: Vec<Vec<i32>> = craft_dxf::sections(&tags)
                 .into_iter()
                 .filter(|s| s.name == "CLASSES")
-                .flat_map(|s| cadcraft_dxf::records(&s.tags))
+                .flat_map(|s| craft_dxf::records(&s.tags))
                 .filter(|(kind, _)| kind == "CLASS")
                 .map(|(_, t)| t.iter().map(|x| x.code).collect())
                 .collect();
@@ -134,7 +134,7 @@ fn r2000_ascii_is_unchanged() {
     let saved = write_with(&d, "x.dxf", &opts(Version::R2000, false)).unwrap();
     let escaped = write_dxf(&d);
     assert_ne!(saved, escaped.as_bytes(), "Café is written in ANSI_1252");
-    assert_eq!(cadcraft_dxf::parse(&saved).unwrap(), cadcraft_dxf::parse(escaped.as_bytes()).unwrap());
+    assert_eq!(craft_dxf::parse(&saved).unwrap(), craft_dxf::parse(escaped.as_bytes()).unwrap());
 }
 
 /// Without a version asked for: 2018 for a new drawing, otherwise the file's own version (the
@@ -166,7 +166,7 @@ fn dwg_at_every_version_reads_back() {
     let d = sample();
     for v in Version::ALL {
         let dwg = write_with(&d, "x.dwg", &opts(v, false)).unwrap();
-        assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some(v.code()), "{v}");
+        assert_eq!(craft_dwg::version(&dwg).as_deref(), Some(v.code()), "{v}");
         let back = read(&dwg, "x.dwg").unwrap();
         assert_eq!(save_version(&back), v, "{v}");
         assert_eq!(back.model.len(), d.model.len(), "{v}");
@@ -187,6 +187,6 @@ fn dwg_at_every_version_reads_back() {
 #[test]
 fn dwg_default_is_at_least_2004() {
     let from_r2000 = read(write_dxf(&sample()).as_bytes(), "x.dxf").unwrap();
-    assert_eq!(cadcraft_dwg::version(&write(&from_r2000, "x.dwg").unwrap()).as_deref(), Some("AC1018"));
-    assert_eq!(cadcraft_dwg::version(&write(&sample(), "x.dwg").unwrap()).as_deref(), Some("AC1032"));
+    assert_eq!(craft_dwg::version(&write(&from_r2000, "x.dwg").unwrap()).as_deref(), Some("AC1018"));
+    assert_eq!(craft_dwg::version(&write(&sample(), "x.dwg").unwrap()).as_deref(), Some("AC1032"));
 }

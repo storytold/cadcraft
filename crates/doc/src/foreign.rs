@@ -55,6 +55,8 @@ impl ForeignExtra {
 pub struct Foreign {
     /// CLASS records (groups after `0 CLASS`) of the kept objects' and entities' types.
     pub classes: Vec<Vec<RawTag>>,
+    /// Classes retain every source position, including duplicate names.
+    pub complete_class_table: bool,
     /// Kept objects, in file order.
     pub objects: Vec<ForeignObject>,
     /// Entries of the named object dictionary that CADCraft doesn't write itself: (key, object).

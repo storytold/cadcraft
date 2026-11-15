@@ -4,7 +4,7 @@
 //!
 //! The DWG is written here with acadrust, giving the second 3D-polyline vertex the highest
 //! handle: exactly what an editing program produces when it inserts a vertex.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use acadrust::entities::{EntityType, Polyline3D, Vertex3DPolyline};
 use acadrust::types::{DxfVersion, Handle, Vector3};

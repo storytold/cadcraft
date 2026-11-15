@@ -264,6 +264,7 @@ pub struct Paragraphs {
 
 impl Paragraphs {
     pub fn scan(contents: &str) -> Paragraphs {
+        let contents = super::unescape_codes(contents);
         let chars: Vec<char> = contents.chars().collect();
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
         let mut cur = 0usize;
@@ -303,10 +304,12 @@ impl Paragraphs {
                                 cur = out.states.len() - 1;
                             }
                         }
-                        _ => {
+                        _ if super::takes_arg(code) => {
                             let (_, n) = arg(&chars, i);
                             i = n;
                         }
+                        // An unknown code has no argument: only the backslash and the code go.
+                        _ => {}
                     }
                 }
                 '\n' => {
@@ -604,7 +607,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let lines = LineBuilder::new(&paras, &fmts, base, width, h).build(&atoms);
 
     // Vertical placement: baselines below the top of each line's column.
-    let ls = if p.line_spacing > 0.0 && p.line_spacing.is_finite() { p.line_spacing } else { 1.0 };
+    let ls = super::sane_line_spacing(p.line_spacing);
     let cols = p.columns.as_ref().filter(|_| width > 0.0);
     let max_cols = match cols {
         Some(c) if c.dynamic => MAX_COLUMNS,
@@ -674,6 +677,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = super::Allowance::new();
     for (l, (c, base_y)) in lines.iter().zip(placed) {
         let pp = paras.props(l.para);
         let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(c) } else { c };
@@ -693,7 +697,15 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         };
         for it in &l.items {
             let fm = fmt(it.fmt);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
             let mut sh = seg_shape(&it.seg, fm, it.x);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(col_x + shift + per_gap * it.gap as f64, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {

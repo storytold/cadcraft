@@ -22,7 +22,7 @@ fn fonts(d: &Drawing) -> Vec<(String, String)> {
 fn style_files(dxf: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut style = false;
-    for t in cadcraft_dxf::parse(dxf.as_bytes()).unwrap() {
+    for t in craft_dxf::parse(dxf.as_bytes()).unwrap() {
         match t.code {
             0 => style = t.str() == "STYLE",
             2 if style => out.push((t.str(), String::new())),
