@@ -591,9 +591,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "6.3.1"
+version = "6.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75c74c9c51b9140663e196b5fb88bc94c334d7a497c8311cb759d8557874747f"
+checksum = "cc031cd87c6529082b0b65c604e86af0ed7744841b17ccfe60b1e31fa606179e"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -731,6 +731,7 @@ dependencies = [
  "cadcraft-render",
  "craft-docpath",
  "craft-dxf",
+ "craft-mime",
  "libc",
  "log",
  "rstar",
@@ -791,6 +792,8 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "clap",
+ "craft-jsonrpc",
+ "craft-mcp",
  "getrandom 0.4.3",
  "libc",
  "log",
@@ -1166,6 +1169,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-codepage"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
+
+[[package]]
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
@@ -1251,6 +1259,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-jsonrpc"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b6222158fbc2a628f27d2c1fff9f648cd194404c#b6222158fbc2a628f27d2c1fff9f648cd194404c"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "craft-mcp"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b6222158fbc2a628f27d2c1fff9f648cd194404c#b6222158fbc2a628f27d2c1fff9f648cd194404c"
+dependencies = [
+ "craft-jsonrpc",
+ "serde_json",
+]
+
+[[package]]
 name = "craft-metadata"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=ae5020c1ed922cf7976a3a5545f05b07f466be12#ae5020c1ed922cf7976a3a5545f05b07f466be12"
@@ -1260,6 +1285,16 @@ dependencies = [
  "craft-tiff",
  "quick-xml 0.41.0",
  "serde",
+]
+
+[[package]]
+name = "craft-mime"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
+dependencies = [
+ "chrono",
+ "craft-codepage",
+ "encoding_rs",
 ]
 
 [[package]]
