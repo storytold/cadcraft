@@ -27,7 +27,7 @@ permissions:
 jobs:
   freebsd:
     # Diagnostic-only pin to validate the shared FreeBSD sysroot change.
-    uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@25a1990
+    uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@25a199081a84a25cb43f860659a93cfad84686a1
     with:
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       architectures: '["aarch64"]'
