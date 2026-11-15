@@ -88,11 +88,10 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     if !ok(s) {
         return;
     }
-    // Model space scaled onto the sheet and turned by the viewport's view twist.
+    // Model space scaled onto the sheet and projected by the viewport's camera / view twist.
     let xf = vp.model_to_paper_matrix();
-    // The model box the area covers (turned, with a twist), with slack: entity bounds are
-    // approximate (text, dimensions).
-    let mbox = Bounds2::from_points(area.corners().map(|p| vp.paper_to_model(p)));
+    // Conservative XY model bounds visible in `area`, capped for edge-on 3D views.
+    let mbox = vp.model_cull_bounds(area);
     let win = mbox.expand(mbox.width().max(mbox.height()) * 0.05);
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.

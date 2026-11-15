@@ -1,4 +1,4 @@
-use cadcraft_geom::Mat3;
+use cadcraft_geom::{Bounds2, Camera3D, Mat3};
 
 use super::common::Handle;
 use super::{Color, Deserialize, Serialize, Vec2, Vec3, standard, yes};
@@ -29,36 +29,201 @@ pub struct Viewport {
     pub on: bool,
     /// The view twist (DVIEW TWist inside the viewport; DXF group 51): radians counterclockwise,
     /// the model view seen through the viewport is turned on the sheet by it. 0 is untwisted.
-    #[serde(default, skip_serializing_if = "is_zero_twist")]
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub twist: f64,
+    /// 3D camera frame for model space inside this viewport (`Camera3D::TOP` for 2D plan views).
+    #[serde(default, skip_serializing_if = "is_top_camera")]
+    pub camera: Camera3D,
+    /// Elevation `Z` of the 3D camera target (`0.0` for planar 2D views).
+    #[serde(default, skip_serializing_if = "is_zero_f64")]
+    pub target_z: f64,
+    /// Per-viewport grid display flag (AutoCAD `AcDbViewport::isGridOn`, DXF group 90 bit 512).
+    /// Newly created layout viewports default to `false` (off).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub grid: bool,
+    /// Keep an independent UCS per viewport (`UCSVP`; DXF group 71). AutoCAD defaults to `true`.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub ucs_per_viewport: bool,
+    /// Shade plot mode (`AcDbViewport::shadePlot`; DXF group 170): `0` As Displayed,
+    /// `1` Legacy wireframe, `2` Legacy hidden, `3` Rendered.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub shade_plot: u8,
+    /// Render mode / visual style (DXF group 281): `0` 2D Wireframe, `1` 3D Wireframe,
+    /// `2` Hidden, `3` Flat Shaded, `4` Gouraud Shaded, `5` Flat Shaded with Edges,
+    /// `6` Gouraud Shaded with Edges.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub render_mode: u8,
 }
-fn is_zero_twist(v: &f64) -> bool {
+fn is_zero_f64(v: &f64) -> bool {
     *v == 0.0
 }
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+fn is_true(v: &bool) -> bool {
+    *v
+}
+fn is_top_camera(c: &Camera3D) -> bool {
+    *c == Camera3D::TOP
+}
 impl Viewport {
+    /// Display labels for `shade_plot` (`0..=3`) matching AutoCAD's Properties palette.
+    pub const SHADE_PLOT_NAMES: [&'static str; 4] = ["As Displayed", "Legacy wireframe", "Legacy hidden", "Rendered"];
+
+    /// Display label for this viewport's `shade_plot` mode (`0..=3`).
+    pub fn shade_plot_name(&self) -> &'static str {
+        Self::SHADE_PLOT_NAMES.get(usize::from(self.shade_plot)).copied().unwrap_or(Self::SHADE_PLOT_NAMES[0])
+    }
+
+    /// Parse a shade plot mode from a numeric code (`0..=3`) or label.
+    pub fn parse_shade_plot(s: &str) -> Option<u8> {
+        let trimmed = s.trim();
+        if let Ok(n) = trimmed.parse::<u8>()
+            && n <= 3
+        {
+            return Some(n);
+        }
+        Self::SHADE_PLOT_NAMES
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(trimmed))
+            .map(|i| i as u8)
+    }
+
+    /// Display label for this viewport's `render_mode` (DXF group 281).
+    pub fn render_mode_name(&self) -> &'static str {
+        match self.render_mode {
+            0 => "2D Wireframe",
+            1 => "3D Wireframe",
+            2 => "Hidden",
+            3 => "Flat Shaded",
+            4 => "Gouraud Shaded",
+            5 => "Flat Shaded with Edges",
+            6 => "Gouraud Shaded with Edges",
+            _ => "2D Wireframe",
+        }
+    }
+
+    /// Whether this viewport has per-viewport frozen layers or layer color overrides.
+    pub fn has_layer_overrides(&self) -> bool {
+        !self.frozen_layers.is_empty() || !self.layer_colors.is_empty()
+    }
     /// The view twist, usable: 0 when it isn't finite.
     pub fn view_twist(&self) -> f64 {
         if self.twist.is_finite() { self.twist } else { 0.0 }
+    }
+    /// The camera target elevation Z, usable: 0 when it isn't finite.
+    pub fn view_target_z(&self) -> f64 {
+        if self.target_z.is_finite() { self.target_z } else { 0.0 }
+    }
+    /// Full 3D camera target in model world coordinates.
+    pub fn target(&self) -> Vec3 {
+        Vec3::new(self.view_center.x, self.view_center.y, self.view_target_z())
+    }
+    /// Effective 3D camera orientation including any planar `twist`.
+    pub fn effective_camera(&self) -> Camera3D {
+        self.camera.with_twist(self.view_twist())
     }
     /// Paper units per model unit.
     pub fn scale(&self) -> f64 {
         self.height / self.view_height
     }
-    /// Where model point `m` is on the sheet: `center + scale · R(twist)(m − view_center)`.
+    /// Change this viewport's paper rectangle `(center_xy, width, height)` while keeping the
+    /// displayed model geometry pinned at the same paper position and scale (`height / view_height`),
+    /// regardless of whether the viewport is display-locked.
+    pub fn resize_border_keeping_camera(&mut self, center_xy: Vec2, width: f64, height: f64) -> bool {
+        if !(center_xy.is_finite()
+            && width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+            && self.height.is_finite()
+            && self.height > 0.0
+            && self.view_height.is_finite()
+            && self.view_height > 0.0)
+        {
+            return false;
+        }
+        let scale0 = self.scale();
+        if !(scale0.is_finite() && scale0 > 1e-12) {
+            return false;
+        }
+        let d_uv = (center_xy - self.center.xy()) / scale0;
+        let eff = self.effective_camera();
+        let new_target = self.target() + eff.x * d_uv.x + eff.y * d_uv.y;
+        let new_view_height = self.view_height * (height / self.height);
+        if !(new_target.is_finite() && new_view_height.is_finite() && new_view_height > 0.0) {
+            return false;
+        }
+        self.view_center = new_target.xy();
+        self.target_z = new_target.z;
+        self.view_height = new_view_height;
+        self.center.x = center_xy.x;
+        self.center.y = center_xy.y;
+        self.width = width;
+        self.height = height;
+        true
+    }
+    /// Where 3D model point `m` projects onto the paper sheet through this viewport.
+    pub fn model_to_paper_3d(&self, m: Vec3) -> Vec2 {
+        let eff = self.effective_camera();
+        if eff.is_top_plan() && self.view_target_z() == 0.0 {
+            return self.center.xy() + (m.xy() - self.view_center).rotate(self.view_twist()) * self.scale();
+        }
+        self.center.xy() + eff.project_3d(m, self.target()) * self.scale()
+    }
+    /// Where model point `m` (on `Z = 0`) is on the sheet.
     pub fn model_to_paper(&self, m: Vec2) -> Vec2 {
-        self.center.xy() + (m - self.view_center).rotate(self.view_twist()) * self.scale()
+        self.model_to_paper_3d(m.to3(0.0))
     }
-    /// The model point at sheet point `p` (the inverse of [`Viewport::model_to_paper`]).
+    /// The model point at sheet point `p` (on `Z = 0`, falling back to image-plane unprojection
+    /// for edge-on views such as Front/Left).
     pub fn paper_to_model(&self, p: Vec2) -> Vec2 {
-        self.view_center + ((p - self.center.xy()) / self.scale()).rotate(-self.view_twist())
+        let eff = self.effective_camera();
+        let uv = (p - self.center.xy()) / self.scale();
+        if eff.is_top_plan() {
+            return self.view_center + uv.rotate(-self.view_twist());
+        }
+        let (ray_o, ray_d) = eff.ray_at_target(uv, self.target());
+        if !eff.is_edge_on_xy()
+            && let Some(hit) = cadcraft_geom::intersect_ray_plane(ray_o, ray_d, Vec3::ZERO, Vec3::Z)
+        {
+            return hit.xy();
+        }
+        eff.unproject_to_xy(uv, self.view_center)
     }
-    /// [`Viewport::model_to_paper`] as a matrix.
+    /// Conservative model-space XY bounds visible inside paper rectangle `area` (capped cleanly for
+    /// near-edge-on 3D views so viewport culling stays bounded).
+    pub fn model_cull_bounds(&self, paper_area: Bounds2) -> Bounds2 {
+        let eff = self.effective_camera();
+        if eff.is_top_plan() {
+            return Bounds2::from_points(paper_area.corners().map(|p| self.paper_to_model(p)));
+        }
+        let diag = paper_area.width().hypot(paper_area.height()) / self.scale().abs().max(1e-12);
+        let cap = diag * 3.0;
+        let capped = Bounds2::new(self.view_center - Vec2::new(cap, cap), self.view_center + Vec2::new(cap, cap));
+        if eff.z.z.abs() <= 0.15 {
+            return capped;
+        }
+        let b = Bounds2::from_points(paper_area.corners().map(|p| self.paper_to_model(p)));
+        let lo = Vec2::new(b.min.x.clamp(capped.min.x, capped.max.x), b.min.y.clamp(capped.min.y, capped.max.y));
+        let hi = Vec2::new(b.max.x.clamp(capped.min.x, capped.max.x), b.max.y.clamp(capped.min.y, capped.max.y));
+        Bounds2::new(lo.min(self.view_center), hi.max(self.view_center))
+    }
+    /// [`Viewport::model_to_paper`] as a 2D affine matrix (projecting `Z = 0` geometry onto paper).
     pub fn model_to_paper_matrix(&self) -> Mat3 {
         let s = self.scale();
-        Mat3::translate(self.center.xy())
-            .then_before(Mat3::scale(s, s))
-            .then_before(Mat3::rotate(self.view_twist()))
-            .then_before(Mat3::translate(-self.view_center))
+        let eff = self.effective_camera();
+        if eff.is_top_plan() && self.view_target_z() == 0.0 {
+            return Mat3::translate(self.center.xy())
+                .then_before(Mat3::scale(s, s))
+                .then_before(Mat3::rotate(self.view_twist()))
+                .then_before(Mat3::translate(-self.view_center));
+        }
+        let o = self.model_to_paper(Vec2::ZERO);
+        Mat3 { a: s * eff.x.x, b: s * eff.y.x, c: s * eff.x.y, d: s * eff.y.y, e: o.x, f: o.y }
     }
 }
 
@@ -77,6 +242,12 @@ impl Default for Viewport {
             clip: None,
             on: true,
             twist: 0.0,
+            camera: Camera3D::TOP,
+            target_z: 0.0,
+            grid: false,
+            ucs_per_viewport: true,
+            shade_plot: 0,
+            render_mode: 0,
         }
     }
 }
@@ -202,4 +373,84 @@ pub struct Table {
 
 fn default_text_h() -> f64 {
     0.18
+}
+
+#[cfg(test)]
+mod viewport_3d_tests {
+    use super::*;
+
+    #[test]
+    fn viewport_3d_projection_and_edge_on_cull_bounds() {
+        let cam = Camera3D::preset("se_isometric").expect("se_isometric");
+        let vp = Viewport {
+            center: Vec3::new(100.0, 80.0, 0.0),
+            width: 80.0,
+            height: 60.0,
+            view_center: Vec2::new(10.0, 20.0),
+            view_height: 30.0,
+            id: 2,
+            camera: cam,
+            target_z: 12.0,
+            ..Viewport::default()
+        };
+        let p = Vec2::new(18.0, 24.0);
+        let paper = vp.model_to_paper(p);
+        assert!(paper.near(vp.model_to_paper_matrix().apply(p), 1e-9));
+        let back = vp.paper_to_model(paper);
+        assert!(back.near(p, 1e-9), "3D roundtrip failed: {back:?} vs {p:?}");
+
+        let front = Viewport {
+            camera: Camera3D::preset("front").expect("front"),
+            target_z: 15.0,
+            ..vp
+        };
+        let area = Bounds2::new(Vec2::new(60.0, 50.0), Vec2::new(140.0, 110.0));
+        let cull = front.model_cull_bounds(area);
+        assert!(!cull.is_empty() && cull.min.is_finite() && cull.max.is_finite());
+        assert!(cull.contains(front.view_center));
+        assert!(cull.width() <= 350.0 && cull.height() <= 350.0, "cull blew up: {cull:?}");
+    }
+
+    #[test]
+    fn resize_border_keeping_camera_preserves_projection_and_scale() {
+        let top = Viewport {
+            center: Vec3::new(100.0, 80.0, 0.0),
+            width: 80.0,
+            height: 60.0,
+            view_center: Vec2::new(10.0, 20.0),
+            view_height: 30.0,
+            id: 2,
+            locked: true,
+            ..Viewport::default()
+        };
+        let twisted = Viewport { twist: 0.7, ..top.clone() };
+        let front = Viewport {
+            camera: Camera3D::preset("front").expect("front"),
+            target_z: 15.0,
+            ..top.clone()
+        };
+        let iso = Viewport {
+            camera: Camera3D::preset("se_isometric").expect("se_isometric"),
+            target_z: 12.0,
+            ..top.clone()
+        };
+        let probes = [Vec3::ZERO, Vec3::new(10.0, 20.0, 0.0), Vec3::new(-5.5, 42.0, 17.0)];
+        for orig in [top, twisted, front, iso] {
+            let mut resized = orig.clone();
+            assert!(resized.resize_border_keeping_camera(Vec2::new(125.0, 95.0), 130.0, 90.0));
+            assert!((resized.scale() - orig.scale()).abs() < 1e-12);
+            for pt in probes {
+                assert!(
+                    resized.model_to_paper_3d(pt).near(orig.model_to_paper_3d(pt), 1e-9),
+                    "point {pt:?} shifted on paper for {:?}: {:?} vs {:?}",
+                    orig.camera.view_name(),
+                    resized.model_to_paper_3d(pt),
+                    orig.model_to_paper_3d(pt),
+                );
+            }
+        }
+        let mut degenerate = Viewport::default();
+        assert!(!degenerate.resize_border_keeping_camera(Vec2::ZERO, 0.0, 10.0));
+        assert!(!degenerate.resize_border_keeping_camera(Vec2::ZERO, 10.0, -5.0));
+    }
 }

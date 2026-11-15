@@ -73,12 +73,50 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
             }
             dm.block = None;
         }
+        EntityKind::Viewport(v) => stretch_viewport(v, &inside, d),
         k => {
             let g = k.grips();
             if g.first().is_some_and(|p| inside(*p)) {
                 k.transform(&Mat3::translate(d));
             }
         }
+    }
+}
+
+/// Stretch a layout viewport by its 4 corners `[BL, BR, TR, TL]`:
+/// - All 4 inside: move frame and content rigidly together.
+/// - Edge pair (2 adjacent) or 1/3 corners inside (when unclipped): resize edges and compensate the
+///   model camera so displayed geometry stays pinned at the same paper position and scale.
+fn stretch_viewport(v: &mut cadcraft_doc::Viewport, inside: &dyn Fn(Vec2) -> bool, d: Vec2) {
+    let half = Vec2::new(v.width / 2.0, v.height / 2.0);
+    let min = v.center.xy() - half;
+    let max = v.center.xy() + half;
+    let corners = cadcraft_geom::Bounds2::new(min, max).corners();
+    let m = corners.map(inside);
+    let count = m.iter().filter(|b| **b).count();
+    if count == 0 {
+        return;
+    }
+    if count == 4 {
+        v.center.x += d.x;
+        v.center.y += d.y;
+        return;
+    }
+    if v.clip.is_some() {
+        return;
+    }
+    let left_moved = (m[0] && m[3]) || (count == 1 && (m[0] || m[3]));
+    let right_moved = (m[1] && m[2]) || (count == 1 && (m[1] || m[2]));
+    let bottom_moved = (m[0] && m[1]) || (count == 1 && (m[0] || m[1]));
+    let top_moved = (m[2] && m[3]) || (count == 1 && (m[2] || m[3]));
+    let left = min.x + if left_moved { d.x } else { 0.0 };
+    let right = max.x + if right_moved { d.x } else { 0.0 };
+    let bottom = min.y + if bottom_moved { d.y } else { 0.0 };
+    let top = max.y + if top_moved { d.y } else { 0.0 };
+    let new_w = (right - left).abs();
+    let new_h = (top - bottom).abs();
+    if new_w > 1e-6 && new_h > 1e-6 {
+        v.resize_border_keeping_camera(Vec2::new(0.5 * (left + right), 0.5 * (bottom + top)), new_w, new_h);
     }
 }
 
@@ -113,6 +151,7 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     for h in &hs {
         doc.modify_entity(*h, |e| stretch_entity(e, &areas, d))?;
     }
+    crate::cmd::layout::viewports::sync_clipped_viewports(doc, &hs)?;
     Ok(json!({ "stretched": hs.len() }))
 }
 
@@ -300,6 +339,7 @@ impl StretchM {
                 doc.modify_entity(*h, |e| stretch_entity(e, &self.windows, d))?;
             }
         }
+        crate::cmd::layout::viewports::sync_clipped_viewports(doc, &self.objs)?;
         s.set_selection(Vec::new());
         Ok(Step::Done)
     }

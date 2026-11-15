@@ -46,6 +46,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
+    let mut grid_on = settings.gridmode;
+    let mut grid_changed = None;
     egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::unique("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
         let s = &mut app.session.settings;
         ui.heading(crate::tl!("Snap and Grid"));
@@ -73,13 +75,16 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.add(egui::DragValue::new(&mut s.polardist).speed(0.05).range(0.0..=1e6)).labelled_by(label.id);
             });
         });
-        ui.checkbox(&mut s.gridmode, crate::tl!("Grid On (F7)"));
+        if ui.checkbox(&mut grid_on, crate::tl!("Grid On (F7)")).changed() {
+            grid_changed = Some(grid_on);
+        }
         ui.horizontal(|ui| {
             let grid_label = ui.label(crate::tl!("Grid spacing"));
             ui.add(egui::DragValue::new(&mut gridunit.x).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false)).labelled_by(grid_label.id);
             let major_label = ui.label(crate::tl!("Major line every"));
             ui.add(egui::DragValue::new(&mut s.gridmajor).range(1..=100)).labelled_by(major_label.id);
         });
+        ui.checkbox(&mut s.ortho_plane_grid, crate::tl!("Orthogonal view plane grid (GRIDORTHO)"));
         ui.separator();
         ui.heading(crate::tl!("Polar Tracking"));
         ui.checkbox(&mut s.polarmode, crate::tl!("Polar Tracking On (F10)"));
@@ -146,6 +151,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
     });
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
+    if let Some(on) = grid_changed {
+        app.session.set_effective_gridmode(on);
+    }
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
         if before != after {
             let _ = app.run("setvar", json!({ "name": name, "value": [after.x, after.y] }));

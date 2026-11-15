@@ -16,7 +16,7 @@ pub(super) fn tile_rects(app: &CadApp, full: Rect) -> Vec<(Rect, cadcraft_engine
 
 /// The world ↔ screen transform of a model tile drawn in `r`.
 pub(super) fn tile_xf(r: Rect, tile: &cadcraft_engine::ModelTile) -> Xf {
-    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12), twist: tile.view.twist, cam: Camera3D::TOP }
+    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12), twist: tile.view.twist, target_z: tile.view.target_z, cam: Camera3D::TOP }
 }
 
 /// The tiles other than the current one (each with its own view, clipped to it), then the
@@ -50,32 +50,40 @@ pub(super) fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
     ));
 }
 
-/// Draw the 3-axis X/Y/Z CADCross / UCS icon, rotating with `cam` (ported from MATCAD `synchronize_cadcross.m`).
-pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect, cam: &Camera3D) {
+/// Draw the 3-axis X/Y/Z CADCross / UCS icon, rotating with `cam` (ported from MATCAD `synchronize_cadcross.m`),
+/// anchored and clipped inside the active viewport (`vp_clip`) and scaled for `vp_full`.
+pub(super) fn draw_ucs_icon(p: &egui::Painter, vp_full: Rect, vp_clip: Rect, cam: &Camera3D) {
     let t = Tokens::get();
-    let o = pos2(rect.left() + 36.0, rect.bottom() - 34.0);
-    let f = egui::FontId::proportional(13.0);
+    let s = crate::viewcube::ucs_arm_scale(vp_full);
+    let p = p.with_clip_rect(vp_clip);
+    let o = pos2(vp_clip.left() + 36.0 * s, vp_clip.bottom() - 34.0 * s);
+    let f = egui::FontId::proportional((13.0 * s).clamp(8.5, 13.0));
+    let box_sz = 9.0 * s;
     if cam.is_top_plan() {
         let st = Stroke::new(1.0, t.canvas_ink);
-        p.line_segment([o, o + vec2(60.0, 0.0)], st);
-        p.line_segment([o, o + vec2(0.0, -60.0)], st);
-        p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
-        p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
-        p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+        let arm = 60.0 * s;
+        let lbl = 70.0 * s;
+        p.line_segment([o, o + vec2(arm, 0.0)], st);
+        p.line_segment([o, o + vec2(0.0, -arm)], st);
+        p.rect_stroke(Rect::from_center_size(o, vec2(box_sz, box_sz)), 0.0, st, egui::StrokeKind::Middle);
+        p.text(o + vec2(lbl, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
+        p.text(o + vec2(0.0, -lbl), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
         return;
     }
     // 3D CADCross: X (red), Y (green), Z (blue) projected by the 3D camera.
+    let arm_3d = 56.0 * s;
+    let lbl_3d = 68.0 * s;
     for (label, axis, col) in super::axis_colors() {
         let uv = cam.project_point(axis, Vec2::ZERO);
         let dir = vec2(uv.x as f32, -(uv.y as f32));
         if dir.length() < 0.08 {
             continue;
         }
-        let end = o + dir * 56.0;
-        p.line_segment([o, end], Stroke::new(1.8, col));
-        p.text(o + dir * 68.0, egui::Align2::CENTER_CENTER, label, f.clone(), col);
+        let end = o + dir * arm_3d;
+        p.line_segment([o, end], Stroke::new((1.8 * s).clamp(1.1, 1.8), col));
+        p.text(o + dir * lbl_3d, egui::Align2::CENTER_CENTER, label, f.clone(), col);
     }
-    p.rect_stroke(Rect::from_center_size(o, vec2(8.0, 8.0)), 0.0, Stroke::new(1.0, t.canvas_ink), egui::StrokeKind::Middle);
+    p.rect_stroke(Rect::from_center_size(o, vec2(8.0 * s, 8.0 * s)), 0.0, Stroke::new(1.0, t.canvas_ink), egui::StrokeKind::Middle);
 }
 
 /// Format the top-left viewport label, switching between `2D Wireframe` in plan view and
@@ -95,31 +103,38 @@ pub(super) fn viewport_label_text(cam: &Camera3D, orbit_active: bool) -> String 
 }
 
 /// Paint the top-left viewport label showing the active view name (`Top`, `SW Isometric`, etc.)
-/// and visual style (`2D Wireframe` vs. `Wireframe`).
+/// and visual style (`2D Wireframe` vs. `Wireframe`), clipped inside `rect`.
 pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, cam: &Camera3D, orbit_active: bool) {
     let t = Tokens::get();
-    let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
+    let p = p.with_clip_rect(rect);
+    let min_dim = rect.width().min(rect.height());
+    let pad_x = (min_dim * 0.06).clamp(4.0, 10.0);
+    let pad_y = (min_dim * 0.05).clamp(3.0, 8.0);
+    let at = pos2(rect.left() + pad_x, rect.top() + pad_y);
     p.text(at, egui::Align2::LEFT_TOP, viewport_label_text(cam, orbit_active), crate::theme::small(), t.canvas_ink);
 }
 
-/// Paint the interactive 3D ViewCube widget and the WCS coordinate-system pill beneath it.
-pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
-    let l = crate::viewcube::Layout::new(rect);
-    let (c, ring) = (l.center, l.ring);
-    let p = ui.painter_at(rect);
+/// Paint the interactive 3D ViewCube widget and the WCS coordinate-system pill beneath it,
+/// scaled to `vp_full` and clipped inside `vp_clip`.
+pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, vp_full: Rect, vp_clip: Rect) {
+    let l = crate::viewcube::Layout::for_viewport(vp_full, vp_clip);
     crate::viewcube::show(app, ui, &l);
+    let p = ui.painter_at(l.clip);
     // WCS pill: the label and a down chevron, drawn as lines rather than a "⌄" glyph that a UI
     // font may lack (it showed as a box, #1541).
-    let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
-    p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
+    let ps = l.scale.clamp(0.55, 1.0);
+    let pill = l.pill;
+    p.rect_filled(pill, 8.0 * ps, Color32::from_rgb(0x48, 0x50, 0x5c));
     let ink = Tokens::DARK.canvas_ink;
-    let label = p.layout_no_wrap(crate::tl!("WCS").to_string(), crate::theme::small(), ink);
-    let (gap, chevron) = (4.0, 6.0);
+    let mut font = crate::theme::small();
+    font.size = (font.size * ps).clamp(7.0, font.size);
+    let label = p.layout_no_wrap(crate::tl!("WCS").to_string(), font, ink);
+    let (gap, chevron) = (4.0 * ps, 6.0 * ps);
     let left = pill.center().x - (label.size().x + gap + chevron) / 2.0;
     let mid = pill.center().y;
     p.galley(pos2(left, mid - label.size().y / 2.0), label.clone(), ink);
     let x = left + label.size().x + gap;
-    p.line(vec![pos2(x, mid - 1.5), pos2(x + chevron / 2.0, mid + 1.5), pos2(x + chevron, mid - 1.5)], Stroke::new(1.2, ink));
+    p.line(vec![pos2(x, mid - 1.5 * ps), pos2(x + chevron / 2.0, mid + 1.5 * ps), pos2(x + chevron, mid - 1.5 * ps)], Stroke::new((1.2 * ps).clamp(0.8, 1.2), ink));
 }
 
 #[cfg(test)]

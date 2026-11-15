@@ -95,7 +95,7 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
             (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
         }
     };
-    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist };
+    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist, grid: true };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     // The first `*ACTIVE` record is the one a reader takes the view from, so it carries the saved
     // view while keeping its own place on the screen and the tiles after it unchanged. Writing
@@ -138,6 +138,7 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
         w.f(51, twist.to_degrees());
+        w.i(76, i64::from(t.grid));
     }
     w.s(0, "ENDTAB");
 }

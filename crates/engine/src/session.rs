@@ -15,3 +15,4 @@ mod picking;
 mod zoom;
 
 pub(crate) use picking::group_10;
+pub(crate) use zoom::{fit_bounds_3d, selection_bounds_3d, space_z_range};

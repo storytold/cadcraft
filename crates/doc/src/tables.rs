@@ -890,7 +890,7 @@ pub struct NamedView {
 
 /// One tiled model space viewport of a [`VportConfig`] (a VPORT table record): its corners as
 /// fractions of the drawing area (0,0 lower left to 1,1 upper right) and its view.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VportTile {
     pub min: Vec2,
@@ -903,6 +903,19 @@ pub struct VportTile {
     /// The tile's view twist (radians, counterclockwise; DXF VPORT group 51 in degrees).
     #[serde(default)]
     pub twist: f64,
+    /// Per-tile grid visibility (DXF VPORT group 76: 0 = off, 1 = on).
+    #[serde(default = "default_true")]
+    pub grid: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for VportTile {
+    fn default() -> Self {
+        VportTile { min: Vec2::ZERO, max: Vec2::ZERO, center: Vec2::ZERO, height: 0.0, aspect: 0.0, twist: 0.0, grid: true }
+    }
 }
 
 /// A model space viewport configuration (VPORTS): `*Active` is the one shown, other names are

@@ -136,7 +136,58 @@ mod native {
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
-        Ok((add_header_vars(out.buf, &doc.header), notes))
+        let dxf = viewport_ucs_off(&doc, add_header_vars(out.buf, &doc.header));
+        Ok((dxf, notes))
+    }
+
+    /// `acadrust::DxfWriter` omits DXF group `71` on `VIEWPORT` entities when `ucs_per_viewport`
+    /// is `false`, which makes readers fall back to AutoCAD's default (`1`). Emit `71 = 0` so
+    /// per-viewport UCS off survives DWG→DXF.
+    fn viewport_ucs_off(doc: &acadrust::CadDocument, dxf: Vec<u8>) -> Vec<u8> {
+        let handles: std::collections::HashSet<u64> = doc
+            .entities()
+            .filter_map(|e| match e {
+                acadrust::EntityType::Viewport(v) if !v.ucs_per_viewport => Some(v.common.handle.value()),
+                _ => None,
+            })
+            .collect();
+        if handles.is_empty() {
+            return dxf;
+        }
+        let mut out = Vec::with_capacity(dxf.len() + handles.len() * 16);
+        let mut lines = dxf.split_inclusive(|b| *b == b'\n');
+        let (mut in_vp, mut target, mut has_71, mut injected) = (false, false, false, false);
+        while let Some(code) = lines.next() {
+            let value = lines.next().unwrap_or_default();
+            let c = code.trim_ascii();
+            let v = value.trim_ascii();
+            match c {
+                b"0" => {
+                    if in_vp && target && !has_71 && !injected {
+                        out.extend_from_slice(b" 71\r\n     0\r\n");
+                    }
+                    in_vp = v == b"VIEWPORT";
+                    target = false;
+                    has_71 = false;
+                    injected = false;
+                }
+                b"5" if in_vp => {
+                    target = std::str::from_utf8(v).ok().and_then(|s| u64::from_str_radix(s, 16).ok()).is_some_and(|h| handles.contains(&h));
+                }
+                b"71" if in_vp => has_71 = true,
+                b"1001" if in_vp && target && !has_71 && !injected => {
+                    out.extend_from_slice(b" 71\r\n     0\r\n");
+                    injected = true;
+                }
+                _ => {}
+            }
+            out.extend_from_slice(code);
+            out.extend_from_slice(value);
+        }
+        if in_vp && target && !has_71 && !injected {
+            out.extend_from_slice(b" 71\r\n     0\r\n");
+        }
+        out
     }
 
     /// acadrust 0.6.6's ASCII writer treats a caret followed by a literal space as already

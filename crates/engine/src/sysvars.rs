@@ -21,6 +21,7 @@ const SESSION_VARS: &[&str] = &[
     "AUTOSNAP",
     "QNEWTEMPLATE",
     "GRIDMODE",
+    "GRIDORTHO",
     "SNAPMODE",
     "SNAPSTYL",
     "SNAPISOPAIR",
@@ -65,6 +66,7 @@ const SESSION_VARS: &[&str] = &[
     "CURSORSIZE",
     "MAXARRAY",
     "ZOOMFACTOR",
+    "ORBITAUTOTARGET",
     "MEASUREINIT",
     "LASTPOINT",
     "AREA",
@@ -95,7 +97,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Marker, tooltip and tracking tooltip always on (1 + 4 + 32); polar 8, tracking 16.
         "AUTOSNAP" => json!(37 + 8 * u32::from(st.polarmode) + 16 * u32::from(st.otrack)),
         "POLARANG" => json!(st.polarang.to_degrees()),
-        "GRIDMODE" => json!(i32::from(st.gridmode)),
+        "GRIDMODE" => json!(i32::from(s.effective_gridmode())),
+        "GRIDORTHO" => json!(i32::from(st.ortho_plane_grid)),
         "SNAPMODE" => json!(i32::from(st.snapmode)),
         "SNAPSTYL" => json!(i32::from(st.isodraft)),
         "SNAPISOPAIR" => json!(st.isoplane.index()),
@@ -146,6 +149,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CURSORSIZE" => json!(st.cursorsize),
         "MAXARRAY" => json!(st.maxarray),
         "ZOOMFACTOR" => json!(st.zoomfactor),
+        "ORBITAUTOTARGET" => json!(i32::from(st.orbitautotarget)),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
         "AREA" => json!(s.area),
@@ -181,7 +185,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "UNDOMARKS" => json!(s.state().ok()?.undo_marks()),
         "VIEWCTR" => {
             let v = s.state().ok()?.view();
-            json!([v.center.x, v.center.y, 0.0])
+            json!([v.center.x, v.center.y, v.target_z])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
         // The view twist (DVIEW TWist), in degrees counterclockwise.
@@ -319,7 +323,11 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
-        "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,
+        "GRIDMODE" => {
+            let on = as_bool(v).ok_or_else(bad)?;
+            s.set_effective_gridmode(on);
+        }
+        "GRIDORTHO" => st.ortho_plane_grid = as_bool(v).ok_or_else(bad)?,
         "SNAPMODE" => st.snapmode = as_bool(v).ok_or_else(bad)?,
         "SNAPSTYL" => st.isodraft = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "SNAPISOPAIR" => st.isoplane = as_i(v).and_then(crate::snap::iso::IsoPlane::from_index).ok_or_else(bad)?,
@@ -376,6 +384,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "CURSORSIZE" => st.cursorsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0),
         "MAXARRAY" => st.maxarray = as_f64(v).ok_or_else(bad)?.clamp(100.0, 10_000_000.0) as u64,
         "ZOOMFACTOR" => st.zoomfactor = as_i(v).filter(|z| (3..=100).contains(z)).ok_or_else(bad)? as u32,
+        "ORBITAUTOTARGET" => st.orbitautotarget = as_bool(v).ok_or_else(bad)?,
         "MEASUREINIT" => st.measureinit = small(v, 1).ok_or_else(bad)? == 1,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),

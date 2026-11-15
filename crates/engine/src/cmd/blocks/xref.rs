@@ -65,7 +65,7 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
         // Fit in the frame of the saved twist, which open_drawing has restored.
         let twist = st.view().twist;
         let (center, w, h) = crate::View::twisted_box(ext, twist);
-        st.set_view_quiet(crate::View { center, height: (h.max(w * px.1 / px.0.max(1.0)) * 1.1).max(1e-6), twist });
+        st.set_view_quiet(crate::View::plan(center, (h.max(w * px.1 / px.0.max(1.0)) * 1.1).max(1e-6), twist));
     }
     echo_all(s, &out);
 }

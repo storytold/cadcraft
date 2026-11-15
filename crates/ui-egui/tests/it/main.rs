@@ -25,6 +25,7 @@ mod native_windows;
 mod options_dialog;
 mod options_right_click;
 mod parameters_rename;
+mod per_viewport_grid;
 mod pickdrag;
 mod properties_units;
 mod rapid_clicks;

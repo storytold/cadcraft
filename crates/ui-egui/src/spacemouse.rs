@@ -1,7 +1,6 @@
 //! Host-independent 3D mouse preferences and navigation. Device I/O lives in the desktop app.
 
 use cadcraft_engine::View;
-use cadcraft_geom::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -123,12 +122,14 @@ fn navigate(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     let aspect = width / height.max(1.0);
     let state = app.session.state_mut().map_err(|e| e.to_string())?;
     let view = state.view();
-    let center = view.center - Vec2::new(x * view.height * aspect, y * view.height);
+    let cam = state.zoom_camera();
+    let panned = view.pan_in_camera_plane(cam, -x * view.height * aspect, -y * view.height);
+    let center = panned.center;
     let height = (view.height / zoom).clamp(1e-9, 1e12);
-    if !center.is_finite() || !height.is_finite() {
+    if !center.is_finite() || !panned.target_z.is_finite() || !height.is_finite() {
         return Err("3D mouse navigation would produce an invalid view".into());
     }
-    state.set_view_quiet(View { center, height, twist: view.twist });
+    state.set_view_quiet(View { height, ..panned });
     Ok(json!({"center": [center.x, center.y], "height": height}))
 }
 

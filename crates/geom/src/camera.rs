@@ -24,6 +24,31 @@ pub fn intersect_ray_plane(ray_o: Vec3, ray_d: Vec3, plane_pt: Vec3, plane_n: Ve
     t.is_finite().then(|| ray_o + ray_d * t)
 }
 
+/// Intersect an infinite line/ray `ray_o + t * ray_d` with triangle `(v0, v1, v2)` (Möller–Trumbore),
+/// returning `(hit_pt, signed_t)` where smaller `t` is closer along `ray_d`.
+pub fn intersect_ray_triangle(ray_o: Vec3, ray_d: Vec3, v0: Vec3, v1: Vec3, v2: Vec3) -> Option<(Vec3, f64)> {
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+    let pvec = ray_d.cross(e2);
+    let det = e1.dot(pvec);
+    if !det.is_finite() || det.abs() < 1e-12 {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    let tvec = ray_o - v0;
+    let u = tvec.dot(pvec) * inv_det;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let qvec = tvec.cross(e1);
+    let v = ray_d.dot(qvec) * inv_det;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let t = e2.dot(qvec) * inv_det;
+    t.is_finite().then(|| (ray_o + ray_d * t, t))
+}
+
 /// Orthonormal 3D camera frame (`x` right, `y` up, `z` forward from camera toward target).
 ///
 /// In the default Top plan view, `x = (1, 0, 0)`, `y = (0, 1, 0)`, `z = (0, 0, -1)`.
@@ -352,10 +377,15 @@ impl Camera3D {
         if n == Vec2::ZERO { Vec2::Y } else { n }
     }
 
+    /// Project a 3D world point `p` relative to `target` onto the camera's `(u, v)` plane.
+    pub fn project_3d(&self, p: Vec3, target: Vec3) -> Vec2 {
+        let d = p - target;
+        Vec2::new(d.dot(self.x), d.dot(self.y))
+    }
+
     /// Project a 3D world point `p` relative to `(center.x, center.y, 0)` onto the camera's `(u, v)` plane.
     pub fn project_point(&self, p: Vec3, center: Vec2) -> Vec2 {
-        let d = Vec3::new(p.x - center.x, p.y - center.y, p.z);
-        Vec2::new(d.dot(self.x), d.dot(self.y))
+        self.project_3d(p, center.to3(0.0))
     }
 
     /// Project a 2D point `(p.x, p.y, 0)` onto the camera's `(u, v)` plane.
@@ -365,15 +395,63 @@ impl Camera3D {
         Vec2::new(dx * self.x.x + dy * self.x.y, dx * self.y.x + dy * self.y.y)
     }
 
+    /// Orthographic view ray `(origin, unit_dir)` at camera-plane offset `uv` relative to `target`.
+    pub fn ray_at_target(&self, uv: Vec2, target: Vec3) -> (Vec3, Vec3) {
+        (target + self.x * uv.x + self.y * uv.y, self.z)
+    }
+
+    /// Find the closest 3D point on segment `[a, b]` to orthographic ray `(uv, target)`,
+    /// returning `(hit_pt, screen_plane_dist, depth_along_z)`.
+    pub fn closest_segment_hit(&self, uv: Vec2, target: Vec3, a: Vec3, b: Vec3) -> (Vec3, f64, f64) {
+        let ua = self.project_3d(a, target);
+        let ub = self.project_3d(b, target);
+        let ab = ub - ua;
+        let len2 = ab.len2();
+        let s = if len2 > 1e-18 { ((uv - ua).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let hit_pt = a + (b - a) * s;
+        let perp_dist = (ua + ab * s).dist(uv);
+        let depth = (hit_pt - target).dot(self.z);
+        (hit_pt, perp_dist, depth)
+    }
+
+    /// Intersect a view ray at camera-plane offset `uv` (relative to `plane_pt`) with an
+    /// arbitrary plane `(plane_pt, plane_n)`.
+    pub fn try_unproject_to_plane(&self, uv: Vec2, plane_pt: Vec3, plane_n: Vec3) -> Option<Vec3> {
+        let ray_o = plane_pt + self.x * uv.x + self.y * uv.y - self.z * 100.0;
+        intersect_ray_plane(ray_o, self.z, plane_pt, plane_n)
+    }
+
     /// Intersect a camera ray through camera-plane offset `uv` with the world XY plane (`Z = 0`),
     /// returning `None` in edge-on views (`|z.z| <= 1e-2`) where rays are parallel to the XY plane.
     pub fn try_unproject_to_xy(&self, uv: Vec2, center: Vec2) -> Option<Vec2> {
         if self.is_edge_on_xy() {
             return None;
         }
-        let target = Vec3::new(center.x, center.y, 0.0);
-        let ray_o = target + self.x * uv.x + self.y * uv.y - self.z * 100.0;
-        intersect_ray_plane(ray_o, self.z, target, Vec3::Z).map(Vec3::xy)
+        self.try_unproject_to_plane(uv, center.to3(0.0), Vec3::Z).map(Vec3::xy)
+    }
+
+    /// Orbit around an arbitrary 3D `pivot` while rigidly carrying `target0` along with the camera
+    /// frame (MATCAD `rotating3D.m` / Rhino `ON_Xform::Rotation`), keeping `pivot` fixed on screen
+    /// (`cam1.project_3d(pivot, target1) == self.project_3d(pivot, target0)`) without edge-on
+    /// singularities.
+    pub fn orbit_about_target(
+        &self,
+        target0: Vec3,
+        pivot: Vec3,
+        daz_deg: f64,
+        del_deg: f64,
+        clamp: bool,
+    ) -> (Self, Vec3) {
+        let cam1 = self.orbit(daz_deg, del_deg, clamp);
+        if !pivot.is_finite() || !target0.is_finite() || pivot == target0 {
+            return (cam1, target0);
+        }
+        let d = target0 - pivot;
+        let u = d.dot(self.x);
+        let v = d.dot(self.y);
+        let w = d.dot(self.z);
+        let target1 = pivot + cam1.x * u + cam1.y * v + cam1.z * w;
+        if target1.is_finite() { (cam1, target1) } else { (cam1, target0) }
     }
 
     /// Intersect a camera ray through camera-plane offset `uv` with the world XY plane (`Z = 0`),
@@ -1136,6 +1214,35 @@ mod tests {
         // In-plane vertical motion in Front maps cleanly between screen v and world Z in project_point.
         let screen_uv = Vec2::new(14.0, -9.5);
         assert!(front.project_point(Vec3::new(center.x + screen_uv.x, center.y, screen_uv.y), center).near(screen_uv, 1e-12));
+    }
+
+    #[test]
+    fn orbit_about_target_keeps_3d_pivot_fixed_on_screen_including_edge_on() {
+        let cam0 = Camera3D::preset("se_isometric").unwrap_or_default();
+        let target0 = Vec3::new(10.0, 20.0, 3.5);
+        let pivot = Vec3::new(42.0, -15.0, 12.75);
+        let uv0 = cam0.project_3d(pivot, target0);
+        let depth0 = (pivot - target0).dot(cam0.z);
+
+        for (daz, del, clamp) in [(35.0, 22.0, false), (-110.0, -45.0, false), (45.0, -35.264389682754654, true)] {
+            let (cam1, target1) = cam0.orbit_about_target(target0, pivot, daz, del, clamp);
+            let uv1 = cam1.project_3d(pivot, target1);
+            let depth1 = (pivot - target1).dot(cam1.z);
+            assert!(uv1.near(uv0, 1e-9), "uv drifted for ({daz}, {del}, {clamp}): {uv1:?} != {uv0:?}");
+            assert!((depth1 - depth0).abs() < 1e-9, "depth drifted: {depth1} != {depth0}");
+        }
+    }
+
+    #[test]
+    fn intersect_ray_triangle_hits_and_misses_cleanly() {
+        let v0 = Vec3::new(0.0, 0.0, 5.0);
+        let v1 = Vec3::new(10.0, 0.0, 5.0);
+        let v2 = Vec3::new(0.0, 10.0, 5.0);
+        let hit = intersect_ray_triangle(Vec3::new(2.0, 3.0, 20.0), Vec3::new(0.0, 0.0, -1.0), v0, v1, v2);
+        let (pt, t) = hit.expect("ray should hit interior");
+        assert_vec3_near(pt, Vec3::new(2.0, 3.0, 5.0), 1e-12, "triangle hit");
+        assert!((t - 15.0).abs() < 1e-12);
+        assert!(intersect_ray_triangle(Vec3::new(8.0, 8.0, 20.0), Vec3::new(0.0, 0.0, -1.0), v0, v1, v2).is_none());
     }
 
     #[test]

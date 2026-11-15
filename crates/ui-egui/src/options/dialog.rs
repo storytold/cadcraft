@@ -109,6 +109,13 @@ fn animations_label(a: AnimationPref) -> &'static str {
     }
 }
 
+fn home_view_label(id: &str) -> String {
+    super::HOME_VIEW_PRESETS
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map_or_else(|| id.to_owned(), |(_, label)| crate::i18n::t(label).to_owned())
+}
+
 /// A colour button, its hex value and a Default button; a change goes into `changes` under `key`.
 /// `label` is the visible row label, so a screen reader names the colour well by it.
 fn color_row(ui: &mut egui::Ui, current: Option<Color32>, default: Color32, key: &str, changes: &mut Map<String, Value>, label: egui::Id) {
@@ -197,6 +204,22 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
                 changes.insert("CURSORSIZE".into(), json!(size));
             }
         });
+        ui.end_row();
+
+        let home_caption = ui.label(crate::tl!("ViewCube Home view"));
+        let current_home = app.ui.viewcube_home_preset.as_str();
+        let mut home = current_home.to_owned();
+        let home_combo = craft_ui::ComboBox::from_id_salt("options_viewcube_home")
+            .selected_text(home_view_label(&home))
+            .show_ui(ui, |ui| {
+                for (id, label) in super::HOME_VIEW_PRESETS {
+                    ui.selectable_value(&mut home, id.to_owned(), crate::i18n::t(label));
+                }
+            });
+        home_combo.response.labelled_by(home_caption.id);
+        if home != current_home {
+            changes.insert("viewcubeHomePreset".into(), json!(home));
+        }
         ui.end_row();
 
         let history_caption = ui.label(crate::tl!("Command line history"));

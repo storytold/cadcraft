@@ -208,6 +208,8 @@ fn copy_props(src: &Entity, dst: &mut Entity, m: &MatchProps) {
         }
         (EntityKind::Viewport(a), EntityKind::Viewport(b)) if m.viewport => {
             b.locked = a.locked;
+            b.ucs_per_viewport = a.ucs_per_viewport;
+            b.shade_plot = a.shade_plot;
             // The same scale: paper height per model height.
             let k = a.view_height / a.height;
             if a.height > 0.0 && k.is_finite() && k > 0.0 && b.height > 0.0 {

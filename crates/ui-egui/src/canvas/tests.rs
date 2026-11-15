@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0, cam: cadcraft_geom::Camera3D::TOP };
+    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0, target_z: 0.0, cam: cadcraft_geom::Camera3D::TOP };
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
@@ -253,7 +253,7 @@ fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
 fn edge_on_to_world_preserves_depth_axis() {
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
     let cam = cadcraft_geom::Camera3D::preset("front").unwrap();
-    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 2.0, twist: 0.0, cam };
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 2.0, twist: 0.0, target_z: 0.0, cam };
 
     assert!(xf.try_to_world(rect.center()).is_none());
     assert!(xf.to_world(rect.center()).near(xf.center, 1e-9));
@@ -271,7 +271,7 @@ fn shallow_3d_screen_delta_to_world_inverts_to_screen() {
     let z = cadcraft_geom::Vec3::new(0.0, 0.995, -0.1).normalized();
     let cam = cadcraft_geom::Camera3D::from_dir_up(z, cadcraft_geom::Vec3::Z);
     assert!(cam.z.z.abs() > 0.01 && cam.z.z.abs() <= 0.15);
-    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 1.5, twist: 0.0, cam };
+    let xf = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 1.5, twist: 0.0, target_z: 0.0, cam };
 
     let delta = vec2(24.0, -40.0);
     let world_offset = xf.screen_delta_to_world(delta);
@@ -280,7 +280,7 @@ fn shallow_3d_screen_delta_to_world_inverts_to_screen() {
 }
 
 #[test]
-fn paper_space_and_mspace_ignore_model_3d_camera_and_block_shift_mmb_orbit() {
+fn paper_space_and_locked_mspace_block_orbit_while_unlocked_mspace_orbits_own_camera() {
     let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
     app.run("line", serde_json::json!({ "points": [[0, 0], [100, 100]] })).unwrap();
     app.run("view.set", serde_json::json!({ "preset": "se_isometric" })).unwrap();
@@ -290,18 +290,7 @@ fn paper_space_and_mspace_ignore_model_3d_camera_and_block_shift_mmb_orbit() {
     app.run("layout.set", serde_json::json!({ "name": "Layout1" })).unwrap();
     assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper("Layout1".into()));
     let ctx = egui::Context::default();
-    let run_frame = |app: &mut CadApp, mut events: Vec<egui::Event>| {
-        let shift = egui::Modifiers { shift: true, ..Default::default() };
-        events.insert(
-            0,
-            egui::Event::Key {
-                key: egui::Key::F12,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: shift,
-            },
-        );
+    let run_frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         let raw = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
             focused: true,
@@ -316,33 +305,60 @@ fn paper_space_and_mspace_ignore_model_3d_camera_and_block_shift_mmb_orbit() {
         .clear();
     };
 
+    // Paper Space: stays TOP and blocks Shift+MMB orbit.
     run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0))]);
     assert_eq!(app.canvas.xf.unwrap().cam, cadcraft_geom::Camera3D::TOP);
+    assert!(begin_canvas_orbit(&app, pos2(700.0, 450.0), None).is_none());
 
-    // Create a viewport on Layout1, enter MSPACE and drag with Shift+MMB: paper/layout
-    // space must stay at Camera3D::TOP and never tilt Model's stored 3D camera.
-    app.run("mview", serde_json::json!({ "p1": [10.0, 10.0], "p2": [150.0, 120.0] })).unwrap();
+    // Unlocked MSPACE: Shift+MMB orbits ONLY the active viewport's own 3D camera; Model tab
+    // keeps `iso_cam` untouched.
+    let vp_res = app.run("mview", serde_json::json!({ "p1": [10.0, 10.0], "p2": [150.0, 120.0] })).unwrap();
+    let vp_handle = vp_res["viewports"][0].as_str().unwrap().to_string();
     app.run("mspace", serde_json::json!({})).unwrap();
+    let shift = egui::Modifiers::SHIFT;
+    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0)), egui::Event::ModifiersChanged(shift)]);
     let press = egui::Event::PointerButton {
         pos: pos2(700.0, 450.0),
         button: egui::PointerButton::Middle,
         pressed: true,
-        modifiers: egui::Modifiers { shift: true, ..Default::default() },
+        modifiers: shift,
     };
-    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0)), press]);
-    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(760.0, 410.0))]);
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(shift), egui::Event::PointerMoved(pos2(700.0, 450.0)), press]);
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(shift), egui::Event::PointerMoved(pos2(760.0, 410.0))]);
     let release = egui::Event::PointerButton {
         pos: pos2(760.0, 410.0),
         button: egui::PointerButton::Middle,
         pressed: false,
-        modifiers: egui::Modifiers { shift: true, ..Default::default() },
+        modifiers: shift,
     };
-    run_frame(&mut app, vec![release]);
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release]);
 
     let st = app.session.state().unwrap();
-    assert_eq!(model_camera(st), cadcraft_geom::Camera3D::TOP);
-    assert_eq!(app.canvas.xf.unwrap().cam, cadcraft_geom::Camera3D::TOP);
-    assert_eq!(st.camera, iso_cam);
+    let vp_cam_orbited = model_camera(st);
+    assert!(!vp_cam_orbited.is_top_plan(), "unlocked MSPACE viewport must orbit in 3D");
+    assert_eq!(app.canvas.xf.unwrap().cam, vp_cam_orbited);
+    assert_eq!(st.camera, iso_cam, "Model tab 3D camera must remain independent");
+
+    // Lock the viewport: further Shift+MMB orbit must be blocked cleanly.
+    app.run("viewport.set", serde_json::json!({ "handle": vp_handle, "locked": true })).unwrap();
+    assert!(begin_canvas_orbit(&app, pos2(700.0, 450.0), None).is_none());
+    run_frame(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0)), egui::Event::ModifiersChanged(shift)]);
+    let press2 = egui::Event::PointerButton {
+        pos: pos2(700.0, 450.0),
+        button: egui::PointerButton::Middle,
+        pressed: true,
+        modifiers: shift,
+    };
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(shift), egui::Event::PointerMoved(pos2(700.0, 450.0)), press2]);
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(shift), egui::Event::PointerMoved(pos2(790.0, 380.0))]);
+    let release2 = egui::Event::PointerButton {
+        pos: pos2(790.0, 380.0),
+        button: egui::PointerButton::Middle,
+        pressed: false,
+        modifiers: shift,
+    };
+    run_frame(&mut app, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), release2]);
+    assert_eq!(model_camera(app.session.state().unwrap()), vp_cam_orbited, "locked MSPACE viewport must keep its camera");
 }
 
 #[test]
@@ -492,4 +508,412 @@ fn interactive_3dorbit_drags_anywhere_to_orbit_in_model_space() {
         ],
     );
     assert!(!app.session.orbit_active());
+}
+
+#[test]
+fn orbit_drag_from_3d_entity_keeps_pivot_fixed_on_screen_and_respects_orbitautotarget() {
+    use cadcraft_geom::Vec3;
+
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let h = {
+        let d = app.session.doc_mut().unwrap();
+        let line = cadcraft_doc::Line { a: Vec3::new(100.0, 0.0, 15.0), b: Vec3::new(200.0, 0.0, 15.0) };
+        d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Line(line)).unwrap()
+    };
+    assert!(app.session.doc().unwrap().entity(h).is_some());
+    app.run("view.set", serde_json::json!({ "preset": "se_isometric" })).unwrap();
+    app.run("zoom.extents", serde_json::json!({})).unwrap();
+
+    let ctx = egui::Context::default();
+    let run_events = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    };
+    run_events(&mut app, vec![egui::Event::PointerMoved(pos2(700.0, 450.0))]);
+    let xf0 = app.canvas.xf.unwrap();
+    let pivot_world = Vec3::new(150.0, 0.0, 15.0);
+    let hit_pos = xf0.to_screen_3d(pivot_world);
+    assert!(app.canvas.rect.unwrap().contains(hit_pos), "hit_pos {hit_pos:?} must lie inside canvas rect");
+
+    app.session.cmdline("3dorbit").unwrap();
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(hit_pos),
+            egui::Event::PointerButton {
+                pos: hit_pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let dragged_pos = hit_pos + vec2(60.0, -35.0);
+    run_events(&mut app, vec![egui::Event::PointerMoved(dragged_pos)]);
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(dragged_pos),
+            egui::Event::PointerButton {
+                pos: dragged_pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+
+    let xf1 = app.canvas.xf.unwrap();
+    let screen_after = xf1.to_screen_3d(pivot_world);
+    assert!(
+        (screen_after - hit_pos).length() < 0.5,
+        "3D ray-hit pivot must remain pinned on screen: before={hit_pos:?}, after={screen_after:?}"
+    );
+    let v1 = app.session.state().unwrap().view();
+    assert!(v1.target_z.abs() > 1e-3, "orbiting around off-target Z=15 line must update target_z: {v1:?}");
+
+    // Turning ORBITAUTOTARGET off forces orbiting around the fixed view target instead of ray hits.
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(dragged_pos),
+            egui::Event::PointerButton {
+                pos: dragged_pos,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: dragged_pos,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert!(!app.session.orbit_active());
+
+    app.run("setvar", serde_json::json!({ "name": "ORBITAUTOTARGET", "value": 0 })).unwrap();
+    let st_before = app.session.state().unwrap();
+    let cam_before = st_before.camera;
+    let target_before = st_before.view().target();
+
+    app.session.cmdline("3dorbit").unwrap();
+    let start2 = xf1.to_screen_3d(pivot_world);
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(start2),
+            egui::Event::PointerButton {
+                pos: start2,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let end2 = start2 + vec2(50.0, -25.0);
+    run_events(&mut app, vec![egui::Event::PointerMoved(end2)]);
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(end2),
+            egui::Event::PointerButton {
+                pos: end2,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let st_after = app.session.state().unwrap();
+    let target_after = st_after.view().target();
+    assert!((st_after.camera.z - cam_before.z).len() > 0.05, "orbit drag with ORBITAUTOTARGET=0 must orbit camera");
+    assert!(
+        (target_after - target_before).len() < 1e-9,
+        "ORBITAUTOTARGET=0 keeps fixed view target: before={target_before:?}, after={target_after:?}"
+    );
+}
+
+#[test]
+fn viewcube_drag_rigidly_orbits_selected_3d_object_pivot() {
+    use cadcraft_geom::Vec3;
+
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let h_sel = {
+        let d = app.session.doc_mut().unwrap();
+        let a = cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(20.0, 0.0, 0.0) };
+        let b = cadcraft_doc::Line { a: Vec3::new(70.0, 40.0, 30.0), b: Vec3::new(90.0, 40.0, 30.0) };
+        let _ = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Line(a)).unwrap();
+        d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Line(b)).unwrap()
+    };
+    app.session.set_selection(vec![h_sel]);
+    app.run("view.set", serde_json::json!({ "preset": "se_isometric" })).unwrap();
+    app.run("zoom.extents", serde_json::json!({})).unwrap();
+
+    let ctx = egui::Context::default();
+    let run_events = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+    };
+    run_events(&mut app, Vec::new());
+
+    let rect = app.canvas.rect.unwrap();
+    let xf0 = app.canvas.xf.unwrap();
+    let pivot = Vec3::new(80.0, 40.0, 30.0);
+    let pivot_screen0 = xf0.to_screen_3d(pivot);
+    let cube_center = crate::viewcube::Layout::new(rect).center;
+
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(cube_center),
+            egui::Event::PointerButton {
+                pos: cube_center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let end = cube_center + vec2(45.0, -30.0);
+    run_events(&mut app, vec![egui::Event::PointerMoved(end)]);
+    run_events(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+
+    let xf1 = app.canvas.xf.unwrap();
+    let pivot_screen1 = xf1.to_screen_3d(pivot);
+    assert!(
+        (pivot_screen1 - pivot_screen0).length() < 0.5,
+        "ViewCube drag must orbit around selected 3D object pivot: before={pivot_screen0:?}, after={pivot_screen1:?}"
+    );
+}
+
+#[test]
+fn scroll_zoom_in_3d_and_front_view_keeps_point_under_cursor() {
+    use cadcraft_geom::Vec3;
+
+    for preset in ["se_isometric", "front"] {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.run("view.set", serde_json::json!({ "preset": preset })).unwrap();
+        let v0 = cadcraft_engine::View { center: Vec2::new(10.0, 20.0), height: 100.0, twist: 0.0, target_z: 35.0 };
+        app.session.state_mut().unwrap().set_view_quiet(v0);
+
+        let ctx = egui::Context::default();
+        let run_events = |app: &mut CadApp, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+                focused: true,
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            })
+            .textures_delta
+            .clear();
+        };
+
+        let cursor = pos2(820.0, 310.0);
+        run_events(&mut app, vec![egui::Event::PointerMoved(cursor)]);
+        let xf0 = app.canvas.xf.unwrap();
+        let cam = xf0.cam;
+        let anchor: Vec3 = xf0.zoom_anchor_3d(cursor);
+
+        run_events(&mut app, vec![egui::Event::PointerMoved(cursor), wheel(egui::MouseWheelUnit::Line, 2.0, egui::Modifiers::NONE)]);
+        let xf1 = app.canvas.xf.unwrap();
+        let v1 = app.session.state().unwrap().view();
+        assert!(xf1.scale > xf0.scale, "{preset}: wheel up must zoom in");
+        assert!(
+            (xf1.to_screen_3d(anchor) - cursor).length() < 0.5,
+            "{preset}: anchor point under cursor must stay fixed (got {:?} vs {cursor:?})",
+            xf1.to_screen_3d(anchor)
+        );
+        assert!(
+            (v1.target() - v0.target()).dot(cam.z).abs() < 1e-9,
+            "{preset}: scroll zoom must preserve camera depth on target plane"
+        );
+    }
+}
+
+fn drive_canvas_events(ctx: &egui::Context, app: &mut CadApp, events: Vec<egui::Event>) {
+    let raw = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+        focused: true,
+        events,
+        ..Default::default()
+    };
+    ctx.run_ui(raw, |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    })
+    .textures_delta
+    .clear();
+}
+
+#[test]
+fn screen_delta_to_world_3d_roundtrips_at_nonzero_target_z_and_shallow_angles() {
+    use cadcraft_geom::Vec3;
+
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
+    let shallow_z = Vec3::new(0.0, 0.995, -0.1).normalized();
+    let cameras = [
+        ("sw_iso", cadcraft_geom::Camera3D::preset("sw_isometric").unwrap()),
+        ("front", cadcraft_geom::Camera3D::preset("front").unwrap()),
+        ("shallow", cadcraft_geom::Camera3D::from_dir_up(shallow_z, Vec3::Z)),
+    ];
+    let delta = vec2(36.0, -28.0);
+    let sample_3d = Vec3::new(15.0, 25.0, 42.0);
+    let sample_2d = Vec2::new(15.0, 25.0);
+
+    for (name, cam) in cameras {
+        let xf0 = Xf { rect, center: Vec2::new(10.0, 20.0), scale: 1.5, twist: 0.0, target_z: 45.0, cam };
+        // Zero pixel delta must produce exact zero offset even when target_z != 0.
+        assert_eq!(xf0.screen_delta_to_world_3d(egui::Vec2::ZERO), Vec3::ZERO, "{name}: zero 3d delta");
+        assert!(xf0.screen_delta_to_world(egui::Vec2::ZERO).len() < 1e-12, "{name}: zero ground delta");
+
+        let offset = xf0.screen_delta_to_world_3d(delta);
+        let t1 = xf0.target() - offset;
+        let xf1 = Xf { center: t1.xy(), target_z: t1.z, ..xf0 };
+        let diff3 = xf1.to_screen_3d(sample_3d) - xf0.to_screen_3d(sample_3d);
+        let diff2 = xf1.to_screen(sample_2d) - xf0.to_screen(sample_2d);
+        assert!((diff3 - delta).length() < 1e-4, "{name}: 3D point must shift by delta={delta:?}, got {diff3:?}");
+        assert!((diff2 - delta).length() < 1e-4, "{name}: 2D point must shift by delta={delta:?}, got {diff2:?}");
+    }
+}
+
+#[test]
+fn mmb_pan_after_3d_orbit_stays_stationary_and_tracks_cursor_without_drift() {
+    use cadcraft_geom::Vec3;
+
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("view.set", serde_json::json!({ "preset": "se_isometric" })).unwrap();
+    // Target with non-zero Z (typical after 3D orbit/zoom about 3D geometry).
+    let v0 = cadcraft_engine::View { center: Vec2::new(10.0, 20.0), height: 100.0, twist: 0.0, target_z: 40.0 };
+    app.session.state_mut().unwrap().set_view_quiet(v0);
+
+    let ctx = egui::Context::default();
+    let start = pos2(700.0, 450.0);
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(start)]);
+
+    // Press MMB and hold it still for several frames: view must NOT drift.
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Middle,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    for _ in 0..5 {
+        drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(start)]);
+    }
+    let held = app.session.state().unwrap().view();
+    assert!(
+        (held.target() - v0.target()).len() < 1e-9,
+        "holding MMB stationary with target_z != 0 must not drift: before={:?}, after={:?}",
+        v0.target(),
+        held.target()
+    );
+
+    // Drag MMB across canvas: a 3D world point must follow the cursor delta 1:1.
+    let obj_3d = Vec3::new(14.0, 18.0, 42.0);
+    let screen_before = app.canvas.xf.unwrap().to_screen_3d(obj_3d);
+    let drag_delta = vec2(90.0, -55.0);
+    let end = start + drag_delta;
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(end)]);
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(end),
+            egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Middle,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let screen_after = app.canvas.xf.unwrap().to_screen_3d(obj_3d);
+    assert!(
+        ((screen_after - screen_before) - drag_delta).length() < 0.5,
+        "MMB 3D pan must move geometry by drag_delta={drag_delta:?}, got {:?}",
+        screen_after - screen_before
+    );
+}
+
+#[test]
+fn mmb_pan_in_front_view_moves_target_z_vertically() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.run("view.set", serde_json::json!({ "preset": "front", "center": [10.0, 20.0], "height": 90.0 })).unwrap();
+
+    let ctx = egui::Context::default();
+    let start = pos2(700.0, 450.0);
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(start)]);
+    drive_canvas_events(
+        &ctx,
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Middle,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let xf0 = app.canvas.xf.unwrap();
+    let dy = 90.0_f32;
+    let end = start + vec2(0.0, dy);
+    drive_canvas_events(&ctx, &mut app, vec![egui::Event::PointerMoved(end)]);
+    let v1 = app.session.state().unwrap().view();
+    let expected_z = f64::from(dy) / xf0.scale;
+    assert!(
+        (v1.target_z - expected_z).abs() < 1e-4,
+        "vertical MMB pan in Front view must lift target_z by dy/scale ({expected_z}), got {}",
+        v1.target_z
+    );
+    assert!(
+        v1.center.near(Vec2::new(10.0, 20.0), 1e-6),
+        "pure vertical MMB pan in Front view must keep XY center unchanged, got {:?}",
+        v1.center
+    );
 }

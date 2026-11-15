@@ -1,7 +1,7 @@
 //! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), the view
 //! twist (DVIEW TWist), layout switching.
 
-use cadcraft_doc::{Space, entity_bounds};
+use cadcraft_doc::Space;
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
@@ -132,7 +132,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .transparent(),
         CommandSpec::new("plan", "Plan View", |s, _| {
             require_model_camera(s, "plan")?;
-            s.state_mut()?.camera = cadcraft_geom::Camera3D::TOP;
+            s.state_mut()?.set_active_camera(cadcraft_geom::Camera3D::TOP);
             ok()
         })
         .menu(&["View", "3D Views", "Plan View"])
@@ -153,20 +153,18 @@ fn ext_bounds(s: &Session) -> Result<Bounds2> {
     Ok(s.doc()?.extents(&space))
 }
 
-fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
+fn fit_3d(s: &mut Session, b: Bounds2, z_range: (f64, f64), margin: f64) -> Result<()> {
     if b.is_empty() {
         return Ok(());
     }
-    let (w, h) = s.viewport_px;
+    let vp = s.viewport_px;
     let st = s.state_mut()?;
-    let aspect = st.zoom_aspect(w / h.max(1.0));
-    // A twisted or 3D view fits the box the bounds make on screen.
-    let cam = st.zoom_camera();
-    let twist = st.zoom_frame().twist;
-    let (center, bw, bh) = View::projected_box(b, cam, twist);
-    let height = bh.max(bw / aspect.max(1e-6)).max(1e-9);
-    st.set_zoom_frame(View { center, height, twist });
+    crate::session::fit_bounds_3d(st, vp, b, z_range, margin);
     Ok(())
+}
+
+fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
+    fit_3d(s, b, (0.0, 0.0), 1.0)
 }
 
 pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
@@ -217,9 +215,8 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "object" | "o" => {
             let hs = targets(s, p)?;
-            let d = s.doc()?;
-            let b = hs.iter().filter_map(|h| d.entity(*h)).fold(Bounds2::EMPTY, |a, e| a.union(&entity_bounds(d, e, 0)));
-            fit(s, b.expand(b.height().max(b.width()) * 0.05))?;
+            let (b, z_range) = crate::session::selection_bounds_3d(s.doc()?, &hs);
+            fit_3d(s, b, z_range, 1.05)?;
         }
         _ => return Err(bad("zoom", "unknown mode")),
     }
@@ -286,9 +283,10 @@ fn pan_frac(s: &mut Session, f: Vec2) -> Result<Value> {
     let (w, h) = s.viewport_px;
     let st = s.state_mut()?;
     let v = st.view();
+    let cam = st.zoom_camera();
     let ww = v.height * w / h.max(1.0);
-    // Screen directions: in a twisted view the drawing is turned by the twist.
-    st.set_view(View { center: v.center + Vec2::new(f.x * ww, f.y * v.height).rotate(-v.twist), ..v });
+    // Screen directions: pan in the effective 3D camera plane (including Top-view twist).
+    st.set_view(v.pan_in_camera_plane(cam, f.x * ww, f.y * v.height));
     ok()
 }
 
@@ -343,7 +341,7 @@ fn vec3_nonzero(cmd: &str, p: &Value, key: &str) -> Result<Option<cadcraft_geom:
 fn run_view_get(s: &mut Session, _: &Value) -> Result<Value> {
     let st = s.state()?;
     let v = st.view();
-    let cam = st.camera;
+    let cam = st.zoom_camera();
     Ok(json!({
         "center": [v.center.x, v.center.y],
         "height": v.height,
@@ -355,29 +353,29 @@ fn run_view_get(s: &mut Session, _: &Value) -> Result<Value> {
     }))
 }
 
-/// Ensure 3D camera operations only run in unlocked Model-tab views; Paper Space layouts and
-/// locked/2D layout viewports keep their sheet and viewport views intact.
+/// Ensure 3D camera operations only run on the Model tab or inside an unlocked active layout
+/// viewport (MSPACE); Paper space and locked viewports keep their sheet and viewport views intact.
 fn require_model_camera(s: &Session, cmd: &str) -> Result<()> {
     let st = s.state()?;
-    if st.active_viewport().is_some_and(|(_, vp)| vp.locked) {
+    if st.is_active_viewport_locked() {
         return Err(crate::EngineError::Other("The viewport is locked.".into()));
     }
-    if !matches!(st.space, Space::Model) {
-        return Err(bad(cmd, "3D camera views are only available in Model space"));
+    if !matches!(st.space, Space::Model) && st.active_viewport().is_none() {
+        return Err(bad(cmd, "3D camera views are only available in Model space or an active layout viewport"));
     }
     Ok(())
 }
 
-/// Apply a camera operation starting from `st.camera.with_twist(v.twist)` and clear the consumed
-/// view twist when not inside an undoable layout viewport so downstream `with_twist` calls never
-/// re-apply the old twist (for example after rolling or orbiting back to canonical Top).
+/// Apply a camera operation starting from `st.zoom_camera().with_twist(v.twist)` and clear any
+/// consumed 2D view twist so downstream calls never re-apply the old twist.
 fn apply_camera_from_twist(
     st: &mut crate::DocState,
     op: impl FnOnce(cadcraft_geom::Camera3D) -> cadcraft_geom::Camera3D,
 ) {
     let v = st.view();
-    let base_cam = st.camera.with_twist(v.twist);
-    st.camera = op(base_cam);
+    let base_cam = st.zoom_camera().with_twist(v.twist);
+    let next = op(base_cam);
+    st.set_active_camera(next);
     if st.active_viewport().is_none() && v.twist != 0.0 {
         st.set_view_quiet(View { twist: 0.0, ..v });
     }
@@ -390,7 +388,7 @@ fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
     if has_param(p, "preset") {
         let preset = str_param(p, "preset").ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
         let cam = cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("3dorbit", "unknown camera preset"))?;
-        s.state_mut()?.camera = cam;
+        s.state_mut()?.set_active_camera(cam);
         return ok();
     }
     let daz = f64_opt("3dorbit", p, "daz", 0.0)?;
@@ -458,7 +456,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(bad("view.set", "unknown neighbor direction")),
         };
         let st = s.state()?;
-        Some(st.camera.with_twist(st.view().twist).orthogonal_neighbor(dir))
+        Some(st.zoom_camera().with_twist(st.view().twist).orthogonal_neighbor(dir))
     } else if has_preset {
         let preset = str_param(p, "preset").ok_or_else(|| bad("view.set", "unknown camera preset"))?;
         Some(cadcraft_geom::Camera3D::preset(preset).ok_or_else(|| bad("view.set", "unknown camera preset"))?)
@@ -470,7 +468,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let Some((c, h)) = center_height else {
         if let Some(cam) = new_cam {
-            s.state_mut()?.camera = cam;
+            s.state_mut()?.set_active_camera(cam);
             return ok();
         }
         return Err(bad("view.set", "center and height, or a camera (preset, dir, neighbor), is required"));
@@ -495,7 +493,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
         Some(dview::Target::Model) => cadcraft_geom::norm_angle(twist),
         None => 0.0,
     };
-    if !s.state_mut()?.set_view(View { center: c, height: h, twist }) {
+    if !s.state_mut()?.set_view(View::plan(c, h, twist)) {
         s.state_mut()?.doc = before.0;
         return Err(bad("view.set", "the view is too large to show. Nothing was changed"));
     }
@@ -503,7 +501,7 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
         dview::record_viewport_edit(s, before, h)?;
     }
     if let Some(cam) = new_cam {
-        s.state_mut()?.camera = cam;
+        s.state_mut()?.set_active_camera(cam);
     }
     ok()
 }
@@ -528,7 +526,7 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
         let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
         let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
-        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15, twist: 0.0 });
+        st.set_view_quiet(View::plan(Vec2::new(w * unit / 2.0, h * unit / 2.0), h * unit * 1.15, 0.0));
     }
     s.touch();
     ok()
@@ -675,7 +673,7 @@ impl Interactive for ZoomM {
                 if st.view_history.last() == Some(&b.screen) {
                     st.view_history.pop();
                 }
-                st.set_zoom_frame(View { center: b.center, height: b.height, twist: b.frame.twist });
+                st.set_zoom_frame(View::plan(b.center, b.height, b.frame.twist));
                 return Ok(Step::Done);
             }
             (ZoomStage::Dynamic(mut b), Input::Point(p)) => {
@@ -1290,5 +1288,66 @@ mod tests {
 
         assert!(s.execute("layout.set", &json!({ "name": "Layout1" })).is_ok());
         assert!(s.cmdline("3dorbit").is_err(), "interactive 3dorbit must refuse Paper space");
+    }
+
+    #[test]
+    fn pan_frac_moves_in_3d_camera_plane_and_respects_twist() {
+        let mut s = Session::new();
+        s.viewport_px = (800.0, 400.0);
+        assert!(s.execute("view.set", &json!({ "preset": "front", "center": [10.0, 20.0], "height": 40.0 })).is_ok());
+        let v0 = s.state().unwrap().view();
+        assert!(s.execute("pan.up", &json!({})).is_ok());
+        let v1 = s.state().unwrap().view();
+        assert!((v1.target_z - (v0.target_z + 10.0)).abs() < 1e-9, "Front pan.up must lift target_z vertically: v1={v1:?}");
+        assert!(v1.center.near(v0.center, 1e-9), "Front pan.up must keep XY center fixed: v1={v1:?}");
+
+        assert!(s.execute("pan.right", &json!({})).is_ok());
+        let v2 = s.state().unwrap().view();
+        assert!((v2.center.x - (v1.center.x + 20.0)).abs() < 1e-9, "Front pan.right must shift +X by 0.25 * width: v2={v2:?}");
+        assert!((v2.target_z - v1.target_z).abs() < 1e-9);
+
+        // Twisted Top view keeps planar rotated screen axes.
+        assert!(s.execute("view.set", &json!({ "preset": "top", "center": [0.0, 0.0], "height": 20.0, "twist": 90.0 })).is_ok());
+        assert!(s.execute("pan.up", &json!({})).is_ok());
+        let vt = s.state().unwrap().view();
+        assert!((vt.center.x - 5.0).abs() < 1e-9 && vt.center.y.abs() < 1e-9, "twist=90° pan.up must pan along +X: vt={vt:?}");
+        assert!(vt.target_z.abs() < 1e-9);
+    }
+
+    #[test]
+    fn mspace_viewports_own_independent_3d_cameras_and_survive_switching() {
+        let mut s = Session::new();
+        assert!(s.execute("line", &json!({ "points": [[0, 0], [40, 20]] })).is_ok());
+        assert!(s.execute("view.set", &json!({ "preset": "nw_isometric" })).is_ok());
+        let model_cam = s.state().unwrap().camera;
+
+        assert!(s.execute("layout.set", &json!({ "name": "Layout1" })).is_ok());
+        let r1 = s.execute("mview", &json!({ "p1": [10.0, 10.0], "p2": [90.0, 80.0] })).unwrap();
+        let h1 = r1["viewports"][0].as_str().unwrap().to_string();
+        let r2 = s.execute("mview", &json!({ "p1": [100.0, 10.0], "p2": [180.0, 80.0] })).unwrap();
+        let h2 = r2["viewports"][0].as_str().unwrap().to_string();
+
+        // Activate VP1 and set SE Isometric + orbit + roll.
+        assert!(s.execute("mspace", &json!({ "handle": h1 })).is_ok());
+        assert!(s.execute("view.set", &json!({ "preset": "se_isometric" })).is_ok());
+        assert!(s.execute("view.roll", &json!({ "angle": 90.0 })).is_ok());
+        assert!(s.execute("3dorbit", &json!({ "daz": 15.0, "del": 10.0 })).is_ok());
+        let vp1_cam = s.state().unwrap().zoom_camera();
+        assert!(!vp1_cam.is_top_plan());
+        assert!(s.execute("zoom.extents", &json!({})).is_ok());
+
+        // Switching to VP2 keeps VP2 at Top plan, without disturbing Model tab's camera or VP1's camera.
+        assert!(s.execute("mspace", &json!({ "handle": h2 })).is_ok());
+        assert!(s.state().unwrap().zoom_camera().is_top_plan());
+        assert_eq!(s.state().unwrap().camera, model_cam);
+
+        // Switching back to VP1 restores VP1's orbited 3D camera, and `plan` resets it to Top.
+        assert!(s.execute("mspace", &json!({ "handle": h1 })).is_ok());
+        assert_eq!(s.state().unwrap().zoom_camera(), vp1_cam);
+        let vg = s.execute("view.get", &json!({})).unwrap();
+        assert_eq!(vg["viewName"].as_str(), Some(vp1_cam.view_name()));
+        assert!(s.execute("plan", &json!({})).is_ok());
+        assert!(s.state().unwrap().zoom_camera().is_top_plan());
+        assert_eq!(s.state().unwrap().camera, model_cam);
     }
 }

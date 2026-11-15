@@ -552,6 +552,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             clip: None,
             on: true,
             twist: 0.0,
+            ..Viewport::default()
         }),
     )
     .unwrap();
@@ -677,7 +678,7 @@ fn the_first_active_record_gives_the_view_even_with_an_unusable_tile() {
 #[test]
 fn a_tiled_drawing_with_no_saved_view_keeps_its_first_tiles_view() {
     let mut d = sample();
-    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0 };
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0, grid: true };
     d.vports.push(VportConfig {
         name: VportConfig::ACTIVE.to_string(),
         tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
@@ -703,7 +704,7 @@ fn a_tiled_drawing_with_no_saved_view_keeps_its_first_tiles_view() {
 fn a_saved_view_set_on_a_tiled_drawing_survives_a_round_trip() {
     let mut d = sample();
     // Two tiles side by side, the first the current one, each with its own old view.
-    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0 };
+    let tile = |min: Vec2, max: Vec2, center: Vec2| VportTile { min, max, center, height: 10.0, aspect: 1.0, twist: 0.0, grid: true };
     d.vports.push(VportConfig {
         name: VportConfig::ACTIVE.to_string(),
         tiles: vec![tile(Vec2::ZERO, Vec2::new(0.5, 1.0), Vec2::new(1.0, 1.0)), tile(Vec2::new(0.5, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))],
@@ -925,6 +926,7 @@ fn viewport_frozen_layers_roundtrip() {
             clip: None,
             on: true,
             twist: 0.0,
+            ..Viewport::default()
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -1113,6 +1115,7 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         clip: None,
         on: true,
         twist: 0.0,
+        ..Viewport::default()
     });
     d.add(&paper, Common::default(), vp).unwrap();
     let text = dxf_2018(&d);
@@ -1256,6 +1259,7 @@ fn viewport_layer_colors_roundtrip() {
             clip: None,
             on: true,
             twist: 0.0,
+            ..Viewport::default()
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];

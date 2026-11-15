@@ -31,10 +31,21 @@ pub const ROLL_ARROW_END_DEG: f32 = 39.0;
 /// (2.0 = twice the global delay; set to 1.0 to match the global delay directly).
 pub const VIEWCUBE_TIP_DELAY_SCALE: f64 = 2.0;
 
+/// Proportional UI scale factor derived from the viewport's smaller screen pixel dimension
+/// (~17% relative to the nominal 120 px box, clamped between 35 px minimum and 120 px maximum).
+pub(crate) fn viewport_scale(viewport_full: Rect) -> f32 {
+    let min_dim = viewport_full.width().min(viewport_full.height()).max(0.0);
+    ((min_dim * 0.17) / 120.0).clamp(35.0 / 120.0, 1.0)
+}
+
 /// Where the ViewCube's parts are on the canvas.
 #[derive(Clone, Debug)]
 pub struct Layout {
     pub center: Pos2,
+    /// Proportional scale factor in `[35/120 ..= 1.0]` relative to full-size ViewCube.
+    pub scale: f32,
+    /// Visible screen clip rect limiting interaction and painting to the active viewport.
+    pub clip: Rect,
     /// Radius of the compass ring's centre line.
     pub ring: f32,
     pub face: Rect,
@@ -64,22 +75,34 @@ pub struct Layout {
 impl Layout {
     /// Compute the ViewCube layout and pre-built roll arrow geometry for `canvas`.
     pub fn new(canvas: Rect) -> Self {
-        let center = pos2(canvas.right() - 116.0, canvas.top() + 106.0);
-        let ring = RING_RADIUS;
-        let ring_outer = ring + RING_THICKNESS * 0.5;
-        let r_inner = ring_outer + ROLL_ARROW_GAP;
-        let r_outer = r_inner + ROLL_ARROW_WIDTH;
-        let (dir_top, dir_bottom, dir_left, dir_right) = directional_triangles(center);
+        Self::for_viewport(canvas, canvas)
+    }
+
+    /// Compute the ViewCube layout scaled to `viewport_full`'s pixel size and anchored/clipped
+    /// within the visible screen rectangle `viewport_clip`.
+    pub fn for_viewport(viewport_full: Rect, viewport_clip: Rect) -> Self {
+        let s = viewport_scale(viewport_full);
+        let clip = viewport_clip;
+        let center = pos2(clip.right() - 116.0 * s, clip.top() + 112.0 * s);
+        let ring = RING_RADIUS * s;
+        let ring_outer = ring + (RING_THICKNESS * s) * 0.5;
+        let r_inner = ring_outer + ROLL_ARROW_GAP * s;
+        let r_outer = r_inner + ROLL_ARROW_WIDTH * s;
+        let (dir_top, dir_bottom, dir_left, dir_right) = directional_triangles_for_cam(center, &Camera3D::TOP, s);
         let (cw_poly, cw_outer, cw_inner, cw_head) = build_curved_arrow_data(center, r_inner, r_outer, ROLL_ARROW_START_DEG, ROLL_ARROW_END_DEG, true);
         let (ccw_poly, ccw_outer, ccw_inner, ccw_head) = mirror_arrow_data(center, &cw_poly, &cw_outer, &cw_inner, &cw_head);
         let roll_cw = poly_bounding_rect(&cw_poly);
         let roll_ccw = poly_bounding_rect(&ccw_poly);
-        let bounds_radius = 108.0;
+        let bounds_radius = 108.0 * s;
+        let pill_scale = s.clamp(0.55, 1.0);
+        let pill_y = ring + 13.5 * s + 12.5 * pill_scale;
         Layout {
             center,
+            scale: s,
+            clip,
             ring,
-            face: Rect::from_center_size(center, vec2(44.0, 44.0)),
-            home: Rect::from_center_size(center + vec2(-86.0, -82.0), vec2(20.0, 20.0)),
+            face: Rect::from_center_size(center, vec2(44.0 * s, 44.0 * s)),
+            home: Rect::from_center_size(center + vec2(-86.0 * s, -82.0 * s), vec2(20.0 * s, 20.0 * s)),
             roll_ccw,
             roll_cw,
             dir_top,
@@ -94,7 +117,7 @@ impl Layout {
             ccw_outer,
             ccw_inner,
             ccw_head,
-            pill: Rect::from_center_size(center + vec2(0.0, ring + 26.0), vec2(56.0, 16.0)),
+            pill: Rect::from_center_size(center + vec2(0.0, pill_y), vec2(56.0 * pill_scale, 16.0 * pill_scale)),
             bounds: Rect::from_center_size(center, vec2(2.0 * bounds_radius, 2.0 * bounds_radius)),
         }
     }
@@ -107,12 +130,15 @@ impl Layout {
     /// 4 orthogonal directional navigation triangles rotated synchronously with the active cube face
     /// (ported from MATCAD `createViewCubeGraphics.m` & `synchronize_viewcube.m`).
     pub fn dir_triangles(&self, cam: &Camera3D) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos2; 3]) {
-        directional_triangles_for_cam(self.center, cam)
+        directional_triangles_for_cam(self.center, cam, self.scale)
     }
 
     /// Hit-test `p` against the 3D projected beveled cube, compass ring, roll buttons,
     /// directional triangles and home icon.
     pub fn part_at_cam(&self, p: Pos2, cam: &Camera3D) -> Option<Part> {
+        if !self.clip.contains(p) {
+            return None;
+        }
         if self.home.contains(p) {
             return Some(Part::Home);
         }
@@ -137,14 +163,15 @@ impl Layout {
                 return Some(Part::DirRight);
             }
         }
-        if let Some(part_name) = hit_beveled_cube(self.center, cam, p) {
+        if let Some(part_name) = hit_beveled_cube(self.center, cam, self.scale, p) {
             if part_name == "top" && cam.is_top_plan() {
                 return Some(Part::Face);
             }
             return Some(Part::Cube(part_name));
         }
         let d = p.distance(self.center);
-        ((self.ring - 10.0..=self.ring + 10.0).contains(&d)).then_some(Part::Ring)
+        let tol = 10.0 * self.scale;
+        ((self.ring - tol..=self.ring + tol).contains(&d)).then_some(Part::Ring)
     }
 }
 
@@ -276,8 +303,8 @@ struct ProjectedQuad {
 
 /// Project visible beveled-cube quads onto screen coordinates around `center` for `cam`,
 /// culling backfaces and shallow edge-on slivers (`facing <= 0.075`) and sorting back-to-front.
-fn project_cube_quads(center: Pos2, cam: &Camera3D) -> Vec<ProjectedQuad> {
-    let quads = build_beveled_cube(CUBE_HALF, CUBE_BEVEL);
+fn project_cube_quads(center: Pos2, cam: &Camera3D, scale: f32) -> Vec<ProjectedQuad> {
+    let quads = build_beveled_cube(CUBE_HALF * f64::from(scale), CUBE_BEVEL);
     let mut out = Vec::with_capacity(quads.len());
     for q in quads {
         // Backface culling: normal must face toward the viewer (-cam.z).
@@ -310,9 +337,9 @@ fn project_cube_quads(center: Pos2, cam: &Camera3D) -> Vec<ProjectedQuad> {
 }
 
 /// Return the topmost visible beveled-cube zone (`"top"`, `"front_right"`, `"top_front_right"`, etc.) containing `p`.
-fn hit_beveled_cube(center: Pos2, cam: &Camera3D, p: Pos2) -> Option<&'static str> {
+fn hit_beveled_cube(center: Pos2, cam: &Camera3D, scale: f32, p: Pos2) -> Option<&'static str> {
     let local = Vec2::new(f64::from(p.x - center.x), f64::from(p.y - center.y));
-    let quads = project_cube_quads(center, cam);
+    let quads = project_cube_quads(center, cam, scale);
     // Check front-to-back (reverse of draw order).
     for q in quads.iter().rev() {
         if point_in_polygon(&q.poly_world, local) {
@@ -326,18 +353,22 @@ fn hit_beveled_cube(center: Pos2, cam: &Camera3D, p: Pos2) -> Option<&'static st
 /// and Home button, and handle clicks and orbit drags.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     let cam = app.session.state().map(|st| crate::canvas::model_camera(st).with_twist(st.view().twist)).unwrap_or_default();
-    let resp = ui.interact(l.bounds, ui.scope_id().with("viewcube"), Sense::click_and_drag());
+    let s = l.scale;
+    let interact_rect = l.bounds.intersect(l.clip);
+    let resp = ui.interact(interact_rect, ui.scope_id().with("viewcube"), Sense::click_and_drag());
     let part = resp.hover_pos().and_then(|p| l.part_at_cam(p, &cam));
-    let p = ui.painter_at(l.bounds.union(l.pill));
+    let p = ui.painter_at(l.bounds.union(l.pill).intersect(l.clip));
 
     // 1. Rotating Compass Ring (always robust at all camera angles, ported from MATCAD synchronize_viewcube.m).
     let ring_col = if part == Some(Part::Ring) { Color32::from_rgb(0x5c, 0x67, 0x7c) } else { Color32::from_rgb(0x48, 0x50, 0x5c) };
-    p.circle_stroke(l.center, l.ring, Stroke::new(9.0, ring_col));
-    p.circle_stroke(l.center, l.ring + 4.5, Stroke::new(1.0, Color32::from_rgb(0x5c, 0x65, 0x72)));
-    p.circle_stroke(l.center, l.ring - 4.5, Stroke::new(1.0, Color32::from_rgb(0x38, 0x3d, 0x46)));
+    let ring_w = (RING_THICKNESS * s).max(1.5);
+    let edge_w = (s * 1.0).clamp(0.6, 1.0);
+    p.circle_stroke(l.center, l.ring, Stroke::new(ring_w, ring_col));
+    p.circle_stroke(l.center, l.ring + ring_w * 0.5, Stroke::new(edge_w, Color32::from_rgb(0x5c, 0x65, 0x72)));
+    p.circle_stroke(l.center, l.ring - ring_w * 0.5, Stroke::new(edge_w, Color32::from_rgb(0x38, 0x3d, 0x46)));
 
     let dir_xy = cam.compass_dir_xy();
-    let f = egui::FontId::proportional(13.5);
+    let f = egui::FontId::proportional((13.5 * s).clamp(6.5, 13.5));
     let lc = Color32::from_rgb(0xd2, 0xd6, 0xdc);
     for (label, wx, wy) in [("N", 0.0_f64, 1.0_f64), ("E", 1.0, 0.0), ("S", 0.0, -1.0), ("W", -1.0, 0.0)] {
         let u = wx * dir_xy.y - wy * dir_xy.x;
@@ -359,7 +390,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
             (&dir_right, part == Some(Part::DirRight)),
         ] {
             let fill = if is_hot { arr_hover } else { arr_col };
-            p.add(Shape::convex_polygon(tri.to_vec(), fill, Stroke::new(1.0, arr_edge)));
+            p.add(Shape::convex_polygon(tri.to_vec(), fill, Stroke::new(edge_w, arr_edge)));
         }
     }
 
@@ -369,10 +400,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     let arr_edge = Color32::from_rgb(0x6e, 0x76, 0x86);
 
     let ccw_fill = if part == Some(Part::RollCcw) { arr_hover } else { arr_col };
-    paint_curved_arrow(&p, &l.ccw_poly, &l.ccw_outer, &l.ccw_inner, &l.ccw_head, ccw_fill, Stroke::new(1.0, arr_edge));
+    paint_curved_arrow(&p, &l.ccw_poly, &l.ccw_outer, &l.ccw_inner, &l.ccw_head, ccw_fill, Stroke::new(edge_w, arr_edge));
 
     let cw_fill = if part == Some(Part::RollCw) { arr_hover } else { arr_col };
-    paint_curved_arrow(&p, &l.cw_poly, &l.cw_outer, &l.cw_inner, &l.cw_head, cw_fill, Stroke::new(1.0, arr_edge));
+    paint_curved_arrow(&p, &l.cw_poly, &l.cw_outer, &l.cw_inner, &l.cw_head, cw_fill, Stroke::new(edge_w, arr_edge));
 
     // 4. 3D Beveled Cube Quads (26 interactive zones).
     let hot_part = match part {
@@ -380,8 +411,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         Some(Part::Cube(name)) => Some(name),
         _ => None,
     };
-    let quads = project_cube_quads(l.center, &cam);
-    let edge_stroke = Stroke::new(0.9, Color32::from_rgb(0x52, 0x56, 0x5e));
+    let quads = project_cube_quads(l.center, &cam, s);
+    let edge_stroke = Stroke::new((0.9 * s).clamp(0.5, 0.9), Color32::from_rgb(0x52, 0x56, 0x5e));
     for q in &quads {
         let is_hot = hot_part == Some(q.part);
         let base: u8 = if q.is_main_face {
@@ -406,12 +437,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
             p.line_segment([q.pts[i], q.pts[(i + 1) % 4]], edge_stroke);
         }
         if q.is_main_face {
-            paint_face_text(&p, l.center, &cam, q);
+            paint_face_text(&p, l.center, &cam, q, s);
         }
     }
 
     // 5. Home button at the top-left.
-    paint_home(&p, l.home, part == Some(Part::Home));
+    paint_home(&p, l.home, part == Some(Part::Home), s);
 
     let resp = if part.is_some() {
         resp.on_hover_cursor(CursorIcon::PointingHand)
@@ -429,30 +460,30 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     }
 
     // 6. ViewCube and Compass Ring Dragging:
-    // Storing (start_pos, cam0) at drag start and calculating orbit from cam0 prevents horizon drift
-    // and eliminates the gimbal / gumball effect entirely.
+    // Storing an `OrbitDrag` snapshot at drag start prevents horizon drift and rigidly orbits
+    // `target0` about the resolved auto-target pivot.
     if resp.drag_started_by(egui::PointerButton::Primary)
         && let Some(press_pos) = ui.input(|i| i.pointer.press_origin()).or_else(|| resp.interact_pointer_pos())
     {
         let is_ring = l.part_at_cam(press_pos, &cam) == Some(Part::Ring);
-        app.canvas.viewcube_drag = Some((press_pos, cam, is_ring));
+        app.canvas.viewcube_drag = crate::canvas::begin_canvas_orbit(app, press_pos, None).map(|drag| (drag, is_ring));
     }
     if resp.dragged_by(egui::PointerButton::Primary)
-        && let Some((start_pos, cam0, is_ring)) = app.canvas.viewcube_drag
+        && let Some((drag, is_ring)) = app.canvas.viewcube_drag
         && let Some(curr_pos) = resp.interact_pointer_pos()
     {
         if is_ring {
             // Angular delta around ring center (MATCAD move_viewcube.m lines 191-198)
-            let a0 = -(start_pos.y - l.center.y).atan2(start_pos.x - l.center.x);
+            let a0 = -(drag.start.y - l.center.y).atan2(drag.start.x - l.center.x);
             let a1 = -(curr_pos.y - l.center.y).atan2(curr_pos.x - l.center.x);
             let daz_deg = f64::from((a1 - a0).to_degrees());
-            apply_drag_orbit(app, cam0.orbit(daz_deg, 0.0, true));
+            crate::canvas::apply_canvas_orbit(app, &drag, daz_deg, 0.0);
         } else {
             // Cube drag: total pixel offset from drag start
-            let delta = curr_pos - start_pos;
+            let delta = curr_pos - drag.start;
             let daz_deg = f64::from(delta.x) * 0.5;
             let del_deg = -f64::from(delta.y) * 0.5; // Negative because egui Y increases downwards
-            apply_drag_orbit(app, cam0.orbit(daz_deg, del_deg, true));
+            crate::canvas::apply_canvas_orbit(app, &drag, daz_deg, del_deg);
         }
     }
     if resp.drag_stopped() {
@@ -463,8 +494,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         let pressed_on = resp.interact_pointer_pos().and_then(|o| l.part_at_cam(o, &cam));
         match pressed_on {
             Some(Part::Face) => {
-                let _ = app.run("view.set", json!({"preset": "top"}));
-                let _ = app.run("zoom.extents", json!({}));
+                if !app.session.state().is_ok_and(|st| st.is_active_viewport_locked()) {
+                    let _ = app.run("view.set", json!({"preset": "top"}));
+                    let _ = app.run("zoom.extents", json!({}));
+                }
             }
             Some(Part::Cube(preset)) => {
                 let _ = app.run("view.set", json!({"preset": preset}));
@@ -473,10 +506,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
                 activate_home_view(app);
             }
             Some(Part::RollCcw) => {
-                let _ = app.run("view.roll", json!({"angle": 90.0, "inPlane": true}));
+                let _ = app.run("view.roll", json!({"angle": 90.0}));
             }
             Some(Part::RollCw) => {
-                let _ = app.run("view.roll", json!({"angle": -90.0, "inPlane": true}));
+                let _ = app.run("view.roll", json!({"angle": -90.0}));
             }
             Some(Part::DirTop) => {
                 let _ = app.run("view.set", json!({"neighbor": "top"}));
@@ -536,12 +569,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
 fn activate_home_view(app: &mut CadApp) {
     let raw = app.ui.viewcube_home_preset.trim();
     let preset = if Camera3D::preset(raw).is_some() { raw.to_owned() } else { "top".to_owned() };
-    if let Ok(st) = app.session.state()
-        && matches!(st.space, cadcraft_doc::Space::Model)
-        && st.mspace.is_none()
-    {
+    let Ok(st) = app.session.state() else { return };
+    if st.is_active_viewport_locked() {
+        app.session.echo("The viewport is locked.");
+        return;
+    }
+    if matches!(st.space, cadcraft_doc::Space::Model) || st.active_viewport().is_some() {
         let v = st.view();
-        if v.twist.abs() > 1e-12 {
+        if v.twist.abs() > 1e-12 && st.active_viewport().is_none() {
             let _ = app.run(
                 "view.set",
                 json!({
@@ -554,24 +589,25 @@ fn activate_home_view(app: &mut CadApp) {
         } else {
             let _ = app.run("view.set", json!({"preset": preset}));
         }
+        let _ = app.run("zoom.extents", json!({}));
     }
-    let _ = app.run("zoom.extents", json!({}));
 }
 
 /// A small house, drawn in code.
-fn paint_home(p: &egui::Painter, r: Rect, hot: bool) {
+fn paint_home(p: &egui::Painter, r: Rect, hot: bool, scale: f32) {
     let t = Tokens::get();
     if hot {
-        p.rect_filled(r, 3.0, t.control_hover);
+        p.rect_filled(r, 3.0 * scale, t.control_hover);
     }
-    let st = Stroke::new(1.3, if hot { t.text } else { t.text_dim });
+    let st = Stroke::new((1.3 * scale).clamp(0.7, 1.3), if hot { t.text } else { t.text_dim });
     let c = r.center();
-    let roof = [c + vec2(-6.5, 0.5), c + vec2(0.0, -6.0), c + vec2(6.5, 0.5)];
+    let pt = |dx: f32, dy: f32| c + vec2(dx * scale, dy * scale);
+    let roof = [pt(-6.5, 0.5), pt(0.0, -6.0), pt(6.5, 0.5)];
     p.line(roof.to_vec(), st);
-    p.line(vec![c + vec2(-4.5, -1.0), c + vec2(-4.5, 6.0), c + vec2(4.5, 6.0), c + vec2(4.5, -1.0)], st);
-    p.line_segment([c + vec2(-1.2, 6.0), c + vec2(-1.2, 2.5)], st);
-    p.line_segment([c + vec2(1.2, 6.0), c + vec2(1.2, 2.5)], st);
-    p.line_segment([c + vec2(-1.2, 2.5), c + vec2(1.2, 2.5)], st);
+    p.line(vec![pt(-4.5, -1.0), pt(-4.5, 6.0), pt(4.5, 6.0), pt(4.5, -1.0)], st);
+    p.line_segment([pt(-1.2, 6.0), pt(-1.2, 2.5)], st);
+    p.line_segment([pt(1.2, 6.0), pt(1.2, 2.5)], st);
+    p.line_segment([pt(-1.2, 2.5), pt(1.2, 2.5)], st);
 }
 
 /// Project the localized main-face label directly onto the 3D cube face plane (`q.centroid`, `u_3d`, `v_3d`)
@@ -581,6 +617,7 @@ fn paint_face_text(
     center: Pos2,
     cam: &Camera3D,
     q: &ProjectedQuad,
+    ui_scale: f32,
 ) {
     // Skip drawing face text when the face is nearly edge-on (< ~12° to the line of sight).
     let facing = q.facing;
@@ -601,8 +638,8 @@ fn paint_face_text(
 
     let alpha = ((facing - 0.20) / 0.15).clamp(0.0, 1.0);
     let text_col = Color32::from_rgba_unmultiplied(0x22, 0x26, 0x2c, (240.0 * alpha) as u8);
-    // Base font size of 13.0 pt matches the on-screen size closely, avoiding heavy downsampling blur.
-    let base_font_size = 13.0_f32;
+    // Base font size scales down softly so small cubes keep crisp glyph rasterization.
+    let base_font_size = (13.0 * ui_scale).clamp(6.0, 13.0);
     let galley = p.layout_no_wrap(label.to_owned(), egui::FontId::proportional(base_font_size), text_col);
     let [tex_w, tex_h] = p.ctx().fonts_mut(|f| f.font_image_size());
     if tex_w == 0 || tex_h == 0 {
@@ -634,10 +671,10 @@ fn paint_face_text(
     let cy = (min_y + max_y) * 0.5;
 
     // Constant 3D scale on the cube face (independent of camera angle):
-    // 9.8 3D units nominal font size, clamped so long labels (e.g. BOTTOM, HINTEN, RECHTS)
-    // never exceed 86% of the 3D inner face width (`inner_span`).
-    let inner_span = (2.0 * (1.0 - CUBE_BEVEL) * CUBE_HALF) as f32;
-    let base_scale = 9.8 / base_font_size;
+    // 9.8 * ui_scale 3D units nominal font size, clamped so long labels (e.g. BOTTOM, HINTEN, RECHTS)
+    // never exceed 86% of the scaled 3D inner face width (`inner_span`).
+    let inner_span = (2.0 * (1.0 - CUBE_BEVEL) * CUBE_HALF) as f32 * ui_scale;
+    let base_scale = (9.8 * ui_scale) / base_font_size;
     let max_w = inner_span * 0.86;
     let scale = base_scale.min(max_w / span_x);
 
@@ -665,15 +702,10 @@ fn paint_face_text(
     }
 }
 
-/// The 4 directional navigation triangles pointing towards the 4 cube face edges (default Top orientation).
-fn directional_triangles(center: Pos2) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos2; 3]) {
-    directional_triangles_for_cam(center, &Camera3D::TOP)
-}
-
 /// The 4 directional navigation triangles rotated with the active orthogonal cube face
 /// (and any active plan-view twist via `Camera3D::with_twist`), ported from MATCAD
 /// `createViewCubeGraphics.m` & `synchronize_viewcube.m`.
-fn directional_triangles_for_cam(center: Pos2, cam: &Camera3D) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos2; 3]) {
+fn directional_triangles_for_cam(center: Pos2, cam: &Camera3D, scale: f32) -> ([Pos2; 3], [Pos2; 3], [Pos2; 3], [Pos2; 3]) {
     let face = match cam.view_name() {
         "Bottom" => "bottom",
         "Front" => "front",
@@ -688,9 +720,9 @@ fn directional_triangles_for_cam(center: Pos2, cam: &Camera3D) -> ([Pos2; 3], [P
         let uv = cam.project_point(p3, Vec2::ZERO);
         pos2(center.x + uv.x as f32, center.y - uv.y as f32)
     };
-    let tip = CUBE_HALF as f32 + 3.5;
-    let base = tip + 11.0;
-    let hw = 7.5;
+    let tip = (CUBE_HALF as f32 + 3.5) * scale;
+    let base = tip + 11.0 * scale;
+    let hw = 7.5 * scale;
     let top = [
         project(-hw, base),
         project(hw, base),
@@ -857,26 +889,53 @@ fn point_in_tri(p: Pos2, t: &[Pos2; 3]) -> bool {
     !(has_neg && has_pos)
 }
 
+/// Responsive scale factor for the UCS icon arms inside `target_full`.
+pub(crate) fn ucs_arm_scale(target_full: Rect) -> f32 {
+    let min_dim = target_full.width().min(target_full.height()).max(0.0);
+    (min_dim / 260.0).clamp(0.45, 1.0)
+}
+
 /// The UCS icon's arms (as drawn by the canvas at the lower-left corner): the X arm and the Y arm.
 pub fn ucs_arms(canvas: Rect) -> [Rect; 2] {
-    let o = pos2(canvas.left() + 36.0, canvas.bottom() - 34.0);
-    [Rect::from_min_max(o + vec2(-8.0, -8.0), o + vec2(80.0, 8.0)), Rect::from_min_max(o + vec2(-8.0, -82.0), o + vec2(8.0, 8.0))]
+    ucs_arms_in(canvas, canvas)
+}
+
+/// The UCS icon's arms anchored in the lower-left of `viewport_clip`, scaled for `viewport_full`.
+pub fn ucs_arms_in(viewport_full: Rect, viewport_clip: Rect) -> [Rect; 2] {
+    let s = ucs_arm_scale(viewport_full);
+    let pad_x = 36.0 * s;
+    let pad_y = 34.0 * s;
+    let hit_pad = 8.0 * s;
+    let arm_len = 80.0 * s;
+    let y_arm_len = 82.0 * s;
+    let o = pos2(viewport_clip.left() + pad_x, viewport_clip.bottom() - pad_y);
+    [
+        Rect::from_min_max(o + vec2(-hit_pad, -hit_pad), o + vec2(arm_len, hit_pad)).intersect(viewport_clip),
+        Rect::from_min_max(o + vec2(-hit_pad, -y_arm_len), o + vec2(hit_pad, hit_pad)).intersect(viewport_clip),
+    ]
 }
 
 /// Make the UCS icon clickable: hovering highlights it, a click (either button) opens the
 /// coordinate-system menu.
 pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
+    ucs_icon_in(app, ui, canvas, canvas);
+}
+
+/// Make the UCS icon clickable within an active viewport's screen bounds.
+pub fn ucs_icon_in(app: &mut CadApp, ui: &mut egui::Ui, viewport_full: Rect, viewport_clip: Rect) {
     let t = Tokens::get();
-    let [x, y] = ucs_arms(canvas);
+    let s = ucs_arm_scale(viewport_full);
+    let [x, y] = ucs_arms_in(viewport_full, viewport_clip);
     let rx = ui.interact(x, ui.scope_id().with("ucs_x"), Sense::click_and_drag());
     let ry = ui.interact(y, ui.scope_id().with("ucs_y"), Sense::click_and_drag());
     let resp = (rx | ry).on_hover_cursor(CursorIcon::PointingHand).on_hover_text("CADCross / UCS icon: World Coordinate System");
     if resp.hovered() {
-        let o = pos2(x.left() + 8.0, x.center().y);
-        let st = Stroke::new(2.0, t.hover);
-        let p = ui.painter_at(canvas);
-        p.line_segment([o, o + vec2(60.0, 0.0)], st);
-        p.line_segment([o, o + vec2(0.0, -60.0)], st);
+        let o = pos2(viewport_clip.left() + 36.0 * s, viewport_clip.bottom() - 34.0 * s);
+        let st = Stroke::new((2.0 * s).clamp(1.2, 2.0), t.hover);
+        let p = ui.painter_at(viewport_clip);
+        let len = 60.0 * s;
+        p.line_segment([o, o + vec2(len, 0.0)], st);
+        p.line_segment([o, o + vec2(0.0, -len)], st);
     }
     let open = (resp.clicked() || resp.secondary_clicked()).then_some(egui::SetOpenCommand::Bool(true));
     ucs_menu(app, egui::Popup::menu(&resp).open_memory(open).at_pointer_fixed());
@@ -916,18 +975,6 @@ fn ucs_menu(app: &mut CadApp, popup: egui::Popup<'_>) {
     });
     if let Some((id, params)) = cmd {
         let _ = app.run(id, params);
-    }
-}
-
-/// Store an orbited camera captured from a ViewCube drag and clear any consumed Model/Paper
-/// `view.twist` so subsequent frames do not apply the old twist a second time.
-fn apply_drag_orbit(app: &mut CadApp, next_cam: Camera3D) {
-    if let Ok(st) = app.session.state_mut() {
-        st.camera = next_cam;
-        let v = st.view();
-        if st.active_viewport().is_none() && v.twist != 0.0 {
-            st.set_view_quiet(cadcraft_engine::View { twist: 0.0, ..v });
-        }
     }
 }
 
@@ -1173,27 +1220,39 @@ mod tests {
     }
 
     #[test]
-    fn roll_arrows_rotate_in_plane_preserving_view_dir() {
+    fn roll_arrows_rotate_around_world_z_snapping_to_cardinals() {
         let (mut app, ctx) = app_and_ctx();
         let l = Layout::new(canvas(&app));
-        let _ = app.run("view.set", json!({"preset": "front"}));
-        let front = app.session.state().map(|st| st.camera).unwrap_or_default();
         let ccw_hit = (l.ccw_outer[l.ccw_outer.len() / 2].to_vec2() + l.ccw_inner[l.ccw_inner.len() / 2].to_vec2()) * 0.5;
         let ccw_pos = ccw_hit.to_pos2();
         let cw_hit = (l.cw_outer[l.cw_outer.len() / 2].to_vec2() + l.cw_inner[l.cw_inner.len() / 2].to_vec2()) * 0.5;
         let cw_pos = cw_hit.to_pos2();
+
+        // 1. Orthogonal Front view: 90° arrows orbit around world Z (Front -> Left -> Front) keeping +Z upright.
+        let _ = app.run("view.set", json!({"preset": "front"}));
+        let front = app.session.state().map(|st| st.camera).unwrap_or_default();
         assert_eq!(l.part_at_cam(ccw_pos, &front), Some(Part::RollCcw));
         assert_eq!(l.part_at_cam(cw_pos, &front), Some(Part::RollCw));
 
         click(&mut app, &ctx, ccw_pos, egui::PointerButton::Primary);
-        let rolled_ccw = app.session.state().map(|st| st.camera).unwrap_or_default();
-        assert!((rolled_ccw.z - front.z).len() < 1e-12, "CCW roll arrow must keep Front z: {:?}", rolled_ccw.z);
-        assert_eq!(rolled_ccw, front.roll_in_plane(90.0));
+        let after_ccw = app.session.state().map(|st| st.camera).unwrap_or_default();
+        assert_eq!(after_ccw.view_name(), "Left", "CCW roll from Front must orbit around world Z to Left: {after_ccw:?}");
+        assert!((after_ccw.y - Vec3::Z).len() < 1e-12, "world-Z roll must keep vertical axis upright: {:?}", after_ccw.y);
 
         click(&mut app, &ctx, cw_pos, egui::PointerButton::Primary);
         let restored = app.session.state().map(|st| st.camera).unwrap_or_default();
-        assert!((restored.z - front.z).len() < 1e-12);
-        assert!((restored.y - front.y).len() < 1e-12);
+        assert_eq!(restored.view_name(), "Front", "CW roll from Left must orbit back to Front: {restored:?}");
+        assert!((restored.y - Vec3::Z).len() < 1e-12);
+
+        // 2. Arbitrary tilted 3D view: preserves elevation (`z.z`) and snaps compass heading to 90° cardinal steps.
+        let skewed = Camera3D::TOP.orbit(27.0, -35.0, false);
+        app.session.state_mut().unwrap().camera = skewed;
+        click(&mut app, &ctx, ccw_pos, egui::PointerButton::Primary);
+        let snapped = app.session.state().map(|st| st.camera).unwrap_or_default();
+        assert!((snapped.z.z - skewed.z.z).abs() < 1e-12, "world-Z roll must preserve elevation z.z");
+        let dir = snapped.compass_dir_xy();
+        let heading = dir.x.atan2(dir.y).to_degrees().rem_euclid(90.0);
+        assert!(heading.min(90.0 - heading) < 1e-9, "heading must snap to 90° cardinal: dir={dir:?}");
     }
 
     #[test]
@@ -1210,7 +1269,7 @@ mod tests {
         frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: start_n, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
         // Move off the thin ring past egui's click threshold; press_origin must still classify as Ring.
         frame(&mut app, &ctx, vec![egui::Event::PointerMoved(past_threshold_inside)]);
-        assert!(matches!(app.canvas.viewcube_drag, Some((_, _, true))), "expected ring drag from press_origin");
+        assert!(matches!(app.canvas.viewcube_drag, Some((_, true))), "expected ring drag from press_origin");
 
         frame(&mut app, &ctx, vec![egui::Event::PointerMoved(end_e)]);
         frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: end_e, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
@@ -1249,5 +1308,28 @@ mod tests {
             assert_eq!(Some(st.camera), Camera3D::preset("sw_isometric"));
             assert!(st.view().twist.abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn viewport_layout_scales_proportionally_and_clamps() {
+        let large = Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 820.0));
+        let l_large = Layout::for_viewport(large, large);
+        assert!((l_large.scale - 1.0).abs() < 1e-6);
+
+        let medium = Rect::from_min_size(pos2(200.0, 100.0), vec2(300.0, 300.0));
+        let l_med = Layout::for_viewport(medium, medium);
+        let expected_med_scale = (300.0 * 0.17) / 120.0;
+        assert!((l_med.scale - expected_med_scale).abs() < 1e-4);
+        assert!(medium.contains_rect(l_med.bounds), "scaled ViewCube bounds {:?} should fit inside medium viewport {:?}", l_med.bounds, medium);
+        assert!(medium.contains_rect(l_med.pill), "scaled WCS pill {:?} should fit inside medium viewport {:?}", l_med.pill, medium);
+        assert_eq!(l_med.part_at(l_med.home.center()), Some(Part::Home));
+        assert_eq!(l_med.part_at(l_med.center), Some(Part::Face));
+        assert_eq!(l_med.part_at(l_med.center + vec2(0.0, -l_med.ring)), Some(Part::Ring));
+
+        let tiny = Rect::from_min_size(pos2(40.0, 40.0), vec2(80.0, 80.0));
+        let l_tiny = Layout::for_viewport(tiny, tiny);
+        assert!((l_tiny.scale - (35.0 / 120.0)).abs() < 1e-4, "tiny viewport must clamp to 35px minimum scale");
+        assert!(tiny.contains(l_tiny.center));
+        assert_eq!(l_tiny.part_at(pos2(tiny.left() - 5.0, tiny.top() - 5.0)), None, "points outside viewport clip must not hit ViewCube");
     }
 }

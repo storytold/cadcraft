@@ -94,7 +94,7 @@ fn a_twisted_layout_viewport_far_from_the_origin_looks_at_its_site() {
 #[test]
 fn twisted_model_views_and_named_views_store_display_centres() {
     let mut d = Drawing::new_metric();
-    let tile = |center: Vec2, twist: f64| VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height: 50.0, aspect: 1.5, twist };
+    let tile = |center: Vec2, twist: f64| VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height: 50.0, aspect: 1.5, twist, grid: true };
     // A saved configuration of two tiles, one twisted.
     d.vports = vec![VportConfig { name: "Site".into(), tiles: vec![tile(SITE, twist()), tile(Vec2::new(5.0, 5.0), 0.0)] }];
     d.views.push(NamedView { name: "Site".into(), center: SITE, height: 50.0, width: 75.0, twist: twist(), ..Default::default() });
@@ -156,7 +156,7 @@ fn display_centres_are_measured_from_the_view_target() {
     assert!(close(v.view_center, SITE), "{:?}", v.view_center);
     // A model view tile and a named view.
     let mut d = Drawing::new_metric();
-    let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: SITE, height: 50.0, aspect: 1.5, twist: twist() };
+    let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: SITE, height: 50.0, aspect: 1.5, twist: twist(), grid: true };
     d.vports = vec![VportConfig { name: "Site".into(), tiles: vec![tile, VportTile { center: Vec2::new(5.0, 5.0), twist: 0.0, ..tile }] }];
     d.views.push(NamedView { name: "Site".into(), center: SITE, height: 50.0, width: 75.0, twist: twist(), ..Default::default() });
     let dxf = with_target(&cadcraft_io::write_dxf(&d), "VPORT", 12, 17, 51, target);
@@ -165,4 +165,54 @@ fn display_centres_are_measured_from_the_view_target() {
     let tiles: Vec<Vec2> = back.vports.iter().filter(|c| c.name == "Site").flat_map(|c| c.tiles.iter().map(|t| t.center)).collect();
     assert!(tiles.first().is_some_and(|c| close(*c, SITE)), "{tiles:?}");
     assert!(back.views.iter().all(|v| close(v.center, SITE)), "{:?}", back.views);
+}
+
+#[test]
+fn three_d_viewport_roundtrips_direction_target_z_and_roll() {
+    let mut d = Drawing::new_metric();
+    let sheet = Space::Paper(d.layouts[0].name.clone());
+    let iso = cadcraft_geom::Camera3D::preset("se_isometric").unwrap().roll_in_plane(35.0);
+    let front = cadcraft_geom::Camera3D::preset("front").unwrap();
+    let add_vp = |d: &mut Drawing, id: u32, camera, vc: Vec2, target_z: f64| {
+        d.add(
+            &sheet,
+            Common::default(),
+            EntityKind::Viewport(Viewport {
+                center: Vec3::new(100.0 + f64::from(id) * 50.0, 80.0, 0.0),
+                width: 40.0,
+                height: 30.0,
+                view_center: vc,
+                view_height: 20.0,
+                id,
+                camera,
+                target_z,
+                ..Viewport::default()
+            }),
+        )
+        .unwrap();
+    };
+    add_vp(&mut d, 2, iso, Vec2::new(15.0, -25.0), 42.5);
+    add_vp(&mut d, 3, front, Vec2::new(5.0, 0.0), 18.0);
+
+    let dxf = cadcraft_io::write_dxf(&d);
+    let back = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    let vps: Vec<Viewport> = back
+        .layouts
+        .iter()
+        .flat_map(|l| l.entities.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::Viewport(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(vps.len(), 2);
+    for (got, expected_cam, expected_c, expected_z) in [
+        (&vps[0], iso, Vec2::new(15.0, -25.0), 42.5),
+        (&vps[1], front, Vec2::new(5.0, 0.0), 18.0),
+    ] {
+        assert!((got.camera.z - expected_cam.z).len() < 1e-6, "z mismatch: {:?} vs {:?}", got.camera.z, expected_cam.z);
+        assert!((got.camera.y - expected_cam.y).len() < 1e-6, "y mismatch: {:?} vs {:?}", got.camera.y, expected_cam.y);
+        assert!(close(got.view_center, expected_c), "center mismatch: {:?} vs {expected_c:?}", got.view_center);
+        assert!((got.target_z - expected_z).abs() < 1e-6, "target_z mismatch: {} vs {expected_z}", got.target_z);
+    }
 }

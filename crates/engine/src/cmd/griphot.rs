@@ -195,7 +195,9 @@ impl GripEdit {
             return Err(other("The object is on a locked layer."));
         }
         let (h, k) = self.acted(s, action, to, value).ok_or_else(|| other("That would make a degenerate object."))?;
-        s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;
+        let d = s.doc_mut()?;
+        d.modify_entity(h, |e| e.kind = k)?;
+        super::layout::viewports::sync_clipped_viewports(d, &[h])?;
         Ok(Step::Done)
     }
 

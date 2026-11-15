@@ -1256,6 +1256,25 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     }
                 }
             }
+            EntityKind::Viewport(vp) => {
+                let single_shared = |key: &'static str, f: &dyn Fn(&cadcraft_doc::Viewport) -> String| -> String {
+                    let _ = key;
+                    shown_part(&f(vp))
+                };
+                viewport_properties(
+                    ui,
+                    d,
+                    std::slice::from_ref(&vp),
+                    &single_shared,
+                    &group,
+                    &len,
+                    &lenx,
+                    &realx,
+                    &mut set,
+                    &mut bad,
+                    ids,
+                );
+            }
             _ => {}
         }
     } else if let Some(dims) = sel
@@ -1480,6 +1499,23 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 let scale = shared("insert.scale", &|k| if let EntityKind::Insert(i) = k { Some(realx(i.scale.x)) } else { None });
                 num(ui, "Scale", "scale", scale, &mut set, &mut bad, ids);
             }
+            EntityKind::Viewport(_) => {
+                let vps: Vec<&cadcraft_doc::Viewport> = sel
+                    .iter()
+                    .filter_map(|h| d.entity(*h))
+                    .filter_map(|x| if let EntityKind::Viewport(v) = &x.kind { Some(v) } else { None })
+                    .collect();
+                let vp_shared = |key: &'static str, f: &dyn Fn(&cadcraft_doc::Viewport) -> String| -> String {
+                    memo.get(key, || {
+                        let vals: Vec<String> = vps.iter().map(|v| f(v)).collect();
+                        match vals.first() {
+                            Some(v0) if vals.iter().all(|v| v == v0) => shown_part(v0),
+                            _ => VARIES.into(),
+                        }
+                    })
+                };
+                viewport_properties(ui, d, &vps, &vp_shared, &group, &len, &lenx, &realx, &mut set, &mut bad, ids);
+            }
             _ => {}
         }
     }
@@ -1497,6 +1533,144 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
     }
+}
+
+/// Shared Geometry and Misc property rows for one or more selected `Viewport` entities.
+#[allow(clippy::too_many_arguments)]
+fn viewport_properties(
+    ui: &mut egui::Ui,
+    d: &cadcraft_doc::Drawing,
+    vps: &[&cadcraft_doc::Viewport],
+    shared: &dyn Fn(&'static str, &dyn Fn(&cadcraft_doc::Viewport) -> String) -> String,
+    group: &dyn Fn(&mut egui::Ui, &str),
+    len: &dyn Fn(f64) -> String,
+    lenx: &dyn Fn(f64) -> String,
+    realx: &dyn Fn(f64) -> String,
+    set: &mut Option<Value>,
+    bad: &mut Option<String>,
+    ids: &Vec<String>,
+) {
+    let num_row = |ui: &mut egui::Ui, label: &str, key: &str, shown: String, set: &mut Option<Value>, bad: &mut Option<String>| {
+        prop_row(ui, label, |ui| {
+            if let Some(f) = number(edit_field(ui, ui.scope_id().with((key, ids)), shown), bad) {
+                *set = Some(json!({ "handles": ids, key: f }));
+            }
+        });
+    };
+    let single = vps.len() == 1;
+    let any_clipped = vps.iter().any(|v| v.clip.is_some());
+    let any_locked = vps.iter().any(|v| v.locked);
+    if single {
+        let vp = vps[0];
+        num_row(ui, "Center X", "centerX", len(vp.center.x), set, bad);
+        num_row(ui, "Center Y", "centerY", len(vp.center.y), set, bad);
+        num_row(ui, "Center Z", "centerZ", len(vp.center.z), set, bad);
+    } else {
+        prop_row(ui, "Center X", |ui| read_only(ui, &shared("vp.cx", &|v| lenx(v.center.x))));
+        prop_row(ui, "Center Y", |ui| read_only(ui, &shared("vp.cy", &|v| lenx(v.center.y))));
+        prop_row(ui, "Center Z", |ui| read_only(ui, &shared("vp.cz", &|v| lenx(v.center.z))));
+    }
+    let height = shared("vp.height", &|v| lenx(v.height));
+    let width = shared("vp.width", &|v| lenx(v.width));
+    if any_clipped {
+        prop_row(ui, "Height", |ui| read_only(ui, &height));
+        prop_row(ui, "Width", |ui| read_only(ui, &width));
+    } else {
+        num_row(ui, "Height", "height", height, set, bad);
+        num_row(ui, "Width", "width", width, set, bad);
+    }
+
+    group(ui, "Misc");
+    let tr_or_varies = |raw: &str| if raw == VARIES { VARIES.to_string() } else { crate::i18n::t(raw).to_string() };
+    let yes_no_prop = |ui: &mut egui::Ui,
+                       label: &str,
+                       cache_key: &'static str,
+                       json_key: &'static str,
+                       get: &dyn Fn(&cadcraft_doc::Viewport) -> bool,
+                       set: &mut Option<Value>| {
+        let raw = shared(cache_key, &|v| if get(v) { "Yes" } else { "No" }.to_string());
+        let shown = tr_or_varies(&raw);
+        prop_row(ui, label, |ui| {
+            if let Some(picked) = pick_menu(ui, &shown, ["Yes", "No"].map(|s| crate::i18n::t(s).to_string())) {
+                *set = Some(json!({ "handles": ids, json_key: picked == crate::i18n::t("Yes") }));
+            }
+        });
+    };
+    yes_no_prop(ui, "On", "vp.on", "on", &|v| v.on, set);
+    let clipped = shared("vp.clipped", &|v| if v.clip.is_some() { "Yes" } else { "No" }.to_string());
+    prop_row(ui, "Clipped", |ui| read_only(ui, &clipped));
+    yes_no_prop(ui, "Display locked", "vp.locked", "locked", &|v| v.locked, set);
+
+    let metric = cadcraft_render::paper::paper_unit_mm(d) == 1.0;
+    let anno_shown = shared("vp.anno_scale", &|v| {
+        let s = v.scale();
+        if !(s.is_finite() && s > 0.0) {
+            return "?".to_string();
+        }
+        d.scales
+            .iter()
+            .find(|sc| sc.has_factor(1.0 / s))
+            .map(|sc| sc.name.clone())
+            .unwrap_or_else(|| crate::vpscale::label(s, metric))
+    });
+    if any_locked {
+        prop_row(ui, "Annotation scale", |ui| read_only(ui, &anno_shown));
+    } else {
+        prop_row(ui, "Annotation scale", |ui| {
+            let items: Vec<String> = d.scales.iter().map(|s| s.name.clone()).collect();
+            if let Some(picked) = pick_menu(ui, &anno_shown, items)
+                && let Some(sc) = d.scales.iter().find(|s| s.name == picked)
+            {
+                let cs = 1.0 / sc.factor();
+                if cs.is_finite() && cs > 0.0 {
+                    *set = Some(json!({ "handles": ids, "customScale": cs }));
+                }
+            }
+        });
+    }
+
+    let std_raw = shared("vp.std_scale", &|v| crate::vpscale::standard_scale_name(v.scale(), metric).to_string());
+    if any_locked {
+        prop_row(ui, "Standard scale", |ui| read_only(ui, &std_raw));
+    } else {
+        let std_shown = tr_or_varies(&std_raw);
+        prop_row(ui, "Standard scale", |ui| {
+            let items = std::iter::once(crate::i18n::t("Scale to fit").to_string())
+                .chain(std::iter::once(crate::i18n::t("Custom").to_string()))
+                .chain(crate::vpscale::scales(metric).into_iter().map(|(name, _)| name.to_string()));
+            if let Some(picked) = pick_menu(ui, &std_shown, items) {
+                if picked == crate::i18n::t("Scale to fit") {
+                    *set = Some(json!({ "handles": ids, "scaleToFit": true }));
+                } else if let Some((_, cs)) = crate::vpscale::scales(metric).into_iter().find(|(name, _)| *name == picked) {
+                    *set = Some(json!({ "handles": ids, "customScale": cs }));
+                }
+            }
+        });
+    }
+
+    let cs_shown = shared("vp.custom_scale", &|v| realx(v.scale()));
+    if any_locked {
+        prop_row(ui, "Custom scale", |ui| read_only(ui, &cs_shown));
+    } else {
+        num_row(ui, "Custom scale", "customScale", cs_shown, set, bad);
+    }
+
+    yes_no_prop(ui, "UCS per viewport", "vp.ucs", "ucsPerViewport", &|v| v.ucs_per_viewport, set);
+    let layer_ovr = shared("vp.layer_ovr", &|v| if v.has_layer_overrides() { "Yes" } else { "No" }.to_string());
+    prop_row(ui, "Layer property overrides", |ui| read_only(ui, &layer_ovr));
+    let visual_style = shared("vp.visual_style", &|v| v.render_mode_name().to_string());
+    prop_row(ui, "Visual style", |ui| read_only(ui, &visual_style));
+    let sp_raw = shared("vp.shade_plot", &|v| v.shade_plot_name().to_string());
+    let sp_shown = tr_or_varies(&sp_raw);
+    prop_row(ui, "Shade plot", |ui| {
+        let items = cadcraft_doc::Viewport::SHADE_PLOT_NAMES.map(|s| crate::i18n::t(s).to_string());
+        if let Some(picked) = pick_menu(ui, &sp_shown, items)
+            && let Some(idx) = cadcraft_doc::Viewport::SHADE_PLOT_NAMES.iter().position(|s| crate::i18n::t(s) == picked)
+        {
+            *set = Some(json!({ "handles": ids, "shadePlot": idx }));
+        }
+    });
+    prop_row(ui, "Linked to sheet view", |ui| read_only(ui, "No"));
 }
 
 #[cfg(test)]
@@ -1786,5 +1960,93 @@ mod tests {
         h.state_mut().run("select", json!({ "handles": [handles[0].clone()] })).unwrap();
         h.run_steps(3);
         assert!(h.query_all_by_value("4.0000").count() > 0, "one circle alone shows its radius");
+    }
+
+    #[test]
+    fn viewport_properties_panel_shows_geometry_misc_locks_and_varies() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("line", json!({ "points": [[0, 0], [100, 100]] })).unwrap();
+        app.run("layout.new", json!({ "name": "Sheet1", "viewport": false })).unwrap();
+        app.run(
+            "mview",
+            json!({ "layout": "Sheet1", "p1": [10, 10], "p2": [110, 70] }),
+        )
+        .unwrap();
+        let vp1 = {
+            let d = app.session.doc().unwrap();
+            d.layouts
+                .iter()
+                .find(|l| l.name == "Sheet1")
+                .unwrap()
+                .entities
+                .iter()
+                .find(|e| matches!(&e.kind, EntityKind::Viewport(_)))
+                .unwrap()
+                .handle
+                .hex()
+        };
+        app.run(
+            "properties.set",
+            json!({ "handles": [vp1.clone()], "customScale": 0.5, "ucsPerViewport": false, "shadePlot": 3 }),
+        )
+        .unwrap();
+        app.run("select", json!({ "handles": [vp1.clone()] })).unwrap();
+
+        let texts = painted_texts(&mut app, properties_section);
+        for want in [
+            "Center X",
+            "Center Y",
+            "Center Z",
+            "Height",
+            "Width",
+            "Misc",
+            "On",
+            "Clipped",
+            "Display locked",
+            "Annotation scale",
+            "Standard scale",
+            "Custom scale",
+            "UCS per viewport",
+            "Layer property overrides",
+            "Visual style",
+            "Shade plot",
+            "Linked to sheet view",
+            "1:2",
+            "0.5000",
+            "2D Wireframe",
+            "Rendered",
+        ] {
+            assert!(
+                texts.iter().any(|t| t.as_str() == crate::i18n::t(want) || t == want),
+                "missing viewport row/value `{want}`; painted: {texts:?}"
+            );
+        }
+
+        // Locking disables editing on Annotation scale / Standard scale / Custom scale (no editable TextEdit for customScale).
+        app.run("properties.set", json!({ "handles": [vp1.clone()], "locked": true })).unwrap();
+        let mut h = palette(app);
+        // With single unlocked vs locked: when locked, only 3 Center fields + Height + Width + General Linetype scale are TextEdits (Custom scale becomes read-only).
+        let locked_custom_scale = h.query_all_by_value("0.5000").count();
+        assert_eq!(locked_custom_scale, 0, "locked viewport shows Custom scale as read-only label, not an editable TextEdit");
+
+        // Multi-select two viewports with different properties shows `*VARIES*`.
+        h.state_mut().run("mview", json!({ "layout": "Sheet1", "p1": [130, 10], "p2": [210, 60] })).unwrap();
+        let vp2 = {
+            let d = h.state().session.doc().unwrap();
+            d.layouts
+                .iter()
+                .find(|l| l.name == "Sheet1")
+                .unwrap()
+                .entities
+                .iter()
+                .filter(|e| matches!(&e.kind, EntityKind::Viewport(_)))
+                .nth(1)
+                .unwrap()
+                .handle
+                .hex()
+        };
+        h.state_mut().run("select", json!({ "handles": [vp1, vp2] })).unwrap();
+        h.run_steps(3);
+        assert!(h.query_all_by_value(VARIES).count() > 0, "two differing viewports show {VARIES}");
     }
 }

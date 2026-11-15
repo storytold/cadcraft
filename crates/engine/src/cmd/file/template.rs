@@ -60,7 +60,7 @@ pub(super) fn run_new(s: &mut Session, p: &Value) -> Result<Option<Value>> {
     {
         let center = cadcraft_geom::Vec2::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0);
         let twist = st.view().twist;
-        st.set_view_quiet(crate::View { center, height: (hi.y - lo.y).max(1e-6), twist });
+        st.set_view_quiet(crate::View::plan(center, (hi.y - lo.y).max(1e-6), twist));
     }
     Ok(Some(json!({ "index": i, "title": title, "template": path })))
 }

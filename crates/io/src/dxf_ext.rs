@@ -916,6 +916,35 @@ pub(crate) fn model_center_to_dcs(m: cadcraft_geom::Vec2, twist: f64) -> cadcraf
     if c.is_finite() { c } else { m }
 }
 
+/// Build `(camera, twist_2d, is_3d)` for a DXF `VIEWPORT` from group 16/26/36 (`view_dir`, target
+/// toward camera) and group 51 (`raw_twist`, radians counterclockwise). Planar Top viewports retain
+/// `twist_2d`; non-Top 3D viewports bake any roll into `camera`.
+pub(crate) fn viewport_camera_from_dxf(
+    has_dir: bool,
+    view_dir: cadcraft_geom::Vec3,
+    raw_twist: f64,
+) -> (cadcraft_geom::Camera3D, f64, bool) {
+    let dir = view_dir.normalized();
+    if !has_dir || dir == cadcraft_geom::Vec3::ZERO || (dir - cadcraft_geom::Vec3::Z).len() < 1e-6 {
+        return (cadcraft_geom::Camera3D::TOP, raw_twist, false);
+    }
+    let base = cadcraft_geom::Camera3D::from_dir_up(-dir, cadcraft_geom::Vec3::ZERO);
+    let cam = if raw_twist != 0.0 && raw_twist.is_finite() {
+        base.roll_in_plane(-raw_twist.to_degrees())
+    } else {
+        base
+    };
+    (cam, 0.0, true)
+}
+
+/// Compute `(view_direction_to_camera, roll_twist_rad)` to write to DXF groups 16/26/36 and 51 for
+/// a non-Top 3D [`cadcraft_geom::Camera3D`].
+pub(crate) fn viewport_3d_dxf_params(cam: cadcraft_geom::Camera3D) -> (cadcraft_geom::Vec3, f64) {
+    let base = cadcraft_geom::Camera3D::from_dir_up(cam.z, cadcraft_geom::Vec3::ZERO);
+    let twist = cadcraft_geom::norm_angle(cam.y.dot(base.x).atan2(cam.y.dot(base.y)));
+    (-cam.z, twist)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

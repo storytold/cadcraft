@@ -130,6 +130,8 @@ pub fn reset(s: &mut Session) {
     st.orthomode = d.orthomode;
     st.snapmode = d.snapmode;
     st.gridmode = d.gridmode;
+    st.paper_gridmode = d.paper_gridmode;
+    st.ortho_plane_grid = d.ortho_plane_grid;
     st.gridmajor = d.gridmajor;
     st.dynmode = d.dynmode;
     st.dynpi_cartesian = d.dynpi_cartesian;

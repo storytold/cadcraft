@@ -673,6 +673,9 @@ impl CadApp {
         if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
             prefs["lastPgpDir"] = json!(dir);
         }
+        if self.ui.viewcube_home_preset != "top" {
+            prefs["viewcubeHomePreset"] = json!(self.ui.viewcube_home_preset);
+        }
         if !self.ui.shortcuts.is_empty() {
             prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
@@ -711,6 +714,9 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(preset) = v.get("viewcubeHomePreset").and_then(Value::as_str).and_then(options::normalize_home_preset) {
+            self.ui.viewcube_home_preset = preset;
         }
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);

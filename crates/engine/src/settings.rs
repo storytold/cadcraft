@@ -11,6 +11,11 @@ pub struct Settings {
     /// POLARANG (radians).
     pub polarang: f64,
     pub gridmode: bool,
+    /// Paper-space grid display flag (default `false` so layouts match the plot preview).
+    pub paper_gridmode: bool,
+    /// When `true`, orthogonal elevation/side views (`Front`/`Back`/`Left`/`Right`) switch the grid
+    /// onto `XZ`/`YZ` (MATCAD style). Defaults to `false` (AutoCAD XY ground plane only).
+    pub ortho_plane_grid: bool,
     pub snapmode: bool,
     /// SNAPUNIT in a drafting settings snapshot; stored in the drawing header.
     pub snapunit: Vec2,
@@ -130,6 +135,9 @@ pub struct Settings {
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
     /// (default: 1).
     pub attreq: bool,
+    /// ORBITAUTOTARGET: automatically picks a 3D orbit pivot from ray-hit / selection / scene
+    /// extents instead of fixing the target at the viewport centre (default: true).
+    pub orbitautotarget: bool,
 }
 
 impl Default for Settings {
@@ -140,6 +148,8 @@ impl Default for Settings {
             polarmode: true,
             polarang: std::f64::consts::FRAC_PI_2,
             gridmode: true,
+            paper_gridmode: false,
+            ortho_plane_grid: false,
             snapmode: false,
             snapunit: Vec2::new(0.5, 0.5),
             osnaphatch: false,
@@ -195,6 +205,7 @@ impl Default for Settings {
             polardist: 0.0,
             auditctl: false,
             attreq: true,
+            orbitautotarget: true,
         }
     }
 }

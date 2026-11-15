@@ -98,7 +98,19 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         if split.is_none()
             && let Some((h, vp)) = st.active_viewport()
         {
-            (h, vp.view_center.x.to_bits(), vp.view_center.y.to_bits(), vp.view_height.to_bits()).hash(&mut s);
+            let hash_v = |v: cadcraft_geom::Vec3| (v.x.to_bits(), v.y.to_bits(), v.z.to_bits());
+            (
+                h,
+                vp.view_center.x.to_bits(),
+                vp.view_center.y.to_bits(),
+                vp.view_target_z().to_bits(),
+                vp.view_height.to_bits(),
+                vp.view_twist().to_bits(),
+                hash_v(vp.camera.x),
+                hash_v(vp.camera.y),
+                hash_v(vp.camera.z),
+            )
+                .hash(&mut s);
         }
         s.finish()
     };

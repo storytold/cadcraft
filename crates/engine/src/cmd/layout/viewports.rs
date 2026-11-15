@@ -6,7 +6,7 @@
 //! entity (a closed polyline, circle, ellipse or spline) whose outline clips what it shows
 //! ([`Viewport::clip`], DXF group 340).
 
-use cadcraft_doc::{Drawing, EntityKind, Handle, Space, Viewport, VportConfig, VportTile};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Space, Viewport, VportConfig, VportTile};
 use cadcraft_geom::{Bounds2, PolyVertex, Vec2};
 use serde_json::{Value, json};
 
@@ -90,6 +90,14 @@ fn vertices_param(cmd: &str, p: &Value) -> Result<Vec<PolyVertex>> {
     Ok(vs)
 }
 
+/// Combined polygon/curve extents of `e` when `e` is a valid clip boundary kind.
+fn raw_boundary_bounds(d: &Drawing, e: &Entity) -> Option<Bounds2> {
+    let b = boundary_bounds(&e.kind)?;
+    // The exact extents (the tessellated outline runs just inside curves).
+    let eb = cadcraft_doc::entity_bounds(d, e, 0);
+    Some(if eb.is_empty() || !eb.min.is_finite() || !eb.max.is_finite() { b } else { b.union(&eb) })
+}
+
 /// Check that `h` is a usable clip boundary in `space`; returns its extents.
 fn check_boundary(cmd: &str, d: &Drawing, space: &Space, h: Handle) -> Result<Bounds2> {
     let e = d.space(space).and_then(|st| st.get(h)).ok_or_else(|| bad(cmd, format!("object {} is not in this layout", h.hex())))?;
@@ -99,14 +107,40 @@ fn check_boundary(cmd: &str, d: &Drawing, space: &Space, h: Handle) -> Result<Bo
     if viewport_of_boundary(d, space, h).is_some() {
         return Err(bad(cmd, "the object already clips a viewport"));
     }
-    let b = boundary_bounds(&e.kind).ok_or_else(|| bad(cmd, "the object must be a closed polyline, circle, ellipse or spline"))?;
-    // The exact extents (the tessellated outline runs just inside curves).
-    let eb = cadcraft_doc::entity_bounds(d, e, 0);
-    let b = if eb.is_empty() || !eb.min.is_finite() || !eb.max.is_finite() { b } else { b.union(&eb) };
+    let b = raw_boundary_bounds(d, e).ok_or_else(|| bad(cmd, "the object must be a closed polyline, circle, ellipse or spline"))?;
     if b.width() > 1e7 || b.height() > 1e7 {
         return Err(bad(cmd, "the viewport is too large"));
     }
     Ok(b)
+}
+
+/// Update every `Viewport` whose clip boundary is in `edited` so its paper rectangle matches
+/// the boundary extents while keeping model geometry pinned on the sheet and scaled uniformly.
+pub(crate) fn sync_clipped_viewports(d: &mut Drawing, edited: &[Handle]) -> Result<()> {
+    if edited.is_empty() {
+        return Ok(());
+    }
+    let dr: &Drawing = d;
+    let mut updates = Vec::new();
+    for l in &dr.layouts {
+        for e in l.entities.iter() {
+            let EntityKind::Viewport(v) = &e.kind else { continue };
+            let Some(clip_h) = v.clip.filter(|b| *b != e.handle && edited.contains(b)) else { continue };
+            let Some(clip_e) = l.entities.get(clip_h) else { continue };
+            let Some(b) = raw_boundary_bounds(dr, clip_e) else { continue };
+            if b.width() > 1e-9 && b.height() > 1e-9 && b.width() <= 1e7 && b.height() <= 1e7 {
+                updates.push((e.handle, b));
+            }
+        }
+    }
+    for (vh, b) in updates {
+        d.modify_entity(vh, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                v.resize_border_keeping_camera(b.center(), b.width(), b.height());
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// The viewport in `space` clipped by `h`.
@@ -326,18 +360,8 @@ pub(super) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let b = check_boundary(cmd, s.doc()?, &space, boundary)?;
     // The viewport takes the boundary's extents; model space stays where it was on the sheet.
-    let k = cur.view_height / cur.height.max(1e-12);
     let mut v = cur;
-    let c = b.center();
-    let view_center = v.paper_to_model(c);
-    let view_height = b.height() * k;
-    if view_center.is_finite() && view_height.is_finite() && view_height > 0.0 {
-        v.view_center = view_center;
-        v.view_height = view_height;
-    }
-    v.center = c.to3(v.center.z);
-    v.width = b.width();
-    v.height = b.height();
+    v.resize_border_keeping_camera(b.center(), b.width(), b.height());
     v.clip = Some(boundary);
     s.doc_mut()?.modify_entity(vh, |e| e.kind = EntityKind::Viewport(v))?;
     if let Some(o) = old.filter(|o| *o != boundary) {

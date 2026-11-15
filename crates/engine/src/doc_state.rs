@@ -120,15 +120,61 @@ impl DocState {
     pub fn edit_space(&self) -> Space {
         if self.active_viewport().is_some() { Space::Model } else { self.space.clone() }
     }
-    /// The effective 3D camera used for zooming/fitting the active view: the Model-space camera
-    /// when editing Model space directly, else Top plan view for Paper space (and MSPACE
-    /// viewports until per-viewport 3D cameras are introduced).
+    /// The effective 3D camera used for zooming/fitting/orbiting the active view: the Model-space
+    /// camera on the Model tab, the active viewport's 3D camera in MSPACE, or Top plan in Paper space.
     pub fn zoom_camera(&self) -> cadcraft_geom::Camera3D {
         if matches!(self.space, Space::Model) && self.mspace.is_none() {
             self.camera
+        } else if let Some((_, vp)) = self.active_viewport() {
+            vp.camera
         } else {
             cadcraft_geom::Camera3D::TOP
         }
+    }
+    /// Whether an MSPACE layout viewport is currently active and display-locked.
+    pub fn is_active_viewport_locked(&self) -> bool {
+        self.active_viewport().is_some_and(|(_, vp)| vp.locked)
+    }
+    /// Set the 3D camera on the active view (Model tab, or the active unlocked MSPACE viewport).
+    /// Returns `false` when in Paper space or when the active viewport is locked.
+    pub fn set_active_camera(&mut self, cam: cadcraft_geom::Camera3D) -> bool {
+        if matches!(self.space, Space::Model) && self.mspace.is_none() {
+            self.camera = cam;
+            return true;
+        }
+        let Some((h, vp)) = self.active_viewport() else {
+            return false;
+        };
+        if vp.locked {
+            return false;
+        }
+        let space = self.space.clone();
+        let doc = Arc::make_mut(&mut self.doc);
+        if let Some(store) = doc.space_mut(&space) {
+            store.modify(h, |e| {
+                if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
+                    x.camera = cam;
+                    x.twist = 0.0;
+                }
+            });
+            return true;
+        }
+        false
+    }
+    /// Update the active MSPACE layout viewport's per-viewport grid flag.
+    pub fn set_active_viewport_grid(&mut self, on: bool) -> bool {
+        let Some(h) = self.mspace else { return false };
+        let space = self.space.clone();
+        let doc = Arc::make_mut(&mut self.doc);
+        if let Some(store) = doc.space_mut(&space) {
+            store.modify(h, |e| {
+                if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
+                    x.grid = on;
+                }
+            });
+            return true;
+        }
+        false
     }
     /// The active MSPACE viewport, if it still exists in the current layout.
     pub fn active_viewport(&self) -> Option<(Handle, cadcraft_doc::Viewport)> {
@@ -149,8 +195,11 @@ impl DocState {
         match self.active_viewport() {
             Some((_, vp)) => {
                 let k = vp.view_height / vp.height;
-                // The viewport's twist turns the model view inside it.
-                View { center: vp.paper_to_model(pv.center), height: pv.height * k, twist: vp.view_twist() }
+                let eff = vp.effective_camera();
+                let d_uv = (pv.center - vp.center.xy()) * k;
+                let target = vp.target() + eff.x * d_uv.x + eff.y * d_uv.y;
+                let twist = if vp.camera.is_top_plan() { vp.view_twist() } else { 0.0 };
+                View { center: target.xy(), height: pv.height * k, twist, target_z: target.z }
             }
             None => pv,
         }
@@ -163,27 +212,36 @@ impl DocState {
             let pv = self.paper_view();
             let k = v.height / pv.height.max(1e-12);
             if vp.locked {
-                // A locked viewport keeps its scale: pan/zoom the sheet instead.
+                // A locked viewport keeps its scale and 3D orientation: pan/zoom the sheet instead.
                 let k0 = vp.view_height / vp.height;
-                let pc = vp.model_to_paper(v.center);
-                let paper = View { center: pc, height: v.height / k0, twist: pv.twist };
+                let pc = vp.model_to_paper_3d(v.target());
+                let paper = View::plan(pc, v.height / k0, pv.twist);
                 if !usable_view(&paper) {
                     return false;
                 }
                 self.put_paper_view(paper);
             } else {
-                // `v`'s twist is the one the viewport shows (a non-finite one keeps its own).
-                let twist = if v.twist.is_finite() { v.twist } else { vp.view_twist() };
-                let center = v.center - ((pv.center - vp.center.xy()) * k).rotate(-twist);
+                // In 2D Top plan views, `v`'s twist turns the viewport; in 3D views the frame carries orientation.
+                let twist = if !vp.camera.is_top_plan() {
+                    0.0
+                } else if v.twist.is_finite() {
+                    v.twist
+                } else {
+                    vp.view_twist()
+                };
+                let eff = vp.camera.with_twist(twist);
+                let d_uv = (pv.center - vp.center.xy()) * k;
+                let vp_target = v.target() - (eff.x * d_uv.x + eff.y * d_uv.y);
                 let height = vp.height * k;
-                if !usable_view(&View { center, height, twist }) {
+                if !usable_view(&View { center: vp_target.xy(), height, twist, target_z: vp_target.z }) {
                     return false;
                 }
                 let doc = Arc::make_mut(&mut self.doc);
                 if let Some(store) = doc.space_mut(&self.space.clone()) {
                     store.modify(h, |e| {
                         if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
-                            x.view_center = center;
+                            x.view_center = vp_target.xy();
+                            x.target_z = vp_target.z;
                             x.view_height = height;
                             x.twist = twist;
                         }
@@ -227,7 +285,7 @@ impl DocState {
         let d = Arc::make_mut(&mut self.doc);
         d.vports.retain(|c| !c.is_active());
         if twist != 0.0 {
-            let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: v.center, height: v.height, aspect: 1.0, twist };
+            let tile = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: v.center, height: v.height, aspect: 1.0, twist, ..VportTile::default() };
             d.vports.insert(0, VportConfig { name: VportConfig::ACTIVE.into(), tiles: vec![tile] });
         }
     }
@@ -258,7 +316,7 @@ impl DocState {
     /// The view ZOOM starts from: the model view of the active unlocked viewport, else [`Self::view`].
     pub fn zoom_frame(&self) -> View {
         match self.zoom_viewport() {
-            Some(v) => View { center: v.view_center, height: v.view_height, twist: v.view_twist() },
+            Some(v) => View { center: v.view_center, height: v.view_height, twist: v.view_twist(), target_z: v.view_target_z() },
             None => self.view(),
         }
     }
@@ -273,9 +331,17 @@ impl DocState {
             Some(vp) => {
                 let pv = self.paper_view();
                 let k = f.height / vp.height;
-                // The frame's twist turns the viewport (a non-finite one keeps the viewport's).
-                let twist = if f.twist.is_finite() { f.twist } else { vp.view_twist() };
-                View { center: f.center + ((pv.center - vp.center.xy()) * k).rotate(-twist), height: pv.height * k, twist }
+                let twist = if !vp.camera.is_top_plan() {
+                    0.0
+                } else if f.twist.is_finite() {
+                    f.twist
+                } else {
+                    vp.view_twist()
+                };
+                let eff = vp.camera.with_twist(twist);
+                let d_uv = (pv.center - vp.center.xy()) * k;
+                let screen_target = f.target() + eff.x * d_uv.x + eff.y * d_uv.y;
+                View { center: screen_target.xy(), height: pv.height * k, twist, target_z: screen_target.z }
             }
             None => f,
         };

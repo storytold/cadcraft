@@ -50,11 +50,30 @@ pub struct Xf {
     /// The view twist (radians counterclockwise, `cadcraft_engine::View::twist`): the drawing
     /// appears turned by it about `center`. 0 for paper space.
     pub twist: f64,
+    /// Elevation Z of the camera target (`cadcraft_engine::View::target_z`).
+    pub target_z: f64,
     /// Active 3D camera orientation for model space (ViewCube, 3D Orbit, CADCross).
     pub cam: cadcraft_geom::Camera3D,
 }
 
 impl Xf {
+    /// Full 3D camera target `(center.x, center.y, target_z)`.
+    pub fn target(&self) -> cadcraft_geom::Vec3 {
+        cadcraft_geom::Vec3::new(self.center.x, self.center.y, self.target_z)
+    }
+    /// Screen-frame XY shift caused by non-zero `target_z` when projecting `Z = 0` geometry.
+    fn z_shift(&self) -> Vec2 {
+        if !self.cam.is_top_plan() && self.target_z != 0.0 {
+            Vec2::new(-self.cam.x.z * self.target_z, -self.cam.y.z * self.target_z)
+        } else {
+            Vec2::ZERO
+        }
+    }
+    /// Convert screen coordinates `p` to camera-plane UV offset (world units relative to `target()`).
+    pub fn screen_uv_at(&self, p: Pos2) -> Vec2 {
+        let c = self.rect.center();
+        Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale)
+    }
     /// A world offset from `center` in the screen's frame (y up): turned by the 3D camera or view twist.
     fn turn(&self, v: Vec2) -> Vec2 {
         if !self.cam.is_top_plan() {
@@ -62,10 +81,20 @@ impl Xf {
         }
         if self.twist == 0.0 { v } else { v.rotate(self.twist) }
     }
+    /// Map a 3D world point `p` to screen coordinates using `target()`.
+    pub fn to_screen_3d(&self, p: cadcraft_geom::Vec3) -> Pos2 {
+        let c = self.rect.center();
+        let q = if !self.cam.is_top_plan() {
+            self.cam.project_3d(p, self.target())
+        } else {
+            self.turn(p.xy() - self.center)
+        };
+        pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
+    }
     /// Map a 2D world point `p` (on `Z = 0`) to screen coordinates.
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
-        let q = self.turn(p - self.center);
+        let q = self.turn(p - self.center) + self.z_shift();
         pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
     /// Intersect screen position `p` with the world XY plane (`Z = 0`), returning `None` in
@@ -73,26 +102,44 @@ impl Xf {
     pub fn try_to_world(&self, p: Pos2) -> Option<Vec2> {
         let c = self.rect.center();
         if !self.cam.is_top_plan() {
-            let uv = Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale);
-            return self.cam.try_unproject_to_xy(uv, self.center);
+            let uv = self.screen_uv_at(p);
+            let (ray_o, ray_d) = self.cam.ray_at_target(uv, self.target());
+            return cadcraft_geom::intersect_ray_plane(
+                ray_o,
+                ray_d,
+                cadcraft_geom::Vec3::ZERO,
+                cadcraft_geom::Vec3::Z,
+            )
+            .map(cadcraft_geom::Vec3::xy);
         }
         Some(self.center + self.screen_delta_to_world(p - c))
     }
     /// Map a screen position `p` back to world XY (`Z = 0`), falling back in edge-on views to
     /// isometric horizontal/depth mapping without discarding the vertical axis.
     pub fn to_world(&self, p: Pos2) -> Vec2 {
-        let c = self.rect.center();
         if !self.cam.is_top_plan() {
-            let uv = Vec2::new(f64::from(p.x - c.x) / self.scale, f64::from(c.y - p.y) / self.scale);
-            return self.cam.unproject_to_xy(uv, self.center);
+            if let Some(hit) = self.try_to_world(p) {
+                return hit;
+            }
+            return self.cam.unproject_to_xy(self.screen_uv_at(p), self.center);
         }
-        self.center + self.screen_delta_to_world(p - c)
+        self.center + self.screen_delta_to_world(p - self.rect.center())
     }
-    /// The world offset a screen offset `d` (points, y down) covers: a pan moves the view by it.
+    /// 3D anchor point in the orthographic target plane `(target(), cam.z)` under screen position
+    /// `p`, keeping interactive scroll/pinch zooms pixel-locked even when `target_z != 0` or in
+    /// edge-on orthogonal views (`Front`, `Left`, etc.).
+    pub fn zoom_anchor_3d(&self, p: Pos2) -> cadcraft_geom::Vec3 {
+        if !self.cam.is_top_plan() {
+            return self.cam.ray_at_target(self.screen_uv_at(p), self.target()).0;
+        }
+        self.to_world(p).to3(self.target_z)
+    }
+    /// The world XY offset (on `Z = 0`) covered by screen offset `d` (points, y down).
     pub fn screen_delta_to_world(&self, d: egui::Vec2) -> Vec2 {
         if !self.cam.is_top_plan() {
-            if let Some(world) = self.try_to_world(self.rect.center() + d) {
-                return world - self.center;
+            let c = self.rect.center();
+            if let (Some(world), Some(center_world)) = (self.try_to_world(c + d), self.try_to_world(c)) {
+                return world - center_world;
             }
             let du = f64::from(d.x) / self.scale;
             let dv = -f64::from(d.y) / self.scale;
@@ -100,6 +147,14 @@ impl Xf {
         }
         let q = Vec2::new(f64::from(d.x) / self.scale, -f64::from(d.y) / self.scale);
         if self.twist == 0.0 { q } else { q.rotate(-self.twist) }
+    }
+    /// The 3D camera-plane offset covered by screen offset `d` (points, y down): a pan shifts
+    /// `View::target()` by `-offset`.
+    pub fn screen_delta_to_world_3d(&self, d: egui::Vec2) -> cadcraft_geom::Vec3 {
+        let eff = self.cam.with_twist(self.twist);
+        let du = f64::from(d.x) / self.scale;
+        let dv = -f64::from(d.y) / self.scale;
+        eff.x * du + eff.y * dv
     }
     /// The world box holding everything on screen (in a twisted or 3D view, the box of the
     /// rect's four unprojected corners, capped around `center` for near-edge-on 3D views).
@@ -128,7 +183,7 @@ impl Xf {
     /// `e = R(m(origin) − center) − (origin − center)`.
     pub(crate) fn gpu_xform(&self, origin: Vec2, m: Mat3) -> [f32; 6] {
         let (a, b) = (self.turn(Vec2::new(m.a, m.b)), self.turn(Vec2::new(m.c, m.d)));
-        let e = self.turn(m.apply(origin) - self.center) - (origin - self.center);
+        let e = self.turn(m.apply(origin) - self.center) + self.z_shift() - (origin - self.center);
         [a.x as f32, a.y as f32, b.x as f32, b.y as f32, e.x as f32, e.y as f32]
     }
 }
@@ -140,6 +195,21 @@ type ListKey = (u64, u64, i32, i32, bool, bool, usize, u64);
 /// Whether two list keys are for the same drawing content (they may differ only in the view).
 fn same_content(a: &ListKey, b: &ListKey) -> bool {
     (a.0, a.1, a.4, a.5, a.6, a.7) == (b.0, b.1, b.4, b.5, b.6, b.7)
+}
+
+/// Snapshot captured at the start of an interactive 3D orbit drag (`3DORBIT`, `Shift+MMB`, ViewCube).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OrbitDrag {
+    pub(crate) start: Pos2,
+    pub(crate) cam0: cadcraft_geom::Camera3D,
+    pub(crate) target0: cadcraft_geom::Vec3,
+    pub(crate) pivot: cadcraft_geom::Vec3,
+}
+
+#[derive(Clone, Copy)]
+struct PanDrag {
+    start: Pos2,
+    target0: cadcraft_geom::Vec3,
 }
 
 #[derive(Default)]
@@ -197,12 +267,13 @@ pub struct CanvasState {
     /// The polar or object snap tracking path(s) the cursor is on.
     pub track: Option<snap::tracking::Track>,
     pan_last: Option<Pos2>,
-    /// Start position and initial camera for Shift+MMB 3D orbit (MATCAD `camera.data.startPt` / `cam0`).
-    orbit_start: Option<(Pos2, cadcraft_geom::Camera3D)>,
-    /// Start position and initial camera for interactive `3DORBIT` primary drag.
-    orbit_drag: Option<(Pos2, cadcraft_geom::Camera3D)>,
-    /// Start position, initial camera and ring flag for ViewCube drag (`move_viewcube.m`).
-    pub(crate) viewcube_drag: Option<(Pos2, cadcraft_geom::Camera3D, bool)>,
+    pan_drag: Option<PanDrag>,
+    /// Snapshot for Shift+MMB 3D orbit (MATCAD `camera.data.startPt` / `cam0` + resolved 3D pivot).
+    orbit_start: Option<OrbitDrag>,
+    /// Snapshot for interactive `3DORBIT` primary drag.
+    orbit_drag: Option<OrbitDrag>,
+    /// Snapshot and ring flag for ViewCube drag (`move_viewcube.m`).
+    pub(crate) viewcube_drag: Option<(OrbitDrag, bool)>,
     /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
     /// scrolling then pans and pinch zooms. A notched mouse wheel clears it so the wheel zooms.
     scroll_pans: bool,
@@ -253,6 +324,14 @@ pub struct CanvasState {
 type CycleKey = (Option<String>, Option<String>, u64, u64, Vec2, f64);
 
 impl CanvasState {
+    /// Active 3D orbit pivot during `3DORBIT`, `Shift+MMB`, or `ViewCube` drag, if any.
+    pub(crate) fn active_orbit_pivot(&self) -> Option<cadcraft_geom::Vec3> {
+        self.orbit_drag
+            .or(self.orbit_start)
+            .or_else(|| self.viewcube_drag.map(|(d, _)| d))
+            .map(|d| d.pivot)
+    }
+
     /// The active MSPACE viewport's contents when they are drawn apart from the layout's list
     /// (see [`VpContent`]): where they are on paper at the viewport's current view, and how many
     /// times they have been built.
@@ -358,11 +437,11 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         && let Ok(st) = app.session.state_mut()
     {
         let view = st.view();
-        st.set_view_quiet(cadcraft_engine::View {
-            center: view.center - nav.xf.screen_delta_to_world(p.scroll),
-            height: view.height,
-            twist: view.twist,
-        });
+        let next_target = view.target() - nav.xf.screen_delta_to_world_3d(p.scroll);
+        if next_target.is_finite() {
+            st.set_view_quiet(view.with_target(next_target));
+        }
+        app.canvas.pan_drag = None;
     }
     let opts = ui.ctx().options(|o| o.input_options);
     let wheel = ui.input(|i| wheel_zoom_points(&i.raw.events, &opts, nav.rect.height()));
@@ -372,31 +451,85 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         && let Some(at) = p.hover_pos
     {
         let factor = app.session.wheel_zoom_factor(f64::from(wheel));
-        let about = nav.xf.to_world(at);
-        let _ = app.session.zoom_about(factor, about);
+        let about = nav.xf.zoom_anchor_3d(at);
+        let _ = app.session.zoom_about_3d(factor, about);
+        app.canvas.pan_drag = None;
     }
     let pinch = ui.input(|i| crate::animation::zoom_delta(i, &opts, app.shows_animations()));
     if inside
         && (pinch - 1.0).abs() > 1e-4
         && let Some(at) = p.hover_pos
     {
-        let _ = app.session.zoom_about(f64::from(pinch), nav.xf.to_world(at));
+        let _ = app.session.zoom_about_3d(f64::from(pinch), nav.xf.zoom_anchor_3d(at));
+        app.canvas.pan_drag = None;
     }
 }
 
 /// Effective 3D camera for the active drawing space: Paper space (and layout viewports
 /// until per-viewport 3D cameras are introduced) always remain in 2D plan view (`Camera3D::TOP`).
-pub(crate) fn model_camera(st: &cadcraft_engine::DocState) -> cadcraft_geom::Camera3D {
-    if matches!(st.space, cadcraft_doc::Space::Model) { st.camera } else { cadcraft_geom::Camera3D::TOP }
+fn can_orbit_3d(st: &cadcraft_engine::DocState) -> bool {
+    matches!(st.space, cadcraft_doc::Space::Model) || st.active_viewport().is_some_and(|(_, vp)| !vp.locked)
 }
 
-/// Store a new Model-space `camera` after an interactive 3D drag and zero any consumed 2D `twist`
-/// so downstream `with_twist` calls do not apply it a second time.
-pub(crate) fn update_model_camera(st: &mut cadcraft_engine::DocState, new_cam: cadcraft_geom::Camera3D) {
-    st.camera = new_cam;
+pub(crate) fn model_camera(st: &cadcraft_engine::DocState) -> cadcraft_geom::Camera3D {
+    st.zoom_camera()
+}
+
+/// Store a new Model-space or active-viewport `camera` (and optional new 3D `target`) after an
+/// interactive 3D drag, clearing any consumed 2D `twist` so downstream `with_twist` calls do not
+/// apply it a second time.
+pub(crate) fn update_model_camera(
+    st: &mut cadcraft_engine::DocState,
+    new_cam: cadcraft_geom::Camera3D,
+    new_target: Option<cadcraft_geom::Vec3>,
+) {
+    let old_v = st.view();
+    let in_viewport = st.active_viewport().is_some();
+    if !st.set_active_camera(new_cam) {
+        return;
+    }
+    let clear_twist = !in_viewport && old_v.twist.abs() > 1e-12;
+    let target_changed = new_target.is_some_and(|t| (t - old_v.target()).len() > 1e-12);
+    if clear_twist || target_changed {
+        let mut next = match new_target {
+            Some(t) => old_v.with_target(t),
+            None => old_v,
+        };
+        if clear_twist || in_viewport {
+            next.twist = 0.0;
+        }
+        st.set_view_quiet(next);
+    }
+}
+
+/// Capture an [`OrbitDrag`] snapshot in Model space or an unlocked MSPACE viewport using the
+/// hybrid MATCAD 3D ray-hit + AutoCAD `ORBITAUTOTARGET` pivot resolver (`click_pos = Some(...)`
+/// tests a 3D hit under the pointer).
+pub(crate) fn begin_canvas_orbit(app: &CadApp, start: Pos2, click_pos: Option<Pos2>) -> Option<OrbitDrag> {
+    let st = app.session.state().ok()?;
+    if !can_orbit_3d(st) {
+        return None;
+    }
+    let click_uv = click_pos.and_then(|pos| app.canvas.xf.map(|xf| xf.screen_uv_at(pos)));
+    let hit_tol = app.canvas.xf.map_or(0.0, |xf| 25.0 / xf.scale.max(1e-12));
+    let pivot = app.session.resolve_orbit_pivot(click_uv, hit_tol);
     let v = st.view();
-    if v.twist.abs() > 1e-12 {
-        st.set_view_quiet(cadcraft_engine::View { twist: 0.0, ..v });
+    Some(OrbitDrag {
+        start,
+        cam0: st.zoom_camera().with_twist(v.twist),
+        target0: v.target(),
+        pivot,
+    })
+}
+
+/// Apply a constrained orbit (`daz_deg`, `del_deg`) relative to `drag` and rigidly carry
+/// `drag.target0` around `drag.pivot` (MATCAD `rotating3D.m`).
+pub(crate) fn apply_canvas_orbit(app: &mut CadApp, drag: &OrbitDrag, daz_deg: f64, del_deg: f64) {
+    if let Ok(st) = app.session.state_mut()
+        && can_orbit_3d(st)
+    {
+        let (cam1, target1) = drag.cam0.orbit_about_target(drag.target0, drag.pivot, daz_deg, del_deg, true);
+        update_model_camera(st, cam1, Some(target1));
     }
 }
 
@@ -408,9 +541,8 @@ pub(super) fn axis_colors() -> [(&'static str, cadcraft_geom::Vec3, Color32); 3]
     ]
 }
 
-/// Paint the small green AutoCAD-style `3DORBIT` pivot sphere at the viewport center.
-fn draw_orbit_pivot(p: &egui::Painter, rect: Rect) {
-    let center = rect.center();
+/// Paint the small green AutoCAD-style `3DORBIT` pivot sphere at `center`.
+fn draw_orbit_pivot(p: &egui::Painter, center: Pos2) {
     p.circle(
         center,
         5.5,
@@ -418,6 +550,112 @@ fn draw_orbit_pivot(p: &egui::Painter, rect: Rect) {
         Stroke::new(1.0, Color32::from_rgb(0x1f, 0x6e, 0x2b)),
     );
     p.circle_filled(center + vec2(-1.6, -1.6), 1.8, Color32::from_rgb(0xb8, 0xf2, 0xbf));
+}
+
+/// Resolve `(full_screen_rect, visible_clip_rect)` of `vp` (and optional polygonal `clip`)
+/// under `xf_paper`, clipped to the outer canvas `rect`.
+fn viewport_screen_bounds(
+    rect: Rect,
+    xf_paper: &Xf,
+    vp: &cadcraft_doc::Viewport,
+    clip: Option<&cadcraft_render::clip::PolyClip>,
+) -> (Rect, Rect) {
+    let vp_full = match clip {
+        Some(c) => {
+            let b = c.bounds();
+            Rect::from_two_pos(
+                xf_paper.to_screen(Vec2::new(b.min.x, b.max.y)),
+                xf_paper.to_screen(Vec2::new(b.max.x, b.min.y)),
+            )
+        }
+        None => Rect::from_two_pos(
+            xf_paper.to_screen(Vec2::new(vp.center.x - vp.width / 2.0, vp.center.y + vp.height / 2.0)),
+            xf_paper.to_screen(Vec2::new(vp.center.x + vp.width / 2.0, vp.center.y - vp.height / 2.0)),
+        ),
+    };
+    (vp_full, vp_full.intersect(rect))
+}
+
+/// Paper-space coordinate transform for `rect`.
+fn paper_xform(st: &cadcraft_engine::DocState, rect: Rect) -> Xf {
+    let pv = st.paper_view();
+    Xf {
+        rect,
+        center: pv.center,
+        scale: f64::from(rect.height()) / pv.height.max(1e-12),
+        twist: 0.0,
+        target_z: 0.0,
+        cam: cadcraft_geom::Camera3D::TOP,
+    }
+}
+
+/// Screen-to-model coordinate transform for any layout `vp` under `xf_paper`.
+fn viewport_model_xf(rect: Rect, xf_paper: &Xf, vp: &cadcraft_doc::Viewport) -> Xf {
+    let k = vp.view_height / vp.height.max(1e-12);
+    let eff = vp.effective_camera();
+    let d_uv = (xf_paper.center - vp.center.xy()) * k;
+    let target = vp.target() + eff.x * d_uv.x + eff.y * d_uv.y;
+    let twist = if vp.camera.is_top_plan() { vp.view_twist() } else { 0.0 };
+    Xf {
+        rect,
+        center: target.xy(),
+        scale: xf_paper.scale / k.max(1e-12),
+        twist,
+        target_z: target.z,
+        cam: eff,
+    }
+}
+
+/// Draw the coordinate grid for every visible layout viewport whose own `grid` flag is enabled,
+/// both when active (`MSPACE`) and inactive (`PSPACE` or another viewport active), clipped cleanly
+/// to the viewport's visible screen/polygon boundary.
+fn paint_layout_viewport_grids(app: &CadApp, painter: &egui::Painter, rect: Rect, xf_paper: &Xf, bg: Rgb, t: &Tokens) {
+    let Ok(st) = app.session.state() else { return };
+    if matches!(st.space, cadcraft_doc::Space::Model) {
+        return;
+    }
+    let Some(store) = st.doc.space(&st.space) else { return };
+    let vp_tokens = t.clone().with_model_background(Color32::from_rgb(bg.0, bg.1, bg.2));
+    for e in store.iter() {
+        let cadcraft_doc::EntityKind::Viewport(vp) = &e.kind else { continue };
+        if !vp.on || !vp.grid || vp.width <= 1e-12 || vp.height <= 1e-12 || vp.view_height <= 1e-12 {
+            continue;
+        }
+        let clip = cadcraft_render::viewport_clip(&st.doc, e.handle, vp);
+        let (_, vp_visible) = viewport_screen_bounds(rect, xf_paper, vp, clip.as_ref());
+        if vp_visible.width() < 1.0 || vp_visible.height() < 1.0 {
+            continue;
+        }
+        let vp_xf = viewport_model_xf(rect, xf_paper, vp);
+        let clipped = painter.with_clip_rect(vp_visible);
+        grid::draw_grid_surface(
+            app,
+            &grid::GridSurface {
+                painter: &clipped,
+                xf: &vp_xf,
+                clip_rect: vp_visible,
+                tokens: &vp_tokens,
+                grid_on: true,
+                show_axes_always: false,
+                poly_clip: clip.as_ref().map(|c| (xf_paper, c)),
+            },
+        );
+    }
+}
+
+/// Active ViewCube `Layout` for the current space (Model space uses `rect`; Layout `MSPACE`
+/// scales and anchors inside the active viewport's on-screen pixel bounds). Returns `None` in
+/// Paper space or when the active viewport is off-screen.
+pub fn active_viewcube_layout(app: &CadApp, rect: Rect) -> Option<crate::viewcube::Layout> {
+    let st = app.session.state().ok()?;
+    if matches!(st.space, cadcraft_doc::Space::Model) {
+        return Some(crate::viewcube::Layout::for_viewport(rect, rect));
+    }
+    let (h, vp) = st.active_viewport()?;
+    let xf_paper = paper_xform(st, rect);
+    let clip = cadcraft_render::viewport_clip(&st.doc, h, &vp);
+    let (vp_full, vp_visible) = viewport_screen_bounds(rect, &xf_paper, &vp, clip.as_ref());
+    (vp_visible.width() >= 1.0 && vp_visible.height() >= 1.0).then(|| crate::viewcube::Layout::for_viewport(vp_full, vp_visible))
 }
 
 fn handle_orbit_drag(app: &mut CadApp, ui: &egui::Ui, nav: &Navigation<'_>) {
@@ -429,24 +667,16 @@ fn handle_orbit_drag(app: &mut CadApp, ui: &egui::Ui, nav: &Navigation<'_>) {
     let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(curr);
     if app.canvas.orbit_drag.is_none() {
         let over_cube = app.ui.show_viewcube
-            && app.session.state().is_ok_and(|st| matches!(st.space, cadcraft_doc::Space::Model))
-            && crate::viewcube::Layout::new(nav.rect).bounds.contains(origin);
+            && active_viewcube_layout(app, nav.rect)
+                .is_some_and(|l| l.clip.contains(origin) && (l.bounds.contains(origin) || l.pill.contains(origin)));
         if !nav.rect.contains(origin) || over_canvas_menu(app, origin) || over_cube {
             return;
         }
-        if let Ok(st) = app.session.state()
-            && matches!(st.space, cadcraft_doc::Space::Model)
-        {
-            let cam0 = st.camera.with_twist(st.view().twist);
-            app.canvas.orbit_drag = Some((origin, cam0));
-        }
+        app.canvas.orbit_drag = begin_canvas_orbit(app, origin, Some(origin));
     }
-    if let Some((start_pos, cam0)) = app.canvas.orbit_drag
-        && let Ok(st) = app.session.state_mut()
-        && matches!(st.space, cadcraft_doc::Space::Model)
-    {
-        let total = curr - start_pos;
-        update_model_camera(st, cam0.orbit(f64::from(total.x) * 0.45, f64::from(-total.y) * 0.45, true));
+    if let Some(drag) = app.canvas.orbit_drag {
+        let total = curr - drag.start;
+        apply_canvas_orbit(app, &drag, f64::from(total.x) * 0.45, f64::from(-total.y) * 0.45);
     }
 }
 
@@ -460,33 +690,36 @@ fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool
         && let Some(at) = p.hover_pos
     {
         if p.mods.shift {
-            if let Ok(st) = app.session.state_mut()
-                && matches!(st.space, cadcraft_doc::Space::Model)
-            {
-                let eff = st.camera.with_twist(st.view().twist);
-                let (start_pos, cam0) = *app.canvas.orbit_start.get_or_insert((at, eff));
-                let total = at - start_pos;
+            app.canvas.pan_drag = None;
+            if app.canvas.orbit_start.is_none() {
+                app.canvas.orbit_start = begin_canvas_orbit(app, at, Some(at));
+            }
+            if let Some(drag) = app.canvas.orbit_start {
+                let total = at - drag.start;
                 // In egui screen coordinates, Y increases downwards; in MATCAD figure pixels, Y increases upwards.
-                let daz = f64::from(total.x) * 0.45;
-                let del = f64::from(-total.y) * 0.45;
-                update_model_camera(st, cam0.orbit(daz, del, true));
+                apply_canvas_orbit(app, &drag, f64::from(total.x) * 0.45, f64::from(-total.y) * 0.45);
             }
         } else {
             app.canvas.orbit_start = None;
-            if let Some(last) = app.canvas.pan_last
+            if app.canvas.pan_drag.is_none()
+                && let Ok(st) = app.session.state()
+            {
+                app.canvas.pan_drag = Some(PanDrag { start: at, target0: st.view().target() });
+            }
+            if let Some(drag) = app.canvas.pan_drag
                 && let Ok(st) = app.session.state_mut()
             {
                 let view = st.view();
-                st.set_view_quiet(cadcraft_engine::View {
-                    center: view.center - nav.xf.screen_delta_to_world(at - last),
-                    height: view.height,
-                    twist: view.twist,
-                });
+                let next_target = drag.target0 - nav.xf.screen_delta_to_world_3d(at - drag.start);
+                if next_target.is_finite() {
+                    st.set_view_quiet(view.with_target(next_target));
+                }
             }
         }
         app.canvas.pan_last = Some(at);
     } else {
         app.canvas.pan_last = None;
+        app.canvas.pan_drag = None;
         app.canvas.orbit_start = None;
     }
     if p.dbl_middle && inside {
@@ -524,19 +757,14 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     let active_vp = &frame.active_vp;
     let active_clip = &frame.active_clip;
     let scale = frame.xf.scale;
+    paint_layout_viewport_grids(app, painter, rect, &xf_paper, bg, &t);
     // The active viewport's contents, drawn apart from the layout's list, under its own objects.
     // `masked`: its outline is in the stencil buffer this frame.
     let mut masked = false;
     if let Some(only) = app.session.display_only() {
         // A command that shows only some objects while it runs (DVIEW's preview set): those,
         // in the view being changed (inside the active viewport, clipped to it).
-        let clip = active_vp.as_ref().map_or(rect, |vp| {
-            Rect::from_two_pos(
-                xf_paper.to_screen(Vec2::new(vp.center.x - vp.width / 2.0, vp.center.y + vp.height / 2.0)),
-                xf_paper.to_screen(Vec2::new(vp.center.x + vp.width / 2.0, vp.center.y - vp.height / 2.0)),
-            )
-            .intersect(rect)
-        });
+        let clip = active_vp.as_ref().map_or(rect, |vp| viewport_screen_bounds(rect, &xf_paper, vp, None).1);
         if let Ok(st) = app.session.state() {
             // A clipped viewport's outline, in the model units the preview is built in.
             let outline =
@@ -559,10 +787,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     }
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
-        let r = Rect::from_two_pos(
-            xf_paper.to_screen(Vec2::new(vp.center.x - vp.width / 2.0, vp.center.y + vp.height / 2.0)),
-            xf_paper.to_screen(Vec2::new(vp.center.x + vp.width / 2.0, vp.center.y - vp.height / 2.0)),
-        );
+        let r = viewport_screen_bounds(rect, &xf_paper, vp, None).0;
         let heavy = Stroke::new(3.0, Color32::from_rgb(0x2a, 0x2a, 0x2a));
         match &active_clip {
             Some(c) => {
@@ -576,11 +801,8 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
         }
         if let Ok(st) = app.session.state() {
             // A clipped viewport's outline bounds (its outline is masked when `masked`).
-            let bounds = active_clip.as_ref().map_or(r, |c| {
-                let b = c.bounds();
-                Rect::from_two_pos(xf_paper.to_screen(Vec2::new(b.min.x, b.max.y)), xf_paper.to_screen(Vec2::new(b.max.x, b.min.y)))
-            });
-            let clipped = painter.with_clip_rect(bounds.intersect(rect));
+            let visible = viewport_screen_bounds(rect, &xf_paper, vp, active_clip.as_ref()).1;
+            let clipped = painter.with_clip_rect(visible);
             let c = &mut app.canvas;
             if let Some(h) = c.hover
                 && !sel.contains(&h)
@@ -665,18 +887,26 @@ fn paint_pointer_overlay(
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
-    if app.session.orbit_active() || app.canvas.orbit_start.is_some() {
-        draw_orbit_pivot(painter, rect);
+    if app.session.orbit_active() || app.canvas.orbit_start.is_some() || app.canvas.viewcube_drag.is_some() {
+        let pivot = app.canvas.active_orbit_pivot().unwrap_or_else(|| app.session.resolve_orbit_pivot(None, 0.0));
+        draw_orbit_pivot(painter, xf.to_screen_3d(pivot));
     }
     // UCS icon, ViewCube and viewport label.
-    if app.ui.show_ucs_icon {
-        draw_ucs_icon(painter, rect, &xf.cam);
-        crate::viewcube::ucs_icon(app, ui, rect);
+    let xf_paper = frame.xf_paper;
+    let overlay_bounds = frame.active_vp.as_ref().map(|vp| viewport_screen_bounds(rect, &xf_paper, vp, frame.active_clip.as_ref()));
+    let (ov_full, ov_clip) = overlay_bounds.unwrap_or((rect, rect));
+    let in_mspace = frame.active_vp.is_some();
+    let show_viewport_overlays = !in_mspace || (ov_clip.width() >= 1.0 && ov_clip.height() >= 1.0);
+    if app.ui.show_ucs_icon && show_viewport_overlays {
+        draw_ucs_icon(painter, ov_full, ov_clip, &xf.cam);
+        crate::viewcube::ucs_icon_in(app, ui, ov_full, ov_clip);
     }
-    if app.ui.show_viewcube && sheet.is_none() {
-        draw_viewcube(app, ui, rect);
+    if app.ui.show_viewcube && (sheet.is_none() || (in_mspace && show_viewport_overlays)) {
+        draw_viewcube(app, ui, ov_full, ov_clip);
     }
-    viewport_label(painter, rect, &xf.cam, app.session.orbit_active());
+    if show_viewport_overlays {
+        viewport_label(painter, ov_clip, &xf.cam, app.session.orbit_active());
+    }
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
@@ -725,7 +955,37 @@ struct DoubleClickContext<'a> {
     active_clip: &'a Option<cadcraft_render::clip::PolyClip>,
 }
 
-fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<bool> {
+struct DoubleClickOutcome {
+    hatch_dialog: bool,
+    switched_viewport: bool,
+}
+
+/// Compute the canvas & paper transforms and active viewport metadata from the current session state.
+fn compute_canvas_xforms(
+    app: &mut CadApp,
+    rect: Rect,
+) -> (
+    cadcraft_engine::View,
+    f64,
+    Xf,
+    Xf,
+    Option<cadcraft_doc::Viewport>,
+    Option<cadcraft_render::clip::PolyClip>,
+) {
+    let view = app.session.state().map(|s| s.view()).unwrap_or_default();
+    let scale = f64::from(rect.height()) / view.height.max(1e-12);
+    let cam = app.session.state().map(model_camera).unwrap_or_default();
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist, target_z: view.target_z, cam };
+    app.canvas.xf = Some(xf);
+    let (xf_paper, active_vp) = match app.session.state() {
+        Ok(st) => (if st.mspace.is_some() { paper_xform(st, rect) } else { xf }, st.active_viewport().map(|(_, v)| v)),
+        Err(_) => (xf, None),
+    };
+    let active_clip = app.session.state().ok().and_then(|st| st.active_viewport().and_then(|(h, v)| cadcraft_render::viewport_clip(&st.doc, h, &v)));
+    (view, scale, xf, xf_paper, active_vp, active_clip)
+}
+
+fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<DoubleClickOutcome> {
     let DoubleClickContext { inside, double, hover, xf, xf_paper, scale, active_viewport, active_clip } = ctx;
     if inside
         && double
@@ -737,6 +997,7 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         let in_rect = |v: &cadcraft_doc::Viewport| (pp.x - v.center.x).abs() <= v.width / 2.0 && (pp.y - v.center.y).abs() <= v.height / 2.0;
         let in_active = active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)));
         if !in_active {
+            let before_mspace = app.session.state().ok().and_then(|st| st.mspace);
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
             app.canvas.drag_window = false;
@@ -745,8 +1006,12 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
             }
             app.session.pending_window = None;
             app.canvas.drag_window = false;
-            app.canvas.list = None;
-            return None;
+            let after_mspace = app.session.state().ok().and_then(|st| st.mspace);
+            if after_mspace != before_mspace {
+                app.canvas.list = None;
+                app.canvas.vp.key = None;
+                return Some(DoubleClickOutcome { hatch_dialog: false, switched_viewport: true });
+            }
         }
     }
     // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
@@ -773,7 +1038,7 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         hatch_dialog = true;
     }
 
-    Some(hatch_dialog)
+    Some(DoubleClickOutcome { hatch_dialog, switched_viewport: false })
 }
 
 fn update_canvas_cursor(
@@ -936,7 +1201,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let view = st.view();
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
     let cam = model_camera(&st);
-    let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist, target_z: view.target_z, cam };
     app.canvas.xf = Some(xf);
 
     // ---------- input ----------
@@ -953,31 +1218,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let navigation = Navigation { rect, tiles: &tiles, response: &resp, xf, pointer };
     let Some((inside, on_menu)) = navigate_canvas(app, ui, &navigation) else { return };
     let PointerInput { hover_pos, mods, middle_down, pressed_primary, pressed_secondary, dbl_primary, .. } = pointer;
-    // Re-read the view after navigation.
-    let view = app.session.state().map(|s| s.view()).unwrap_or(view);
-    let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let cam = app.session.state().map(model_camera).unwrap_or_default();
-    let xf = Xf { rect, center: view.center, scale, twist: view.twist, cam };
-    app.canvas.xf = Some(xf);
-    // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
-    let (xf_paper, active_vp) = match app.session.state() {
-        Ok(st) => {
-            let pv = st.paper_view();
-            // Paper space is never twisted and stays in 2D plan view.
-            let xp = Xf {
-                rect,
-                center: pv.center,
-                scale: f64::from(rect.height()) / pv.height.max(1e-12),
-                twist: 0.0,
-                cam: cadcraft_geom::Camera3D::TOP,
-            };
-            (if st.mspace.is_some() { xp } else { xf }, st.active_viewport().map(|(_, v)| v))
-        }
-        Err(_) => (xf, None),
-    };
-    // A clipped active viewport's outline (picks and its heavy border follow it).
-    let active_clip = app.session.state().ok().and_then(|st| st.active_viewport().and_then(|(h, v)| cadcraft_render::viewport_clip(&st.doc, h, &v)));
-    let Some(hatch_dialog) = handle_double_click(
+    // Re-read the view after navigation, handle double-click transitions, and refresh transforms
+    // in the same frame so layout <-> MSPACE switches paint immediately without a blank frame.
+    let (mut view, mut scale, mut xf, mut xf_paper, mut active_vp, mut active_clip) = compute_canvas_xforms(app, rect);
+    let Some(dc) = handle_double_click(
         app,
         DoubleClickContext {
             inside,
@@ -992,6 +1236,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     ) else {
         return;
     };
+    if dc.switched_viewport {
+        (view, scale, xf, xf_paper, active_vp, active_clip) = compute_canvas_xforms(app, rect);
+    }
+    let hatch_dialog = dc.hatch_dialog || dc.switched_viewport;
 
     let pressed_primary =
         collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
@@ -1202,6 +1450,26 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             (Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), None)
         }
     };
+    if let Some(paper) = paper_rect
+        && app.session.settings.paper_gridmode
+    {
+        let paper_clip = paper.intersect(rect);
+        if paper_clip.width() >= 1.0 && paper_clip.height() >= 1.0 {
+            let paper_tokens = t.clone().with_model_background(t.paper);
+            grid::draw_grid_surface(
+                app,
+                &grid::GridSurface {
+                    painter: &painter.with_clip_rect(paper_clip),
+                    xf: &xf_paper,
+                    clip_rect: paper_clip,
+                    tokens: &paper_tokens,
+                    grid_on: true,
+                    show_axes_always: false,
+                    poly_clip: None,
+                },
+            );
+        }
+    }
     let sel = app.session.selection();
     // How the object under the cursor and the selected ones are highlighted (PREVIEWEFFECT,
     // HIGHLIGHT, SELECTIONEFFECT); with HIGHLIGHT off only their grips show.

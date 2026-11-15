@@ -229,6 +229,9 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         EntityKind::PolyfaceMesh(m) => set_xy(m.vertices.get_mut(index)?, to),
         EntityKind::Region(_) => return Some(translated(kind, delta)),
         EntityKind::Viewport(v) => {
+            if v.clip.is_some() {
+                return None;
+            }
             let opposite = *grips.get((index + 2) % 4)?;
             let w = (to.x - opposite.x).abs();
             let h = (to.y - opposite.y).abs();
@@ -236,9 +239,9 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
                 return None;
             }
             let c = to.mid(opposite);
-            set_xy(&mut v.center, c);
-            v.width = w;
-            v.height = h;
+            if !v.resize_border_keeping_camera(c, w, h) {
+                return None;
+            }
         }
         EntityKind::Wipeout(w) => w.set_vertex(index, to)?,
         EntityKind::Unknown(_) => return None,

@@ -79,13 +79,24 @@ fn same(a: f64, b: f64) -> bool {
     (a - b).abs() <= b.abs() * 1e-6
 }
 
+/// The matching standard scale name from [`scales`], or `"Custom"`.
+pub fn standard_scale_name(scale: f64, metric: bool) -> &'static str {
+    if scale.is_finite() && scale > 0.0
+        && let Some((name, _)) = scales(metric).into_iter().find(|(_, v)| same(*v, scale))
+    {
+        return name;
+    }
+    "Custom"
+}
+
 /// How a scale reads: a standard name, else a ratio such as `1:37.5`.
 pub fn label(scale: f64, metric: bool) -> String {
     if !(scale.is_finite() && scale > 0.0) {
         return "?".into();
     }
-    if let Some((n, _)) = scales(metric).into_iter().find(|(_, v)| same(*v, scale)) {
-        return n.to_string();
+    let std_name = standard_scale_name(scale, metric);
+    if std_name != "Custom" {
+        return std_name.to_string();
     }
     let num = |x: f64| {
         let r = (x * 1000.0).round() / 1000.0;

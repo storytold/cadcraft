@@ -359,7 +359,8 @@ fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
     let clamp = |p: Vec2| Vec2::new(p.x.clamp(0.0, 1.0), p.y.clamp(0.0, 1.0));
-    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, twist };
+    let grid = t.i(76).is_none_or(|v| v != 0);
+    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, twist, grid };
     let name = if name.eq_ignore_ascii_case(VportConfig::ACTIVE) { VportConfig::ACTIVE.to_string() } else { name };
     let room = d.vports.len() < MAX_OBJECTS;
     match d.vports.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&name)) {

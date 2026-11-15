@@ -26,6 +26,7 @@ fn drawing(psltscale: i64) -> Drawing {
         clip: None,
         on: true,
         twist: 0.0,
+        ..Viewport::default()
     };
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
     d
