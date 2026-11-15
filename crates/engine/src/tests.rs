@@ -1384,6 +1384,40 @@ fn typed_ltscale_asks_for_the_scale() {
 }
 
 #[test]
+fn typed_limits_asks_for_the_corners() {
+    // Issue #3181: typing LIMITS failed with "'min' ([x, y]) is required" instead of asking.
+    let mut s = Session::new();
+    s.cmdline("limits").unwrap();
+    assert!(s.prompt_text().contains("Specify lower left corner <0.0000,0.0000>"), "{}", s.prompt_text());
+    // Text that is not a point is refused and asked again.
+    s.cmdline("abc").unwrap();
+    assert!(s.prompt_text().contains("Specify lower left corner"), "{}", s.prompt_text());
+    s.cmdline("-10,-5").unwrap();
+    assert!(s.prompt_text().contains("Specify upper right corner <12.0000,9.0000>"), "{}", s.prompt_text());
+    s.cmdline("100,50").unwrap();
+    assert!(s.current_prompt().is_none());
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.point("LIMMIN").map(|p| (p.x, p.y)), Some((-10.0, -5.0)));
+    assert_eq!(h.point("LIMMAX").map(|p| (p.x, p.y)), Some((100.0, 50.0)));
+    // Enter keeps each corner; the defaults show the current limits.
+    s.cmdline("limits").unwrap();
+    assert!(s.prompt_text().contains("<-10.0000,-5.0000>"), "{}", s.prompt_text());
+    s.cmdline("").unwrap();
+    assert!(s.prompt_text().contains("<100.0000,50.0000>"), "{}", s.prompt_text());
+    s.cmdline("").unwrap();
+    assert!(s.current_prompt().is_none());
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.point("LIMMIN").map(|p| (p.x, p.y)), Some((-10.0, -5.0)));
+    assert_eq!(h.point("LIMMAX").map(|p| (p.x, p.y)), Some((100.0, 50.0)));
+    // Both corners on one line, as in a script.
+    s.cmdline("limits 0,0 420,297").unwrap();
+    assert!(s.current_prompt().is_none());
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.point("LIMMIN").map(|p| (p.x, p.y)), Some((0.0, 0.0)));
+    assert_eq!(h.point("LIMMAX").map(|p| (p.x, p.y)), Some((420.0, 297.0)));
+}
+
+#[test]
 fn format_thickness_asks_for_the_thickness() {
     let mut s = Session::new();
     s.start("thickness").unwrap();

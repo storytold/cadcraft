@@ -50,7 +50,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{thickness} (THICKNESS: the 3D thickness given to new lines, arcs, circles, points and polylines; may be negative) → {thickness}")
             .transparent()
             .interactive(|_| Ok(Box::new(ThicknessM))),
-        CommandSpec::new("limits", "Drawing Limits", run_limits).menu(&["Format", "Drawing Limits"]).params("{min: [x,y], max: [x,y]}"),
+        CommandSpec::new("limits", "Drawing Limits", run_limits)
+            .menu(&["Format", "Drawing Limits"])
+            .params("{min: [x,y], max: [x,y]} (the command line asks for the lower left, then the upper right corner; Enter keeps each)")
+            .interactive(|_| Ok(Box::new(LimitsM::default()))),
         CommandSpec::new("style", "Text Style...", run_style)
             .menu(&["Format", "Text Style..."])
             .alias(&["st"])
@@ -761,6 +764,62 @@ fn run_limits(s: &mut Session, p: &Value) -> Result<Value> {
     d.header.set("LIMMIN", cadcraft_doc::HVal::Point(a.to3(0.0)));
     d.header.set("LIMMAX", cadcraft_doc::HVal::Point(b.to3(0.0)));
     ok()
+}
+
+/// LIMITS typed or picked: asks for the lower left corner, then the upper right one, each with
+/// the current corner as its default (Enter keeps it).
+#[derive(Default)]
+struct LimitsM {
+    lower: Option<cadcraft_geom::Vec2>,
+}
+
+impl LimitsM {
+    /// The current LIMMIN (before the lower corner is given) or LIMMAX (after).
+    fn current(&self, s: &Session) -> cadcraft_geom::Vec2 {
+        let (name, fallback) = if self.lower.is_none() { ("LIMMIN", (0.0, 0.0)) } else { ("LIMMAX", (12.0, 9.0)) };
+        let p = s.doc().ok().and_then(|d| d.header.point(name));
+        p.map_or(cadcraft_geom::Vec2::new(fallback.0, fallback.1), |p| cadcraft_geom::Vec2::new(p.x, p.y))
+    }
+}
+
+impl Interactive for LimitsM {
+    fn name(&self) -> &'static str {
+        "LIMITS"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let cur = self.current(s);
+        let default = format!("{:.4},{:.4}", cur.x, cur.y);
+        match self.lower {
+            None => Prompt::new("Specify lower left corner", Accept::POINT).default(default),
+            Some(lo) => Prompt::new("Specify upper right corner", Accept::POINT).default(default).base(lo),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let p = match i {
+            Input::Cancel => return Ok(Step::Cancel),
+            Input::Point(p) => p,
+            Input::Enter => self.current(s),
+            Input::Text(_) | Input::Keyword(_) => {
+                s.echo("Requires a point.");
+                return Ok(Step::Continue);
+            }
+            _ => return Ok(Step::Continue),
+        };
+        if !(p.x.is_finite() && p.y.is_finite()) {
+            s.echo("Requires a point.");
+            return Ok(Step::Continue);
+        }
+        match self.lower {
+            None => {
+                self.lower = Some(p);
+                Ok(Step::Continue)
+            }
+            Some(lo) => {
+                run_limits(s, &json!({ "min": [lo.x, lo.y], "max": [p.x, p.y] }))?;
+                Ok(Step::Done)
+            }
+        }
+    }
 }
 
 fn style_json(st: &cadcraft_doc::TextStyle, current: &str) -> Value {
