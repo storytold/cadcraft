@@ -22,6 +22,7 @@ mod mspace_viewport_view;
 mod named_viewports_dialog;
 mod native_menu_text_keys;
 mod native_windows;
+mod offset_clicks;
 mod options_dialog;
 mod options_right_click;
 mod parameters_rename;
