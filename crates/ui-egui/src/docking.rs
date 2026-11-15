@@ -334,11 +334,12 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     style.font = crate::theme::body();
     // AutoCAD's palettes dock only in the left and right dock columns: a window edge without a
     // dock makes one, and neither the drawing nor the top and bottom edges take a drop.
-    // Floating title bars only move windows.
+    // A floating palette dragged by its title bar docks too, as in AutoCAD (#3021); Ctrl/Cmd
+    // held at the release keeps it floating.
     style.side_edge_zones = false;
     style.new_dock_zones = true;
     style.drop_edges = Sides::NONE;
-    style.title_bar_docks = false;
+    style.title_bar_docks = true;
     let mut area = DockArea::new(egui::Id::unique("cadcraft-docking")).input_blocked(native_input_blocked(app, ui.ctx()));
     if let Some(panel) = app.raise_panel.take() {
         area = area.raise_panel(panel);

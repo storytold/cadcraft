@@ -570,6 +570,38 @@ fn palettes_dock_only_in_the_left_and_right_columns() {
 }
 
 #[test]
+fn floating_palette_docks_when_dragged_by_its_title_bar() {
+    // Issue #3021: a floating palette moved by its title bar onto a dock column docks there,
+    // as in AutoCAD; before, only a drag on its tab docked and the title bar just moved it.
+    let mut h = harness(None, 1280.0, 1.0);
+    h.state_mut().run("ui.dock", json!({"operation":"float","panel":"properties","rect":[400,250,300,350]})).unwrap();
+    h.run_steps(4);
+    let document = h.state().session.doc().unwrap().clone();
+    let title = hit(&h, Hit::Title(Panel::Properties));
+    let layers = hit(&h, Hit::Tab(Panel::Layers));
+    let column = hit(&h, Hit::ColumnBar(Panel::Layers));
+    drag(&mut h, title.center(), egui::pos2(column.center().x, layers.bottom() + 120.0));
+    let layout = &h.state().ui.docking.layout;
+    assert!(layout.floating.is_empty(), "{layout:?}");
+    let end = dock_panels(layout, Side::End);
+    assert!(end.iter().flatten().any(|group| group.contains(&Panel::Properties)), "{end:?}");
+    assert_eq!(frames(layout), [[Panel::Canvas]]);
+    assert_eq!(h.state().session.doc().unwrap(), &document);
+
+    // Ctrl/Cmd held at the release keeps the palette floating.
+    h.state_mut().run("ui.dock", json!({"operation":"float","panel":"properties","rect":[400,250,300,350]})).unwrap();
+    h.run_steps(4);
+    let title = hit(&h, Hit::Title(Panel::Properties)).center();
+    let to = egui::pos2(column.center().x, hit(&h, Hit::Tab(Panel::Layers)).bottom() + 120.0);
+    h.event(Event::ModifiersChanged(Modifiers::COMMAND));
+    drag(&mut h, title, to);
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    let layout = &h.state().ui.docking.layout;
+    assert!(layout.floating.iter().any(|window| window.contains(&Panel::Properties)), "{layout:?}");
+}
+
+#[test]
 fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     let mut h = harness(None, 1280.0, 1.0);
     h.state_mut().run("ui.dock", json!({"operation":"move", "panel":"layers", "target":"toolSets", "zone":"center", "before":null})).unwrap();
