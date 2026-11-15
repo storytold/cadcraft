@@ -308,8 +308,8 @@ impl Paragraphs {
                             let (_, n) = arg(&chars, i);
                             i = n;
                         }
-                        // An unknown code has no argument: only the backslash and the code go.
-                        _ => {}
+                        // An unknown code is text, as typed: read on from the code, as the layout does.
+                        _ => i -= 1,
                     }
                 }
                 '\n' => {
