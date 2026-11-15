@@ -3,6 +3,11 @@ use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
 use cadcraft_geom::{PolyVertex, Vec3};
 
+// The synthetic TrueType file both this suite and the PDF writer's build: the fonts layer's
+// test-only helper, inlined rather than published or depended on.
+#[path = "../../fonts/tests/support/sfnt.rs"]
+mod sfnt;
+
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) }))
@@ -277,46 +282,7 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
-// ---------- a fixture TrueType font, made here: no font file, no installed font ----------
-
-fn be16(v: &mut Vec<u8>, x: u16) {
-    v.extend_from_slice(&x.to_be_bytes());
-}
-
-fn be32(v: &mut Vec<u8>, x: u32) {
-    v.extend_from_slice(&x.to_be_bytes());
-}
-
-/// One simple glyph: closed contours of on-curve points, with the box the file records for it.
-fn simple_glyph(contours: &[Vec<(i16, i16)>]) -> Vec<u8> {
-    let points: Vec<(i16, i16)> = contours.iter().flatten().copied().collect();
-    let mut g = Vec::new();
-    be16(&mut g, contours.len() as u16);
-    let box_ = points.iter().fold((i16::MAX, i16::MAX, i16::MIN, i16::MIN), |b, p| (b.0.min(p.0), b.1.min(p.1), b.2.max(p.0), b.3.max(p.1)));
-    for v in [box_.0, box_.1, box_.2, box_.3] {
-        be16(&mut g, v as u16);
-    }
-    let mut end = 0u16;
-    for c in contours {
-        end = end.saturating_add(c.len() as u16);
-        be16(&mut g, end.saturating_sub(1));
-    }
-    be16(&mut g, 0);
-    g.extend(std::iter::repeat_n(1u8, points.len()));
-    let (mut px, mut py) = (0i16, 0i16);
-    for (x, _) in &points {
-        be16(&mut g, x.wrapping_sub(px) as u16);
-        px = *x;
-    }
-    for (_, y) in &points {
-        be16(&mut g, y.wrapping_sub(py) as u16);
-        py = *y;
-    }
-    while g.len() % 4 != 0 {
-        g.push(0);
-    }
-    g
-}
+// ---------- a fixture TrueType font: no font file, no installed font ----------
 
 /// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
 fn ring(rx: f64, ry: f64, points: usize, clockwise: bool) -> Vec<(i16, i16)> {
@@ -342,96 +308,16 @@ fn fixture_font() -> &'static str {
 }
 
 fn fixture_font_bytes() -> Vec<u8> {
-    let mut glyf = Vec::new();
-    let mut loca = Vec::new();
-    be32(&mut loca, 0); // .notdef: no contours
-    be32(&mut loca, 0);
-    glyf.extend_from_slice(&simple_glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)]));
-    be32(&mut loca, glyf.len() as u32);
-    let mut head = Vec::new();
-    be32(&mut head, 0x0001_0000);
-    be32(&mut head, 0x0001_0000);
-    be32(&mut head, 0);
-    be32(&mut head, 0x5F0F_3CF5);
-    be16(&mut head, 0);
-    be16(&mut head, 1000);
-    head.extend_from_slice(&[0; 16]);
-    for v in [0i16, 0, 1000, 700] {
-        be16(&mut head, v as u16);
-    }
-    for v in [0u16, 8, 2, 1, 0] {
-        be16(&mut head, v);
-    }
-    let mut hhea = Vec::new();
-    be32(&mut hhea, 0x0001_0000);
-    for v in [800i16, -200, 0, 1000, 0, 0, 1000, 1, 0, 0, 0, 0, 0, 0, 0] {
-        be16(&mut hhea, v as u16);
-    }
-    be16(&mut hhea, 2);
-    let mut maxp = Vec::new();
-    be32(&mut maxp, 0x0001_0000);
-    for v in [2u16, 256, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0] {
-        be16(&mut maxp, v);
-    }
-    let mut hmtx = Vec::new();
-    for _ in 0..2 {
-        be16(&mut hmtx, 1000);
-        be16(&mut hmtx, 0);
-    }
-    // cmap: format 4, 'O' → glyph 1.
-    let mut sub = Vec::new();
-    let segs: [(u16, u16, u16); 2] = [(0x4F, 0x4F, 1u16.wrapping_sub(0x4F)), (0xFFFF, 0xFFFF, 1)];
-    be16(&mut sub, 4);
-    be16(&mut sub, (16 + segs.len() * 8) as u16);
-    be16(&mut sub, 0);
-    be16(&mut sub, (segs.len() * 2) as u16);
-    for v in [4u16, 1, 0] {
-        be16(&mut sub, v);
-    }
-    for s in segs {
-        be16(&mut sub, s.1);
-    }
-    be16(&mut sub, 0);
-    for s in segs {
-        be16(&mut sub, s.0);
-    }
-    for s in segs {
-        be16(&mut sub, s.2);
-    }
-    for _ in segs {
-        be16(&mut sub, 0);
-    }
-    let mut cmap = Vec::new();
-    for v in [0u16, 1, 3, 1] {
-        be16(&mut cmap, v);
-    }
-    be32(&mut cmap, 12);
-    cmap.extend_from_slice(&sub);
-    let mut os2 = vec![0u8; 78];
-    os2[8..10].copy_from_slice(&0u16.to_be_bytes());
-    let mut tables: Vec<(&[u8; 4], Vec<u8>)> =
-        vec![(b"OS/2", os2), (b"cmap", cmap), (b"glyf", glyf), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"loca", loca), (b"maxp", maxp)];
-    tables.sort_by_key(|t| *t.0);
-    let mut out = Vec::new();
-    be32(&mut out, 0x0001_0000);
-    for v in [tables.len() as u16, 128, 3, tables.len() as u16 * 16 - 128] {
-        be16(&mut out, v);
-    }
-    let mut off = 12 + 16 * tables.len();
-    for (t, d) in &tables {
-        out.extend_from_slice(*t);
-        be32(&mut out, 0);
-        be32(&mut out, off as u32);
-        be32(&mut out, d.len() as u32);
-        off += d.len().div_ceil(4) * 4;
-    }
-    for (_, d) in &tables {
-        out.extend_from_slice(d);
-        while out.len() % 4 != 0 {
-            out.push(0);
-        }
-    }
-    out
+    sfnt::bytes(&sfnt::Sfnt {
+        // Glyph 1 is "O": a 128-point ring, its counter a second, oppositely wound contour.
+        glyphs: &[sfnt::notdef(), sfnt::glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)])],
+        cmap: &[(0x4F, 0x4F, 1 - 0x4F)], // "O" → glyph 1
+        advance: 1000,                   // one em wide
+        lsb: 0,
+        metrics: 2,                 // hmtx matches the two metrics hhea declares
+        fs_type: 0,                 // any use
+        ink_box: [0, 0, 1000, 700], // the ring's box; the 700-unit cap height is the unit scale
+    })
 }
 
 #[test]

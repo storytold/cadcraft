@@ -434,8 +434,16 @@ fn dxf_layer_table_stops_at_the_record_cap() {
     }
     text.push_str("0\nENDTAB\n0\nENDSEC\n0\nEOF\n");
     let d = read(text.as_bytes(), "layers.dxf").unwrap();
-    assert!(d.layers.len() <= 1_000_000, "{} layers read from {records} records", d.layers.len());
-    assert!(d.layers.len() > 900_000, "the records below the cap are kept: {}", d.layers.len());
+    // The exact total, not a range: the layer list stops at 1,000,000 layers, the drawing's own
+    // default layers counted among them, so a cap that truncates early or late fails as loudly as
+    // none at all. The count is a literal on purpose -- if the constant changes, this test must fail
+    // rather than follow it.
+    assert_eq!(
+        d.layers.len(),
+        1_000_000,
+        "the LAYER table must stop at exactly 1,000,000 layers in total, defaults included, reading {records} records, but kept {}",
+        d.layers.len()
+    );
 }
 
 #[test]
