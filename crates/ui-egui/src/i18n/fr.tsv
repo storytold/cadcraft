@@ -243,6 +243,7 @@
 	Enter mode	Entrez le mode
 	Enter name of block to insert	Entrez le nom du bloc à insérer
 	Enter new text	Entrez le nouveau texte
+	Enter new value for {name}	Entrez la nouvelle valeur de {name}
 	Enter next point	Entrez le point suivant
 	Enter number of columns	Entrez le nombre de colonnes
 	Enter number of data rows	Entrez le nombre de lignes de données
@@ -258,6 +259,7 @@
 	Enter text (use \P for new paragraphs)	Entrer le texte (utilisez \P pour les nouveaux paragraphes)
 	Enter the number of segments	Entrer le nombre de segments
 	Enter twist direction of helix	Entrer le sens de vrillage de l'hélice
+	Enter value for {tag}	Entrez la valeur de {tag}
 	Entire drawing	Tout le dessin
 	Equal	Égalité
 	Erase	Effacer

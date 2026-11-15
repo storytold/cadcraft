@@ -433,7 +433,9 @@ impl Interactive for LayerM {
                 let p = Prompt::new(msg, NAME);
                 if enter_is_current { p.default(cur) } else { p }
             }
-            Stage::ConfirmOff(_) => Prompt::new(format!("Really want layer \"{cur}\" (the CURRENT layer) off?"), KW).kw(&["Yes", "No"]).default("N"),
+            Stage::ConfirmOff(_) => Prompt::with_values("Really want layer \"{layer}\" (the CURRENT layer) off?", [("layer", cur.clone())], KW)
+                .kw(&["Yes", "No"])
+                .default("N"),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {

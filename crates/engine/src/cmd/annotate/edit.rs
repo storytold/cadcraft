@@ -325,7 +325,7 @@ impl Interactive for OverrideM {
             return sel.prompt();
         }
         match &self.var {
-            Some(v) => Prompt::new(format!("Enter new value for dimension variable {}", v.to_ascii_uppercase()), Accept::TEXT),
+            Some(v) => Prompt::with_values("Enter new value for dimension variable {name}", [("name", v.to_ascii_uppercase())], Accept::TEXT),
             None => Prompt::new("Enter dimension variable name to override", Accept::TEXT).kw(&["Clear overrides"]),
         }
     }

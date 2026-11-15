@@ -139,6 +139,26 @@ const TYPES: &[(&str, Option<&str>, &str)] = &[
     ("VPort", None, "viewport configuration"),
 ];
 
+/// The old- and new-name prompts for a [`TYPES`] noun, each written whole so it can be
+/// translated (#2611).
+fn name_prompts(noun: &str) -> (&'static str, &'static str) {
+    match noun {
+        "block" => ("Enter old block name", "Enter new block name"),
+        "dimension style" => ("Enter old dimension style name", "Enter new dimension style name"),
+        "layer" => ("Enter old layer name", "Enter new layer name"),
+        "linetype" => ("Enter old linetype name", "Enter new linetype name"),
+        "material" => ("Enter old material name", "Enter new material name"),
+        "multileader style" => ("Enter old multileader style name", "Enter new multileader style name"),
+        "plot style" => ("Enter old plot style name", "Enter new plot style name"),
+        "text style" => ("Enter old text style name", "Enter new text style name"),
+        "table style" => ("Enter old table style name", "Enter new table style name"),
+        "UCS" => ("Enter old UCS name", "Enter new UCS name"),
+        "view" => ("Enter old view name", "Enter new view name"),
+        "viewport configuration" => ("Enter old viewport configuration name", "Enter new viewport configuration name"),
+        _ => ("Enter old object name", "Enter new object name"),
+    }
+}
+
 /// Keyword-only: spaces separate inputs.
 const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 /// A name: Space ends the input.
@@ -188,14 +208,14 @@ impl Interactive for RenameM {
         "-RENAME"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        let noun = |t: &usize| TYPES.get(*t).map_or("object", |(_, _, n)| *n);
+        let names = |t: &usize| name_prompts(TYPES.get(*t).map_or("", |(_, _, n)| *n));
         match &self.stage {
             Stage::Type => {
                 let kws: Vec<&str> = TYPES.iter().map(|(k, _, _)| *k).collect();
                 Prompt::new("Enter object type to rename", KW).kw(&kws)
             }
-            Stage::Old(t) => Prompt::new(format!("Enter old {} name", noun(t)), NAME),
-            Stage::New(t, _) => Prompt::new(format!("Enter new {} name", noun(t)), NAME),
+            Stage::Old(t) => Prompt::new(names(t).0, NAME),
+            Stage::New(t, _) => Prompt::new(names(t).1, NAME),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {

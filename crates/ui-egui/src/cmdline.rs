@@ -488,7 +488,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text_faint);
             x += gw;
             // A LISP `get…` prompt shows as the routine wrote it (no keywords, default or colon added).
-            let message = if pr.raw { pr.display() } else { crate::i18n::t(&pr.message).to_string() };
+            let message = if pr.raw { pr.display() } else { crate::i18n::prompt(pr).into_owned() };
             let g = p.layout_no_wrap(message, font.clone(), t.text);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
