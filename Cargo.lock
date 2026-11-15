@@ -644,7 +644,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cadcraft"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -675,7 +675,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-cli"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -691,14 +691,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-color"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-constraints"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-doc",
  "cadcraft-geom",
@@ -708,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-doc"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
@@ -718,16 +718,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "cadcraft-dwg"
-version = "0.20.1"
-dependencies = [
- "acadrust",
- "log",
-]
-
-[[package]]
 name = "cadcraft-engine"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-constraints",
@@ -748,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-fonts"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-geom",
  "craft-dxf",
@@ -761,22 +753,22 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-geom"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-io"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "acadrust",
  "cadcraft-color",
  "cadcraft-doc",
- "cadcraft-dwg",
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-render",
+ "craft-dwg",
  "craft-dxf",
  "craft-pdf",
  "craft-print",
@@ -793,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-mcp"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -808,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-render"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -822,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-ui-egui"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -850,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-web"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-fonts",
@@ -1240,6 +1232,15 @@ dependencies = [
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
+
+[[package]]
+name = "craft-dwg"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf#7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf"
+dependencies = [
+ "acadrust",
+ "log",
+]
 
 [[package]]
 name = "craft-dxf"
@@ -7025,7 +7026,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "chrono",
  "serde_json",
