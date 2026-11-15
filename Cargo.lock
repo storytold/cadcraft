@@ -714,6 +714,7 @@ version = "0.21.0"
 dependencies = [
  "cadcraft-geom",
  "craft-dxf",
+ "craft-shx",
  "encoding_rs",
  "harfrust 0.14.0",
  "icu_segmenter",
@@ -1192,6 +1193,11 @@ dependencies = [
  "krilla",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "craft-shx"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b3307f7814629961841b80ab907116252e41b34d#b3307f7814629961841b80ab907116252e41b34d"
 
 [[package]]
 name = "craft-ui"
