@@ -202,10 +202,10 @@ impl Session {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
                     let crossing = self.window_is_crossing(pw.corner, p);
-                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+                    let hs = select::select_window_in(self.doc()?, &space, self.viewport_frozen(), Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
-                match select::pick(self.doc()?, &space, p, ap) {
+                match select::pick_in(self.doc()?, &space, self.viewport_frozen(), p, ap) {
                     Some(h) => Ok(Some(Input::Pick(cmd::groups::expand(self, vec![h])))),
                     None => {
                         self.pending_window = Some(PendingWindow { corner: p, during_command: true });
@@ -217,10 +217,14 @@ impl Session {
                 let tl = t.trim().to_ascii_lowercase();
                 let d = self.doc()?;
                 let store = d.space(&space);
+                let frozen = self.viewport_frozen();
                 let picked = match tl.as_str() {
-                    "all" => store.map(|s| s.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()),
-                    "l" | "last" => store.and_then(|s| s.last()).map(|e| vec![e.handle]),
-                    "p" | "previous" => Some(self.state()?.previous_selection.clone()),
+                    "all" => store.map(|s| s.iter().filter(|e| select::selectable(d, e, frozen)).map(|e| e.handle).collect()),
+                    "l" | "last" => store.and_then(|s| select::last_in(s, frozen)).map(|h| vec![h]),
+                    "p" | "previous" => {
+                        let st = self.state()?;
+                        Some(st.drawn_in_viewport(&st.previous_selection))
+                    }
                     _ => None,
                 };
                 match picked {
@@ -241,8 +245,9 @@ impl Session {
     fn select_mode_input(&mut self, input: Input) -> Result<Option<Input>> {
         let Some(mut mode) = self.select_mode.take() else { return Ok(Some(input)) };
         if mode.kind == select::SelectKind::Group {
+            let space = self.space();
             return match input {
-                Input::Text(name) | Input::Keyword(name) => match select::select_group(self.doc()?, &self.space(), &name) {
+                Input::Text(name) | Input::Keyword(name) => match select::select_group_in(self.doc()?, &space, self.viewport_frozen(), &name) {
                     Some(hs) => Ok(Some(Input::Pick(hs))),
                     None => {
                         self.echo(format!("No group named \"{}\".", name.trim()));
@@ -262,14 +267,14 @@ impl Session {
         match input {
             Input::Point(p) => {
                 if mode.push(p) {
-                    return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
+                    return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick));
                 }
             }
             Input::Keyword(k) if k == "Undo" => {
                 mode.pts.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick)),
+            Input::Enter => return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick)),
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
