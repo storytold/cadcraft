@@ -233,6 +233,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
+        EntityKind::PdfUnderlay(u) => underlay_frames(b, ctx, u).iter().for_each(|pts| stroke(b, pts)),
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -262,6 +263,28 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
     }
+}
+
+/// A PDF underlay's frame (its clip boundary when clipped) as closed polylines, per PDFFRAME:
+/// 0 = none, 1 = shown and plotted, 2 = shown but not plotted. An unloaded underlay has none.
+fn underlay_frames(b: &Builder, ctx: &Ctx, u: &cadcraft_doc::PdfUnderlay) -> Vec<Vec<Vec2>> {
+    let frame = match ctx.d.header.i64("PDFFRAME", 1) {
+        0 => false,
+        2 => !b.plotting,
+        _ => true,
+    };
+    if u.unloaded || !frame {
+        return Vec::new();
+    }
+    u.frames()
+        .into_iter()
+        .map(|mut pts| {
+            if let Some(f) = pts.first().copied() {
+                pts.push(f);
+            }
+            pts
+        })
+        .collect()
 }
 
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {

@@ -515,6 +515,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             let v = i.v.xy() * i.size.y;
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
+        EntityKind::PdfUnderlay(u) => underlay_bounds(u),
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         // An OLE object's content is not drawn, but its frame is, so the frame counts (#2422).
         EntityKind::Unknown(u) if u.is_ole_frame() => ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points),
@@ -537,6 +538,15 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             b
         }
     }
+}
+
+/// A PDF underlay's bounds: none while it is unloaded, and its frame too, since an inverted
+/// clip's boundary can lie off a page whose size isn't read yet.
+fn underlay_bounds(u: &crate::PdfUnderlay) -> Bounds2 {
+    if u.unloaded {
+        return Bounds2::EMPTY;
+    }
+    Bounds2::from_points(u.outline().into_iter().chain(u.frames().into_iter().flatten()))
 }
 
 /// The polyline's drawn extent: its centre line, widened by the filled band of every segment,

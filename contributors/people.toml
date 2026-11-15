@@ -118,3 +118,7 @@ sync_github_name = true
 
 [people.helenkwok]
 real_name = "Helen Kwok"
+
+[people.ATARYS-LAB]
+display_name = "Julien - ATARYS"
+sync_github_name = false
