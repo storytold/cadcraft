@@ -341,7 +341,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(left_out.result(hs.len()))
 }
 
-fn model_fit_bounds(d: &cadcraft_doc::Drawing) -> (cadcraft_geom::Bounds2, (f64, f64)) {
+pub(super) fn model_fit_bounds(d: &cadcraft_doc::Drawing) -> (cadcraft_geom::Bounds2, (f64, f64)) {
     let ext = d.extents(&cadcraft_doc::Space::Model);
     if ext.is_empty() {
         let lo = d.header.point("LIMMIN").map(|q| q.xy()).unwrap_or(cadcraft_geom::Vec2::ZERO);
@@ -349,6 +349,17 @@ fn model_fit_bounds(d: &cadcraft_doc::Drawing) -> (cadcraft_geom::Bounds2, (f64,
         return (cadcraft_geom::Bounds2::new(lo, hi), (0.0, 0.0));
     }
     (ext, crate::session::space_z_range(d, &cadcraft_doc::Space::Model))
+}
+
+pub(super) fn fit_viewport_to_model(vp: &mut cadcraft_doc::Viewport, ext: cadcraft_geom::Bounds2, z_range: (f64, f64)) {
+    let (target, bw, bh) = crate::View::projected_box_3d(ext, z_range, vp.camera, vp.view_twist());
+    let aspect = (vp.width / vp.height.max(1e-12)).max(1e-12);
+    let vh = (bh.max(bw / aspect) * 1.02).max(1e-9);
+    if target.is_finite() && vh.is_finite() {
+        vp.view_center = target.xy();
+        vp.target_z = target.z;
+        vp.view_height = vh;
+    }
 }
 
 fn apply_kind_properties(
@@ -536,14 +547,7 @@ fn set_viewport_properties(
         if params.get("scaleToFit").and_then(Value::as_bool) == Some(true)
             && let Some((ext, z_range)) = fit_model
         {
-            let (target, bw, bh) = crate::View::projected_box_3d(ext, z_range, vp.camera, vp.view_twist());
-            let aspect = (vp.width / vp.height.max(1e-12)).max(1e-12);
-            let vh = (bh.max(bw / aspect) * 1.02).max(1e-9);
-            if target.is_finite() && vh.is_finite() {
-                vp.view_center = target.xy();
-                vp.target_z = target.z;
-                vp.view_height = vh;
-            }
+            fit_viewport_to_model(vp, ext, z_range);
         }
         if let Some(cs) = number("customScale").filter(|x| *x > 0.0) {
             let vh = vp.height / cs;
@@ -1579,5 +1583,14 @@ mod tests {
         assert!(!matched.ucs_per_viewport);
         assert_eq!(matched.shade_plot, 3);
         assert!((matched.scale() - 0.8).abs() < 1e-9);
+
+        // viewport.set supports scaleToFit and refuses when locked.
+        assert!(s.execute("viewport.set", &json!({ "handle": vh2, "scaleToFit": true })).is_err());
+        s.execute("viewport.set", &json!({ "handle": vh2, "locked": false, "scaleToFit": true })).unwrap();
+        let fitted = match &s.doc().unwrap().entity(h2).unwrap().kind {
+            EntityKind::Viewport(v) => v.clone(),
+            _ => panic!(),
+        };
+        assert!(fitted.view_height > 0.0 && (fitted.scale() - 0.8).abs() > 1e-3);
     }
 }

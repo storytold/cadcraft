@@ -122,12 +122,43 @@ pub fn target(app: &CadApp) -> Option<(Handle, Viewport)> {
     }
 }
 
+/// Scales shown in the viewport scale dropdown: the drawing's scale list when present, else [`scales`].
+pub(crate) fn menu_scales(doc: Option<&cadcraft_doc::Drawing>, metric: bool) -> Vec<(String, f64)> {
+    if let Some(d) = doc
+        && !d.scales.is_empty()
+    {
+        let list: Vec<(String, f64)> = d
+            .scales
+            .iter()
+            .filter_map(|sc| {
+                let s = 1.0 / sc.factor();
+                (s.is_finite() && s > 0.0).then(|| (sc.name.clone(), s))
+            })
+            .collect();
+        if !list.is_empty() {
+            return list;
+        }
+    }
+    scales(metric).into_iter().map(|(name, v)| (name.to_string(), v)).collect()
+}
+
 /// Draw the scale list and lock toggle ending at `right`; returns their left edge.
 pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let Some((h, vp)) = target(app) else { return right };
     let t = Tokens::get();
-    let metric = app.session.doc().is_ok_and(|d| cadcraft_render::paper::paper_unit_mm(d) == 1.0);
     let scale = if vp.view_height > 0.0 { vp.height / vp.view_height } else { 0.0 };
+    let (metric, menu_items, text) = {
+        let doc = app.session.doc().ok();
+        let metric = doc.as_ref().is_some_and(|d| cadcraft_render::paper::paper_unit_mm(d) == 1.0);
+        let items = menu_scales(doc.as_deref(), metric);
+        let text = doc
+            .as_ref()
+            .and_then(|d| (scale.is_finite() && scale > 0.0).then(|| d.scales.iter().find(|sc| same(1.0 / sc.factor(), scale))).flatten())
+            .map(|sc| sc.name.clone())
+            .unwrap_or_else(|| label(scale, metric));
+        (metric, items, text)
+    };
+    let _ = metric;
     let p = ui.painter().clone();
     // Lock toggle.
     let lr = Rect::from_min_size(pos2(right - 20.0, cy - 9.0), vec2(18.0, 18.0));
@@ -145,7 +176,6 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
         }
     }
     // Scale list.
-    let text = label(scale, metric);
     let g = p.layout_no_wrap(text, crate::theme::small(), if vp.locked { t.text_dim } else { t.text });
     let w = g.size().x + 22.0;
     let sr = Rect::from_min_max(pos2(lr.left() - 4.0 - w, cy - 9.0), pos2(lr.left() - 4.0, cy + 9.0));
@@ -157,24 +187,44 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     p.line_segment([pos2(ax, ay + 1.5), pos2(ax + 3.0, ay - 1.5)], egui::Stroke::new(1.2, t.text_dim));
     let sresp = sresp.on_hover_text(if vp.locked { crate::tl!("Viewport is locked") } else { crate::tl!("Viewport scale") });
     let mut pick = None;
+    let mut fit = false;
+    let mut custom = false;
     if !vp.locked {
-        egui::Popup::from_toggle_button_response(&sresp).width(150.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        egui::Popup::from_toggle_button_response(&sresp).width(160.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                for (name, v) in scales(metric) {
-                    if ui.selectable_label(same(v, scale), name).clicked() {
-                        pick = Some(v);
+                if ui.selectable_label(false, crate::i18n::t("Scale to fit")).clicked() {
+                    fit = true;
+                    ui.close();
+                }
+                for (name, v) in &menu_items {
+                    if ui.selectable_label(same(*v, scale), name).clicked() {
+                        pick = Some(*v);
                         ui.close();
                     }
+                }
+                ui.separator();
+                if ui.selectable_label(false, crate::i18n::t("Custom...")).clicked() {
+                    custom = true;
+                    ui.close();
                 }
             });
         });
     }
-    if let Some(v) = pick {
+    if fit {
+        let r = app.run("viewport.set", json!({ "handle": h.hex(), "scaleToFit": true }));
+        app.canvas.list = None;
+        if let Err(e) = r {
+            app.status = Some((e, crate::now_ms()));
+        }
+    } else if let Some(v) = pick {
         let r = app.run("viewport.set", json!({ "handle": h.hex(), "scale": v }));
         app.canvas.list = None;
         if let Err(e) = r {
             app.status = Some((e, crate::now_ms()));
         }
+    }
+    if custom {
+        app.start("scalelistedit");
     }
     sr.left()
 }
@@ -204,5 +254,15 @@ mod tests {
         for n in ["1\" = 10'-0\"", "1\" = 20'-0\"", "1\" = 30'-0\"", "1\" = 40'-0\"", "1\" = 50'-0\"", "1\" = 60'-0\"", "1\" = 100'-0\""] {
             assert!(names.contains(&n), "{n} missing");
         }
+    }
+
+    #[test]
+    fn menu_scales_uses_drawing_scales_when_present() {
+        let mut d = cadcraft_doc::Drawing::default();
+        d.scales.push(cadcraft_doc::AnnoScale::new("1:25", 1.0, 25.0));
+        let items = menu_scales(Some(&d), true);
+        assert!(items.iter().any(|(name, s)| name == "1:25" && (*s - 0.04).abs() < 1e-9));
+        let fallback = menu_scales(None, true);
+        assert!(fallback.iter().any(|(name, s)| name == "1:50" && (*s - 0.02).abs() < 1e-9));
     }
 }

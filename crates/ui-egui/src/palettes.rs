@@ -565,7 +565,8 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     } else {
         ui.data_mut(|d| d.remove::<String>(id));
     }
-    if resp.lost_focus() && buf != value {
+    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    if resp.lost_focus() && !cancelled && buf != value {
         out = Some(buf);
     }
     out
@@ -576,6 +577,33 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
 fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
     let typed = typed?;
     let v = cadcraft_engine::units::parse_distance(&typed);
+    if v.is_none() {
+        *bad = Some(typed);
+    }
+    v
+}
+
+/// A committed numeric field requiring a strictly positive finite number (`> 0`).
+fn pos_number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
+    let typed = typed?;
+    let v = cadcraft_engine::units::parse_distance(&typed).filter(|x| x.is_finite() && *x > 0.0);
+    if v.is_none() {
+        *bad = Some(typed);
+    }
+    v
+}
+
+/// A committed viewport scale (`> 0`): accepts decimals, fractions (`1/50`) and ratios (`1:50`).
+fn scale_number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
+    let typed = typed?;
+    let t = typed.trim();
+    let v = if let Some((a, b)) = t.split_once(':') {
+        let num: Option<f64> = a.trim().parse().ok();
+        let den: Option<f64> = b.trim().parse().ok();
+        num.zip(den).map(|(x, y)| x / y).filter(|s| s.is_finite() && *s > 0.0)
+    } else {
+        cadcraft_engine::units::parse_distance(t).filter(|s| s.is_finite() && *s > 0.0)
+    };
     if v.is_none() {
         *bad = Some(typed);
     }
@@ -1557,6 +1585,13 @@ fn viewport_properties(
             }
         });
     };
+    let pos_num_row = |ui: &mut egui::Ui, label: &str, key: &str, shown: String, set: &mut Option<Value>, bad: &mut Option<String>| {
+        prop_row(ui, label, |ui| {
+            if let Some(f) = pos_number(edit_field(ui, ui.scope_id().with((key, ids)), shown), bad) {
+                *set = Some(json!({ "handles": ids, key: f }));
+            }
+        });
+    };
     let single = vps.len() == 1;
     let any_clipped = vps.iter().any(|v| v.clip.is_some());
     let any_locked = vps.iter().any(|v| v.locked);
@@ -1576,8 +1611,8 @@ fn viewport_properties(
         prop_row(ui, "Height", |ui| read_only(ui, &height));
         prop_row(ui, "Width", |ui| read_only(ui, &width));
     } else {
-        num_row(ui, "Height", "height", height, set, bad);
-        num_row(ui, "Width", "width", width, set, bad);
+        pos_num_row(ui, "Height", "height", height, set, bad);
+        pos_num_row(ui, "Width", "width", width, set, bad);
     }
 
     group(ui, "Misc");
@@ -1597,7 +1632,7 @@ fn viewport_properties(
         });
     };
     yes_no_prop(ui, "On", "vp.on", "on", &|v| v.on, set);
-    let clipped = shared("vp.clipped", &|v| if v.clip.is_some() { "Yes" } else { "No" }.to_string());
+    let clipped = tr_or_varies(&shared("vp.clipped", &|v| if v.clip.is_some() { "Yes" } else { "No" }.to_string()));
     prop_row(ui, "Clipped", |ui| read_only(ui, &clipped));
     yes_no_prop(ui, "Display locked", "vp.locked", "locked", &|v| v.locked, set);
 
@@ -1630,13 +1665,12 @@ fn viewport_properties(
     }
 
     let std_raw = shared("vp.std_scale", &|v| crate::vpscale::standard_scale_name(v.scale(), metric).to_string());
+    let std_shown = tr_or_varies(&std_raw);
     if any_locked {
-        prop_row(ui, "Standard scale", |ui| read_only(ui, &std_raw));
+        prop_row(ui, "Standard scale", |ui| read_only(ui, &std_shown));
     } else {
-        let std_shown = tr_or_varies(&std_raw);
         prop_row(ui, "Standard scale", |ui| {
             let items = std::iter::once(crate::i18n::t("Scale to fit").to_string())
-                .chain(std::iter::once(crate::i18n::t("Custom").to_string()))
                 .chain(crate::vpscale::scales(metric).into_iter().map(|(name, _)| name.to_string()));
             if let Some(picked) = pick_menu(ui, &std_shown, items) {
                 if picked == crate::i18n::t("Scale to fit") {
@@ -1652,13 +1686,17 @@ fn viewport_properties(
     if any_locked {
         prop_row(ui, "Custom scale", |ui| read_only(ui, &cs_shown));
     } else {
-        num_row(ui, "Custom scale", "customScale", cs_shown, set, bad);
+        prop_row(ui, "Custom scale", |ui| {
+            if let Some(f) = scale_number(edit_field(ui, ui.scope_id().with(("customScale", ids)), cs_shown), bad) {
+                *set = Some(json!({ "handles": ids, "customScale": f }));
+            }
+        });
     }
 
     yes_no_prop(ui, "UCS per viewport", "vp.ucs", "ucsPerViewport", &|v| v.ucs_per_viewport, set);
-    let layer_ovr = shared("vp.layer_ovr", &|v| if v.has_layer_overrides() { "Yes" } else { "No" }.to_string());
+    let layer_ovr = tr_or_varies(&shared("vp.layer_ovr", &|v| if v.has_layer_overrides() { "Yes" } else { "No" }.to_string()));
     prop_row(ui, "Layer property overrides", |ui| read_only(ui, &layer_ovr));
-    let visual_style = shared("vp.visual_style", &|v| v.render_mode_name().to_string());
+    let visual_style = tr_or_varies(&shared("vp.visual_style", &|v| v.render_mode_name().to_string()));
     prop_row(ui, "Visual style", |ui| read_only(ui, &visual_style));
     let sp_raw = shared("vp.shade_plot", &|v| v.shade_plot_name().to_string());
     let sp_shown = tr_or_varies(&sp_raw);
@@ -1670,7 +1708,7 @@ fn viewport_properties(
             *set = Some(json!({ "handles": ids, "shadePlot": idx }));
         }
     });
-    prop_row(ui, "Linked to sheet view", |ui| read_only(ui, "No"));
+    prop_row(ui, "Linked to sheet view", |ui| read_only(ui, crate::i18n::t("No")));
 }
 
 #[cfg(test)]
@@ -2048,5 +2086,73 @@ mod tests {
         h.state_mut().run("select", json!({ "handles": [vp1, vp2] })).unwrap();
         h.run_steps(3);
         assert!(h.query_all_by_value(VARIES).count() > 0, "two differing viewports show {VARIES}");
+    }
+
+    #[test]
+    fn viewport_custom_scale_enter_does_not_fire_cmdline_and_validates_inputs() {
+        let mut bad = None;
+        assert_eq!(scale_number(Some("1:50".into()), &mut bad), Some(0.02));
+        assert!(bad.is_none());
+        assert_eq!(scale_number(Some("0".into()), &mut bad), None);
+        assert_eq!(bad.as_deref(), Some("0"));
+        bad = None;
+        assert_eq!(pos_number(Some("-3".into()), &mut bad), None);
+        assert_eq!(bad.as_deref(), Some("-3"));
+
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("layout.new", json!({ "name": "Sheet1", "viewport": false })).unwrap();
+        app.run("layout.set", json!({ "name": "Sheet1" })).unwrap();
+        // Record VPORTS.1 as the last interactive command and cancel it, just like pressing Enter later would repeat.
+        app.start("vports.1");
+        assert!(app.session.current_prompt().is_some());
+        app.session.cancel();
+        assert!(app.session.current_prompt().is_none());
+
+        app.run("mview", json!({ "layout": "Sheet1", "p1": [10, 10], "p2": [110, 90] })).unwrap();
+        let vp1 = {
+            let d = app.session.doc().unwrap();
+            d.layouts
+                .iter()
+                .find(|l| l.name == "Sheet1")
+                .unwrap()
+                .entities
+                .iter()
+                .find(|e| matches!(&e.kind, EntityKind::Viewport(_)))
+                .unwrap()
+                .handle
+        };
+        app.run("properties.set", json!({ "handles": [vp1.hex()], "customScale": 0.5 })).unwrap();
+        app.run("select", json!({ "handles": [vp1.hex()] })).unwrap();
+
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(400.0, 1200.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.frame_started_with_keyboard_input = ui.ctx().egui_wants_keyboard_input();
+                properties_section(app, ui);
+                crate::cmdline::keyboard(app, ui.ctx());
+            },
+            app,
+        );
+        h.run_steps(3);
+        let field = h.get_all_by_value("0.5000").next().unwrap();
+        field.focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run_steps(2);
+        h.get_all_by_value("0.5000").next().unwrap().type_text("1:50");
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+
+        assert!(
+            h.state().session.current_prompt().is_none(),
+            "Enter inside Properties Custom scale must not trigger/repeat cmdline command; prompt={:?}",
+            h.state().session.current_prompt()
+        );
+        let d = h.state().session.doc().unwrap();
+        let vp = match &d.entity(vp1).unwrap().kind {
+            EntityKind::Viewport(v) => v,
+            _ => panic!(),
+        };
+        assert!((vp.scale() - 0.02).abs() < 1e-6, "expected 1:50 scale 0.02, got {}", vp.scale());
     }
 }
