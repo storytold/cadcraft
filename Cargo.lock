@@ -824,6 +824,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "chrono",
+ "craft-image-codecs",
  "craft-ui",
  "craft-update",
  "craft-window",
