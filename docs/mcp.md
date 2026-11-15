@@ -74,6 +74,9 @@ configuration works across the suite) keep the agent to the folders you give it:
   /work/project/out`, `automation path rejected: UNC paths are refused unless a root is on the
   same server and share: \\203.0.113.5\s\x.dwg`, or `automation filesystem access is not granted:
   write authority is absent: /work/project/out/x.png`.
+- A refused path in a `command_line` line is not a tool error: the reply is an ordinary result, with
+  the refusal in its `error` field (and echoed in `output`) and without `isError`. A client that
+  drives `command_line` has to read `error`.
 - A file a drawing names is held to the roots too: an image or xref saved with a path outside them is
   not loaded from there, and the answer doesn't say whether the file exists. As without roots, a file
   of the same name beside the host drawing is tried next, so when one is there and inside the roots

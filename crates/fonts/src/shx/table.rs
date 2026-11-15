@@ -354,6 +354,10 @@ fn read_from(dirs: &[(PathBuf, Vec<OpenGuard>)], name: &str) -> Option<Vec<u8>> 
         if let Some(b) = [d.join(name), d.join(name.to_ascii_uppercase())].iter().find_map(|f| read(f)) {
             return Some(b);
         }
+        // The folder is listed only when its guards allow the folder itself.
+        if !guards.iter().all(|g| g(d)) {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(d) else { continue };
         let found = entries
             .take(MAX_DIR_ENTRIES)
