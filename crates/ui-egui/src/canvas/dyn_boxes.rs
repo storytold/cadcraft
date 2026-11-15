@@ -15,7 +15,11 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
             hover
         }
     };
-    let Some(prompt) = app.session.current_prompt() else { return };
+    let Some(prompt) = app.session.current_prompt() else {
+        // Held where typing started, so the free pointer can reach the list.
+        command_tip(app, p, app.canvas.typing_at.unwrap_or(at), hover);
+        return;
+    };
     // DYNPROMPT = 0: no prompt beside the cursor (the value boxes stay).
     let show_prompt = app.session.settings.dynprompt;
     let options = show_prompt && !prompt.keywords.is_empty();
@@ -56,6 +60,91 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
         options_hint(p, r);
     }
     options_menu(app, p, r, hover);
+}
+
+/// What Dynamic Input shows beside the cursor with no command running: the typed command name
+/// and its AutoComplete matches; `None` with nothing typed, DYNMODE or DYNPROMPT off (#2127).
+pub(super) fn command_tip_text(app: &CadApp) -> Option<(String, Vec<crate::cmdline::Suggestion>)> {
+    let st = &app.session.settings;
+    if !st.dynmode || !st.dynprompt || app.session.prompting() || app.cmd.buffer.is_empty() {
+        return None;
+    }
+    Some((app.cmd.buffer.clone(), crate::cmdline::suggestions(&app.cmd.buffer)))
+}
+
+/// The typed command name shows beside the cursor (over the drawing), and so not on the command
+/// line, as in AutoCAD.
+pub(crate) fn command_tip_shown(app: &CadApp) -> bool {
+    app.canvas.cursor.is_some() && command_tip_text(app).is_some()
+}
+
+/// Where the crosshair stays while a command name is typed over the drawing: the pointer's
+/// position when typing started (`hover`), held until the text is cleared or a command starts.
+pub(super) fn typing_anchor(app: &mut CadApp, hover: Option<Pos2>) -> Option<Pos2> {
+    if hover.is_none() || command_tip_text(app).is_none() {
+        app.canvas.typing_at = None;
+        app.canvas.tip_rows.clear();
+    } else if app.canvas.typing_at.is_none() {
+        app.canvas.typing_at = hover;
+    }
+    app.canvas.typing_at
+}
+
+/// The typed command name beside the cursor, the AutoComplete list under it: the first match,
+/// which Tab completes, marked like the command line's list; the row under the pointer (`hover`)
+/// highlighted, and the rows kept for clicks.
+fn command_tip(app: &mut CadApp, p: &egui::Painter, at: Pos2, hover: Pos2) {
+    app.canvas.tip_rows.clear();
+    let Some((typed, sug)) = command_tip_text(app) else { return };
+    let t = Tokens::get();
+    let font = crate::theme::small();
+    let galley = p.layout_no_wrap(typed, font.clone(), t.text);
+    let tip = galley.size() + vec2(12.0, 8.0);
+    let rows: Vec<_> = sug.iter().map(|s| p.layout_no_wrap(s.display.clone(), font.clone(), t.text)).collect();
+    let row_h = rows.iter().map(|g| g.size().y).fold(12.0, f32::max) + 6.0;
+    let w = rows.iter().map(|g| g.size().x).fold(tip.x, f32::max) + 16.0;
+    let list_h = if rows.is_empty() { 0.0 } else { row_h * rows.len() as f32 + 6.0 };
+    // Tip and list together stay inside the drawing, so what is typed is never clipped away.
+    let area = p.clip_rect();
+    let r = Rect::from_min_size(fit_tip(at, vec2(w.max(tip.x), tip.y + list_h), tip.y, area), tip);
+    p.rect_filled(r, 3.0, t.cmd_bg);
+    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    let caret = r.min.x + 6.0 + galley.size().x + 1.0;
+    p.galley(r.min + vec2(6.0, 4.0), galley, t.text);
+    p.line_segment([pos2(caret, r.top() + 4.0), pos2(caret, r.bottom() - 4.0)], Stroke::new(1.0, t.text));
+    if rows.is_empty() {
+        return;
+    }
+    let m = Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(w, list_h - 2.0));
+    p.rect_filled(m, 3.0, t.cmd_bg);
+    p.rect_stroke(m, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    for (i, (g, s)) in rows.into_iter().zip(&sug).enumerate() {
+        let row = Rect::from_min_size(pos2(m.left() + 2.0, m.top() + 2.0 + row_h * i as f32), vec2(w - 4.0, row_h));
+        if row.contains(hover) {
+            p.rect_filled(row, 2.0, t.cmd_keyword_hover);
+        } else if i == 0 {
+            p.rect_filled(row, 2.0, t.list_row);
+        }
+        p.galley(pos2(row.left() + 6.0, row.center().y - g.size().y / 2.0), g, t.text);
+        // Only the visible part of a row takes clicks.
+        let seen = row.intersect(area);
+        if seen.is_positive() {
+            app.canvas.tip_rows.push((seen, s.id.clone()));
+        }
+    }
+}
+
+/// The top-left corner of the command tip with its list (`size`, the tip `tip_h` tall on top),
+/// placed like the other tooltips (right of and above the cursor `at`) and moved to stay inside
+/// `area`: to the cursor's left near the right edge, down or up near the top and bottom.
+pub(super) fn fit_tip(at: Pos2, size: egui::Vec2, tip_h: f32, area: Rect) -> Pos2 {
+    let mut x = at.x + 18.0;
+    if x + size.x > area.right() {
+        x = at.x - 18.0 - size.x;
+    }
+    let x = x.min(area.right() - size.x).max(area.left());
+    let y = (at.y - tip_h - 14.0).min(area.bottom() - size.y).max(area.top());
+    pos2(x, y)
 }
 
 /// The drawing's length units: (LUNITS, LUPREC).
