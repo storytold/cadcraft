@@ -187,7 +187,7 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         ],
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
         Pick::PlotStyleOpen | Pick::PlotStyleSave(_) => vec![
-            ("Styles de tracé CADCraft (JSON)", vec!["json"]),
+            (i18n::t("CADCraft plot styles (JSON)"), vec!["json"]),
             (i18n::t("All files"), vec!["*"]),
         ],
         Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],

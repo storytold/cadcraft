@@ -5,7 +5,7 @@
 //! (`app.run`), so every edit is undoable and scriptable.
 
 use egui::RichText;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use cadcraft_doc::{Drawing, Entity, EntityKind};
 use cadcraft_color::{Color, aci_rgb};
 use serde_json::{Value, json};
@@ -176,6 +176,9 @@ struct TableUiState {
     selected: BTreeSet<String>,
     sort: Option<(usize, bool)>,
     secondary: Option<(usize, bool)>,
+    // Sorting is a snapshot: editing a value must not move its widget mid-interaction.
+    displayed_order: Vec<String>,
+    applied_sort: Option<(Option<(usize, bool)>, Option<(usize, bool)>)>,
 }
 
 fn aci_swatch(index: usize) -> egui::Color32 {
@@ -358,18 +361,32 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                 }
             };
         }
-        if let Some((col, descending)) = state.sort {
-            rows.sort_by(|a, b| {
-                let mut cmp = sort_key!(a, col).cmp(&sort_key!(b, col));
-                if descending { cmp = cmp.reverse(); }
-                if cmp == std::cmp::Ordering::Equal
-                    && let Some((second, reverse)) = state.secondary
-                {
-                    cmp = sort_key!(a, second).cmp(&sort_key!(b, second));
-                    if reverse { cmp = cmp.reverse(); }
-                }
-                cmp
-            });
+        // Re-sort only when the sorting choice or the set of styles changes.
+        // Applying an edit can change a sorting key, but must not reposition the
+        // active DragValue/TextEdit widget before the user finishes interacting.
+        let sort_config = (state.sort, state.secondary);
+        let row_names: BTreeSet<_> = rows.iter().map(|st| st.name.as_str()).collect();
+        let saved_names: BTreeSet<_> = state.displayed_order.iter().map(String::as_str).collect();
+        if state.applied_sort != Some(sort_config) || row_names != saved_names {
+            if let Some((col, descending)) = state.sort {
+                rows.sort_by(|a, b| {
+                    let mut cmp = sort_key!(a, col).cmp(&sort_key!(b, col));
+                    if descending { cmp = cmp.reverse(); }
+                    if cmp == std::cmp::Ordering::Equal
+                        && let Some((second, reverse)) = state.secondary
+                    {
+                        cmp = sort_key!(a, second).cmp(&sort_key!(b, second));
+                        if reverse { cmp = cmp.reverse(); }
+                    }
+                    cmp
+                });
+            }
+            state.displayed_order = rows.iter().map(|st| st.name.clone()).collect();
+            state.applied_sort = Some(sort_config);
+        } else {
+            let positions: BTreeMap<&str, usize> = state.displayed_order.iter()
+                .enumerate().map(|(index, name)| (name.as_str(), index)).collect();
+            rows.sort_by_key(|st| positions.get(st.name.as_str()).copied().unwrap_or(usize::MAX));
         }
         // Remove names deleted from the table so a later batch edit cannot recreate them.
         let current_names: BTreeSet<String> = table.styles.iter().map(|st| st.name.clone()).collect();
@@ -444,6 +461,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                     for st in &rows {
+                        ui.push_id((&table.name, &st.name), |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = COLUMN_GAP;
                             let mut checked = state.selected.contains(&st.name);
@@ -564,6 +582,7 @@ fn content(app: &mut CadApp, ui: &mut egui::Ui) -> Action {
                         });
                     }
                     });
+                        });
                 }
             });
         });
