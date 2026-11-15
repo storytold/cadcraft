@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("pagesetup", "Page Setup Manager...", run_pagesetup)
             .menu(&["File", "Page Setup Manager..."])
             .params(
-                "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
+                "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool, paperMm?: bool}",
             ),
         CommandSpec::new("plot", "Print...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "plot")?, "plot"))
             .menu(&["File", "Print..."])
@@ -198,6 +198,8 @@ fn default_page(d: &Drawing) -> PageSetup {
         p.paper = a4.name.into();
         p.width_mm = a4.width_mm;
         p.height_mm = a4.height_mm;
+        // New metric layouts use millimetres for paper-space coordinates.
+        p.paper_mm = true;
     }
     p
 }
@@ -650,6 +652,7 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         "plotStyleTable",
         "displayPlotStyles",
         "plotTransparency",
+        "paperMm",
     ];
     let changes = keys.iter().any(|k| p.get(k).is_some());
     let name = match str_param(p, "layout") {
@@ -681,6 +684,13 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         page.paper = ps.name.into();
         page.width_mm = ps.width_mm;
         page.height_mm = ps.height_mm;
+        // A selected ISO sheet uses millimetres; ANSI/ARCH sheets use inches.
+        // This also repairs existing layouts when the paper is reselected.
+        page.paper_mm = !ps.imperial;
+    }
+    // Explicit override for imported layouts and mixed-unit workflows.
+    if let Some(value) = p.get("paperMm") {
+        page.paper_mm = value.as_bool().ok_or_else(|| bad(cmd, "`paperMm` must be a boolean"))?;
     }
     let mm = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0 && *v <= 5080.0);
     match (mm("width"), mm("height")) {
