@@ -480,13 +480,38 @@ impl Tracker {
         cfg: &TrackConfig,
         base: Option<Vec2>,
     ) -> Option<Track> {
-        let t = self.find(d, space, cursor, aperture, tol, cfg, base);
+        self.track_with_frozen(d, space, cursor, aperture, tol, cfg, base, &[])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn track_with_frozen(
+        &mut self,
+        d: &Drawing,
+        space: &Space,
+        cursor: Vec2,
+        aperture: f64,
+        tol: f64,
+        cfg: &TrackConfig,
+        base: Option<Vec2>,
+        frozen: &[String],
+    ) -> Option<Track> {
+        let t = self.find(d, space, cursor, aperture, tol, cfg, base, frozen);
         self.last = t.clone();
         t
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn find(&self, d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, tol: f64, cfg: &TrackConfig, base: Option<Vec2>) -> Option<Track> {
+    fn find(
+        &self,
+        d: &Drawing,
+        space: &Space,
+        cursor: Vec2,
+        aperture: f64,
+        tol: f64,
+        cfg: &TrackConfig,
+        base: Option<Vec2>,
+        frozen: &[String],
+    ) -> Option<Track> {
         if !(cursor.is_finite() && aperture.is_finite() && tol.is_finite() && aperture > 0.0 && tol > 0.0) {
             return None;
         }
@@ -536,7 +561,7 @@ impl Tracker {
         // 2. A path crossing an object.
         if cfg.running(mode::INT | mode::APP) {
             let ix = crate::spatial::index(d, space);
-            let prims = super::gather(d, space, &ix, cursor, aperture, mode::NEA).map(|(_, p)| p).unwrap_or_default();
+            let prims = super::gather_in(d, space, &ix, cursor, aperture, mode::NEA, frozen).map(|(_, p)| p).unwrap_or_default();
             for prim in prims.iter().take(200) {
                 let extend = cfg.running(mode::APP) && super::extendable(prim);
                 for seg in super::prim_segments(prim) {
@@ -587,11 +612,25 @@ pub fn candidate(
     cfg: &TrackConfig,
     base: Option<Vec2>,
 ) -> Option<Acquired> {
+    candidate_with_frozen(d, space, cursor, hit, aperture, cfg, base, &[])
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn candidate_with_frozen(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    hit: Option<&SnapHit>,
+    aperture: f64,
+    cfg: &TrackConfig,
+    base: Option<Vec2>,
+    frozen: &[String],
+) -> Option<Acquired> {
     if !can_acquire(cursor, aperture, cfg) {
         return None;
     }
     let ix = crate::spatial::index(d, space);
-    let prims = super::gather(d, space, &ix, cursor, aperture, mode::NEA).map(|(_, p)| p).unwrap_or_default();
+    let prims = super::gather_in(d, space, &ix, cursor, aperture, mode::NEA, frozen).map(|(_, p)| p).unwrap_or_default();
     candidate_from_prims(cursor, hit, aperture, cfg, base, &prims)
 }
 
@@ -787,7 +826,7 @@ impl crate::Session {
         s.orthomode ^= q.shift;
         let angbase = self.angle_settings().angbase;
         let Ok(st) = self.state() else { return CursorSnap { point: raw, ..Default::default() } };
-        let (doc, space) = (st.doc.clone(), st.edit_space());
+        let (doc, space, frozen) = (st.doc.clone(), st.edit_space(), st.active_viewport_frozen().to_vec());
         if !raw.is_finite() {
             return CursorSnap { point: raw, ..Default::default() };
         }
@@ -796,10 +835,10 @@ impl crate::Session {
         let cfg = TrackConfig::relative_to(&s, angbase, last);
         let osmode = s.osmode | if s.osnaphatch { mode::HATCH } else { 0 };
         let ix = crate::spatial::index(&doc, &space);
-        let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred);
+        let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred, &frozen);
         let cand = match (osmode & mode::HATCH, near_prims.as_deref()) {
             (0, Some(prims)) => candidate_with_prims(raw, hit.as_ref(), q.aperture, &cfg, q.base, prims),
-            _ => candidate(&doc, &space, raw, hit.as_ref(), q.aperture, &cfg, q.base),
+            _ => candidate_with_frozen(&doc, &space, raw, hit.as_ref(), q.aperture, &cfg, q.base, &frozen),
         };
         let wait = self.tracking.hover(cand, q.now, cfg.shift_acquire, q.shift);
         if let Some(h) = hit {
@@ -813,7 +852,7 @@ impl crate::Session {
             let (origin, angle) = super::grid_frame(&doc);
             p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
         }
-        if let Some(mut t) = self.tracking.track(&doc, &space, p, q.aperture, q.tol, &cfg, q.base) {
+        if let Some(mut t) = self.tracking.track_with_frozen(&doc, &space, p, q.aperture, q.tol, &cfg, q.base, &frozen) {
             // PolarSnap (SNAPTYPE 1): steps of POLARDIST, or of the snap X spacing when it is 0.
             let step = if s.polardist > 0.0 { s.polardist } else { s.snapunit.x };
             if s.snapmode

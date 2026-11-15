@@ -372,3 +372,61 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn osnap_in_mspace_skips_vplayer_frozen_layers() {
+    let mut s = Session::new();
+    s.execute("layer.new", &json!({"name": "Hidden"})).unwrap();
+    s.execute("line", &json!({"points": [[60, -25], [70, -25]]})).unwrap();
+    let line_h = s.doc().unwrap().model.iter().last().unwrap().handle;
+    s.execute("properties.set", &json!({"handles": [line_h], "layer": "Hidden"})).unwrap();
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.execute("mview", &json!({"p1": [20, 20], "p2": [220, 120]})).unwrap();
+    let vp_h = viewports(&s, "Layout1").last().unwrap().0;
+    s.execute("vplayer", &json!({"handles": [vp_h], "freeze": ["Hidden"]})).unwrap();
+    s.execute("mspace", &json!({"handle": vp_h})).unwrap();
+
+    let ap = s.pixel_size() * s.settings.aperture.max(1.0);
+    let d = ap * 0.5;
+    let model_before = s.doc().unwrap().model.len();
+    for (ovr, pt, name) in [
+        ("end", format!("{},-25", 60.0 + d), "Endpoint"),
+        ("mid", format!("{},-25", 65.0 + d), "Midpoint"),
+        ("nea", format!("63,{}", -25.0 + d), "Nearest"),
+    ] {
+        s.cmdline("line").unwrap();
+        s.cmdline(ovr).unwrap();
+        s.cmdline(&pt).unwrap();
+        assert_eq!(
+            s.log.last().map(String::as_str),
+            Some(format!("No {name} found for specified point.").as_str()),
+            "{ovr} should not snap to a line on a VPLAYER-frozen layer; log: {:?}",
+            s.log
+        );
+        s.cmdline("").unwrap();
+    }
+    assert_eq!(s.doc().unwrap().model.len(), model_before, "no new line should be created");
+
+    // Running osnaps through snap_cursor must also ignore the VPLAYER-frozen layer.
+    s.settings.osmode = crate::snap::mode::END | crate::snap::mode::MID | crate::snap::mode::NEA;
+    let cs = s.snap_cursor(
+        cadcraft_geom::Vec2::new(60.0 + d, -25.0),
+        &crate::snap::tracking::CursorQuery { base: None, deferred: false, corner: false, aperture: ap, tol: ap, now: 0.0, shift: false },
+    );
+    assert!(cs.snap.is_none(), "running osnap should not snap to a VPLAYER-frozen line: {:?}", cs.snap);
+
+    // A block reference on layer "0" containing an entity on "Hidden" must also not snap.
+    s.execute("block", &json!({"name": "B", "base": [60, -25], "handles": [line_h]})).unwrap();
+    let model_with_block = s.doc().unwrap().model.len();
+    s.cmdline("line").unwrap();
+    s.cmdline("end").unwrap();
+    s.cmdline(&format!("{},-25", 60.0 + d)).unwrap();
+    assert_eq!(
+        s.log.last().map(String::as_str),
+        Some("No Endpoint found for specified point."),
+        "end should not snap to a block entity on a VPLAYER-frozen layer; log: {:?}",
+        s.log
+    );
+    s.cmdline("").unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), model_with_block);
+}
