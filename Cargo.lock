@@ -700,6 +700,7 @@ dependencies = [
  "cadcraft-render",
  "craft-docpath",
  "craft-dxf",
+ "craft-mime",
  "libc",
  "log",
  "rstar",
@@ -1134,6 +1135,11 @@ dependencies = [
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
+
+[[package]]
+name = "craft-codepage"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
 
 [[package]]
@@ -1155,7 +1161,7 @@ name = "craft-dxf"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
 dependencies = [
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9)",
  "encoding_rs",
  "kurbo",
  "log",
@@ -1188,6 +1194,16 @@ dependencies = [
  "unicode-bidi",
  "windows-registry",
  "writeable",
+]
+
+[[package]]
+name = "craft-mime"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
+dependencies = [
+ "chrono",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db)",
+ "encoding_rs",
 ]
 
 [[package]]
