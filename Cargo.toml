@@ -16,6 +16,7 @@ cadcraft-geom = { path = "crates/geom" }
 # DXF tags: the shared reader and writer (moved from crates/dxf; craft-libs#791).
 craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "006e4df225fca57e95ead0fb1f91920900798a99" }
 craft-dwg = { git = "https://github.com/storytold/craft-libs", rev = "7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf" }
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "0325b2d73676d736e94097dbcef01219cf25c7db" }
 cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
 cadcraft-constraints = { path = "crates/constraints" }
@@ -25,6 +26,8 @@ cadcraft-io = { path = "crates/io" }
 cadcraft-engine = { path = "crates/engine" }
 cadcraft-ui-egui = { path = "crates/ui-egui" }
 cadcraft-mcp = { path = "crates/mcp" }
+craft-mcp = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
+craft-jsonrpc = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
 # Which paths stored in a drawing (xrefs, data links) may be opened.
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 # PDF writing (krilla) for plots, and reading them back in tests. The root patches below pin

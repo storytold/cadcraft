@@ -7,10 +7,10 @@
 //!
 //! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
 //! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
-//! partitions on Android and HarmonyOS, and the XDG directories elsewhere. Web builds have no
+//! partitions on Android and `HarmonyOS`, and the XDG directories elsewhere. Web builds have no
 //! system fonts.
 //!
-//! Two process-wide settings (like AutoCAD's profile variables) control substitution:
+//! Two process-wide settings (like `AutoCAD`'s profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
 //!   file we don't read, a missing TTF). Empty = the built-in stroke font.
 //! - [`fallback_fonts`] (`FONTFALLBACK`): fonts tried first for characters the text's font
@@ -97,7 +97,7 @@ impl Face {
     pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
         let Some(f) = self.font() else { return vec![None; chars.len()] };
         let map = f.charmap();
-        chars.iter().map(|c| map.map(*c).map(|g| g.to_u32())).collect()
+        chars.iter().map(|c| map.map(*c).map(skrifa::GlyphId::to_u32)).collect()
     }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
@@ -838,7 +838,13 @@ fn key(name: &str) -> String {
 
 /// Names that mean a stroke font: never looked up as TrueType.
 fn is_stroke_name(k: &str) -> bool {
-    k.is_empty() || k.ends_with(".shx") || k == crate::BUILTIN_FONT.to_ascii_lowercase() || k == "txt" || k == "simplex" || k == "romans"
+    k.is_empty()
+        || k.ends_with(".shx")
+        || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
+        || k == crate::BUILTIN_FONT.to_ascii_lowercase()
+        || k == "txt"
+        || k == "simplex"
+        || k == "romans"
 }
 
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names
@@ -1025,26 +1031,31 @@ impl OutlinePen for Pen {
         self.push(Self::pt(x, y));
     }
     /// Flatten a quadratic segment into six samples, charging each retained point to the glyph budget.
-    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        let a = self.cur.last().copied().unwrap_or_default();
-        let c = Self::pt(cx0, cy0);
-        let b = Self::pt(x, y);
-        for i in 1..=6 {
-            let t = f64::from(i) / 6.0;
-            let u = 1.0 - t;
-            self.push(a * (u * u) + c * (2.0 * u * t) + b * (t * t));
+    fn quad_to(&mut self, cx0: f32, cy0: f32, end_x: f32, end_y: f32) {
+        let start = self.cur.last().copied().unwrap_or_default();
+        let control = Self::pt(cx0, cy0);
+        let end = Self::pt(end_x, end_y);
+        for step in 1..=6 {
+            let ratio = f64::from(step) / 6.0;
+            let inverse_ratio = 1.0 - ratio;
+            self.push(start * (inverse_ratio * inverse_ratio) + control * (2.0 * inverse_ratio * ratio) + end * (ratio * ratio));
         }
     }
     /// Flatten a cubic segment into eight samples, charging each retained point to the glyph budget.
-    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
-        let a = self.cur.last().copied().unwrap_or_default();
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, end_x: f32, end_y: f32) {
+        let start = self.cur.last().copied().unwrap_or_default();
         let c0 = Self::pt(cx0, cy0);
         let c1 = Self::pt(cx1, cy1);
-        let b = Self::pt(x, y);
-        for i in 1..=8 {
-            let t = f64::from(i) / 8.0;
-            let u = 1.0 - t;
-            self.push(a * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + b * (t * t * t));
+        let end = Self::pt(end_x, end_y);
+        for step in 1..=8 {
+            let ratio = f64::from(step) / 8.0;
+            let inverse_ratio = 1.0 - ratio;
+            self.push(
+                start * (inverse_ratio * inverse_ratio * inverse_ratio)
+                    + c0 * (3.0 * inverse_ratio * inverse_ratio * ratio)
+                    + c1 * (3.0 * inverse_ratio * ratio * ratio)
+                    + end * (ratio * ratio * ratio),
+            );
         }
     }
     fn close(&mut self) {
@@ -1054,7 +1065,7 @@ impl OutlinePen for Pen {
 
 /// How far below the baseline a face reaches, as a fraction of the text height (which is the
 /// face's cap height): its descent over its cap height. A bottom-justified text's alignment
-/// point is there, as AutoCAD places it (#2229). `None` when the face has no usable descent.
+/// point is there, as `AutoCAD` places it (#2229). `None` when the face has no usable descent.
 pub fn descent_ratio(face: &Face) -> Option<f64> {
     let f = face.font()?;
     let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
@@ -1387,6 +1398,13 @@ mod family_tests {
         assert!(family_candidates(&stems, &norm("gost type a"), "go").is_empty(), "too short a word matches nothing");
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
+    }
+
+    #[test]
+    fn dotfile_shx_names_are_stroke_names() {
+        for name in [".shx", ".shx.ttf", ".SHX", ".SHX.TTF", "sub/.shx", "sub/.SHX"] {
+            assert!(is_stroke_name(&key(name)), "{name}");
+        }
     }
 }
 
