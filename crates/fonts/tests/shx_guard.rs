@@ -10,11 +10,28 @@ use cadcraft_fonts::shx;
 
 const FONT: &str = "*0,4,guard\n6,2,0,0\n*65,7,UCA\n1,064,040,06C,2,020,0\n";
 
-/// A new folder of this test's own.
-fn fresh_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("cadcraft-shx-guard-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A folder of this test's own, made here so nothing else put it there first, and removed when the
+/// test ends, also when it fails.
+struct TestDir(std::path::PathBuf);
+
+impl Drop for TestDir {
+    /// Removes the folder and all it holds.
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A new folder for `tag`: creating it must not find one already there.
+fn fresh_dir(tag: &str) -> TestDir {
+    let mut n = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!("cadcraft-shx-{tag}-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return TestDir(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => panic!("{}: {e}", dir.display()),
+        }
+    }
 }
 
 /// The lower-case file name of `file`, so a guard never reads the test folder's own name.
@@ -27,7 +44,8 @@ fn name(file: &Path) -> String {
 #[test]
 fn every_file_the_search_opens_goes_to_the_guard_first() {
     let bytes = shx::compile(FONT).unwrap();
-    let dir = fresh_dir();
+    let owner = fresh_dir("guard");
+    let dir = owner.0.clone();
     std::fs::write(dir.join("cadcraft-guard-ok.shx"), &bytes).unwrap();
     std::fs::write(dir.join("cadcraft-guard-bad.shx"), &bytes).unwrap();
     // Found only by looking through the folder, as a link under another spelling would be.
@@ -79,5 +97,4 @@ fn every_file_the_search_opens_goes_to_the_guard_first() {
     assert!(!shx::drawing_dirs().contains(&dir));
     assert!(shx::find("cadcraft-guard-bad.shx").is_none(), "the outside font stays rejected after the eviction");
     assert!(shx::find("cadcraft-guard-ok.shx").is_some());
-    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -271,10 +271,14 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     };
     // A guard belongs to the folder, however the search reaches it: a font folder or the search path
     // naming the same folder as a drawing's is held to the same guards.
+    // Each folder is resolved once per lookup (spelled, and as the file system has it).
+    let resolved = |d: &Path| std::fs::canonicalize(d).ok();
+    let guarded: Vec<(PathBuf, Option<PathBuf>, Vec<OpenGuard>)> = guarded.into_iter().map(|(d, g)| (d.clone(), resolved(&d), g)).collect();
     let dirs: Vec<(PathBuf, Vec<OpenGuard>)> = folders
         .into_iter()
         .map(|d| {
-            let own = guarded.iter().filter(|(g, _)| same_folder(g, &d)).flat_map(|(_, g)| g.iter().cloned());
+            let real = resolved(&d);
+            let own = guarded.iter().filter(|(g, r, _)| *g == d || (real.is_some() && *r == real)).flat_map(|(_, _, g)| g.iter().cloned());
             let guards = own.chain(overflow.iter().cloned()).collect();
             (d, guards)
         })
@@ -302,11 +306,6 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     t.loaded_bytes += size;
     t.resolved.insert(k, font.clone());
     font
-}
-
-/// Do `a` and `b` name the same folder, as spelled or once the file system has resolved them?
-fn same_folder(a: &Path, b: &Path) -> bool {
-    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// Most directory entries looked at for a font file whose name differs only in case.
