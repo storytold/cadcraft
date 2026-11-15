@@ -47,6 +47,9 @@
 	Add: Pick points	Προσθήκη: επιλέξτε σημεία
 	Add: Select objects	Προσθήκη: επιλέξτε αντικείμενα
 	Additional angles	Πρόσθετες γωνίες
+	Add…	Προσθήκη…
+	Alias	Ψευδώνυμο
+	Alias file: {file}	Αρχείο ψευδωνύμων: {file}
 	Align	Στοίχιση
 	Align Multileaders	Στοίχιση πολλαπλών γραμμών υπόδειξης (Multileaders)
 	Align Text	Στοίχιση κειμένου
@@ -57,6 +60,8 @@
 	All Scales	Όλες οι κλίμακες
 	All Used Layers	Όλα τα χρησιμοποιούμενα επίπεδα (Layers)
 	An array that would create more objects than this is refused.	Απορρίπτεται η διάταξη επειδή θα δημιουργούσε περισσότερα αντικείμενα από το επιτρεπτό όριο.
+	Analyze Shapes	Ανάλυση σχημάτων
+	Analyze Usage	Ανάλυση χρήσης
 	Angle	Γωνία
 	Angular	Γωνιακό
 	Animation Effects	Εφέ κίνησης
@@ -89,6 +94,7 @@
 	Automatic save file location	Θέση αρχείων αυτόματης αποθήκευσης
 	Axis, End	Άξονας, τέλος
 	B	B
+	Backup copy	Αντίγραφο ασφαλείας
 	Base	Βάση
 	Baseline	Γραμμή βάσης (Baseline)
 	Batch Publish	Μαζική δημοσίευση
@@ -118,6 +124,7 @@
 	Box	Κουτί (Box)
 	Break	Διακοπή (Break)
 	Break At Point	Διακοπή σε σημείο (Break at Point)
+	Break-line Symbol	Σύμβολο γραμμής διακοπής (Break-line Symbol)
 	Bring Above Objects	Μεταφορά πάνω από τα αντικείμενα
 	Bring Annotations to Front	Μεταφορά σχολιασμών στο προσκήνιο
 	Bring to Front	Μεταφορά στο προσκήνιο
@@ -145,10 +152,13 @@
 	Center, Start, Length	Κέντρο, αρχή, μήκος
 	Centered	Κεντραρισμένο
 	Chamfer	Λοξότμηση (Chamfer)
+	Change	Αλλαγή
+	Change Properties	Αλλαγή ιδιοτήτων (Change Properties)
 	Change Space	Αλλαγή χώρου σχεδίασης
 	Change to Current Layer	Μεταφορά στο τρέχον επίπεδο (Layer)
 	Changed: {n}	Αλλαγές: {n}
 	Changes apply at once and are kept for next time.	Οι αλλαγές εφαρμόζονται αμέσως και διατηρούνται για την επόμενη φορά.
+	Choose the command the alias starts.	Επιλέξτε την εντολή που εκκινεί το ψευδώνυμο.
 	Circle	Κύκλος
 	Circumference	Περιφέρεια
 	Clear	Εκκαθάριση
@@ -166,6 +176,16 @@
 	Close Array Editing	Κλείσιμο επεξεργασίας διάταξης
 	Close Block Editor	Κλείσιμο επεξεργαστή μπλοκ
 	Close Comparison	Κλείσιμο σύγκρισης
+	Command	Εντολή
+	Convert Text to Mtext	Μετατροπή κειμένου σε πολυγραμμικό κείμενο (MText)
+	Create backup copy with each save	Δημιουργία αντιγράφου ασφαλείας σε κάθε αποθήκευση
+	Customize	Προσαρμογή
+	Define each corner of the selection window with a separate click.	Ορίστε κάθε γωνία του παραθύρου επιλογής με ξεχωριστό κλικ.
+	Discard	Απόρριψη
+	Don't Save	Να μην αποθηκευτεί
+	Edit Command Aliases (PGP)...	Επεξεργασία ψευδωνύμων εντολών (PGP)...
+	Edit…	Επεξεργασία…
+	Explode Attributes to Text	Διάσπαση ιδιοτήτων (Attributes) σε κείμενο
 	Export Comparison	Εξαγωγή σύγκρισης
 	Closed	Κλειστό
 	Coincident	Σύμπτωση (Coincident)
@@ -197,6 +217,29 @@
 	Constraint Bars	Γραμμές περιορισμών
 	Constraint Settings	Ρυθμίσεις περιορισμών
 	Construction Line	Βοηθητική ευθεία (Construction Line)
+	Express Tools	Εργαλεία Express (Express Tools)
+	Font	Γραμματοσειρά
+	Imperial (inches)	Αγγλοσαξονικό (ίντσες)
+	Implied Loops	Έμμεσοι βρόχοι
+	Interface scale	Κλίμακα περιβάλλοντος
+	Island	Νησίδα
+	Metric (millimetres)	Μετρικό (χιλιοστά)
+	More than {n} aliases.	Περισσότερα από {n} ψευδώνυμα.
+	Move/Copy/Rotate	Μετακίνηση/Αντιγραφή/Περιστροφή
+	Multiple Insert	Πολλαπλή εισαγωγή (Multiple Insert)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Τα νέα σχέδια και το πρώτο σχέδιο κατά την εκκίνηση χρησιμοποιούν αυτές τις μονάδες, εκτός αν έχει οριστεί προεπιλεγμένο πρότυπο (QNEWTEMPLATE).
+	No alias file loaded. REINIT replaces these aliases with a file's.	Δεν έχει φορτωθεί αρχείο ψευδωνύμων. Η εντολή REINIT αντικαθιστά αυτά τα ψευδώνυμα με αυτά ενός αρχείου.
+	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο (Save Layout as Template)
+	Save alias	Αποθήκευση ψευδωνύμου
+	Save changes to block "{name}"?	Να αποθηκευτούν οι αλλαγές στο μπλοκ «{name}»;
+	Save changes to {name}?	Να αποθηκευτούν οι αλλαγές στο {name};
+	Select boundaries to remove	Επιλέξτε περιγράμματα για αφαίρεση
+	Select using two clicks only	Επιλογή μόνο με δύο κλικ
+	Type an alias name.	Πληκτρολογήστε ένα όνομα ψευδωνύμου.
+	Units	Μονάδες
+	Units of new drawings	Μονάδες νέων σχεδίων
+	Your changes will be lost if you don't save them.	Οι αλλαγές σας θα χαθούν αν δεν τις αποθηκεύσετε.
+	built-in	ενσωματωμένο
 	contains authoring elements. Open in Block Editor?	περιέχει στοιχεία δημιουργίας. Άνοιγμα στον επεξεργαστή μπλοκ;
 	Contents	Περιεχόμενα
 	Continue	Συνέχεια
@@ -1317,6 +1360,9 @@
 	Zoom Realtime	Μεγέθυνση σε πραγματικό χρόνο
 	Zoom sensitivity	Ευαισθησία μεγέθυνσης
 	Zoom Window	Μεγέθυνση περιοχής παραθύρου
+	overrides built-in	υπερισχύει του ενσωματωμένου
+	{alias} is already defined; select it and use Edit.	Το {alias} είναι ήδη ορισμένο· επιλέξτε το και χρησιμοποιήστε την Επεξεργασία.
+	{command} is an unknown command.	Το {command} δεν είναι γνωστή εντολή.
 	{contributors} · {commits}	{contributors} · {commits}
 	{kind} (constraint {id})	{kind} (περιορισμός {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} περιορισμός {name} = {expression}  (διπλό κλικ για επεξεργασία)
