@@ -256,6 +256,34 @@ mod tests {
         assert!(tris.iter().all(|p| (5.0e5..=5.0e5 + 2.0).contains(&p.x) && (-3.0e5..=-3.0e5 + 2.0).contains(&p.y)));
     }
 
+    // Regression test for #651: the level of detail followed the pixel size, so a page of small
+    // filled text on screen kept a few points a glyph while a plot kept all of them.
+    #[test]
+    fn a_small_on_screen_pixel_simplifies_glyphs_and_a_plot_does_not() {
+        // Text of height 1 has a 700-unit cap height: one font unit is 1/700 of a drawing unit.
+        let xf = Mat3 { a: 1.0 / 700.0, b: 0.0, c: 0.0, d: 1.0 / 700.0, e: 0.0, f: 0.0 };
+        assert!(matches!(detail(xf, 0.0), Detail::Full), "a plot keeps every point");
+        assert!(matches!(detail(xf, 2.0), Detail::Box), "an em under two pixels is the ink's box");
+        assert!(matches!(detail(xf, 0.1), Detail::Reduced(band) if band >= 2), "10 px per cap height simplifies");
+        assert!(matches!(detail(xf, f64::NAN), Detail::Full), "a pixel size that is not a size keeps full detail");
+    }
+
+    #[test]
+    fn a_coarse_band_drops_the_points_of_a_flattened_curve() {
+        // A ring of 64 points, the outline a flattened curve gives.
+        let ring: Vec<Vec2> = (0..64u32)
+            .map(|i| {
+                let t = std::f64::consts::TAU * f64::from(i) / 64.0;
+                Vec2::new(500.0 * t.cos(), 350.0 * t.sin())
+            })
+            .collect();
+        let coarse = simplify(&ring, 8.0);
+        assert!(coarse.len() < ring.len() / 2, "{} of {} points kept at 8 font units", coarse.len(), ring.len());
+        assert!(coarse.len() >= 4, "a ring never collapses to a line: {}", coarse.len());
+        let fine = simplify(&ring, 0.01);
+        assert!(fine.len() >= ring.len(), "a fine band keeps every point: {} of {}", fine.len(), ring.len());
+    }
+
     #[test]
     fn hostile_placed_outline_never_panics() {
         assert!(triangulate_placed(&[]).is_empty());
