@@ -170,3 +170,10 @@ fn the_pixels_never_reach_the_drawing_file() {
     assert!(bare.rasters.is_empty() && d.rasters.len() == 1);
     assert_eq!(bare, d);
 }
+
+#[test]
+fn long_narrow_bmp_uses_cadcrafts_pixel_limit() {
+    let mut file = std::io::Cursor::new(Vec::new());
+    image::write_buffer_with_format(&mut file, &vec![0; 300_000 * 3], 1, 300_000, image::ExtendedColorType::Rgb8, image::ImageFormat::Bmp).unwrap();
+    assert_eq!(probe(&file.into_inner()).unwrap(), (1, 300_000));
+}
