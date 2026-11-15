@@ -66,15 +66,13 @@ fn extend_execute_pick_selects_the_end_toward_the_boundary() -> TestResult {
 }
 
 #[test]
-fn trim_execute_distinguishes_a_pick_projecting_onto_a_cut_from_no_cut() -> TestResult {
+fn trim_execute_distinguishes_picks_at_or_projecting_onto_a_cut_from_no_cut() -> TestResult {
     let (mut s, a, b) = fixture(50.0, 25.0)?;
-    for pick in [[25, 10], [25, 0]] {
-        failure(
-            &mut s,
-            "trim",
-            json!({"handle": a.hex(), "edges": [b.hex()], "pick": pick, "mode": "standard"}),
-            "The `pick` point projects onto a cutting intersection; pick a portion of the object away from that intersection.",
-        )?;
+    for (pick, message) in [
+        ([25, 10], "The `pick` point is off the line and projects onto a cutting intersection; pick away from that intersection."),
+        ([25, 0], "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection."),
+    ] {
+        failure(&mut s, "trim", json!({"handle": a.hex(), "edges": [b.hex()], "pick": pick, "mode": "standard"}), message)?;
     }
     let (mut s, a, b) = fixture(50.0, 75.0)?;
     failure(

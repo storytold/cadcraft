@@ -86,12 +86,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Trim"])
             .alias(&["tr"])
             .params(concat!(
-                "{handle, pick: [x,y]} | {fence: [[x,y],...]} | {crossing: [[x,y],[x,y]]}; ",
-                "edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\" ",
+                "{handle, pick: [x,y]} | {fence: [[x,y],...]} | {crossing: [[x,y],[x,y]]}; edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\" ",
                 "→ {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing). ",
                 "For handle+pick: handle is the object to trim; pick selects the portion of that object to remove ",
-                "(normally a point on it, away from a cutting intersection); edges are the cutting edges. ",
-                "The JSON default is standard mode."
+                "(normally a point on it, away from a cutting intersection); edges are the cutting edges. The JSON default is standard mode."
             ))
             .interactive(|_| Ok(Box::new(TrimM::new(false)))),
         CommandSpec::new("extend", "Extend", trimextend::run_extend)

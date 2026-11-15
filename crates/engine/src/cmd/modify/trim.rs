@@ -116,16 +116,19 @@ pub(crate) fn json_pick_error(s: &Session, h: Handle, pick: Vec2, edges: Edges, 
             "No usable boundary intersection was found for either end of the object to extend."
         }
     } else {
+        let pick_param = ln.param_of(pick).clamp(0.0, 1.0);
         let has_cut = cut.iter().flat_map(|c| intersect_ext(&Segment::Line(ln), c, false)).any(|x| {
             let t = ln.param_of(x);
             t > 1e-9 && t < 1.0 - 1e-9
         });
         if !has_cut {
             "No usable cutting-edge intersection in the interior of the object to trim."
-        } else if ln.param_of(pick).is_nan() {
+        } else if pick_param.is_nan() {
             return error;
+        } else if !ln.at(pick_param).near(pick, 1e-9) {
+            "The `pick` point is off the line and projects onto a cutting intersection; pick away from that intersection."
         } else {
-            "The `pick` point projects onto a cutting intersection; pick a portion of the object away from that intersection."
+            "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection."
         }
     };
     EngineError::Other(message.into())
