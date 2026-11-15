@@ -261,8 +261,28 @@ fn in_box_in(pts: impl Iterator<Item = Vec2>, angle: f64, offset: Vec2, p: Vec2,
     }
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether `e` is on one of the layers in `frozen`: the layers frozen in a layout viewport, which
+/// does not draw their objects. The names are compared as the renderer compares them.
+pub(crate) fn on_frozen_layer(frozen: &[String], e: &Entity) -> bool {
+    frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer))
+}
+
+/// The last object of `store`, in draw order, that is not on one of the layers in `frozen`, the
+/// layers frozen in the layout viewport the selection is made through: what the Last option
+/// takes there. With no such layers it is the last object, whether the drawing shows it or not.
+pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> Option<Handle> {
+    if frozen.is_empty() {
+        return store.last().map(|e| e.handle);
+    }
+    store.iter().filter(|e| !on_frozen_layer(frozen, e)).last().map(|e| e.handle)
+}
+
+/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]) and it is not
+/// on one of the layers in `frozen`, the layers frozen in the layout viewport the selection is
+/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else). A viewport shows
+/// model space, so `frozen` goes with a selection in model space only.
+pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
+    d.is_visible(e) && !on_frozen_layer(frozen, e)
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -321,15 +341,28 @@ fn projected_candidates<'a>(
 /// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
 /// picked, and DRAWORDER changes which).
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
-    let ix = spatial::index(d, space);
-    pick_with(d, space, &ix, p, aperture)
+    pick_in(d, space, &[], p, aperture)
 }
 
-pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
+/// [`pick`] through a layout viewport: the objects on the layers in `frozen`, the layers frozen
+/// in that viewport, are not drawn there and are not picked.
+pub fn pick_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Option<Handle> {
+    let ix = spatial::index(d, space);
+    pick_with(d, space, &ix, frozen, p, aperture)
+}
+
+pub(crate) fn pick_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    p: Vec2,
+    aperture: f64,
+) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
     // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
-        if !selectable(d, e) {
+        if !selectable(d, e, frozen) {
             continue;
         }
         let infinite = is_infinite(e);
@@ -346,11 +379,16 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
 /// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):
 /// the objects selection cycling lists.
 pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handle> {
+    pick_all_in(d, space, &[], p, aperture)
+}
+
+/// [`pick_all`] through a layout viewport that freezes the layers in `frozen` ([`pick_in`]).
+pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Vec<Handle> {
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
     cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
         .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
         .map(|(e, _)| e.handle)
         .collect()
@@ -358,8 +396,13 @@ pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handl
 
 /// Collect entities under camera-plane coordinate `uv` within `aperture`, topmost first.
 pub fn pick_all_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, proj: &PickProjection) -> Vec<Handle> {
+    pick_all_projected_in(d, space, &[], uv, aperture, proj)
+}
+
+/// [`pick_all_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn pick_all_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv: Vec2, aperture: f64, proj: &PickProjection) -> Vec<Handle> {
     if proj.is_plan_axis_aligned() {
-        return pick_all(d, space, uv + proj.target.xy(), aperture);
+        return pick_all_in(d, space, frozen, uv + proj.target.xy(), aperture);
     }
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(uv, uv).expand(aperture);
@@ -368,7 +411,7 @@ pub fn pick_all_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, p
     };
     cands
         .filter(|(e, known)| {
-            selectable(d, e) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).expand(aperture).intersects(&probe))
+            selectable(d, e, frozen) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).expand(aperture).intersects(&probe))
         })
         .filter(|(e, _)| entity_distance_in(d, e, uv, aperture / 4.0, Some(proj)) <= aperture)
         .map(|(e, _)| e.handle)
@@ -377,13 +420,18 @@ pub fn pick_all_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, p
 
 /// The topmost entity under camera-plane coordinate `uv` within `aperture`.
 pub fn pick_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, proj: &PickProjection) -> Option<Handle> {
+    pick_projected_in(d, space, &[], uv, aperture, proj)
+}
+
+/// [`pick_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn pick_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv: Vec2, aperture: f64, proj: &PickProjection) -> Option<Handle> {
     if proj.is_plan_axis_aligned() {
-        return pick(d, space, uv + proj.target.xy(), aperture);
+        return pick_in(d, space, frozen, uv + proj.target.xy(), aperture);
     }
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(uv, uv).expand(aperture);
     for (e, known) in projected_candidates(d, space, &ix, &probe.expand(aperture), proj, true, true)? {
-        if !selectable(d, e) {
+        if !selectable(d, e, frozen) {
             continue;
         }
         let infinite = is_infinite(e);
@@ -419,26 +467,51 @@ fn seg_hits_box(a: Vec2, b: Vec2, bx: &Bounds2) -> bool {
 
 /// Window selection (entirely inside) or crossing selection (inside or touching).
 pub fn select_window(d: &Drawing, space: &Space, bx: Bounds2, crossing: bool) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_window_with(d, space, &ix, bx, crossing)
+    select_window_in(d, space, &[], bx, crossing)
 }
 
-pub(crate) fn select_window_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, bx: Bounds2, crossing: bool) -> Vec<Handle> {
+/// [`select_window`] through a layout viewport: the objects on the layers in `frozen`, the layers
+/// frozen in that viewport, are not drawn there and are not selected.
+pub fn select_window_in(d: &Drawing, space: &Space, frozen: &[String], bx: Bounds2, crossing: bool) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_window_with(d, space, &ix, frozen, bx, crossing)
+}
+
+pub(crate) fn select_window_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    bx: Bounds2,
+    crossing: bool,
+) -> Vec<Handle> {
     let Some(cands) = candidates(d, space, ix, &bx, crossing, false) else { return Vec::new() };
     let tol = window_tol(&bx);
-    cands.filter(|(e, known)| selectable(d, e) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
+    cands.filter(|(e, known)| selectable(d, e, frozen) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
 }
 
 /// Window or crossing selection in camera-plane coordinates `uv_bx`.
 pub fn select_window_projected(d: &Drawing, space: &Space, uv_bx: Bounds2, crossing: bool, proj: &PickProjection) -> Vec<Handle> {
+    select_window_projected_in(d, space, &[], uv_bx, crossing, proj)
+}
+
+/// [`select_window_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_window_projected_in(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    uv_bx: Bounds2,
+    crossing: bool,
+    proj: &PickProjection,
+) -> Vec<Handle> {
     if proj.is_plan_axis_aligned() {
-        return select_window(d, space, proj.shift_bounds(&uv_bx), crossing);
+        return select_window_in(d, space, frozen, proj.shift_bounds(&uv_bx), crossing);
     }
     let ix = spatial::index(d, space);
     let Some(cands) = projected_candidates(d, space, &ix, &uv_bx, proj, crossing, false) else { return Vec::new() };
     let tol = window_tol(&uv_bx);
     cands
-        .filter(|(e, known)| selectable(d, e) && in_window_in(d, e, *known, &uv_bx, crossing, tol, Some(proj)))
+        .filter(|(e, known)| selectable(d, e, frozen) && in_window_in(d, e, *known, &uv_bx, crossing, tol, Some(proj)))
         .map(|(e, _)| e.handle)
         .collect()
 }
@@ -522,17 +595,29 @@ fn polys_hit_fence(polys: &[Vec<Vec2>], fence: &[Vec2]) -> bool {
 
 /// Fence selection: entities crossed by the fence polyline.
 pub fn select_fence(d: &Drawing, space: &Space, fence: &[Vec2]) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_fence_with(d, space, &ix, fence)
+    select_fence_in(d, space, &[], fence)
 }
 
-pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, fence: &[Vec2]) -> Vec<Handle> {
+/// [`select_fence`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_fence_in(d: &Drawing, space: &Space, frozen: &[String], fence: &[Vec2]) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_fence_with(d, space, &ix, frozen, fence)
+}
+
+pub(crate) fn select_fence_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    fence: &[Vec2],
+) -> Vec<Handle> {
     let fb = Bounds2::from_points(fence.iter().copied());
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
     let Some(cands) = candidates(d, space, ix, &probe, true, false) else { return Vec::new() };
     cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).intersects(&probe)))
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).intersects(&probe)))
         .filter(|(e, _)| polys_hit_fence(&hit_polylines(d, e, tol), fence))
         .map(|(e, _)| e.handle)
         .collect()
@@ -540,9 +625,14 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
 
 /// Fence selection in camera-plane coordinates `uv_fence`.
 pub fn select_fence_projected(d: &Drawing, space: &Space, uv_fence: &[Vec2], proj: &PickProjection) -> Vec<Handle> {
+    select_fence_projected_in(d, space, &[], uv_fence, proj)
+}
+
+/// [`select_fence_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_fence_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv_fence: &[Vec2], proj: &PickProjection) -> Vec<Handle> {
     if proj.is_plan_axis_aligned() {
         let shifted: Vec<Vec2> = uv_fence.iter().map(|&p| p + proj.target.xy()).collect();
-        return select_fence(d, space, &shifted);
+        return select_fence_in(d, space, frozen, &shifted);
     }
     let fb = Bounds2::from_points(uv_fence.iter().copied());
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
@@ -550,7 +640,7 @@ pub fn select_fence_projected(d: &Drawing, space: &Space, uv_fence: &[Vec2], pro
     let ix = spatial::index(d, space);
     let Some(cands) = projected_candidates(d, space, &ix, &probe, proj, true, false) else { return Vec::new() };
     cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).intersects(&probe)))
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).intersects(&probe)))
         .filter(|(e, _)| polys_hit_fence(&projected_hit_polylines(d, e, tol, Some(proj)), uv_fence))
         .map(|(e, _)| e.handle)
         .collect()
@@ -572,19 +662,44 @@ fn polys_hit_polygon(polys: &[Vec<Vec2>], poly: &[Vec2], edges: &[Line], crossin
 /// Window polygon selection (entities entirely inside `poly`) or crossing polygon selection
 /// (inside or crossing its edges). The polygon closes back to its first point.
 pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool) -> Vec<Handle> {
-    select_polygon_in(d, space, poly, crossing, None)
+    select_polygon_in(d, space, &[], poly, crossing)
+}
+
+/// [`select_polygon`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[Vec2], crossing: bool) -> Vec<Handle> {
+    select_polygon_with_proj(d, space, frozen, poly, crossing, None)
 }
 
 /// Window polygon or crossing polygon selection in camera-plane coordinates `uv_poly`.
 pub fn select_polygon_projected(d: &Drawing, space: &Space, uv_poly: &[Vec2], crossing: bool, proj: &PickProjection) -> Vec<Handle> {
-    if proj.is_plan_axis_aligned() {
-        let shifted: Vec<Vec2> = uv_poly.iter().map(|&p| p + proj.target.xy()).collect();
-        return select_polygon(d, space, &shifted, crossing);
-    }
-    select_polygon_in(d, space, uv_poly, crossing, Some(proj))
+    select_polygon_projected_in(d, space, &[], uv_poly, crossing, proj)
 }
 
-fn select_polygon_in(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool, proj: Option<&PickProjection>) -> Vec<Handle> {
+/// [`select_polygon_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_polygon_projected_in(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    uv_poly: &[Vec2],
+    crossing: bool,
+    proj: &PickProjection,
+) -> Vec<Handle> {
+    if proj.is_plan_axis_aligned() {
+        let shifted: Vec<Vec2> = uv_poly.iter().map(|&p| p + proj.target.xy()).collect();
+        return select_polygon_in(d, space, frozen, &shifted, crossing);
+    }
+    select_polygon_with_proj(d, space, frozen, uv_poly, crossing, Some(proj))
+}
+
+fn select_polygon_with_proj(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    poly: &[Vec2],
+    crossing: bool,
+    proj: Option<&PickProjection>,
+) -> Vec<Handle> {
     let (Some(first), true) = (poly.first(), poly.len() >= 3) else { return Vec::new() };
     let ix = spatial::index(d, space);
     let pb = Bounds2::from_points(poly.iter().copied());
@@ -599,7 +714,7 @@ fn select_polygon_in(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool, 
     let mut out = Vec::new();
     for (e, known) in cands {
         let infinite = is_infinite(e);
-        if !selectable(d, e) || (infinite && !crossing) {
+        if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
         let eb = match proj {
@@ -625,9 +740,15 @@ fn select_polygon_in(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool, 
 /// The visible objects in `space` of the group called `name` (any case), or `None` when the
 /// drawing has no such group.
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
+    select_group_in(d, space, &[], name)
+}
+
+/// [`select_group`] through a layout viewport that freezes the layers in `frozen`: the group's
+/// objects on those layers are left out.
+pub fn select_group_in(d: &Drawing, space: &Space, frozen: &[String], name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e, frozen))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.
@@ -732,32 +853,41 @@ impl SelectMode {
     }
     /// The objects the mode selects in unrotated 2D plan view, or `None` while it has too few points.
     pub fn select(&self, d: &Drawing, space: &Space) -> Option<Vec<Handle>> {
+        self.select_in(d, space, &[])
+    }
+    /// [`SelectMode::select`] through a layout viewport: the objects on the layers in `frozen`,
+    /// the layers frozen in that viewport, are not drawn there and are not selected.
+    pub fn select_in(&self, d: &Drawing, space: &Space, frozen: &[String]) -> Option<Vec<Handle>> {
         match (self.kind, self.pts.as_slice()) {
             (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
-                Some(select_window(d, space, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
+                Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
             }
-            (SelectKind::Box, [a, b, ..]) => Some(select_window(d, space, Bounds2::new(*a, *b), b.x < a.x)),
-            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence(d, space, pts)),
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), b.x < a.x)),
+            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_in(d, space, frozen, pts)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
-                Some(select_polygon(d, space, pts, self.kind == SelectKind::CPolygon))
+                Some(select_polygon_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon))
             }
             _ => None,
         }
     }
     /// The objects the mode selects under `proj`, or `None` while it has too few points.
     pub fn select_projected(&self, d: &Drawing, space: &Space, proj: &PickProjection) -> Option<Vec<Handle>> {
+        self.select_projected_in(d, space, &[], proj)
+    }
+    /// [`SelectMode::select_projected`] through a layout viewport that freezes the layers in `frozen`.
+    pub fn select_projected_in(&self, d: &Drawing, space: &Space, frozen: &[String], proj: &PickProjection) -> Option<Vec<Handle>> {
         if proj.is_plan_axis_aligned() {
-            return self.select(d, space);
+            return self.select_in(d, space, frozen);
         }
         let uvs = self.uv_points(proj);
         match (self.kind, uvs.as_slice()) {
             (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
-                Some(select_window_projected(d, space, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing, proj))
+                Some(select_window_projected_in(d, space, frozen, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing, proj))
             }
-            (SelectKind::Box, [a, b, ..]) => Some(select_window_projected(d, space, Bounds2::new(*a, *b), b.x < a.x, proj)),
-            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_projected(d, space, pts, proj)),
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_projected_in(d, space, frozen, Bounds2::new(*a, *b), b.x < a.x, proj)),
+            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_projected_in(d, space, frozen, pts, proj)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
-                Some(select_polygon_projected(d, space, pts, self.kind == SelectKind::CPolygon, proj))
+                Some(select_polygon_projected_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon, proj))
             }
             _ => None,
         }

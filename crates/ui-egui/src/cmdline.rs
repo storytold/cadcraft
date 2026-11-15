@@ -138,17 +138,36 @@ pub struct Suggestion {
     pub label: &'static str,
 }
 
-/// Matching command names/aliases and system variables for AutoComplete.
+/// [`suggestions`] for what `session` can run: a Greek word that is a command of its own there (an
+/// alias, a command the drawing's LISP defines) stays as typed.
 #[cfg_attr(not(test), allow(dead_code))]
-fn suggestions(prefix: &str) -> Vec<Suggestion> {
-    suggestions_for(None, prefix)
+fn suggestions_in(session: &cadcraft_engine::Session, prefix: &str) -> Vec<Suggestion> {
+    suggestions(prefix, &|word| session.greek_word_is_a_command(word))
+}
+
+/// Matching command names/aliases for AutoComplete. `is_own_command` tells whether a Greek-layout
+/// word is a command of its own rather than the Latin name its keys type.
+#[cfg_attr(not(test), allow(dead_code))]
+fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
+    suggestions_for_with(None, prefix, is_own_command)
 }
 
 fn suggestions_for(session: Option<&cadcraft_engine::Session>, prefix: &str) -> Vec<Suggestion> {
+    suggestions_for_with(session, prefix, &|word| session.is_some_and(|s| s.greek_word_is_a_command(word)))
+}
+
+fn suggestions_for_with(session: Option<&cadcraft_engine::Session>, prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    let p = prefix.to_ascii_lowercase();
+    // Typed with the Greek keyboard layout (ΛΙΝ), it completes as the Latin name (LINE), unless the word
+    // as typed already names a command, alias or LISP command: that is what Enter runs.
+    let typed = prefix.to_ascii_lowercase();
+    let p = if cadcraft_engine::cmd::find_command(&cadcraft_engine::cmd::resolve_alias(&typed)).is_some() {
+        typed
+    } else {
+        cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_own_command(prefix)).unwrap_or(typed)
+    };
     let seen_empty: HashSet<&'static str> = HashSet::new();
     if session.is_some_and(is_setvar_name_prompt) {
         let mut out = var_suggestions(session, &p, &seen_empty);
@@ -805,6 +824,52 @@ mod tests {
         frame(app, ctx, vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }]);
     }
 
+    /// A Greek-layout prefix completes like its Latin keys; a prefix in another script is matched
+    /// as it is.
+    #[test]
+    fn autocomplete_reads_a_greek_layout_prefix_as_its_latin_keys() {
+        // ΛΙΝ is the keys L-I-N on the Greek layout: it completes like the Latin prefix does.
+        let latin: Vec<String> = suggestions("lin", &|_| false).into_iter().map(|s| s.id).collect();
+        assert!(latin.iter().any(|id| id == "LINE"), "{latin:?}");
+        let greek: Vec<String> = suggestions("ΛΙΝ", &|_| false).into_iter().map(|s| s.id).collect();
+        assert_eq!(greek, latin);
+        // A prefix that is not Greek-layout typing is matched as it is.
+        assert!(suggestions("ЖЖЖ", &|_| false).is_empty());
+    }
+
+    /// A Greek word the user made an alias is offered as that alias's command, which is what Enter
+    /// runs.
+    #[test]
+    fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
+        // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
+        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE. The alias store is
+        // process-wide and the alias dialog's tests clear it, so this test takes its turn with them.
+        let _alone = crate::aliasdlg::lock_alias_store();
+        let mut session = Session::empty();
+        session.execute("aliasedit", &serde_json::json!({ "set": { "Ξ": "qsave" } })).unwrap();
+        let first = suggestions("Ξ", &|_| false).into_iter().next().map(|s| s.id);
+        session.execute("aliasedit", &serde_json::json!({ "remove": ["Ξ"] })).unwrap();
+        assert_eq!(first.as_deref(), Some("QSAVE"));
+    }
+
+    /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
+    /// its keys.
+    #[test]
+    fn autocomplete_leaves_a_greek_word_the_drawings_lisp_defines_as_typed() {
+        // ΛΙΝΕ is the keys of LINE, but the drawing defines a command of that Greek name: Enter runs that
+        // command, so Tab must not replace the word with LINE.
+        let mut session = Session::new();
+        session.cmdline("(defun c:ΛΙΝΕ () (princ))").unwrap();
+        for word in ["ΛΙΝΕ", "λινε", "λίνε"] {
+            assert!(suggestions_in(&session, word).is_empty(), "{word}: {:?}", suggestions_in(&session, word));
+        }
+        // Another word of the same keys is still read as Latin: Enter would start LINE for it too.
+        assert!(suggestions_in(&session, "ΛΙΝ").iter().any(|s| s.id == "LINE"));
+        // Without the definition ΛΙΝΕ completes as LINE.
+        let plain = Session::new();
+        assert!(suggestions_in(&plain, "ΛΙΝΕ").iter().any(|s| s.id == "LINE"));
+    }
+
     #[test]
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
         use cadcraft_engine::geom::Vec2;
@@ -938,7 +1003,7 @@ mod autocomplete_tests {
 
     #[test]
     fn exact_alias_is_first_suggestion_with_alias_display() {
-        let rec = suggestions("rec");
+        let rec = suggestions("rec", &|_| false);
         assert!(!rec.is_empty());
         assert_eq!(rec[0].id, "RECTANG");
         assert_eq!(rec[0].display, "REC (RECTANG)");
@@ -948,26 +1013,26 @@ mod autocomplete_tests {
         assert_eq!(rec[1].id, "RECOVER");
         assert_eq!(rec[1].display, "RECOVER");
 
-        let l = suggestions("l");
+        let l = suggestions("l", &|_| false);
         assert_eq!(l[0].id, "LINE");
         assert_eq!(l[0].display, "L (LINE)");
 
-        let c = suggestions("c");
+        let c = suggestions("c", &|_| false);
         assert_eq!(c[0].id, "CIRCLE");
         assert_eq!(c[0].display, "C (CIRCLE)");
 
-        let co = suggestions("co");
+        let co = suggestions("co", &|_| false);
         assert_eq!(co[0].id, "COPY");
         assert_eq!(co[0].display, "CO (COPY)");
     }
 
     #[test]
     fn prefix_without_alias_shows_command_id() {
-        let rect = suggestions("rect");
+        let rect = suggestions("rect", &|_| false);
         assert_eq!(rect[0].id, "RECTANG");
         assert_eq!(rect[0].display, "RECTANG");
 
-        let line = suggestions("line");
+        let line = suggestions("line", &|_| false);
         assert_eq!(line[0].id, "LINE");
         assert_eq!(line[0].display, "LINE");
     }

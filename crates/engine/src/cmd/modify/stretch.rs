@@ -21,14 +21,17 @@ impl StretchArea {
     }
 }
 
-/// Add to `hs` the visible multilines in `space` with a control vertex inside `area`. A crossing
-/// selection tests the drawn element lines, which sit away from the control vertices by the
-/// multiline's scale, so a small area around a vertex alone would miss them.
-fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space, area: &StretchArea, hs: &mut Vec<Handle>) {
-    let Some(store) = d.space(space) else { return };
+/// Add to `hs` the multilines in the edit space that a selection can take there (visible, and
+/// inside an MSPACE viewport not on a layer frozen in it) with a control vertex inside `area`. A
+/// crossing selection tests the drawn element lines, which sit away from the control vertices by
+/// the multiline's scale, so a small area around a vertex alone would miss them.
+fn add_mline_vertex_hits(s: &Session, area: &StretchArea, hs: &mut Vec<Handle>) {
+    let Ok(d) = s.doc() else { return };
+    let Some(store) = d.space(&s.space()) else { return };
+    let frozen = s.viewport_frozen();
     for e in store.iter() {
         if let EntityKind::MLine(m) = &e.kind
-            && d.is_visible(e)
+            && crate::select::selectable(d, e, frozen)
             && !hs.contains(&e.handle)
             && m.vertices.iter().any(|v| area.contains(v.p.xy()))
         {
@@ -132,19 +135,19 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // A fence marks no area: the objects it crosses move whole.
     if let Some(fence) = listed("fence", 2)? {
-        let hs = crate::select::select_fence(s.doc()?, &space, &fence);
+        let hs = crate::select::select_fence_in(s.doc()?, &space, s.viewport_frozen(), &fence);
         let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
         return Ok(json!({ "stretched": moved.len() }));
     }
     let (mut hs, area) = if let Some(poly) = listed("polygon", 3)? {
-        (crate::select::select_polygon(s.doc()?, &space, &poly, true), StretchArea::Polygon(poly))
+        (crate::select::select_polygon_in(s.doc()?, &space, s.viewport_frozen(), &poly, true), StretchArea::Polygon(poly))
     } else {
         let w = points_param(p, "window").ok_or_else(|| bad("stretch", "`window` [[x,y],[x,y]], `polygon` or `fence` is required"))?;
         let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return Err(bad("stretch", "window needs 2 corners")) };
         let bx = cadcraft_geom::Bounds2::new(*a, *b);
-        (crate::select::select_window(s.doc()?, &space, bx, true), StretchArea::Box(bx))
+        (crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), bx, true), StretchArea::Box(bx))
     };
-    add_mline_vertex_hits(s.doc()?, &space, &area, &mut hs);
+    add_mline_vertex_hits(s, &area, &mut hs);
     hs.retain(|h| !crate::cmd::curves::is_locked(s, *h));
     let doc = s.doc_mut()?;
     let areas = [area];
@@ -213,7 +216,7 @@ impl StretchM {
     fn finish_mode(&mut self, s: &mut Session, m: SelectMode) -> Result<()> {
         let space = s.space();
         let proj = s.pick_projection();
-        let Some(mut hs) = m.select_projected(s.doc()?, &space, &proj) else { return Ok(()) };
+        let Some(mut hs) = m.select_projected_in(s.doc()?, &space, s.viewport_frozen(), &proj) else { return Ok(()) };
         let crossing = m.is_crossing_projected(&proj);
         let area = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
             (SelectKind::WPolygon | SelectKind::CPolygon, _) => Some(StretchArea::Polygon(m.pts)),
@@ -225,7 +228,7 @@ impl StretchM {
         };
         let whole = area.is_none();
         if let (Some(a), true, false) = (&area, crossing, self.removing) {
-            add_mline_vertex_hits(s.doc()?, &space, a, &mut hs);
+            add_mline_vertex_hits(s, a, &mut hs);
         }
         if let (Some(a), false) = (area, self.removing) {
             self.windows.push(a);
@@ -269,16 +272,17 @@ impl StretchM {
                     let crossing = s.window_is_crossing_uv(a_uv, b_uv);
                     let bx = cadcraft_geom::Bounds2::new(c, p);
                     let space = s.space();
-                    let mut hs = crate::select::select_window_projected(
+                    let mut hs = crate::select::select_window_projected_in(
                         s.doc()?,
                         &space,
+                        s.viewport_frozen(),
                         cadcraft_geom::Bounds2::new(a_uv, b_uv),
                         crossing,
                         &proj,
                     );
                     if !self.removing {
                         if crossing {
-                            add_mline_vertex_hits(s.doc()?, &space, &StretchArea::Box(bx), &mut hs);
+                            add_mline_vertex_hits(s, &StretchArea::Box(bx), &mut hs);
                         }
                         self.windows.push(StretchArea::Box(bx));
                     }
@@ -289,7 +293,7 @@ impl StretchM {
                     let space = s.space();
                     let proj = s.pick_projection();
                     let uv = s.take_pick_uv(p);
-                    match crate::select::pick_projected(s.doc()?, &space, uv, aperture, &proj) {
+                    match crate::select::pick_projected_in(s.doc()?, &space, s.viewport_frozen(), uv, aperture, &proj) {
                         Some(h) => self.add(s, vec![h], true),
                         None => self.corner = Some((p, proj.unproject_target_plane(uv))),
                     }
@@ -300,6 +304,7 @@ impl StretchM {
                 self.corner = None;
                 let d = s.doc()?;
                 let store = d.space(&s.space());
+                let frozen = s.viewport_frozen();
                 let word = t.trim().to_ascii_lowercase();
                 // `_C`, `_L`: the English name, as scripts write it.
                 let word = word.strip_prefix('_').unwrap_or(&word).to_string();
@@ -316,9 +321,14 @@ impl StretchM {
                         self.removing = false;
                         None
                     }
-                    "all" => Some(store.map(|st| st.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()).unwrap_or_default()),
-                    "l" | "last" => Some(store.and_then(|st| st.last()).map(|e| vec![e.handle]).unwrap_or_default()),
-                    "p" | "previous" => Some(s.state()?.previous_selection.clone()),
+                    "all" => Some(
+                        store.map(|st| st.iter().filter(|e| crate::select::selectable(d, e, frozen)).map(|e| e.handle).collect()).unwrap_or_default(),
+                    ),
+                    "l" | "last" => Some(store.and_then(|st| crate::select::last_in(st, frozen)).map(|h| vec![h]).unwrap_or_default()),
+                    "p" | "previous" => {
+                        let st = s.state()?;
+                        Some(st.drawn_in_viewport(&st.previous_selection))
+                    }
                     _ => {
                         s.echo("*Invalid selection*");
                         None
