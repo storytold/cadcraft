@@ -805,6 +805,7 @@ dependencies = [
  "cadcraft-doc",
  "cadcraft-fonts",
  "cadcraft-geom",
+ "craft-image-codecs",
  "lyon_tessellation",
  "rayon",
  "serde_json",

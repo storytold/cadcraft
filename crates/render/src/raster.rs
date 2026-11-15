@@ -354,7 +354,33 @@ fn premultiplied(r: &cadcraft_doc::Raster) -> Option<Pixmap> {
     Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(r.width(), r.height())?)
 }
 
+/// Encode a premultiplied pixmap as PNG without a second full-frame copy.
+pub fn encode_png(pixmap: &Pixmap) -> Option<Vec<u8>> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Image, PngRows};
+    let width = usize::try_from(pixmap.width()).ok()?.max(1);
+    let mut rows = pixmap.pixels().chunks_exact(width);
+    let make_row = |row: &[tiny_skia::PremultipliedColorU8]| {
+        let rgba = row
+            .iter()
+            .flat_map(|p| {
+                let c = p.demultiply();
+                [c.red(), c.green(), c.blue(), c.alpha()]
+            })
+            .collect();
+        Image::from_u8(pixmap.width(), 1, ChannelLayout::Rgba, rgba).ok()
+    };
+    let first = make_row(rows.next()?)?;
+    let mut out = Vec::new();
+    let mut encoder = PngRows::new(&mut out, &first, pixmap.height(), &EncodeOptions::default()).ok()?;
+    encoder.push(&first).ok()?;
+    for row in rows {
+        encoder.push(&make_row(row)?).ok()?;
+    }
+    encoder.finish().ok()?;
+    Some(out)
+}
+
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
-    render(list, view, o)?.encode_png().ok()
+    encode_png(&render(list, view, o)?)
 }
