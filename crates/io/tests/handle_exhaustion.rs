@@ -207,6 +207,10 @@ fn assert_three_lines_survive(d: &Drawing) {
     let band = Handle(cadcraft_doc::HANDLE_LIMIT);
     let owner = d.model.iter().find(|e| e.handle == band).expect("the band handle was renumbered");
     assert!(matches!(&owner.kind, EntityKind::Line(l) if l.a.x == 20.0), "the band handle moved to another line");
+    // The handle just below the band is the file's too, and it stays with its own record.
+    let below = Handle(cadcraft_doc::HANDLE_LIMIT - 1);
+    let owner = d.model.iter().find(|e| e.handle == below).expect("the below-band handle was renumbered");
+    assert!(matches!(&owner.kind, EntityKind::Line(l) if l.a.x == 10.0), "the below-band handle moved to another line");
 }
 
 #[test]
