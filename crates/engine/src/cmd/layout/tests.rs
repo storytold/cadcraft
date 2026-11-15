@@ -171,8 +171,8 @@ fn pagesetup_paper_table() {
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3", "landscape": true, "margins": [5, 5, 5, 5]})).unwrap();
     assert_eq!(r["page"]["widthMm"], 297.0);
     let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
-    // Imperial drawing: paper units are inches.
-    assert!((sheet.size.x - 420.0 / 25.4).abs() < 1e-9 && (sheet.size.y - 297.0 / 25.4).abs() < 1e-9);
+    // ISO A3 explicitly uses millimetres, even in an imperial drawing.
+    assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9);
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "Z12"})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());

@@ -684,13 +684,20 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         page.paper = ps.name.into();
         page.width_mm = ps.width_mm;
         page.height_mm = ps.height_mm;
-        // A selected ISO sheet uses millimetres; ANSI/ARCH sheets use inches.
-        // This also repairs existing layouts when the paper is reselected.
-        page.paper_mm = !ps.imperial;
     }
-    // Explicit override for imported layouts and mixed-unit workflows.
+    // Resolve units once, for built-in sizes and recognised plotter papers alike.
+    // Unrecognised custom device papers retain the layout's existing units.
+    if (p.get("paper").is_some() || (p.get("device").is_some() && device_paper))
+        && let Some(ps) = cadcraft_render::paper_size(&page.paper)
+    {
+        page.paper_mm = !ps.imperial;
+        page.paper_unit_mm_override = Some(!ps.imperial);
+    }
+    // An explicit choice always wins over the paper preset and MEASUREMENT.
     if let Some(value) = p.get("paperMm") {
-        page.paper_mm = value.as_bool().ok_or_else(|| bad(cmd, "`paperMm` must be a boolean"))?;
+        let mm = value.as_bool().ok_or_else(|| bad(cmd, "`paperMm` must be a boolean"))?;
+        page.paper_mm = mm;
+        page.paper_unit_mm_override = Some(mm);
     }
     let mm = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0 && *v <= 5080.0);
     match (mm("width"), mm("height")) {

@@ -456,6 +456,19 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
     w.f(148, origin.x);
     w.f(149, origin.y);
+    // The plot settings end at AcDbLayout. Keep PAPERUNITS here so the
+    // page-setup reader can see it (PSVIEW belongs to AcDbLayout below).
+    let units = match page.paper_unit_mm_override {
+        Some(true) => 1,
+        Some(false) => 2,
+        None if page.paper_mm => 3,
+        None => 0,
+    };
+    w.s(1001, dxf_ext::APP);
+    w.s(1000, "PAPERUNITS");
+    w.s(1002, "{");
+    w.i(1070, units);
+    w.s(1002, "}");
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);

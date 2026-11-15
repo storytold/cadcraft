@@ -85,7 +85,12 @@ pub fn paper_unit_mm(d: &Drawing) -> f64 {
 /// page says so (plot paper units mm), else as the drawing's MEASUREMENT says. Drawings from
 /// AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
 pub fn page_unit_mm(d: &Drawing, page: &PageSetup) -> f64 {
-    if page.paper_mm { 1.0 } else { paper_unit_mm(d) }
+    match page.paper_unit_mm_override {
+        Some(true) => 1.0,
+        Some(false) => 25.4,
+        None if page.paper_mm => 1.0,
+        None => paper_unit_mm(d),
+    }
 }
 
 /// Millimetres per paper-space unit on the layout holding the paper-space entity `h` (the

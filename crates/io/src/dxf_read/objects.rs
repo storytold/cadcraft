@@ -244,9 +244,31 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
         p.height_mm = w.max(h);
     }
     p.margins_mm = [mm(40, p.margins_mm[0]), mm(41, p.margins_mm[1]), mm(42, p.margins_mm[2]), mm(43, p.margins_mm[3])];
-    // Plot paper units 1: millimetres. 0 (inches) is left to MEASUREMENT: earlier CADCraft
-    // versions wrote 0 for every layout.
+    // The DXF flag (72: 0 inches, 1 millimetres) is ambiguous in older
+    // CADCraft files: they wrote 0 when units followed MEASUREMENT. A CADCraft
+    // xdata marker preserves the intended three-state setting on round trips.
+    // Keep the historical fallback for files with no marker.
     p.paper_mm = t.i(72) == Some(1);
+    let units = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(t.0, crate::dxf_ext::APP), "PAPERUNITS");
+    match units.iter().find(|tag| tag.code == 1070).map(Tag::i64) {
+        Some(0) => {
+            p.paper_mm = false;
+            p.paper_unit_mm_override = None;
+        }
+        Some(1) => {
+            p.paper_mm = true;
+            p.paper_unit_mm_override = Some(true);
+        }
+        Some(2) => {
+            p.paper_mm = false;
+            p.paper_unit_mm_override = Some(false);
+        }
+        Some(3) => {
+            p.paper_mm = true;
+            p.paper_unit_mm_override = None;
+        }
+        _ => {}
+    }
     // Plot rotation 1 or 3 turns the media a quarter turn; media defined wider than tall is
     // already landscape.
     let rotated = matches!(t.i(73), Some(1 | 3));
@@ -297,7 +319,16 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
 
 /// A layout's saved paper-space view (centre, height) from CADCraft xdata.
 fn layout_view(tags: &[Tag]) -> Option<(Vec2, f64)> {
-    let list = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(tags, crate::dxf_ext::APP), "PSVIEW");
-    let g = |c: i32| list.iter().find(|t| t.code == c).map(Tag::f64).filter(|v| v.is_finite());
-    Some((Vec2::new(g(1010)?, g(1020)?), g(1040)?))
+    // PAPERUNITS and PSVIEW can live in separate CADCRAFT xdata runs.
+    // The generic xdata() helper returns only the first run, which may be PAPERUNITS.
+    tags.iter()
+        .enumerate()
+        .filter(|(_, t)| t.code == 1001 && t.str().trim().eq_ignore_ascii_case(crate::dxf_ext::APP))
+        .find_map(|(at, _)| {
+            let rest = tags.get(at + 1..)?;
+            let end = rest.iter().position(|t| t.code == 1001).unwrap_or(rest.len());
+            let list = crate::dxf_ext::xdata_list(rest.get(..end)?, "PSVIEW");
+            let g = |c: i32| list.iter().find(|t| t.code == c).map(Tag::f64).filter(|v| v.is_finite());
+            Some((Vec2::new(g(1010)?, g(1020)?), g(1040)?))
+        })
 }

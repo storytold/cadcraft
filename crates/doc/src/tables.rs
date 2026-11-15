@@ -807,6 +807,9 @@ pub struct PageSetup {
     /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
     /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
     pub paper_mm: bool,
+    /// Explicit paper-space units; `None` keeps the legacy MEASUREMENT fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paper_unit_mm_override: Option<bool>,
     /// Paper size (DXF groups 44, 45) and plot rotation (group 73) as the file stored them.
     /// Saving writes them back while they still describe `width_mm`, `height_mm` and
     /// `landscape`, so each program's convention for media defined wider than tall survives a
@@ -839,6 +842,7 @@ impl Default for PageSetup {
             show_plot_styles: false,
             plot_transparency: false,
             paper_mm: false,
+            paper_unit_mm_override: None,
             file_paper: None,
             image_origin: None,
         }

@@ -69,3 +69,23 @@ fn invalid_paper_mm_is_rejected_without_changing_layout() {
     assert!(session.execute("pagesetup", &json!({ "layout": "Reject", "paperMm": "yes" })).is_err());
     assert_eq!(paper_mm(&session, "Reject"), before);
 }
+
+#[test]
+fn inch_paper_in_metric_drawing_uses_25_4_mm_per_unit() {
+    let mut session = session_with_measurement(1);
+    new_layout(&mut session, "InchSheet");
+
+    session.execute(
+        "pagesetup",
+        &json!({ "layout": "InchSheet", "paper": "Letter" }),
+    ).unwrap();
+
+    let drawing = session.doc().unwrap();
+    let page = &drawing.layout("InchSheet").unwrap().page;
+
+    assert_eq!(
+        cadcraft_render::paper::page_unit_mm(drawing, page),
+        25.4,
+        "Letter must use inches even when MEASUREMENT=1"
+    );
+}
