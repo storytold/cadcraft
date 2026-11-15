@@ -12,79 +12,22 @@ pub fn plain_mtext(s: &str) -> String {
     let s = unescape_codes(s);
     let s = s.as_ref();
     let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    '~' => {
-                        out.push(' ');
-                        i += 2;
-                    }
-                    '\\' | '{' | '}' => {
-                        out.push(code);
-                        i += 2;
-                    }
-                    'S' => {
-                        // \Snum^den; \Snum/den; \Snum#den;
-                        let mut j = i + 2;
-                        let mut stack = String::new();
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            stack.push(match ch {
-                                '^' | '#' => '/',
-                                c => c,
-                            });
-                            j += 1;
-                        }
-                        // "6\S1/2;" reads as "6 1/2".
-                        if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
-                            out.push(' ');
-                        }
-                        out.push_str(stack.trim_end_matches('/'));
-                        i = j + 1;
-                    }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
-                    // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
-                    'U' if crate::unicode_escape(&chars, i).is_some() => {
-                        if let Some(u) = crate::unicode_escape(&chars, i) {
-                            out.push(u);
-                        }
-                        i += 7;
-                    }
-                    // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
-                    _ if takes_arg(code) => {
-                        let mut j = i + 2;
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                    }
-                    // An unknown code has no argument: drop the backslash and the code only.
-                    _ => i += 2,
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens};
+    for token in Tokens::new(s, StackMode::Plain) {
+        match token {
+            Token::Control('P' | 'N') => out.push('\n'),
+            Token::Control('~') => out.push(' '),
+            Token::Control(c @ ('\\' | '{' | '}')) => out.push(c),
+            Token::Stack(raw) => {
+                let stack: String = raw.chars().map(|c| if matches!(c, '^' | '#') { '/' } else { c }).collect();
+                if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
+                    out.push(' ');
                 }
+                out.push_str(stack.trim_end_matches('/'));
             }
-            '{' | '}' => i += 1,
-            '\r' => i += 1,
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            Token::Char('\r') => {}
+            Token::Char(c) => out.push(c),
+            _ => {}
         }
     }
     out
@@ -226,25 +169,12 @@ const MAX_ATOMS: usize = 200_000;
 const STACK_SCALE: f64 = 0.7;
 
 // Shared DXF escape handling and parameterized-command classification.
-pub(crate) use craft_dxf::mtext::{takes_arg, unescape_codes};
+pub(crate) use craft_dxf::mtext::unescape_codes;
 
 /// The line-spacing factor to lay out with: AutoCAD's 0.25..=4 range, 1 for a missing or
 /// non-finite value.
 pub(crate) fn sane_line_spacing(v: f64) -> f64 {
     if v.is_finite() && v > 0.0 { v.clamp(0.25, 4.0) } else { 1.0 }
-}
-
-fn arg(chars: &[char], from: usize) -> (String, usize) {
-    let mut j = from;
-    let mut a = String::new();
-    while let Some(&ch) = chars.get(j) {
-        if ch == ';' {
-            return (a, j + 1);
-        }
-        a.push(ch);
-        j += 1;
-    }
-    (a, j)
 }
 
 fn num(a: &str) -> Option<f64> {
@@ -284,7 +214,7 @@ fn font_switch(a: &str) -> Option<TextFont> {
 
 /// Parse MTEXT contents into words, spaces and paragraph breaks with their formats.
 fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
-    let chars: Vec<char> = contents.chars().collect();
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens, split_stack};
     let h_min = base.height * 1e-3;
     let h_max = if (base.height * 1e3).is_finite() { base.height * 1e3 } else { f64::MAX };
     let mut fmts = vec![base];
@@ -324,158 +254,94 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             *cur = fmts.len() - 1;
         }
     };
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
+    for token in Tokens::new(contents, StackMode::Structured) {
         if atoms.len() > MAX_ATOMS {
             break;
         }
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                i += 2;
-                match code {
-                    'P' | 'N' => {
-                        end_word(&mut atoms, &mut word);
-                        atoms.push(Atom::Para(cur));
-                    }
-                    '~' => push_char(&mut word, '\u{a0}', cur),
-                    '\\' | '{' | '}' => push_char(&mut word, code, cur),
-                    'L' => derive(&mut fmts, &mut cur, &|f| f.under = true),
-                    'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
-                    'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
-                    'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' => {}
-                    // `\U+XXXX`: a character by its Unicode code.
-                    'U' if i >= 2 && crate::unicode_escape(&chars, i - 2).is_some() => {
-                        if let Some(u) = crate::unicode_escape(&chars, i - 2) {
-                            push_char(&mut word, u, cur);
-                        }
-                        i += 5;
-                    }
-                    'S' => {
-                        let mut j = i;
-                        let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            if ch == '\\' {
-                                if let Some(&n) = chars.get(j + 1) {
-                                    if sep.is_none() { top.push(n) } else { bottom.push(n) }
-                                }
-                                j += 2;
-                                continue;
-                            }
-                            if sep.is_none() && matches!(ch, '/' | '#' | '^') {
-                                sep = Some(ch);
-                            } else if sep.is_none() {
-                                top.push(ch);
-                            } else {
-                                bottom.push(ch);
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                        word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
-                    }
-                    'f' | 'F' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(font) = font_switch(&a) {
-                            derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
-                        }
-                    }
-                    'H' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
-                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
-                            // Relative heights compound; keep the result within 1e-3..1e3 times the
-                            // MTEXT's own height, never infinite.
-                            derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(h_max).max(h_min) } else { v });
-                        }
-                    }
-                    'W' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
-                        if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
-                            // Relative factors compound; keep the result within the absolute range.
-                            derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
-                        }
-                    }
-                    'Q' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(v) = num(&a).filter(|v| v.abs() < 85.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
-                        }
-                    }
-                    'C' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u16>() {
-                            let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
-                            derive(&mut fmts, &mut cur, &|f| f.color = col);
-                        }
-                    }
-                    'c' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u32>() {
-                            derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
-                        }
-                    }
-                    'A' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
-                            derive(&mut fmts, &mut cur, &|f| f.valign = v);
-                        }
-                    }
-                    _ if takes_arg(code) => {
-                        // \T and \p: argument up to ';'.
-                        let (_, n) = arg(&chars, i);
-                        i = n;
-                    }
-                    // An unknown code has no argument: only the backslash and the code are dropped.
-                    _ => {}
+        match token {
+            Token::Control('P' | 'N') => {
+                end_word(&mut atoms, &mut word);
+                atoms.push(Atom::Para(cur));
+            }
+            Token::Control('~') => push_char(&mut word, '\u{a0}', cur),
+            Token::Control(c @ ('\\' | '{' | '}')) => push_char(&mut word, c, cur),
+            Token::Control('L') => derive(&mut fmts, &mut cur, &|f| f.under = true),
+            Token::Control('l') => derive(&mut fmts, &mut cur, &|f| f.under = false),
+            Token::Control('O') => derive(&mut fmts, &mut cur, &|f| f.over = true),
+            Token::Control('o') => derive(&mut fmts, &mut cur, &|f| f.over = false),
+            Token::Stack(raw) => {
+                let (top, bottom, sep) = split_stack(raw);
+                word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
+            }
+            Token::Argument('f' | 'F', a) => {
+                if let Some(font) = font_switch(a) {
+                    derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
                 }
             }
-            '{' => {
+            Token::Argument('H', a) => {
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
+                    // Relative heights compound; keep the result within 1e-3..1e3 times the
+                    // MTEXT's own height, never infinite.
+                    derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(h_max).max(h_min) } else { v });
+                }
+            }
+            Token::Argument('W', a) => {
+                // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
+                    // Relative factors compound; keep the result within the absolute range.
+                    derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
+                }
+            }
+            Token::Argument('Q', a) => {
+                if let Some(v) = num(a).filter(|v| v.abs() < 85.0) {
+                    derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
+                }
+            }
+            Token::Argument('C', a) => {
+                if let Ok(v) = a.trim().parse::<u16>() {
+                    let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
+                    derive(&mut fmts, &mut cur, &|f| f.color = col);
+                }
+            }
+            Token::Argument('c', a) => {
+                if let Ok(v) = a.trim().parse::<u32>() {
+                    derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
+                }
+            }
+            Token::Argument('A', a) => {
+                if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
+                    derive(&mut fmts, &mut cur, &|f| f.valign = v);
+                }
+            }
+            Token::OpenGroup => {
                 if stack.len() < 256 {
                     stack.push(cur);
                 }
-                i += 1;
             }
-            '}' => {
+            Token::CloseGroup => {
                 if let Some(f) = stack.pop() {
                     cur = f;
                 }
-                i += 1;
             }
-            '\r' => i += 1,
-            '\n' => {
+            Token::Char('\r') => {}
+            Token::Char('\n') => {
                 end_word(&mut atoms, &mut word);
                 atoms.push(Atom::Para(cur));
-                i += 1;
             }
-            ' ' => {
+            Token::Char(' ') => {
                 end_word(&mut atoms, &mut word);
                 atoms.push(Atom::Space(cur));
-                i += 1;
             }
-            _ => {
-                push_char(&mut word, c, cur);
-                i += 1;
-            }
+            Token::Char(c) => push_char(&mut word, c, cur),
+            _ => {}
         }
     }
     end_word(&mut atoms, &mut word);
