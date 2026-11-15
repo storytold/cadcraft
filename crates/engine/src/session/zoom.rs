@@ -212,8 +212,9 @@ fn entity_z_range(d: &Drawing, e: &Entity, depth: usize) -> (f64, f64) {
         EntityKind::Face3d(f) => z_range_points(f.corners.iter()),
         EntityKind::PolyfaceMesh(m) => z_range_points(m.vertices.iter()),
         EntityKind::Insert(ins) => {
-            let mut lo = if ins.insert.z.is_finite() { ins.insert.z } else { 0.0 };
-            let mut hi = lo;
+            let insert_z = if ins.insert.z.is_finite() { ins.insert.z } else { 0.0 };
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
             if depth < cadcraft_doc::MAX_BLOCK_DEPTH
                 && let Some(blk) = d.block(&ins.block)
             {
@@ -235,7 +236,11 @@ fn entity_z_range(d: &Drawing, e: &Entity, depth: usize) -> (f64, f64) {
                     hi = hi.max(a.text.insert.z);
                 }
             }
-            (lo, hi)
+            if lo > hi {
+                (insert_z, insert_z)
+            } else {
+                (lo, hi)
+            }
         }
         _ => (0.0, 0.0),
     }
@@ -604,6 +609,48 @@ mod tests {
                 "{preset}: zoom in target plane must preserve depth coordinate"
             );
         }
+    }
+
+    #[test]
+    fn insert_z_range_excludes_insert_z_when_block_has_geometry() {
+        use cadcraft_doc::{Block, Handle, Insert};
+        let mut s = Session::new();
+        {
+            let d = s.doc_mut().expect("doc");
+            let mut blk = Block::new("ELEV");
+            blk.entities.push(Entity::new(
+                Handle(1),
+                EntityKind::Line(DocLine { a: Vec3::new(0.0, 0.0, 1000.0), b: Vec3::new(20.0, 10.0, 1000.0) }),
+            ));
+            d.blocks.insert("ELEV".into(), std::sync::Arc::new(blk));
+            d.blocks.insert("EMPTY".into(), std::sync::Arc::new(Block::new("EMPTY")));
+            let elev_h = d
+                .add(
+                    &Space::Model,
+                    Common::default(),
+                    EntityKind::Insert(Insert { block: "ELEV".into(), insert: Vec3::ZERO, ..Default::default() }),
+                )
+                .expect("add elev insert");
+            let elev_e = d.entity(elev_h).expect("elev entity");
+            assert_eq!(entity_z_range(d, elev_e, 0), (1000.0, 1000.0));
+        }
+        assert_eq!(space_z_range(s.doc().expect("doc"), &Space::Model), (1000.0, 1000.0));
+        s.execute("view.set", &json!({ "preset": "front" })).expect("front");
+        s.zoom_extents().expect("zoom extents");
+        let target_z = s.state().expect("state").view().target_z;
+        assert!((target_z - 1000.0).abs() < 1e-6, "expected target_z=1000, got {target_z}");
+
+        // When a block has neither visible geometry nor attributes, fallback uses insert.z.
+        let d = s.doc_mut().expect("doc");
+        let empty_h = d
+            .add(
+                &Space::Model,
+                Common::default(),
+                EntityKind::Insert(Insert { block: "EMPTY".into(), insert: Vec3::new(0.0, 0.0, 42.0), ..Default::default() }),
+            )
+            .expect("add empty insert");
+        let empty_e = d.entity(empty_h).expect("empty entity");
+        assert_eq!(entity_z_range(d, empty_e, 0), (42.0, 42.0));
     }
 }
 
