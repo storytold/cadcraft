@@ -17,7 +17,7 @@ use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
 pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
-pub(crate) use pgp::{specs as alias_specs, user_alias};
+pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
 /// Largest drawing accepted from a local path, matching the per-file xref limit. A path naming an
