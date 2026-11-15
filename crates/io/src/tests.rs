@@ -797,7 +797,7 @@ fn landscape_media_keeps_its_size_order_and_rotation() {
         assert_eq!(p.paper, media);
 
         let dwg = write(&d, "t.dwg").unwrap();
-        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        let back = String::from_utf8_lossy(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
         assert_eq!(plot_paper_groups(&back, "Layout1"), (420.0, 297.0, rotation), "DWG, landscape {landscape}");
         let r = read(&dwg, "t.dwg").unwrap();
         let p = &r.layout("Layout1").unwrap().page;
@@ -844,7 +844,7 @@ fn a_files_own_paper_groups_are_written_back() {
         assert_eq!((p.width_mm, p.height_mm, p.landscape), (pw, ph, landscape), "{media} {groups:?} read");
         assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DXF");
         let dwg = write(&r, "t.dwg").unwrap();
-        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        let back = String::from_utf8_lossy(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
         assert_eq!(plot_paper_groups(&back, "Layout1"), groups, "{media} {groups:?} DWG");
         let r = read(&dwg, "t.dwg").unwrap();
         assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DWG read and saved again");
@@ -1234,7 +1234,7 @@ fn viewport_frozen_layers_survive_dwg() {
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
     // The DWG holds them in group 331, what AutoCAD reads.
-    let p = pairs(&String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
+    let p = pairs(&String::from_utf8(craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
     assert_eq!(frozen_331(&p), [layer_handle(&p, "Walls"), layer_handle(&p, "A B")]);
 }
 
@@ -1376,8 +1376,8 @@ fn generated_arrowhead_blocks_are_not_kept_as_user_blocks() {
     for (_, name) in crate::dxf_ext::ARROWS.iter().filter(|(k, _)| *k != cadcraft_render::Arrowhead::ClosedFilled) {
         assert!(dxf.contains(&format!("\r\n{name}\r\n")), "{name} is written");
     }
-    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
-    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let from_dwg = read_dxf(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
         assert!(back.blocks.keys().all(|k| !k.starts_with('_')), "{what}: {:?}", back.blocks.keys().collect::<Vec<_>>());
         assert!(roundtrip(&back).blocks.keys().all(|k| !k.starts_with('_')), "{what}: second save");
@@ -1408,8 +1408,8 @@ fn file_arrowhead_blocks_with_standard_names_are_kept() {
     d.dim_styles.push(DimStyle { name: "Dots".into(), arrow_block1: "_Dot".into(), arrow_block2: "_DotSmall".into(), ..DimStyle::default() });
     let kinds = |d: &Drawing, name: &str| d.block(name).map(|b| b.entities.iter().map(|e| e.kind.clone()).collect::<Vec<_>>()).unwrap_or_default();
     let dxf = write_dxf(&d);
-    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
-    let from_dwg = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    let from_dwg = read_dxf(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     for (back, what) in [(read_dxf(dxf.as_bytes()).unwrap(), "DXF"), (from_dwg, "DWG")] {
         for name in ["_Dot", "_DotSmall"] {
             assert_eq!(kinds(&back, name), kinds(&d, name), "{what}: {name}");
@@ -1479,8 +1479,8 @@ fn many_entities(n: usize) -> Drawing {
 #[cfg(not(target_arch = "wasm32"))]
 fn ac1024_dwg(n: usize) -> Vec<u8> {
     let dxf = write_dxf(&many_entities(n)).replacen("AC1015", "AC1024", 1);
-    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
-    assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some("AC1024"));
+    let dwg = craft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    assert_eq!(craft_dwg::version(&dwg).as_deref(), Some("AC1024"));
     dwg
 }
 
@@ -1492,7 +1492,7 @@ fn ac1024_dwg(n: usize) -> Vec<u8> {
 fn ac1024_dwg_with_many_entities_opens() {
     let n = 30_000;
     let dwg = ac1024_dwg(n);
-    let dxf = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
+    let dxf = craft_dwg::dwg_to_dxf(&dwg).unwrap();
     let tags = craft_dxf::parse(&dxf).unwrap().len();
     assert!(dxf.len() < dwg.len() * 20, "DXF {} bytes from {} DWG bytes", dxf.len(), dwg.len());
     assert!(tags < dwg.len(), "{tags} group codes from {} DWG bytes", dwg.len());
@@ -1509,21 +1509,41 @@ fn ac1024_dwg_with_many_entities_opens() {
 #[test]
 fn oversized_dwg_and_dxf_are_rejected_early() {
     let dwg = ac1024_dwg(3000);
-    let full = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().len();
+    let full = craft_dwg::dwg_to_dxf(&dwg).unwrap().len();
     assert!(full > 400_000, "{full}");
-    let limits = cadcraft_dwg::Limits { max_dxf_bytes: 300_000, ..cadcraft_dwg::Limits::DEFAULT };
-    let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
+    let limits = craft_dwg::Limits { max_dxf_bytes: 300_000, ..craft_dwg::Limits::DEFAULT };
+    let e = craft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
     assert!(e.starts_with("DWG: converting this 0."), "{e}");
     assert!(e.contains("MB file produced more than 0.3 MB of drawing data (the limit)"), "{e}");
 
-    let limits = cadcraft_dwg::Limits { max_dwg_bytes: 100_000, ..cadcraft_dwg::Limits::DEFAULT };
-    let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
-    assert!(e.starts_with("DWG: the file is 0.") && e.ends_with("MB, larger than the 0.1 MB CADCraft opens"), "{e}");
+    let limits = craft_dwg::Limits { max_dwg_bytes: 100_000, ..craft_dwg::Limits::DEFAULT };
+    let e = craft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
+    assert!(e.starts_with("DWG: the file is 0.") && e.ends_with("MB, larger than the 0.1 MB accepted by this bridge"), "{e}");
 
     // Lines that aren't even group codes: the size is reported before anything is parsed.
     let text = "not a group code\nx\n".repeat(60);
     let e = craft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
     assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads (set CADCRAFT_MAX_DXF_TAGS to read more)");
+}
+
+#[test]
+fn shared_dwg_diagnostics_keep_cadcraft_vocabulary() {
+    assert_eq!(
+        cadcraft_dwg_message("DWG: the file is 0.1 MB, larger than the 0.1 MB accepted by this bridge"),
+        "DWG: the file is 0.1 MB, larger than the 0.1 MB CADCraft opens"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DWG: 2 objects of types this bridge can't preserve were left out (FOO × 2)"),
+        "DWG: 2 objects of types CADCraft doesn't keep were left out (FOO × 2)"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DWG version `AC1015` can't be written (this bridge writes AC1018+)"),
+        "DWG version `AC1015` can't be written (CADCraft writes AC1018+)"
+    );
+    assert_eq!(
+        cadcraft_dwg_message("DXF: the input is 1024 MB, larger than the 1024 MB accepted for DWG conversion"),
+        "DXF: the input is 1024 MB, larger than the 1024 MB CADCraft converts to DWG"
+    );
 }
 
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
@@ -2336,8 +2356,8 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
         _ => panic!("not a dimension"),
     }
     // And through DWG.
-    let dwg = cadcraft_dwg::dxf_to_dwg(text.as_bytes()).unwrap();
-    let back = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg(text.as_bytes()).unwrap();
+    let back = read_dxf(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let dims: Vec<_> = back.model.iter().filter_map(|e| if let EntityKind::Dimension(x) = &e.kind { Some(x.clone()) } else { None }).collect();
     assert_eq!(dims.len(), 1);
     assert!(matches!(dims[0].kind, DimKind::ArcLength), "{:?}", dims[0].kind);
@@ -3568,7 +3588,7 @@ fn proxies_keep_their_class_in_dwg() {
 fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
     use acadrust::entities::{EntityType, ExtendedEntityData};
     use acadrust::objects::ObjectType;
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(&proxy_file(), "AC1032").unwrap();
+    let dwg = craft_dwg::dxf_to_dwg_as(&proxy_file(), "AC1032").unwrap();
     let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
     let class_of = |id: i32| doc.classes.iter().find(|c| i32::from(c.class_number) == id).map(|c| c.dxf_name.clone());
     let mut objects: Vec<Option<String>> = doc
@@ -3599,11 +3619,11 @@ fn a_proxy_whose_class_is_unknown_is_left_out_of_the_dwg() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn a_proxy_left_out_of_the_dwg_is_counted_as_unwritten() {
-    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&proxy_file(), "AC1032").unwrap();
+    let (_, unwritten) = craft_dwg::dxf_to_dwg_noted(&proxy_file(), "AC1032").unwrap();
     assert_eq!(unwritten, [("ACAD_PROXY_OBJECT".to_string(), 1)].into_iter().collect());
     let d = read(&proxy_file(), "p.dxf").unwrap();
     let binary = write_with(&d, "p.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
-    let (_, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(&binary, "AC1032").unwrap();
+    let (_, unwritten) = craft_dwg::dxf_to_dwg_noted(&binary, "AC1032").unwrap();
     // CADCraft's own save already left the stray proxy out; the binary DXF's other three go.
     assert_eq!(unwritten, [("ACAD_PROXY_ENTITY".to_string(), 1), ("ACAD_PROXY_OBJECT".to_string(), 2)].into_iter().collect());
 }
@@ -3620,7 +3640,7 @@ fn a_binary_dxf_leaves_its_proxies_out_of_the_dwg() {
     let d = read(&proxy_file(), "p.dxf").unwrap();
     let binary = write_with(&d, "p.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
     assert!(binary.starts_with(b"AutoCAD Binary DXF"));
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(&binary, "AC1032").unwrap();
+    let dwg = craft_dwg::dxf_to_dwg_as(&binary, "AC1032").unwrap();
     let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(dwg)).read().unwrap();
     let proxies = doc.objects.values().filter(|o| matches!(o, ObjectType::ProxyObject(_))).count()
         + doc.entities().filter(|e| matches!(e, EntityType::Extended(x) if matches!(x.data, ExtendedEntityData::Proxy(_)))).count();
