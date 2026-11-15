@@ -101,6 +101,9 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    /// The font set the list was drawn with ([`cadcraft_fonts::ttf::generation`] and
+    /// [`cadcraft_fonts::shx::generation`]): a new font folder redraws the text.
+    font_generation: u64,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -1100,7 +1103,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
-            if let Some(e) = st.doc.entity(*h) {
+            if let Some(e) = st.doc.entity(*h)
+                && st.doc.is_visible(e)
+            {
                 let grips = e.kind.grips();
                 let count = grips.len();
                 for (gi, g) in grips.into_iter().enumerate() {

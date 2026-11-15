@@ -44,7 +44,8 @@ fn trim_execute_pick_selects_the_portion_to_remove() -> TestResult {
         let result = s.execute("trim", &json!({"handle": a.hex(), "edges": [b.hex()], "pick": pick}))?;
         let handles = result["handles"].as_array().ok_or("expected handles")?;
         assert_eq!(handles.len(), 1);
-        let h = handles.first().and_then(Value::as_str).and_then(Handle::parse_hex).ok_or("expected replacement handle")?;
+        let h = handles.first().and_then(Value::as_str).and_then(Handle::parse_hex).ok_or("expected trimmed handle")?;
+        assert_eq!(h, a, "TRIM keeps the original handle on the surviving piece");
         assert_line(&s, h, start, end)?;
         assert_eq!(s.doc()?.entity(b), Some(&boundary));
     }
@@ -65,20 +66,16 @@ fn extend_execute_pick_selects_the_end_toward_the_boundary() -> TestResult {
 }
 
 #[test]
-fn trim_execute_distinguishes_a_bad_pick_a_cut_pick_and_no_cut() -> TestResult {
+fn trim_execute_distinguishes_a_pick_projecting_onto_a_cut_from_no_cut() -> TestResult {
     let (mut s, a, b) = fixture(50.0, 25.0)?;
-    failure(
-        &mut s,
-        "trim",
-        json!({"handle": a.hex(), "edges": [b.hex()], "pick": [25, 10]}),
-        "The `pick` point is off the object to trim; pick a removable portion of that object.",
-    )?;
-    failure(
-        &mut s,
-        "trim",
-        json!({"handle": a.hex(), "edges": [b.hex()], "pick": [25, 0], "mode": "standard"}),
-        "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection.",
-    )?;
+    for pick in [[25, 10], [25, 0]] {
+        failure(
+            &mut s,
+            "trim",
+            json!({"handle": a.hex(), "edges": [b.hex()], "pick": pick, "mode": "standard"}),
+            "The `pick` point projects onto a cutting intersection; pick a portion of the object away from that intersection.",
+        )?;
+    }
     let (mut s, a, b) = fixture(50.0, 75.0)?;
     failure(
         &mut s,

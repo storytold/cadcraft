@@ -127,6 +127,7 @@ impl Font {
             data,
             records: self.records,
             cache: RwLock::default(),
+            hebrew: std::sync::OnceLock::new(),
         })
     }
 }

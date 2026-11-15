@@ -27,6 +27,7 @@ pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
 mod recent;
+pub mod render_look;
 pub mod sample;
 pub mod select;
 pub mod settings_dir;
