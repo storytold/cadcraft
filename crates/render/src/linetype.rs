@@ -23,8 +23,8 @@ impl DashBudget {
     pub fn new(max: usize) -> Self {
         Self { spent: std::sync::atomic::AtomicUsize::new(0), max }
     }
-    /// The units left in the budget (a snapshot: parts of a build run side by side, and an
-    /// approximate read is what a budget is for).
+    /// The units left in the budget, for tests that pin what one run spent.
+    #[cfg(test)]
     pub fn remaining(&self) -> usize {
         self.max.saturating_sub(self.spent.load(std::sync::atomic::Ordering::Relaxed))
     }
@@ -47,10 +47,18 @@ pub const MAX_PLOT_DASHES: usize = 2_000_000;
 /// plot passes the dash budget its lines share: once it is spent, the polyline is returned whole
 /// (continuous).
 pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: Option<&DashBudget>) -> Vec<Vec<Vec2>> {
+    apply_report(pts, lt, scale, min_pattern, budget).0
+}
+
+/// Like [`apply`], and also says whether the run was expanded into dashes (`true`) or drawn
+/// continuous (`false`: a ceiling, or a spent shared budget). A caller that draws the run's
+/// embedded texts and shapes uses this so they keep or go with its dashes, rather than reading
+/// the budget a second time after [`apply`] has already spent it.
+pub fn apply_report(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: Option<&DashBudget>) -> (Vec<Vec<Vec2>>, bool) {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     if pts.len() < 2 || total <= 1e-12 || total < min_pattern {
-        return vec![pts.to_vec()];
+        return (vec![pts.to_vec()], false);
     }
     // A display build zoomed out a lot falls back to a continuous line rather than expanding a
     // huge dash count. A plot or export has no zoom — `min_pattern` is 0 — so it keeps the
@@ -58,7 +66,7 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: 
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
     let repeats = len / total;
     if repeats > MAX_DASHES || (min_pattern > 0.0 && repeats > 50_000.0) {
-        return vec![pts.to_vec()];
+        return (vec![pts.to_vec()], false);
     }
     let pattern: Vec<f64> = lt.pattern.iter().map(|d| d.length * scale).collect();
     // AutoCAD centres the pattern so lines start and end with a dash: start at half the first dash.
@@ -98,7 +106,7 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: 
             // One step per pattern element: the budget must let through every repeat the ceiling
             // above admits, not stop a multi-element pattern at a smaller fixed count.
             if (guard as f64) > MAX_DASHES * pattern.len() as f64 {
-                return vec![pts.to_vec()];
+                return (vec![pts.to_vec()], false);
             }
             pos += remaining;
             let p = a + dir * pos;
@@ -106,22 +114,22 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: 
                 cur.push(p);
                 // One dash less of the plot's budget; past it this line keeps its shape whole.
                 if budget.is_some_and(|b| !b.take(1)) {
-                    return vec![pts.to_vec()];
+                    return (vec![pts.to_vec()], false);
                 }
                 out.push(std::mem::take(&mut cur));
                 if out.len() > max_runs {
-                    return vec![pts.to_vec()];
+                    return (vec![pts.to_vec()], false);
                 }
             }
             idx = (idx + 1) % pattern.len();
             let n = pattern.get(idx).copied().unwrap_or(0.0);
             if n == 0.0 {
                 if budget.is_some_and(|b| !b.take(1)) {
-                    return vec![pts.to_vec()];
+                    return (vec![pts.to_vec()], false);
                 }
                 out.push(vec![p]);
                 if out.len() > max_runs {
-                    return vec![pts.to_vec()];
+                    return (vec![pts.to_vec()], false);
                 }
                 idx = (idx + 1) % pattern.len();
                 let n2 = pattern.get(idx).copied().unwrap_or(0.0);
@@ -144,11 +152,11 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: 
     // is drawn continuous, at the same point the walk above falls back (#1285).
     if cur.len() >= 2 {
         if budget.is_some_and(|b| !b.take(1)) || out.len() >= max_runs {
-            return vec![pts.to_vec()];
+            return (vec![pts.to_vec()], false);
         }
         out.push(cur);
     }
-    out
+    (out, true)
 }
 
 /// The dashes of the pattern along a run of length `len`, as (start, end) distances; a dot has
@@ -326,11 +334,16 @@ mod tests {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         let pts = [Vec2::ZERO, Vec2::new(3750.0, 0.0)]; // 5,000 dashes
         let budget = DashBudget::new(6_000);
-        // The first line's dashes fit the budget.
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0, Some(&budget)).len(), 5_000);
+        // The first line's dashes fit the budget, and the run reports that it expanded.
+        let (runs, expanded) = apply_report(&pts, &lt, 1.0, 0.0, Some(&budget));
+        assert_eq!(runs.len(), 5_000);
+        assert!(expanded);
         assert_eq!(budget.remaining(), 1_000);
-        // The next line takes what is left and then falls back to a continuous run.
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0, Some(&budget)).len(), 1);
+        // The next line takes what is left and then falls back to a continuous run, which it
+        // reports so the caller drops its labels with the dashes.
+        let (runs, expanded) = apply_report(&pts, &lt, 1.0, 0.0, Some(&budget));
+        assert_eq!(runs.len(), 1);
+        assert!(!expanded);
         // With room in the budget a wide line's dashes come back as ranges too.
         let budget = DashBudget::new(MAX_PLOT_DASHES);
         assert_eq!(ranges(3750.0, &lt, 1.0, 0.0, Some(&budget)).map(|d| d.len()), Some(5_000));

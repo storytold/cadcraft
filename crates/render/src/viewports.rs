@@ -83,7 +83,6 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
         points: &points,
         max_points: MAX_DISPLAY_POINTS,
     };
-    };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }

@@ -93,7 +93,10 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     let stroke = |b: &mut Builder, pts: &[Vec2]| match lt.as_ref().filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-            for dash in linetype::apply(pts, lt, ltscale, min, b.shared_dashes) {
+            // The run's dashes and its labels are decided together: a run drawn continuous (a
+            // ceiling, or a spent plot budget) keeps no embedded texts either (#1069).
+            let (dashes, expanded) = linetype::apply_report(pts, lt, ltscale, min, b.shared_dashes);
+            for dash in dashes {
                 if dash.len() == 1 {
                     if let Some(p) = dash.first() {
                         b.point(ctx, rgb, *p);
@@ -103,8 +106,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 }
             }
             // Text and shapes embedded in the linetype (shapes when their SHX file is found).
-            if b.opts.text {
-                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min, b.shared_dashes) {
+            if b.opts.text && expanded {
+                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
                     b.shaped(ctx, rgb, lw, &sh);
                 }
             }
