@@ -33,9 +33,9 @@ impl Session {
         let orbit = self.edit_orbit();
         if let Some(pw) = self.pending_window.take() {
             let crossing = self.window_is_crossing(pw.corner, p);
-            let hs = select::select_window_in_orbit(self.doc()?, &space, orbit, Bounds2::new(pw.corner, p), crossing);
+            let hs = select::select_window_in_orbit(self.doc()?, &space, self.viewport_frozen(), orbit, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
-            let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+            let mut sel = if pickadd || shift { self.stored_selection() } else { Vec::new() };
             if shift && pickadd {
                 sel.retain(|h| !hs.contains(h));
             } else {
@@ -45,7 +45,7 @@ impl Session {
             return Ok(());
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
-        match select::pick_in_orbit(self.doc()?, &space, orbit, p, ap) {
+        match select::pick_in_orbit(self.doc()?, &space, self.viewport_frozen(), orbit, p, ap) {
             Some(h) => self.idle_pick(h, shift),
             None => self.pending_window = Some(PendingWindow { corner: p, during_command: false }),
         }
@@ -57,7 +57,7 @@ impl Session {
         let pickadd = self.settings.pickadd;
         // With group selection the object's selectable groups come (or go) with it.
         let hs = cmd::groups::expand(self, vec![h]);
-        let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+        let mut sel = if pickadd || shift { self.stored_selection() } else { Vec::new() };
         let had = sel.contains(&h);
         if shift && (pickadd || had) {
             sel.retain(|x| !hs.contains(x));
@@ -95,7 +95,7 @@ impl Session {
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
         let orbit = self.edit_orbit();
-        self.doc().map(|d| select::pick_all_in_orbit(d, &self.space(), orbit, p, ap)).unwrap_or_default()
+        self.doc().map(|d| select::pick_all_in_orbit(d, &self.space(), self.viewport_frozen(), orbit, p, ap)).unwrap_or_default()
     }
 
     /// Whether selection cycling marks `p` with its badge (SELECTIONCYCLING 1 or 2): overlapping
@@ -157,7 +157,8 @@ impl Session {
 
     /// The object a prompt picking one object finds at `p` in `space`: the one named for that
     /// point ([`Session::input_object`]), which is none when it lies in another space, else the
-    /// object under `p` within `aperture`.
+    /// object under `p` within `aperture`. Inside an MSPACE viewport a pick in model space finds
+    /// what that viewport draws: not the objects on the layers frozen in it.
     pub fn pick_object(&self, space: &Space, p: Vec2, aperture: f64) -> Result<Option<Handle>> {
         let d = self.doc()?;
         if let Some((h, q)) = self.pick_hint
@@ -165,7 +166,9 @@ impl Session {
         {
             return Ok((d.space_of(h).as_ref() == Some(space)).then_some(h));
         }
-        Ok(select::pick(d, space, p, aperture))
+        // The viewport shows model space only: its frozen layers hide nothing on the sheet.
+        let frozen = if *space == Space::Model { self.viewport_frozen() } else { &[] };
+        Ok(select::pick_in(d, space, frozen, p, aperture))
     }
 }
 

@@ -273,7 +273,9 @@ pub(super) fn viewport_highlight_tolerance(scale: f64) -> f64 {
 /// The selected or the hovered objects tessellated in model units for the active MSPACE
 /// viewport, whose contents can't be looked up by handle in the layout's lists. The selection and
 /// the hover are kept apart, so moving the cursor over objects doesn't tessellate the selection
-/// again; each is rebuilt only when the drawing, the objects or the zoom band change.
+/// again; each is rebuilt only when the drawing, the objects, the zoom band or the layers frozen
+/// in the viewport change. An object on one of those layers is not drawn in the viewport, so it
+/// is not highlighted there either.
 #[derive(Default)]
 pub(super) struct VpHighlight {
     key: Option<u64>,
@@ -289,6 +291,8 @@ impl VpHighlight {
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
+            // Entering another viewport changes what is drawn without changing the drawing.
+            let frozen = st.viewport_frozen();
             (
                 st.uid,
                 st.revision,
@@ -296,13 +300,14 @@ impl VpHighlight {
                 tolerance.to_bits(),
                 st.orbit.hash_key(),
                 handles,
+                frozen,
                 super::list::font_generation(),
             )
                 .hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {
-            let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).map(|e| e.as_ref());
+            let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).filter(|e| !st.hidden_in_viewport(e)).map(|e| e.as_ref());
             self.list =
                 cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, orbit: st.orbit, ..Default::default() });
             self.key = Some(key);
