@@ -40,6 +40,11 @@ pub enum Event {
     Committed { version: u64, not_saved: std::collections::BTreeMap<String, usize>, bytes: Vec<u8> },
     /// The heartbeat answer.
     Pong,
+    /// The read timeout fired with nothing to read: the connection is fine, round the loop again.
+    ///
+    /// A socket read timeout is how a caller polls for its own queued work; it must not end the
+    /// session, and the error text cannot tell it from a lost connection (CodeRabbit on #2936).
+    Idle,
     /// The server reports a problem outside an operation.
     Error { code: String, message: String, retryable: bool },
     /// A message this client does not act on (a delta it has already matched, say).
@@ -155,7 +160,10 @@ impl Session {
     /// Wait for one message and apply it to the replica.
     pub fn next_event(&mut self) -> Result<Event, SessionError> {
         loop {
-            let message = self.connection.receive().map_err(SessionError::Transport)?;
+            let Some(message) = self.connection.try_receive().map_err(SessionError::Transport)? else {
+                // A read timeout is the normal way round a caller's loop, not a lost connection.
+                return Ok(Event::Idle);
+            };
             match message {
                 ServerMessage::Applied { applied } => {
                     self.client.applied(&applied)?;

@@ -62,4 +62,23 @@ pub enum Change {
     LayoutRename { id: RecordId, from: String, to: String },
     /// A layout deleted; its entities go with it.
     LayoutDelete { id: RecordId, name: String },
+    /// A block definition created or redefined, with its objects (ADR 0020).
+    ///
+    /// A block's objects live in the block, not in a space, so no entity change carries them: a
+    /// replica that only received a reference would draw an empty frame. The change carries the
+    /// definition whole — its properties (`Block` serializes without its objects) and the objects
+    /// in draw order — and arrives before any change that names the block.
+    BlockCreate {
+        name: String,
+        /// The definition's properties, as `Block` serializes them without its objects.
+        properties: Value,
+        /// The block's objects in draw order; their handles were chosen by the server.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        entities: Vec<Entity>,
+    },
+    /// A block definition deleted; the references to it are deleted in the same change set.
+    ///
+    /// Without this change an undo of a block creation would leave the definition on every
+    /// replica, and a later insert of the same name would differ from the authoritative drawing.
+    BlockDelete { name: String },
 }

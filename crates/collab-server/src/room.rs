@@ -359,19 +359,32 @@ impl Room {
     }
 
     /// Restore a snapshot and replay the journal tail written by [`Room::with_journal`].
+    ///
+    /// The journal stays attached: an operation applied after the restart is written to the same
+    /// file, so the next restart loses at most the operations after the last snapshot
+    /// (CodeRabbit on #2936).
     pub fn restore_with_journal(snapshot: &Snapshot, journal: &Path) -> Result<Self, RoomError> {
         let mut room = Room::restore(snapshot)?;
-        let text = std::fs::read_to_string(journal).unwrap_or_default();
+        // Only a missing journal is an empty one: an unreadable file is an error, and starting
+        // without its tail would silently drop the operations the snapshot does not hold.
+        let text = match std::fs::read_to_string(journal) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(RoomError::Io(format!("{}: {error}", journal.display()))),
+        };
         let mut entries: Vec<Applied> =
             text.lines().filter_map(|line| serde_json::from_str::<Applied>(line).ok()).filter(|a| a.version > snapshot.version).collect();
         entries.sort_by_key(|a| a.version);
         for applied in entries {
+            if applied.version <= room.version {
+                return Err(RoomError::Io(format!("the journal repeats or reorders version {} after the room reached it", applied.version)));
+            }
             if applied.version != room.version.saturating_add(1) {
                 return Err(RoomError::Io(format!(
                     "the journal goes from version {} to {}, with {} missing",
                     room.version,
                     applied.version,
-                    applied.version - room.version - 1
+                    applied.version.saturating_sub(room.version).saturating_sub(1)
                 )));
             }
             let doc = room.session.doc_mut().map_err(|_| RoomError::NoDrawing)?;
@@ -379,7 +392,7 @@ impl Room {
             room.version = applied.version;
             room.remember_memory_only(applied);
         }
-        Ok(room)
+        room.with_journal(journal)
     }
 
     /// Write a snapshot to `snapshot` (bytes and a `.version` file beside it) and empty the
@@ -789,6 +802,75 @@ mod journal_tests {
 
         let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
         assert!(Room::restore_with_journal(&snapshot, &tail).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A room restored from a snapshot keeps writing its journal: without it, a later crash would
+    /// lose every operation since the snapshot (CodeRabbit on #2936).
+    #[test]
+    fn a_restored_room_keeps_writing_its_journal() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.compact(&state).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        assert_eq!(std::fs::read_to_string(&journal).unwrap().lines().count(), 1);
+        let snapshot = || {
+            let bytes = std::fs::read(&state).unwrap();
+            let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+            Snapshot { version, bytes }
+        };
+
+        let mut restored = Room::restore_with_journal(&snapshot(), &journal).unwrap();
+        assert_eq!(restored.version(), 2);
+        restored.apply(&line_op("c", 6.0)).unwrap();
+
+        let text = std::fs::read_to_string(&journal).unwrap();
+        assert_eq!(text.lines().count(), 2, "an operation applied after a restart is written to the journal");
+        let last: Applied = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last.version, 3);
+
+        // And the line it wrote is what the next restart replays.
+        let again = Room::restore_with_journal(&snapshot(), &journal).unwrap();
+        assert_eq!(again.version(), 3);
+        assert_eq!(again.drawing().unwrap().space(&Space::Model), restored.drawing().unwrap().space(&Space::Model));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A repeated version in the journal is its own error: subtracting it from the room's version
+    /// underflowed (a debug build panicked, a release one reported a huge gap), and replaying it
+    /// would apply the same edit twice (CodeRabbit on #2936).
+    #[test]
+    fn a_journal_with_a_repeated_version_is_refused() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        let text = std::fs::read_to_string(&journal).unwrap();
+        std::fs::write(&journal, format!("{text}{text}")).unwrap();
+
+        let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
+        let error = match Room::restore_with_journal(&snapshot, &journal) {
+            Err(error) => error,
+            Ok(_) => panic!("a repeated journal version cannot be replayed"),
+        };
+        assert!(error.to_string().contains("repeats or reorders version 1"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only a missing journal is an empty one: a file that cannot be read is an error, not a room
+    /// that starts without the operations the snapshot does not hold (CodeRabbit on #2936).
+    #[test]
+    fn an_unreadable_journal_is_refused() {
+        let dir = workspace();
+        // A directory has no text to read: the read fails with a kind that is not `NotFound`.
+        let journal = dir.join("journal.jsonl");
+        std::fs::create_dir_all(&journal).unwrap();
+
+        let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
+        assert!(Room::restore_with_journal(&snapshot, &journal).is_err(), "a journal that cannot be read is not an empty one");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

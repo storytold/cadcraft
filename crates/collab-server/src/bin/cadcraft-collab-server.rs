@@ -28,6 +28,9 @@ struct Args {
     /// The session id the cabinet knows.
     #[arg(long, default_value = "session")]
     session: String,
+    /// The cabinet's file id of the drawing this room serves; a token's `doc` must be this id.
+    #[arg(long)]
+    file_id: Option<String>,
     /// A file holding the cabinet's HS256 session secret.
     #[arg(long)]
     secret_file: Option<PathBuf>,
@@ -58,7 +61,13 @@ fn main() -> Result<(), String> {
     let args = Args::parse();
     let auth = authenticator(&args)?;
     let room = load(&args)?;
-    let server = Arc::new(Server::new(room, auth, args.session.clone(), "cadcraft"));
+    let mut server = Server::new(room, auth, args.session.clone(), "cadcraft");
+    // The drawing this room serves: a token's `doc` must be this id, so a token for another
+    // drawing cannot join (the cabinet's file id is the token's `doc`, CodeRabbit on #2936).
+    if let Some(file_id) = &args.file_id {
+        server = server.with_doc(file_id.clone());
+    }
+    let server = Arc::new(server);
     let (addr, _accept_loop) = server.bind(args.listen).map_err(|e| e.to_string())?;
     println!("cadcraft-collab-server: session {} listening on ws://{addr}", args.session);
 
@@ -68,11 +77,12 @@ fn main() -> Result<(), String> {
         thread::spawn(move || {
             loop {
                 thread::sleep(interval);
-                if let Ok(snapshot) = server.room().snapshot() {
-                    let temporary = state.with_extension("dxf.tmp");
-                    if std::fs::write(&temporary, &snapshot.bytes).is_ok() {
-                        let _ = std::fs::rename(&temporary, &state);
-                    }
+                // A snapshot is a compaction, not a copy of the bytes: `load` pairs the DXF with
+                // the version file beside it and replays the journal after that version, so the
+                // periodic write must record the version and empty the journal too, as
+                // `deployment.md` says (CodeRabbit on #2936).
+                if let Err(error) = server.room().compact(&state) {
+                    eprintln!("cadcraft-collab-server: the snapshot at {} was not written: {error}", state.display());
                 }
             }
         });
@@ -91,7 +101,9 @@ fn main() -> Result<(), String> {
             let mut idle_since = Some(std::time::Instant::now());
             loop {
                 thread::sleep(Duration::from_secs(30));
-                if server.participants() > 0 {
+                // Connections, not presence entries: a viewer never sends presence, and a client
+                // that has not sent a frame yet has no entry either (CodeRabbit on #2936).
+                if server.connections_open() > 0 {
                     idle_since = None;
                     continue;
                 }
@@ -187,7 +199,7 @@ fn answer(mut stream: TcpStream, server: &Server) -> std::io::Result<()> {
     let path = request.split_whitespace().nth(1).unwrap_or("/");
     let body = match path {
         "/healthz" | "/readyz" => "ok\n".to_string(),
-        "/metrics" => server.metrics().render(server.version(), server.journal_len(), server.participants()),
+        "/metrics" => server.metrics().render(server.version(), server.journal_len(), server.participants(), server.connections_open()),
         _ => {
             let body = "not found\n";
             return write_response(&mut stream, "404 Not Found", body);

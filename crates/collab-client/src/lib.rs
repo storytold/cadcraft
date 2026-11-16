@@ -14,11 +14,15 @@
 #![forbid(unsafe_code)]
 
 mod client;
+// The session owns a socket: on the web the transport is the host page's, and a module that
+// spawns no thread and links no TLS stack here (CodeRabbit on #2936).
+#[cfg(not(target_arch = "wasm32"))]
 mod session;
 #[cfg(not(target_arch = "wasm32"))]
 mod ws;
 
 pub use client::{Client, ClientError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use session::{Event, Session, SessionError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use ws::Connection;

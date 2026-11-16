@@ -20,34 +20,47 @@ pub fn diff(before: &Drawing, after: &Drawing, space: &Space) -> Result<Vec<Chan
     diff_space(before, after, space, space, &HashSet::new(), &TableRenames::default())
 }
 
-/// What a client must apply to turn `before` into `after`, for the whole drawing: table records
-/// first, then the entities of every space that exists in both states.
+/// What a client must apply to turn `before` into `after`, for the whole drawing: the records and
+/// block definitions an entity may name first, then the entities of every space that exists in
+/// both states, then the records that are gone.
+///
+/// The order is a contract (ADR 0020 §3): a creation may name a layer that this same change set
+/// creates and a reference may name a block it redefines, so those come first; a deletion removes
+/// the objects on it, so it must come after the entity changes that move objects off that layer
+/// (a layer merge moves an object and deletes its old layer).
 ///
 /// `registry` hands out session-scoped record identifiers (ADR 0002); `renames` lists the renames
 /// the server performed, so a rename is one change and every entity whose layer name followed it is
 /// not sent as a replacement.
 pub fn diff_all(before: &Drawing, after: &Drawing, registry: &mut TableRegistry, renames: &TableRenames) -> Result<Vec<Change>, CollabError> {
-    let mut changes = diff_tables(before, after, registry, renames);
+    let mut changes = diff_table_creates(before, after, registry, renames);
+    changes.extend(diff_blocks(before, after));
     let deleted_layers = deleted_layers(before, after, renames);
     for (old_space, new_space) in paired_spaces(before, after, renames) {
         changes.extend(diff_space(before, after, &old_space, &new_space, &deleted_layers, renames)?);
     }
+    changes.extend(diff_table_deletes(before, after, registry, renames));
+    changes.extend(diff_block_deletes(before, after));
     Ok(changes)
 }
 
-/// Named records created or deleted between the two states, plus the renames the server declared.
+/// Named records created or renamed between the two states, plus the renames the server declared.
+///
+/// This is the first half of [`diff_all`]: everything here must be in place before an entity
+/// change names it. The second half is [`diff_table_deletes`].
 pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegistry, renames: &TableRenames) -> Vec<Change> {
+    let mut changes = diff_table_creates(before, after, registry, renames);
+    changes.extend(diff_table_deletes(before, after, registry, renames));
+    changes
+}
+
+/// The records an entity change may name: layers and layouts that are new, and the declared
+/// renames (a rename keeps every reference valid).
+fn diff_table_creates(before: &Drawing, after: &Drawing, registry: &mut TableRegistry, renames: &TableRenames) -> Vec<Change> {
     let mut changes = Vec::new();
-    let renamed_from: HashSet<String> = renames.layers.iter().map(|(from, _)| from.to_ascii_lowercase()).collect();
     let renamed_to: HashSet<String> = renames.layers.iter().map(|(_, to)| to.to_ascii_lowercase()).collect();
     let old_layers: HashMap<String, &cadcraft_doc::Layer> = before.layers.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
     let new_layers: HashMap<String, &cadcraft_doc::Layer> = after.layers.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
-    for (key, layer) in &old_layers {
-        if !new_layers.contains_key(key) && !renamed_from.contains(key) {
-            let id = forgotten(registry, RecordKind::Layer, &layer.name);
-            changes.push(Change::TableDelete { kind: RecordKind::Layer, id, name: layer.name.clone() });
-        }
-    }
     for (key, layer) in &new_layers {
         if !old_layers.contains_key(key) && !renamed_to.contains(key) {
             let id = registry.id(RecordKind::Layer, &layer.name);
@@ -60,16 +73,9 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
         changes.push(Change::TableRename { kind: RecordKind::Layer, id, from: from.clone(), to: to.clone() });
     }
 
-    let renamed_from: HashSet<String> = renames.layouts.iter().map(|(from, _)| from.to_ascii_lowercase()).collect();
     let renamed_to: HashSet<String> = renames.layouts.iter().map(|(_, to)| to.to_ascii_lowercase()).collect();
     let old_layouts: HashMap<String, &cadcraft_doc::Layout> = before.layouts.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
     let new_layouts: HashMap<String, &cadcraft_doc::Layout> = after.layouts.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
-    for (key, layout) in &old_layouts {
-        if !new_layouts.contains_key(key) && !renamed_from.contains(key) {
-            let id = forgotten(registry, RecordKind::Layout, &layout.name);
-            changes.push(Change::LayoutDelete { id, name: layout.name.clone() });
-        }
-    }
     for (key, layout) in &new_layouts {
         if !old_layouts.contains_key(key) && !renamed_to.contains(key) {
             let id = registry.id(RecordKind::Layout, &layout.name);
@@ -82,6 +88,68 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
         changes.push(Change::LayoutRename { id, from: from.clone(), to: to.clone() });
     }
     changes
+}
+
+/// The records that are gone. They remove the objects still on them, so they come after every
+/// entity change ([`diff_all`]).
+fn diff_table_deletes(before: &Drawing, after: &Drawing, registry: &mut TableRegistry, renames: &TableRenames) -> Vec<Change> {
+    let mut changes = Vec::new();
+    let renamed_from: HashSet<String> = renames.layers.iter().map(|(from, _)| from.to_ascii_lowercase()).collect();
+    let old_layers: HashMap<String, &cadcraft_doc::Layer> = before.layers.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
+    let new_layers: HashMap<String, &cadcraft_doc::Layer> = after.layers.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
+    for (key, layer) in &old_layers {
+        if !new_layers.contains_key(key) && !renamed_from.contains(key) {
+            let id = forgotten(registry, RecordKind::Layer, &layer.name);
+            changes.push(Change::TableDelete { kind: RecordKind::Layer, id, name: layer.name.clone() });
+        }
+    }
+
+    let renamed_from: HashSet<String> = renames.layouts.iter().map(|(from, _)| from.to_ascii_lowercase()).collect();
+    let old_layouts: HashMap<String, &cadcraft_doc::Layout> = before.layouts.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
+    let new_layouts: HashMap<String, &cadcraft_doc::Layout> = after.layouts.iter().map(|l| (l.name.to_ascii_lowercase(), l)).collect();
+    for (key, layout) in &old_layouts {
+        if !new_layouts.contains_key(key) && !renamed_from.contains(key) {
+            let id = forgotten(registry, RecordKind::Layout, &layout.name);
+            changes.push(Change::LayoutDelete { id, name: layout.name.clone() });
+        }
+    }
+    changes
+}
+
+/// The block definitions created, redefined or removed (ADR 0020).
+///
+/// A definition's objects live in the block, so an unchanged definition is skipped by its `Arc`
+/// and a changed one travels whole. A creation is applied before an entity change that names the
+/// block; a deletion comes after the references to it are gone.
+fn diff_blocks(before: &Drawing, after: &Drawing) -> Vec<Change> {
+    let mut changes = Vec::new();
+    let old_blocks: HashMap<String, &Arc<cadcraft_doc::Block>> = before.blocks.iter().map(|(k, b)| (k.to_ascii_lowercase(), b)).collect();
+    let new_blocks: HashMap<String, &Arc<cadcraft_doc::Block>> = after.blocks.iter().map(|(k, b)| (k.to_ascii_lowercase(), b)).collect();
+    for (key, block) in &new_blocks {
+        match old_blocks.get(key) {
+            None => changes.push(block_change(block)),
+            Some(old) if !Arc::ptr_eq(*old, *block) && ***old != ***block => changes.push(block_change(block)),
+            Some(_) => {}
+        }
+    }
+    changes
+}
+
+/// The definitions that are gone, after the references to them.
+fn diff_block_deletes(before: &Drawing, after: &Drawing) -> Vec<Change> {
+    let old_blocks: HashMap<String, &Arc<cadcraft_doc::Block>> = before.blocks.iter().map(|(k, b)| (k.to_ascii_lowercase(), b)).collect();
+    let new_blocks: HashSet<String> = after.blocks.keys().map(|k| k.to_ascii_lowercase()).collect();
+    old_blocks.iter().filter(|(key, _)| !new_blocks.contains(*key)).map(|(_, block)| Change::BlockDelete { name: block.name.clone() }).collect()
+}
+
+/// The change that carries `block` whole: its properties (`Block` serializes without its objects)
+/// and its objects in draw order.
+fn block_change(block: &cadcraft_doc::Block) -> Change {
+    Change::BlockCreate {
+        name: block.name.clone(),
+        properties: serde_json::to_value(block).unwrap_or(serde_json::Value::Null),
+        entities: block.entities.iter().map(|entity| (**entity).clone()).collect(),
+    }
 }
 
 /// Forget a deleted record, or give it an identifier first when the registry had not seen it.

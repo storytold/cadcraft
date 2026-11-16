@@ -305,6 +305,8 @@ pub struct CadApp {
     /// The version of the shared drawing this app shows.
     pub collab_version: u64,
     collab_seq: u64,
+    /// This window's share of the operation ids: two participants must not both send `local-0`.
+    collab_run: u64,
     last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
     pub(crate) capture_geometry: Option<capture::CaptureGeometry>,
@@ -404,6 +406,7 @@ impl CadApp {
             remote_presence: std::collections::BTreeMap::new(),
             collab_version: 0,
             collab_seq: 0,
+            collab_run: collab::run_id(),
             last_presence: None,
             capture_geometry: None,
             capture_epoch: 0,
@@ -597,6 +600,15 @@ impl CadApp {
 
     /// Run a command programmatically (or a UI command).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A shared session's file actions are the room's commit: they must not reach the local
+        // engine's save, which `menus::run_ui_command` runs before `collab_command` otherwise
+        // (CodeRabbit on #2936).
+        if self.is_shared()
+            && collab::is_shared_save(id)
+            && let Some(r) = self.collab_command(id, &params)
+        {
+            return r;
+        }
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
@@ -619,6 +631,16 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        // Undo, redo and save take no prompt, so a shared session takes them as a room message:
+        // the interface's own handler would run them on this window's drawing instead
+        // (CodeRabbit on #2936).
+        let lowered = name.to_ascii_lowercase();
+        if self.is_shared() && matches!(lowered.as_str(), "undo" | "u" | "redo" | "mr" | "save" | "qsave" | "saveas") {
+            if let Some(Err(message)) = self.collab_command(&lowered, &Value::Null) {
+                self.session.echo(message);
+            }
+            return;
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -642,6 +664,28 @@ impl CadApp {
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if self.is_shared() {
+            // A line that names all of its parameters needs no prompt: it is one operation
+            // (CodeRabbit on #2936). Undo, redo and save take none either, and are the room's.
+            let words = text.split_whitespace().count();
+            let room = match collab::explicit_command(text) {
+                Some((name, params)) => self.collab_command(&name, &params),
+                None if words == 1 => {
+                    let name = text.trim().to_ascii_lowercase();
+                    matches!(name.as_str(), "undo" | "u" | "redo" | "mr" | "save" | "qsave" | "saveas")
+                        .then(|| self.collab_command(&name, &Value::Null))
+                        .flatten()
+                }
+                None => None,
+            };
+            if let Some(room) = room {
+                match room {
+                    Ok(_) => return None,
+                    Err(message) => {
+                        self.session.echo(message.clone());
+                        return Some(message);
+                    }
+                }
+            }
             let message = "a shared session takes commands with explicit parameters; the interactive command line is not available yet".to_string();
             self.session.echo(message.clone());
             return Some(message);
@@ -768,6 +812,13 @@ impl CadApp {
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
     pub fn open_path(&mut self, path: &Path) {
+        // A shared session edits the room's drawing: opening another file would make it the
+        // window's active drawing, so the room's changes (and a commit's bytes) would land in a
+        // file that is not the room's (CodeRabbit on #2936).
+        if self.is_shared() {
+            self.open_failed("a shared session edits the room's drawing; leave the session to open another file");
+            return;
+        }
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {

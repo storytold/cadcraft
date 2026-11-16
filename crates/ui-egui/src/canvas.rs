@@ -1130,7 +1130,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         preview_look,
         selection_look,
     );
-    paint_presence(app, painter, &xf_paper, rect);
+    // The editing transform, not the paper one: a participant's cursor travels in editing-space
+    // coordinates (the two differ only inside an MSPACE viewport), so it is drawn with the
+    // transform its sender used (CodeRabbit on #2936).
+    paint_presence(app, painter, &xf, rect);
     app.canvas.draw_ms = crate::now_ms() - t0;
     compare::paint(app, ui.ctx(), painter, &xf_paper, rect);
     blockedit::paint(app, ui.ctx(), painter, &xf_paper, rect);

@@ -22,6 +22,9 @@ pub enum RecordKind {
     Layer,
     /// A layout (paper space); its entities live in the layout.
     Layout,
+    /// A block definition; block references name it. A block carries its own objects, so it
+    /// travels whole ([`crate::Change::BlockCreate`]) and not through the record registry.
+    Block,
 }
 
 /// A record identifier, unique for the session and never reused (ADR 0002).

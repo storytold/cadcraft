@@ -157,14 +157,28 @@ impl Snapshot {
     }
 
     /// Join the parts of a snapshot back into the drawing bytes.
+    ///
+    /// A snapshot is only usable whole: the parts must be one version's, numbered from zero, and
+    /// the last one must say there is nothing after it. A connection that dropped after part N, or
+    /// a server that sent parts of two snapshots, must fail here rather than hand a truncated or
+    /// mixed drawing to the reader.
     pub fn decode(parts: &[Snapshot]) -> Result<Vec<u8>, String> {
         use base64::Engine as _;
         let engine = base64::engine::general_purpose::STANDARD;
-        let mut parts = parts.to_vec();
+        let Some(first) = parts.first() else { return Err("a snapshot has no parts".to_string()) };
+        let version = first.version;
+        let mut parts: Vec<&Snapshot> = parts.iter().collect();
         parts.sort_by_key(|part| part.seq);
+        if parts.iter().any(|part| part.version != version) {
+            return Err("snapshot parts come from different snapshots".to_string());
+        }
         let mut bytes = Vec::new();
         for (expected, part) in parts.iter().enumerate() {
             if part.seq as usize != expected {
+                return Err(format!("snapshot part {expected} is missing"));
+            }
+            // Every part but the last says another one follows; the last says none does.
+            if part.more != (expected + 1 < parts.len()) {
                 return Err(format!("snapshot part {expected} is missing"));
             }
             bytes.extend(engine.decode(&part.bytes_base64).map_err(|e| e.to_string())?);
@@ -207,6 +221,29 @@ mod tests {
         let mut parts = Snapshot::encode(1, &bytes);
         parts.remove(0);
         assert!(Snapshot::decode(&parts).is_err());
+    }
+
+    /// A snapshot is only usable whole, and only from one version: a short tail, a part of
+    /// another snapshot or an empty list must fail instead of handing the reader a truncated or
+    /// mixed drawing (CodeRabbit on #2936).
+    #[test]
+    fn a_snapshot_that_lost_its_tail_or_mixes_versions_is_refused() {
+        let bytes = vec![1u8; Snapshot::CHUNK_BYTES + 1];
+        let parts = Snapshot::encode(3, &bytes);
+        assert_eq!(Snapshot::decode(&parts).unwrap(), bytes);
+
+        let mut short = parts.clone();
+        short.pop();
+        assert!(Snapshot::decode(&short).is_err(), "the last part is missing, so the drawing is short");
+
+        let mut mixed = parts.clone();
+        mixed[1].version = 4;
+        assert!(Snapshot::decode(&mixed).is_err(), "parts of two snapshots would interleave two drawings");
+
+        assert!(Snapshot::decode(&[]).is_err(), "an empty list is not an empty drawing");
+        let mut lying = parts.clone();
+        lying[0].more = false;
+        assert!(Snapshot::decode(&lying).is_err(), "a part that says it is the last, with another after it, is a hole");
     }
 
     #[test]

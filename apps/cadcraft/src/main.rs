@@ -295,11 +295,15 @@ fn main() -> eframe::Result {
     // standard error and exits 2 before the window opens.
     let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
     let vars = env::Env::read();
-    let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
-    let collab = match (launch.collab_url, launch.collab_token, launch.collab_doc) {
-        (Some(url), Some(token), Some(doc)) => Some((url, token, doc)),
-        _ => None,
+    let collab = match launch_args::collab_config(&launch) {
+        Ok(config) => config,
+        // A usage error, like a bad flag: named on standard error, exit 2, before the window.
+        Err(message) => {
+            eprintln!("cadcraft: {message}");
+            std::process::exit(2);
+        }
     };
+    let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {

@@ -44,7 +44,11 @@ pub struct Metrics {
 
 impl Metrics {
     /// The counters and the room's state, as Prometheus text.
-    pub fn render(&self, version: u64, journal: usize, participants: usize) -> String {
+    ///
+    /// `participants` is the presence board's size (only a client that sends `Presence` has an
+    /// entry there); `connections_open` is the number of open sockets, which is what the idle
+    /// shutdown must look at.
+    pub fn render(&self, version: u64, journal: usize, participants: usize, connections_open: usize) -> String {
         format!(
             "# TYPE cadcraft_collab_connections_total counter\ncadcraft_collab_connections_total {}\n\
              # TYPE cadcraft_collab_operations_total counter\ncadcraft_collab_operations_total{{result=\"applied\"}} {}\n\
@@ -52,7 +56,8 @@ impl Metrics {
              # TYPE cadcraft_collab_errors_total counter\ncadcraft_collab_errors_total {}\n\
              # TYPE cadcraft_collab_version gauge\ncadcraft_collab_version {}\n\
              # TYPE cadcraft_collab_journal_length gauge\ncadcraft_collab_journal_length {}\n\
-             # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n",
+             # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n\
+             # TYPE cadcraft_collab_connections_open gauge\ncadcraft_collab_connections_open {}\n",
             self.connections.load(Ordering::Relaxed),
             self.applied.load(Ordering::Relaxed),
             self.rejected.load(Ordering::Relaxed),
@@ -60,6 +65,7 @@ impl Metrics {
             version,
             journal,
             participants,
+            connections_open,
         )
     }
 }
@@ -72,6 +78,9 @@ pub struct Server {
     auth: Arc<dyn Authenticator>,
     app: String,
     session: String,
+    /// The drawing this room serves, when the deployment names one (`--file-id`): a token's `doc`
+    /// must be this id, so a token for another drawing cannot join.
+    doc: Option<String>,
     metrics: Arc<Metrics>,
 }
 
@@ -85,8 +94,17 @@ impl Server {
             auth,
             app: app.into(),
             session: session_id.into(),
+            doc: None,
             metrics: Arc::new(Metrics::default()),
         }
+    }
+
+    /// Name the drawing this room serves (`--file-id`): a token whose `doc` is another drawing is
+    /// refused at the first message, so the per-drawing access the claim carries is enforced here
+    /// and not only by the client.
+    pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
+        self.doc = Some(doc.into());
+        self
     }
 
     /// The counters of this room.
@@ -131,11 +149,29 @@ impl Server {
         lock(&self.presence).len()
     }
 
+    /// How many sockets are open, including clients that have not sent presence yet.
+    pub fn connections_open(&self) -> usize {
+        lock(&self.peers).len()
+    }
+
+    /// Whether `claims` may enter the room this server serves, with the `hello`'s `doc` as
+    /// `requested`.
+    ///
+    /// The token's `doc` is the cabinet's file id: it must name the drawing the client asked for,
+    /// and the drawing this room serves when the deployment named one. An empty `doc` is the
+    /// `--dev-token` case, which only a deployment that names no drawing accepts.
+    fn accepts_doc(&self, claims: &Claims, requested: &str) -> bool {
+        if claims.doc.is_empty() {
+            return self.doc.is_none();
+        }
+        claims.doc == requested && self.doc.as_deref().is_none_or(|served| served == claims.doc.as_str())
+    }
+
     fn connection(&self, stream: TcpStream) -> io::Result<()> {
         stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
         let mut socket = accept(stream).map_err(io::Error::other)?;
-        let (app, jwt, last_version) = match read_client(&mut socket)? {
-            Some(ClientMessage::Hello { app, jwt, last_version, .. }) => (app, jwt, last_version),
+        let (app, doc, jwt, last_version) = match read_client(&mut socket)? {
+            Some(ClientMessage::Hello { app, doc, jwt, last_version, .. }) => (app, doc, jwt, last_version),
             _ => return Ok(()),
         };
         if app != self.app {
@@ -149,6 +185,10 @@ impl Server {
                 return Ok(());
             }
         };
+        if !self.accepts_doc(&claims, &doc) {
+            send(&mut socket, &ServerMessage::Error { code: "auth".into(), message: "the token is for another drawing".into(), retryable: false })?;
+            return Ok(());
+        }
         let (tx, rx) = channel();
         lock(&self.peers).push((claims.sub.clone(), tx.clone()));
 
@@ -381,5 +421,55 @@ fn read_client(socket: &mut WebSocket<TcpStream>) -> io::Result<Option<ClientMes
     match socket.read() {
         Ok(Message::Text(text)) => Ok(serde_json::from_str(text.as_str()).ok()),
         _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::StaticAuthenticator;
+    use cadcraft_collab::Role;
+    use cadcraft_doc::Drawing;
+
+    fn server(doc: Option<&str>) -> Server {
+        let auth = Arc::new(StaticAuthenticator::new(Vec::new()));
+        let server = Server::new(Room::new(Drawing::new_metric()).unwrap(), auth, "session", "cadcraft");
+        match doc {
+            Some(doc) => server.with_doc(doc),
+            None => server,
+        }
+    }
+
+    fn claims(doc: &str) -> Claims {
+        Claims { sub: "u1".into(), doc: doc.into(), role: Role::Editor }
+    }
+
+    /// The token's `doc` is the cabinet's file id: a room that serves one drawing must not accept
+    /// a token for another, or an editor of one drawing edits every drawing that shares the
+    /// secret (CodeRabbit on #2936).
+    #[test]
+    fn a_token_is_bound_to_the_drawing_the_room_serves() {
+        let bound = server(Some("file-1"));
+        assert!(bound.accepts_doc(&claims("file-1"), "file-1"));
+        assert!(!bound.accepts_doc(&claims("file-2"), "file-2"), "another drawing's token");
+        assert!(!bound.accepts_doc(&claims("file-1"), "file-2"), "the client asked for another drawing");
+        assert!(!bound.accepts_doc(&claims(""), "file-1"), "a dev token in a room bound to a drawing");
+
+        let unbound = server(None);
+        assert!(unbound.accepts_doc(&claims("file-1"), "file-1"), "no served id: the claim only has to match the request");
+        assert!(!unbound.accepts_doc(&claims("file-1"), "file-2"));
+        assert!(unbound.accepts_doc(&claims(""), "anything"), "a dev token names no drawing");
+    }
+
+    /// The idle shutdown looks at sockets, not presence: a viewer never sends presence and would
+    /// otherwise have the room closed under it (CodeRabbit on #2936).
+    #[test]
+    fn open_connections_are_counted_even_without_presence() {
+        let server = server(None);
+        assert_eq!(server.connections_open(), 0);
+        let (tx, _rx) = channel();
+        lock(&server.peers).push(("u1".into(), tx));
+        assert_eq!(server.connections_open(), 1);
+        assert_eq!(server.participants(), 0, "a connection that sent no presence is still a connection");
     }
 }

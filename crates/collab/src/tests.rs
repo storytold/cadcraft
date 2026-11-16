@@ -252,6 +252,63 @@ fn a_new_layer_is_created_before_the_objects_on_it() {
     assert!(applied.layers.iter().any(|l| l.name == "NEW"));
 }
 
+/// A layer merge moves an object to another layer and deletes the old one: the object's change
+/// must reach the replica before the layer that still holds it is deleted, or the replica refuses
+/// the change (`NoEntity`) and needs a snapshot (CodeRabbit on #2936).
+#[test]
+fn a_layer_deletion_follows_the_object_that_left_it() {
+    let mut before = Drawing::new_metric();
+    before.layers.push(cadcraft_doc::Layer::new("TEMP"));
+    let h = before.add(&Space::Model, Common { layer: "TEMP".into(), ..Default::default() }, point(1.0)).unwrap();
+    let mut after = before.clone();
+    after
+        .modify_entity(h, |e| {
+            e.common.layer = "0".into();
+            e.kind = point(2.0);
+        })
+        .unwrap();
+    after.layers.retain(|l| !l.name.eq_ignore_ascii_case("TEMP"));
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+    let replaced = changes.iter().position(|c| matches!(c, Change::EntityReplace { .. })).expect("the object moved");
+    let deleted = changes.iter().position(|c| matches!(c, Change::TableDelete { .. })).expect("the layer is gone");
+    assert!(replaced < deleted, "the object leaves the layer before the layer goes: {changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.entity(h), after.entity(h), "the object arrived on its new layer");
+    assert!(applied.layers.iter().all(|l| !l.name.eq_ignore_ascii_case("TEMP")));
+}
+
+/// A block definition's objects live in the block, not in a space, so the definition travels whole
+/// — and an undo of its creation removes it (ADR 0020, CodeRabbit on #2936).
+#[test]
+fn a_block_definition_travels_with_its_objects() {
+    let before = Drawing::new_metric();
+    let mut after = before.clone();
+    let mut block = cadcraft_doc::Block::new("DOOR");
+    let line = after.new_handle();
+    block.entities.push(Entity::new(line, point(1.0)));
+    after.blocks.insert("DOOR".into(), std::sync::Arc::new(block));
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::BlockCreate { name, entities, .. } if name == "DOOR" && entities.len() == 1)), "{changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.blocks, after.blocks, "the definition and its objects arrived");
+    assert!(applied.handseed > line.0, "a later allocation cannot reuse the block's handle");
+
+    let changes = crate::diff_all(&applied, &before, &mut registry, &crate::TableRenames::default()).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::BlockDelete { name } if name == "DOOR")), "{changes:?}");
+    apply(&mut applied, &changes).unwrap();
+    assert!(applied.blocks.is_empty());
+}
+
 #[test]
 fn renaming_a_layout_keeps_its_entities() {
     let mut before = Drawing::new_metric();
