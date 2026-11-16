@@ -4,6 +4,10 @@
 //! version is read as that version, and its new FIELD objects are written in that version's
 //! groups (before 2007: the format in group 4, values without flags and format).
 //!
+//! Saved as DWG 2007 or later, such a pre-2007 format reaches the DWG only through craft-dwg's
+//! copy of it into the 2007 value format (craft-libs #1580); the DWG 2018 checks of a drawing kept
+//! as R2000 need a craft-dwg pin with that change.
+//!
 //! Non-ASCII field text is not covered: the bridge writes it as `\U+XXXX` escapes, which the
 //! acadrust used here decodes for every version; acadrust#213 / CADCraft #2851 track a newer one
 //! that does not.
@@ -354,8 +358,8 @@ fn a_dwg_2004_with_fields_reopens_with_them_and_saves_the_same() {
     assert_eq!(contents(&read(&second, "b.dwg").unwrap()), [DATE, TWO, EXPR]);
 }
 
-/// A drawing kept as AutoCAD 2007 (AC1021) is read as that, no longer as 2010: its FIELD groups
-/// are the 2007 ones, so a DWG 2018 keeps the formats.
+/// A drawing kept as AutoCAD 2007 (AC1021) is read as that: its new FIELD objects are in the
+/// 2007 groups (as when it was read as 2010), so a DWG 2018 keeps the formats.
 #[test]
 fn fields_added_to_a_2007_drawing_keep_formats_in_dwg_2018() {
     let r2007 = write_with(&Drawing::new_metric(), "old.dwg", &SaveOptions { version: Some(Version::R2007), binary: false }).unwrap();
