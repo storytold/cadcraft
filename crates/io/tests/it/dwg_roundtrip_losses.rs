@@ -6,6 +6,7 @@ use cadcraft_doc::*;
 use cadcraft_geom::{Vec2, Vec3};
 
 fn through_dwg(d: &Drawing) -> Drawing {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = cadcraft_io::write(d, "x.dwg").unwrap();
     cadcraft_io::read(&dwg, "x.dwg").unwrap()
 }
@@ -62,6 +63,7 @@ fn viewport_ids(l: &Layout) -> Vec<u32> {
 /// AutoCAD 2018 (R2000 DWG has neither), while the DXF the bridge reads stays R2000.
 #[test]
 fn dwg_keeps_true_colours_and_transparency() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     d.layers.push(Layer { name: "Fancy".into(), color: Color::True(Rgb(12, 200, 99)), ..Layer::default() });
     let h = line(

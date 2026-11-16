@@ -393,6 +393,7 @@ fn read_census_reports_entities_the_reader_left_out() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dxf_round_trip_of_plain_geometry_is_lossless() {
+    crate::dwg_worker::allow_in_process();
     use corpus::{Format, round_trip};
     let mut d = drawing();
     // What the comparator should see in a round trip: the drawing as read from its own DXF.
@@ -416,6 +417,7 @@ fn dxf_round_trip_of_plain_geometry_is_lossless() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn hostile_files_are_reported_not_crashed() {
+    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusOptions, check_bytes};
     let opts = CorpusOptions::default();
     for (bytes, name) in [
@@ -437,6 +439,7 @@ fn hostile_files_are_reported_not_crashed() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn report_renders_as_markdown_and_json() {
+    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusOptions, CorpusReport, check_bytes};
     let d = drawing();
     let dxf = crate::write(&d, "a.dxf").unwrap();
@@ -498,6 +501,7 @@ fn corpus_round_trip_report() {
         eprintln!("CADCRAFT_CORPUS_DIR is not set: corpus round trip skipped");
         return;
     };
+    crate::dwg_worker::allow_in_process();
     let out = std::env::var_os("CADCRAFT_CORPUS_REPORT").map_or_else(|| dir.join("report"), std::path::PathBuf::from);
     let files = corpus::corpus_files(&dir, std::slice::from_ref(&out));
     let report = corpus::run(&dir, &files, &corpus::CorpusOptions::default(), &mut |i, n, rel| eprintln!("[{}/{n}] {rel}", i + 1));
@@ -515,6 +519,7 @@ fn corpus_round_trip_report() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn types_the_dwg_writer_cannot_write_are_reported_lost() {
+    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusReport, FileReport, Format, round_trip};
     let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags });
     let mut d = Drawing::new_metric();

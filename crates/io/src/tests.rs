@@ -778,6 +778,7 @@ fn plot_paper_groups(dxf: &str, layout: &str) -> (f64, f64, i64) {
 
 #[test]
 fn landscape_media_keeps_its_size_order_and_rotation() {
+    crate::dwg_worker::allow_in_process();
     // A media defined wider than tall, as ZWCAD and AutoCAD name it (#1463).
     let media = "ISO full bleed A3 (420.00 x 297.00 MM)";
     for (landscape, rotation) in [(true, 0), (false, 1)] {
@@ -811,6 +812,7 @@ fn landscape_media_keeps_its_size_order_and_rotation() {
 /// longer describe it and the size and rotation are derived again.
 #[test]
 fn a_files_own_paper_groups_are_written_back() {
+    crate::dwg_worker::allow_in_process();
     let set = |dxf: &str, (w, h, r): (f64, f64, i64)| -> String {
         let mut lines: Vec<String> = dxf.lines().map(String::from).collect();
         let name = (0..lines.len() - 3)
@@ -1229,6 +1231,7 @@ fn viewport_freeze_edited_in_autocad_is_read_as_edited() {
 
 #[test]
 fn viewport_frozen_layers_survive_dwg() {
+    crate::dwg_worker::allow_in_process();
     let (d, _) = frozen_vp_dxf();
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
@@ -1490,6 +1493,7 @@ fn ac1024_dwg(n: usize) -> Vec<u8> {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn ac1024_dwg_with_many_entities_opens() {
+    crate::dwg_worker::allow_in_process();
     let n = 30_000;
     let dwg = ac1024_dwg(n);
     let dxf = craft_dwg::dwg_to_dxf(&dwg).unwrap();
@@ -1552,6 +1556,7 @@ fn shared_dwg_diagnostics_keep_cadcraft_vocabulary() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn damaged_dwg_opens_partially_and_says_what_it_left_out() {
+    crate::dwg_worker::allow_in_process();
     let mut dxf = String::from("0\nSECTION\n2\nENTITIES\n");
     for i in 0..200 {
         dxf += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");
@@ -1847,6 +1852,7 @@ fn constraints_and_parameters_roundtrip_exactly() {
 
 #[test]
 fn layer_states_roundtrip_next_to_constraints() {
+    crate::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     let (constraints, _) = parametric_sample(&mut d);
     d.layers.push(Layer {
@@ -2103,6 +2109,7 @@ fn reads_utf8_and_code_page_text() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_roundtrip_keeps_non_ascii_text() {
+    crate::dwg_worker::allow_in_process();
     let back = read(&write(&intl_sample(), "x.dwg").unwrap(), "x.dwg").unwrap();
     assert_intl(&back);
 }
@@ -2205,6 +2212,7 @@ fn extension_sample_roundtrips_and_can_be_exported() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_roundtrip_keeps_extension_data() {
+    crate::dwg_worker::allow_in_process();
     let d = extension_sample();
     let back = read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
     // The bridge loses DIMFXL and DIMJOGANG (0 and its 5° minimum come back).
@@ -2464,6 +2472,7 @@ fn gradient_falls_back_to_xdata_and_native_groups_win() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn gradient_hatch_roundtrips_through_dwg() {
+    crate::dwg_worker::allow_in_process();
     let (d, gradients) = gradient_sample();
     let back = read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
     let hs = hatches(&back);
@@ -3580,6 +3589,7 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn proxies_keep_their_class_in_dwg() {
+    crate::dwg_worker::allow_in_process();
     use acadrust::entities::{EntityType, ExtendedEntityData};
     use acadrust::objects::ObjectType;
     let d = read(&proxy_file(), "p.dxf").unwrap();
@@ -3688,6 +3698,7 @@ fn a_binary_dxf_leaves_its_proxies_out_of_the_dwg() {
 #[cfg(unix)]
 #[test]
 fn non_unicode_names_pick_the_format_by_extension() {
+    crate::dwg_worker::allow_in_process();
     use std::os::unix::ffi::OsStringExt as _;
     let name = |ext: &str| std::path::PathBuf::from(std::ffi::OsString::from_vec([b"caf\xe9.".as_slice(), ext.as_bytes()].concat()));
     assert!(is_image(name("png")) && !is_image(name("dxf")));

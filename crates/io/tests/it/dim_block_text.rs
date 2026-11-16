@@ -106,6 +106,7 @@ fn dxf_angular_block_text_keeps_the_decimal_separator() {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_angular_block_text_keeps_the_decimal_separator() {
+    cadcraft_io::dwg_worker::allow_in_process();
     use std::io::Cursor;
 
     use acadrust::entities::EntityType;

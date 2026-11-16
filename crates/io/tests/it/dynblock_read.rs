@@ -73,6 +73,7 @@ fn a_dynamic_block_reads_its_parameters_and_actions() {
 
 #[test]
 fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(dxf(&fixture()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();
     let again = read_dxf(write_dxf(&d).as_bytes()).unwrap();
@@ -109,6 +110,7 @@ fn with_scale_action() -> String {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_scale_action_survives_a_dwg_save() {
+    cadcraft_io::dwg_worker::allow_in_process();
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
     let d = read_dxf(dxf(&with_scale_action()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();

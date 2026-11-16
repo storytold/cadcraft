@@ -822,6 +822,7 @@ fn non_unicode_arguments() {
 #[cfg(unix)]
 #[test]
 fn non_unicode_output_names() {
+    cadcraft_io::dwg_worker::allow_in_process();
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
     let s = Scratch::new("nonunicode-out");
