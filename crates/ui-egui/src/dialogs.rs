@@ -24,6 +24,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "hatch" => crate::hatchdlg::dialog(app, ctx, &mut open),
         "aliasedit" => crate::aliasdlg::dialog(app, ctx, &mut open),
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
+        crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
@@ -32,6 +33,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
+        o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
     }
     // A dialog that closed by opening another (Plot Preview back to Plot) keeps the new one.
@@ -325,7 +327,7 @@ fn about(ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("About CADCraft"))
         .id(egui::Id::unique("About CADCraft"))
         .open(open)
-        .default_size(vec2(640.0, 420.0))
+        .default_size(vec2(820.0, 420.0))
         .collapsible(false)
         .show(ctx, |ui| {
             let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
