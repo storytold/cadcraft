@@ -12,6 +12,7 @@ workspace = true
 cadcraft-geom = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
+craft-image-codecs = { workspace = true }
 cadcraft-fonts = { workspace = true }
 tiny-skia = { workspace = true }
 lyon_tessellation = { workspace = true }
