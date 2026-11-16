@@ -202,3 +202,43 @@
 	Yes	כן
 	Zoom In	הגדל תצוגה
 	Zoom Out	הקטן תצוגה
+
+# Continued source-verified Hebrew UI labels, 2026-11-16; English IDs unchanged.
+	All Used Layers	כל השכבות שבשימוש
+	ByLayer	לפי שכבה
+	Change to Current Layer	העבר לשכבה הנוכחית
+	Clear Command History	נקה את היסטוריית הפקודות
+	Command Line	שורת הפקודה
+	Copy Layout	העתק פריסה
+	Copy Selection	העתק בחירה
+	Delete Layer	מחק שכבה
+	Delete Layout	מחק פריסה
+	Deselect All	בטל את כל הבחירות
+	Find All	חפש הכול
+	Find and Replace	חיפוש והחלפה
+	Find...	חיפוש...
+	Freeze Layer	הקפא שכבה
+	New Drawing	שרטוט חדש
+	New Drawing...	שרטוט חדש...
+	New Layer	שכבה חדשה
+	New Layout	פריסה חדשה
+	No selection	אין בחירה
+	Open Sample Drawing	פתח שרטוט לדוגמה
+	Previous Layer	השכבה הקודמת
+	Quick Select	בחירה מהירה
+	Quick Select...	בחירה מהירה...
+	Recent Commands	פקודות אחרונות
+	Rename Layer	שנה את שם השכבה
+	Rename Layout	שנה את שם הפריסה
+	Restore Layer State	שחזר מצב שכבות
+	Save Layer State	שמור מצב שכבות
+	Search for layer	חפש שכבה
+	Select	בחר
+	Select Objects	בחר אובייקטים
+	Select Similar	בחר אובייקטים דומים
+	Selection	בחירה
+	Settings...	הגדרות...
+	Switch Layout	עבור לפריסה
+	Thaw Layer	בטל הקפאת שכבה
+	Turn On Layer	הפעל שכבה
+	Type a command	הקלד פקודה
