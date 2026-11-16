@@ -395,3 +395,56 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
 }
+
+/// The centres of the circles one frame of the app painted.
+fn painted_circles(app: &mut CadApp, ctx: &egui::Context) -> Vec<Pos2> {
+    fn collect(shape: &Shape, at: &mut Vec<Pos2>) {
+        match shape {
+            Shape::Circle(c) => at.push(c.center),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, at)),
+            _ => {}
+        }
+    }
+    let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), ..Default::default() };
+    let mut out = ctx.run_ui(raw, |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    });
+    out.textures_delta.clear();
+    let mut at = Vec::new();
+    out.shapes.iter().for_each(|s| collect(&s.shape, &mut at));
+    at
+}
+
+/// A participant's cursor travels in editing-space coordinates (model space inside an MSPACE
+/// viewport), so it is drawn with the editing transform: the paper transform would put it
+/// somewhere else or off the canvas (CodeRabbit on #2936/#2937).
+#[test]
+fn a_presence_cursor_inside_a_viewport_uses_the_editing_transform() {
+    let (mut app, _shown, _hidden, viewport, _other) = lines_in_two_viewports();
+    app.session.execute("mspace", &serde_json::json!({ "handle": viewport })).unwrap();
+    let space = app.session.state().unwrap().space.clone();
+    // One frame sets the transforms; the cursor then sits at the middle of the canvas, where the
+    // editing transform and the paper one disagree.
+    let ctx = egui::Context::default();
+    painted_circles(&mut app, &ctx);
+    let xf = app.canvas.xf.expect("the frame set the editing transform");
+    let cursor = xf.to_world(xf.rect.center());
+    app.remote_presence.insert(
+        "u2".into(),
+        cadcraft_collab::Presence {
+            actor: "u2".into(),
+            role: None,
+            space,
+            cursor: Some([cursor.x, cursor.y]),
+            selection: Vec::new(),
+            layer: "0".into(),
+            view: None,
+        },
+    );
+
+    let circles = painted_circles(&mut app, &ctx);
+
+    let editing = app.canvas.xf.expect("the second frame set the editing transform").to_screen(cursor);
+    assert!(circles.iter().any(|at| (*at - editing).length() < 0.5), "no cursor at the editing transform's {editing:?}");
+}

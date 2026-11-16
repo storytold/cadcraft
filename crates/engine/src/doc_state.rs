@@ -29,6 +29,10 @@ pub struct DocState {
     pub saved: Arc<Drawing>,
     pub revision: u64,
     pub space: Space,
+    /// The layer an operation named explicitly (`OpContext.clay`): objects created while it is set
+    /// go there instead of the drawing's `CLAYER`. `None` in an ordinary window, which follows the
+    /// drawing's current layer as always.
+    pub clay: Option<String>,
     /// Tiled model viewports (VPORTS).
     pub tiles: ModelTiles,
     /// MSPACE: the layout viewport whose model space is being edited (None = paper space).
@@ -65,6 +69,7 @@ impl DocState {
             title: title.into(),
             revision: 1,
             space: Space::Model,
+            clay: None,
             tiles: ModelTiles::default(),
             mspace: None,
             views: Vec::new(),

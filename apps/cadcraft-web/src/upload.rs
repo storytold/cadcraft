@@ -29,10 +29,20 @@ const MAX_READING_BYTES: u64 = 512 << 20;
 /// A file read in the browser (name, contents), or why it couldn't be read.
 type Upload = Result<(String, Vec<u8>), String>;
 
+/// A drawing the hosting page sent (`cadcraft:open`): the cabinet's bytes are the document the
+/// session starts from, so it opens locally (`CadApp::open_host_bytes`) instead of becoming a
+/// room operation the room refuses.
+#[derive(Clone)]
+struct HostFile {
+    name: String,
+    bytes: Vec<u8>,
+}
+
 /// Files read in the background, waiting for the app's next frame.
 #[derive(Clone)]
 pub struct Inbox {
     files: Rc<Cell<Vec<Upload>>>,
+    host_files: Rc<Cell<Vec<HostFile>>>,
     /// Bytes of the files being read now.
     reading: Rc<Cell<u64>>,
     ctx: egui::Context,
@@ -40,7 +50,7 @@ pub struct Inbox {
 
 impl Inbox {
     pub fn new(ctx: &egui::Context) -> Self {
-        Inbox { files: Rc::default(), reading: Rc::default(), ctx: ctx.clone() }
+        Inbox { files: Rc::default(), host_files: Rc::default(), reading: Rc::default(), ctx: ctx.clone() }
     }
 
     /// Show the browser's file picker and return at once. A chosen file arrives through
@@ -126,12 +136,18 @@ impl Inbox {
         });
     }
 
-    /// A file read elsewhere (sent by the page embedding CADCraft): opened on the next frame like
-    /// a picked file, or refused when too large to open.
-    pub fn receive(&self, name: String, bytes: Vec<u8>) {
+    /// The drawing the hosting page sent with the session (`cadcraft:open`): it opens locally on
+    /// the next frame, even while a shared session is attached, because the cabinet's bytes are
+    /// how the file reaches the browser (INTEGRATION.md §5.1).
+    pub fn receive_host(&self, name: String, bytes: Vec<u8>) {
         match CadApp::open_size_error(&name, bytes.len() as u64) {
             Some(e) => self.push(Err(e)),
-            None => self.push(Ok((name, bytes))),
+            None => {
+                let mut files = self.host_files.take();
+                files.push(HostFile { name, bytes });
+                self.host_files.set(files);
+                self.ctx.request_repaint();
+            }
         }
     }
 
@@ -150,6 +166,11 @@ impl Inbox {
     /// Open what arrived since the last frame (or report why it couldn't be read). Fonts are
     /// registered first, so drawings opened with them draw with them.
     pub fn drain(&self, app: &mut CadApp) {
+        // The host's drawing first: it is the document the session starts from, and it opens in
+        // the window rather than as a room operation.
+        for file in self.host_files.take() {
+            app.open_host_bytes(&file.name, &file.bytes);
+        }
         let (fonts, files): (Vec<Upload>, Vec<Upload>) = self.files.take().into_iter().partition(|u| u.as_ref().is_ok_and(|(n, _)| is_shx(n)));
         let mut registered = false;
         for (name, bytes) in fonts.into_iter().flatten() {

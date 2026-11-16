@@ -24,6 +24,16 @@ pub(crate) struct LaunchArgs {
     /// Open with the sample drawing
     #[arg(long)]
     pub(crate) sample: bool,
+    /// Join a shared session at this WebSocket URL
+    #[arg(long, value_name = "URL", env = "CADCRAFT_COLLAB_URL")]
+    pub(crate) collab_url: Option<String>,
+    /// The session token (a JWT) for the shared session; prefer the environment, which is not
+    /// visible in the process list
+    #[arg(long, value_name = "TOKEN", env = "CADCRAFT_COLLAB_TOKEN", hide = true)]
+    pub(crate) collab_token: Option<String>,
+    /// The drawing id the shared session is about
+    #[arg(long, value_name = "DOC", env = "CADCRAFT_COLLAB_DOC")]
+    pub(crate) collab_doc: Option<String>,
 }
 
 /// The command line. An empty or blank variable counts as unset.
@@ -46,6 +56,30 @@ pub(crate) fn parse(mut cmd: Command, args: impl IntoIterator<Item = OsString>) 
     let argv = std::iter::once(OsString::from("cadcraft")).chain(args.iter().cloned());
     let matches = cmd.try_get_matches_from_mut(argv).map_err(|e| name_env_vars(e, &cmd, &args))?;
     LaunchArgs::from_arg_matches(&matches)
+}
+
+/// The shared session's settings: the URL, the token and the drawing, or none of them.
+///
+/// A partial set is a usage error, not a silent offline start: the user asked for a shared
+/// session and would not hear that the request was incomplete (CodeRabbit on #2936).
+pub(crate) fn collab_config(args: &LaunchArgs) -> Result<Option<(String, String, String)>, String> {
+    match (&args.collab_url, &args.collab_token, &args.collab_doc) {
+        (None, None, None) => Ok(None),
+        (Some(url), Some(token), Some(doc)) => Ok(Some((url.clone(), token.clone(), doc.clone()))),
+        (url, token, doc) => {
+            let mut missing = Vec::new();
+            if url.is_none() {
+                missing.push("--collab-url");
+            }
+            if token.is_none() {
+                missing.push("--collab-token");
+            }
+            if doc.is_none() {
+                missing.push("--collab-doc");
+            }
+            Err(format!("a shared session needs all three of --collab-url, --collab-token and --collab-doc; missing {}", missing.join(", ")))
+        }
+    }
 }
 
 /// A control port, for clap's `value_parser`: `--control` and `CADCRAFT_CONTROL_PORT`, which may
@@ -154,5 +188,20 @@ mod tests {
         assert!(text.contains(&format!("invalid value '{}' for 'PATH'", path.to_string_lossy())), "{text}");
         assert!(!text.contains("--control <PORT>'"), "{text}");
         assert_eq!(parse(path_fallback(), ["--control", "7"].map(OsString::from)).unwrap().control, Some(7));
+    }
+
+    /// A shared session's three settings are one switch: a partial set is a usage error naming
+    /// what is missing, not a silent offline start (CodeRabbit on #2936).
+    #[test]
+    fn a_partial_collaboration_configuration_is_refused() {
+        let error = collab_config(&parse_args(&["--collab-url", "wss://office/sync"]).unwrap()).unwrap_err();
+        assert!(error.ends_with("missing --collab-token, --collab-doc"), "{error}");
+        let error = collab_config(&parse_args(&["--collab-token", "t"]).unwrap()).unwrap_err();
+        assert!(error.ends_with("missing --collab-url, --collab-doc"), "{error}");
+
+        assert!(collab_config(&parse_args(&[]).unwrap()).unwrap().is_none(), "no flags, no session");
+        let full = parse_args(&["--collab-url", "wss://office/sync", "--collab-token", "t", "--collab-doc", "file-1"]).unwrap();
+        let (url, token, doc) = collab_config(&full).unwrap().expect("all three");
+        assert_eq!((url.as_str(), token.as_str(), doc.as_str()), ("wss://office/sync", "t", "file-1"));
     }
 }

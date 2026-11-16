@@ -236,13 +236,16 @@ fn keep_z(src: &EntityKind, k: &mut EntityKind) {
 fn add_offset(s: &mut Session, src: &Entity, mut k: EntityKind, current_layer: bool, erase: bool) -> Result<Handle> {
     keep_z(&src.kind, &mut k);
     let space = s.space();
+    // The current layer as the command sees it: an operation in a shared session names the
+    // author's layer (`context.clay`, ADR-0019), an ordinary window keeps the drawing's `CLAYER`.
+    let layer = current_layer.then(|| s.current_common().layer);
     let d = s.doc_mut()?;
     let mut common = src.common.clone();
     if matches!(k, EntityKind::Circle(_) | EntityKind::Arc(_)) {
         common.thickness = 0.0;
     }
-    if current_layer {
-        common.layer = d.header.str("CLAYER", "0");
+    if let Some(layer) = layer {
+        common.layer = layer;
     }
     let nh = d.new_handle();
     if let Some(st) = d.space_mut(&space) {

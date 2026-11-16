@@ -295,6 +295,14 @@ fn main() -> eframe::Result {
     // standard error and exits 2 before the window opens.
     let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
     let vars = env::Env::read();
+    let collab = match launch_args::collab_config(&launch) {
+        Ok(config) => config,
+        // A usage error, like a bad flag: named on standard error, exit 2, before the window.
+        Err(message) => {
+            eprintln!("cadcraft: {message}");
+            std::process::exit(2);
+        }
+    };
     let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
@@ -368,6 +376,22 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            if let Some((url, token, doc)) = collab.clone() {
+                // A shared session's drawing comes from the server; a local empty drawing gives the
+                // change sets somewhere to land until the first snapshot arrives.
+                if app.session.doc().is_err() {
+                    app.session.new_drawing(false);
+                }
+                match cadcraft_ui_egui::collab::Collab::connect(&url, &token, &doc) {
+                    Ok(collab) => {
+                        app = app.with_collab(collab);
+                    }
+                    Err(error) => {
+                        eprintln!("collab: {error}");
+                        app.set_status(format!("collab: {error}"));
+                    }
+                }
+            }
             // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the
             // app when the dialog is resized (#1527).
             #[cfg(target_os = "macos")]
@@ -417,11 +441,21 @@ fn main() -> eframe::Result {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
             }
-            if sample {
-                let _ = app.run("ui.sample", serde_json::json!({}));
-            }
-            for f in &files {
-                app.open_path(f);
+            // A shared session's drawing comes from the room: a sample or a path on the command line
+            // would open a local drawing into the attached session, and the room's changes would
+            // then land on a drawing the room does not own while commands go to the room (ADR 0001,
+            // CodeRabbit on #2938).
+            if app.is_shared() {
+                if sample || !files.is_empty() {
+                    app.set_status("the shared session's drawing comes from the room; the local drawing was not opened");
+                }
+            } else {
+                if sample {
+                    let _ = app.run("ui.sample", serde_json::json!({}));
+                }
+                for f in &files {
+                    app.open_path(f);
+                }
             }
             if app.session.docs.is_empty() {
                 // In the units the profile asks for (MEASUREINIT, restored above).

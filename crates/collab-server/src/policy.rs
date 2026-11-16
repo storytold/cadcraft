@@ -1,0 +1,306 @@
+//! What a shared session accepts: roles, the command allowlist and the size limits.
+//!
+//! A collaboration session is not a shell. A command that opens or writes a file, drives the UI,
+//! runs a script or reads another drawing would either escape the session or make every participant
+//! depend on one client's files, so it is refused on the server (ADR-0001, ADR-0008). The role
+//! check is here too: the engine has no read-only mode, so a viewer is stopped at this boundary.
+
+use cadcraft_collab::Op;
+
+/// The most entities, table records and layout changes one operation may change.
+pub const MAX_CHANGES: usize = 5_000;
+/// The most bytes one operation's parameters may take.
+pub const MAX_OP_BYTES: usize = 1 << 20;
+/// The most participants one room keeps presence for.
+pub const MAX_PARTICIPANTS: usize = 8;
+
+/// Why `command` is not a shared-drawing operation, or `None` when it is.
+///
+/// The deny list is explicit rather than an allowlist of 400 command ids: every command CADCraft
+/// has is a drawing operation unless it touches a file, the UI, a script or another drawing, and a
+/// new command should not need a protocol change to work. The hard exclusions are the ones that can
+/// leave the session or bypass its order (ADR-0001 §allowlist).
+pub fn deny_reason(command: &str) -> Option<&'static str> {
+    let command = command.trim().to_ascii_lowercase();
+    if command.is_empty() {
+        return Some("a command is required");
+    }
+    // The current layer is a participant's, not the drawing's: a room that ran this would move its
+    // own `CLAYER` with no change set, and every replica would keep the layer it already had — so
+    // a later deletion of that layer would be refused on the replica that is still on it
+    // (CodeRabbit on #2938). A client sets its own layer locally (ADR-0019).
+    if matches!(command.as_str(), "layer.current" | "clayer") {
+        return Some("the current layer belongs to each participant, not to the drawing");
+    }
+    const DENIED: &[&str] = &[
+        "open",
+        "save",
+        "qsave",
+        "saveas",
+        "new",
+        "quit",
+        "exit",
+        "close",
+        "recover",
+        "audit",
+        "purge",
+        "plot",
+        "preview",
+        "publish",
+        "export",
+        "script",
+        "deliver",
+        "undo",
+        "redo",
+        "compare",
+        "compareexport",
+        "xref",
+        "xattach",
+        "xbind",
+        "xopen",
+        "options",
+        "mcp",
+        "control",
+        "document.bytes",
+        // Commands that read or write a file on the server: `appload` loads a `.lsp` from a path,
+        // `wblock` writes one, and the rest import or export a file (ADR-0001).
+        "appload",
+        "wblock",
+        "-wblock",
+        "tableexport",
+        "dataextraction",
+        "eattext",
+        "datalink",
+        "datalinkupdate",
+        "drawingrecovery",
+        "exportpdf",
+    ];
+    if DENIED.contains(&command.as_str()) {
+        return Some("the command changes the file or the session, not the shared drawing");
+    }
+    const DENIED_PREFIXES: &[&str] = &["ui.", "app.", "file.", "lisp", "plot", "recover", "script"];
+    for prefix in DENIED_PREFIXES {
+        if command.starts_with(prefix) {
+            return Some("the command is not a shared-drawing operation");
+        }
+    }
+    None
+}
+
+/// Why `op` is too large for one transaction, or `None` when it fits.
+pub fn size_reason(op: &Op) -> Option<&'static str> {
+    match serde_json::to_vec(&op.params) {
+        Ok(bytes) if bytes.len() > MAX_OP_BYTES => Some("the operation's parameters are larger than 1 MiB"),
+        Ok(_) => None,
+        Err(_) => Some("the operation's parameters are not valid JSON"),
+    }
+}
+
+/// Why `op` may not run in a shared session, or `None` when it may.
+///
+/// `imageattach` names an image file in the drawing. Without bytes the engine would open that file
+/// on the **server's** disk at a path the client chose, and the other participants would see a
+/// different image or a crossed-out frame. A shared session therefore takes the raster bytes in the
+/// operation (`data`) or their content address in the room's store (`asset`, ADR 0021), and rejects
+/// the file-reading form before the drawing changes.
+///
+/// `insert` and `minsert` read a drawing file the same way when their `file` parameter names one;
+/// the interactive `bolt=C:\parts\bolt.dwg` form is not reachable as an operation, because a shared
+/// session's command line only inserts a block the drawing already holds (`cmdline::insert`), and
+/// the JSON form has no path in `name`. So the file-reading form is refused here and a block insert
+/// stays a drawing operation (CodeRabbit on #2938).
+pub fn params_reason(op: &Op) -> Option<&'static str> {
+    if is_image_attach(&op.command) {
+        let has_data = op.params.get("data").and_then(|value| value.as_str()).is_some_and(|data| !data.trim().is_empty());
+        let asset = op.params.get("asset").and_then(|value| value.as_str()).map(str::trim).filter(|asset| !asset.is_empty());
+        return match (has_data, asset) {
+            (true, Some(_)) => Some("give the image bytes in `data` or their content address in `asset`, not both"),
+            (true, None) => None,
+            (false, None) => Some(
+                "imageattach needs the image bytes in `data` or their content address in `asset`; a shared session never reads a file by the client's path",
+            ),
+            (false, Some(asset)) if !cadcraft_collab::is_asset_id(asset) => {
+                Some("`asset` must be the SHA-256 of the image bytes: 64 lower-case hexadecimal characters")
+            }
+            (false, Some(_)) => None,
+        };
+    }
+    if is_insert(&op.command) {
+        let file = op.params.get("file").and_then(|value| value.as_str()).map(str::trim).filter(|file| !file.is_empty());
+        if file.is_some() {
+            return Some("insert reads a drawing file on the server; a shared session inserts a block the drawing already holds");
+        }
+    }
+    None
+}
+
+/// Whether `command` inserts a block, including the aliases the engine gives it: `-INSERT` is the
+/// classic command line, `ddinsert` and `minsert` run the same form.
+pub(crate) fn is_insert(command: &str) -> bool {
+    matches!(command.trim().to_ascii_lowercase().as_str(), "insert" | "i" | "-insert" | "ddinsert" | "minsert")
+}
+
+/// Whether `command` attaches a raster image: `IMAGEATTACH`, and `ATTACH`, which the engine runs
+/// as the same command when the file is an image.
+pub(crate) fn is_image_attach(command: &str) -> bool {
+    matches!(command.trim().to_ascii_lowercase().as_str(), "imageattach" | "attach")
+}
+
+/// Whether a change set exceeds [`MAX_CHANGES`].
+pub fn changes_too_many(changes: usize) -> bool {
+    changes > MAX_CHANGES
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cadcraft_collab::Role;
+    use cadcraft_collab::{OpContext, OpKind};
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    fn op(command: &str, params: serde_json::Value) -> Op {
+        Op {
+            op_id: "op".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: command.into(),
+            params,
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    #[test]
+    fn file_session_and_ui_commands_are_denied() {
+        for command in [
+            "open",
+            "save",
+            "saveas",
+            "qsave",
+            "new",
+            "recover",
+            "purge",
+            "audit",
+            "undo",
+            "redo",
+            "lisp",
+            "ui.theme",
+            "file.new",
+            "app.quit",
+            "document.bytes",
+        ] {
+            assert!(deny_reason(command).is_some(), "`{command}` must not be a shared operation");
+        }
+    }
+
+    #[test]
+    fn appload_and_the_file_commands_are_denied() {
+        for command in
+            ["appload", "wblock", "-wblock", "tableexport", "dataextraction", "eattext", "datalink", "datalinkupdate", "drawingrecovery", "exportpdf"]
+        {
+            assert!(deny_reason(command).is_some(), "`{command}` reads or writes a file on the server");
+        }
+    }
+
+    #[test]
+    fn the_current_layer_is_never_a_room_operation() {
+        for command in ["layer.current", "CLAYER"] {
+            assert!(deny_reason(command).is_some(), "`{command}` is each participant's own setting");
+        }
+        // The property command is still a drawing operation: its changes belong to the room.
+        assert!(deny_reason("layer.set").is_none());
+    }
+
+    #[test]
+    fn insert_of_a_file_is_refused_and_insert_of_a_block_is_not() {
+        // `name` alone: the block the drawing already holds.
+        assert!(params_reason(&op("insert", json!({ "name": "BOLT", "at": [0, 0] }))).is_none());
+        assert!(params_reason(&op("minsert", json!({ "name": "BOLT", "at": [0, 0] }))).is_none());
+        // The `file` parameter makes the engine read a drawing on the server's disk.
+        let file = json!({ "name": "BOLT", "file": "/srv/parts/bolt.dwg", "at": [0, 0] });
+        assert!(params_reason(&op("insert", file.clone())).is_some());
+        assert!(params_reason(&op("MINSERT", file)).is_some());
+        // Every alias the engine gives the command is checked too.
+        for command in ["insert", "i", "-insert", "ddinsert", "minsert"] {
+            assert!(
+                params_reason(&op(command, json!({ "name": "BOLT", "file": "bolt.dwg", "at": [0, 0] }))).is_some(),
+                "`{command}` runs the same file-reading form"
+            );
+        }
+        // An empty `file` names nothing.
+        assert!(params_reason(&op("insert", json!({ "name": "BOLT", "file": "  ", "at": [0, 0] }))).is_none());
+        // An ordinary drawing command is untouched.
+        assert!(params_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
+    }
+
+    #[test]
+    fn drawing_commands_are_allowed() {
+        for command in [
+            "line",
+            "pline",
+            "move",
+            "copy",
+            "erase",
+            "rotate",
+            "layer.set",
+            "layout.rename",
+            "layout.new",
+            "rename",
+            "hatch",
+            "dimlinear",
+            "draworder",
+            "insert",
+            "minsert",
+        ] {
+            assert!(deny_reason(command).is_none(), "`{command}` is a drawing operation");
+        }
+    }
+
+    #[test]
+    fn a_viewer_may_not_write_but_may_close_only_as_owner() {
+        assert!(!Role::Viewer.may_write());
+        assert!(Role::Editor.may_write());
+        assert!(Role::Owner.may_write());
+        assert!(!Role::Editor.may_close());
+        assert!(Role::Owner.may_close());
+    }
+
+    #[test]
+    fn an_oversized_parameter_object_is_refused() {
+        assert!(size_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
+        let huge = "x".repeat(MAX_OP_BYTES + 1);
+        assert!(size_reason(&op("mtext", json!({ "text": huge }))).is_some());
+    }
+
+    #[test]
+    fn the_change_limit_is_inclusive() {
+        assert!(!changes_too_many(MAX_CHANGES));
+        assert!(changes_too_many(MAX_CHANGES + 1));
+    }
+
+    #[test]
+    fn imageattach_needs_its_bytes_in_the_operation() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        // The client's path is only a label: the bytes must travel with the operation.
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png" }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": "  " }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": 7 }))).is_some());
+        assert!(params_reason(&op("imageattach", json!({ "path": "map.png", "data": png }))).is_none());
+        // Every other drawing command is untouched by the rule.
+        assert!(params_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
+        // The command name is matched the way the engine spells it, ignoring case.
+        assert!(params_reason(&op("ImageAttach", json!({ "path": "map.png" }))).is_some());
+    }
+
+    #[test]
+    fn attach_takes_the_same_rule_as_imageattach() {
+        // `attach` runs IMAGEATTACH for an image, so a path with no bytes would read the server's
+        // disk here too.
+        assert!(params_reason(&op("attach", json!({ "path": "/etc/passwd.png" }))).is_some());
+        assert!(params_reason(&op("Attach", json!({ "path": "map.png", "data": "  " }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "data": 7 }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "asset": "not-an-address" }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "asset": "0".repeat(64) }))).is_none());
+    }
+}
