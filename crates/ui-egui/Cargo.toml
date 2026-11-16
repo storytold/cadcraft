@@ -18,6 +18,10 @@ cadcraft-render = { workspace = true }
 cadcraft-engine = { workspace = true }
 cadcraft-collab = { workspace = true }
 cadcraft-collab-client = { workspace = true }
+# A host's document in a test is a drawing written and read as a file (collab.rs);
+# the dynamic grips tests also read the synthetic dynamic-block fixture.
+cadcraft-io = { workspace = true }
+craft-image-codecs = { workspace = true }
 cadcraft-fonts = { workspace = true }
 craft-window = { workspace = true }
 egui = { workspace = true }
@@ -41,9 +45,6 @@ js-sys = "0.3"
 [dev-dependencies]
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
-# A host's document in a test is a drawing written and read as a file (collab.rs);
-# the dynamic grips tests also read the synthetic dynamic-block fixture through it.
-cadcraft-io = { workspace = true }
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in
 # production too; the tests exercise the same installed chain as the app.
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
