@@ -279,3 +279,45 @@
 	2 Viewports	2 חלונות תצוגה
 	3 Viewports	3 חלונות תצוגה
 	4 Viewports	4 חלונות תצוגה
+
+# DAY-04: UI labels translated from official CADCraft English source keys (16 Nov 2026).
+	Bold	מודגש
+	Boundary	גבול
+	Boundary...	גבול...
+	Bring to Front	הבא לחזית
+	CADCraft Help	עזרה של CADCraft
+	Center Line	קו מרכז
+	Center Mark	סימון מרכז
+	Change Space	שנה מרחב
+	Clear	נקה
+	Clipboard	לוח
+	Close All	סגור הכול
+	Color Index	אינדקס צבעים
+	Color...	צבע...
+	Command Reference	מדריך פקודות
+	Construction Line	קו עזר
+	Contents	תוכן
+	Count	ספירה
+	Default Save Format	פורמט שמירה כברירת מחדל
+	Delete Column	מחק עמודה
+	Delete Row	מחק שורה
+	Description	תיאור
+	Diameter	קוטר
+	Display name	שם תצוגה
+	Drawing Utilities	כלי עזר לשרטוט
+	Dynamic Input	קלט דינמי
+	Edit Text...	עריכת טקסט...
+	Ellipse	אליפסה
+	Endpoint	נקודת קצה
+	Enter new text	הזן טקסט חדש
+	Explode	פרק
+	Format	עיצוב
+	General	כללי
+	Geometry	גאומטריה
+	Gradient...	מעבר צבע...
+	Grid (F7)	רשת (F7)
+	Grid On (F7)	הפעל רשת (F7)
+	Hide Palettes	הסתר לוחות
+	Home	בית
+	Horizontal	אופקי
+	Interface Theme	ערכת נושא לממשק
