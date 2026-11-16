@@ -1176,7 +1176,7 @@ source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48#10f0fac31c3c7f063de8c359b39d247451324b48"
+source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
 
 [[package]]
 name = "craft-docpath"
@@ -1195,9 +1195,9 @@ dependencies = [
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48#10f0fac31c3c7f063de8c359b39d247451324b48"
+source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
 dependencies = [
- "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48)",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9)",
  "encoding_rs",
  "kurbo",
  "log",
