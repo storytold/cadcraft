@@ -536,7 +536,7 @@ JWT (ADR-0008), WSS, `Origin` для web, лимиты сообщений и о�
 | engine | `apply_remote`, `execute_intent`, `set_record_undo` | 452 lib-теста |
 | `cadcraft-collab-server` | комната, дедуп, structural, undo/redo, журнал, снапшот, commit, auth, роли, лимиты, WebSocket, метрики, idle-shutdown, хранилище вложений `--assets` (ADR-0021) | 60 + e2e |
 | `cadcraft-collab-client` | реплика, порядок версий, resync, reconnect, события | 5 тестов |
-| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 23 адресуемые команды | 260 lib (1 ignored), `collab_cmdline` 55 |
+| UI | флаги `--collab-url/--collab-doc`, поток соединения, presence-курсоры, undo/redo/save через сервер, viewer, список участников и выход из сессии, 25 адресуемых команд | 260 lib (1 ignored), `collab_cmdline` 55 |
 
 Осталось до приёмки: открытие commit-файла в LibreCAD/QCAD и web-режим через
 `craft-web-host`. Серверное хранилище вложений (`--assets`) реализовано

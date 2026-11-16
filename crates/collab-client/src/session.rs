@@ -133,7 +133,10 @@ impl Session {
     /// Wait for one message and apply it to the replica.
     pub fn next_event(&mut self) -> Result<Event, SessionError> {
         loop {
-            let message = self.connection.receive().map_err(SessionError::Transport)?;
+            let Some(message) = self.connection.try_receive().map_err(SessionError::Transport)? else {
+                // A read timeout is the normal way round a caller's loop, not a lost connection.
+                return Ok(Event::Idle);
+            };
             if let Some(event) = self.driver.on_message(message)? {
                 return Ok(event);
             }

@@ -48,6 +48,7 @@ pub struct ClientInfo {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClientMessage {
     /// The first message: the token, the drawing and where to resume from.
+    #[serde(rename_all = "camelCase")]
     Hello {
         /// The application id; a room only accepts its own.
         app: String,
@@ -64,25 +65,31 @@ pub enum ClientMessage {
     /// An operation.
     Op { op: Op },
     /// Undo this participant's last operation, if nothing changed since.
+    #[serde(rename_all = "camelCase")]
     Undo { op_id: String },
     /// Redo the operation this participant last undid, if nothing changed since.
+    #[serde(rename_all = "camelCase")]
     Redo { op_id: String },
     /// Where the participant is looking; never journaled.
     Presence { presence: Presence },
     /// Ask for the journal tail after `last_version`, or a snapshot when it is gone.
+    #[serde(rename_all = "camelCase")]
     Resync { last_version: u64 },
     /// Ask for the file to be written (ADR-0009).
+    #[serde(rename_all = "camelCase")]
     Commit { expected_version: u64 },
     /// Ask for the file a commit the cabinet refused with `409` built (TASK §6).
     ///
     /// The room keeps the refused file until the next accepted commit; the answer is
     /// [`ServerMessage::SaveCopyResult`]. The cabinet is never written by this request: the owner
     /// saves the room's work under a path of their own.
+    #[serde(rename_all = "camelCase")]
     SaveCopy { op_id: String },
     /// Store the bytes of an attachment under their content address (ADR 0021).
     ///
     /// The room checks the address against the bytes and its limits before anything is written;
     /// an attachment is never read by a name a client chose.
+    #[serde(rename_all = "camelCase")]
     AssetPut {
         /// SHA-256 of `bytes_base64`, lower-case hexadecimal.
         sha256: String,
@@ -103,6 +110,7 @@ pub enum ClientMessage {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMessage {
     /// The session is open.
+    #[serde(rename_all = "camelCase")]
     Welcome {
         /// The room's id.
         session_id: String,
@@ -130,6 +138,7 @@ pub enum ServerMessage {
     /// The drawing at a version, when the journal does not reach back.
     Snapshot { snapshot: Snapshot },
     /// The file a commit produced (ADR-0009).
+    #[serde(rename_all = "camelCase")]
     CommitResult {
         /// The drawing's version the file was written from.
         version: u64,
@@ -146,6 +155,7 @@ pub enum ServerMessage {
     ///
     /// This answer carries no bytes: the cabinet owns the file now, and every participant sees
     /// that it was stored.
+    #[serde(rename_all = "camelCase")]
     Committed {
         /// The drawing's version the file was written from.
         version: u64,
@@ -165,6 +175,7 @@ pub enum ServerMessage {
         message: String,
     },
     /// The file of a refused commit, for the owner to save as a copy (TASK §6).
+    #[serde(rename_all = "camelCase")]
     SaveCopyResult {
         /// The drawing's version the file was written from.
         version: u64,
@@ -183,6 +194,7 @@ pub enum ServerMessage {
         stored: bool,
     },
     /// The bytes of an attachment the room stores.
+    #[serde(rename_all = "camelCase")]
     Asset {
         /// The content address.
         sha256: String,
@@ -242,6 +254,11 @@ impl Snapshot {
     pub fn decode(parts: &[Snapshot]) -> Result<Vec<u8>, String> {
         use base64::Engine as _;
         let engine = base64::engine::general_purpose::STANDARD;
+        let Some(first) = parts.first() else { return Ok(Vec::new()) };
+        let version = first.version;
+        if parts.iter().any(|part| part.version != version) {
+            return Err("snapshot parts come from different snapshots".to_string());
+        }
         let mut parts = parts.to_vec();
         parts.sort_by_key(|part| part.seq);
         let mut bytes = Vec::new();
@@ -250,6 +267,9 @@ impl Snapshot {
                 return Err(format!("snapshot part {expected} is missing"));
             }
             bytes.extend(engine.decode(&part.bytes_base64).map_err(|e| e.to_string())?);
+        }
+        if parts.last().is_some_and(|part| part.more) {
+            return Err("snapshot part is missing".to_string());
         }
         Ok(bytes)
     }
@@ -367,14 +387,51 @@ mod tests {
     }
 
     #[test]
-    fn an_old_commit_result_without_a_cabinet_still_parses() {
+    fn a_commit_result_without_a_cabinet_still_parses() {
         let old = serde_json::json!({
             "type": "commitResult",
             "version": 2,
-            "not_saved": {},
-            "bytes_base64": "aGVsbG8="
+            "notSaved": {},
+            "bytesBase64": "aGVsbG8="
         });
         let message: ServerMessage = serde_json::from_value(old).unwrap();
         assert!(matches!(message, ServerMessage::CommitResult { cabinet: None, .. }));
+    }
+    #[test]
+    fn the_wire_fields_are_camel_case_as_the_rfc_lists_them() {
+        let hello = ClientMessage::Hello {
+            app: "cadcraft".into(),
+            doc: "d1".into(),
+            jwt: "j".into(),
+            client: ClientInfo { name: "cadcraft".into(), ver: "0".into() },
+            last_version: Some(3),
+        };
+        let json = serde_json::to_value(&hello).unwrap();
+        assert_eq!(json["lastVersion"], json!(3));
+        assert_eq!(json["client"]["name"], json!("cadcraft"));
+
+        let undo = ClientMessage::Undo { op_id: "o1".into() };
+        assert_eq!(serde_json::to_value(&undo).unwrap()["opId"], json!("o1"));
+
+        let commit = ClientMessage::Commit { expected_version: 5 };
+        assert_eq!(serde_json::to_value(&commit).unwrap()["expectedVersion"], json!(5));
+
+        let result = ServerMessage::SaveCopyResult { version: 4, not_saved: BTreeMap::new(), bytes_base64: "aGVsbG8=".into() };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["bytesBase64"], json!("aGVsbG8="));
+        assert!(json.get("bytes_base64").is_none(), "the struct's fields are camelCase on the wire");
+    }
+
+    #[test]
+    fn a_snapshot_that_lost_its_tail_or_mixes_versions_is_refused() {
+        let parts = Snapshot::encode(7, &vec![1u8; Snapshot::CHUNK_BYTES + 1]);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(Snapshot::decode(&parts).unwrap().len(), Snapshot::CHUNK_BYTES + 1);
+
+        assert_eq!(Snapshot::decode(&parts[..1]).unwrap_err(), "snapshot part is missing");
+
+        let mut mixed = parts.clone();
+        mixed[1].version = 8;
+        assert_eq!(Snapshot::decode(&mixed).unwrap_err(), "snapshot parts come from different snapshots");
     }
 }

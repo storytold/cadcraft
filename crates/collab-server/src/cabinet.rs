@@ -13,9 +13,11 @@
 //! commit must send as `expectedVersion`.
 //!
 //! The client is deliberately plain: `http://` only, `Connection: close`, one request per
-//! attempt. The room is deployed beside the cabinet behind the ingress (RFC §9), so TLS is the
-//! proxy's job; an `https://` endpoint is refused with a message that says so rather than
-//! failing the handshake. Neither the token nor the document ever reaches the logs.
+//! attempt, and HTTP/1.0 so the cabinet cannot answer with a chunked body (the reader takes a
+//! `Content-Length` or reads to the close; it does not decode chunk framing). The room is
+//! deployed beside the cabinet behind the ingress (RFC §9), so TLS is the proxy's job; an
+//! `https://` endpoint is refused with a message that says so rather than failing the handshake.
+//! Neither the token nor the document ever reaches the logs.
 
 use std::fmt;
 use std::io::{Read as _, Write as _};
@@ -155,7 +157,7 @@ impl Cabinet {
         stream.set_read_timeout(Some(self.config.timeout)).map_err(|e| PublishError::Transport(e.to_string()))?;
         stream.set_write_timeout(Some(self.config.timeout)).map_err(|e| PublishError::Transport(e.to_string()))?;
         let head = format!(
-            "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
+            "POST {path} HTTP/1.0\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
             token = self.config.token,
             len = body.len(),
         );
@@ -312,7 +314,7 @@ mod tests {
         let published = a_cabinet(url).publish("s1", b"drawing", 3, Some("old")).expect("stored");
         assert_eq!(published, Published { version: 7, etag: "abc".into() });
         let request = requests.recv().expect("one request");
-        assert!(request.starts_with("POST /api/v1/internal/office/sessions/s1/commit HTTP/1.1\r\n"), "{request}");
+        assert!(request.starts_with("POST /api/v1/internal/office/sessions/s1/commit HTTP/1.0\r\n"), "{request}");
         assert!(request.contains("Authorization: Bearer service-token\r\n"), "{request}");
         assert!(request.contains("\"expectedVersion\":\"old\""), "{request}");
         assert!(request.contains("\"version\":3"), "{request}");

@@ -195,11 +195,15 @@ impl Incremental {
                 let section = job.section;
                 let starts_len = job.starts.len();
                 if job.next >= starts_len {
+                    // An ENTITIES section with no records at all (an empty drawing, a writer that
+                    // emits the section anyway) leaves nothing to read here: the section is over,
+                    // and leaving it in place would make this loop build the same job again.
+                    self.section = section + 1;
                     self.entity_job = None;
                     continue;
                 }
                 let start = job.next;
-                let mut end = (start + budget).min(starts_len);
+                let mut end = start.saturating_add(budget).min(starts_len);
                 // A batch must not split a POLYLINE (or an INSERT with attributes) from the
                 // VERTEX/ATTRIB records that follow it: end only at a record that starts a new
                 // object. `starts_len` is always a safe end (the section is over).

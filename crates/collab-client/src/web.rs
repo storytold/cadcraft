@@ -459,7 +459,12 @@ impl WebSession {
         // sent only opened the session.
         self.events.push_back(Event::Joined { drawing: Box::new(drawing.clone()), version: shown });
         let mut driver = Driver::new(Client::new(drawing, shown), joining.role, joining.session_id, joining.participants);
-        for op in std::mem::take(&mut self.waiting_ops) {
+        // Operations the room never answered are resent with their ids, before the ones that
+        // waited for the join: the snapshot replaces the replica, not what this participant asked
+        // for, and a stale join must not drop an edit made just before the socket dropped
+        // (ADR 0003).
+        let unanswered = self.driver.as_ref().map(|old| old.client().outbox().to_vec()).unwrap_or_default();
+        for op in unanswered.into_iter().chain(std::mem::take(&mut self.waiting_ops)) {
             driver.client_mut().submit(op);
         }
         let last_version = driver.resync_from(joining.room_version);
@@ -510,6 +515,31 @@ impl WebSession {
         // While a snapshot is being read, the replica it replaces is stale: the tail comes from
         // the journal after the join, so these messages are not applied twice.
         if self.join.is_some() {
+            match message {
+                // Replica-changing messages: the resync after the join carries them, and the
+                // replica they would land on is the one being replaced.
+                ServerMessage::Applied { .. } | ServerMessage::Delta { .. } | ServerMessage::Snapshot { .. } => {}
+                // An operation submitted while the snapshot was read: it left this client's
+                // outbox but never reached a replica, so the user hears why it failed.
+                ServerMessage::Rejected { rejected } => {
+                    self.waiting_ops.retain(|op| op.op_id != rejected.op_id);
+                    // The join keeps the operations the room never answered; one it has just
+                    // refused must not be carried into the new replica and resent.
+                    if let Some(driver) = &mut self.driver {
+                        driver.client_mut().discard(&rejected.op_id);
+                    }
+                    self.events.push_back(Event::Rejected(rejected));
+                }
+                // A save's answer, a server error or a presence frame: the resync after the join
+                // never repeats them, so they become events without touching the stale replica.
+                other => {
+                    if let Some(driver) = &mut self.driver
+                        && let Ok(Some(event)) = driver.on_message(other)
+                    {
+                        self.events.push_back(event);
+                    }
+                }
+            }
             return;
         }
         let Some(driver) = &mut self.driver else { return };
@@ -541,6 +571,10 @@ impl WebSession {
         for presence in &participants {
             self.events.push_back(Event::Presence(presence.clone()));
         }
+        // A welcome ends any join that was still in flight: its socket dropped while that snapshot
+        // was read, so the replica it was to replace is still the one shown and a stale join must
+        // not replace it later. A welcome with a snapshot starts a new one below.
+        self.join = None;
         if let Some(driver) = &mut self.driver
             && snapshot.is_empty()
         {
@@ -585,6 +619,82 @@ impl WebSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cadcraft_collab::{Op, OpContext, OpKind};
+    use serde_json::json;
+
+    /// A session that never dialled: the queue is empty, so nothing arrives from a socket.
+    fn a_session() -> WebSession {
+        WebSession {
+            socket: Socket {
+                inner: Rc::new(RefCell::new(Inner {
+                    url: "ws://example".into(),
+                    socket: None,
+                    incoming: VecDeque::new(),
+                    attempt: 0,
+                    live: false,
+                    closers: Closers::default(),
+                })),
+            },
+            doc: "plan.dxf".into(),
+            token: "jwt-secret".into(),
+            actor_id: None,
+            role: Role::Editor,
+            driver: None,
+            join: None,
+            waiting_ops: Vec::new(),
+            waiting: VecDeque::new(),
+            events: VecDeque::new(),
+        }
+    }
+
+    fn an_op(op_id: &str) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 1,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[0.0, 0.0], [1.0, 0.0]] }),
+            context: OpContext::in_space(cadcraft_doc::Space::Model),
+        }
+    }
+
+    fn a_drawing() -> cadcraft_doc::Drawing {
+        use cadcraft_doc::geom::Vec3;
+        let mut drawing = cadcraft_doc::Drawing::new_metric();
+        drawing
+            .add(
+                &cadcraft_doc::Space::Model,
+                cadcraft_doc::Common::default(),
+                cadcraft_doc::EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(1.0, 0.0, 0.0), angle: 0.0 }),
+            )
+            .expect("a point");
+        drawing
+    }
+
+    /// A snapshot of `drawing` at `version` on its way in, with nothing read yet.
+    fn a_joining(drawing: &cadcraft_doc::Drawing, version: u64) -> Joining {
+        let bytes = cadcraft_io::write(drawing, "snapshot.dxf").expect("written");
+        Joining {
+            join: SnapshotJoin::new(cadcraft_collab::message::Snapshot::encode(version, &bytes)),
+            role: Role::Editor,
+            session_id: "room".into(),
+            participants: Vec::new(),
+            room_version: version,
+        }
+    }
+
+    /// Read the whole snapshot in `joining` so `complete_join` has a drawing.
+    fn read_snapshot(joining: &mut Joining) {
+        let mut joined = false;
+        for _ in 0..10_000 {
+            joined = joining.join.advance(JOIN_FRAME, JOIN_BATCH).expect("the snapshot joins");
+            if joined {
+                return;
+            }
+        }
+        assert!(joined, "the snapshot is read");
+    }
 
     /// The token is a credential: a debug print must not put it in a log.
     #[test]
@@ -615,5 +725,68 @@ mod tests {
         let debug = format!("{session:?}");
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(!debug.contains("jwt-secret"), "{debug}");
+    }
+
+    /// A snapshot join replaces the replica, not what this participant asked for: an operation the
+    /// room never answered is queued again and resent with its id, so an edit made just before a
+    /// disconnect is not lost (ADR 0003, CodeRabbit on #2938).
+    #[test]
+    fn a_completed_join_keeps_the_operations_the_room_never_answered() {
+        let mut session = a_session();
+        let mut old = Driver::new(Client::new(cadcraft_doc::Drawing::new_metric(), 2), Role::Editor, "room".into(), Vec::new());
+        old.client_mut().submit(an_op("o1"));
+        session.driver = Some(old);
+        let mut joining = a_joining(&a_drawing(), 3);
+        read_snapshot(&mut joining);
+        session.join = Some(joining);
+
+        session.complete_join();
+
+        let outbox = session.driver.as_ref().expect("the room's replica is in").client().outbox();
+        assert_eq!(outbox.len(), 1, "the unanswered operation is still queued");
+        assert_eq!(outbox[0].op_id, "o1", "and keeps the id the room answers by");
+    }
+
+    /// A welcome without a snapshot ends a join that was still in flight: the replica the window
+    /// shows is the one the welcome's journal tail applies to, and a stale join must not replace
+    /// it later.
+    #[test]
+    fn a_welcome_without_a_snapshot_drops_a_join_in_flight() {
+        let mut session = a_session();
+        session.driver = Some(Driver::new(Client::new(a_drawing(), 1), Role::Editor, "room".into(), Vec::new()));
+        session.join = Some(a_joining(&a_drawing(), 3));
+        let welcome = ServerMessage::Welcome {
+            session_id: "room".into(),
+            actor_id: "u1".into(),
+            role: Role::Editor,
+            version: 4,
+            participants: Vec::new(),
+            snapshot: Vec::new(),
+        };
+
+        session.on_text(&serde_json::to_string(&welcome).expect("encoded"));
+
+        assert!(session.join.is_none(), "the stale join is gone");
+        assert_eq!(session.version(), 1, "the replica the window shows is kept");
+    }
+
+    /// A save's answer or a refusal that arrives while a snapshot is read is not thrown away: the
+    /// resync after the join carries the replica alone, never a commit answer or a refusal.
+    #[test]
+    fn a_join_does_not_swallow_the_messages_it_does_not_apply() {
+        let mut session = a_session();
+        session.driver = Some(Driver::new(Client::new(cadcraft_doc::Drawing::new_metric(), 1), Role::Editor, "room".into(), Vec::new()));
+        session.waiting_ops.push(an_op("o9"));
+        session.join = Some(a_joining(&a_drawing(), 3));
+
+        let conflict = ServerMessage::CommitConflict { version: 3, message: "the cabinet refused version 3".into() };
+        session.on_text(&serde_json::to_string(&conflict).expect("encoded"));
+        let rejected =
+            cadcraft_collab::Reject { op_id: "o9".into(), code: "stale".into(), message: "another operation came first".into(), retryable: true };
+        session.on_text(&serde_json::to_string(&ServerMessage::Rejected { rejected }).expect("encoded"));
+
+        assert!(matches!(session.events.front(), Some(Event::CommitConflict { .. })), "the save's answer reaches the window: {:?}", session.events);
+        assert!(matches!(session.events.back(), Some(Event::Rejected(_))), "and the refusal too: {:?}", session.events);
+        assert!(session.waiting_ops.is_empty(), "a refused operation waits no longer");
     }
 }

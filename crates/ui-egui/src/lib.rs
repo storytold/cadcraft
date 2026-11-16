@@ -656,6 +656,19 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        // A complete action needs no prompt, and in a shared session it is the room's: an undo
+        // walks its author's history and a save is the room's commit (TASK §6). A menu item or a
+        // shortcut for one must reach `collab_command` instead of the refusal below, and must not
+        // reach the local save either (CodeRabbit on #2938).
+        if self.is_shared() {
+            let name = name.to_ascii_lowercase();
+            if matches!(name.as_str(), "u" | "undo" | "redo" | "mr" | "save" | "qsave" | "saveas") {
+                if let Some(Err(message)) = self.collab_command(&name, &Value::Null) {
+                    self.session.echo(message);
+                }
+                return;
+            }
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -681,6 +694,20 @@ impl CadApp {
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if self.is_shared() {
+            // A typed undo, redo or save is a complete action too: the room keeps the history and
+            // writes the file, so it goes to the session before the parser refuses it as an
+            // interactive command line (CodeRabbit on #2938).
+            let mut words = text.split_whitespace();
+            if let (Some(first), None) = (words.next(), words.next()) {
+                let name = first.to_ascii_lowercase();
+                if matches!(name.as_str(), "u" | "undo" | "redo" | "mr" | "save" | "qsave" | "saveas") {
+                    if let Some(Err(message)) = self.collab_command(&name, &Value::Null) {
+                        self.session.echo(message.clone());
+                        return Some(message);
+                    }
+                    return None;
+                }
+            }
             // A shared session has no prompt to fill in: the line names its own points and objects
             // and goes to the server as one operation (see `collab::collab_cmdline`).
             return self.collab_cmdline(text);

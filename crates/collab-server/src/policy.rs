@@ -55,6 +55,18 @@ pub fn deny_reason(command: &str) -> Option<&'static str> {
         "mcp",
         "control",
         "document.bytes",
+        // Commands that read or write a file on the server: `appload` loads a `.lsp` from a path,
+        // `wblock` writes one, and the rest import or export a file (ADR-0001).
+        "appload",
+        "wblock",
+        "-wblock",
+        "tableexport",
+        "dataextraction",
+        "eattext",
+        "datalink",
+        "datalinkupdate",
+        "drawingrecovery",
+        "exportpdf",
     ];
     if DENIED.contains(&command.as_str()) {
         return Some("the command changes the file or the session, not the shared drawing");
@@ -85,7 +97,7 @@ pub fn size_reason(op: &Op) -> Option<&'static str> {
 /// operation (`data`) or their content address in the room's store (`asset`, ADR 0021), and rejects
 /// the file-reading form before the drawing changes.
 pub fn params_reason(op: &Op) -> Option<&'static str> {
-    if op.command.trim().eq_ignore_ascii_case("imageattach") {
+    if is_image_attach(&op.command) {
         let has_data = op.params.get("data").and_then(|value| value.as_str()).is_some_and(|data| !data.trim().is_empty());
         let asset = op.params.get("asset").and_then(|value| value.as_str()).map(str::trim).filter(|asset| !asset.is_empty());
         return match (has_data, asset) {
@@ -101,6 +113,12 @@ pub fn params_reason(op: &Op) -> Option<&'static str> {
         };
     }
     None
+}
+
+/// Whether `command` attaches a raster image: `IMAGEATTACH`, and `ATTACH`, which the engine runs
+/// as the same command when the file is an image.
+pub(crate) fn is_image_attach(command: &str) -> bool {
+    matches!(command.trim().to_ascii_lowercase().as_str(), "imageattach" | "attach")
 }
 
 /// Whether a change set exceeds [`MAX_CHANGES`].
@@ -152,6 +170,15 @@ mod tests {
     }
 
     #[test]
+    fn appload_and_the_file_commands_are_denied() {
+        for command in
+            ["appload", "wblock", "-wblock", "tableexport", "dataextraction", "eattext", "datalink", "datalinkupdate", "drawingrecovery", "exportpdf"]
+        {
+            assert!(deny_reason(command).is_some(), "`{command}` reads or writes a file on the server");
+        }
+    }
+
+    #[test]
     fn drawing_commands_are_allowed() {
         for command in [
             "line",
@@ -168,6 +195,7 @@ mod tests {
             "dimlinear",
             "draworder",
             "insert",
+            "minsert",
         ] {
             assert!(deny_reason(command).is_none(), "`{command}` is a drawing operation");
         }
@@ -207,5 +235,16 @@ mod tests {
         assert!(params_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
         // The command name is matched the way the engine spells it, ignoring case.
         assert!(params_reason(&op("ImageAttach", json!({ "path": "map.png" }))).is_some());
+    }
+
+    #[test]
+    fn attach_takes_the_same_rule_as_imageattach() {
+        // `attach` runs IMAGEATTACH for an image, so a path with no bytes would read the server's
+        // disk here too.
+        assert!(params_reason(&op("attach", json!({ "path": "/etc/passwd.png" }))).is_some());
+        assert!(params_reason(&op("Attach", json!({ "path": "map.png", "data": "  " }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "data": 7 }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "asset": "not-an-address" }))).is_some());
+        assert!(params_reason(&op("attach", json!({ "path": "map.png", "asset": "0".repeat(64) }))).is_none());
     }
 }

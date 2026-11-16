@@ -99,6 +99,9 @@ pub struct AssetStore {
     root: PathBuf,
     room: String,
     limits: AssetLimits,
+    /// Serializes the quota check with the write, and a removal with a put: two callers (the room
+    /// and each connection) share one store, so the limits are checked and used under one lock.
+    write: std::sync::Mutex<()>,
 }
 
 impl AssetStore {
@@ -113,7 +116,7 @@ impl AssetStore {
         let root = root.into().join(room);
         std::fs::create_dir_all(&root)?;
         let root = std::fs::canonicalize(&root)?;
-        Ok(AssetStore { root, room: room.to_string(), limits: AssetLimits::default() })
+        Ok(AssetStore { root, room: room.to_string(), limits: AssetLimits::default(), write: std::sync::Mutex::new(()) })
     }
 
     /// Use `limits` instead of the defaults. A deployment may tighten them; the tests use small
@@ -146,6 +149,8 @@ impl AssetStore {
             return Err(AssetError::Mismatch);
         }
         let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        // From the quota check to the rename: a second writer must not read the same usage.
+        let _write = self.write.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(path) = self.find(sha256)? {
             let label = self.label_of(&path);
             return Ok(Stored { sha256: sha256.to_string(), bytes: size, stored: false, label });
@@ -228,6 +233,8 @@ impl AssetStore {
         if !cadcraft_collab::is_asset_id(sha256) {
             return Err(AssetError::BadId);
         }
+        // The same lock as `put`: a discard must not race a write that has just stored the blob.
+        let _write = self.write.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(path) = self.find(sha256)? {
             std::fs::remove_file(path)?;
             sync_directory(&self.root);
@@ -321,6 +328,7 @@ fn valid_room(room: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     /// A 1×1 red PNG: a raster IMAGEATTACH decodes.
     const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
@@ -474,6 +482,32 @@ mod tests {
         std::fs::write(&outside, &bytes).unwrap();
         std::os::unix::fs::symlink(&outside, store.root().join(format!("{id}.png"))).unwrap();
         assert_eq!(store.get(&id), Err(AssetError::NotFound), "a symlink out of the room is not an attachment");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_writers_cannot_both_pass_the_quota() {
+        // One file fits; eight threads write different blobs at once. Without one lock from the
+        // usage check to the rename, more than one reads the same usage and gets through.
+        let dir = workspace("serialized");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap().with_limits(AssetLimits { max_bytes: 10_000, max_files: 1, max_total: 15_000 }));
+        let writers: Vec<_> = (0u8..8)
+            .map(|i| {
+                let store = Arc::clone(&store);
+                std::thread::spawn(move || {
+                    let bytes = vec![0xff, 0xd8, 0xff, 0xe0, i, 1, 2, 3];
+                    store.put(&cadcraft_collab::asset_id(&bytes), &bytes).is_ok()
+                })
+            })
+            .collect();
+        let mut stored = 0;
+        for writer in writers {
+            if writer.join().unwrap() {
+                stored += 1;
+            }
+        }
+        assert_eq!(stored, 1, "the room's limit of one file was passed {stored} times");
+        assert_eq!(store.usage().unwrap().0, 1, "one blob is on disk");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

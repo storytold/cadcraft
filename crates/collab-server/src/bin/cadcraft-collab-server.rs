@@ -91,6 +91,11 @@ fn main() -> Result<(), String> {
         room = room.with_assets(Arc::clone(assets));
     }
     let mut server = Server::new(room, auth, args.session.clone(), "cadcraft");
+    // The drawing this room serves: a token's `doc` must be this id, so a token for another
+    // drawing cannot join (the cabinet's file id is the token's `doc`).
+    if let Some(file_id) = &args.file_id {
+        server = server.with_doc(file_id.clone());
+    }
     if let Some(assets) = assets {
         server = server.with_assets(assets);
     }
@@ -104,11 +109,12 @@ fn main() -> Result<(), String> {
         thread::spawn(move || {
             loop {
                 thread::sleep(interval);
-                if let Ok(snapshot) = server.room().snapshot() {
-                    let temporary = state.with_extension("dxf.tmp");
-                    if std::fs::write(&temporary, &snapshot.bytes).is_ok() {
-                        let _ = std::fs::rename(&temporary, &state);
-                    }
+                // A snapshot is a compaction, not a copy of the bytes: `load` pairs the DXF with
+                // the version file beside it and replays the journal after that version, so the
+                // periodic write must record the version and empty the journal too, as
+                // `deployment.md` says (CodeRabbit on #2938).
+                if let Err(error) = server.room().compact(&state) {
+                    eprintln!("cadcraft-collab-server: the snapshot at {} was not written: {error}", state.display());
                 }
             }
         });
@@ -127,7 +133,9 @@ fn main() -> Result<(), String> {
             let mut idle_since = Some(std::time::Instant::now());
             loop {
                 thread::sleep(Duration::from_secs(30));
-                if server.participants() > 0 {
+                // Connections, not presence entries: a viewer never sends presence, and a
+                // client that has not sent a frame yet has no entry either.
+                if server.connections_open() > 0 {
                     idle_since = None;
                     continue;
                 }
@@ -256,7 +264,7 @@ fn answer(mut stream: TcpStream, server: &Server) -> std::io::Result<()> {
     let path = request.split_whitespace().nth(1).unwrap_or("/");
     let body = match path {
         "/healthz" | "/readyz" => "ok\n".to_string(),
-        "/metrics" => server.metrics().render(server.version(), server.journal_len(), server.participants()),
+        "/metrics" => server.metrics().render(server.version(), server.journal_len(), server.participants(), server.connections_open()),
         _ => {
             let body = "not found\n";
             return write_response(&mut stream, "404 Not Found", body);

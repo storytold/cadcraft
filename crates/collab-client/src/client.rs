@@ -78,6 +78,12 @@ impl Client {
         let applied = Applied { op_id: String::new(), version, actor: String::new(), changes: changes.to_vec() };
         self.applied(&applied)
     }
+
+    /// Forget an operation the server refused: it is never applied, and resending it after a
+    /// reconnect would only be refused again.
+    pub fn discard(&mut self, op_id: &str) {
+        self.pending.retain(|op| op.op_id != op_id);
+    }
 }
 
 #[cfg(test)]

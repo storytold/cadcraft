@@ -50,7 +50,11 @@ pub struct Metrics {
 
 impl Metrics {
     /// The counters and the room's state, as Prometheus text.
-    pub fn render(&self, version: u64, journal: usize, participants: usize) -> String {
+    ///
+    /// `participants` is the presence board's size (only a client that sends `Presence` has an
+    /// entry there); `connections_open` is the number of open sockets, which is what the idle
+    /// shutdown must look at.
+    pub fn render(&self, version: u64, journal: usize, participants: usize, connections_open: usize) -> String {
         format!(
             "# TYPE cadcraft_collab_connections_total counter\ncadcraft_collab_connections_total {}\n\
              # TYPE cadcraft_collab_operations_total counter\ncadcraft_collab_operations_total{{result=\"applied\"}} {}\n\
@@ -60,7 +64,8 @@ impl Metrics {
              # TYPE cadcraft_collab_commit_conflicts_total counter\ncadcraft_collab_commit_conflicts_total {}\n\
              # TYPE cadcraft_collab_version gauge\ncadcraft_collab_version {}\n\
              # TYPE cadcraft_collab_journal_length gauge\ncadcraft_collab_journal_length {}\n\
-             # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n",
+             # TYPE cadcraft_collab_participants gauge\ncadcraft_collab_participants {}\n\
+             # TYPE cadcraft_collab_connections_open gauge\ncadcraft_collab_connections_open {}\n",
             self.connections.load(Ordering::Relaxed),
             self.applied.load(Ordering::Relaxed),
             self.rejected.load(Ordering::Relaxed),
@@ -70,6 +75,7 @@ impl Metrics {
             version,
             journal,
             participants,
+            connections_open,
         )
     }
 }
@@ -82,9 +88,14 @@ pub struct Server {
     auth: Arc<dyn Authenticator>,
     app: String,
     session: String,
+    /// The drawing this room serves, when the deployment names one (`--file-id`): a token's `doc`
+    /// must be this id, so a token for another drawing cannot join.
+    doc: Option<String>,
     metrics: Arc<Metrics>,
     /// Attachments of this room; `None` when the deployment did not give `--assets` (ADR 0021).
     assets: Option<Arc<AssetStore>>,
+    /// One commit at a time: each publish must see the etag the previous one stored.
+    commit: Mutex<()>,
 }
 
 impl Server {
@@ -97,9 +108,19 @@ impl Server {
             auth,
             app: app.into(),
             session: session_id.into(),
+            doc: None,
             metrics: Arc::new(Metrics::default()),
             assets: None,
+            commit: Mutex::new(()),
         }
+    }
+
+    /// Name the drawing this room serves (`--file-id`): a token whose `doc` is another drawing is
+    /// refused at the first message, so the per-drawing ACL the claim carries is enforced here and
+    /// not only by the client.
+    pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
+        self.doc = Some(doc.into());
+        self
     }
 
     /// Serve attachments from `assets` as well; the room must be given the same store
@@ -151,11 +172,29 @@ impl Server {
         lock(&self.presence).len()
     }
 
+    /// How many sockets are open, including clients that have not sent presence yet.
+    pub fn connections_open(&self) -> usize {
+        lock(&self.peers).len()
+    }
+
+    /// Whether `claims` may enter the room this server serves, with the `hello`'s `doc` as
+    /// `requested`.
+    ///
+    /// The token's `doc` is the cabinet's file id: it must name the drawing the client asked for,
+    /// and the drawing this room serves when the deployment named one. An empty `doc` is the
+    /// `--dev-token` case, which only a deployment that names no drawing accepts.
+    fn accepts_doc(&self, claims: &Claims, requested: &str) -> bool {
+        if claims.doc.is_empty() {
+            return self.doc.is_none();
+        }
+        claims.doc == requested && self.doc.as_deref().is_none_or(|served| served == claims.doc.as_str())
+    }
+
     fn connection(&self, stream: TcpStream) -> io::Result<()> {
         stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
         let mut socket = accept(stream).map_err(io::Error::other)?;
-        let (app, jwt, last_version) = match read_client(&mut socket)? {
-            Some(ClientMessage::Hello { app, jwt, last_version, .. }) => (app, jwt, last_version),
+        let (app, doc, jwt, last_version) = match read_client(&mut socket)? {
+            Some(ClientMessage::Hello { app, doc, jwt, last_version, .. }) => (app, doc, jwt, last_version),
             _ => return Ok(()),
         };
         if app != self.app {
@@ -169,6 +208,10 @@ impl Server {
                 return Ok(());
             }
         };
+        if !self.accepts_doc(&claims, &doc) {
+            send(&mut socket, &ServerMessage::Error { code: "auth".into(), message: "the token is for another drawing".into(), retryable: false })?;
+            return Ok(());
+        }
         let (tx, rx) = channel();
         lock(&self.peers).push((claims.sub.clone(), tx.clone()));
 
@@ -247,10 +290,13 @@ impl Server {
                     });
                     return true;
                 }
-                let already = lock(&self.room).applied(&op_id).cloned();
+                // The lock is held until the answer is broadcast, as the `Op` arm does: an
+                // operation from another participant must not broadcast its version in between.
+                let mut room = lock(&self.room);
+                let already = room.applied(&op_id).cloned();
                 let outcome = match already {
                     Some(applied) => Ok(Outcome::Applied(applied)),
-                    None => lock(&self.room).undo(&claims.sub, &op_id),
+                    None => room.undo(&claims.sub, &op_id),
                 };
                 match outcome {
                     Ok(Outcome::Applied(applied)) => {
@@ -275,10 +321,12 @@ impl Server {
                     });
                     return true;
                 }
-                let already = lock(&self.room).applied(&op_id).cloned();
+                // Held through the broadcast for the same reason as `Undo`.
+                let mut room = lock(&self.room);
+                let already = room.applied(&op_id).cloned();
                 let outcome = match already {
                     Some(applied) => Ok(Outcome::Applied(applied)),
-                    None => lock(&self.room).redo(&claims.sub, &op_id),
+                    None => room.redo(&claims.sub, &op_id),
                 };
                 match outcome {
                     Ok(Outcome::Applied(applied)) => {
@@ -296,14 +344,16 @@ impl Server {
                     }
                 }
             }
-            ClientMessage::Presence { presence } => {
+            ClientMessage::Presence { mut presence } => {
                 // The token says who this is; a client cannot label its cursor as someone else,
                 // nor claim another role: the server fills both from the claims.
-                let mut presence = presence;
                 presence.actor = claims.sub.clone();
                 presence.role = Some(claims.role);
-                lock(&self.presence).update(presence.clone(), Instant::now());
-                self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });
+                // A board that is full refuses a new participant: do not broadcast a cursor the
+                // board (and so the `welcome` of the next connection) does not hold.
+                if lock(&self.presence).update(presence.clone(), Instant::now()) {
+                    self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });
+                }
             }
             ClientMessage::Resync { last_version } => self.resync(last_version, tx),
             ClientMessage::Commit { expected_version } => {
@@ -318,6 +368,11 @@ impl Server {
                     });
                     return true;
                 }
+                // One commit at a time: the etag read and the accept/refuse that follows it must
+                // not interleave, or two commits of the same version see the same etag and the
+                // second one records a conflict the cabinet does not have. The room lock is not
+                // held across the network call; this one is.
+                let _commit = lock(&self.commit);
                 let (committed, cabinet, expected) = {
                     let room = lock(&self.room);
                     if expected_version != room.version() {
@@ -565,4 +620,115 @@ fn asset_error(error: &AssetError) -> ServerMessage {
         AssetError::BadId | AssetError::Mismatch | AssetError::NotAnImage | AssetError::BadRoom { .. } => ("invalid", false),
     };
     ServerMessage::Error { code: code.into(), message: error.to_string(), retryable }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::StaticAuthenticator;
+    use cadcraft_collab::{Op, OpContext, OpKind, Presence};
+    use cadcraft_doc::{Drawing, Space};
+    use serde_json::json;
+
+    fn a_server() -> Server {
+        Server::new(Room::new(Drawing::new_metric()).unwrap(), Arc::new(StaticAuthenticator::default()), "s1", "cadcraft")
+    }
+
+    fn line_op(op_id: &str, x: f64) -> Op {
+        Op {
+            op_id: op_id.into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[x, 0.0], [x + 1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        }
+    }
+
+    fn presence(actor: &str) -> Presence {
+        Presence { actor: actor.into(), role: None, space: Space::Model, cursor: Some([1.0, 2.0]), selection: vec![], layer: "0".into(), view: None }
+    }
+
+    /// The claims of `doc`: an editor of that drawing.
+    fn claims(doc: &str) -> Claims {
+        Claims { sub: "u1".into(), doc: doc.into(), role: crate::Role::Editor }
+    }
+
+    #[test]
+    fn a_token_naming_another_drawing_cannot_join() {
+        let server = a_server().with_doc("file-1");
+        let other = claims("file-2");
+        assert!(!server.accepts_doc(&other, "file-2"), "a token for another drawing is refused, whatever it asks for");
+        let right = claims("file-1");
+        assert!(server.accepts_doc(&right, "file-1"));
+        assert!(!server.accepts_doc(&right, "file-2"), "the `hello` must name the token's drawing too");
+        let dev = Claims { doc: String::new(), ..right };
+        assert!(!server.accepts_doc(&dev, "file-1"), "an unnamed token only fits a deployment that names no drawing");
+        assert!(a_server().accepts_doc(&dev, "anything"), "the `--dev-token` case stays explicit");
+    }
+
+    #[test]
+    fn open_connections_are_counted_even_without_presence() {
+        let server = a_server();
+        assert_eq!(server.connections_open(), 0);
+        let (tx, _rx) = channel();
+        lock(&server.peers).push(("viewer".into(), tx));
+        assert_eq!(server.connections_open(), 1, "a viewer that has not sent presence is still a connection");
+        assert_eq!(server.participants(), 0, "but not a participant of the board");
+    }
+
+    #[test]
+    fn a_presence_the_board_refused_is_not_broadcast() {
+        let server = a_server();
+        let now = Instant::now();
+        for i in 0..crate::MAX_PARTICIPANTS {
+            assert!(lock(&server.presence).update(presence(&format!("p{i}")), now));
+        }
+        let (listener, heard) = channel();
+        lock(&server.peers).push(("listener".into(), listener));
+        let (own, _own_rx) = channel();
+
+        server.handle(ClientMessage::Presence { presence: presence("late") }, &claims("d1"), &own);
+
+        assert!(heard.try_recv().is_err(), "the board refused the entry, so no peer is told about it");
+        assert_eq!(server.participants(), crate::MAX_PARTICIPANTS);
+    }
+
+    #[test]
+    fn an_undo_and_an_operation_never_arrive_out_of_order() {
+        let server = Arc::new(a_server());
+        let (observer, heard) = channel();
+        lock(&server.peers).push(("observer".into(), observer));
+        let claims = claims("d1");
+        let workers: Vec<_> = (0u8..2)
+            .map(|worker| {
+                let server = Arc::clone(&server);
+                let claims = claims.clone();
+                thread::spawn(move || {
+                    let (own, _own_rx) = channel();
+                    for n in 0..200u32 {
+                        let message = if worker == 0 {
+                            ClientMessage::Op { op: line_op(&format!("op-{worker}-{n}"), f64::from(n)) }
+                        } else {
+                            ClientMessage::Undo { op_id: format!("undo-{worker}-{n}") }
+                        };
+                        server.handle(message, &claims, &own);
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("a worker thread");
+        }
+
+        let mut version = 0;
+        for message in heard.try_iter() {
+            if let ServerMessage::Applied { applied } = message {
+                assert_eq!(applied.version, version + 1, "version {} arrived after version {version}", applied.version);
+                version = applied.version;
+            }
+        }
+        assert!(version >= 200, "the workers did not apply their operations: {version}");
+    }
 }

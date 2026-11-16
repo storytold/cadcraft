@@ -14,7 +14,7 @@ use std::time::Duration;
 use cadcraft_collab::{Applied, CabinetCommit, Op, Presence, Reject, Role};
 use cadcraft_collab_client::Event;
 #[cfg(not(target_arch = "wasm32"))]
-use cadcraft_collab_client::Session as Remote;
+use cadcraft_collab_client::{ClientError, Session as Remote, SessionError};
 
 /// Ask the host page's cabinet to store a commit the room built without publishing it itself
 /// (`cadcraft:commit`, with the file the room answered).
@@ -292,8 +292,17 @@ impl Collab {
                     }
                     Event::CommitConflict { version, message } => updates.push(Update::CommitConflict { version, message }),
                     Event::SaveCopy { version, not_saved, bytes } => updates.push(Update::SaveCopy { version, not_saved, bytes }),
-                    Event::Error { message, .. } => updates.push(Update::Lost(message)),
-                    Event::AssetStored { .. } | Event::Asset { .. } | Event::Pong | Event::Ignored => {}
+                    Event::Error { code, message, retryable } => {
+                        let stale = retryable && code == "stale";
+                        updates.push(error_update(code, message, retryable));
+                        if stale {
+                            // The room refused a save because another participant's operation
+                            // arrived first: fetch the tail so the participant can save again.
+                            let version = session.version();
+                            let _ = session.resync(version);
+                        }
+                    }
+                    Event::AssetStored { .. } | Event::Asset { .. } | Event::Pong | Event::Idle | Event::Ignored => {}
                 }
             }
             self.role.set(session.role());
@@ -382,18 +391,33 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
             Ok(Event::SaveCopy { version, not_saved, bytes }) => {
                 let _ = updates.send(Update::SaveCopy { version, not_saved, bytes });
             }
-            Ok(Event::Error { message, .. }) => {
-                let _ = updates.send(Update::Lost(message));
-                return;
-            }
-            Ok(_) => {}
-            Err(error) => {
-                // A read timeout is the normal way round this loop; a closed socket is not.
-                let text = error.to_string();
-                if !text.contains("timed out") && !text.contains("WouldBlock") {
-                    let _ = updates.send(Update::Lost(text));
+            Ok(Event::Error { code, message, retryable }) => {
+                let stale = retryable && code == "stale";
+                let _ = updates.send(error_update(code, message, retryable));
+                if !retryable {
                     return;
                 }
+                // The room refused a save or an operation, not the connection: a `stale` commit
+                // means another participant's operation arrived first. Fetch the tail and let the
+                // participant save again.
+                if stale && session.resync(session.version()).is_err() {
+                    let _ = updates.send(Update::Lost("the connection closed".into()));
+                    return;
+                }
+            }
+            // `Event::Idle` is the read timeout: the connection is fine, so round the loop again.
+            Ok(_) => {}
+            // A missed version is not a lost connection either: ask for the tail instead of ending
+            // the session (ADR 0001).
+            Err(SessionError::Client(ClientError::Gap { .. })) => {
+                if session.resync(session.version()).is_err() {
+                    let _ = updates.send(Update::Lost("the connection closed".into()));
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = updates.send(Update::Lost(error.to_string()));
+                return;
             }
         }
     }
@@ -412,6 +436,13 @@ impl crate::CadApp {
         // A session joins on its own frames: its drawing has not arrived yet, and the window may
         // still open the host's document until it does.
         self.collab_joined = false;
+        // The new room is not the old one: its people, its version and its commit answers must not
+        // be carried over to the participant list, the sync indicator or the next operation's
+        // `base_version` (CodeRabbit on #2938).
+        self.remote_presence.clear();
+        self.collab_version = 0;
+        self.last_collab_commit = None;
+        self.collab_conflict = None;
         self.collab = Some(collab);
     }
 
@@ -848,6 +879,19 @@ fn role_tag(role: Role) -> &'static str {
     }
 }
 
+/// What a server's `Error` becomes: a recoverable one is a refusal reported on the command line,
+/// and the session stays (the room refused a save or an operation, not the connection). An error
+/// that leaves the connection unusable ends the session.
+fn error_update(code: String, message: String, retryable: bool) -> Update {
+    if retryable {
+        // The room's word for a refusal; an error outside an operation answers no operation of
+        // this client's, so its id is empty.
+        Update::Rejected(Reject { op_id: String::new(), code, message, retryable })
+    } else {
+        Update::Lost(message)
+    }
+}
+
 /// UI-only commands of a shared session: the participant list and leaving it.
 pub fn route(app: &mut crate::CadApp, id: &str, _params: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
     match id {
@@ -888,7 +932,7 @@ pub fn is_structural(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CabinetCommit, Collab, Request, Role, Update, is_structural};
+    use super::{CabinetCommit, Collab, CommitState, Request, Role, Update, error_update, is_structural};
     use serde_json::json;
 
     /// The copy of a refused commit is named after the drawing, not over its file: an extension
@@ -947,6 +991,92 @@ mod tests {
         assert_eq!(app.session.active, 0, "the tab really changed");
         assert!(requests.try_recv().is_err(), "a drawing switch is not a room operation");
         assert!(app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).is_err(), "a viewer still cannot edit");
+    }
+
+    /// A menu item or a shortcut for a complete action reaches the room: `menus::activate` calls
+    /// `start`, and undo, redo and save need no prompt, so they must not be refused as an
+    /// interactive command (TASK §6, CodeRabbit on #2938).
+    #[test]
+    fn a_menu_undo_in_a_shared_session_reaches_the_room() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        crate::menus::activate(&mut app, "undo");
+        assert!(matches!(requests.try_recv(), Ok(Request::Undo(_))), "the menu's undo is the room's");
+
+        crate::menus::activate(&mut app, "qsave");
+        assert!(matches!(requests.try_recv(), Ok(Request::Commit(_))), "a save is the room's commit, never the local one");
+
+        app.start("line");
+        assert!(requests.try_recv().is_err(), "a command with prompts is still refused");
+    }
+
+    /// A typed `undo`, `redo` or `save` is the session's too, and goes to `collab_command` before
+    /// the command-line parser refuses it as interactive (CodeRabbit on #2938).
+    #[test]
+    fn a_typed_undo_in_a_shared_session_reaches_the_room() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        assert!(app.cmdline("undo").is_none(), "the room's undo, not a refusal");
+        assert!(matches!(requests.try_recv(), Ok(Request::Undo(_))));
+        assert!(app.cmdline("qsave").is_none(), "the room's save, not a local one");
+        assert!(matches!(requests.try_recv(), Ok(Request::Commit(_))));
+
+        // A line that is not a complete action still becomes one room operation.
+        assert!(app.cmdline("line 0,0 10,0").is_none());
+        match requests.try_recv().expect("the edit reached the room") {
+            Request::Op(op) => assert_eq!(op.command, "line"),
+            _ => panic!("a line travels as an operation"),
+        }
+    }
+
+    /// A recoverable server error is a refusal, not a lost session: the participant hears why and
+    /// keeps the room (the `stale` commit of a save that raced another participant's edit). An
+    /// error the connection cannot recover from still ends it.
+    #[test]
+    fn a_retryable_server_error_keeps_the_session() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, _requests, updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        updates.send(error_update("stale".into(), "another participant's edit came first".into(), true)).expect("an update");
+        app.collab_tick(&egui::Context::default());
+        assert!(app.is_shared(), "a refused save is not a lost connection");
+
+        updates.send(error_update("auth".into(), "the token expired".into(), false)).expect("an update");
+        app.collab_tick(&egui::Context::default());
+        assert!(!app.is_shared(), "an unrecoverable error ends the session");
+    }
+
+    /// A second session replaces the first: the old room's people, version and commit answers do
+    /// not reach the new one's participant list, sync indicator or `base_version`.
+    #[test]
+    fn attaching_a_session_clears_the_previous_rooms_state() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.collab_version = 9;
+        let presence = cadcraft_collab::Presence {
+            actor: "u1".into(),
+            role: None,
+            space: cadcraft_doc::Space::Model,
+            cursor: None,
+            selection: Vec::new(),
+            layer: "0".into(),
+            view: None,
+        };
+        app.remote_presence.insert("u1".into(), presence);
+        app.last_collab_commit = Some(CommitState { version: 9, cabinet: None, not_saved: std::collections::BTreeMap::new() });
+        app.collab_conflict = Some("the cabinet refused version 9".into());
+
+        let (collab, _requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        assert!(app.remote_presence.is_empty(), "the old room's participants are gone");
+        assert_eq!(app.collab_version, 0, "the new room's operations start at its own version");
+        assert!(app.last_collab_commit.is_none());
+        assert!(app.collab_conflict.is_none());
     }
 
     /// The host's document is the session's document (INTEGRATION.md §5.1): opening it runs in

@@ -282,6 +282,11 @@ impl Room {
         let params = prepared.as_ref().map(|prepared| &prepared.params).unwrap_or(&op.params);
         let before = self.drawing()?.clone();
         if let Err(error) = self.session.execute_intent(&op.command, params, &op.context) {
+            // A command can change the drawing and then fail (a later object it refused): put the
+            // drawing back, as the paths below do, so the room keeps the version it answers for.
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = before;
+            }
             if let Some(prepared) = &prepared {
                 self.discard_attachment(prepared);
             }
@@ -473,6 +478,9 @@ impl Room {
     }
 
     /// Restore a snapshot and replay the journal tail written by [`Room::with_journal`].
+    ///
+    /// The journal stays attached: an operation applied after the restart is written to the same
+    /// file, so the next restart loses at most the operations after the last snapshot.
     pub fn restore_with_journal(snapshot: &Snapshot, journal: &Path) -> Result<Self, RoomError> {
         let mut room = Room::restore(snapshot)?;
         let text = std::fs::read_to_string(journal).unwrap_or_default();
@@ -480,12 +488,15 @@ impl Room {
             text.lines().filter_map(|line| serde_json::from_str::<Applied>(line).ok()).filter(|a| a.version > snapshot.version).collect();
         entries.sort_by_key(|a| a.version);
         for applied in entries {
+            if applied.version <= room.version {
+                return Err(RoomError::Io(format!("the journal repeats or reorders version {} after the room reached it", applied.version)));
+            }
             if applied.version != room.version.saturating_add(1) {
                 return Err(RoomError::Io(format!(
                     "the journal goes from version {} to {}, with {} missing",
                     room.version,
                     applied.version,
-                    applied.version - room.version - 1
+                    applied.version.saturating_sub(room.version).saturating_sub(1)
                 )));
             }
             let doc = room.session.doc_mut().map_err(|_| RoomError::NoDrawing)?;
@@ -493,7 +504,7 @@ impl Room {
             room.version = applied.version;
             room.remember_memory_only(applied);
         }
-        Ok(room)
+        room.with_journal(journal)
     }
 
     /// Write a snapshot to `snapshot` (bytes and a `.version` file beside it) and empty the
@@ -603,7 +614,7 @@ impl Room {
     /// `asset` is read from the store, and the bytes are handed to the engine as `data`. Either
     /// way the client's path is a label only: nothing is opened by it.
     fn prepare_attachment(&self, op: &Op) -> Result<Option<PreparedAttachment>, AttachmentRefusal> {
-        if !op.command.trim().eq_ignore_ascii_case("imageattach") {
+        if !crate::policy::is_image_attach(&op.command) {
             return Ok(None);
         }
         let mut params = op.params.clone();
@@ -901,6 +912,34 @@ mod tests {
     }
 
     #[test]
+    fn a_command_that_changes_the_drawing_and_then_fails_is_rolled_back() {
+        let mut drawing = Drawing::new_metric();
+        let line = drawing
+            .add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }))
+            .unwrap();
+        let mut room = Room::new(drawing).unwrap();
+        let before = room.drawing().unwrap().clone();
+        // PEDIT edits its objects in turn: the line is converted to a polyline with a width, then
+        // the second handle names nothing and the command fails.
+        let op = Op {
+            op_id: "partial".into(),
+            actor: "u1".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            command: "pedit".into(),
+            params: json!({ "handles": [line.hex(), "FFFF"], "option": "width", "width": 2.0 }),
+            context: OpContext::in_space(Space::Model),
+        };
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "invalid"),
+            Outcome::Applied(_) => panic!("the second object is not in the drawing: the operation cannot apply"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before, "a command that changed the drawing and then failed leaves it as it was");
+    }
+
+    #[test]
     fn a_snapshot_restores_the_drawing_and_the_version() {
         let mut room = Room::new(a_drawing_with_a_layer()).unwrap();
         let Outcome::Applied(_) = room.apply(&line_op("a", 0.0)).unwrap() else { panic!() };
@@ -1090,6 +1129,58 @@ mod journal_tests {
 
         assert_eq!(restored.version(), 3);
         assert_eq!(restored.drawing().unwrap().space(&Space::Model), room.drawing().unwrap().space(&Space::Model));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_restored_room_keeps_writing_its_journal() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.compact(&state).unwrap();
+        room.apply(&line_op("b", 3.0)).unwrap();
+        assert_eq!(std::fs::read_to_string(&journal).unwrap().lines().count(), 1);
+        let snapshot = || {
+            let bytes = std::fs::read(&state).unwrap();
+            let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+            Snapshot { version, bytes }
+        };
+
+        let mut restored = Room::restore_with_journal(&snapshot(), &journal).unwrap();
+        assert_eq!(restored.version(), 2);
+        restored.apply(&line_op("c", 6.0)).unwrap();
+
+        let text = std::fs::read_to_string(&journal).unwrap();
+        assert_eq!(text.lines().count(), 2, "an operation applied after a restart is written to the journal");
+        let last: Applied = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last.version, 3);
+
+        // And the line it wrote is what the next restart replays.
+        let again = Room::restore_with_journal(&snapshot(), &journal).unwrap();
+        assert_eq!(again.version(), 3);
+        assert_eq!(again.drawing().unwrap().space(&Space::Model), restored.drawing().unwrap().space(&Space::Model));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_journal_with_a_repeated_version_is_refused() {
+        let dir = workspace();
+        let full = dir.join("full.jsonl");
+        let repeated = dir.join("repeated.jsonl");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&full).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        let text = std::fs::read_to_string(&full).unwrap();
+        let line = text.lines().next().unwrap().to_string();
+        std::fs::write(&repeated, format!("{line}\n{line}\n")).unwrap();
+
+        let snapshot = Room::new(Drawing::new_metric()).unwrap().snapshot().unwrap();
+        match Room::restore_with_journal(&snapshot, &repeated) {
+            Err(RoomError::Io(message)) => assert!(message.contains("repeats or reorders"), "{message}"),
+            Ok(room) => panic!("a journal that repeats a version cannot replay: it reached {}", room.version()),
+            Err(other) => panic!("expected an io error, got {other}"),
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1446,6 +1537,46 @@ mod attachment_tests {
         let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!("a stored attachment is a drawing operation") };
         assert_eq!(image_path(&room), format!("demo/{id}.png"));
         assert_eq!(room.drawing().unwrap().rasters.len(), 1, "the engine decoded the stored bytes");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn attach_takes_its_bytes_from_the_room_like_imageattach() {
+        let dir = workspace("attach");
+        let store = Arc::new(AssetStore::new(&dir, "demo").unwrap());
+        let bytes = png();
+        let id = asset_id(&bytes);
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_assets(Arc::clone(&store));
+        let mut op = image_op("attach");
+        op.command = "attach".into();
+        op.params["data"] = json!(PNG_1X1);
+
+        let Outcome::Applied(_) = room.apply(&op).unwrap() else { panic!("an attached image with its bytes is a drawing operation") };
+        assert_eq!(image_path(&room), format!("demo/{id}.png"), "the label names the room's copy, not the client's path");
+        assert_eq!(store.get(&id).unwrap(), bytes, "the bytes are in the store");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_attach_by_path_alone_is_refused_before_the_drawing_changes() {
+        // A file that exists on this server's disk: had the engine opened it, the attach would
+        // succeed, which is exactly what a shared session must not do.
+        let dir = workspace("attach-path");
+        let label = dir.join("map.png");
+        std::fs::write(&label, png()).unwrap();
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        let before = room.drawing().unwrap().clone();
+        let mut op = image_op("attach-path");
+        op.command = "attach".into();
+        op.params["path"] = json!(label.to_string_lossy());
+
+        match room.apply(&op).unwrap() {
+            Outcome::Rejected(reject) => assert_eq!(reject.code, "invalid"),
+            Outcome::Applied(_) => panic!("`attach` reads no file by the client's path"),
+        }
+        assert_eq!(room.version(), 0);
+        assert_eq!(room.drawing().unwrap(), &before);
+        assert!(room.drawing().unwrap().rasters.is_empty(), "the file beside the path was not read");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

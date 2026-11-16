@@ -3705,3 +3705,31 @@ fn incremental_reader_keeps_a_written_drawing() {
     while !reader.step(3).unwrap() {}
     assert_eq!(reader.drawing(), complete);
 }
+
+/// An `ENTITIES` section with no records is a finished drawing, not a step the reader repeats
+/// forever: a browser driving the incremental reader must not freeze on an empty drawing.
+#[test]
+fn an_empty_entities_section_finishes_the_incremental_reader() {
+    let dxf = "0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n";
+    let mut reader = read_incremental(dxf.as_bytes()).unwrap();
+    let mut steps = 0;
+    while !reader.step(64).unwrap() {
+        steps += 1;
+        assert!(steps < 100, "the reader must advance past an empty ENTITIES section");
+    }
+    assert_eq!(reader.read_records(), 0);
+    // A budget of `usize::MAX` with a non-zero start must not overflow `start + budget`.
+    let bytes = write(&sample(), "incremental-max.dxf").unwrap();
+    let mut reader = read_incremental(&bytes).unwrap();
+    let mut steps = 0;
+    while reader.read_records() == 0 {
+        assert!(!reader.step(1).unwrap());
+        steps += 1;
+        assert!(steps < 10_000, "the reader reaches the ENTITIES section");
+    }
+    while !reader.step(usize::MAX).unwrap() {
+        steps += 1;
+        assert!(steps < 10_000, "the loop must finish");
+    }
+    assert_eq!(reader.read_records(), reader.total_records());
+}

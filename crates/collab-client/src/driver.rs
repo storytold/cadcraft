@@ -70,6 +70,9 @@ pub enum Event {
     Asset { sha256: String, bytes: Vec<u8> },
     /// The heartbeat answer.
     Pong,
+    /// The read timeout fired and nothing arrived: the connection is fine, the caller keeps
+    /// draining its queue. Only the blocking transport reports it (a browser has no read).
+    Idle,
     /// The server reports a problem outside an operation.
     Error { code: String, message: String, retryable: bool },
     /// A message this client does not act on (a delta it has already matched, say).
@@ -172,7 +175,12 @@ impl Driver {
                 Event::Applied(applied)
             }
             ServerMessage::Presence { presence } => Event::Presence(presence),
-            ServerMessage::Rejected { rejected } => Event::Rejected(rejected),
+            ServerMessage::Rejected { rejected } => {
+                // The room will never apply it, and a resend after a reconnect would only be
+                // refused again: it leaves the outbox, so the sync indicator settles (ADR 0003).
+                self.client.discard(&rejected.op_id);
+                Event::Rejected(rejected)
+            }
             ServerMessage::CommitResult { version, not_saved, bytes_base64, cabinet } => {
                 let bytes = cadcraft_collab::message::decode_bytes(&bytes_base64).map_err(SessionError::Snapshot)?;
                 Event::Committed { version, not_saved, bytes, cabinet }
@@ -257,7 +265,7 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_collab::{Op, OpContext, OpKind, diff};
+    use cadcraft_collab::{Op, OpContext, OpKind, Reject, diff};
     use cadcraft_doc::geom::Vec3;
     use cadcraft_doc::{Common, EntityKind, Point, Space};
     use serde_json::json;
@@ -338,5 +346,28 @@ mod tests {
         };
         driver.client_mut().submit(op);
         assert_eq!(driver.client().outbox().len(), 1);
+    }
+
+    /// A refused operation never comes back: keeping it would leave the sync indicator pending
+    /// forever and resend it after every reconnect, for another refusal (CodeRabbit on #2938).
+    #[test]
+    fn a_rejected_operation_leaves_the_outbox() {
+        let mut driver = a_driver(Drawing::new_metric(), 3);
+        let op = Op {
+            op_id: "o1".into(),
+            actor: "u1".into(),
+            base_version: 3,
+            kind: OpKind::Command,
+            command: "line".into(),
+            params: json!({ "points": [[0.0, 0.0], [1.0, 0.0]] }),
+            context: OpContext::in_space(Space::Model),
+        };
+        driver.client_mut().submit(op);
+        let rejected = Reject { op_id: "o1".into(), code: "stale".into(), message: "another operation came first".into(), retryable: true };
+
+        let event = driver.on_message(ServerMessage::Rejected { rejected }).unwrap();
+
+        assert!(matches!(event, Some(Event::Rejected(_))), "the participant is still told why");
+        assert!(driver.client().outbox().is_empty(), "a refused operation is not queued again");
     }
 }
