@@ -94,32 +94,42 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     sources.into_iter().filter(|s| !s.is_empty() && !catalog.contains_key(&("", *s))).map(str::to_string).collect()
 }
 
+/// The modules whose `tl!`/`tf!` literals the gap report checks against each catalog.
+/// `every_module_with_marked_literals_is_scanned` fails when a module that marks text is missing here.
+const SCANNED_MODULES: [&str; 26] = [
+    "xrefs",
+    "canvas",
+    "chrome",
+    "cmdline",
+    "credits",
+    "dialogs",
+    "hatchdlg",
+    "aliasdlg",
+    "keys",
+    "mtext_editor",
+    "layers",
+    "bedit",
+    "palettes",
+    "parametric",
+    "quick",
+    "vpscale",
+    "options/dialog",
+    "finddlg",
+    "textdlg",
+    "closing",
+    "context_menu",
+    "plotstyles",
+    "save_loss",
+    "spacemouse",
+    "updates_ui",
+    "viewcube",
+];
+
 fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
-    let modules = [
-        "xrefs",
-        "canvas",
-        "chrome",
-        "cmdline",
-        "credits",
-        "dialogs",
-        "hatchdlg",
-        "aliasdlg",
-        "keys",
-        "mtext_editor",
-        "layers",
-        "bedit",
-        "palettes",
-        "parametric",
-        "quick",
-        "vpscale",
-        "options/dialog",
-        "finddlg",
-        "textdlg",
-    ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    for module in modules {
+    for module in SCANNED_MODULES {
         files.push(src.join(format!("{module}.rs")));
         module_files(&src.join(module), &mut files);
     }
@@ -183,6 +193,27 @@ fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
             files.push(path);
         }
     }
+}
+
+/// A module that marks text with `tl!`/`tf!` but is not in `SCANNED_MODULES` hides its untranslated
+/// strings from the gap report: the "Save changes to …?" prompt stayed English in Spanish that way.
+#[test]
+fn every_module_with_marked_literals_is_scanned() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    module_files(&src, &mut files);
+    let unscanned: Vec<String> = files
+        .iter()
+        .filter(|file| !file.starts_with(src.join("i18n")))
+        .filter(|file| {
+            let source = std::fs::read_to_string(file).unwrap();
+            source.contains("crate::tl!(") || source.contains("crate::tf!(")
+        })
+        .filter_map(|file| file.strip_prefix(&src).ok())
+        .map(|relative| relative.with_extension("").to_string_lossy().replace('\\', "/"))
+        .filter(|module| !SCANNED_MODULES.iter().any(|scanned| module == scanned || module.starts_with(&format!("{scanned}/"))))
+        .collect();
+    assert_eq!(unscanned, Vec::<String>::new());
 }
 
 fn assert_primary_locale_aliases() {
