@@ -281,7 +281,13 @@ fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool, frozen: &[String]
 /// Nor does one of the layers in `frozen`, those frozen in the layout viewport measured through,
 /// which does not draw them (the names compared as the renderer compares them).
 fn layer_counts(d: &Drawing, layer: &str, off_counts: bool, frozen: &[String]) -> bool {
-    layer == "0" || (d.layer(layer).is_none_or(|l| !l.frozen && (l.on || off_counts)) && !frozen.iter().any(|f| f.eq_ignore_ascii_case(layer)))
+    layer == "0" || (d.layer(layer).is_none_or(|l| !l.frozen && (l.on || off_counts)) && !frozen_in(frozen, layer))
+}
+
+/// Whether `layer` is one of the layers in `frozen`, those frozen in a layout viewport (the names
+/// compared as the renderer compares them).
+fn frozen_in(frozen: &[String], layer: &str) -> bool {
+    frozen.iter().any(|f| f.eq_ignore_ascii_case(layer))
 }
 
 /// The box of the contents of the block `blk`, referenced at `depth`, in the block's coordinates:
@@ -426,6 +432,16 @@ impl<'a> ViewportBounds<'a> {
     /// The layers frozen in the viewport.
     pub fn frozen(&self) -> &'a [String] {
         self.frozen
+    }
+
+    /// Whether the viewport leaves `part` out for its layer. `part` is an entity of the block
+    /// that an object the viewport draws is drawn from (a block reference, a dimension, a
+    /// multileader), and it is left out when its layer is frozen in the viewport, as in the
+    /// boxes above. A part on layer 0 never is: it takes the layer of the object, which the
+    /// caller has checked. What the drawing itself hides (a layer frozen for the whole drawing
+    /// or turned off) is not looked at here.
+    pub fn leaves_out(&self, part: &Entity) -> bool {
+        part.common.layer != "0" && frozen_in(self.frozen, &part.common.layer)
     }
 
     /// The box of what the viewport draws of `e`. Like [`entity_bounds`] it does not look at the
@@ -883,6 +899,27 @@ mod tests {
             assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
             assert!(extents.width() > drawn.width());
         }
+    }
+
+    /// A viewport leaves a part of a block out for its layer when that layer is frozen in the
+    /// viewport, its name matched whatever its case. A part on layer 0 is never left out, also
+    /// where the viewport freezes layer 0: it takes the layer of the object drawn from the block.
+    /// A layer the drawing itself hides (frozen for the whole drawing, or turned off) is not the
+    /// viewport's to leave out, and a viewport that freezes no layer leaves nothing out.
+    #[test]
+    fn a_viewport_leaves_out_the_parts_on_its_frozen_layers() {
+        let part = |layer: &str| {
+            let kind = EntityKind::Line(crate::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) });
+            let mut e = Entity::new(crate::Handle(1), kind);
+            e.common.layer = layer.into();
+            e
+        };
+        let frozen = ["hidden".to_string(), "0".to_string()];
+        let (through, plain) = (ViewportBounds::new(&frozen), ViewportBounds::new(&[]));
+        assert!(through.leaves_out(&part("Hidden")), "a layer frozen in the viewport, its name in another case");
+        assert!(!plain.leaves_out(&part("Hidden")), "the same part where no layer is frozen");
+        assert!(!through.leaves_out(&part("0")), "layer 0 takes the object's layer");
+        assert!(!through.leaves_out(&part("Other")), "a layer the viewport does not freeze");
     }
 
     /// Through a layout viewport the block contents on a layer frozen in it take no room: a part

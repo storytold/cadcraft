@@ -112,7 +112,7 @@ fn entity_distance_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
+    if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, view, p) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
@@ -133,8 +133,10 @@ fn entity_distance_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<
 /// Whether `p` is on the text of a dimension or multileader: inside the box around its words,
 /// turned with the text, as plain text is hit anywhere inside its box. Their other geometry is
 /// hit along its lines, so without this the cursor found the object only between the letters'
-/// edges and the lines.
-fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+/// edges and the lines. Text in a dimension's block that `view` leaves out
+/// ([`ViewportBounds::leaves_out`]) does not count: the viewport does not draw text on a layer
+/// frozen in it, and a pick in its box finds nothing there, as in AutoCAD.
+fn in_text(d: &Drawing, e: &Entity, view: &ViewportBounds<'_>, p: Vec2) -> bool {
     match &e.kind {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
@@ -142,7 +144,7 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
             // The block draws translated by the insertion point (group 12): test there (#2634).
             Some(blk) => {
                 let p = p - dm.insertion_point.xy();
-                blk.entities.iter().any(|be| match &be.kind {
+                blk.entities.iter().filter(|be| !view.leaves_out(be)).any(|be| match &be.kind {
                     EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
                     EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
                     _ => false,

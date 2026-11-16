@@ -757,6 +757,94 @@ fn a_crossing_window_tests_the_parts_the_viewport_draws() {
     assert_eq!(select::select_fence_in(&d, &model, &[], &across(hidden_part)), [dim]);
 }
 
+/// A dimension is picked anywhere inside the box of its text, and that text is a part of its
+/// block. Through a viewport that freezes the text's layer the text is not drawn: a pick in its
+/// box finds nothing there and selection cycling lists nothing, while the lines of the dimension
+/// are picked as before and a window around all of it takes it. Where the text is drawn a pick
+/// in its middle takes the dimension. AutoCAD 2022 was given this dimension, with the text of
+/// its block moved to "Hidden", and answers every case asserted here the same way. The block is
+/// the one it made, without the arrowheads and the definition points. The frozen layers are
+/// given to the selection as a viewport gives them.
+///
+/// Some answers of AutoCAD are not matched and not asserted. It picks nothing at any of the 27
+/// points of its grid inside the box of the text and takes nothing with a crossing window inside
+/// that box; here the nine points of the top row and that crossing window still take the
+/// dimension, through the top side of the rectangle around it, which is hit as the rectangle
+/// around a block reference is (#2991). And with the layer frozen for the whole drawing or turned
+/// off it picks nothing in that box either, where CADCraft picks the dimension as it did before
+/// this change, which leaves what a drawing-wide layer state does alone.
+#[test]
+fn a_dimension_is_not_picked_on_text_that_is_not_drawn() {
+    use cadcraft_engine::doc::{Block, Common, DimKind, Dimension, Drawing, Entity, EntityKind, Line, MText, Space};
+    use cadcraft_engine::geom::Vec3;
+    let mut d = Drawing::new_metric();
+    d.ensure_layer("Hidden");
+    // A horizontal dimension from (0, 5) and (40, 15) with its line along y = 40 and text 3 high:
+    // two extension lines, the two halves of the dimension line, and the text between them.
+    let mut block = Block::new("*D5");
+    let lines = [([0.0, 5.063], [0.0, 40.18]), ([40.0, 15.063], [40.0, 40.18]), ([2.0, 40.0], [12.462, 40.0]), ([38.0, 40.0], [27.538, 40.0])];
+    for (handle, (a, b)) in (1..).zip(lines) {
+        let mut part = Entity::new(Handle(handle), EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) }));
+        part.common.layer = "0".into();
+        block.entities.push(part);
+    }
+    let words = MText {
+        insert: Vec3::new(20.0, 40.0, 0.0),
+        height: 3.0,
+        width: 0.0,
+        attach: 5,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "\\A1;40.0000".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let mut text = Entity::new(Handle(5), EntityKind::MText(words));
+    text.common.layer = "Hidden".into();
+    block.entities.push(text);
+    d.blocks.insert("*D5".into(), std::sync::Arc::new(block));
+    let dimension = Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        defpt: Vec3::new(40.0, 40.0, 0.0),
+        text_mid: Vec3::new(20.0, 40.0, 0.0),
+        p13: Vec3::new(0.0, 5.0, 0.0),
+        p14: Vec3::new(40.0, 15.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: String::new(),
+        style: "Standard".into(),
+        measurement: 0.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: Some("*D5".into()),
+        insertion_point: Vec3::ZERO,
+        overrides: Default::default(),
+        assoc: Vec::new(),
+        marks: Default::default(),
+    };
+    let dim = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dimension)).unwrap();
+    let through = ["Hidden".to_string()];
+    let (middle, dimension_line, extension_line) = ([20.0, 40.0], [3.0, 40.0], [0.0, 20.0]);
+    let cycled = |frozen: &[String], p: [f64; 2]| select::pick_all_in(&d, &Space::Model, frozen, Vec2::new(p[0], p[1]), 0.2);
+    // AutoCAD was picked at a grid of 27 points inside the box of the text (14.896 by 3.063
+    // there) and took nothing at any of them. Its two lower rows are asserted: 18 points, each
+    // more than 2 away from the lines. The top row, 0.613 above the dimension line, is not: it is
+    // 0.163 from the top side of the rectangle around the dimension, which lies 0.45 above that
+    // line, so inside the pick distance of 0.2, and that side still takes the dimension (#2991).
+    let grid: Vec<[f64; 2]> = (0..9).flat_map(|i| (0..2).map(move |j| [14.704 + 1.324 * f64::from(i), 39.387 + 0.613 * f64::from(j)])).collect();
+    assert_eq!(picked(&d, &[], middle), Some(dim), "where the text is drawn");
+    assert_eq!(cycled(&[], middle), [dim]);
+    assert_eq!(picked(&d, &through, middle), None, "a pick in the middle of the text that is not drawn");
+    assert_eq!(cycled(&through, middle), [], "selection cycling there");
+    for p in grid {
+        assert_eq!(picked(&d, &through, p), None, "a pick inside the box of the text at {p:?}");
+    }
+    assert_eq!(picked(&d, &through, dimension_line), Some(dim), "the dimension line");
+    assert_eq!(picked(&d, &through, extension_line), Some(dim), "an extension line");
+    assert_eq!(windowed(&d, &through, [-2.0, 3.0], [42.0, 43.0]), [dim], "a window around all of it");
+}
+
 /// The selections of a grid across the five references, with what each finds: at every point a
 /// pick, selection cycling's list, a crossing window, a fence, two windows and the two polygons.
 fn probes(s: &Session) -> Vec<(String, Vec<Handle>)> {
