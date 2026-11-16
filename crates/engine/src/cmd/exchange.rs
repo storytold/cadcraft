@@ -204,7 +204,8 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("import", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("import", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("import", "paths are not available on the web; pass `data`"))
@@ -362,7 +363,7 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         let (a, b) = (screen(Vec2::new(min.x, max.y)), screen(Vec2::new(max.x, min.y)));
         cadcraft_render::raster::blank_outside_pixels(&mut pm, a, b);
     }
-    let png = pm.encode_png().map_err(|_| bad("preview", "rendering the preview failed"))?;
+    let png = cadcraft_render::raster::encode_png(&pm).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
     let layout = space.tab_name();
     Ok(json!({ "data": base64_encode(&png), "width": w, "height": h, "layout": layout, "paper": page.paper, "landscape": page.landscape }))
 }

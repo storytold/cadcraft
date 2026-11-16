@@ -416,3 +416,35 @@ fn a_gradient_hatch_offers_the_current_pattern_on_the_pattern_tab() {
         k => panic!("{k:?}"),
     }
 }
+
+/// Edit mode opens on the selected hatches. A selected hatch on a layer frozen in the active
+/// viewport is not drawn there, so it is not one of them and the command asks for a hatch.
+#[test]
+fn edit_mode_leaves_out_a_selected_hatch_the_viewport_does_not_draw() {
+    let (mut app, _) = app_with_rect();
+    let hx = app.session.execute("hatch", &json!({ "points": [[5, 5]] })).unwrap()["handle"].as_str().unwrap().to_string();
+    let hatch = Handle::parse_hex(&hx).unwrap();
+    app.session.execute("layer.new", &json!({ "name": "Hidden" })).unwrap();
+    app.session.execute("properties.set", &json!({ "handles": [hx], "layer": "Hidden" })).unwrap();
+    app.session.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    let made = app.session.execute("mview", &json!({ "count": 2, "p1": [20, 20], "p2": [220, 120] })).unwrap();
+    let viewport = |i: usize| made["viewports"][i].as_str().unwrap().to_string();
+    let (a, b) = (viewport(0), viewport(1));
+    app.session.execute("vplayer", &json!({ "handles": [a], "freeze": ["Hidden"] })).unwrap();
+
+    // Through the viewport that draws the hatch, edit mode opens on it.
+    app.session.execute("mspace", &json!({ "handle": b })).unwrap();
+    app.session.set_selection(vec![hatch]);
+    open_edit(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    assert_eq!(app.hatch_dlg.as_ref().map(|d| d.edit.clone()), Some(vec![hatch]));
+
+    // Through the viewport that freezes its layer there is no hatch to edit yet.
+    (app.ui.dialog, app.hatch_dlg) = (None, None);
+    app.session.execute("mspace", &json!({ "handle": a })).unwrap();
+    app.session.set_selection(vec![hatch]);
+    open_edit(&mut app);
+    assert_eq!(app.ui.dialog, None, "no dialog: the command asks for a hatch first");
+    assert_eq!(app.hatch_dlg.as_ref().map(|d| d.edit.clone()), Some(Vec::new()), "a hatch the viewport does not draw must not be edited");
+    assert!(app.session.running.is_some(), "HATCHPICK must be asking for a hatch");
+}
