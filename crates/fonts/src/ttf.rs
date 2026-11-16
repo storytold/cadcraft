@@ -578,7 +578,7 @@ pub fn available(name: &str) -> bool {
     let k = key(name);
     // The built-in stroke font is CADCraft's own stand-in for the basic stroke fonts.
     let stand_in = matches!(k.trim_end_matches(".shx"), "txt" | "simplex" | "romans");
-    k.is_empty() || stand_in || k == crate::BUILTIN_FONT.to_ascii_lowercase() || crate::shx::find(name).is_some() || find(name).is_some()
+    k.is_empty() || stand_in || k.eq_ignore_ascii_case(crate::BUILTIN_FONT) || crate::shx::find(name).is_some() || find(name).is_some()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -841,8 +841,8 @@ fn is_stroke_name(k: &str) -> bool {
     let base = k.trim_end_matches('_');
     base.is_empty()
         || k.ends_with(".shx")
-        || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
-        || k == crate::BUILTIN_FONT.to_ascii_lowercase()
+        || std::path::Path::new(base).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
+        || k.eq_ignore_ascii_case(crate::BUILTIN_FONT)
         || matches!(
             base,
             "txt"
