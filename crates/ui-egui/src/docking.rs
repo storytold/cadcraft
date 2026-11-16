@@ -19,6 +19,7 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    PlotStyles,
 }
 
 impl Panel {
@@ -31,6 +32,7 @@ impl Panel {
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
+            Self::PlotStyles => "plotStyles",
         }
     }
     fn label(self) -> &'static str {
@@ -41,6 +43,7 @@ impl Panel {
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
+            Self::PlotStyles => "Plot Style Manager",
         }
     }
     /// The icon a palette shows in a column collapsed to icons.
@@ -53,10 +56,11 @@ impl Panel {
             Self::Layers => Some(Icon::Layers),
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
+            Self::PlotStyles => Some(Icon::Plot),
         }
     }
-    /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    /// Palettes outside the default arrangement, opened on request (QUICKCALC, STYLESMANAGER).
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::PlotStyles];
 }
 
 /// The drawing view never moves, floats, closes or takes tabs; palettes dock beside it.
@@ -149,6 +153,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
         Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::PlotStyles => &[(Panel::Properties, true), (Panel::Layers, true), (Panel::ExternalRefs, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -414,6 +419,7 @@ impl DockContent<Panel> for Panels<'_> {
             Panel::ExternalRefs => {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
+            Panel::PlotStyles => crate::plotstyles::panel(app, ui),
         }
     }
     fn logical_label(&self, panel: &Panel) -> String {
@@ -440,6 +446,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
+        Panel::PlotStyles => (egui::vec2(260.0, 160.0), 900.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };

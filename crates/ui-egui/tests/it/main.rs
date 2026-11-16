@@ -26,6 +26,8 @@ mod options_dialog;
 mod options_right_click;
 mod parameters_rename;
 mod pickdrag;
+mod plot_style_colors;
+mod plot_style_panel;
 mod properties_units;
 mod rapid_clicks;
 mod selection_cycling;

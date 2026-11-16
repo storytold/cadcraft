@@ -100,7 +100,11 @@ fn default_layout_is_tool_sets_left_and_the_palettes_right_in_dock_columns() {
     assert_eq!((start[0].width, end[0].width), (TOOL_SETS_WIDTH, PALETTES_WIDTH));
     assert!(start.iter().chain(&end).all(|column| !column.iconic));
     assert!(start.iter().chain(&end).flat_map(|column| &column.groups).all(|group| group.height.is_none() && !group.minimized));
-    assert!(!workspace.layout.contains(&Panel::QuickCalc) && !workspace.layout.contains(&Panel::ExternalRefs));
+    assert!(
+        !workspace.layout.contains(&Panel::QuickCalc)
+            && !workspace.layout.contains(&Panel::PlotStyles)
+            && !workspace.layout.contains(&Panel::ExternalRefs)
+    );
 
     // Drawn: Tool Sets left of the drawing, Layers above Properties right of it, Layers at its
     // own height and Properties taking the rest of the column.
@@ -132,7 +136,7 @@ fn palette_icons_are_painted_in_code_and_shown_in_an_iconic_column() {
         output.textures_delta.clear();
         (painted, output.shapes.len())
     };
-    for panel in [Panel::ToolSets, Panel::QuickCalc, Panel::Layers, Panel::Properties, Panel::ExternalRefs] {
+    for panel in [Panel::ToolSets, Panel::QuickCalc, Panel::PlotStyles, Panel::Layers, Panel::Properties, Panel::ExternalRefs] {
         let (painted, shapes) = paint(panel);
         assert!(painted && shapes > 0, "{panel:?}: {painted} {shapes}");
     }

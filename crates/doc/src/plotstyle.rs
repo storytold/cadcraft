@@ -389,6 +389,113 @@ pub fn plot_style_table(d: &crate::Drawing, name: &str) -> Option<PlotStyleTable
     d.plot_style_tables.iter().find(|t| t.name.eq_ignore_ascii_case(n)).cloned().or_else(|| PlotStyleTable::builtin(n))
 }
 
+/// The index colours (1..=255) the drawing draws with, for the Plot Style Manager's "show only
+/// colors used in the drawing" filter (#3122): an object's index colour, a true colour's nearest
+/// index colour, a ByLayer object's layer colour and a ByBlock object's block reference colour,
+/// plus the DIMCLRD / DIMCLRE / DIMCLRT colours a dimension or a tolerance draws with.
+/// Objects count in model space, in every layout and in every block definition, so a block no one
+/// has placed yet still shows its colours.
+pub fn plot_style_colors_in_use(d: &crate::Drawing) -> std::collections::BTreeSet<u8> {
+    /// A style component colour (`DIMCLRD` and the like) as it draws: ByLayer takes the layer's
+    /// colour, ByBlock the object's own colour (`own`), and a true colour its nearest index colour.
+    fn component(c: cadcraft_color::Color, layer_color: cadcraft_color::Color, own: cadcraft_color::Color) -> u8 {
+        let c = match c {
+            cadcraft_color::Color::ByLayer => layer_color,
+            cadcraft_color::Color::ByBlock => own,
+            c => c,
+        };
+        match c {
+            cadcraft_color::Color::True(rgb) => cadcraft_color::nearest_aci(rgb),
+            cadcraft_color::Color::Index(i) => i,
+            _ => 7,
+        }
+    }
+    /// Block contents expanded with their reference's colour and layer: layer 0 inside a block
+    /// takes the reference's layer, and ByBlock its colour, as they draw (`render`).
+    fn walk<'a>(
+        d: &'a crate::Drawing,
+        w: &mut Colors<'a>,
+        store: &'a crate::EntityStore,
+        block_color: cadcraft_color::Color,
+        block_layer: Option<&'a str>,
+        depth: usize,
+    ) {
+        if depth > crate::MAX_BLOCK_DEPTH {
+            return;
+        }
+        for e in store.iter() {
+            let layer_name = if e.common.layer == "0" { block_layer.unwrap_or("0") } else { e.common.layer.as_str() };
+            let layer_color = d.layer(layer_name).map_or(cadcraft_color::Color::Index(7), |l| l.color);
+            let own = match e.common.color {
+                cadcraft_color::Color::ByLayer => layer_color,
+                cadcraft_color::Color::ByBlock => block_color,
+                c => c,
+            };
+            // Dimensions and tolerances draw their lines, boxes and text in their style's
+            // colours, which may name a colour no object has (#3122 review).
+            match &e.kind {
+                crate::EntityKind::Dimension(dm) => {
+                    let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+                    for c in [st.dim_line_color, st.ext_line_color, st.text_color] {
+                        w.out.insert(component(c, layer_color, own));
+                    }
+                }
+                crate::EntityKind::Tolerance(t) => {
+                    let st = d.dim_style(&t.style).cloned().unwrap_or_default();
+                    for c in [st.dim_line_color, st.text_color] {
+                        w.out.insert(component(c, layer_color, own));
+                    }
+                }
+                _ => {}
+            }
+            // A layer or reference whose own colour is logical still draws colour 7.
+            let color = match own {
+                cadcraft_color::Color::ByLayer | cadcraft_color::Color::ByBlock => cadcraft_color::Color::Index(7),
+                c => c,
+            };
+            w.out.insert(match color {
+                cadcraft_color::Color::True(rgb) => cadcraft_color::nearest_aci(rgb),
+                cadcraft_color::Color::Index(i) => i,
+                _ => 7,
+            });
+            if let crate::EntityKind::Insert(ins) = &e.kind
+                && depth < crate::MAX_BLOCK_DEPTH
+                && let Some(blk) = d.block(&ins.block)
+            {
+                w.reached.insert(blk.name.as_str());
+                // A hostile drawing can nest references so that every path has its own colour
+                // and layer context; each context is walked once, at its depth, so the walk
+                // stays bounded instead of growing with the nesting (CWE-400).
+                if w.seen.insert((blk.name.as_str(), color, Some(layer_name), depth)) {
+                    walk(d, w, &blk.entities, color, Some(layer_name), depth + 1);
+                }
+            }
+        }
+    }
+    struct Colors<'a> {
+        out: std::collections::BTreeSet<u8>,
+        reached: std::collections::HashSet<&'a str>,
+        seen: std::collections::HashSet<(&'a str, cadcraft_color::Color, Option<&'a str>, usize)>,
+    }
+    let mut w = Colors { out: std::collections::BTreeSet::new(), reached: std::collections::HashSet::new(), seen: std::collections::HashSet::new() };
+    let top = cadcraft_color::Color::Index(7);
+    walk(d, &mut w, &d.model, top, None, 0);
+    for l in &d.layouts {
+        walk(d, &mut w, &l.entities, top, None, 0);
+    }
+    // A definition no reference from the placed content reaches is part of the drawing too: walk
+    // it as a reference outside any block would draw it. The set is taken before these walks so
+    // the answer does not depend on the definitions' order: a definition reached only from
+    // another unplaced one counts both in its parent's context and on its own.
+    let placed = w.reached.clone();
+    for b in d.blocks.values() {
+        if !placed.contains(b.name.as_str()) {
+            walk(d, &mut w, &b.entities, top, None, 0);
+        }
+    }
+    w.out
+}
+
 /// The names of every table a drawing can use: its own, then the built-in ones it doesn't
 /// shadow.
 pub fn plot_style_table_names(d: &crate::Drawing) -> Vec<String> {
@@ -479,6 +586,135 @@ mod tests {
         let rgb: PlotStyle = serde_json::from_value(serde_json::json!({"name": "x", "color": [1, 2, 3]})).unwrap();
         assert_eq!(rgb.color, Some(Rgb(1, 2, 3)));
         assert!(serde_json::from_value::<PlotStyle>(serde_json::json!({"color": "#zz0000"})).is_err());
+    }
+
+    #[test]
+    fn colors_in_use_follow_layers_true_colors_and_layouts() {
+        use crate::{Common, Drawing, EntityKind, Line, Space};
+        use cadcraft_geom::Vec3;
+
+        let mut d = Drawing::new_imperial();
+        assert!(plot_style_colors_in_use(&d).is_empty(), "an empty drawing uses no colour");
+        let line = || EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) });
+        let common = |color| Common { color, ..Common::default() };
+        // ByLayer on the default layer draws colour 7.
+        d.add(&Space::Model, common(cadcraft_color::Color::ByLayer), line()).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [7]);
+        // A layer's colour, a true colour's nearest index colour, and an object in a layout.
+        d.layers.push(crate::Layer { name: "Red".into(), color: cadcraft_color::Color::Index(1), ..crate::Layer::new("Red") });
+        let on_red = Common { layer: "Red".into(), ..Common::default() };
+        d.add(&Space::Model, on_red, line()).unwrap();
+        d.add(&Space::Model, common(cadcraft_color::Color::True(Rgb(0, 0, 255))), line()).unwrap();
+        d.add(&Space::Paper("Layout1".into()), common(cadcraft_color::Color::Index(4)), line()).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [1, 4, 5, 7]);
+    }
+
+    #[test]
+    fn colors_in_use_follow_block_references() {
+        use crate::{Common, Drawing, Entity, EntityKind, Handle, Line, Space};
+        use cadcraft_geom::Vec3;
+
+        let mut d = Drawing::new_imperial();
+        let line = || EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) });
+        d.layers.push(crate::Layer { name: "Green".into(), color: cadcraft_color::Color::Index(3), ..crate::Layer::new("Green") });
+        let mut blk = crate::Block::new("B");
+        let mut green = Entity::new(Handle(1), line());
+        green.common.layer = "Green".into();
+        let mut by_block = Entity::new(Handle(2), line());
+        by_block.common.color = cadcraft_color::Color::ByBlock;
+        blk.entities.push(green);
+        blk.entities.push(by_block);
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        // A definition nobody has placed still counts, its ByBlock object drawing colour 7.
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [3, 7]);
+        // Placed with colour 4, its ByBlock object draws that colour, not 7.
+        let insert = EntityKind::Insert(crate::Insert { block: "B".into(), ..crate::Insert::default() });
+        d.add(&Space::Model, Common { color: cadcraft_color::Color::Index(4), ..Common::default() }, insert).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [3, 4]);
+    }
+
+    #[test]
+    fn colors_in_use_include_dimension_component_colors() {
+        use crate::{Common, DimKind, Dimension, Drawing, EntityKind, Space};
+        use cadcraft_geom::Vec3;
+
+        let mut d = Drawing::new_imperial();
+        d.dim_styles.push(crate::DimStyle {
+            name: "Pens".into(),
+            // ByLayer and ByBlock components follow the dimension, as they draw.
+            dim_line_color: cadcraft_color::Color::ByLayer,
+            ext_line_color: cadcraft_color::Color::ByBlock,
+            text_color: cadcraft_color::Color::Index(5),
+            ..crate::DimStyle::default()
+        });
+        let dim = || Dimension {
+            kind: DimKind::Aligned,
+            defpt: Vec3::ZERO,
+            text_mid: Vec3::ZERO,
+            p13: Vec3::ZERO,
+            p14: Vec3::new(1.0, 0.0, 0.0),
+            p15: Vec3::ZERO,
+            p16: Vec3::ZERO,
+            text: String::new(),
+            style: "Pens".into(),
+            measurement: 1.0,
+            text_rotation: 0.0,
+            user_text_pos: false,
+            block: None,
+            insertion_point: Vec3::ZERO,
+            overrides: Default::default(),
+            assoc: Vec::new(),
+            marks: Default::default(),
+        };
+        // DIMCLRD draws the layer colour 7, DIMCLRE the dimension's ByBlock colour 4, DIMCLRT 5.
+        let common = || Common { color: cadcraft_color::Color::Index(4), ..Common::default() };
+        d.add(&Space::Model, common(), EntityKind::Dimension(dim())).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [4, 5, 7]);
+        // A per-dimension override changes the colour DIMCLRT draws on that dimension only.
+        let mut over = dim();
+        over.overrides = serde_json::json!({ "textColor": 2 }).as_object().cloned().unwrap_or_default();
+        d.add(&Space::Model, common(), EntityKind::Dimension(over)).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [2, 4, 5, 7]);
+    }
+
+    #[test]
+    fn colors_in_use_include_tolerance_component_colors() {
+        use crate::{Common, Drawing, EntityKind, Space, Tolerance};
+        use cadcraft_geom::Vec3;
+
+        let mut d = Drawing::new_imperial();
+        d.dim_styles.push(crate::DimStyle {
+            name: "Pens".into(),
+            dim_line_color: cadcraft_color::Color::Index(1),
+            text_color: cadcraft_color::Color::Index(2),
+            ..crate::DimStyle::default()
+        });
+        let t = Tolerance { insert: Vec3::ZERO, dir: Vec3::new(1.0, 0.0, 0.0), style: "Pens".into(), text: "1".into() };
+        // The tolerance's own colour is ByLayer (7); DIMCLRD and DIMCLRT add 1 and 2.
+        d.add(&Space::Model, Common::default(), EntityKind::Tolerance(t)).unwrap();
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [1, 2, 7]);
+    }
+
+    #[test]
+    fn colors_in_use_walk_unplaced_definitions_independently_of_order() {
+        use crate::{Drawing, Entity, EntityKind, Handle, Line};
+        use cadcraft_geom::Vec3;
+
+        let mut d = Drawing::new_imperial();
+        let line = || EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) });
+        let mut b = crate::Block::new("B");
+        let mut by_block = Entity::new(Handle(1), line());
+        by_block.common.color = cadcraft_color::Color::ByBlock;
+        b.entities.push(by_block);
+        d.blocks.insert("B".into(), std::sync::Arc::new(b));
+        // Unplaced A places B with colour 3, so B draws 3 inside A and 7 on its own. Walking A
+        // first must not hide B's own context from the answer.
+        let mut a = crate::Block::new("A");
+        let mut insert = Entity::new(Handle(2), EntityKind::Insert(crate::Insert { block: "B".into(), ..crate::Insert::default() }));
+        insert.common.color = cadcraft_color::Color::Index(3);
+        a.entities.push(insert);
+        d.blocks.insert("A".into(), std::sync::Arc::new(a));
+        assert_eq!(plot_style_colors_in_use(&d).into_iter().collect::<Vec<_>>(), [3, 7]);
     }
 
     #[test]
