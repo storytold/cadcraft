@@ -164,6 +164,11 @@ S S3 C ON
 ",
     )
     .unwrap();
+    // AutoCAD 2024 asks for the toggles without "or" before them.
+    assert_eq!(
+        s.current_prompt().unwrap().display(),
+        "Enter states to change [On/Frozen/Lock/Plot/Newvpfreeze/Color/lineType/lineWeight/TRansparency/plotStyle]:"
+    );
     s.input(Input::Cancel).unwrap();
     assert!(s.running.is_none());
     assert_eq!(states(&s), [state("S1", LayerState::ALL), state("S2", LayerState::ALL)]);
