@@ -50,6 +50,7 @@ fn reference_to(block: &str, rotation: f64) -> (Drawing, Handle) {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
     (d, r)
@@ -274,6 +275,7 @@ fn a_lookup_cell_that_isnt_a_number_is_refused() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
     let before = insert(&d, r).block.clone();
