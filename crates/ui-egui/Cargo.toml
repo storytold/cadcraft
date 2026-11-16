@@ -18,6 +18,8 @@ cadcraft-render = { workspace = true }
 cadcraft-engine = { workspace = true }
 cadcraft-collab = { workspace = true }
 cadcraft-collab-client = { workspace = true }
+cadcraft-io = { workspace = true }
+craft-image-codecs = { workspace = true }
 cadcraft-fonts = { workspace = true }
 craft-window = { workspace = true }
 egui = { workspace = true }
@@ -42,8 +44,6 @@ craft-ui = { workspace = true, features = ["native-windows"] }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 # Validates the canvas WGSL and its GLSL ES 3.0 (WebGL2) translation in tests (same naga wgpu uses).
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
-# Reads the synthetic dynamic-block fixture of the io tests for the dynamic grips tests.
-cadcraft-io = { workspace = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
