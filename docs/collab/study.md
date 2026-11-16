@@ -50,9 +50,11 @@
 
 ## 2. Модель документа
 
-Корень — `Drawing` (`crates/doc/src/lib.rs:95`):
+Корень — `Drawing` (`crates/doc/src/lib.rs:95`). Ниже — схема полей, а не
+компилируемое объявление: часть полей объединена в строки, чтобы не раздувать
+листинг (полный список — в исходнике).
 
-```rust
+```text
 pub struct Drawing {
     pub header: Header,
     pub foreign: Arc<foreign::Foreign>,   // данные файла, которые не моделируются
@@ -67,12 +69,11 @@ pub struct Drawing {
     pub model: EntityStore,
     pub layouts: Vec<Layout>,             // у каждого свой EntityStore (paper space)
     pub active_layout: Option<String>,
-    pub views / vports / ucss / layer_states / groups / plot_style_tables / scales,
+    // views / vports / ucss / layer_states / groups / plot_style_tables / scales
     pub constraints: Vec<Constraint>,
     pub handseed: u64,                    // следующий свободный handle
     // сессионное, не пишется в файл:
-    pub hidden_objects: BTreeSet<Handle>, pub read_notes: Vec<String>,
-    pub refedit: Option<RefEdit>, pub skipped_records: …,
+    // hidden_objects, read_notes, refedit, skipped_records
 }
 ```
 
@@ -298,6 +299,12 @@ at 200k entities» и «display list once per change»; **сам я это не 
   `docs/architecture.md`/`gaps.md` — авторские оценки, не мои.
 - Известные из `gaps.md` ограничения: DWG 10 МБ падал за ~2 минуты (#57, FF6);
   лимиты на размер входных данных и рекурсию блоков (`MAX_BLOCK_DEPTH`).
+- **Как воспроизвести (в этом PR не запускалось):**
+  `cargo run -p cadcraft-cli -- perf --entities 200000` на хосте сборки
+  (`scripts/remote-build.sh`), плюс `perf` на реальном файле. Оценка
+  «picking ≈0.001 ms at 200k entities» из `docs/architecture.md` — авторская,
+  без даты и без стенда в репозитории; она не подтверждает лимиты RFC §9, пока
+  не снята этим прогоном.
 - **WASM**: сборка ~13 МБ (~5 МБ gzip, `INTEGRATION.md`); rayon выключен,
   потоки не гарантированы; DWG недоступен; всё, что делает сервер синхронизации
   (мост DWG в дочернем процессе, файловые снапшоты), живёт вне браузера.
