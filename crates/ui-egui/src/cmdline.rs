@@ -165,8 +165,15 @@ fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Sugge
     // 3. Alias prefix matches (for commands not yet added): the user's aliases (ALIASEDIT) and the
     //    built-in ones. A built-in alias the user gave to another command is not offered for its
     //    old command, since Enter would run the user's.
+    //    A user alias is looked up as typed too: with the Greek-layout fallback `p` holds the Latin
+    //    keys, and an alias the user named in Greek would be missed.
     let mut alias_matches: Vec<(String, &'static cadcraft_engine::CommandSpec)> = Vec::new();
-    for (alias, id) in cadcraft_engine::cmd::file::user_aliases_starting_with(&p) {
+    let as_typed = prefix.to_ascii_lowercase();
+    let mut user_aliases = cadcraft_engine::cmd::file::user_aliases_starting_with(&p);
+    if as_typed != p {
+        user_aliases.extend(cadcraft_engine::cmd::file::user_aliases_starting_with(&as_typed));
+    }
+    for (alias, id) in user_aliases {
         if let Some(c) = cadcraft_engine::cmd::find_command(&id)
             && !c.id.contains('.')
             && !seen_ids.contains(c.id)
@@ -828,6 +835,18 @@ mod tests {
         assert_eq!(umlaut.first().map(|s| (s.id.as_str(), s.display.as_str())), Some(("LENGTHEN", "ZZLÄNGE (LENGTHEN)")), "{umlaut:?}");
         assert_eq!(moved.first().map(|s| s.id.as_str()), Some("XLINE"), "{moved:?}");
         assert!(!moved.iter().any(|s| s.id == "EXPLODE"), "{moved:?}");
+    }
+
+    /// A user alias named in Greek is offered while its beginning is typed, though the
+    /// Greek-layout fallback reads the prefix as Latin keys.
+    #[test]
+    fn autocomplete_offers_a_greek_user_alias_by_prefix() {
+        let _alone = crate::aliasdlg::lock_alias_store();
+        let mut session = Session::empty();
+        session.execute("aliasedit", &serde_json::json!({ "set": { "ΖΖΚΥΚ": "circle" } })).unwrap();
+        let greek = suggestions("ΖΖΚ", &|_| false);
+        session.execute("aliasedit", &serde_json::json!({ "remove": ["ΖΖΚΥΚ"] })).unwrap();
+        assert!(greek.iter().any(|s| s.id == "CIRCLE" && s.display == "ΖΖΚΥΚ (CIRCLE)"), "{greek:?}");
     }
 
     /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
