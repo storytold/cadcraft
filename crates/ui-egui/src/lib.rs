@@ -365,6 +365,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Blocks window's previews.
+    pub block_previews: dialogs::BlockPreviews,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -425,6 +427,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            block_previews: dialogs::BlockPreviews::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
