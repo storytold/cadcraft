@@ -992,21 +992,17 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
     }
 }
 
-/// The DWG bridge's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the DWG
-/// version the bridge writes) has.
-/// `frozen_341`: see [`Ctx::frozen_341`].
-pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
-    tags_kept_for(d, version, target, frozen_341, true).0
-}
-
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
 /// file ends up in) has, and the foreign objects the file keeps, by their handles in the drawing.
+/// `read_as`: the reader's version for groups that depend on it, such as FIELD objects. This is
+/// the declared version for DXF, or the version the DWG bridge reads the kept groups as.
 /// `bridge`: the text is for the DWG bridge, not a DXF file. The versions alone can't say so: an
 /// R2000 DWG is bridged from R2000 text.
 pub(super) fn tags_kept_for(
     d: &Drawing,
     version: Version,
     target: Version,
+    read_as: Version,
     frozen_341: bool,
     bridge: bool,
 ) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
@@ -1049,7 +1045,7 @@ pub(super) fn tags_kept_for(
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
     // FIELD objects exist from AutoCAD 2004 (R2004) on.
-    let fields = if target >= Version::R2004 { crate::dxf_field::plan(d) } else { crate::dxf_field::Plan::default() };
+    let fields = if target >= Version::R2004 { crate::dxf_field::plan(d, read_as) } else { crate::dxf_field::Plan::default() };
     let mut cx = Ctx { paper_views: paper_views(d), target, fields: fields.fields, frozen_341, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
@@ -1292,8 +1288,6 @@ pub(super) fn tags_kept_for(
     // Kept constraint groups go in the order their reader expects: a DXF's own version. The
     // bridge's R2000 text is read as the version its kept groups came from when that is newer
     // (craft-dwg's `encode_kept_noted` declares it), so there they stay as read.
-    let read_as =
-        if !bridge { version } else { d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version) };
     crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
     // Kept render settings take the class-version form of the version the text is read as (#907).
     crate::dxf_raw::render_settings_versions(&mut w.t, d.foreign.version.as_deref().and_then(Version::for_acadver), read_as);

@@ -25,7 +25,7 @@ use std::sync::Arc;
 use cadcraft_doc::fields::{self, split_value, with_value};
 use cadcraft_doc::foreign::{Foreign, ForeignObject};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag};
-use craft_dxf::Tag;
+use craft_dxf::{Tag, Version};
 
 /// Upper bound on FIELD objects of one text.
 const MAX_NODES: usize = 1_000;
@@ -72,8 +72,9 @@ fn parse_object(o: &ForeignObject) -> Option<Parsed<'_>> {
     let evaluator = o.tags.iter().find(|t| t.code == 1)?.value.as_str();
     let code_at = o.tags.iter().position(|t| t.code == 2)?;
     let code = o.tags.get(code_at)?.value.as_str();
-    // The child count (90), then that many child handles (360).
-    let count_at = code_at + 1;
+    // The child count (90), then that many child handles (360). Before AutoCAD 2007 the format
+    // (group 4) follows the object list, or in some files the code.
+    let count_at = code_at + 1 + usize::from(o.tags.get(code_at + 1).is_some_and(|t| t.code == 4));
     let count = usize::try_from(o.tags.get(count_at).filter(|t| t.code == 90)?.value.trim().parse::<i64>().ok()?).ok()?;
     let children: Vec<Handle> =
         o.tags.get(count_at + 1..)?.iter().take_while(|t| t.code == 360).filter_map(|t| Handle::parse_hex(t.value.trim())).collect();
@@ -85,12 +86,11 @@ fn parse_object(o: &ForeignObject) -> Option<Parsed<'_>> {
         return None;
     }
     // The value record (group 7) says whether there is a value: type 4 or 2 (flag 93 = 4), not 3.
-    let has_value = o
-        .tags
-        .iter()
-        .position(|t| t.code == 7)
-        .and_then(|i| o.tags.get(i + 1..)?.iter().find(|t| t.code == 93))
-        .is_some_and(|t| t.value.trim() == "4");
+    // Before AutoCAD 2007 a value has no flags, and one without a value has type 0.
+    let has_value = o.tags.iter().position(|t| t.code == 7).and_then(|i| o.tags.get(i + 1..)).is_some_and(|after| match after.first() {
+        Some(t) if t.code == 90 => t.value.trim() != "0",
+        _ => after.iter().find(|t| t.code == 93).is_some_and(|t| t.value.trim() == "4"),
+    });
     let value = o.tags.iter().rev().find(|t| t.code == 301).map(|t| t.value.as_str()).filter(|_| has_value);
     Some(Parsed { evaluator, code, children, value })
 }
@@ -298,8 +298,9 @@ fn dictionary(h: Handle, owner: Handle, reactor: bool, key: &str, entry: Handle)
     ForeignObject { handle: h, kind: "DICTIONARY".into(), tags }
 }
 
-/// The FIELD object of a field, then the objects of its nested fields.
-fn field_objects(n: &Node, h: Handle, owner: Handle, ids: &mut Alloc, out: &mut Vec<ForeignObject>) {
+/// The FIELD object of a field, then the objects of its nested fields. `legacy`: in the groups of
+/// a version before AutoCAD 2007 (see [`legacy`]).
+fn field_objects(n: &Node, h: Handle, owner: Handle, legacy: bool, ids: &mut Alloc, out: &mut Vec<ForeignObject>) {
     let handles: Vec<Handle> = n.children.iter().map(|_| ids.next()).collect();
     let mut t = vec![
         rt(5, h.hex()),
@@ -311,9 +312,14 @@ fn field_objects(n: &Node, h: Handle, owner: Handle, ids: &mut Alloc, out: &mut 
     t.push(rt(90, handles.len().to_string()));
     t.extend(handles.iter().map(|c| rt(360, c.hex())));
     let date = n.variable.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("Date"));
-    t.extend([rt(97, "0"), rt(91, if date { "32" } else { "63" }), rt(92, "0"), rt(94, "59"), rt(95, "2"), rt(96, "0"), rt(300, "")]);
+    t.push(rt(97, "0"));
+    if legacy {
+        t.push(rt(4, n.format.clone().unwrap_or_default()));
+    }
+    t.extend([rt(91, if date { "32" } else { "63" }), rt(92, "0"), rt(94, "59"), rt(95, "2"), rt(96, "0"), rt(300, "")]);
     match &n.variable {
         // The variable's name is the field's one data entry.
+        Some(v) if legacy => t.extend([rt(93, "1"), rt(6, "Variable"), rt(90, "4"), rt(1, v.as_str())]),
         Some(v) => t.extend([
             rt(93, "1"),
             rt(6, "Variable"),
@@ -328,30 +334,38 @@ fn field_objects(n: &Node, h: Handle, owner: Handle, ids: &mut Alloc, out: &mut 
         None => t.push(rt(93, "0")),
     }
     t.push(rt(7, "ACFD_FIELD_VALUE"));
-    value_record(&mut t, n);
+    value_record(&mut t, n, legacy);
     out.push(ForeignObject { handle: h, kind: "FIELD".into(), tags: t });
     for (c, ch) in n.children.iter().zip(handles) {
-        field_objects(c, ch, h, ids, out);
+        field_objects(c, ch, h, legacy, ids, out);
     }
 }
 
-/// The cached value of a field (type 4 text, 2 real), its format and its text.
-fn value_record(t: &mut Vec<RawTag>, n: &Node) {
+/// The cached value of a field (type 4 text, 2 real), its format and its text. Before AutoCAD
+/// 2007 (`legacy`) a value has no flags (93) and no unit, format and text groups (94 to 304); a
+/// field without a value has type 0 with its number (91), which the reader looks for.
+fn value_record(t: &mut Vec<RawTag>, n: &Node, legacy: bool) {
     let shown = n.value.clone().unwrap_or_default();
-    match n.value.as_deref() {
-        None => t.extend([rt(93, "3"), rt(90, "0")]),
+    let (flags, body) = match n.value.as_deref() {
+        None => ("3", if legacy { vec![rt(90, "0"), rt(91, "0")] } else { vec![rt(90, "0")] }),
         Some(v) => match (n.evaluator, v.trim().parse::<f64>().ok().filter(|x| x.is_finite())) {
-            ("AcExpr", Some(x)) => t.extend([rt(93, "4"), rt(90, "2"), rt(140, craft_dxf::format_real(x))]),
-            _ => t.extend([rt(93, "4"), rt(90, "4"), rt(1, v)]),
+            ("AcExpr", Some(x)) => ("4", vec![rt(90, "2"), rt(140, craft_dxf::format_real(x))]),
+            _ => ("4", vec![rt(90, "4"), rt(1, v)]),
         },
+    };
+    if !legacy {
+        t.push(rt(93, flags));
     }
-    t.extend([rt(94, "0"), rt(300, n.format.clone().unwrap_or_default()), rt(302, shown.as_str()), rt(304, "ACVALUE_END")]);
+    t.extend(body);
+    if !legacy {
+        t.extend([rt(94, "0"), rt(300, n.format.clone().unwrap_or_default()), rt(302, shown.as_str()), rt(304, "ACVALUE_END")]);
+    }
     t.extend([rt(301, shown.as_str()), rt(98, shown.chars().count().to_string())]);
 }
 
 /// The objects below an MTEXT's extension dictionary `xdict`: the `ACAD_FIELD` dictionary (key
 /// `TEXT`), the `_text` field and the fields below it. The `ACAD_FIELD` dictionary comes first.
-fn text_objects(template: &str, nodes: &[Node], xdict: Handle, ids: &mut Alloc) -> Vec<ForeignObject> {
+fn text_objects(template: &str, nodes: &[Node], xdict: Handle, legacy: bool, ids: &mut Alloc) -> Vec<ForeignObject> {
     let (acad_field, text) = (ids.next(), ids.next());
     let mut out = vec![dictionary(acad_field, xdict, true, "TEXT", text)];
     let handles: Vec<Handle> = nodes.iter().map(|_| ids.next()).collect();
@@ -367,13 +381,22 @@ fn text_objects(template: &str, nodes: &[Node], xdict: Handle, ids: &mut Alloc) 
         rt(90, handles.len().to_string()),
     ];
     t.extend(handles.iter().map(|c| rt(360, c.hex())));
+    t.push(rt(97, "0"));
+    if legacy {
+        t.push(rt(4, ""));
+    }
     // No data entries (AutoCAD also writes the checksum of the text, which is not reproduced).
-    t.extend([rt(97, "0"), rt(91, "63"), rt(92, "0"), rt(94, "13"), rt(95, "2"), rt(96, "0"), rt(300, ""), rt(93, "0")]);
-    t.extend([rt(7, "ACFD_FIELD_VALUE"), rt(93, "3"), rt(90, "0"), rt(94, "0"), rt(300, ""), rt(302, ""), rt(304, "ACVALUE_END")]);
+    t.extend([rt(91, "63"), rt(92, "0"), rt(94, "13"), rt(95, "2"), rt(96, "0"), rt(300, ""), rt(93, "0")]);
+    t.push(rt(7, "ACFD_FIELD_VALUE"));
+    if legacy {
+        t.extend([rt(90, "0"), rt(91, "0")]);
+    } else {
+        t.extend([rt(93, "3"), rt(90, "0"), rt(94, "0"), rt(300, ""), rt(302, ""), rt(304, "ACVALUE_END")]);
+    }
     t.extend([rt(301, ""), rt(98, "0")]);
     out.push(ForeignObject { handle: text, kind: "FIELD".into(), tags: t });
     for (n, h) in nodes.iter().zip(handles) {
-        field_objects(n, h, text, ids, &mut out);
+        field_objects(n, h, text, legacy, ids, &mut out);
     }
     out
 }
@@ -429,16 +452,36 @@ fn drop_objects(f: &mut Foreign, handle: Handle, keep_empty: bool) {
     }
 }
 
-/// The DXF version whose FIELD groups [`plan`] writes (AutoCAD 2010).
+/// The version a drawing without a kept version is read as when it has FIELD objects (AutoCAD
+/// 2010): read as R2000, acadrust drops a FIELD's flags, cached value and format.
 pub(crate) const OBJECT_VERSION: &str = "AC1024";
+
+/// The version the DWG bridge reads a drawing as for a `dwg` save, if not the bridge's R2000: the
+/// kept version (the objects CADCraft keeps are still in its groups, and acadrust reads some of
+/// them by version), or [`OBJECT_VERSION`] for a drawing without one (or with one acadrust does
+/// not know) that gets FIELD objects. [`plan`] writes the FIELD objects in this version's groups.
+pub(crate) fn bridge_version(d: &Drawing, dwg: Version) -> Option<&str> {
+    let fields = dwg >= Version::R2004 && writes_fields(d);
+    match d.foreign.version.as_deref() {
+        Some(v) if !fields || Version::for_acadver(v).is_some() => Some(v),
+        _ => fields.then_some(OBJECT_VERSION),
+    }
+}
+
+/// Whether FIELD objects read as `version` are in the groups before AutoCAD 2007: the format in
+/// group 4, values without flags, unit, format and text.
+fn legacy(version: Version) -> bool {
+    version < Version::R2007
+}
 
 /// Whether saving the drawing (as 2004 or later) writes FIELD objects for its texts.
 pub(crate) fn writes_fields(d: &Drawing) -> bool {
     every_entity(d).any(|e| matches!(&e.kind, EntityKind::MText(t) if tree(&t.contents).is_some()))
 }
 
-/// The file's field objects for the drawing's MTEXTs.
-pub(crate) fn plan(d: &Drawing) -> Plan {
+/// The file's field objects for the drawing's MTEXTs, in the groups of `version` (the version
+/// the file is read as).
+pub(crate) fn plan(d: &Drawing, version: Version) -> Plan {
     let mut plan = Plan::default();
     let mut make: Vec<(Handle, String, Vec<Node>)> = Vec::new();
     let mut drop: Vec<Handle> = Vec::new();
@@ -492,7 +535,7 @@ pub(crate) fn plan(d: &Drawing) -> Plan {
                 x
             }
         };
-        let objects = text_objects(&template, &nodes, xdict, &mut ids);
+        let objects = text_objects(&template, &nodes, xdict, legacy(version), &mut ids);
         if let (Some(top), Some(o)) = (objects.first(), f.objects.iter_mut().find(|o| o.handle == xdict)) {
             o.tags.extend([rt(3, "ACAD_FIELD"), rt(360, top.handle.hex())]);
         }

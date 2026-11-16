@@ -166,21 +166,18 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// reads them as that version.
 ///
 /// A drawing with field texts and no kept version (a new one, or one from a DXF without
-/// `$ACADVER`) or a kept version older than AutoCAD 2010 gets FIELD objects in the groups of
-/// AutoCAD 2010 ([`dxf_field::OBJECT_VERSION`]), and the bridge reads the drawing as that: read as
-/// R2000, acadrust drops a FIELD's flags, cached value and format (#551). The bridge's text is
-/// ASCII with `\U+XXXX` escapes, which this acadrust decodes for every version; a newer one that
-/// does not (acadrust#213, CADCraft #2851) would leave the escapes in non-ASCII field text.
+/// `$ACADVER`) gets FIELD objects in the groups of AutoCAD 2010 ([`dxf_field::OBJECT_VERSION`]),
+/// and the bridge reads the drawing as that: read as R2000, acadrust drops a FIELD's flags, cached
+/// value and format (#551). A drawing with a kept version is always read as that, also with field
+/// texts, which then get FIELD objects in that version's groups: acadrust reads some kept objects
+/// (FIELD objects, MTEXT background and hatch gradient round-trip data) by version.
+///
+/// The bridge's text is ASCII with `\U+XXXX` escapes, which this acadrust decodes for every
+/// version; a newer one that does not (acadrust#213, CADCraft #2851) would leave the escapes in
+/// non-ASCII field text.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
-    let bridge = dxf_write::dwg_bridge(d, version);
-    // Field objects are written in the groups of AutoCAD 2010, so a drawing that has them is read
-    // as at least that. Kept groups from a newer file stay as that version; older ones are read
-    // as AutoCAD 2010 only when fields are written, which the other kept objects read the same.
-    let fields = version >= Version::R2004 && dxf_field::writes_fields(d);
-    let kept = match d.foreign.version.as_deref() {
-        Some(v) if !fields || Version::for_acadver(v).is_some_and(|k| k >= Version::R2010) => Some(v),
-        _ => fields.then_some(dxf_field::OBJECT_VERSION),
-    };
+    let kept = dxf_field::bridge_version(d, version);
+    let bridge = dxf_write::dwg_bridge(d, version, kept);
     craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), kept).map_err(dwg_error)
 }
 

@@ -36,7 +36,6 @@ pub(crate) use blocks::table_block_entities;
 use ctx::Ctx;
 use entity::entity;
 pub(crate) use header::code_page;
-use sections::tags_for;
 
 struct W {
     t: Vec<Tag>,
@@ -156,7 +155,7 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 
 /// [`tags`], with the foreign objects the file keeps, by their handles in the drawing.
 fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::HashSet<cadcraft_doc::Handle>) {
-    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
+    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version, version < Version::R2004, false);
     // Kept proxies in this version's layout (#3229). Not for the DWG bridge, whose writer reads
     // them in the layout of the DWG they came from.
     proxy::proxy_layout(&mut tags, version);
@@ -164,9 +163,12 @@ fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::Hash
 }
 
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
-pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg, false);
+/// version's (MULTILEADER from 2007). `read_as` is the version the bridge reads it as instead of
+/// R2000 ([`crate::dxf_field::bridge_version`]).
+pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version, read_as: Option<&str>) -> String {
+    let version = Version::R2000;
+    let read_as = read_as.and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version);
+    let (mut tags, _) = sections::tags_kept_for(d, version, dwg, read_as, false, true);
     bridge_markers(&mut tags);
     craft_dxf::write_ascii(&tags)
 }
