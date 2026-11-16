@@ -244,9 +244,13 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     let height = links.iter().find(|l| Some(l.owner) == first).map_or(0.0, |l| l.heights.0);
     let common = common.unwrap_or_default();
     let elevation = if common.extrusion.z < 0.0 { -height } else { height };
+    let mut kind = lwpoly(vs, closed);
+    if let EntityKind::LwPolyline(p) = &mut kind {
+        p.elevation = elevation;
+    }
     let nh = doc.new_handle();
     if let Some(st) = doc.space_mut(&space) {
-        st.push(Entity { handle: nh, common, kind: with_z(lwpoly(vs, closed), elevation) });
+        st.push(Entity { handle: nh, common, kind });
     }
     s.set_selection(Vec::new());
     Ok(Some(nh))
