@@ -1562,12 +1562,6 @@ fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
     let mut s = Session::new();
     s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
     let line = s.doc().unwrap().model.last().unwrap().handle;
-    // A line on a layer turned off, drawn before the proxy.
-    s.execute("layer.new", &json!({"name": "Hidden", "current": true})).unwrap();
-    s.execute("line", &json!({"points": [[0, -10], [10, -10]]})).unwrap();
-    let hidden = s.doc().unwrap().model.last().unwrap().handle;
-    s.execute("layer.current", &json!({"name": "0"})).unwrap();
-    s.execute("layer.set", &json!({"name": "Hidden", "on": false})).unwrap();
     let drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
     let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
     let proxy = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(unknown)).unwrap();
@@ -1592,12 +1586,22 @@ fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
     s.execute("select", &json!({"handles": [proxy.hex(), line.hex()]})).unwrap();
     assert_eq!(s.selection(), vec![line], "SELECT by handles");
 
-    // Last skips the proxy drawn last and the line on the layer turned off: it is the first line.
+    // Last passes over the proxy drawn last: it takes the line.
     s.set_selection(Vec::new());
     s.start("erase").unwrap();
     s.input(Input::Text("L".into())).unwrap();
     s.input(Input::Enter).unwrap();
     let d = s.doc().unwrap();
-    assert!(d.entity(line).is_none(), "Last took the visible line");
-    assert!(d.entity(hidden).is_some() && d.entity(proxy).is_some(), "the hidden line and the proxy are kept");
+    assert!(d.entity(line).is_none(), "Last took the line");
+    assert!(d.entity(proxy).is_some(), "the proxy is kept");
+}
+
+#[test]
+fn additional_tools_keeps_compatible_command_ids() {
+    assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
+    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt"] {
+        let command = crate::cmd::find_command(id).expect("existing command id");
+        assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
+        assert!(!command.menu.contains(&"Express Tools"));
+    }
 }

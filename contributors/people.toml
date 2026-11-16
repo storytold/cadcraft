@@ -123,3 +123,6 @@ real_name = "Helen Kwok"
 real_name = "Walter Haslbeck"
 display_name = "Walter Haslbeck"
 sync_github_name = false
+
+[people.V1dalTheAbidal]
+sync_github_name = true
