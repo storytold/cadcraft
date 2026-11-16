@@ -90,6 +90,23 @@ impl Header {
             .filter(|p| p.is_finite() && if allow_zero { p.x >= 0.0 && p.y >= 0.0 } else { p.x > 0.0 && p.y > 0.0 })
             .unwrap_or(Vec2::new(0.5, 0.5))
     }
+    /// The model view the drawing was saved at: `$VIEWCTR` (centre) and `$VIEWSIZE` (height, in
+    /// drawing units), when both are present and usable. A DXF file keeps the pair in HEADER and
+    /// repeats it in the `*ACTIVE` VPORT record (12/22 and 40); a reader opens the drawing on it
+    /// rather than on the extents, so a drawing saved on one detail of a large sheet opens there.
+    pub fn saved_view(&self) -> Option<(Vec2, f64)> {
+        let center = self.point("VIEWCTR")?.xy();
+        let height = self.get("VIEWSIZE").and_then(HVal::as_f64)?;
+        (center.is_finite() && height.is_finite() && height > 1e-9).then_some((center, height))
+    }
+    /// Record the view the drawing is saved at (see [`Header::saved_view`]). A view that cannot
+    /// be shown is not recorded, so a usable stored view is never replaced by an unusable one.
+    pub fn set_saved_view(&mut self, center: Vec2, height: f64) {
+        if center.is_finite() && height.is_finite() && height > 1e-9 {
+            self.set("VIEWCTR", HVal::Point(center.to3(0.0)));
+            self.set_f64("VIEWSIZE", height);
+        }
+    }
     pub fn set_f64(&mut self, name: &str, v: f64) {
         self.set(name, HVal::Real(v));
     }

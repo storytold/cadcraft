@@ -232,6 +232,8 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
             }
             // Drawn on the CPU each frame (clipped to the view).
             Kind::Infinite { .. } => {}
+            // Drawn by the canvas as a textured mesh.
+            Kind::Image { .. } => {}
         }
     }
     m
@@ -281,6 +283,13 @@ pub fn build_highlight_mesh(list: &DisplayList, prims: &[usize], origin: Vec2, c
                 }
             }
             Kind::Infinite { .. } => {}
+            Kind::Image { .. } => {
+                let mut run = 0.0;
+                for (a, b) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+                    push_instance(&mut m.quads, rel(*a, origin), rel(*b, origin), color, width, run as f32);
+                    run += a.dist(*b);
+                }
+            }
         }
     }
     m

@@ -46,6 +46,10 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("INSUNITS", 70),
     ("MEASUREMENT", 70),
     ("PSLTSCALE", 70),
+    // The model view the drawing is saved at, as DXF keeps it in HEADER (the `*ACTIVE` VPORT
+    // record below repeats it). Written so a drawing opened on its saved view saves it back.
+    ("VIEWCTR", -2),
+    ("VIEWSIZE", 40),
 ];
 
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after
@@ -140,6 +144,6 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
 /// from 2007 (UTF-8 text), `ANSI_1252`.
 pub(crate) fn code_page(d: &Drawing, version: Version) -> String {
     let read = d.header.get("DWGCODEPAGE").and_then(HVal::as_str).map(str::trim).unwrap_or_default();
-    let known = read.is_ascii() && read.len() <= 32 && cadcraft_dxf::decode_code_page(b"", read).is_some();
+    let known = read.is_ascii() && read.len() <= 32 && craft_dxf::decode_code_page(b"", read).is_some();
     if version < Version::R2007 && known { read.to_string() } else { "ANSI_1252".into() }
 }
