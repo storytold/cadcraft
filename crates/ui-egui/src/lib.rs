@@ -36,8 +36,10 @@ pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
+// Panels an external program declares over the control channel.
 mod mtext_editor;
 mod panel_state;
+pub mod plugin_panels;
 pub mod spacemouse;
 pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
@@ -1106,6 +1108,7 @@ impl CadApp {
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, ui.ctx());
         dialogs::show(self, ui.ctx());
+        plugin_panels::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
         save_loss::prompt(self, ui.ctx());
