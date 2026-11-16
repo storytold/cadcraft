@@ -29,7 +29,12 @@ const READ_POLL: Duration = Duration::from_millis(50);
 /// How long a new connection has to send its `hello`.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
-type Peers = Arc<Mutex<Vec<(String, Sender<ServerMessage>)>>>;
+/// One open socket: its id, the actor the token names, and the queue its thread drains.
+///
+/// The id is per connection, not per actor: one participant may hold several sockets (a second
+/// window, a reconnect before the old socket times out), and a broadcast must reach all of them
+/// but the sender (CodeRabbit on #2938).
+type Peers = Arc<Mutex<Vec<(u64, String, Sender<ServerMessage>)>>>;
 
 /// What a room has done, for a health check and a metrics scrape.
 #[derive(Debug, Default)]
@@ -96,6 +101,8 @@ pub struct Server {
     assets: Option<Arc<AssetStore>>,
     /// One commit at a time: each publish must see the etag the previous one stored.
     commit: Mutex<()>,
+    /// The id the next accepted connection gets; `peers` is keyed by it.
+    next_connection: AtomicU64,
 }
 
 impl Server {
@@ -112,6 +119,7 @@ impl Server {
             metrics: Arc::new(Metrics::default()),
             assets: None,
             commit: Mutex::new(()),
+            next_connection: AtomicU64::new(0),
         }
     }
 
@@ -213,7 +221,8 @@ impl Server {
             return Ok(());
         }
         let (tx, rx) = channel();
-        lock(&self.peers).push((claims.sub.clone(), tx.clone()));
+        let conn = self.next_connection.fetch_add(1, Ordering::Relaxed);
+        lock(&self.peers).push((conn, claims.sub.clone(), tx.clone()));
 
         let participants = lock(&self.presence).participants().cloned().collect();
         let snapshot = self.snapshot_for(last_version);
@@ -231,13 +240,20 @@ impl Server {
         )?;
 
         socket.get_mut().set_read_timeout(Some(READ_POLL))?;
-        let result = self.pump(&mut socket, &claims, &tx, &rx);
-        self.leave(&claims.sub);
+        let result = self.pump(&mut socket, &claims, conn, &tx, &rx);
+        self.leave(conn, &claims.sub);
         result
     }
 
     /// Read, answer and flush until the socket closes.
-    fn pump(&self, socket: &mut WebSocket<TcpStream>, claims: &Claims, tx: &Sender<ServerMessage>, rx: &Receiver<ServerMessage>) -> io::Result<()> {
+    fn pump(
+        &self,
+        socket: &mut WebSocket<TcpStream>,
+        claims: &Claims,
+        conn: u64,
+        tx: &Sender<ServerMessage>,
+        rx: &Receiver<ServerMessage>,
+    ) -> io::Result<()> {
         loop {
             loop {
                 match rx.try_recv() {
@@ -249,7 +265,7 @@ impl Server {
             match socket.read() {
                 Ok(Message::Text(text)) => {
                     let Ok(message) = serde_json::from_str::<ClientMessage>(text.as_str()) else { continue };
-                    if !self.handle(message, claims, tx) {
+                    if !self.handle(message, claims, conn, tx) {
                         return Ok(());
                     }
                 }
@@ -261,8 +277,9 @@ impl Server {
         }
     }
 
-    /// Answer one message; `false` closes the connection.
-    fn handle(&self, message: ClientMessage, claims: &Claims, tx: &Sender<ServerMessage>) -> bool {
+    /// Answer one message; `false` closes the connection. `conn` is this socket's id: a broadcast
+    /// skips it and no other connection of the same actor (CodeRabbit on #2938).
+    fn handle(&self, message: ClientMessage, claims: &Claims, conn: u64, tx: &Sender<ServerMessage>) -> bool {
         match message {
             ClientMessage::Op { mut op } => {
                 // The token says who sent it; a client cannot file an edit under another name.
@@ -271,7 +288,7 @@ impl Server {
                     Ok(Outcome::Applied(applied)) => {
                         self.metrics.applied.fetch_add(1, Ordering::Relaxed);
                         let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
-                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                        self.broadcast(Some(conn), ServerMessage::Applied { applied });
                     }
                     Ok(Outcome::Rejected(rejected)) => {
                         self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
@@ -302,7 +319,7 @@ impl Server {
                     Ok(Outcome::Applied(applied)) => {
                         self.metrics.applied.fetch_add(1, Ordering::Relaxed);
                         let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
-                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                        self.broadcast(Some(conn), ServerMessage::Applied { applied });
                     }
                     Ok(Outcome::Rejected(rejected)) => {
                         self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
@@ -332,7 +349,7 @@ impl Server {
                     Ok(Outcome::Applied(applied)) => {
                         self.metrics.applied.fetch_add(1, Ordering::Relaxed);
                         let _ = tx.send(ServerMessage::Applied { applied: applied.clone() });
-                        self.broadcast(Some(&claims.sub), ServerMessage::Applied { applied });
+                        self.broadcast(Some(conn), ServerMessage::Applied { applied });
                     }
                     Ok(Outcome::Rejected(rejected)) => {
                         self.metrics.rejected.fetch_add(1, Ordering::Relaxed);
@@ -352,7 +369,7 @@ impl Server {
                 // A board that is full refuses a new participant: do not broadcast a cursor the
                 // board (and so the `welcome` of the next connection) does not hold.
                 if lock(&self.presence).update(presence.clone(), Instant::now()) {
-                    self.broadcast(Some(&claims.sub), ServerMessage::Presence { presence });
+                    self.broadcast(Some(conn), ServerMessage::Presence { presence });
                 }
             }
             ClientMessage::Resync { last_version } => self.resync(last_version, tx),
@@ -409,7 +426,7 @@ impl Server {
                                 cabinet: CabinetCommit { version: published.version, etag: published.etag },
                             };
                             let _ = tx.send(message.clone());
-                            self.broadcast(Some(&claims.sub), message);
+                            self.broadcast(Some(conn), message);
                         }
                         Err(PublishError::Conflict(message)) => {
                             self.metrics.conflicts.fetch_add(1, Ordering::Relaxed);
@@ -581,18 +598,25 @@ impl Server {
         room.snapshot().map(|snapshot| Snapshot::encode(snapshot.version, &snapshot.bytes)).unwrap_or_default()
     }
 
-    fn broadcast(&self, except: Option<&str>, message: ServerMessage) {
-        for (actor, tx) in lock(&self.peers).iter() {
-            if Some(actor.as_str()) == except {
+    /// Send `message` to every open socket but `except`, which is the sender's connection id: the
+    /// sender already has it on its own queue, and its other windows must still receive it.
+    fn broadcast(&self, except: Option<u64>, message: ServerMessage) {
+        for (id, _, tx) in lock(&self.peers).iter() {
+            if Some(*id) == except {
                 continue;
             }
             let _ = tx.send(message.clone());
         }
     }
 
-    fn leave(&self, actor: &str) {
-        lock(&self.presence).remove(actor);
-        lock(&self.peers).retain(|(name, _)| name != actor);
+    /// Forget one closed socket. The actor leaves the presence board only when no other connection
+    /// of theirs is open: two windows of one participant are one participant.
+    fn leave(&self, conn: u64, actor: &str) {
+        let mut peers = lock(&self.peers);
+        peers.retain(|(id, _, _)| *id != conn);
+        if !peers.iter().any(|(_, name, _)| name == actor) {
+            lock(&self.presence).remove(actor);
+        }
     }
 }
 
@@ -677,7 +701,7 @@ mod tests {
         let server = a_server();
         assert_eq!(server.connections_open(), 0);
         let (tx, _rx) = channel();
-        lock(&server.peers).push(("viewer".into(), tx));
+        lock(&server.peers).push((0, "viewer".into(), tx));
         assert_eq!(server.connections_open(), 1, "a viewer that has not sent presence is still a connection");
         assert_eq!(server.participants(), 0, "but not a participant of the board");
     }
@@ -721,20 +745,45 @@ mod tests {
             assert!(lock(&server.presence).update(presence(&format!("p{i}")), now));
         }
         let (listener, heard) = channel();
-        lock(&server.peers).push(("listener".into(), listener));
+        lock(&server.peers).push((0, "listener".into(), listener));
         let (own, _own_rx) = channel();
 
-        server.handle(ClientMessage::Presence { presence: presence("late") }, &claims("d1"), &own);
+        server.handle(ClientMessage::Presence { presence: presence("late") }, &claims("d1"), 1, &own);
 
         assert!(heard.try_recv().is_err(), "the board refused the entry, so no peer is told about it");
         assert_eq!(server.participants(), crate::MAX_PARTICIPANTS);
+    }
+
+    /// One participant, two sockets: a broadcast reaches the other window of the same actor, and
+    /// closing one window leaves the other connected and the participant on the board
+    /// (CodeRabbit on #2938).
+    #[test]
+    fn a_broadcast_reaches_the_actors_other_connection_and_leave_keeps_it() {
+        let server = a_server();
+        assert!(lock(&server.presence).update(presence("u1"), Instant::now()));
+        let (first, heard_first) = channel();
+        let (second, heard_second) = channel();
+        lock(&server.peers).push((0, "u1".into(), first));
+        lock(&server.peers).push((1, "u1".into(), second));
+
+        server.broadcast(Some(0), ServerMessage::Presence { presence: presence("u1") });
+        assert!(heard_first.try_recv().is_err(), "the sender's connection already has the message on its own queue");
+        assert!(heard_second.try_recv().is_ok(), "the actor's other window receives its edits");
+
+        server.leave(0, "u1");
+        assert_eq!(server.connections_open(), 1, "the other window is still open");
+        assert_eq!(server.participants(), 1, "one participant with one window left is still here");
+
+        server.leave(1, "u1");
+        assert_eq!(server.connections_open(), 0);
+        assert_eq!(server.participants(), 0, "the last connection of the actor takes their presence away");
     }
 
     #[test]
     fn an_undo_and_an_operation_never_arrive_out_of_order() {
         let server = Arc::new(a_server());
         let (observer, heard) = channel();
-        lock(&server.peers).push(("observer".into(), observer));
+        lock(&server.peers).push((0, "observer".into(), observer));
         let claims = claims("d1");
         let workers: Vec<_> = (0u8..2)
             .map(|worker| {
@@ -748,7 +797,7 @@ mod tests {
                         } else {
                             ClientMessage::Undo { op_id: format!("undo-{worker}-{n}") }
                         };
-                        server.handle(message, &claims, &own);
+                        server.handle(message, &claims, 1, &own);
                     }
                 })
             })
