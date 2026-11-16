@@ -18,6 +18,10 @@ use crate::{Client, Connection};
 pub struct Session {
     connection: Connection,
     driver: Driver,
+    /// The join this connect already holds the drawing for: [`Session::next_event`] reports it
+    /// first, before anything the socket brings, so a driver that only reads events learns which
+    /// drawing the window shows and at what version (CodeRabbit on #2938).
+    joined: Option<Event>,
 }
 
 impl Session {
@@ -44,11 +48,15 @@ impl Session {
         timeout: Duration,
     ) -> Result<Self, SessionError> {
         let hello = hello(doc, token, last_version, "cadcraft");
+        let fresh = replica.is_none();
         let (connection, first) = Connection::connect(url, &hello, timeout).map_err(SessionError::Transport)?;
         match first {
             cadcraft_collab::ServerMessage::Welcome { session_id, role, version, snapshot, participants, .. } => {
                 let (drawing, shown) = welcome_drawing(&snapshot, replica, last_version, version)?;
-                Ok(Session { connection, driver: Driver::new(Client::new(drawing, shown), role, session_id, participants) })
+                // A first connection shows the room's drawing from now on; a reconnect keeps the
+                // replica the caller passed in and has nothing to announce.
+                let joined = fresh.then(|| Event::Joined { drawing: Box::new(drawing.clone()), version: shown });
+                Ok(Session { connection, driver: Driver::new(Client::new(drawing, shown), role, session_id, participants), joined })
             }
             cadcraft_collab::ServerMessage::Error { message, .. } => Err(SessionError::Refused(message)),
             other => Err(SessionError::Refused(format!("expected a welcome, got {other:?}"))),
@@ -131,7 +139,13 @@ impl Session {
     }
 
     /// Wait for one message and apply it to the replica.
+    ///
+    /// The first call after a fresh connect reports the join the welcome carried: the caller sees
+    /// the room's drawing and version before any later event, as the browser's join does.
     pub fn next_event(&mut self) -> Result<Event, SessionError> {
+        if let Some(event) = self.joined.take() {
+            return Ok(event);
+        }
         loop {
             let Some(message) = self.connection.try_receive().map_err(SessionError::Transport)? else {
                 // A read timeout is the normal way round a caller's loop, not a lost connection.

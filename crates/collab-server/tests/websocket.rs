@@ -357,3 +357,27 @@ fn presence_carries_the_servers_role_and_the_welcome_lists_it() {
     assert_eq!(seen_by_v.role, Some(Role::Editor));
     assert_eq!(seen_by_v.cursor, Some([5.0, 6.0]));
 }
+
+/// The desktop session reports the room's drawing before anything the socket brings: the driver
+/// that only reads events (the app's worker) learns what the window shows and at what version
+/// (CodeRabbit on #2938).
+#[test]
+fn a_desktop_session_reports_the_rooms_drawing_first() {
+    let mut room = Room::new(Drawing::new_metric()).unwrap();
+    room.apply(&line_op("a", "a1", 0.0)).unwrap();
+    let version = room.version();
+    assert_eq!(version, 1, "the room is not empty");
+    let auth = Arc::new(StaticAuthenticator::new([("token-a".to_string(), Claims { sub: "a".into(), doc: "d1".into(), role: Role::Editor })]));
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
+
+    let mut session = cadcraft_collab_client::Session::connect(&format!("ws://{addr}"), "token-a", "d1", None, Duration::from_secs(3))
+        .expect("the desktop session connects");
+    match session.next_event().expect("the first event") {
+        cadcraft_collab_client::Event::Joined { drawing, version: shown } => {
+            assert_eq!(shown, version, "the join names the room's version");
+            assert_eq!(drawing.entity_count(), 1, "the window gets the room's drawing, not its placeholder");
+        }
+        other => panic!("expected the join first, got {other:?}"),
+    }
+}
