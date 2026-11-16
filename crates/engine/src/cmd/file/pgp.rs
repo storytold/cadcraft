@@ -13,6 +13,7 @@
 //! aliases set in a script last for that session only.
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use serde_json::{Value, json};
@@ -57,6 +58,17 @@ fn store() -> MutexGuard<'static, Aliases> {
 /// The command a user alias stands for (`name` in lower case).
 pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
+}
+
+/// The user aliases that start with `prefix` (lower case), in name order, with the command each
+/// stands for. AutoComplete offers them while a name is typed; there are at most [`MAX_ALIASES`].
+pub fn user_aliases_starting_with(prefix: &str) -> Vec<(String, String)> {
+    store()
+        .map
+        .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
+        .take_while(|(alias, _)| alias.starts_with(prefix))
+        .map(|(alias, id)| (alias.clone(), id.clone()))
+        .collect()
 }
 
 /// The user alias that is the Greek word `word` in another case or accent.
