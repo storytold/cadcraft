@@ -60,15 +60,26 @@ pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
 }
 
-/// The user aliases that start with `prefix` (lower case), in name order, with the command each
-/// stands for. AutoComplete offers them while a name is typed; there are at most [`MAX_ALIASES`].
+/// The user aliases that start with `prefix` (lower case), with the command each stands for.
+/// AutoComplete offers them while a name is typed; there are at most [`MAX_ALIASES`]. A Greek
+/// `prefix` also matches a Greek alias in another case, accent or final sigma, the way
+/// [`greek_alias`] resolves the whole name when Enter runs it.
 pub fn user_aliases_starting_with(prefix: &str) -> Vec<(String, String)> {
-    store()
+    let st = store();
+    let mut out: Vec<(String, String)> = st
         .map
         .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
         .take_while(|(alias, _)| alias.starts_with(prefix))
         .map(|(alias, id)| (alias.clone(), id.clone()))
-        .collect()
+        .collect();
+    if let Some(fold) = crate::keyboard::greek_fold(prefix) {
+        for (alias, id) in &st.map {
+            if !alias.starts_with(prefix) && crate::keyboard::greek_fold(alias).is_some_and(|a| a.starts_with(&fold)) {
+                out.push((alias.clone(), id.clone()));
+            }
+        }
+    }
+    out
 }
 
 /// The user alias that is the Greek word `word` in another case or accent.

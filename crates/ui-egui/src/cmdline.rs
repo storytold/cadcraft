@@ -845,8 +845,16 @@ mod tests {
         let mut session = Session::empty();
         session.execute("aliasedit", &serde_json::json!({ "set": { "ΖΖΚΥΚ": "circle" } })).unwrap();
         let greek = suggestions("ΖΖΚ", &|_| false);
+        // In another case or with an accent, as Enter would still run it.
+        let lower = suggestions("ζζκ", &|_| false);
+        let accented = suggestions("ζζκύ", &|_| false);
+        // A Latin prefix is not read as Greek: zzk does not offer the Greek alias.
+        let latin = suggestions("zzk", &|_| false);
         session.execute("aliasedit", &serde_json::json!({ "remove": ["ΖΖΚΥΚ"] })).unwrap();
-        assert!(greek.iter().any(|s| s.id == "CIRCLE" && s.display == "ΖΖΚΥΚ (CIRCLE)"), "{greek:?}");
+        for found in [&greek, &lower, &accented] {
+            assert!(found.iter().any(|s| s.id == "CIRCLE" && s.display == "ΖΖΚΥΚ (CIRCLE)"), "{found:?}");
+        }
+        assert!(!latin.iter().any(|s| s.display.starts_with("ΖΖΚΥΚ")), "{latin:?}");
     }
 
     /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
