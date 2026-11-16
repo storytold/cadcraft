@@ -691,6 +691,29 @@ impl Drop for PathlessShots {
     }
 }
 
+fn write_screenshot_png(img: &image::RgbaImage, output: impl std::io::Write) -> std::io::Result<()> {
+    cadcraft_render::raster::write_rgba_png(output, img.width(), img.height(), img.as_raw())
+        .ok_or_else(|| std::io::Error::other("PNG encoding failed"))
+}
+
+fn save_explicit_screenshot(img: &image::RgbaImage, path: &str) -> std::io::Result<()> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Format, Image};
+    let format = match image::ImageFormat::from_path(path).map_err(std::io::Error::other)? {
+        image::ImageFormat::Png => Format::Png,
+        image::ImageFormat::Jpeg => Format::Jpeg,
+        image::ImageFormat::Bmp => Format::Bmp,
+        image::ImageFormat::Tiff => Format::Tiff,
+        _ => return Err(std::io::Error::other("unsupported screenshot format")),
+    };
+    if format == Format::Png {
+        return write_screenshot_png(img, std::fs::File::create(path)?);
+    }
+    let pixels = Image::from_u8(img.width(), img.height(), ChannelLayout::Rgba, img.as_raw().clone()).map_err(std::io::Error::other)?;
+    let opts = EncodeOptions { jpeg_quality: 75, jpeg_chroma_subsampling: false, ..EncodeOptions::default() };
+    let bytes = craft_image_codecs::encode(&pixels, format, &opts).map_err(std::io::Error::other)?;
+    std::fs::write(path, bytes)
+}
+
 /// Save a pathless screenshot into the private per-process directory: re-validate or recreate it as an owner-only real directory (0700 on Unix; plain create elsewhere), then create up to 64 exclusive files (0600 on Unix) and write a PNG.
 fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write as _;
@@ -713,7 +736,7 @@ fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Resu
         let path = dir.join(format!("cadcraft-shot-{token}-{}.png", next_pathless_nonce()));
         match create_private_file(&path) {
             Ok(mut file) => {
-                let written = img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other).and_then(|()| file.flush());
+                let written = write_screenshot_png(img, &mut file).and_then(|()| file.flush());
                 if let Err(e) = written {
                     // The reply carries no path on failure, so nobody else could remove the partial file.
                     drop(file);
@@ -752,7 +775,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
         return inline_screenshot(&img, token);
     }
     let saved = match path {
-        Some(path) => img.save(path).map(|()| path.to_string()).map_err(std::io::Error::other),
+        Some(path) => save_explicit_screenshot(&img, path).map(|()| path.to_string()),
         None => save_pathless_screenshot(&img, token).map(|path| path.to_string_lossy().into_owned()),
     };
     match saved {
@@ -766,7 +789,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64)
 fn inline_screenshot(img: &image::RgbaImage, token: u64) -> Value {
     let (w, h) = img.dimensions();
     let mut png = Vec::new();
-    if let Err(e) = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png) {
+    if let Err(e) = write_screenshot_png(img, &mut png) {
         return json!({"ok": false, "error": e.to_string(), "request": token});
     }
     json!({"ok": true, "request": token, "result": {"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "bytes": png.len()}})
@@ -775,6 +798,25 @@ fn inline_screenshot(img: &image::RgbaImage, token: u64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_screenshot_retains_supported_file_formats() {
+        let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 128]));
+        for ext in ["png", "bmp", "tiff", "jpg"] {
+            let path = std::env::temp_dir().join(format!("cadcraft-format-{}-{}.{}", std::process::id(), next_pathless_nonce(), ext));
+            let name = path.to_string_lossy().to_string();
+            save_explicit_screenshot(&img, &name).unwrap();
+            let decoded = image::open(&path).unwrap().to_rgba8();
+            assert_eq!(decoded.dimensions(), img.dimensions(), "{ext}");
+            if ext != "jpg" {
+                let mut original = std::io::Cursor::new(Vec::new());
+                img.write_to(&mut original, image::ImageFormat::from_path(&path).unwrap()).unwrap();
+                let original = image::load_from_memory(&original.into_inner()).unwrap().to_rgba8();
+                assert_eq!(decoded.as_raw(), original.as_raw(), "{ext}");
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+    }
 
     #[test]
     fn an_inline_screenshot_carries_the_png_and_its_size() {
