@@ -29,11 +29,13 @@ cadcraft-collab-server \
   --http 127.0.0.1:8788
 ```
 
-`--dev-token <token>:<role>` (repeatable) exists for tests only: it needs
-`--allow-dev-tokens`, and it is refused in a release build and whenever
-`--secret-file` is set (see the auth policy below). A deployment where the
-cabinet signs tokens never uses it. Prefer the environment or a file over argv:
-an argument is visible in the process list.
+`--dev-token <token>:<role>` (repeatable) exists for tests only. The RFC
+requires `--allow-dev-tokens`, a release-build refusal and a refusal whenever
+`--secret-file` is set (see the auth policy below); those controls are **not
+implemented yet** (see the list of missing flags below), so an operator cannot
+rely on them today. A deployment where the cabinet signs tokens never uses
+`--dev-token`. Prefer the environment or a file over argv: an argument is
+visible in the process list.
 
 Flags the binary has today (measured on the `feature/realtime-collaboration-server`
 head; defaults are the code's, not the policy's):
@@ -69,7 +71,9 @@ the limits and guarantees below hold):
 - a ≤60 s auth tick that re-checks `exp`/role/revocation for every participant
   and before each broadcast, plus a `revoked` record in the lease store;
 - persisted commit objects with a TTL ≥24 h and a re-signed `uploadUrl` on a
-  retry with the same `opId`.
+  retry with the same `opId`;
+- `--restore-to <version>` — bound the journal at the chosen generation on
+  restore instead of replaying the retained tail.
 
 The journal and the rest of the state are **derived from `--state`**, not
 separate flags: `<state>.jsonl` (journal), `<state>.version` (last committed
@@ -160,7 +164,7 @@ records the writer cannot emit back (SAT-text `3DSOLID`/`REGION`/`BODY` without
 ACIS data-store entries, `rfc.md` §4.6), and the manifest. The manifest is
 written last, after `fsync` of both payloads, and carries
 `{format, version, generation, lengths:{dxf, sat}, sha256:{dxf, sat}, recordIds,
-handles, fileId, savedAt, dedup}`. A generation is valid only when both hashes
+handles, fileId, savedAt, dedup, evictedUpTo}`. A generation is valid only when both hashes
 match and the manifest names it; otherwise `prev/` is read, and if both are
 invalid the room refuses to join (ADR-0024). The journal is truncated **only**
 after the new generation is durable and read back, and only below
@@ -190,9 +194,15 @@ data-store records do not survive the DXF writer alone and travel in the
 sidecar. DWG through the bridge does not keep everything; the snapshot is DXF
 for that reason, and `commit` may write either format.
 
-Backup is a copy of the generation directory plus `--file`; restore is «put the
-previous generation in place and start» — the room then serves that version and
-clients resync to it.
+Backup is a copy of the generation directory plus `--file`. Restore is «put the
+previous generation in place and start», but it also has to bound the journal:
+before the room starts, the operator truncates `<state>.jsonl` above the chosen
+generation's version (or starts with `--restore-to <version>`, which does the
+same) and sets `<state>.version` to that version. Otherwise the retained tail
+from `prev.version` to head would replay past the generation the operator chose.
+The room refuses to start when the journal's first record is above the chosen
+version — it never serves a version the operator did not ask for. Clients then
+resync to that version.
 
 ## Commit
 
@@ -217,7 +227,13 @@ The payload path depends on size, because every message is limited to 1 MiB:
   commit with a new `opId`. If the cabinet already downloaded the object but did
   not confirm, it finishes the commit from the bytes it holds after the `sha256`
   check and does not ask the server again — no second object, no second
-  version. `snapshot` is chunked over the WebSocket for the same reason
+  version. The cabinet's side of that premise is durable: before creating a
+  version for `(sessionId, opId)` it records the intent
+  `{opId, sha256, expectedVersion}`, and after `ReplaceContent` it marks the
+  version id. On restart an interrupted intent is resolved by looking for a
+  version with that `sha256` in that session — found means the commit is
+  confirmed and answered idempotently, not found means no version exists and
+  `gone` is safe. `snapshot` is chunked over the WebSocket for the same reason
   (`rfc.md` §4.2/§4.6).
 
 `notSaved` is `{format, dropped:[{what, count}], sidecar}`, counted **before**
@@ -244,7 +260,12 @@ file lock and answers `409`; the server relays
   message, 8 MiB per delta, 5000 changed / 500 000 scanned objects per
   transaction, 30 s presence TTL, 2 MiB per-participant send queue (disconnect
   on overflow), 64 MiB journal, 512 MiB snapshot, 5 s unauthenticated `hello`
-  timeout, 32 connections per IP.
+  timeout, 32 connections per IP. A delta larger than the 2 MiB queue is not a
+  disconnect: the chunks of one `applied` are enqueued one at a time as space
+  frees (a chunk is smaller than the whole limit, so at least one always fits),
+  and the connection is closed only when the queue stays full for 30 s with no
+  drain. The 8 MiB delta cap is a document-level limit, not a queue
+  reservation.
 - Readiness is notified asynchronously; the old 50 ms read poll is a fallback
   only, and its added latency and CPU cost are measured before being kept.
 
