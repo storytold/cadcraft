@@ -150,6 +150,11 @@ fn fillmode_0_draws_a_solid_or_gradient_hatch_as_its_boundary() {
         let ring = &l.verts[p.start as usize..(p.start + p.len) as usize];
         assert!(ring.len() == 5 && ring.first() == ring.last(), "{ring:?}");
     }
+    // The outline is the edge of what the fill would cover. The "ignore" style (2) fills over
+    // the island, so only the outer loop is drawn.
+    let ignore = Hatch { style: 2, ..solid.clone() };
+    assert_eq!(kinds(&ignore, 1), vec![Kind::Tris]);
+    assert_eq!(kinds(&ignore, 0).len(), 1, "{:?}", kinds(&ignore, 0));
     // A pattern hatch keeps its lines, and loses only its background colour.
     let pattern = Hatch { pattern: "ANSI31".into(), solid: false, background: Some(Color::Index(5)), ..solid.clone() };
     let on = kinds(&pattern, 1);
