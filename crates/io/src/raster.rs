@@ -4,7 +4,7 @@
 
 use crate::{IoError, Result};
 use cadcraft_doc::Raster;
-use craft_image_codecs::{ChannelLayout, DecodeOptions, DecodeWarning, EncodeOptions, Format, Image, Limits, PngRows, SampleType};
+use craft_image_codecs::{ChannelLayout, DecodeOptions, DecodeWarning, Format, Limits, SampleType};
 
 /// Largest image file read (bytes).
 pub const MAX_IMAGE_BYTES: usize = 256 << 20;
@@ -61,17 +61,7 @@ pub fn decode(bytes: &[u8]) -> Result<Raster> {
 
 /// `raster` as a PNG file, encoded in rows to avoid a full extra image copy.
 pub fn encode_png(raster: &Raster) -> Result<Vec<u8>> {
-    let stride = usize::try_from(raster.width()).ok().and_then(|w| w.checked_mul(4)).filter(|s| *s > 0).ok_or_else(|| bad("invalid image width"))?;
-    let mut chunks = raster.rgba().chunks_exact(stride);
-    let first = chunks.next().ok_or_else(|| bad("the image is empty"))?;
-    let row = |data: &[u8]| Image::from_u8(raster.width(), 1, ChannelLayout::Rgba, data.to_vec()).map_err(bad);
-    let first = row(first)?;
     let mut out = Vec::new();
-    let mut writer = PngRows::new(&mut out, &first, raster.height(), &EncodeOptions::default()).map_err(bad)?;
-    writer.push(&first).map_err(bad)?;
-    for chunk in chunks {
-        writer.push(&row(chunk)?).map_err(bad)?;
-    }
-    writer.finish().map_err(bad)?;
+    cadcraft_render::raster::write_rgba_png(&mut out, raster.width(), raster.height(), raster.rgba()).ok_or_else(|| bad("PNG encoding failed"))?;
     Ok(out)
 }

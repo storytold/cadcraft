@@ -7,7 +7,7 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, arg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
+use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
 
 /// Columns an MTEXT's text flows through, each as wide as the MTEXT's width.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -265,58 +265,30 @@ pub struct Paragraphs {
 impl Paragraphs {
     pub fn scan(contents: &str) -> Paragraphs {
         let contents = super::unescape_codes(contents);
-        let chars: Vec<char> = contents.chars().collect();
+        use craft_dxf::mtext_tokens::{StackMode, Token, Tokens};
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
         let mut cur = 0usize;
-        let mut i = 0;
         let brk = |out: &mut Paragraphs, cur: usize, column: bool| {
             out.para.push(cur);
             out.column_break.push(column);
         };
-        while let Some(&c) = chars.get(i) {
-            match c {
-                '\\' => {
-                    let code = chars.get(i + 1).copied().unwrap_or(' ');
-                    i += 2;
-                    match code {
-                        'P' => brk(&mut out, cur, false),
-                        'N' => brk(&mut out, cur, true),
-                        '~' | '\\' | '{' | '}' | 'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {}
-                        'S' => {
-                            let mut j = i;
-                            while let Some(&ch) = chars.get(j) {
-                                if ch == ';' {
-                                    break;
-                                }
-                                j += if ch == '\\' { 2 } else { 1 };
-                            }
-                            i = j + 1;
-                        }
-                        'p' => {
-                            let (a, n) = arg(&chars, i);
-                            i = n;
-                            if out.states.len() < MAX_STATES
-                                && let Some(st) = out.states.get(cur)
-                            {
-                                let mut st = st.clone();
-                                st.apply(&a);
-                                out.states.push(st);
-                                cur = out.states.len() - 1;
-                            }
-                        }
-                        _ if super::takes_arg(code) => {
-                            let (_, n) = arg(&chars, i);
-                            i = n;
-                        }
-                        // An unknown code has no argument: only the backslash and the code go.
-                        _ => {}
+        for token in Tokens::new(&contents, StackMode::Structured) {
+            match token {
+                // An unknown code is text, as typed (as the layout reads it), so a line feed after a
+                // lone backslash still breaks the paragraph.
+                Token::Control('P') | Token::Char('\n') | Token::Unknown('\n') => brk(&mut out, cur, false),
+                Token::Control('N') => brk(&mut out, cur, true),
+                Token::Argument('p', a) => {
+                    if out.states.len() < MAX_STATES
+                        && let Some(st) = out.states.get(cur)
+                    {
+                        let mut st = st.clone();
+                        st.apply(a);
+                        out.states.push(st);
+                        cur = out.states.len() - 1;
                     }
                 }
-                '\n' => {
-                    brk(&mut out, cur, false);
-                    i += 1;
-                }
-                _ => i += 1,
+                _ => {}
             }
         }
         // A `\p` anywhere in a paragraph applies to all of it: the break pushed the state at
