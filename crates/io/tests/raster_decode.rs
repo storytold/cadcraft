@@ -170,3 +170,47 @@ fn the_pixels_never_reach_the_drawing_file() {
     assert!(bare.rasters.is_empty() && d.rasters.len() == 1);
     assert_eq!(bare, d);
 }
+
+#[test]
+fn long_narrow_bmp_uses_cadcrafts_pixel_limit() {
+    let mut file = std::io::Cursor::new(Vec::new());
+    image::write_buffer_with_format(&mut file, &vec![0; 60_000 * 3], 1, 60_000, image::ExtendedColorType::Rgb8, image::ImageFormat::Bmp).unwrap();
+    assert_eq!(probe(&file.into_inner()).unwrap(), (1, 60_000));
+}
+
+#[test]
+fn sixteen_bit_png_and_tiff_match_the_previous_rgba_conversion() {
+    let samples: [u16; 12] = [0, 1, 128, 255, 256, 257, 32767, 32768, 50000, 65280, 65534, 65535];
+    let bytes: Vec<u8> = samples.into_iter().flat_map(u16::to_ne_bytes).collect();
+    for format in [image::ImageFormat::Png, image::ImageFormat::Tiff] {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::write_buffer_with_format(&mut out, &bytes, 2, 2, image::ExtendedColorType::Rgb16, format).unwrap();
+        let file = out.into_inner();
+        let old = image::load_from_memory(&file).unwrap().to_rgba8();
+        let new = decode(&file).unwrap();
+        assert_eq!(new.rgba(), old.as_raw(), "{format:?}");
+    }
+}
+
+#[test]
+fn tiff_uses_first_directory_and_keeps_stored_orientation() {
+    use tiff::encoder::{TiffEncoder, colortype::RGB8};
+    use tiff::tags::Tag;
+    let mut file = std::io::Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+        let mut thumbnail = tiff.new_image::<RGB8>(1, 2).unwrap();
+        thumbnail.encoder().write_tag(Tag::NewSubfileType, 1u32).unwrap();
+        thumbnail.encoder().write_tag(Tag::Orientation, 6u16).unwrap();
+        thumbnail.write_data(&[10, 20, 30, 90, 100, 110]).unwrap();
+        tiff.new_image::<RGB8>(2, 2).unwrap().write_data(&[200; 12]).unwrap();
+    }
+    let file = file.into_inner();
+    assert_eq!(craft_image_codecs::tiff_info(&file).unwrap().default_page(), Some(1));
+    let old = image::load_from_memory(&file).unwrap().to_rgba8();
+    assert_eq!(old.dimensions(), (1, 2));
+    assert_eq!(probe(&file).unwrap(), (1, 2));
+    let actual = decode(&file).unwrap();
+    assert_eq!((actual.width(), actual.height()), old.dimensions());
+    assert_eq!(actual.rgba(), old.as_raw());
+}
