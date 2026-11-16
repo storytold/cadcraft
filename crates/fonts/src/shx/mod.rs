@@ -26,7 +26,6 @@
 //!   above, below, modes, encoding, embedding, 0) and then each shape as (number, length,
 //!   record).
 
-mod compile;
 mod parse;
 mod program;
 mod table;
@@ -39,42 +38,13 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use cadcraft_geom::Vec2;
 
-pub use compile::compile;
+pub use craft_shx::{ShxError, compile};
 pub use table::{
     FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, installed, register, search_path, set_font_dirs,
     set_font_map, set_provider, set_search_path,
 };
 pub use text::ShxText;
 pub(crate) use text::{shape, width};
-
-/// Why a font file can't be read or a shape source can't be compiled.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShxError {
-    /// Not an SHX file (unknown signature).
-    NotShx,
-    /// The file ends inside its header or index.
-    Truncated,
-    /// The file is larger, or has more of something, than CADCraft reads.
-    TooLarge,
-    /// The file is well-formed but holds no shape.
-    Empty,
-    /// Shape source error: line and message.
-    Source(usize, String),
-}
-
-impl std::fmt::Display for ShxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShxError::NotShx => f.write_str("not an SHX shape or font file"),
-            ShxError::Truncated => f.write_str("the SHX file is truncated"),
-            ShxError::TooLarge => f.write_str("the SHX file is too large"),
-            ShxError::Empty => f.write_str("the SHX file has no shapes"),
-            ShxError::Source(line, msg) => write!(f, "line {line}: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for ShxError {}
 
 /// The kind of SHX file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

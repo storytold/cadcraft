@@ -809,6 +809,7 @@ version = "0.21.0"
 dependencies = [
  "cadcraft-geom",
  "craft-dxf",
+ "craft-shx",
  "encoding_rs",
  "harfrust 0.14.0",
  "icu_segmenter",
@@ -893,6 +894,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "chrono",
+ "craft-image-codecs",
  "craft-ui",
  "craft-update",
  "craft-window",
@@ -1271,6 +1273,11 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 
 [[package]]
+name = "craft-codepage"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
+
+[[package]]
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
@@ -1287,9 +1294,11 @@ dependencies = [
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=006e4df225fca57e95ead0fb1f91920900798a99#006e4df225fca57e95ead0fb1f91920900798a99"
+source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
 dependencies = [
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9)",
  "encoding_rs",
+ "kurbo",
  "log",
  "thiserror 2.0.21",
 ]
@@ -1390,7 +1399,7 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 dependencies = [
  "chrono",
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db)",
  "encoding_rs",
 ]
 
@@ -1403,6 +1412,11 @@ dependencies = [
  "krilla",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "craft-shx"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=b3307f7814629961841b80ab907116252e41b34d#b3307f7814629961841b80ab907116252e41b34d"
 
 [[package]]
 name = "craft-tiff"
