@@ -30,6 +30,8 @@ cadcraft-ui-egui = { path = "crates/ui-egui" }
 cadcraft-mcp = { path = "crates/mcp" }
 craft-mcp = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
 craft-jsonrpc = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
+# SVG/SVGZ import and export geometry (craft-libs#778).
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "c4c4547b7b0151e7c79ab50fa97cb64fbdff4e52" }
 # Which paths stored in a drawing (xrefs, data links) may be opened.
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 # PDF writing (krilla) for plots, and reading them back in tests. The root patches below pin
