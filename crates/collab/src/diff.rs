@@ -32,6 +32,28 @@ pub fn diff_all(before: &Drawing, after: &Drawing, registry: &mut TableRegistry,
     for (old_space, new_space) in paired_spaces(before, after, renames) {
         changes.extend(diff_space(before, after, &old_space, &new_space, &deleted_layers, renames)?);
     }
+    // A layout that is new in `after` has no space in `before` to be paired with, so no pair
+    // carried its objects: `LayoutCreate` alone leaves the replica with an empty sheet, and a later
+    // change that names one of those handles fails there with `NoEntity`. Its objects travel as
+    // creations, in draw order, after the layout they belong to (CodeRabbit on #2938).
+    for layout in &after.layouts {
+        let renamed = renames.layouts.iter().any(|(_, to)| to.eq_ignore_ascii_case(&layout.name));
+        let existed = before.layouts.iter().any(|old| old.name.eq_ignore_ascii_case(&layout.name));
+        if existed || renamed {
+            continue;
+        }
+        let space = Space::Paper(layout.name.clone());
+        let Some(store) = after.space(&space) else { continue };
+        let mut below = None;
+        for entity in store.iter() {
+            if deleted_layers.contains(&entity.common.layer.to_ascii_lowercase()) {
+                continue;
+            }
+            let order = below.map_or(Anchor::Bottom, |handle| Anchor::After { handle });
+            changes.push(Change::EntityCreate { space: space.clone(), handle: entity.handle, order, entity: entity.as_ref().clone() });
+            below = Some(entity.handle);
+        }
+    }
     Ok(changes)
 }
 
@@ -59,6 +81,22 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
         let id = registry.renamed(RecordKind::Layer, from, to);
         changes.push(Change::TableRename { kind: RecordKind::Layer, id, from: from.clone(), to: to.clone() });
     }
+    // An existing layer whose properties changed: the table holds the layer whole, so the change
+    // does too. Without it `layer.set` stays on the server and every replica keeps the old colour,
+    // linetype and flags (CodeRabbit on #2938).
+    for (key, layer) in &new_layers {
+        let Some(old) = old_layers.get(key) else { continue };
+        if renamed_to.contains(key) {
+            continue;
+        }
+        let (old_value, new_value) = (serde_json::to_value(old).ok(), serde_json::to_value(layer).ok());
+        if old_value == new_value {
+            continue;
+        }
+        let Some(properties) = new_value else { continue };
+        let id = registry.id(RecordKind::Layer, &layer.name);
+        changes.push(Change::TableReplace { kind: RecordKind::Layer, id, name: layer.name.clone(), properties });
+    }
 
     let renamed_from: HashSet<String> = renames.layouts.iter().map(|(from, _)| from.to_ascii_lowercase()).collect();
     let renamed_to: HashSet<String> = renames.layouts.iter().map(|(_, to)| to.to_ascii_lowercase()).collect();
@@ -80,6 +118,18 @@ pub fn diff_tables(before: &Drawing, after: &Drawing, registry: &mut TableRegist
     for (from, to) in &renames.layouts {
         let id = registry.renamed(RecordKind::Layout, from, to);
         changes.push(Change::LayoutRename { id, from: from.clone(), to: to.clone() });
+    }
+    // An existing layout whose page setup, saved view or limits changed: `LayoutCreate` copies them
+    // when a layout comes back, and a change to one that stayed needs the same properties.
+    let page_state = |layout: &cadcraft_doc::Layout| serde_json::json!({ "page": layout.page, "view": layout.view, "limits": layout.limits });
+    for (key, layout) in &new_layouts {
+        let Some(old) = old_layouts.get(key) else { continue };
+        if renamed_to.contains(key) || page_state(old) == page_state(layout) {
+            continue;
+        }
+        let Some(properties) = serde_json::to_value(layout).ok() else { continue };
+        let id = registry.id(RecordKind::Layout, &layout.name);
+        changes.push(Change::TableReplace { kind: RecordKind::Layout, id, name: layout.name.clone(), properties });
     }
 
     // Blocks carry their own objects, so an unchanged definition is skipped by its `Arc` and a

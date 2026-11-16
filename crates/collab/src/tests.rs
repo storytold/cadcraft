@@ -264,6 +264,77 @@ fn deleting_a_layer_takes_its_objects_in_one_change() {
 }
 
 #[test]
+fn a_layer_property_change_reaches_the_replica() {
+    let mut before = Drawing::new_metric();
+    before.layers.push(cadcraft_doc::Layer::new("WALLS"));
+    let mut after = before.clone();
+    let walls = after.layers.iter_mut().find(|l| l.name == "WALLS").unwrap();
+    walls.color = Color::Index(7);
+    walls.frozen = true;
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+
+    assert!(
+        matches!(changes.as_slice(), [Change::TableReplace { name, .. }] if name == "WALLS"),
+        "a property edit is one change, not a delete and a create: {changes:?}"
+    );
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(serde_json::to_value(&applied.layers).unwrap(), serde_json::to_value(&after.layers).unwrap());
+}
+
+#[test]
+fn a_layout_page_setup_change_reaches_the_replica() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Sheet", 1));
+    let mut after = before.clone();
+    after.layouts.iter_mut().find(|l| l.name == "Sheet").unwrap().view = Some((cadcraft_doc::geom::Vec2::new(1.0, 2.0), 3.0));
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let changes = crate::diff_all(&before, &after, &mut registry, &crate::TableRenames::default()).unwrap();
+
+    assert!(matches!(changes.as_slice(), [Change::TableReplace { name, .. }] if name == "Sheet"), "{changes:?}");
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(
+        applied.layouts.iter().find(|l| l.name == "Sheet").and_then(|l| l.view),
+        after.layouts.iter().find(|l| l.name == "Sheet").and_then(|l| l.view)
+    );
+}
+
+#[test]
+fn a_layout_that_comes_back_brings_its_objects() {
+    let mut full = Drawing::new_metric();
+    full.layouts.push(Layout::new("Plan", 1));
+    add(&mut full, &Space::Paper("Plan".into()), 1.0);
+    add(&mut full, &Space::Paper("Plan".into()), 2.0);
+    // An undo of a layout deletion: the layout and everything on it come back.
+    let mut deleted = full.clone();
+    deleted.layouts.retain(|l| l.name != "Plan");
+    assert!(deleted.space(&Space::Paper("Plan".into())).is_none());
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&deleted);
+    let changes = crate::diff_all(&deleted, &full, &mut registry, &crate::TableRenames::default()).unwrap();
+
+    assert!(
+        changes.iter().any(|change| matches!(change, Change::LayoutCreate { name, .. } if name == "Plan")),
+        "the layout itself is a table change: {changes:?}"
+    );
+    let mut applied = deleted.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(
+        applied.space(&Space::Paper("Plan".into())).map(|store| store.iter().map(|e| e.handle).collect::<Vec<_>>()),
+        full.space(&Space::Paper("Plan".into())).map(|store| store.iter().map(|e| e.handle).collect::<Vec<_>>()),
+        "the replica's sheet holds the objects, in draw order"
+    );
+    assert_eq!(applied.space(&Space::Paper("Plan".into())), full.space(&Space::Paper("Plan".into())));
+}
+
+#[test]
 fn a_new_layer_is_created_before_the_objects_on_it() {
     let before = Drawing::new_metric();
     let mut after = before.clone();

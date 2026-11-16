@@ -45,6 +45,13 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         properties: Option<Value>,
     },
+    /// An existing named record replaced whole: a layer's colour, a layout's page setup.
+    ///
+    /// A table holds each record whole, so a field-level change would be a second shape of the
+    /// same record; the change carries the record's properties and the receiving side keeps its own
+    /// name. Without it a property edit stays on the server and every replica keeps the old values
+    /// (CodeRabbit on #2938).
+    TableReplace { kind: RecordKind, id: RecordId, name: String, properties: Value },
     /// A named record renamed; every reference follows, on the receiving side too.
     TableRename { kind: RecordKind, id: RecordId, from: String, to: String },
     /// A named record deleted; its objects go with it.

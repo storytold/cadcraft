@@ -64,6 +64,33 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
             Change::TableCreate { kind: RecordKind::Block, .. } => {
                 return Err(CollabError::InvalidName("a block is created with `block`".into()));
             }
+            Change::TableReplace { kind: RecordKind::Layer, name, properties, .. } => {
+                let layer = serde_json::from_value::<Layer>(properties.clone())
+                    .map_err(|_| CollabError::InvalidName(format!("the properties of the layer `{name}` could not be read")))?;
+                let slot = drawing
+                    .layers
+                    .iter_mut()
+                    .find(|l| l.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| CollabError::NoRecord(RecordKind::Layer, name.clone()))?;
+                *slot = layer;
+                // The name is the table's: a record is known by it, and a replace does not rename.
+                slot.name = name.clone();
+            }
+            Change::TableReplace { kind: RecordKind::Layout, name, properties, .. } => {
+                let saved = serde_json::from_value::<Layout>(properties.clone())
+                    .map_err(|_| CollabError::InvalidName(format!("the properties of the layout `{name}` could not be read")))?;
+                let slot = drawing
+                    .layouts
+                    .iter_mut()
+                    .find(|l| l.name.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| CollabError::NoRecord(RecordKind::Layout, name.clone()))?;
+                slot.page = saved.page;
+                slot.view = saved.view;
+                slot.limits = saved.limits;
+            }
+            Change::TableReplace { kind: RecordKind::Block, .. } => {
+                return Err(CollabError::InvalidName("a block travels whole; it is not replaced through the record registry".into()));
+            }
             Change::TableRename { kind: RecordKind::Layer, from, to, .. } => rename_layer(drawing, from, to)?,
             Change::TableRename { kind: RecordKind::Layout, .. } => {
                 return Err(CollabError::InvalidName("a layout is renamed with `layout.rename`".into()));
