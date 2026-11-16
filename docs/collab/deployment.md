@@ -97,7 +97,11 @@ The authoritative drawing lives in memory. Every applied operation is appended
 to a journal (`--state.jsonl`, one JSON line per operation); every
 `--snapshot-secs` the room writes its DXF to `--state` (temporary file + rename)
 with the version beside it (`--state.version`) and empties the journal, because
-the snapshot now holds everything the journal did.
+the snapshot now holds everything the journal did. When the room has committed
+to the cabinet, the cabinet's etag is written beside them (`--state.etag`) and
+read back on start: the next commit sends it as `expectedVersion`, so a file
+changed outside the session while the room was down is a conflict, not an
+overwrite.
 
 On start the snapshot is preferred over `--file`, and the journal tail is
 replayed on top of it: a restart loses at most the operations after the last

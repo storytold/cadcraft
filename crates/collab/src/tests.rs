@@ -100,6 +100,33 @@ fn a_new_draw_order_is_a_move_not_a_rebuild() {
 }
 
 #[test]
+fn a_creation_beside_a_reorder_lands_in_the_new_draw_order() {
+    let mut before = Drawing::new_metric();
+    let x = add(&mut before, &Space::Model, 1.0);
+    let y = add(&mut before, &Space::Model, 2.0);
+    let z = add(&mut before, &Space::Model, 3.0);
+    // `before` is [X, Y, Z]; the change set turns it into [Y, Z, X, N] in one step.
+    let mut after = before.clone();
+    assert!(after.model.send_to_back(y));
+    assert!(after.model.move_next_to(x, z, true));
+    let n = add(&mut after, &Space::Model, 4.0);
+    assert_eq!(after.model.iter().map(|e| e.handle).collect::<Vec<_>>(), vec![y, z, x, n]);
+
+    let changes = diff(&before, &after, &Space::Model).unwrap();
+    assert!(
+        changes.iter().any(|change| matches!(change, Change::EntityCreate { handle, .. } if *handle == n)),
+        "the new object travels as a creation: {changes:?}"
+    );
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(
+        applied.space(&Space::Model).map(|store| store.iter().map(|e| e.handle).collect::<Vec<_>>()),
+        after.space(&Space::Model).map(|store| store.iter().map(|e| e.handle).collect::<Vec<_>>()),
+        "the replica holds the new draw order: {changes:?}"
+    );
+}
+
+#[test]
 fn deleting_an_entity_does_not_move_the_others() {
     let mut before = Drawing::new_metric();
     let _a = add(&mut before, &Space::Model, 1.0);

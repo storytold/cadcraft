@@ -163,7 +163,13 @@ fn load(args: &Args) -> Result<Room, String> {
         && let Ok(bytes) = std::fs::read(state)
         && let Ok(version) = std::fs::read_to_string(state_version(state)).and_then(|text| text.trim().parse::<u64>().map_err(std::io::Error::other))
     {
-        return Room::restore_with_journal(&Snapshot { version, bytes }, &journal_path(state)).map_err(|e| e.to_string());
+        return {
+            let mut room = Room::restore_with_journal(&Snapshot { version, bytes }, &journal_path(state)).map_err(|e| e.to_string())?;
+            // The cabinet's etag is part of the state: without it the next commit carries no
+            // `expectedVersion` and cannot notice a file changed outside the session.
+            room.restore_cabinet_etag(state).map_err(|e| e.to_string())?;
+            Ok(room)
+        };
     }
     let bytes = std::fs::read(&args.file).map_err(|e| format!("{}: {e}", args.file.display()))?;
     let drawing = cadcraft_io::read(&bytes, &args.file).map_err(|e| e.to_string())?;

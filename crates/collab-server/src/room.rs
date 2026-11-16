@@ -515,11 +515,41 @@ impl Room {
         std::fs::write(&temporary, &saved.bytes).map_err(|e| RoomError::Io(e.to_string()))?;
         std::fs::rename(&temporary, snapshot).map_err(|e| RoomError::Io(e.to_string()))?;
         std::fs::write(snapshot.with_extension("version"), saved.version.to_string()).map_err(|e| RoomError::Io(e.to_string()))?;
+        // The etag of the cabinet's file travels with the state: a restart that forgot it would
+        // commit without `expectedVersion`, so a file changed outside the session since the last
+        // commit would be overwritten instead of reported as a conflict (CodeRabbit on #2938).
+        // A commit does not move the drawing, so an etag newer than this snapshot is still the
+        // file's; an etag that cannot be written leaves the next commit without one, as before.
+        let etag_path = snapshot.with_extension("etag");
+        match &self.cabinet_etag {
+            Some(etag) => std::fs::write(&etag_path, etag.as_bytes()).map_err(|e| RoomError::Io(e.to_string()))?,
+            None => {
+                let _ = std::fs::remove_file(&etag_path);
+            }
+        }
         self.journal.clear();
         if let Some(path) = &self.journal_path {
             std::fs::write(path, b"").map_err(|e| RoomError::Io(e.to_string()))?;
         }
         Ok(())
+    }
+
+    /// Take the cabinet etag [`compact`](Self::compact) wrote beside `snapshot`, when it is there.
+    ///
+    /// A missing file is not an error: a room that never committed has no etag, and one that was
+    /// compacted before this sidecar existed has none either.
+    pub fn restore_cabinet_etag(&mut self, snapshot: &Path) -> Result<(), RoomError> {
+        match std::fs::read_to_string(snapshot.with_extension("etag")) {
+            Ok(etag) => {
+                let etag = etag.trim();
+                if !etag.is_empty() {
+                    self.cabinet_etag = Some(etag.to_string());
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(RoomError::Io(error.to_string())),
+        }
     }
 
     /// Apply a journal tail (operations after the snapshot) in order, ignoring the answers.
@@ -1110,6 +1140,44 @@ mod journal_tests {
         ));
         let _ = std::fs::create_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn the_cabinet_etag_travels_with_the_state() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.accept_cabinet(&Published { version: 7, etag: "\"e7\"".into() });
+        room.compact(&state).unwrap();
+
+        // A restart reads the drawing and the etag beside it: the next commit expects the file
+        // version the cabinet answered, so a file changed outside the session is a conflict, not an
+        // overwrite (CodeRabbit on #2938).
+        let bytes = std::fs::read(&state).unwrap();
+        let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+        let mut restored = Room::restore_with_journal(&Snapshot { version, bytes }, &journal).unwrap();
+        restored.restore_cabinet_etag(&state).unwrap();
+        assert_eq!(restored.cabinet_etag(), Some("\"e7\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_room_that_never_committed_has_no_etag_after_a_restart() {
+        let dir = workspace();
+        let journal = dir.join("journal.jsonl");
+        let state = dir.join("state.dxf");
+        let mut room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+        room.apply(&line_op("a", 0.0)).unwrap();
+        room.compact(&state).unwrap();
+
+        let bytes = std::fs::read(&state).unwrap();
+        let version = std::fs::read_to_string(state.with_extension("version")).unwrap().trim().parse::<u64>().unwrap();
+        let mut restored = Room::restore_with_journal(&Snapshot { version, bytes }, &journal).unwrap();
+        restored.restore_cabinet_etag(&state).unwrap();
+        assert_eq!(restored.cabinet_etag(), None, "a missing sidecar is not an error");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

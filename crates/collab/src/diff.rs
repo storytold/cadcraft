@@ -219,22 +219,41 @@ fn diff_space(
     let new_by_handle: HashMap<Handle, &Arc<Entity>> = new_order.iter().map(|e| (e.handle, *e)).collect();
 
     let mut changes = Vec::new();
+    // The replica's draw order once the deletions are applied: every entity of `before` that survives
+    // (one on a deleted layer goes with its layer). Creations and moves are placed on this order, so
+    // the result is what the replica will actually hold — a creation anchored past an entity that
+    // moves later in the same change set does not stay where it was created (CodeRabbit on #2938).
+    let mut order: Vec<Handle> = Vec::with_capacity(old_order.len());
     for e in &old_order {
-        if !new_by_handle.contains_key(&e.handle) && !gone(e) {
-            changes.push(Change::EntityDelete { handle: e.handle });
+        if gone(e) {
+            continue;
         }
+        if !new_by_handle.contains_key(&e.handle) {
+            changes.push(Change::EntityDelete { handle: e.handle });
+            continue;
+        }
+        order.push(e.handle);
     }
 
     // Creations, in draw order: each is anchored to the entity drawn just below it, which is
     // either one that already exists or one created earlier in this loop.
     let mut below: Option<Handle> = None;
     for e in &new_order {
+        // An entity the layer deletion removes is not in the replica, so it is not an anchor either.
+        if gone(e) {
+            continue;
+        }
         if !old_by_handle.contains_key(&e.handle) {
-            let order = match below {
+            let anchor = match below {
                 Some(handle) => Anchor::After { handle },
                 None => Anchor::Bottom,
             };
-            changes.push(Change::EntityCreate { space: new_space.clone(), handle: e.handle, order, entity: e.as_ref().clone() });
+            changes.push(Change::EntityCreate { space: new_space.clone(), handle: e.handle, order: anchor, entity: e.as_ref().clone() });
+            let at = match below {
+                Some(handle) => order.iter().position(|below| *below == handle).map_or(order.len(), |index| index + 1),
+                None => 0,
+            };
+            order.insert(at, e.handle);
         }
         below = Some(e.handle);
     }
@@ -247,63 +266,39 @@ fn diff_space(
         changes.push(Change::EntityReplace { handle: e.handle, entity: e.as_ref().clone() });
     }
 
-    changes.extend(moves(&old_order, &new_order, &old_by_handle, &new_by_handle));
+    changes.extend(orders(&mut order, &new_order, gone));
     Ok(changes)
 }
 
-/// Entities present in both states that changed place, anchored at their immediate predecessor in
-/// the new order (which exists by the time moves are applied).
+/// The entities whose place in the replica's `order` differs from the new draw order, in that order.
 ///
-/// A move is reported only when the entity's predecessor *among entities present in both* changed:
-/// an insertion or a deletion elsewhere must not look like every later entity moving.
-fn moves(
-    old_order: &[&Arc<Entity>],
-    new_order: &[&Arc<Entity>],
-    old_by_handle: &HashMap<Handle, &Arc<Entity>>,
-    new_by_handle: &HashMap<Handle, &Arc<Entity>>,
-) -> Vec<Change> {
-    let common: HashSet<Handle> = old_by_handle.keys().copied().filter(|h| new_by_handle.contains_key(h)).collect();
-    if common.len() < 2 {
-        return Vec::new();
-    }
-    let mut below_old: HashMap<Handle, Option<Handle>> = HashMap::with_capacity(common.len());
-    let mut previous: Option<Handle> = None;
-    for e in old_order {
-        if common.contains(&e.handle) {
-            below_old.insert(e.handle, previous);
-            previous = Some(e.handle);
-        }
-    }
-    let mut below_new: HashMap<Handle, Option<Handle>> = HashMap::with_capacity(common.len());
-    let mut previous: Option<Handle> = None;
-    for e in new_order {
-        if common.contains(&e.handle) {
-            below_new.insert(e.handle, previous);
-            previous = Some(e.handle);
-        }
-    }
+/// A change set that both creates and reorders entities can leave a creation behind: it was anchored
+/// to a predecessor that moved afterwards. Comparing the simulated order with the new one, in new
+/// order, corrects every such entity with one `EntityOrder` whose anchor is already in its final
+/// place. An insertion or a deletion elsewhere is not a move: those entities keep their predecessor
+/// and are skipped.
+fn orders(order: &mut Vec<Handle>, new_order: &[&Arc<Entity>], gone: impl Fn(&Entity) -> bool) -> Vec<Change> {
     let mut changes = Vec::new();
+    let mut desired: Option<Handle> = None;
     for e in new_order {
-        if !common.contains(&e.handle) || below_new.get(&e.handle) == below_old.get(&e.handle) {
+        if gone(e) {
             continue;
         }
-        let order = match below_in_order(new_order, e.handle) {
-            Some(handle) => Anchor::After { handle },
-            None => Anchor::Bottom,
-        };
-        changes.push(Change::EntityOrder { handle: e.handle, order });
+        let at = order.iter().position(|handle| *handle == e.handle);
+        let below_now = at.and_then(|index| index.checked_sub(1)).map(|index| order[index]);
+        if at.is_none() || below_now != desired {
+            let anchor = desired.map_or(Anchor::Bottom, |handle| Anchor::After { handle });
+            changes.push(Change::EntityOrder { handle: e.handle, order: anchor });
+            if let Some(at) = at {
+                order.remove(at);
+            }
+            let insert_at = match desired {
+                Some(handle) => order.iter().position(|below| *below == handle).map_or(order.len(), |index| index + 1),
+                None => 0,
+            };
+            order.insert(insert_at, e.handle);
+        }
+        desired = Some(e.handle);
     }
     changes
-}
-
-/// The entity drawn directly below `handle` in `order`.
-fn below_in_order(order: &[&Arc<Entity>], handle: Handle) -> Option<Handle> {
-    let mut below = None;
-    for e in order {
-        if e.handle == handle {
-            return below;
-        }
-        below = Some(e.handle);
-    }
-    None
 }
