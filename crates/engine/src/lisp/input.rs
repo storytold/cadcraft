@@ -152,7 +152,7 @@ impl GetRequest {
                 let space = s.state().map(|st| st.edit_space()).map_err(|e| Again::Msg(e.to_string()))?;
                 let d = s.doc().map_err(|e| Again::Msg(e.to_string()))?;
                 // `p` is in the UCS; objects are picked at the world point.
-                match crate::select::pick(d, &space, s.input_ucs().to_wcs(Vec2::new(p[0], p[1])), ap) {
+                match crate::select::pick_in(d, &space, s.viewport_frozen(), s.input_ucs().to_wcs(Vec2::new(p[0], p[1])), ap) {
                     Some(h) => Ok(Value::list(vec![Value::Ename(h), Value::point(&p)])),
                     None => Err("Missed, try again.".into()),
                 }

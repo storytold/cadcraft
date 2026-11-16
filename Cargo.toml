@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 # default-members
 
 [workspace.package]
-version = "0.20.1"
+version = "0.21.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -14,8 +14,11 @@ repository = "https://github.com/storytold/cadcraft"
 # internal
 cadcraft-geom = { path = "crates/geom" }
 # DXF tags: the shared reader and writer (moved from crates/dxf; craft-libs#791).
-craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "006e4df225fca57e95ead0fb1f91920900798a99" }
+craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "9ed120e6b1bd5116a4649c578d1272d60cf932b9" }
 craft-dwg = { git = "https://github.com/storytold/craft-libs", rev = "7bb6c90076a0177d01cc4c482e7fd8dc9f31a8bf" }
+craft-shx = { git = "https://github.com/storytold/craft-libs", rev = "2f2d1d84e3a36b3f93e81507aeff3f0da97a7162" }
+craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "ae5020c1ed922cf7976a3a5545f05b07f466be12" }
+craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "0325b2d73676d736e94097dbcef01219cf25c7db" }
 cadcraft-color = { path = "crates/color" }
 cadcraft-doc = { path = "crates/doc" }
 cadcraft-constraints = { path = "crates/constraints" }
@@ -25,11 +28,17 @@ cadcraft-io = { path = "crates/io" }
 cadcraft-engine = { path = "crates/engine" }
 cadcraft-ui-egui = { path = "crates/ui-egui" }
 cadcraft-mcp = { path = "crates/mcp" }
+craft-mcp = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
+craft-jsonrpc = { git = "https://github.com/storytold/craft-libs", rev = "b6222158fbc2a628f27d2c1fff9f648cd194404c" }
+# SVG/SVGZ import and export geometry (craft-libs#778).
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "c4c4547b7b0151e7c79ab50fa97cb64fbdff4e52" }
 # Which paths stored in a drawing (xrefs, data links) may be opened.
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 # PDF writing (krilla) for plots, and reading them back in tests. The root patches below pin
 # craft-pdf's patched backends to the same revision (Cargo ignores dependency-local patches).
 craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", default-features = false }
+# TrueType embedding-permission classification for plotted fonts (craft-libs#778).
+craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "c07e38090879ffa994f893df9956c6d5b96c049c", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }
