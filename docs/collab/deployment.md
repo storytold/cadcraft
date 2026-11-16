@@ -73,14 +73,18 @@ the limits and guarantees below hold):
 - persisted commit objects with a TTL ≥24 h and a re-signed `uploadUrl` on a
   retry with the same `opId`;
 - `--restore-to <version>` — bound the journal at the chosen generation on
-  restore instead of replaying the retained tail.
+  restore instead of replaying the retained tail, and mint a new `historyId`
+  (`rfc.md` §4.5).
 
 The journal and the rest of the state are **derived from `--state`**, not
-separate flags: `<state>.jsonl` (journal), `<state>.version` (last committed
-version), `<state>.meta.json` (manifest: version, generation, hashes, dedup),
-`<state>.sat` (sidecar of unmodelled ACIS records), and `prev/` (previous
-generation). The manifest, sidecar and `prev/` are part of the RFC contract;
-the current binary writes only the DXF and the version file.
+separate flags: `<state>.jsonl` (journal, with a `{format:1, historyId,
+createdAt}` header line before the operations), `<state>.version` (last
+committed version and `historyId`), `<state>.meta.json` (manifest: version,
+generation, `historyId`, part lengths and hashes, dedup), `<state>.sat`
+(sidecar of unmodelled ACIS records), `<state>.records` (name-table map), and
+`prev/` (previous generation). The manifest, sidecar, `records` and `prev/` are
+part of the RFC contract; the current binary writes only the DXF and the
+version file.
 
 ## Transport and TLS
 
@@ -152,21 +156,28 @@ allowlist — not the primary filter:
 ## State, snapshots and restarts
 
 The authoritative drawing lives in memory. Every applied operation is appended
-to the journal (`<state>.jsonl`, one JSON line per operation). Each record
-carries `format`, `version`, `length`, `sha256`, so an incomplete tail is
-discarded on start, while a gap or a corrupt record in the middle refuses the
-start: the room does not come up with a wrong drawing, and the operator keeps
-the previous generation.
+to the journal (`<state>.jsonl`, one JSON line per operation, preceded by a
+`{format:1, historyId, createdAt}` header). Each record carries `format`,
+`version`, `length`, `sha256`, so an incomplete tail is discarded on start,
+while a gap or a corrupt record in the middle refuses the start: the room does
+not come up with a wrong drawing, and the operator keeps the previous
+generation. A journal whose header names another `historyId` than the manifest
+is refused on start: mixing two histories is exactly the mismatch `resync`
+cannot detect by version numbers.
 
 State files are created `0600` in a private directory. The snapshot is a
-**generation** of three parts: the DXF payload, the `.sat` sidecar with the
+**generation** of four parts: the DXF payload, the `.sat` sidecar with the
 records the writer cannot emit back (SAT-text `3DSOLID`/`REGION`/`BODY` without
-ACIS data-store entries, `rfc.md` §4.6), and the manifest. The manifest is
-written last, after `fsync` of both payloads, and carries
-`{format, version, generation, lengths:{dxf, sat}, sha256:{dxf, sat}, recordIds,
-handles, fileId, savedAt, dedup, evictedUpTo}`. A generation is valid only when both hashes
-match and the manifest names it; otherwise `prev/` is read, and if both are
-invalid the room refuses to join (ADR-0024). The journal is truncated **only**
+ACIS data-store entries, `rfc.md` §4.6), the `records` stream (the `recordIds`
+name-table map, gzipped JSON; ≤32 MiB, above that the drawing is refused with
+`too-large` at open/commit rather than truncated), and the manifest. The manifest is written last, after `fsync` of the
+three payloads, and carries `{format, version, generation, historyId,
+lengths:{dxf, sat, records}, sha256:{dxf, sat, records}, recordCount, handles,
+fileId, savedAt, dedup, evictedUpTo}`. `historyId` is the room's history
+identity (`rfc.md` §4.5): it survives ordinary snapshot rotation and restarts,
+and is re-minted only by a restore. A generation is valid only when all three
+hashes match and the manifest names it; otherwise `prev/` is read, and if both
+are invalid the room refuses to join (ADR-0024). The journal is truncated **only**
 after the new generation is durable and read back, and only below
 `prev.version`: the records from `prev.version` to head stay while `prev/`
 exists, so a fallback to `prev/` always has a continuous tail. A gap above
@@ -198,11 +209,24 @@ Backup is a copy of the generation directory plus `--file`. Restore is «put the
 previous generation in place and start», but it also has to bound the journal:
 before the room starts, the operator truncates `<state>.jsonl` above the chosen
 generation's version (or starts with `--restore-to <version>`, which does the
-same) and sets `<state>.version` to that version. Otherwise the retained tail
-from `prev.version` to head would replay past the generation the operator chose.
-The room refuses to start when the journal's first record is above the chosen
-version — it never serves a version the operator did not ask for. Clients then
-resync to that version.
+same), sets `<state>.version` to that version, and mints a new `historyId` in
+the manifest, the journal header and `<state>.version`. Otherwise the retained
+tail from `prev.version` to head would replay past the generation the operator
+chose. The room refuses to start when the journal's first operation is above
+the chosen version — it never serves a version the operator did not ask for.
+
+A new `historyId` is what makes a returning client safe: version numbers on the
+restored history repeat ones it has already seen, so `resync{lastVersion}` alone
+would match a version number that now denotes different content and answer
+nothing — the client would keep a drawing that does not match the server and
+apply its queued operations against the wrong base. The client sends its
+`historyId` in `hello`/`resync` (`rfc.md` §4.2, §4.5); when it differs or is
+absent, the room sends a `snapshot` regardless of `lastVersion`. A restore
+therefore always ends with every reconnecting client on a fresh base, and its
+unsent queue is re-sent against that base (`opId` dedup answers repeats), never
+against the discarded tail. The same identity rule covers an operator who
+restores and lets the room reach the old version again: the number matches, the
+history does not.
 
 ## Commit
 
@@ -227,14 +251,23 @@ The payload path depends on size, because every message is limited to 1 MiB:
   commit with a new `opId`. If the cabinet already downloaded the object but did
   not confirm, it finishes the commit from the bytes it holds after the `sha256`
   check and does not ask the server again — no second object, no second
-  version. The cabinet's side of that premise is durable: before creating a
-  version for `(sessionId, opId)` it records the intent
-  `{opId, sha256, expectedVersion}`, and after `ReplaceContent` it marks the
-  version id. On restart an interrupted intent is resolved by looking for a
-  version with that `sha256` in that session — found means the commit is
-  confirmed and answered idempotently, not found means no version exists and
-  `gone` is safe. `snapshot` is chunked over the WebSocket for the same reason
-  (`rfc.md` §4.2/§4.6).
+  version. The cabinet's side of that premise is durable, and the commit's
+  identity is `(sessionId, opId)`, not the `sha256`: before creating a version
+  it records the intent `{sessionId, opId, sha256, expectedVersion,
+  versionId?}`, the version is created with provenance `origin:{sessionId,
+  opId}` in the same durable step as its content, and only then the intent gets
+  the `versionId`. On restart an interrupted intent is resolved by that
+  provenance: a `versionId` is confirmed only if the version exists and its
+  `origin` matches; otherwise the cabinet looks for a version of the session
+  with that `origin` — found means the commit is confirmed and answered
+  idempotently, not found means no version exists and `gone` is safe. An
+  earlier version with the same `sha256` (a save with no edits) is not evidence:
+  matching by hash would report a commit that created nothing as complete. If
+  the cabinet's store cannot attach provenance atomically, an unresolved intent
+  is still never falsely confirmed — the client starts a new commit with a new
+  `opId`, which creates at most a second version with the same bytes.
+  `snapshot` is chunked over the WebSocket for the same reason (`rfc.md`
+  §4.2/§4.6).
 
 `notSaved` is `{format, dropped:[{what, count}], sidecar}`, counted **before**
 writing (`loss_on_save`): the cabinet shows it to the user, records it in the
@@ -258,14 +291,20 @@ file lock and answers `409`; the server relays
 - Limits are the single table of `rfc.md` §9: 8 participants, 50 operations/s
   per room and per `sub` with `rate-limited{hint.retryAfterMs}`, 1 MiB per
   message, 8 MiB per delta, 5000 changed / 500 000 scanned objects per
-  transaction, 30 s presence TTL, 2 MiB per-participant send queue (disconnect
-  on overflow), 64 MiB journal, 512 MiB snapshot, 5 s unauthenticated `hello`
-  timeout, 32 connections per IP. A delta larger than the 2 MiB queue is not a
-  disconnect: the chunks of one `applied` are enqueued one at a time as space
-  frees (a chunk is smaller than the whole limit, so at least one always fits),
-  and the connection is closed only when the queue stays full for 30 s with no
-  drain. The 8 MiB delta cap is a document-level limit, not a queue
-  reservation.
+  transaction, 30 s presence TTL, 2 MiB per-participant chunk queue, 16 MiB or
+  2048 undelivered versions per participant, 64 MiB journal, 512 MiB snapshot
+  with a `meta` frame ≤8 KiB and a `records` stream ≤32 MiB, 5 s unauthenticated
+  `hello` timeout, 32 connections per IP. A delta larger than the 2 MiB queue is
+  not a disconnect: the chunks of one `applied` are enqueued one at a time as
+  space frees (a chunk is smaller than the whole limit, so at least one always
+  fits). The close timer starts when the head chunk cannot be enqueued — free
+  space below its size, which happens even when the queue is under 2 MiB — is
+  cleared only when that chunk is enqueued, and is not reset by a partial drain
+  that still does not admit it; 30 s of continuous refusal closes the connection
+  as a slow consumer. The undelivered-delta cap is separate: at 16 MiB or 2048
+  versions the connection closes immediately, the producer is never blocked and
+  the other participants never wait. The 8 MiB delta cap is a document-level
+  limit, not a queue reservation.
 - Readiness is notified asynchronously; the old 50 ms read poll is a fallback
   only, and its added latency and CPU cost are measured before being kept.
 
