@@ -355,17 +355,18 @@ fn chord_interpolate(fit: &[Vec2], d0: Option<Vec2>, d1: Option<Vec2>) -> Option
         }
         row += 1;
     };
-    for (ti, q) in t.iter().zip(fit) {
-        let span = find_span(m - 1, p, *ti, &knots);
-        let coeffs: Vec<(usize, f64)> = basis(span, *ti, p, &knots).into_iter().enumerate().map(|(j, v)| (span + j - p, v)).collect();
-        put(&coeffs, *q, &mut a);
-    }
     // At the start the first derivative is 3 (P1 - P0) / k(4), and the second derivative is 0
-    // when (P1 - P0) / k(4) = (P2 - P1) / k(5); the end mirrors it.
+    // when (P1 - P0) / k(4) = (P2 - P1) / k(5); the end mirrors it. Each end's row sits next to
+    // that end's point rows, so the system stays banded for `solve`.
     let (s1, s2) = (1.0 / (k(p + 1) - k(1)), 1.0 / (k(p + 2) - k(2)));
     match d0 {
         Some(d) => put(&[(0, -3.0 * s1), (1, 3.0 * s1)], d, &mut a),
         None => put(&[(0, s1), (1, -(s1 + s2)), (2, s2)], Vec2::ZERO, &mut a),
+    }
+    for (ti, q) in t.iter().zip(fit) {
+        let span = find_span(m - 1, p, *ti, &knots);
+        let coeffs: Vec<(usize, f64)> = basis(span, *ti, p, &knots).into_iter().enumerate().map(|(j, v)| (span + j - p, v)).collect();
+        put(&coeffs, *q, &mut a);
     }
     let (e1, e2) = (1.0 / (k(m + p - 1) - k(m - 1)), 1.0 / (k(m + p - 2) - k(m - 2)));
     match d1 {
