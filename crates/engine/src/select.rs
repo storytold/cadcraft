@@ -349,6 +349,26 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
+/// Whether `e` is on one of the layers in `frozen`: the layers frozen in a layout viewport, which
+/// does not draw their objects. The names are compared as the renderer compares them.
+pub(crate) fn on_frozen_layer(frozen: &[String], e: &Entity) -> bool {
+    frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer))
+}
+
+/// The last object of `store`, in draw order, that is not on one of the layers in `frozen`, the
+/// layers frozen in the layout viewport the selection is made through: what the Last option
+/// takes there. With no such layers it is the last object, whether the drawing shows it or not.
+pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> Option<Handle> {
+    if frozen.is_empty() {
+        return store.last().map(|e| e.handle);
+    }
+    store.iter().filter(|e| !on_frozen_layer(frozen, e)).last().map(|e| e.handle)
+}
+
+/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]) and it is not
+/// on one of the layers in `frozen`, the layers frozen in the layout viewport the selection is
+/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else). A viewport shows
+/// model space, so `frozen` goes with a selection in model space only.
 pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
     d.is_visible(e) && !on_frozen_layer(frozen, e) && d.anno_draw(e) != AnnoDraw::Hidden
 }
