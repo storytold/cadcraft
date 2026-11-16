@@ -81,6 +81,12 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
     s.execute("stylesmanager", &json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_1", "color": null}})).unwrap();
     assert_eq!(s.doc().unwrap().plot_style_tables.len(), 2);
     assert!(s.execute("stylesmanager", &json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Pen"}})).is_err());
+    // Grayscale must be stored and survive a subsequent read.
+    s.execute("stylesmanager", &json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_1", "grayscale": true}})).unwrap();
+    let table = s.execute("stylesmanager", &json!({"action": "get", "name": "monochrome.ctb"})).unwrap();
+    let style = table["styles"].as_array().unwrap().iter().find(|v| v["name"] == "Color_1").unwrap();
+    assert_eq!(style["grayscale"], true);
+    s.execute("stylesmanager", &json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_1", "grayscale": false}})).unwrap();
     // Save as text, delete, load back.
     let text = s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb"})).unwrap()["text"].as_str().unwrap().to_string();
     s.execute("stylesmanager", &json!({"action": "delete", "name": "office.stb"})).unwrap();

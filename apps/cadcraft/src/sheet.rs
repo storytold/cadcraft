@@ -32,7 +32,7 @@ pub fn start_pick(window: Arc<winit::window::Window>, ui: egui::Context) -> Star
             crate::filters(&pick).iter().fold(rfd::AsyncFileDialog::new().set_parent(&*window), |d, (label, exts)| d.add_filter(*label, exts));
         let path = |f: rfd::FileHandle| f.path().to_string_lossy().to_string();
         let answer: Answer = match pick {
-            Pick::Save(name) => {
+            Pick::Save(name) | Pick::PlotStyleSave(name) => {
                 let picked = dialog.set_file_name(name).save_file();
                 Box::pin(async move { picked.await.map(path) })
             }
@@ -41,7 +41,7 @@ pub fn start_pick(window: Arc<winit::window::Window>, ui: egui::Context) -> Star
                 let picked = dialog.pick_file();
                 Box::pin(async move { picked.await.map(path) })
             }
-            Pick::Open => {
+            Pick::Open | Pick::PlotStyleOpen => {
                 let picked = dialog.pick_file();
                 Box::pin(async move { picked.await.map(path) })
             }
