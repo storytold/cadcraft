@@ -29,10 +29,11 @@ cadcraft-collab-server \
   --http 127.0.0.1:8788
 ```
 
-`--dev-token <token>:<role>` (repeatable) replaces `--secret-file` for tests and
-a single-tenant deployment; it is never used where the cabinet signs tokens.
-Prefer the environment or a file over argv: an argument is visible in the
-process list.
+`--dev-token <token>:<role>` (repeatable) exists for tests only: it needs
+`--allow-dev-tokens`, and it is refused in a release build and whenever
+`--secret-file` is set (see the auth policy below). A deployment where the
+cabinet signs tokens never uses it. Prefer the environment or a file over argv:
+an argument is visible in the process list.
 
 Flags the binary has today (measured on the `feature/realtime-collaboration-server`
 head; defaults are the code's, not the policy's):
@@ -64,7 +65,11 @@ the limits and guarantees below hold):
 - `--allow-dev-tokens` — an explicit switch for `--dev-token`, refused in
   release builds and when `--secret-file` is set;
 - a `0600` requirement on `--secret-file`, a minimum secret length, and the
-  verification-only/asymmetric key mode.
+  verification-only/asymmetric key mode;
+- a ≤60 s auth tick that re-checks `exp`/role/revocation for every participant
+  and before each broadcast, plus a `revoked` record in the lease store;
+- persisted commit objects with a TTL ≥24 h and a re-signed `uploadUrl` on a
+  retry with the same `opId`.
 
 The journal and the rest of the state are **derived from `--state`**, not
 separate flags: `<state>.jsonl` (journal), `<state>.version` (last committed
@@ -101,10 +106,16 @@ compared with `--issuer`, `--audience`, `--file-id`, `--session`, and
 The role and `exp` are checked on **every** operation and on `ping`, not only at
 `hello`: the engine has no read-only mode, and a lease that outlives the token
 would be a hole. A revoked or expired token gets `rejected{code:"auth"}` and the
-connection closes; revocation does not merely drop presence. The maximum lease
-TTL is 10 minutes; `ping` renews it only while the token is still valid. An
-unauthenticated `hello` is dropped after 5 seconds and does not consume a
-participant slot.
+connection closes; revocation does not merely drop presence. Client activity is
+not the only trigger: the room re-checks `exp` and the revocation entry for
+every participant at least every 60 seconds and before each `applied`/
+`snapshot` batch it sends, so an idle viewer stops receiving the drawing when
+its token dies instead of at the next `ping` or lease expiry. Revocation is a
+`revoked` record in the shared lease store (or the session file); the room reads
+it on the same tick and closes the connections of that `sub`/`sessionId` with
+`error{code:"auth"}`. The maximum lease TTL is 10 minutes; `ping` renews it only
+while the token is still valid. An unauthenticated `hello` is dropped after 5
+seconds and does not consume a participant slot.
 
 `--dev-token` tokens are for tests: they need `--allow-dev-tokens`, a unique
 `sub` per token, an explicit expiry, and they are refused when `--secret-file`
@@ -148,11 +159,15 @@ State files are created `0600` in a private directory. The snapshot is a
 records the writer cannot emit back (SAT-text `3DSOLID`/`REGION`/`BODY` without
 ACIS data-store entries, `rfc.md` §4.6), and the manifest. The manifest is
 written last, after `fsync` of both payloads, and carries
-`{format, version, generation, sha256:{dxf, sat}, recordIds, handles, fileId,
-savedAt, dedup}`. A generation is valid only when both hashes match and the
-manifest names it; otherwise `prev/` is read, and if both are invalid the room
-refuses to join (ADR-0024). The journal is truncated **only** after the new
-generation is durable and read back.
+`{format, version, generation, lengths:{dxf, sat}, sha256:{dxf, sat}, recordIds,
+handles, fileId, savedAt, dedup}`. A generation is valid only when both hashes
+match and the manifest names it; otherwise `prev/` is read, and if both are
+invalid the room refuses to join (ADR-0024). The journal is truncated **only**
+after the new generation is durable and read back, and only below
+`prev.version`: the records from `prev.version` to head stay while `prev/`
+exists, so a fallback to `prev/` always has a continuous tail. A gap above
+`prev.version`, or two invalid generations, is reported to the operator and the
+room refuses to start — a silent loss of versions is not an option.
 
 One policy replaces the old mix of `--snapshot-secs 30` and «500 operations or
 5 minutes»: a snapshot is written at 500 operations, or every 5 minutes, or when
@@ -160,8 +175,10 @@ the journal reaches 64 MiB — whichever comes first; two generations are kept
 (`current`, `prev/`). A client that resumes from a version older than the
 snapshot is sent the snapshot; its unacknowledged queue is kept and re-sent, and
 the `opId` window answers repeats. The dedup window lives in the manifest, so
-compaction does not erase it; an evicted repeat gets `stale` and a resync, never
-a second execution.
+compaction does not erase it; an evicted repeat gets `stale` with
+`retryable:false` and `hint.dedup:"evicted"` plus a resync, never a second
+execution — and the client does not re-send it, because the window cannot prove
+whether it ran.
 
 On start the snapshot is preferred over `--file`, and the journal tail is
 replayed on top of it: a restart loses at most the operations after the last
@@ -190,8 +207,18 @@ The payload path depends on size, because every message is limited to 1 MiB:
 - above that: `{uploadUrl:"/commit/<opId>", sha256, size, version, notSaved}`
   and no bytes. The cabinet fetches the file over HTTP `Range` with the same
   JWT, verifies `sha256`, and only then creates the version; the server drops
-  the object after confirmation or by TTL. `snapshot` is chunked over the
-  WebSocket for the same reason (`rfc.md` §4.2/§4.6).
+  the object after confirmation or by TTL. The object TTL is at least the dedup
+  window (24 h). A retry with the same `opId` while the object exists returns
+  the same `{sha256, size}` with a re-signed `uploadUrl` and a fresh `expiresAt`,
+  without rebuilding the file. If the object has expired or was lost (restart,
+  eviction) and no confirmation arrived, the answer is
+  `rejected{code:"gone", retryable:false, hint:{commit:"expired"}}`: the cabinet
+  knows it has no bytes and no version was created, so the client starts a new
+  commit with a new `opId`. If the cabinet already downloaded the object but did
+  not confirm, it finishes the commit from the bytes it holds after the `sha256`
+  check and does not ask the server again — no second object, no second
+  version. `snapshot` is chunked over the WebSocket for the same reason
+  (`rfc.md` §4.2/§4.6).
 
 `notSaved` is `{format, dropped:[{what, count}], sidecar}`, counted **before**
 writing (`loss_on_save`): the cabinet shows it to the user, records it in the
@@ -214,7 +241,7 @@ file lock and answers `409`; the server relays
   participants.
 - Limits are the single table of `rfc.md` §9: 8 participants, 50 operations/s
   per room and per `sub` with `rate-limited{hint.retryAfterMs}`, 1 MiB per
-  message, 8 MiB per delta, 5000 changed / 50 000 scanned objects per
+  message, 8 MiB per delta, 5000 changed / 500 000 scanned objects per
   transaction, 30 s presence TTL, 2 MiB per-participant send queue (disconnect
   on overflow), 64 MiB journal, 512 MiB snapshot, 5 s unauthenticated `hello`
   timeout, 32 connections per IP.
