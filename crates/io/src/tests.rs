@@ -3589,9 +3589,9 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn proxies_keep_their_class_in_dwg() {
-    crate::dwg_worker::allow_in_process();
     use acadrust::entities::{EntityType, ExtendedEntityData};
     use acadrust::objects::ObjectType;
+    crate::dwg_worker::allow_in_process();
     let d = read(&proxy_file(), "p.dxf").unwrap();
     for version in [Version::R2018, Version::R2013, Version::R2010, Version::R2004] {
         let dwg = write_with(&d, "p.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
@@ -3698,8 +3698,8 @@ fn a_binary_dxf_leaves_its_proxies_out_of_the_dwg() {
 #[cfg(unix)]
 #[test]
 fn non_unicode_names_pick_the_format_by_extension() {
-    crate::dwg_worker::allow_in_process();
     use std::os::unix::ffi::OsStringExt as _;
+    crate::dwg_worker::allow_in_process();
     let name = |ext: &str| std::path::PathBuf::from(std::ffi::OsString::from_vec([b"caf\xe9.".as_slice(), ext.as_bytes()].concat()));
     assert!(is_image(name("png")) && !is_image(name("dxf")));
     let d = sample();

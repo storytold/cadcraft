@@ -393,8 +393,8 @@ fn read_census_reports_entities_the_reader_left_out() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dxf_round_trip_of_plain_geometry_is_lossless() {
-    crate::dwg_worker::allow_in_process();
     use corpus::{Format, round_trip};
+    crate::dwg_worker::allow_in_process();
     let mut d = drawing();
     // What the comparator should see in a round trip: the drawing as read from its own DXF.
     d = crate::read(crate::write(&d, "a.dxf").unwrap().as_slice(), "a.dxf").unwrap();
@@ -417,8 +417,8 @@ fn dxf_round_trip_of_plain_geometry_is_lossless() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn hostile_files_are_reported_not_crashed() {
-    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusOptions, check_bytes};
+    crate::dwg_worker::allow_in_process();
     let opts = CorpusOptions::default();
     for (bytes, name) in [
         (&b""[..], "empty.dxf"),
@@ -439,8 +439,8 @@ fn hostile_files_are_reported_not_crashed() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn report_renders_as_markdown_and_json() {
-    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusOptions, CorpusReport, check_bytes};
+    crate::dwg_worker::allow_in_process();
     let d = drawing();
     let dxf = crate::write(&d, "a.dxf").unwrap();
     let opts = CorpusOptions::default();
@@ -519,8 +519,8 @@ fn corpus_round_trip_report() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn types_the_dwg_writer_cannot_write_are_reported_lost() {
-    crate::dwg_worker::allow_in_process();
     use corpus::{CorpusReport, FileReport, Format, round_trip};
+    crate::dwg_worker::allow_in_process();
     let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags });
     let mut d = Drawing::new_metric();
     let widget = vec![tag(100, "AcDbEntity"), tag(100, "AcmeWidget"), tag(10, "1.0"), tag(20, "2.0"), tag(30, "0.0")];

@@ -110,8 +110,8 @@ fn with_scale_action() -> String {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn a_scale_action_survives_a_dwg_save() {
-    cadcraft_io::dwg_worker::allow_in_process();
     use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(dxf(&with_scale_action()).as_bytes()).unwrap();
     let before = dynamic_block(&d, "Door").unwrap();
     assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale)), "{:?}", before.actions);
