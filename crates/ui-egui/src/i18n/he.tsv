@@ -357,3 +357,41 @@
 	Object Snap On (F3)	הצמדה לאובייקטים מופעלת (F3)
 	Paper Space	מרחב נייר
 	Paste as Block	הדבק כבלוק
+# Night L04: source-verified missing GUI / safety / save-workflow messages
+	Degrees of freedom: {n}	דרגות חופש: {n}
+	Version {version}	גרסה {version}
+	{alias} is already defined; select it and use Edit.	הכינוי {alias} כבר מוגדר; יש לבחור בו ולהשתמש בעריכה.
+	{command} is an unknown command.	הפקודה {command} אינה מוכרת.
+	{contributors} · {commits}	תורמים: {contributors} · שינויים בקוד: {commits}
+	{count} more types	עוד {count} סוגים
+	{kind} (constraint {id})	{kind} (אילוץ {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	אילוץ {kind} {name} = {expression} (לחיצה כפולה לעריכה)
+	{n} more warnings; see the command line.	עוד {n} אזהרות; יש לעיין בשורת הפקודה.
+	Alias file: {file}	קובץ כינויים: {file}
+	Boundaries picked: {n}	גבולות שנבחרו: {n}
+	Changed: {n}	שונו: {n}
+	contains authoring elements. Open in Block Editor?	מכיל רכיבי עריכה. לפתוח בעורך הבלוקים?
+	Current: {color}	נוכחי: {color}
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	ייבוא הקובץ יחליף {n} כינויים קיימים ושינויים שטרם הוחלו.
+	Layout {name}: {table}	פריסה {name}: {table}
+	More than {n} aliases.	יותר מ-{n} כינויים.
+	None	ללא
+	Not a number or distance: {text}	הערך אינו מספר או מרחק תקין: {text}
+	Only in {name}: {n}	רק ב-{name}: {n}
+	Only in this drawing: {n}	רק בשרטוט זה: {n}
+	Origin: {x}, {y}	נקודת מוצא: {x}, {y}
+	Polar: {distance} < {angle}°	קוטבי: {distance} < {angle}°
+	References: {n}	הפניות: {n}
+	Repeat {command}	חזרה על {command}
+	Replaces the shortcut of {commands}	מחליף את קיצור הדרך של {commands}
+	Save cancelled: {path} was not changed.	השמירה בוטלה: הקובץ {path} לא השתנה.
+	Save changes to {name}?	לשמור את השינויים ב-{name}?
+	Save changes to block "{name}"?	לשמור את השינויים בבלוק "{name}"?
+	Saving {name} will remove content	שמירת {name} תסיר תוכן
+	Scale List...	רשימת קני מידה...
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	הקובץ הנוכחי אינו שלם. {name} יישאר ללא שינוי, והקובץ הנוכחי יוחלף.
+	The current file is kept as {name} until the next save.	הקובץ הנוכחי נשמר בשם {name} עד לשמירה הבאה.
+	This drawing	שרטוט זה
+	This format can't keep these objects yet: {objects}.	הפורמט אינו תומך עדיין בשמירת האובייקטים הבאים: {objects}.
+	Type something to find	יש להקליד טקסט לחיפוש
+	Viewport {id}	חלון תצוגה {id}

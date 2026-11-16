@@ -710,3 +710,52 @@ fn hebrew_language_catalog_and_preference_roundtrip() {
         assert_eq!(plural_he(n), category);
     }
 }
+
+#[test]
+fn hebrew_night04_cadcraft_source_critical_messages() {
+    for source in [
+        "Degrees of freedom: {n}",
+        "Version {version}",
+        "{alias} is already defined; select it and use Edit.",
+        "{command} is an unknown command.",
+        "{contributors} · {commits}",
+        "{count} more types",
+        "{kind} (constraint {id})",
+        "{kind} constraint {name} = {expression}  (double-click to edit)",
+        "{n} more warnings; see the command line.",
+        "Alias file: {file}",
+        "Boundaries picked: {n}",
+        "Changed: {n}",
+        "contains authoring elements. Open in Block Editor?",
+        "Current: {color}",
+        "Importing a file replaces your {n} aliases, and any changes not applied yet.",
+        "Layout {name}: {table}",
+        "More than {n} aliases.",
+        "None",
+        "Not a number or distance: {text}",
+        "Only in {name}: {n}",
+        "Only in this drawing: {n}",
+        "Origin: {x}, {y}",
+        "Polar: {distance} < {angle}°",
+        "References: {n}",
+        "Repeat {command}",
+        "Replaces the shortcut of {commands}",
+        "Save cancelled: {path} was not changed.",
+        "Save changes to {name}?",
+        "Save changes to block \"{name}\"?",
+        "Saving {name} will remove content",
+        "Scale List...",
+        "The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.",
+        "The current file is kept as {name} until the next save.",
+        "This drawing",
+        "This format can't keep these objects yet: {objects}.",
+        "Type something to find",
+        "Viewport {id}",
+    ] {
+        let translated = tr("he", source);
+        assert_ne!(translated, source, "English fallback: {source}");
+        assert_eq!(placeholders(source), placeholders(translated), "placeholders: {source}");
+        assert!(translated.chars().any(|c| ('א'..='ת').contains(&c)), "Hebrew missing: {source}");
+        assert_eq!(tr("en", source), source, "English changed: {source}");
+    }
+}
