@@ -28,7 +28,8 @@ pub fn specs() -> Vec<CommandSpec> {
 const MEMBER_PICKS: &[&str] = &["groupedit", "-group"];
 
 /// `hs` plus the other members of the selectable groups they belong to (in the space being
-/// edited, visible), when PICKSTYLE has group selection on. Order: `hs` first.
+/// edited, visible, and inside an MSPACE viewport not on a layer frozen in it), when PICKSTYLE
+/// has group selection on. Order: `hs` first.
 pub(crate) fn expand(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
     if s.settings.pickstyle & 1 == 0 || hs.is_empty() || s.running.as_ref().is_some_and(|r| MEMBER_PICKS.contains(&r.id.as_str())) {
         return hs;
@@ -39,6 +40,7 @@ pub(crate) fn expand(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
     }
     let space = s.space();
     let Some(store) = d.space(&space) else { return hs };
+    let frozen = s.viewport_frozen();
     // Member → its selectable groups, built once (window selections may hold many objects).
     let mut of: HashMap<Handle, Vec<usize>> = HashMap::new();
     for (i, g) in d.groups.iter().enumerate().filter(|(_, g)| g.selectable) {
@@ -56,7 +58,7 @@ pub(crate) fn expand(s: &Session, hs: Vec<Handle>) -> Vec<Handle> {
             }
             let Some(g) = d.groups.get(*gi) else { continue };
             for m in &g.members {
-                if store.get(*m).is_some_and(|e| d.is_visible(e)) && seen.insert(*m) {
+                if store.get(*m).is_some_and(|e| crate::select::selectable(d, e, frozen)) && seen.insert(*m) {
                     out.push(*m);
                 }
             }
