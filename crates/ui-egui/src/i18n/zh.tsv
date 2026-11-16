@@ -1351,6 +1351,8 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	Check for Updates	检查更新
+	Release updates are disabled for this development build.	此开发版本已禁用正式版更新。
 # Menu and command labels the October 2026 update missed (#1129).
 	Align Multileaders	对齐多重引线
 	Analyze Usage	分析使用情况
