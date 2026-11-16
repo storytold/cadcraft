@@ -5,6 +5,10 @@ guarantees. The protocol and its decisions are in `rfc.md` (§1–§14); the ADR
 (0001–0014) were accepted in the cabinet's protocol track and their content is
 carried by those sections — this repository does not contain `.craft/`.
 
+This file describes the target contract. Where the current binary is weaker
+(missing flags, claim re-validation, state durability, dedup persistence), the
+gap is named in place rather than papered over.
+
 ## One process, one drawing
 
 One process serves one drawing (`--file`). A room is authoritative for that
@@ -17,41 +21,57 @@ domain.
 cadcraft-collab-server \
   --listen 127.0.0.1:8787 \
   --file /srv/office/drawings/plan.dxf \
-  --file-id 9d2c4a1e-6b0f-4d6a-9c1e-2f7b8a0d3e55 \
   --session 6f1c0b7a-2d44-4e91-8a3c-5b6e9f0d1c72 \
   --secret-file /run/secrets/office-sync-hs256 \
   --issuer cabinet --audience office-sync \
-  --state /var/lib/office-sync/9d2c4a1e.dxf \
-  --snapshot-secs 300 --snapshot-ops 500 \
+  --state /var/lib/office-sync/6f1c0b7a.dxf \
+  --snapshot-secs 300 \
   --http 127.0.0.1:8788
 ```
 
 `--dev-token <token>:<role>` (repeatable) replaces `--secret-file` for tests and
-a single-tenant deployment; it is accepted only together with
-`--allow-dev-tokens` and never where the cabinet signs tokens. Prefer the
-environment or a file over argv: an argument is visible in the process list.
+a single-tenant deployment; it is never used where the cabinet signs tokens.
+Prefer the environment or a file over argv: an argument is visible in the
+process list.
 
-| flag | required | default | meaning |
-|---|---|---|---|
-| `--listen` | yes | `127.0.0.1:8787` | WebSocket listener; non-loopback needs `--allow-remote` |
-| `--file` | yes, unless `--state` exists | — | source drawing |
-| `--file-id` | yes | — | cabinet file id; must match the JWT `fileId` |
-| `--session` | yes | — | session id; must match the JWT `sessionId` |
-| `--secret-file` | yes, unless `--dev-token` | — | HS256 secret, `0600`, ≥32 bytes |
-| `--issuer` / `--audience` | yes | — | expected `iss` / `aud` |
-| `--state` | no | `<state-dir>/<file-id>.dxf` | snapshot payload path |
-| `--snapshot-secs` | no | `300` | time trigger of the snapshot policy |
-| `--snapshot-ops` | no | `500` | operation trigger of the snapshot policy |
-| `--idle-secs` | no | `600` | final snapshot + exit with no participants |
-| `--http` | no | — | health/metrics listener (loopback) |
-| `--metrics-token` | no | — | bearer token for `/metrics` when exposed |
-| `--allow-remote` | no | off | permit a non-loopback `--listen` (needs TLS behind it) |
+Flags the binary has today (measured on the `feature/realtime-collaboration-server`
+head; defaults are the code's, not the policy's):
+
+| flag | default | meaning |
+|---|---|---|
+| `--listen` | `127.0.0.1:8787` | WebSocket listener |
+| `--file` | — (required) | source drawing |
+| `--session` | `session` | session id; must match the JWT `sessionId` |
+| `--secret-file` | — | file with the HS256 secret |
+| `--issuer` / `--audience` | — | required `iss` / `aud` |
+| `--dev-token` | — | fixed `token:role`, repeatable (tests only) |
+| `--state` | — | snapshot payload path; journal and version derive from it |
+| `--assets` | — | attachment store root (ADR-0021) |
+| `--cabinet-url` | — | cabinet commit endpoint; with it, `--file-id`, `--cabinet-token-file`, `--cabinet-timeout-ms`, `--cabinet-attempts` |
+| `--snapshot-secs` | `30` | seconds between snapshots |
+| `--http` | — | health/metrics listener |
+| `--idle-secs` | `600` | final snapshot + exit with no participants; `0` keeps it open |
+
+**Required by this RFC, not implemented yet** (the stack must add them before
+the limits and guarantees below hold):
+
+- `--snapshot-ops` (500) and a 64 MiB journal trigger — one snapshot policy
+  with `--snapshot-secs` instead of the time-only default;
+- `--allow-remote` — refuse a non-loopback `--listen` unless given, and require
+  a TLS terminator behind it;
+- `--origin` — `Origin` allowlist on the WebSocket upgrade;
+- `--metrics-token` — bearer token for `/metrics` when it is not loopback;
+- `--allow-dev-tokens` — an explicit switch for `--dev-token`, refused in
+  release builds and when `--secret-file` is set;
+- a `0600` requirement on `--secret-file`, a minimum secret length, and the
+  verification-only/asymmetric key mode.
 
 The journal and the rest of the state are **derived from `--state`**, not
 separate flags: `<state>.jsonl` (journal), `<state>.version` (last committed
 version), `<state>.meta.json` (manifest: version, generation, hashes, dedup),
 `<state>.sat` (sidecar of unmodelled ACIS records), and `prev/` (previous
-generation).
+generation). The manifest, sidecar and `prev/` are part of the RFC contract;
+the current binary writes only the DXF and the version file.
 
 ## Transport and TLS
 
