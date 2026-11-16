@@ -6,6 +6,7 @@
 - Проект: `cadcraft`
 - Upstream: `https://github.com/storytold/cadcraft`
 - Коммит: `a655cee0c1399ca1629675605074897e2cb6850e` (ветка `collab/study` от `origin/main`)
+- Ссылки на строки сверены с `16341b66` (после слияния `origin/main` в docs-ветку #2934)
 - Дата: 2026-11-06
 - Автор: `cadcraft/envoy`
 
@@ -203,7 +204,7 @@ pub struct Drawing {
   сущностей такие типы пропускает — `io/src/dxf_write/entity.rs:768`),
   насколько может; DWG-мост теряет кастомные классы, объекты и часть foreign
   данных (`docs/gaps.md` top-10 №1, FF1; `cadcraft::cmd::file::drops_unknown`,
-  `loss_on_save`, `cmd/file.rs:835`).
+  `loss_on_save`, `cmd/file.rs:873`).
 - **Предупреждение уже реализовано**: `loss_on_save()` считает, что будет
   потеряно, **до** записи, а `not_saved_message()`/`report_not_saved()` отдают
   список в результат (`notSaved`) и в командную строку; интерактивный QSAVE
