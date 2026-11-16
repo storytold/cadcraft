@@ -104,7 +104,7 @@ fn with_scale_action() -> String {
 
 /// A scale action goes through CADCraft's own DWG save (the bridge DXF, then acadrust) whole:
 /// the DWG holds it with its connections, and it reads back as the same action. AutoCAD refused
-/// such DWGs while acadrust left out the byte after its connections (cadcraft-dwg's
+/// such DWGs while acadrust left out the byte after its connections (craft-dwg's
 /// `scale_actions_keep_the_byte_autocad_reads_after_their_connections` covers the byte).
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
