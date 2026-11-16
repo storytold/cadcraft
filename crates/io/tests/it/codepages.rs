@@ -248,7 +248,7 @@ fn hostile_multibyte_never_panics() {
 #[test]
 fn pre_2007_dwg_text_decodes_through_the_bridge() {
     let dxf = ascii_dxf("AC1015", "ANSI_1251", b"\xD1\xEB\xEE\xE9", b"\xC1\xEB\xEE\xEA", b"\xCF\xF0\xE8\xE2\xE5\xF2");
-    let dwg = cadcraft_dwg::dxf_to_dwg(&dxf).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg(&dxf).unwrap();
     let d = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     assert_eq!(names(&d), ("Слой".into(), "Блок".into(), "Привет".into()));
 }
