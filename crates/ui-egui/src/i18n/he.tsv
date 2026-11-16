@@ -242,3 +242,40 @@
 	Thaw Layer	בטל הקפאת שכבה
 	Turn On Layer	הפעל שכבה
 	Type a command	הקלד פקודה
+
+# Night localization: independent English-source translations for CAD viewport, editing and drafting controls, 2026-11-16.
+	Add Current Scale	הוסף קנה מידה נוכחי
+	All Annotation Objects	כל אובייקטי ההערות
+	All Scales	כל קני המידה
+	Annotation Visibility	תצוגת הערות
+	Annotation scale	קנה מידה להערות
+	Block Reference	הפניה לבלוק
+	Break At Point	פצל בנקודה
+	Bring Above Objects	העבר מעל לאובייקטים
+	ByBlock	לפי בלוק
+	Clip Viewport	חתוך חלון תצוגה
+	Compare Drawings...	השווה שרטוטים...
+	Constraint Bars	סרגלי אילוצים
+	Constraint Settings	הגדרות אילוצים
+	Create Block	צור בלוק
+	Current selection	הבחירה הנוכחית
+	Delete Constraints	מחק אילוצים
+	Delete Duplicate Objects	מחק אובייקטים כפולים
+	Dimension Style...	סגנון מידות...
+	Dimension Text Edit	עריכת טקסט מידה
+	Dimensional Constraints	אילוצי מידות
+	Drafting Settings...	הגדרות שרטוט...
+	Draw Order	סדר ציור
+	Drawing Limits	גבולות השרטוט
+	Edit Array	ערוך מערך
+	Edit Attributes...	ערוך מאפיינים...
+	Edit Table Cell	ערוך תא בטבלה
+	End Object Isolation	סיים בידוד אובייקטים
+	Enter block name	הזן שם בלוק
+	Entire drawing	השרטוט כולו
+	Geometric Constraints	אילוצים גאומטריים
+	Grid Display	הצג רשת
+	1 Viewport	חלון תצוגה אחד
+	2 Viewports	2 חלונות תצוגה
+	3 Viewports	3 חלונות תצוגה
+	4 Viewports	4 חלונות תצוגה
