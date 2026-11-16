@@ -70,7 +70,9 @@ pub fn apply(drawing: &mut Drawing, changes: &[Change]) -> Result<(), CollabErro
                 if drawing.layouts.iter().all(|l| !l.name.eq_ignore_ascii_case(from)) {
                     return Err(CollabError::NoRecord(RecordKind::Layout, from.clone()));
                 }
-                if drawing.layouts.iter().any(|l| l.name.eq_ignore_ascii_case(to)) {
+                // A rename that only changes the casing names the layout being renamed: the
+                // check must not refuse it, as `rename_layer` already allows.
+                if drawing.layouts.iter().any(|l| l.name.eq_ignore_ascii_case(to) && !l.name.eq_ignore_ascii_case(from)) {
                     return Err(CollabError::DuplicateName(RecordKind::Layout, to.clone()));
                 }
                 if let Some(layout) = drawing.layouts.iter_mut().find(|l| l.name.eq_ignore_ascii_case(from)) {

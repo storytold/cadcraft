@@ -458,11 +458,16 @@ impl Session {
                 self.echo(text);
             }
         }
+        let record = self.record_undo;
         if let Some((doc, sel)) = steps.base.or(run.before)
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            st.push_undo(crate::Snapshot { label: run.label.clone(), doc, selection: sel });
+            // A session that records no history (the collaboration server, ADR 0010) adds no
+            // routine step either, but still redraws.
+            if record {
+                st.push_undo(crate::Snapshot { label: run.label.clone(), doc, selection: sel });
+            }
             st.revision += 1;
         }
         self.lisp_last = Some(result);

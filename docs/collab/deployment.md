@@ -112,13 +112,14 @@ drawing content, tokens or user paths.
 
 ## What is still missing for a first production deployment
 
-- The desktop app joins a session with `--collab-url`, `--collab-doc` and
-  `CADCRAFT_COLLAB_TOKEN` (the environment keeps the token out of the process
-  list), sends every command that is not a UI/view command through
-  `collab_command`, draws the other participants' cursors and names in the space
-  being shown, and maps undo to the server's per-user step; the interactive
-  command line is refused in a shared session, and the web build's flag is not
-  wired yet.
+- Desktop collaboration is planned, not wired in this branch:
+  `apps/cadcraft/src/launch_args.rs` does not accept `--collab-url`,
+  `--collab-doc` or `CADCRAFT_COLLAB_TOKEN` yet (the RFC marks them as planned,
+  §10/§13a). When wired, the app joins a session with those flags, sends every
+  command that is not a UI/view command through `collab_command`, draws the
+  other participants' cursors and names in the space being shown, and maps undo
+  to the server's per-user step; the interactive command line is refused in a
+  shared session, and the web build's flag is not wired yet.
 - WSS termination tested against the cabinet's ingress, and the cabinet's ACL
   and secret provisioning exercised end to end.
 - The web build's session messages (`cadcraft:session`, presence, commit) through
