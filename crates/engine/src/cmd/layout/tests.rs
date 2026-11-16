@@ -372,3 +372,26 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn layout_set_frames_extents_away_from_origin() {
+    let mut s = Session::new();
+    s.doc_mut().unwrap().layouts.push(cadcraft_doc::Layout::new("COVER", 2));
+    let paper = Space::Paper("COVER".into());
+    s.doc_mut()
+        .unwrap()
+        .add(
+            &paper,
+            cadcraft_doc::Common::default(),
+            cadcraft_doc::EntityKind::Line(cadcraft_doc::Line {
+                a: cadcraft_geom::Vec3::new(12049.0, 4307.0, 0.0),
+                b: cadcraft_geom::Vec3::new(12449.0, 4594.0, 0.0),
+            }),
+        )
+        .unwrap();
+    s.execute("layout.set", &json!({"name": "COVER"})).unwrap();
+    let v = s.state().unwrap().view();
+    assert!((v.center.x - 12249.0).abs() < 1e-6, "center.x={}", v.center.x);
+    assert!((v.center.y - 4450.5).abs() < 1e-6, "center.y={}", v.center.y);
+    assert!(v.height >= 287.0, "height={}", v.height);
+}
