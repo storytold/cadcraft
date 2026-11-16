@@ -314,10 +314,12 @@ generation, cursor}`: клиент знает, что база придёт ча
 ## 5. Presence (ADR-0006)
 
 Отдельный тип в том же WS, не журналируется, без подтверждений:
-`{space, layout, mspace, cursor:[x,y] (WCS), viewport:{center,height}, selection:[handle], layer}`.
-≤10 Гц на клиента, ≤2 KiB, коалесцировать в последнее состояние, при перегрузке
-— drop-stale. TTL 30 с → «неактивен»; `leave`/разрыв WS чистят сразу. Viewer
-шлёт presence, но не `op`. Содержимое чертежа и текст в presence не попадают.
+`{clientId, space, layout, mspace, cursor:[x,y] (WCS), viewport:{center,height},
+selection:[handle], layer}`. `clientId` различает окна одного `sub`: без него два
+окна перетирали бы курсор друг друга. ≤10 Гц на клиента, ≤2 KiB, коалесцировать
+в последнее состояние, при перегрузке — drop-stale. TTL 30 с → «неактивен»;
+`leave`/разрыв WS чистят сразу. Viewer шлёт presence, но не `op`. Содержимое
+чертежа и текст в presence не попадают.
 
 ## 6. Undo/redo на пользователя (ADR-0010)
 
