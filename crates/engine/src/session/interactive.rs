@@ -483,12 +483,21 @@ impl Session {
         // Passes add-ons registered (`register_after_command`). One that panics is reported, the
         // drawing and selection go back to what they were before that pass, and the next passes
         // still run. Saving the drawing shares it (an `Arc`); it is copied only if the pass edits.
+        // The document is found again by its `uid`, not its index, since a pass may switch or
+        // close drawings, and it becomes the active one again. Like the guard in `guard.rs`, this
+        // does nothing on wasm, where a panic aborts.
         for pass in crate::after_command_passes() {
-            let saved = self.state().ok().map(|st| (Arc::clone(&st.doc), st.selection.clone()));
+            let saved = self.state().ok().map(|st| (st.uid, Arc::clone(&st.doc), st.selection.clone()));
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pass(self, before, ok))).is_err() {
-                if let (Some((doc, selection)), Ok(st)) = (saved, self.state_mut()) {
+                if let Some((uid, doc, selection)) = saved
+                    && let Some((i, st)) = self.docs.iter_mut().enumerate().find(|(_, st)| st.uid == uid)
+                {
                     st.doc = doc;
                     st.selection = selection;
+                    if self.active != i {
+                        self.active = i;
+                        self.bump_doc_epoch();
+                    }
                 }
                 self.echo("A post-command pass of an add-on failed; its changes were skipped.".to_string());
             }

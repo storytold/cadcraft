@@ -5,6 +5,7 @@
 //! The registries are process-wide, so the whole scenario is one test.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Common, Drawing, EntityKind, ExtData, Line, Space};
@@ -27,6 +28,10 @@ impl ExtData for Count {
 const COUNT: &str = "test.count";
 const BROKEN: &str = "test.broken";
 const AFTER: &str = "test.after";
+const SWITCHED: &str = "test.switched";
+
+/// Arms [`switching_pass`] for the next command only.
+static SWITCH_ARMED: AtomicBool = AtomicBool::new(false);
 
 fn add_line(s: &mut Session, _: &Value) -> cadcraft_engine::Result<Value> {
     let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) });
@@ -65,6 +70,18 @@ fn after_pass(s: &mut Session, _before: Option<&Arc<Drawing>>, _ok: bool) {
     if let Ok(d) = s.doc_mut() {
         d.ext.set(AFTER, Count(n));
     }
+}
+
+/// When armed: changes the drawing, makes another drawing the active one, then panics.
+fn switching_pass(s: &mut Session, _before: Option<&Arc<Drawing>>, _ok: bool) {
+    if !SWITCH_ARMED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(d) = s.doc_mut() {
+        d.ext.set(SWITCHED, Count(0));
+    }
+    s.active = usize::from(s.active == 0);
+    panic!("an add-on bug after a document switch");
 }
 
 fn count(s: &Session) -> Option<usize> {
@@ -117,4 +134,19 @@ fn add_on_commands_and_after_command_passes() {
     assert!(d.ext.get::<Count>(BROKEN).is_none(), "the broken pass's change was skipped");
     assert!(s.selection().is_empty(), "the broken pass's selection was skipped");
     assert_eq!(d.ext.get::<Count>(AFTER), Some(&Count(2)));
+
+    // A pass that switches drawings and then panics: the drawing the command ran in gets its
+    // saved state back and is active again, and the other drawing is not overwritten.
+    register_after_command(switching_pass);
+    s.execute("new", &json!({})).unwrap();
+    assert!(s.docs.len() >= 2);
+    let active = s.active;
+    let other = usize::from(active == 0);
+    let other_doc = Arc::clone(&s.docs[other].doc);
+    SWITCH_ARMED.store(true, Ordering::SeqCst);
+    s.execute("test.addline", &json!({})).unwrap();
+    assert_eq!(s.active, active, "the drawing the command ran in is active again");
+    assert!(s.doc().unwrap().ext.get::<Count>(SWITCHED).is_none(), "the switching pass's change was skipped");
+    assert_eq!(model_len(s.doc().unwrap()), 1, "the command's own line stays");
+    assert!(Arc::ptr_eq(&s.docs[other].doc, &other_doc), "the other drawing was not overwritten");
 }
