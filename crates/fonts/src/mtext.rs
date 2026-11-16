@@ -25,6 +25,14 @@ pub fn plain_mtext(s: &str) -> String {
                 }
                 out.push_str(stack.trim_end_matches('/'));
             }
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text. A trailing lone backslash is dropped.
+            Token::Unknown(c) => {
+                out.push('\\');
+                if c != '\r' {
+                    out.push(c);
+                }
+            }
             Token::Char('\r') => {}
             Token::Char(c) => out.push(c),
             _ => {}
@@ -236,6 +244,19 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             atoms.push(Atom::Word(std::mem::take(word)));
         }
     };
+    // A character read as text: a line feed breaks the paragraph and a space ends the word.
+    let text_char = |atoms: &mut Vec<Atom>, word: &mut Vec<(Seg, usize)>, c: char, f: usize| match c {
+        '\r' => {}
+        '\n' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Para(f));
+        }
+        ' ' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Space(f));
+        }
+        c => push_char(word, c, f),
+    };
     // Derive a new format from the current one.
     let derive = |fmts: &mut Vec<Fmt>, cur: &mut usize, f: &dyn Fn(&mut Fmt)| {
         let mut n = fmts.get(*cur).cloned().unwrap_or(Fmt {
@@ -331,16 +352,13 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     cur = f;
                 }
             }
-            Token::Char('\r') => {}
-            Token::Char('\n') => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Para(cur));
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text (#2952).
+            Token::Unknown(c) => {
+                push_char(&mut word, '\\', cur);
+                text_char(&mut atoms, &mut word, c, cur);
             }
-            Token::Char(' ') => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Space(cur));
-            }
-            Token::Char(c) => push_char(&mut word, c, cur),
+            Token::Char(c) => text_char(&mut atoms, &mut word, c, cur),
             _ => {}
         }
     }
@@ -426,56 +444,56 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
 }
 
 /// Shape a segment with its left end at `x` on the baseline.
-fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
-    let h = f.height;
+fn seg_shape(seg: &Seg, format: &Fmt, origin_x: f64) -> Shaped {
+    let height = format.height;
     let mut out = Shaped::default();
-    let put = |s: &str, size: f64, at: Vec2| {
-        if s.is_empty() {
+    let put = |text: &str, size: f64, at: Vec2| {
+        if text.is_empty() {
             return Shaped::default();
         }
-        let mut sh = shape_line(&f.font, s, size, f.wf, f.oblique);
-        sh.map(|p| p + at);
+        let mut sh = shape_line(&format.font, text, size, format.wf, format.oblique);
+        sh.map(|point| point + at);
         sh
     };
-    let w = seg_width(seg, f);
+    let width = seg_width(seg, format);
     match seg {
-        Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
+        Seg::Text(text) => out.extend(put(text, height, Vec2::new(origin_x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
-            let hs = h * STACK_SCALE;
-            let wt = text_width(&f.font, top, hs, f.wf);
-            let wb = text_width(&f.font, bottom, hs, f.wf);
+            let hs = height * STACK_SCALE;
+            let wt = text_width(&format.font, top, hs, format.wf);
+            let wb = text_width(&format.font, bottom, hs, format.wf);
             match sep {
                 '#' => {
-                    out.extend(put(top, hs, Vec2::new(x, h * 0.4)));
-                    let sx = x + wt + h * 0.1;
-                    out.extend(put(bottom, hs, Vec2::new(sx + h * 0.4, -h * 0.05)));
-                    out.strokes.push(vec![Vec2::new(sx, -h * 0.1), Vec2::new(sx + h * 0.3, h * 1.1)]);
+                    out.extend(put(top, hs, Vec2::new(origin_x, height * 0.4)));
+                    let sx = origin_x + wt + height * 0.1;
+                    out.extend(put(bottom, hs, Vec2::new(sx + height * 0.4, -height * 0.05)));
+                    out.strokes.push(vec![Vec2::new(sx, -height * 0.1), Vec2::new(sx + height * 0.3, height * 1.1)]);
                 }
                 '^' => {
                     // Tolerances: centred on the line, or the lower value on the baseline (\A0) or
                     // the upper value level with the text (\A2).
-                    let (yt, yb) = match f.valign {
-                        0 => (hs + h * 0.1, 0.0),
-                        2 => (0.0, -hs - h * 0.1),
-                        _ => (h * 0.55, h * 0.45 - hs),
+                    let (yt, yb) = match format.valign {
+                        0 => (hs + height * 0.1, 0.0),
+                        2 => (0.0, -hs - height * 0.1),
+                        _ => (height * 0.55, height * 0.45 - hs),
                     };
-                    out.extend(put(top, hs, Vec2::new(x, yt)));
-                    out.extend(put(bottom, hs, Vec2::new(x, yb)));
+                    out.extend(put(top, hs, Vec2::new(origin_x, yt)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x, yb)));
                 }
                 _ => {
-                    let bar = h * 0.45;
-                    out.extend(put(top, hs, Vec2::new(x + (w - wt) / 2.0, bar + h * 0.12)));
-                    out.extend(put(bottom, hs, Vec2::new(x + (w - wb) / 2.0, bar - h * 0.12 - hs)));
-                    out.strokes.push(vec![Vec2::new(x, bar), Vec2::new(x + w, bar)]);
+                    let bar = height * 0.45;
+                    out.extend(put(top, hs, Vec2::new(origin_x + (width - wt) / 2.0, bar + height * 0.12)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x + (width - wb) / 2.0, bar - height * 0.12 - hs)));
+                    out.strokes.push(vec![Vec2::new(origin_x, bar), Vec2::new(origin_x + width, bar)]);
                 }
             }
         }
     }
-    if f.under {
-        out.strokes.push(vec![Vec2::new(x, -h * 0.2), Vec2::new(x + w, -h * 0.2)]);
+    if format.under {
+        out.strokes.push(vec![Vec2::new(origin_x, -height * 0.2), Vec2::new(origin_x + width, -height * 0.2)]);
     }
-    if f.over {
-        out.strokes.push(vec![Vec2::new(x, h * 1.2), Vec2::new(x + w, h * 1.2)]);
+    if format.over {
+        out.strokes.push(vec![Vec2::new(origin_x, height * 1.2), Vec2::new(origin_x + width, height * 1.2)]);
     }
     out
 }
@@ -583,8 +601,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 };
                 for segments in pieces {
                     let word_width = word_width(segments);
-                    let space_width =
-                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                    let space_width = pending_space.map_or(0.0, |format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf));
                     if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                     } else if !line.items.is_empty() || pending_space.is_some() {
@@ -750,7 +767,7 @@ mod tests {
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
         assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
-        assert_eq!(plain_mtext("\\U+12"), "+12", "a short escape loses only the backslash and the code");
+        assert_eq!(plain_mtext("\\U+12"), "\\U+12", "a short escape is shown as typed");
     }
 
     #[test]
@@ -772,18 +789,24 @@ mod tests {
         assert_eq!(plain_mtext("\\\\U+0041"), "\\U+0041");
         // `\M+n` double-byte characters, decoded like the DXF reader does.
         assert_eq!(plain_mtext("\\M+5BCFE x;y"), "\u{4ef6} x;y");
-        // Malformed escapes lose only the backslash and the code.
-        assert_eq!(plain_mtext("a\\U+12 b"), "a+12 b");
-        assert_eq!(lay("a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(lay("\\pxql;a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(plain_mtext("a\\M+ b"), "a+ b");
+        // Malformed escapes are shown as typed, backslash included, as AutoCAD 2024 shows them.
+        for s in ["a\\U+12 b", "\\U+12x", "a\\U+12;b", "a\\U+123 b", "a\\U+ b", "a\\U+00G1b", "a\\M+ b"] {
+            assert_eq!(plain_mtext(s), s);
+            assert_eq!(lay(s, 0.0).lines, vec![s]);
+            assert_eq!(lay(&format!("\\pxql;{s}"), 0.0).lines, vec![s]);
+        }
+        // A valid escape takes exactly four digits.
+        assert_eq!(plain_mtext("a\\U+12345b"), "a\u{1234}5b");
     }
 
     #[test]
     fn unknown_code_without_semicolon_keeps_the_text() {
-        assert_eq!(plain_mtext("A\\Zbc d"), "Abc d");
-        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["Abc d"]);
-        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["Abc d"]);
+        // An unknown code is shown as typed, as AutoCAD 2024 shows it.
+        assert_eq!(plain_mtext("A\\Zbc d"), "A\\Zbc d");
+        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        // The text after it is read as usual: here a paragraph break.
+        assert_eq!(plain_mtext("A\\Z\\Pb"), "A\\Z\nb");
         // A trailing lone backslash is dropped.
         assert_eq!(plain_mtext("A\\"), "A");
         // Codes with an argument still take it up to the `;`, or to the end.
@@ -912,7 +935,7 @@ mod tests {
         let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
         assert_eq!(cols, vec![None, Some(MTextColor::Aci(1)), None]);
         let l = lay("\\c16711680;R", 0.0);
-        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0xFF0000))));
+        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0x00FF_0000))));
     }
 
     #[test]
@@ -934,8 +957,8 @@ mod tests {
         let bar = l.strokes.iter().find(|s| s.len() == 2 && (s[0].y - s[1].y).abs() < 1e-12 && (s[0].y + 0.55).abs() < 1e-9);
         assert!(bar.is_some());
         let ys: Vec<f64> = l.strokes.iter().flatten().map(|p| p.y).collect();
-        let max = ys.iter().cloned().fold(f64::MIN, f64::max);
-        let min = ys.iter().cloned().fold(f64::MAX, f64::min);
+        let max = ys.iter().copied().fold(f64::MIN, f64::max);
+        let min = ys.iter().copied().fold(f64::MAX, f64::min);
         assert!(max > 0.0 && min < -1.0, "{min}..{max}");
         // Narrower than the two digits side by side at full size.
         assert!(l.bounds.width() < crate::line_width("12", 1.0, 1.0));
