@@ -35,6 +35,8 @@ craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-l
 # PDF writing (krilla) for plots, and reading them back in tests. The root patches below pin
 # craft-pdf's patched backends to the same revision (Cargo ignores dependency-local patches).
 craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", default-features = false }
+# TrueType embedding-permission classification for plotted fonts (craft-libs#778).
+craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "c07e38090879ffa994f893df9956c6d5b96c049c", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }
