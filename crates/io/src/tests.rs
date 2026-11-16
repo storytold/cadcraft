@@ -2944,6 +2944,15 @@ fn svg_path_lines_curves_and_arcs() {
 }
 
 #[test]
+fn svg_smooth_quadratic_has_two_coordinates() {
+    let smooth = format!("{SVG_PAGE}<path d=\"M0 0 Q3 3 6 0 T12 0\"/></svg>");
+    let explicit = format!("{SVG_PAGE}<path d=\"M0 0 Q3 3 6 0 Q9 -3 12 0\"/></svg>");
+    let smooth = read(smooth.as_bytes(), "smooth.svg").unwrap();
+    let explicit = read(explicit.as_bytes(), "explicit.svg").unwrap();
+    assert_eq!(geometry(&smooth), geometry(&explicit));
+}
+
+#[test]
 fn svg_group_transforms_apply() {
     let svg = format!("{SVG_PAGE}<g transform=\"translate(5,2)\"><line x1=\"0\" y1=\"0\" x2=\"10\" y2=\"0\"/></g></svg>");
     let d = read(svg.as_bytes(), "t.svg").unwrap();
@@ -3070,6 +3079,33 @@ fn svgz_gunzips_to_the_same_drawing() {
     let packed = read(&gzip_of(svg.as_bytes()), "a.svgz").unwrap();
     assert_eq!(kinds(&plain), kinds(&packed));
     assert_eq!(plain.model.iter().map(|e| &e.kind).collect::<Vec<_>>(), packed.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+}
+
+#[test]
+fn svgz_checks_the_gzip_trailer_and_combines_members() {
+    let svg = format!("{SVG_PAGE}<circle cx=\"5\" cy=\"5\" r=\"1\"/></svg>");
+    let split = svg.len() / 2;
+    let mut members = gzip_of(&svg.as_bytes()[..split]);
+    members.extend(gzip_of(&svg.as_bytes()[split..]));
+    let plain = read(svg.as_bytes(), "a.svg").unwrap();
+    let decoded = read(&members, "a.svgz").unwrap();
+    assert_eq!(plain.model.iter().map(|e| &e.kind).collect::<Vec<_>>(), decoded.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+
+    let mut corrupt = gzip_of(svg.as_bytes());
+    let crc_offset = corrupt.len() - 8;
+    corrupt[crc_offset] ^= 1;
+    assert!(read(&corrupt, "a.svgz").is_err());
+}
+
+#[test]
+fn svgz_open_and_svg_export_follow_the_public_dispatch() {
+    let source = format!("{SVG_PAGE}<line x1=\"1\" y1=\"2\" x2=\"9\" y2=\"7\"/></svg>");
+    let drawing = read(&gzip_of(source.as_bytes()), "input.svgz").unwrap();
+    assert_eq!(kinds(&drawing), ["Line"]);
+    let output = write(&drawing, "output.svg").unwrap();
+    assert!(std::str::from_utf8(&output).unwrap().contains("<polyline"));
+    let reopened = read(&output, "output.svg").unwrap();
+    assert!(!reopened.model.is_empty());
 }
 
 #[test]
