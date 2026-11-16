@@ -25,6 +25,13 @@ pub fn deny_reason(command: &str) -> Option<&'static str> {
     if command.is_empty() {
         return Some("a command is required");
     }
+    // The current layer is a participant's, not the drawing's: a room that ran this would move its
+    // own `CLAYER` with no change set, and every replica would keep the layer it already had — so
+    // a later deletion of that layer would be refused on the replica that is still on it
+    // (CodeRabbit on #2938). A client sets its own layer locally (ADR-0019).
+    if matches!(command.as_str(), "layer.current" | "clayer") {
+        return Some("the current layer belongs to each participant, not to the drawing");
+    }
     const DENIED: &[&str] = &[
         "open",
         "save",
@@ -96,6 +103,12 @@ pub fn size_reason(op: &Op) -> Option<&'static str> {
 /// different image or a crossed-out frame. A shared session therefore takes the raster bytes in the
 /// operation (`data`) or their content address in the room's store (`asset`, ADR 0021), and rejects
 /// the file-reading form before the drawing changes.
+///
+/// `insert` and `minsert` read a drawing file the same way when their `file` parameter names one;
+/// the interactive `bolt=C:\parts\bolt.dwg` form is not reachable as an operation, because a shared
+/// session's command line only inserts a block the drawing already holds (`cmdline::insert`), and
+/// the JSON form has no path in `name`. So the file-reading form is refused here and a block insert
+/// stays a drawing operation (CodeRabbit on #2938).
 pub fn params_reason(op: &Op) -> Option<&'static str> {
     if is_image_attach(&op.command) {
         let has_data = op.params.get("data").and_then(|value| value.as_str()).is_some_and(|data| !data.trim().is_empty());
@@ -112,7 +125,19 @@ pub fn params_reason(op: &Op) -> Option<&'static str> {
             (false, Some(_)) => None,
         };
     }
+    if is_insert(&op.command) {
+        let file = op.params.get("file").and_then(|value| value.as_str()).map(str::trim).filter(|file| !file.is_empty());
+        if file.is_some() {
+            return Some("insert reads a drawing file on the server; a shared session inserts a block the drawing already holds");
+        }
+    }
     None
+}
+
+/// Whether `command` inserts a block, including the aliases the engine gives it: `-INSERT` is the
+/// classic command line, `ddinsert` and `minsert` run the same form.
+pub(crate) fn is_insert(command: &str) -> bool {
+    matches!(command.trim().to_ascii_lowercase().as_str(), "insert" | "i" | "-insert" | "ddinsert" | "minsert")
 }
 
 /// Whether `command` attaches a raster image: `IMAGEATTACH`, and `ATTACH`, which the engine runs
@@ -176,6 +201,37 @@ mod tests {
         {
             assert!(deny_reason(command).is_some(), "`{command}` reads or writes a file on the server");
         }
+    }
+
+    #[test]
+    fn the_current_layer_is_never_a_room_operation() {
+        for command in ["layer.current", "CLAYER"] {
+            assert!(deny_reason(command).is_some(), "`{command}` is each participant's own setting");
+        }
+        // The property command is still a drawing operation: its changes belong to the room.
+        assert!(deny_reason("layer.set").is_none());
+    }
+
+    #[test]
+    fn insert_of_a_file_is_refused_and_insert_of_a_block_is_not() {
+        // `name` alone: the block the drawing already holds.
+        assert!(params_reason(&op("insert", json!({ "name": "BOLT", "at": [0, 0] }))).is_none());
+        assert!(params_reason(&op("minsert", json!({ "name": "BOLT", "at": [0, 0] }))).is_none());
+        // The `file` parameter makes the engine read a drawing on the server's disk.
+        let file = json!({ "name": "BOLT", "file": "/srv/parts/bolt.dwg", "at": [0, 0] });
+        assert!(params_reason(&op("insert", file.clone())).is_some());
+        assert!(params_reason(&op("MINSERT", file)).is_some());
+        // Every alias the engine gives the command is checked too.
+        for command in ["insert", "i", "-insert", "ddinsert", "minsert"] {
+            assert!(
+                params_reason(&op(command, json!({ "name": "BOLT", "file": "bolt.dwg", "at": [0, 0] }))).is_some(),
+                "`{command}` runs the same file-reading form"
+            );
+        }
+        // An empty `file` names nothing.
+        assert!(params_reason(&op("insert", json!({ "name": "BOLT", "file": "  ", "at": [0, 0] }))).is_none());
+        // An ordinary drawing command is untouched.
+        assert!(params_reason(&op("line", json!({ "points": [[0, 0], [1, 1]] }))).is_none());
     }
 
     #[test]

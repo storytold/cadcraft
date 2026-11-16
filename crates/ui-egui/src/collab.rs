@@ -557,7 +557,11 @@ impl crate::CadApp {
                                 Some(Err(message)) => self.session.echo(format!("shared session: the host refused version {version}: {message}")),
                                 None => {
                                     let path = self.session.state().ok().and_then(|state| state.path.clone());
-                                    let path = path.unwrap_or_else(|| format!("cadcraft-shared-{version}.dxf"));
+                                    // The room commits DXF bytes. A drawing opened from another
+                                    // format (`plan.dwg`) is never replaced by them: the file goes
+                                    // beside it as a `.dxf` copy, and the window says where
+                                    // (CodeRabbit on #2938).
+                                    let path = room_copy_path(path.as_deref(), version);
                                     let temporary = format!("{path}.tmp");
                                     match std::fs::write(&temporary, &bytes).and_then(|()| std::fs::rename(&temporary, &path)) {
                                         Ok(()) => self.session.echo(format!("shared session: wrote {path} (version {version})")),
@@ -643,12 +647,54 @@ impl crate::CadApp {
         self.opened(r);
     }
 
+    /// Make a layer current in this window, without a room operation.
+    ///
+    /// The engine command also thaws a frozen layer. The thaw is the drawing's state, so it goes to
+    /// the room as `layer.set`; `CLAYER` stays here. A read-only participant may choose its layer
+    /// but cannot thaw one, and hears why (CodeRabbit on #2938).
+    fn current_layer_here(&mut self, id: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let name = params.get("name").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+        let frozen = self.session.doc().ok().and_then(|drawing| drawing.layer(&name).map(|layer| layer.frozen)).unwrap_or(false);
+        let may_write = self.collab.as_ref().is_some_and(|collab| collab.role().may_write());
+        if frozen && !may_write {
+            return Err("this shared session is read-only: a frozen layer cannot be thawed here".into());
+        }
+        let local = self.execute_here(id, params);
+        if frozen && local.is_ok() && may_write {
+            let space = self.session.state().ok().map(|state| state.space.clone());
+            if let Some(space) = space {
+                let op = Op {
+                    op_id: format!("{:016x}-{}", self.collab_run, self.collab_seq),
+                    actor: String::new(),
+                    base_version: self.collab_version,
+                    kind: cadcraft_collab::OpKind::Command,
+                    command: "layer.set".into(),
+                    params: serde_json::json!({ "name": name, "frozen": false }),
+                    context: cadcraft_collab::OpContext::in_space(space),
+                };
+                self.collab_seq = self.collab_seq.saturating_add(1);
+                if let Some(collab) = &self.collab {
+                    collab.send(Request::Op(op));
+                }
+            }
+        }
+        local
+    }
+
     /// Send a command to the shared session instead of running it locally.
     ///
     /// `None` when this drawing is not shared. View and settings commands never reach here: the UI
     /// command catalog handles them first, so they stay local.
     pub fn collab_command(&mut self, id: &str, params: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
         let collab = self.collab.as_ref()?;
+        // Which layer is current is the participant's own setting, not the drawing's: the server
+        // has no command for it and a room operation would move the server drawing's `CLAYER` with
+        // no change set, leaving every replica on a layer the room no longer calls current. The
+        // choice is made here; a frozen layer is thawed in the room as a layer property, which is
+        // the shared half of the command (ADR-0019, CodeRabbit on #2938).
+        if is_current_layer(id) {
+            return Some(self.current_layer_here(id, params));
+        }
         if !collab.role().may_write() {
             return Some(Err("this shared session is read-only".into()));
         }
@@ -720,6 +766,16 @@ impl crate::CadApp {
             cadcraft_collab::cmdline::op_for(text, &state.doc, &state.space, &op_id, self.collab_version)
         };
         match op {
+            // `layer.current` is the participant's own layer, like the UI's Make Current: a typed
+            // line runs here rather than moving the room's `CLAYER` (ADR-0019, CodeRabbit on #2938).
+            Ok(op) if is_current_layer(&op.command) => {
+                let result = self.current_layer_here(&op.command, &op.params);
+                if let Err(message) = result {
+                    self.session.echo(message.clone());
+                    return Some(message);
+                }
+                None
+            }
             Ok(op) => {
                 if let Some(collab) = &self.collab {
                     collab.send(Request::Op(op));
@@ -964,10 +1020,94 @@ pub fn is_structural(command: &str) -> bool {
     matches!(command, "laydel" | "laymrg" | "rename" | "layout.delete" | "layout.rename" | "layout.copy" | "block.delete" | "group.delete")
 }
 
+/// Whether `command` makes a layer current: `LAYER.CURRENT` and its alias. The current layer is a
+/// participant's setting, so a shared session runs it in this window instead of the room
+/// (ADR-0019).
+fn is_current_layer(command: &str) -> bool {
+    matches!(command, "layer.current" | "clayer")
+}
+
+/// Where the file of a commit the room answered itself goes: the drawing's own path when it is a
+/// `.dxf`, and a `.dxf` copy beside it otherwise. The room commits DXF bytes, so writing them over
+/// a `plan.dwg` would leave a file named for one format holding another (CodeRabbit on #2938).
+fn room_copy_path(path: Option<&str>, version: u64) -> String {
+    if let Some(path) = path
+        && std::path::Path::new(path).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("dxf"))
+    {
+        return path.to_string();
+    }
+    let Some(path) = path else { return format!("cadcraft-shared-{version}.dxf") };
+    let (folder, name) = match path.rfind(['/', '\\']) {
+        Some(at) => path.split_at(at + 1),
+        None => ("", path),
+    };
+    let stem = name.rsplit_once('.').map(|(stem, _)| stem).filter(|stem| !stem.is_empty()).unwrap_or(name);
+    format!("{folder}{stem} (room {version}).dxf")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CabinetCommit, Collab, CommitState, Request, Role, Update, error_update, is_structural};
+    use super::{CabinetCommit, Collab, CommitState, Request, Role, Update, error_update, is_structural, room_copy_path};
     use serde_json::json;
+
+    /// The current layer is the participant's, not the drawing's: `layer.current` runs in this
+    /// window and is never queued as a room operation (ADR-0019, CodeRabbit on #2938).
+    #[test]
+    fn a_shared_session_sets_its_own_current_layer() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.session.execute("layer.new", &json!({ "name": "WALLS" })).expect("a layer to choose");
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        app.run("layer.current", json!({ "name": "WALLS" })).expect("the layer is chosen here");
+
+        assert_eq!(app.session.doc().unwrap().header.str("CLAYER", "?"), "WALLS", "the participant's layer changed");
+        assert!(requests.try_recv().is_err(), "the current layer is not a room operation");
+    }
+
+    /// The shared half of making a frozen layer current is the thaw: it is the drawing's state, so
+    /// the room hears about it as a layer property while `CLAYER` stays here (CodeRabbit on #2938).
+    #[test]
+    fn making_a_frozen_layer_current_thaws_it_in_the_room() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.session.execute("layer.new", &json!({ "name": "FROZEN", "frozen": true })).expect("a frozen layer");
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        app.run("layer.current", json!({ "name": "FROZEN" })).expect("the layer is chosen here");
+
+        assert_eq!(app.session.doc().unwrap().header.str("CLAYER", "?"), "FROZEN");
+        match requests.try_recv().expect("the thaw reaches the room") {
+            Request::Op(op) => {
+                assert_eq!(op.command, "layer.set");
+                assert_eq!(op.params, json!({ "name": "FROZEN", "frozen": false }));
+            }
+            _ => panic!("the thaw is an operation of the drawing"),
+        }
+    }
+
+    /// A read-only participant chooses its layer but cannot thaw one: the room would change its
+    /// drawing for a participant that may not edit it (CodeRabbit on #2938).
+    #[test]
+    fn a_viewer_cannot_thaw_a_frozen_layer() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.session.execute("layer.new", &json!({ "name": "FROZEN", "frozen": true })).expect("a frozen layer");
+        let (collab, requests, _updates) = Collab::detached(Role::Viewer);
+        app.attach_collab(collab);
+
+        assert!(app.run("layer.current", json!({ "name": "FROZEN" })).is_err(), "the session is read-only");
+        assert!(requests.try_recv().is_err(), "nothing reaches the room");
+    }
+
+    /// The room commits DXF bytes, so a drawing opened from another format is not replaced by them.
+    #[test]
+    fn a_commit_never_overwrites_a_drawing_of_another_format() {
+        assert_eq!(room_copy_path(Some("/tmp/plan.dxf"), 7), "/tmp/plan.dxf");
+        assert_eq!(room_copy_path(Some("/tmp/PLAN.DXF"), 7), "/tmp/PLAN.DXF");
+        assert_eq!(room_copy_path(Some("/tmp/plan.dwg"), 7), "/tmp/plan (room 7).dxf");
+        assert_eq!(room_copy_path(Some("plan.dwg"), 7), "plan (room 7).dxf");
+        assert_eq!(room_copy_path(None, 7), "cadcraft-shared-7.dxf");
+    }
 
     /// A change the window cannot apply must not move its version past the edit: the window asks
     /// for the room's drawing instead (CodeRabbit on #2936/#2937).

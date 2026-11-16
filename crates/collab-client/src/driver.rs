@@ -171,8 +171,14 @@ impl Driver {
     pub(crate) fn on_message(&mut self, message: ServerMessage) -> Result<Option<Event>, SessionError> {
         Ok(Some(match message {
             ServerMessage::Applied { applied } => {
+                let before = self.client.version();
                 self.client.applied(&applied)?;
-                Event::Applied(applied)
+                // The room answers a resent operation again when a participant reconnects
+                // (ADR 0003): the stored change set may name a version this replica already has,
+                // and applying it to the window would replace newer objects with old ones and move
+                // `collab_version` back. Only a change set that advanced the replica is a change
+                // the window must see (CodeRabbit on #2938).
+                if self.client.version() > before { Event::Applied(applied) } else { Event::Ignored }
             }
             ServerMessage::Presence { presence } => Event::Presence(presence),
             ServerMessage::Rejected { rejected } => {
@@ -201,10 +207,29 @@ impl Driver {
             ServerMessage::Pong => Event::Pong,
             ServerMessage::Error { code, message, retryable } => Event::Error { code, message, retryable },
             ServerMessage::Delta { applied, .. } => {
+                // The tail a reconnect asks for: the entries the replica is missing are applied
+                // here, and the window must see them too — an `Event::Ignored` would leave the
+                // drawing and `collab_version` behind the replica, and the next change set would
+                // land on a base without the tail (CodeRabbit on #2938). Entries at or below the
+                // replica's version are the ones it already has, and are skipped by `applied`.
+                let mut merged: Option<cadcraft_collab::Applied> = None;
                 for entry in applied {
+                    let before = self.client.version();
                     self.client.applied(&entry)?;
+                    if self.client.version() == before {
+                        continue;
+                    }
+                    match &mut merged {
+                        Some(last) => {
+                            last.op_id.clone_from(&entry.op_id);
+                            last.version = entry.version;
+                            last.actor.clone_from(&entry.actor);
+                            last.changes.extend(entry.changes);
+                        }
+                        None => merged = Some(entry),
+                    }
                 }
-                Event::Ignored
+                merged.map_or(Event::Ignored, Event::Applied)
             }
             ServerMessage::Snapshot { snapshot } => {
                 self.parts.push(snapshot);
@@ -300,7 +325,8 @@ mod tests {
     }
 
     /// The journal tail after a reconnect is applied through the same driver the first connect
-    /// uses, so a browser and the desktop land in the same state.
+    /// uses, and it reaches the window: a page that dropped the entries showed a drawing and a
+    /// `collab_version` behind the room (CodeRabbit on #2938).
     #[test]
     fn a_journal_tail_brings_the_replica_to_the_room_version() {
         let before = a_point(1.0);
@@ -310,7 +336,7 @@ mod tests {
 
         let event = driver.on_message(ServerMessage::Delta { version: 4, more: false, applied: vec![applied] }).unwrap();
 
-        assert_eq!(event, Some(Event::Ignored));
+        assert!(matches!(event, Some(Event::Applied(ref change)) if change.version == 4), "the window applies the tail");
         assert_eq!(driver.version(), 4);
         assert_eq!(driver.drawing().space(&Space::Model), after.space(&Space::Model));
     }
@@ -369,5 +395,57 @@ mod tests {
 
         assert!(matches!(event, Some(Event::Rejected(_))), "the participant is still told why");
         assert!(driver.client().outbox().is_empty(), "a refused operation is not queued again");
+    }
+
+    /// The room answers a resent operation again after a reconnect: the stored change set names a
+    /// version this replica already has. The window must not apply it over newer edits or move its
+    /// `collab_version` back (CodeRabbit on #2938).
+    #[test]
+    fn a_stored_answer_is_not_a_change_the_window_sees() {
+        let replica = a_point(1.0);
+        let mut driver = a_driver(replica.clone(), 3);
+
+        let stored = Applied { op_id: "o1".into(), version: 2, actor: "u1".into(), changes: Vec::new() };
+        assert!(matches!(driver.on_message(ServerMessage::Applied { applied: stored }).unwrap(), Some(Event::Ignored)));
+        assert_eq!(driver.client().version(), 3, "the replica stays at the version it shows");
+
+        // An answer the replica has not reached is still a change the window applies.
+        let mut with_another = replica.clone();
+        with_another.add(&Space::Model, Common::default(), EntityKind::Point(Point { p: Vec3::new(2.0, 0.0, 0.0), angle: 0.0 })).unwrap();
+        let changes = diff(&replica, &with_another, &Space::Model).unwrap();
+        let applied = Applied { op_id: "o2".into(), version: 4, actor: "u2".into(), changes };
+        assert!(matches!(driver.on_message(ServerMessage::Applied { applied }).unwrap(), Some(Event::Applied(_))));
+        assert_eq!(driver.client().version(), 4);
+    }
+
+    /// The journal tail a reconnect asks for reaches the window: every entry the replica was
+    /// missing becomes one change set, so the drawing the participant sees and the version the next
+    /// operation is based on follow the room (CodeRabbit on #2938).
+    #[test]
+    fn a_resync_tail_reaches_the_window() {
+        let first = a_point(1.0);
+        let mut second = first.clone();
+        second.add(&Space::Model, Common::default(), EntityKind::Point(Point { p: Vec3::new(2.0, 0.0, 0.0), angle: 0.0 })).unwrap();
+        let mut third = second.clone();
+        third.add(&Space::Model, Common::default(), EntityKind::Point(Point { p: Vec3::new(3.0, 0.0, 0.0), angle: 0.0 })).unwrap();
+        let mut driver = a_driver(first.clone(), 3);
+
+        // The room repeats the version the replica has, then carries it to 5.
+        let delta = ServerMessage::Delta {
+            version: 5,
+            more: false,
+            applied: vec![
+                Applied { op_id: "o1".into(), version: 3, actor: "u1".into(), changes: Vec::new() },
+                Applied { op_id: "o2".into(), version: 4, actor: "u2".into(), changes: diff(&first, &second, &Space::Model).unwrap() },
+                Applied { op_id: "o3".into(), version: 5, actor: "u3".into(), changes: diff(&second, &third, &Space::Model).unwrap() },
+            ],
+        };
+        let Some(Event::Applied(merged)) = driver.on_message(delta).unwrap() else {
+            panic!("the tail is a change the window applies");
+        };
+        assert_eq!(merged.version, 5, "the window follows the room's version");
+        assert_eq!(merged.changes.len(), 2, "both missing creations are in the one change set");
+        assert_eq!(driver.client().version(), 5);
+        assert_eq!(driver.client().drawing().space(&Space::Model), third.space(&Space::Model));
     }
 }

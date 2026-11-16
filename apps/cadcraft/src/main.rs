@@ -441,11 +441,21 @@ fn main() -> eframe::Result {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
             }
-            if sample {
-                let _ = app.run("ui.sample", serde_json::json!({}));
-            }
-            for f in &files {
-                app.open_path(f);
+            // A shared session's drawing comes from the room: a sample or a path on the command line
+            // would open a local drawing into the attached session, and the room's changes would
+            // then land on a drawing the room does not own while commands go to the room (ADR 0001,
+            // CodeRabbit on #2938).
+            if app.is_shared() {
+                if sample || !files.is_empty() {
+                    app.set_status("the shared session's drawing comes from the room; the local drawing was not opened");
+                }
+            } else {
+                if sample {
+                    let _ = app.run("ui.sample", serde_json::json!({}));
+                }
+                for f in &files {
+                    app.open_path(f);
+                }
             }
             if app.session.docs.is_empty() {
                 // In the units the profile asks for (MEASUREINIT, restored above).
