@@ -152,8 +152,8 @@ rows, and no marked UI literal falls back to English. 1,289 rows come from the T
 shared catalogs in [storytold/craft-i18n](https://github.com/storytold/craft-i18n) (`locales/ta/`),
 reviewed there for language and terminology by native speakers; the other 218 (newer strings: the
 Hatch and Gradient dialog, dynamic blocks, selection and grip options, command aliases, plot
-settings, drawing units and save warnings) are AI-assisted and not yet reviewed by a native
-speaker. Commands use the
+settings, drawing units and save warnings) are AI-assisted. Native speakers Radhika and Mohan Raj
+reviewed the whole Tamil interface in the running app on 2026-11-14. Commands use the
 imperative (**சேமி**, **திற**); prompts read "… குறிப்பிடவும்" for Specify, "… உள்ளிடவும்" for
 Enter and "… தேர்ந்தெடுக்கவும்" for Select. The vocabulary is ordinary Tamil drafting language:
 அடுக்கு (layer), தொகுதி (block), பரிமாணம் (dimension), கோட்டு நிரப்பு (hatch), தளவமைப்பு
