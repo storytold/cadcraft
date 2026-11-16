@@ -160,7 +160,7 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 | `op` | C→S | `{opId, baseVersion, kind, target, payload, preview?}` | намерение; `target` несёт `space`/`layout`/`selection` (§3) |
 | `undo` | C→S | `{opId, targetOpId?}` | отменить последнюю операцию участника (или названную `targetOpId`); ответ — `applied` или `rejected{code:"undo-conflict"}`; это не `op` с командой `undo`, а отдельное сообщение конверта |
 | `redo` | C→S | `{opId, targetOpId?}` | вернуть последнюю отменённую операцию; ответ — `applied` или `rejected{code:"redo-conflict"}` |
-| `applied` | S→C | `{opId, version, actorId, result:{command?, delta?, conflict?}, more?}` | авторитетный результат для **всех**, включая автора: `delta` едет всегда, `command` — подтверждённое намерение; длинная дельта дробится с `more:true` (§4.3) |
+| `applied` | S→C | `{opId, version, actorId, result:{command?, delta?, conflict?}, more?, seq?, total?}` | авторитетный результат для **всех**, включая автора: `delta` едет всегда, `command` — подтверждённое намерение; длинная дельта дробится с `more:true` и нумеруется `seq`/`total`, `sha256` всей дельты — в первом чанке (§4.3) |
 | `rejected` | S→C | `{opId, code, message, retryable, hint?}` | отказ; коды — закрытый список §4.2a (`stale`, `gone`, `forbidden`, `invalid`, `too-large`, `rate-limited`, `undo-conflict`, `redo-conflict`, `auth`, `lease`, `external-change`, `unsupported`) |
 | `presence` | C↔S | `{clientId, space, layout, cursor:[x,y], viewport, selection[], layer, mspace}` | не журналируется, без подтверждений; `clientId` различает окна одного `sub` |
 | `resync` | C→S | `{lastVersion}` | догон или база + хвост (§4.5) |
@@ -174,10 +174,19 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 1 MiB, потому что DXF на 100 MB в base64 — это ~133 MB одним сообщением
 (замечание gridcraft к ревью `rfc/cadcraft`).
 
+`capabilities` в `welcome` фиксирует `{kinds:["command","primitive","structural"],
+limits:{…}, protoVersion}`; неизвестные поля сообщений игнорируются
+(forward-compatibility), неизвестный `kind`/`target` — `unsupported` до мутации.
+`protoVersion` в `hello` и `welcome` обязателен: несовпадение — `unsupported`
+с перечислением поддерживаемых версий.
+
 ### 4.2a Коды отказа и сверка авторского результата
 
 Коды `rejected` закрыты; новый код — изменение RFC, а не расширение на месте.
 Код `conflict` отказом не является: конфликт едет флагом в `applied` (§4.4).
+`rejected.opId` — идентификатор запроса; `hint` несёт машиночитаемые детали
+(`version`, `retryAfterMs`), `message` — текст для пользователя. `error` —
+про соединение, `rejected` — про конкретную операцию.
 
 | code | retryable | что делает клиент |
 |---|---|---|
