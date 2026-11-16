@@ -71,8 +71,14 @@ pub fn plain_mtext(s: &str) -> String {
                         }
                         i = j + 1;
                     }
-                    // An unknown code has no argument: drop the backslash and the code only.
-                    _ => i += 2,
+                    // A trailing lone backslash is dropped.
+                    _ if chars.get(i + 1).is_none() => i += 1,
+                    // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD
+                    // shows it: keep the backslash and read on from the code.
+                    _ => {
+                        out.push('\\');
+                        i += 1;
+                    }
                 }
             }
             '{' | '}' | '\r' => i += 1,
@@ -220,87 +226,13 @@ const MAX_ATOMS: usize = 200_000;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
 
-/// Codes that take an argument terminated by `;` (besides `\S`, which has its own scan). Any
-/// other code stands alone, so a missing `;` must not swallow the text after it.
-pub(crate) fn takes_arg(code: char) -> bool {
-    matches!(code, 'f' | 'F' | 'H' | 'W' | 'Q' | 'T' | 'A' | 'C' | 'c' | 'p')
-}
+// Shared DXF escape handling and parameterized-command classification.
+pub(crate) use craft_dxf::mtext::{takes_arg, unescape_codes};
 
 /// The line-spacing factor to lay out with: AutoCAD's 0.25..=4 range, 1 for a missing or
 /// non-finite value.
 pub(crate) fn sane_line_spacing(v: f64) -> f64 {
     if v.is_finite() && v > 0.0 { v.clamp(0.25, 4.0) } else { 1.0 }
-}
-
-/// Four hex digits at `chars[at..at + 4]`.
-fn hex4(chars: &[char], at: usize) -> Option<u32> {
-    let digits = chars.get(at..at.checked_add(4)?)?;
-    digits.iter().try_fold(0u32, |acc, c| Some(acc * 16 + c.to_digit(16)?))
-}
-
-/// Push a decoded character so that the tokenizers read it as text, never as markup.
-fn push_literal(out: &mut String, c: char) {
-    if matches!(c, '\\' | '{' | '}') {
-        out.push('\\');
-    }
-    out.push(c);
-}
-
-/// Decode `\U+hhhh` (one UTF-16 unit; a surrogate pair gives one character, a lone surrogate
-/// U+FFFD) and `\M+nhhhh` (double-byte East Asian characters) to the characters they stand
-/// for. Malformed escapes are left for the tokenizers, which drop the backslash and the code.
-/// An escaped backslash (`\\U+0041`) is not an escape.
-pub(crate) fn unescape_codes(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.contains("\\U+") && !s.contains("\\M+") {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        if c != '\\' {
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        let (n, plus) = (chars.get(i + 1).copied(), chars.get(i + 2).copied());
-        if n == Some('U') && plus == Some('+') {
-            if let Some(unit) = hex4(&chars, i + 3) {
-                i += 7;
-                let low = |at: usize| {
-                    (chars.get(at) == Some(&'\\') && chars.get(at + 1) == Some(&'U') && chars.get(at + 2) == Some(&'+'))
-                        .then(|| hex4(&chars, at + 3))
-                        .flatten()
-                        .filter(|u| (0xDC00..0xE000).contains(u))
-                };
-                let ch = if (0xD800..0xDC00).contains(&unit) {
-                    match low(i) {
-                        Some(lo) => {
-                            i += 7;
-                            char::from_u32(0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00))
-                        }
-                        None => None,
-                    }
-                } else {
-                    char::from_u32(unit)
-                };
-                push_literal(&mut out, ch.unwrap_or('\u{fffd}'));
-                continue;
-            }
-        } else if n == Some('M') && plus == Some('+') && chars.get(i + 3).is_some_and(char::is_ascii_digit) && hex4(&chars, i + 4).is_some() {
-            push_literal(&mut out, craft_dxf::mif_escape_at(&chars, i).unwrap_or('\u{fffd}'));
-            i += 8;
-            continue;
-        }
-        // Any other backslash pair stays as it is (and an escaped backslash stays one).
-        out.push('\\');
-        i += 1;
-        if let Some(&next) = chars.get(i) {
-            out.push(next);
-            i += 1;
-        }
-    }
-    std::borrow::Cow::Owned(out)
 }
 
 fn arg(chars: &[char], from: usize) -> (String, usize) {
@@ -518,8 +450,15 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                         let (_, n) = arg(&chars, i);
                         i = n;
                     }
-                    // An unknown code has no argument: only the backslash and the code are dropped.
-                    _ => {}
+                    // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD
+                    // shows it: keep the backslash and read on from the code. A trailing lone
+                    // backslash is dropped.
+                    _ => {
+                        if chars.get(i - 1).is_some() {
+                            push_char(&mut word, '\\', cur);
+                            i -= 1;
+                        }
+                    }
                 }
             }
             '{' => {
@@ -956,7 +895,7 @@ mod tests {
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
         assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
-        assert_eq!(plain_mtext("\\U+12"), "+12", "a short escape loses only the backslash and the code");
+        assert_eq!(plain_mtext("\\U+12"), "\\U+12", "a short escape is shown as typed");
     }
 
     #[test]
@@ -978,18 +917,24 @@ mod tests {
         assert_eq!(plain_mtext("\\\\U+0041"), "\\U+0041");
         // `\M+n` double-byte characters, decoded like the DXF reader does.
         assert_eq!(plain_mtext("\\M+5BCFE x;y"), "\u{4ef6} x;y");
-        // Malformed escapes lose only the backslash and the code.
-        assert_eq!(plain_mtext("a\\U+12 b"), "a+12 b");
-        assert_eq!(lay("a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(lay("\\pxql;a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(plain_mtext("a\\M+ b"), "a+ b");
+        // Malformed escapes are shown as typed, backslash included, as AutoCAD 2024 shows them.
+        for s in ["a\\U+12 b", "\\U+12x", "a\\U+12;b", "a\\U+123 b", "a\\U+ b", "a\\U+00G1b", "a\\M+ b"] {
+            assert_eq!(plain_mtext(s), s);
+            assert_eq!(lay(s, 0.0).lines, vec![s]);
+            assert_eq!(lay(&format!("\\pxql;{s}"), 0.0).lines, vec![s]);
+        }
+        // A valid escape takes exactly four digits.
+        assert_eq!(plain_mtext("a\\U+12345b"), "a\u{1234}5b");
     }
 
     #[test]
     fn unknown_code_without_semicolon_keeps_the_text() {
-        assert_eq!(plain_mtext("A\\Zbc d"), "Abc d");
-        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["Abc d"]);
-        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["Abc d"]);
+        // An unknown code is shown as typed, as AutoCAD 2024 shows it.
+        assert_eq!(plain_mtext("A\\Zbc d"), "A\\Zbc d");
+        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        // The text after it is read as usual: here a paragraph break.
+        assert_eq!(plain_mtext("A\\Z\\Pb"), "A\\Z\nb");
         // A trailing lone backslash is dropped.
         assert_eq!(plain_mtext("A\\"), "A");
         // Codes with an argument still take it up to the `;`, or to the end.

@@ -1174,6 +1174,11 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 
 [[package]]
+name = "craft-codepage"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48#10f0fac31c3c7f063de8c359b39d247451324b48"
+
+[[package]]
 name = "craft-docpath"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=92d392cff132eaf53e13afff77f38b5c11b73aa0#92d392cff132eaf53e13afff77f38b5c11b73aa0"
@@ -1190,9 +1195,11 @@ dependencies = [
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=006e4df225fca57e95ead0fb1f91920900798a99#006e4df225fca57e95ead0fb1f91920900798a99"
+source = "git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48#10f0fac31c3c7f063de8c359b39d247451324b48"
 dependencies = [
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=10f0fac31c3c7f063de8c359b39d247451324b48)",
  "encoding_rs",
+ "kurbo",
  "log",
  "thiserror 2.0.21",
 ]
@@ -1293,7 +1300,7 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db#0325b2d73676d736e94097dbcef01219cf25c7db"
 dependencies = [
  "chrono",
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097dbcef01219cf25c7db)",
  "encoding_rs",
 ]
 
