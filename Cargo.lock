@@ -830,6 +830,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "chrono",
+ "craft-image-codecs",
  "craft-ui",
  "craft-update",
  "craft-window",
@@ -1329,7 +1330,7 @@ dependencies = [
 [[package]]
 name = "craft-shx"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=b3307f7814629961841b80ab907116252e41b34d#b3307f7814629961841b80ab907116252e41b34d"
+source = "git+https://github.com/storytold/craft-libs?rev=3c5007339754def577b3c5274f523d96384a35c4#3c5007339754def577b3c5274f523d96384a35c4"
 
 [[package]]
 name = "craft-tiff"
