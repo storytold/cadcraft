@@ -52,7 +52,7 @@ pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
 pub(super) fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
     let st = app.session.state().ok()?;
     let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
-    let h = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, aperture)?;
+    let h = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, aperture)?;
     matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Hatch(_)).then_some(h)
 }
 
