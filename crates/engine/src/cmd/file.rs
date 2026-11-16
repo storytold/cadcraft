@@ -17,7 +17,7 @@ use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
 pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
-pub(crate) use pgp::{specs as alias_specs, user_alias};
+pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
 /// Largest drawing accepted from a local path, matching the per-file xref limit. A path naming an
@@ -1020,46 +1020,14 @@ fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
     save_reporting(s, p, run_saveas, asked)
 }
 
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
+/// Encode bytes with the standard padded Base64 alphabet.
 pub fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(char::from(B64[((n >> (18 - 6 * i)) & 63) as usize]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
+    craft_mime::base64::STANDARD.encode(data)
 }
 
+/// Decode the legacy file/control Base64 form, retaining its permissive alphabet and padding.
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let mut buf = 0u32;
-    let mut bits = 0;
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
-            _ => return None,
-        };
-        buf = (buf << 6) | u32::from(v);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buf >> bits) & 0xff) as u8);
-        }
-    }
-    Some(out)
+    craft_mime::base64_compat::decode(s).ok()
 }
 
 #[cfg(test)]
