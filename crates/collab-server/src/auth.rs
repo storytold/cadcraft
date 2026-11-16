@@ -55,6 +55,17 @@ struct TokenClaims {
     aud: Option<String>,
 }
 
+/// The claims of a `--dev-token` entry.
+///
+/// The token is the secret: using it as the actor id would hand it to every participant (the
+/// server sends `actorId` in `welcome`, `applied` and `presence`), and anyone could reconnect with
+/// that role. The id is a label derived from the token instead — stable for the same token, and
+/// no use to a reader (CodeRabbit on #2937).
+pub fn dev_claims(token: &str, role: Role) -> Claims {
+    let digest = cadcraft_collab::asset_id(token.as_bytes());
+    Claims { sub: format!("dev-{}", &digest[..8]), doc: String::new(), role }
+}
+
 /// A verifier of HS256 tokens signed with the cabinet's session secret.
 #[derive(Clone, Debug)]
 pub struct JwtAuthenticator {
@@ -142,5 +153,18 @@ mod tests {
         assert!(auth.verify(&token(secret, &claims)).is_ok());
         let wrong = JwtAuthenticator::hs256(secret).with_issuer("someone-else");
         assert!(wrong.verify(&token(secret, &claims)).is_err());
+    }
+
+    /// A `--dev-token` names the participant by a label derived from the token, never by the
+    /// token itself: every participant learns the actor id (CodeRabbit on #2937).
+    #[test]
+    fn a_dev_token_is_not_the_participant_id() {
+        let claims = dev_claims("owner-secret-token", Role::Owner);
+        assert!(claims.sub.starts_with("dev-"), "{}", claims.sub);
+        assert!(!claims.sub.contains("owner-secret-token"), "the id must not carry the secret: {}", claims.sub);
+        assert_eq!(claims.role, Role::Owner);
+        assert_eq!(claims.doc, "", "a dev token is the unnamed case");
+        assert_eq!(dev_claims("owner-secret-token", Role::Owner).sub, claims.sub, "the same token keeps its id");
+        assert_ne!(dev_claims("editor-secret-token", Role::Editor).sub, claims.sub);
     }
 }

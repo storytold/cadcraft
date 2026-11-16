@@ -708,6 +708,16 @@ impl CadApp {
                     return None;
                 }
             }
+            // A line that carries all its parameters (`line {"points": …}`) is a complete
+            // operation, not an interactive prompt: it goes to the room like a typed undo does
+            // (CodeRabbit on #2936).
+            if let Some((name, params)) = Self::explicit_command(text) {
+                if let Some(Err(message)) = self.collab_command(&name, &params) {
+                    self.session.echo(message.clone());
+                    return Some(message);
+                }
+                return None;
+            }
             // A shared session has no prompt to fill in: the line names its own points and objects
             // and goes to the server as one operation (see `collab::collab_cmdline`).
             return self.collab_cmdline(text);
@@ -834,6 +844,13 @@ impl CadApp {
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
     pub fn open_path(&mut self, path: &Path) {
+        // A shared session edits the room's drawing: opening another file would make it the
+        // window's active drawing, so the room's changes (and a commit's bytes) would land in a
+        // file that is not the room's (CodeRabbit on #2936).
+        if self.is_shared() {
+            self.session.echo("a shared session edits the room's drawing; leave the session to open another file");
+            return;
+        }
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {

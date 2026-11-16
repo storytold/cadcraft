@@ -457,10 +457,15 @@ impl Session {
             }
             return;
         }
+        let record = self.record_undo;
         if let Ok(st) = self.state_mut()
             && !Arc::ptr_eq(&run.before, &st.doc)
         {
-            st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+            // A session that keeps its history on the server records no step of its own, and the
+            // revision still grows so the window redraws (CodeRabbit on #2935).
+            if record {
+                st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+            }
             st.revision += 1;
         }
     }

@@ -1,9 +1,9 @@
 //! One CADCraft room served over WebSocket, with an optional health and metrics endpoint.
 //!
-//! The drawing is read once, the room is authoritative from then on, and a snapshot of its DXF is
-//! written to `--state` every `--snapshot-secs`: a restart restores it and replays nothing, because
-//! the journal is not persisted yet. Tokens are verified with the cabinet's HS256 secret from
-//! `--secret-file`; `--dev-token token:role` exists for a single-tenant or test deployment.
+//! The drawing is read once, the room is authoritative from then on, and the room is snapshotted
+//! to `--state` every `--snapshot-secs` with its journal beside it: a restart restores the snapshot
+//! and replays the journal tail on top of it. Tokens are verified with the cabinet's HS256 secret
+//! from `--secret-file`; `--dev-token token:role` exists for a single-tenant or test deployment.
 
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use cadcraft_collab::Role;
-use cadcraft_collab_server::auth::{Authenticator, Claims, JwtAuthenticator, StaticAuthenticator};
+use cadcraft_collab_server::auth::{Authenticator, JwtAuthenticator, StaticAuthenticator, dev_claims};
 use cadcraft_collab_server::{AssetStore, Cabinet, CabinetConfig, DEFAULT_ATTEMPTS, DEFAULT_TIMEOUT_MS, Room, Server, Snapshot};
 use clap::Parser;
 
@@ -241,7 +241,7 @@ fn authenticator(args: &Args) -> Result<Arc<dyn Authenticator>, String> {
             "viewer" => Role::Viewer,
             other => return Err(format!("`{other}` is not owner, editor or viewer")),
         };
-        entries.push((token.to_string(), Claims { sub: token.to_string(), doc: String::new(), role }));
+        entries.push((token.to_string(), dev_claims(token, role)));
     }
     Ok(Arc::new(StaticAuthenticator::new(entries)))
 }

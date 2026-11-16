@@ -545,7 +545,11 @@ impl Server {
         let (delta, snapshot) = {
             let room = lock(&self.room);
             let tail: Vec<_> = room.journal().filter(|a| a.version > last_version).cloned().collect();
-            let reachable = tail.is_empty() || tail.first().is_some_and(|a| a.version == last_version.saturating_add(1));
+            // An empty tail only proves the client is up to date when it already holds the
+            // room's version: after a compaction (or a restart from a snapshot) the journal is
+            // empty for a client that is behind, and a delta with no changes would move it past
+            // the edits it never saw (CodeRabbit on #2937).
+            let reachable = last_version >= room.version() || tail.first().is_some_and(|a| a.version == last_version.saturating_add(1));
             if reachable {
                 (Some(ServerMessage::Delta { version: room.version(), more: false, applied: tail }), None)
             } else {
@@ -676,6 +680,37 @@ mod tests {
         lock(&server.peers).push(("viewer".into(), tx));
         assert_eq!(server.connections_open(), 1, "a viewer that has not sent presence is still a connection");
         assert_eq!(server.participants(), 0, "but not a participant of the board");
+    }
+
+    /// A client behind a compacted journal must be sent the drawing: the tail is empty, and an
+    /// empty delta with the room's version would move the client past the edits it never saw
+    /// (CodeRabbit on #2937).
+    #[test]
+    fn a_client_behind_a_compacted_journal_gets_the_drawing() {
+        let mut room = Room::new(Drawing::new_metric()).unwrap();
+        room.apply(&line_op("op-1", 0.0)).unwrap();
+        assert_eq!(room.version(), 1);
+        let state = std::env::temp_dir().join(format!("cadcraft-resync-{}.dxf", std::process::id()));
+        room.compact(&state).unwrap();
+        assert_eq!(room.journal().count(), 0, "a compaction empties the journal");
+        let server = Server::new(room, Arc::new(StaticAuthenticator::default()), "s1", "cadcraft");
+
+        let (tx, answers) = channel();
+        server.resync(0, &tx);
+        assert!(
+            matches!(answers.try_recv(), Ok(ServerMessage::Snapshot { .. })),
+            "a client at 0 with the room at 1 cannot be caught up from an empty journal"
+        );
+        // A client that already holds the room's version needs nothing.
+        let (tx, answers) = channel();
+        server.resync(1, &tx);
+        assert!(
+            matches!(answers.try_recv(), Ok(ServerMessage::Delta { version: 1, applied, .. }) if applied.is_empty()),
+            "a client at the room's version gets an empty delta"
+        );
+
+        let _ = std::fs::remove_file(&state);
+        let _ = std::fs::remove_file(state.with_extension("version"));
     }
 
     #[test]

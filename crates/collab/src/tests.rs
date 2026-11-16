@@ -305,6 +305,55 @@ fn renaming_a_layout_keeps_its_entities() {
     assert_eq!(applied.space(&Space::Paper("Sheet".into())), after.space(&Space::Paper("Sheet".into())));
 }
 
+/// A rename that only changes the casing is one rename, not a collision with the layout it
+/// renames: the duplicate check must skip the layout being renamed, as the layer's check does
+/// (CodeRabbit on #2935).
+#[test]
+fn a_case_only_layout_rename_is_one_rename() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Plan", 1));
+    before.add(&Space::Paper("Plan".into()), Common::default(), point(1.0)).unwrap();
+    let mut after = before.clone();
+    after.layouts.iter_mut().find(|l| l.name == "Plan").unwrap().name = "PLAN".into();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    let renames = crate::TableRenames { layers: vec![], layouts: vec![("Plan".into(), "PLAN".into())] };
+    let changes = crate::diff_all(&before, &after, &mut registry, &renames).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::LayoutRename { from, to, .. } if from == "Plan" && to == "PLAN")), "{changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    let names: Vec<&str> = applied.layouts.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names.iter().filter(|name| name.eq_ignore_ascii_case("plan")).count(), 1, "the layout is renamed, not duplicated: {names:?}");
+    assert!(names.contains(&"PLAN"), "the drawing's spelling of the new name: {names:?}");
+    assert_eq!(applied.space(&Space::Paper("PLAN".into())), after.space(&Space::Paper("PLAN".into())));
+}
+
+/// The spaces of a renamed layout are paired whatever the casing a client sent: every other
+/// layout lookup is case-insensitive, so the rename must be too, or the layout's entity edits
+/// are dropped (CodeRabbit on #2937).
+#[test]
+fn a_layout_rename_pairs_its_space_whatever_the_casing() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Plan", 1));
+    before.add(&Space::Paper("Plan".into()), Common::default(), point(1.0)).unwrap();
+    let mut after = before.clone();
+    after.layouts.iter_mut().find(|l| l.name == "Plan").unwrap().name = "Sheet".into();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    // The client names the layout it renamed in another casing.
+    let renames = crate::TableRenames { layers: vec![], layouts: vec![("PLAN".into(), "Sheet".into())] };
+    let changes = crate::diff_all(&before, &after, &mut registry, &renames).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::LayoutRename { .. })), "{changes:?}");
+    assert!(!changes.iter().any(|c| matches!(c, Change::EntityDelete { .. })), "the renamed layout keeps its objects: {changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.space(&Space::Paper("Sheet".into())), after.space(&Space::Paper("Sheet".into())));
+}
+
 #[test]
 fn deleting_a_layout_removes_its_space_and_its_objects() {
     let mut before = Drawing::new_metric();

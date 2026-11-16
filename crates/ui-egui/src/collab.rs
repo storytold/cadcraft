@@ -76,6 +76,9 @@ pub enum Request {
     Commit(u64),
     /// Ask for the file of a commit the cabinet refused with `409` (TASK §6).
     SaveCopy,
+    /// Fetch the room's tail (or its drawing) after `version`: a change the replica could not
+    /// apply leaves the window behind the room, and the answer puts it back in step.
+    Resync(u64),
 }
 
 /// The state the shared-session panel shows after a commit.
@@ -267,6 +270,7 @@ impl Collab {
             Request::Redo(op_id) => session.redo(&op_id),
             Request::Commit(version) => session.commit(version),
             Request::SaveCopy => session.save_copy("save-copy"),
+            Request::Resync(version) => session.resync(version),
         };
         if let Err(message) = result {
             self.error.replace(Some(message));
@@ -361,6 +365,12 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
                 }
                 Ok(Request::SaveCopy) => {
                     if session.save_copy("save-copy").is_err() {
+                        let _ = updates.send(Update::Lost("the connection closed".into()));
+                        return;
+                    }
+                }
+                Ok(Request::Resync(version)) => {
+                    if session.resync(version).is_err() {
                         let _ = updates.send(Update::Lost("the connection closed".into()));
                         return;
                     }
@@ -507,9 +517,18 @@ impl crate::CadApp {
                     }
                 }
                 Update::Applied(applied) => {
-                    self.collab_version = applied.version;
-                    if let Err(error) = self.session.apply_remote(&applied.changes) {
-                        self.session.echo(format!("shared session: {error}"));
+                    // The version is the room's answer for a drawing the window now holds: only a
+                    // change that applied moves it. A refused change leaves the window on its own
+                    // version and asks for the room's drawing instead of dropping the edit for
+                    // good (CodeRabbit on #2936/#2937).
+                    match self.session.apply_remote(&applied.changes) {
+                        Ok(()) => self.collab_version = applied.version,
+                        Err(error) => {
+                            self.session.echo(format!("shared session: {error}"));
+                            if let Some(collab) = &self.collab {
+                                collab.send(Request::Resync(self.collab_version));
+                            }
+                        }
                     }
                 }
                 Update::Rejected(rejected) => self.session.echo(format!("shared session: {}", rejected.message)),
@@ -714,6 +733,21 @@ impl crate::CadApp {
                 Some(message)
             }
         }
+    }
+
+    /// `cmd {json}` on a command line: the command's name and the parameters that follow it, when
+    /// the rest of the line is a JSON object. Such a line already names every parameter, so it is
+    /// a complete operation for a shared session instead of an interactive prompt with nothing to
+    /// answer (CodeRabbit on #2936).
+    pub(crate) fn explicit_command(text: &str) -> Option<(String, serde_json::Value)> {
+        let line = text.trim_start();
+        let first = line.split_whitespace().next()?;
+        let rest = line.get(first.len()..)?.trim_start();
+        if !rest.starts_with('{') {
+            return None;
+        }
+        let params = serde_json::from_str(rest).ok()?;
+        Some((first.to_ascii_lowercase(), params))
     }
 
     /// Show who is in the shared session, with each participant's place in the drawing.
@@ -934,6 +968,63 @@ pub fn is_structural(command: &str) -> bool {
 mod tests {
     use super::{CabinetCommit, Collab, CommitState, Request, Role, Update, error_update, is_structural};
     use serde_json::json;
+
+    /// A change the window cannot apply must not move its version past the edit: the window asks
+    /// for the room's drawing instead (CodeRabbit on #2936/#2937).
+    #[test]
+    fn a_change_the_window_cannot_apply_asks_the_room_for_its_drawing() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, requests, updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+        app.collab_version = 4;
+        let applied = cadcraft_collab::Applied {
+            op_id: "op-1".into(),
+            version: 5,
+            actor: "u2".into(),
+            changes: vec![cadcraft_collab::Change::EntityDelete { handle: cadcraft_doc::Handle(9_999) }],
+        };
+
+        updates.send(Update::Applied(applied)).expect("an update");
+        app.collab_tick(&egui::Context::default());
+
+        assert_eq!(app.collab_version, 4, "the refused change is not a version the window holds");
+        assert!(matches!(requests.try_recv(), Ok(Request::Resync(4))), "the window asks for the tail it lost");
+        assert!(app.is_shared(), "a change the drawing refused is not a lost connection");
+    }
+
+    /// A command line that names all of its parameters is a complete operation in a shared
+    /// session, not an interactive prompt the room cannot answer (CodeRabbit on #2936).
+    #[test]
+    fn a_parameterised_command_line_reaches_the_room() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        assert!(app.cmdline("line {\"points\": [[0.0, 0.0], [10.0, 0.0]]}").is_none(), "the operation is queued, not refused");
+        match requests.try_recv().expect("the edit reached the room") {
+            Request::Op(op) => {
+                assert_eq!(op.command, "line");
+                assert_eq!(op.params, json!({ "points": [[0.0, 0.0], [10.0, 0.0]] }), "the parameters travel as given");
+            }
+            _ => panic!("an explicit command is one operation"),
+        }
+        // A line with nothing to fill in is still the interactive prompt a shared session refuses.
+        assert!(app.cmdline("line").is_some());
+    }
+
+    /// A shared session edits the room's drawing: opening another file would put the room's
+    /// changes and a commit's bytes into a file that is not the room's (CodeRabbit on #2936).
+    #[test]
+    fn a_shared_session_refuses_to_open_another_file() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let (collab, requests, _updates) = Collab::detached(Role::Editor);
+        app.attach_collab(collab);
+
+        app.open_path(std::path::Path::new("/tmp/other.dxf"));
+
+        assert!(requests.try_recv().is_err(), "the open never reached the room");
+        assert!(app.session.log.iter().any(|line| line.contains("leave the session")), "the refusal is shown");
+    }
 
     /// The copy of a refused commit is named after the drawing, not over its file: an extension
     /// stays and `(copy)` goes before it.
