@@ -99,6 +99,65 @@ fn a_state_that_hides_the_definition_hides_the_attribute() {
     assert!(!groups.is_empty() && !groups.iter().any(|(c, _)| c == "60"), "{groups:?}");
 }
 
+/// DOOR with two attribute definitions tagged SWING: the first shown in the Open state, the second
+/// in no state. The reference has an attribute for each.
+fn door_with_two_swings() -> (Drawing, Handle) {
+    let attdef = |handle: &str| {
+        format!(
+            "0 ATTDEF\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbText\n10 2\n20 2\n30 0\n40 1\n1 W\n100 AcDbAttributeDefinition\n3 Swing\n2 SWING\n70 0\n"
+        )
+    };
+    let src = include_str!("data/dynblock_door.txt")
+        .replace("\r\n", "\n")
+        .replace("93 2\n331 31\n331 32\n", "93 4\n331 31\n331 32\n331 33\n331 34\n")
+        .replace("94 2\n332 31\n332 32\n", "94 3\n332 31\n332 32\n332 33\n")
+        .replace("31 0\n0 ENDBLK\n5 25\n", &format!("31 0\n{}{}0 ENDBLK\n5 25\n", attdef("33"), attdef("34")));
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let defs: Vec<_> =
+        d.block("Door").unwrap().entities.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None }).collect();
+    assert_eq!(defs.len(), 2);
+    let attribs = defs
+        .into_iter()
+        .map(|mut a| {
+            a.text.insert = a.text.insert + Vec3::new(100.0, 0.0, 0.0);
+            a
+        })
+        .collect();
+    let ins = cadcraft_doc::Insert {
+        block: "Door".into(),
+        insert: Vec3::new(100.0, 0.0, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs,
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
+    (d, r)
+}
+
+/// Whether each of the reference's SWING attributes is hidden, in order.
+fn swings_hidden(d: &Drawing, r: Handle) -> Vec<bool> {
+    let EntityKind::Insert(i) = &d.entity(r).unwrap().kind else { panic!("not a reference") };
+    i.attribs.iter().filter(|a| a.tag == "SWING").map(|a| a.modes.hidden).collect()
+}
+
+#[test]
+fn definitions_sharing_a_tag_each_hide_their_own_attribute() {
+    let (mut d, r) = door_with_two_swings();
+    set_property(&mut d, r, "Visibility1", "Closed").unwrap();
+    assert_eq!(swings_hidden(&d, r), [true, true], "Closed shows neither definition");
+    // Open shows the first definition again, not the second: the first attribute shows, the
+    // second stays hidden (by tag alone, the second's unchanged state hid the first's change).
+    set_property(&mut d, r, "Visibility1", "Open").unwrap();
+    assert_eq!(swings_hidden(&d, r), [false, true]);
+    set_property(&mut d, r, "Visibility1", "Closed").unwrap();
+    assert_eq!(swings_hidden(&d, r), [true, true]);
+}
+
 #[test]
 fn an_attribute_hidden_on_its_own_stays_hidden_when_another_property_changes() {
     // SWING hidden on its own (group 60 as read) while the Open state shows its definition: a
