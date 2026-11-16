@@ -75,14 +75,28 @@ pub(super) fn write_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispE
 pub(super) fn findfile(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let p = string(&a[0])?;
-    Ok(Flow::Value(resolve_support_file(ctx.s, &p).map(|found| Value::str(&found)).unwrap_or_default()))
+    Ok(Flow::Value(resolve_support_file_or_dir(ctx.s, &p).map(|found| Value::str(&found)).unwrap_or_default()))
 }
 
-/// Resolve a file path against as-is, active drawing folder, `lisp_file_dir`, and their immediate subfolders.
+/// Resolve a regular file path against as-is, active drawing folder, `lisp_file_dir`, and their immediate subfolders.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn resolve_support_file(s: &crate::Session, path: &str) -> Option<String> {
+    resolve_support_path(s, path, false)
+}
+
+/// Resolve a file or folder path against as-is, active drawing folder, `lisp_file_dir`, and their immediate subfolders.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resolve_support_file_or_dir(s: &crate::Session, path: &str) -> Option<String> {
+    resolve_support_path(s, path, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_support_path(s: &crate::Session, path: &str, allow_dirs: bool) -> Option<String> {
+    if path.trim().is_empty() {
+        return None;
+    }
     let p = std::path::Path::new(path);
-    if p.is_file() {
+    if p.is_file() || (allow_dirs && p.is_dir()) {
         return Some(path.to_string());
     }
     let mut base_dirs = Vec::new();
@@ -100,14 +114,14 @@ pub fn resolve_support_file(s: &crate::Session, path: &str) -> Option<String> {
     }
     for dir in &base_dirs {
         let cand = dir.join(path);
-        if cand.is_file() {
+        if cand.is_file() || (allow_dirs && cand.is_dir()) {
             return Some(cand.to_string_lossy().into_owned());
         }
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 if entry.path().is_dir() {
                     let sub_cand = entry.path().join(path);
-                    if sub_cand.is_file() {
+                    if sub_cand.is_file() || (allow_dirs && sub_cand.is_dir()) {
                         return Some(sub_cand.to_string_lossy().into_owned());
                     }
                 }
@@ -119,6 +133,11 @@ pub fn resolve_support_file(s: &crate::Session, path: &str) -> Option<String> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn resolve_support_file(_s: &crate::Session, _path: &str) -> Option<String> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn resolve_support_file_or_dir(_s: &crate::Session, _path: &str) -> Option<String> {
     None
 }
 
@@ -171,6 +190,19 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 #[cfg(target_arch = "wasm32")]
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 
+/// A file or a folder: routines test whether a module is installed with `(findfile "module/.")`.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
+fn file_exists(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    p.is_file() || p.is_dir()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+fn file_exists(_path: &str) -> bool {
+    false
+}
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
