@@ -15,16 +15,18 @@ cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
 craft-dwg = { workspace = true }
 craft-svg = { workspace = true }
+craft-image-codecs = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-fonts = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 craft-pdf = { workspace = true, features = ["write"] }
-image = { workspace = true }
 
 [dev-dependencies]
 miniz_oxide = "0.9"
+tiff = "0.11"
+image = { workspace = true }
 tiny-skia = { workspace = true }
 # Reads plotted PDFs back.
 craft-pdf = { workspace = true, features = ["read"] }
