@@ -6,7 +6,7 @@
 //! `^2` in `10^2` as a control character.
 
 use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
-use cadcraft_dxf::Tag;
+use craft_dxf::Tag;
 
 /// Upper bound on column heights read from a file.
 const MAX_COLUMNS: usize = 1_000;
