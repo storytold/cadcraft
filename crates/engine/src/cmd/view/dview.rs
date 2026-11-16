@@ -409,6 +409,7 @@ impl Interactive for DviewM {
                     rows: 1,
                     col_spacing: 0.0,
                     row_spacing: 0.0,
+                    clip: None,
                 };
                 extra.push(Entity { handle: Handle(0), common, kind: EntityKind::Insert(ins) });
             } else {

@@ -93,7 +93,7 @@ fn dwg_keeps_the_solids_geometry() {
     let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
     // The DWG read back (as the bridge's DXF) binds the same bytes to both solids.
-    let back = String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    let back = String::from_utf8(craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let mut got = asm_data(&back);
     got.sort();
     assert_eq!(got, vec![("2A".to_string(), SAB_HEX.to_string()), ("2B".to_string(), SAB_HEX.to_string())]);

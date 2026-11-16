@@ -189,6 +189,7 @@ fn inserts_of_missing_or_empty_blocks_do_not_stretch_extents() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     };
     d.blocks.insert("Empty".into(), std::sync::Arc::new(Block::new("Empty")));
@@ -242,6 +243,7 @@ fn visible_attributes_of_a_missing_block_still_count() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
     };
@@ -285,6 +287,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     ));
     b.entities.push(Entity::new(Handle(2), line((0.0, 0.0), (1.0, 1.0))));
@@ -303,6 +306,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
         .unwrap();
@@ -420,6 +424,7 @@ fn plain_insert(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -708,4 +713,15 @@ fn space_names_its_tab() {
     assert!(p.is_paper());
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
+}
+
+/// Several spellings of one DIM field apply once, the last in the map's order, and none is rejected.
+#[test]
+fn dim_style_spellings_of_one_field_apply_once() {
+    let mut st = DimStyle::default();
+    let m = serde_json::json!({ "textHeight": 2.5, "TEXTHEIGHT": 3.5, "DIMTXT": 4.5 });
+    let m = m.as_object().unwrap();
+    let want = m.values().next_back().and_then(serde_json::Value::as_f64).unwrap();
+    assert!(st.apply_fields(m).is_empty());
+    assert_eq!(st.text_height, want);
 }
