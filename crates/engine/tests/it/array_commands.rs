@@ -212,3 +212,20 @@ fn arrays_over_maxarray_are_refused_not_shrunk() {
     assert!(s.current_prompt().is_none(), "{}", prompt(&s));
     assert_eq!(circle_centers(&s).len(), 2000);
 }
+
+#[test]
+fn json_arraypolar_rejects_bad_fill_angles() {
+    let mut s = Session::new();
+    let h = s.execute("circle", &json!({"center": [5, 0], "radius": 1})).unwrap()["handle"].clone();
+    let before = s.doc().unwrap().model.iter().count();
+    for bad in [0.0, 720.0, -400.0, 360.5] {
+        let p = json!({"handles": [h], "center": [0, 0], "count": 4, "angle": bad, "associative": false});
+        let e = s.execute("arraypolar", &p).unwrap_err();
+        assert!(e.to_string().contains("Requires a fill angle between -360 and 360 degrees"), "{bad}: {e}");
+        assert_eq!(s.doc().unwrap().model.iter().count(), before, "{bad}");
+    }
+    for ok in [360.0, -360.0] {
+        let p = json!({"handles": [h], "center": [0, 0], "count": 4, "angle": ok, "associative": false});
+        s.execute("arraypolar", &p).unwrap();
+    }
+}

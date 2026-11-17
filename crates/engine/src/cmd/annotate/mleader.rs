@@ -1,4 +1,3 @@
-use super::common::style;
 use super::{
     Accept, EngineError, EntityKind, Input, Interactive, LeaderOrder, MLeader, MLeaderOptions, MText, Prompt, Result, Session, Step, Value, Vec2,
     bad, json, points_param, str_param, v3,
@@ -57,33 +56,8 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     if pts.len() < 2 {
         return Err(bad("leader", "need 2+ points"));
     }
-    let st = style(s);
-    let h = s.add_entity(EntityKind::Leader(cadcraft_doc::Leader {
-        vertices: pts.iter().map(|q| v3(*q)).collect(),
-        arrow: true,
-        spline: false,
-        style: st,
-    }))?;
-    let mut out = vec![h.hex()];
-    if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
-        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
-        out.push(
-            s.add_entity(EntityKind::MText(MText {
-                insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
-                height: th,
-                width: 0.0,
-                attach: 4,
-                rotation: 0.0,
-                style: "Standard".into(),
-                contents: t.into(),
-                line_spacing: 1.0,
-                line_spacing_exact: false,
-                columns: None,
-            }))?
-            .hex(),
-        );
-    }
-    Ok(json!({ "handles": out }))
+    let hs = super::leader::json_leader(s, &pts, str_param(p, "text"))?;
+    Ok(json!({ "handles": hs.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
 /// The MLEADER Options prompt being answered.
