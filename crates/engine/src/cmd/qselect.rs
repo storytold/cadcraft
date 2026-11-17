@@ -280,7 +280,7 @@ fn run_qselect(s: &mut Session, p: &Value) -> Result<Value> {
     let sel = match mode.as_str() {
         "exclude" => excluded,
         "append" => {
-            let mut cur = s.selection();
+            let mut cur = s.stored_selection();
             for h in matched {
                 if !cur.contains(&h) {
                     cur.push(h);
