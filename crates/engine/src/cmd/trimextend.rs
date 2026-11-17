@@ -241,6 +241,9 @@ enum Stage {
     Edge,
     /// "Select objects to erase or <exit>": the objects picked so far.
     Erase(Vec<Handle>),
+    /// EXTEND clicked an object: its extension shows (`TrimM::shown`) until a second click on it
+    /// extends it. Working the extension out on every cursor move lagged.
+    Confirm(Handle, Vec2),
 }
 
 /// The cutting (boundary) edges of one drawing and space, kept while the cursor moves: the
@@ -271,6 +274,8 @@ pub(crate) struct TrimM {
     edge_cache: Mutex<Option<EdgeCache>>,
     glow_cache: Mutex<Option<GlowCache>>,
     hatch_glow_cache: Mutex<Option<HatchGlowCache>>,
+    /// The extension EXTEND shows while it waits for the second click ([`Stage::Confirm`]).
+    shown: Option<Glow>,
 }
 
 /// Samples along an object when finding the part of it a trim takes away or an extend adds.
@@ -362,6 +367,7 @@ impl TrimM {
             edge_cache: Mutex::new(None),
             glow_cache: Mutex::new(None),
             hatch_glow_cache: Mutex::new(None),
+            shown: None,
         }
     }
     /// The cutting (boundary) edges with their objects, from the cache while the drawing is the
@@ -568,6 +574,7 @@ impl Interactive for TrimM {
             }
             Stage::Edges(_) => Prompt::new("Select objects or", Accept::SELECT).default("select all"),
             Stage::Erase(_) => Prompt::new("Select objects to erase or", Accept::SELECT).default("exit"),
+            Stage::Confirm(..) => Prompt::new("Click the object again to extend it, or pick another", Accept::POINT).kw(&["Undo"]),
             Stage::Fence(pts) => match pts.last() {
                 None => Prompt::new("Specify first fence point", Accept::POINT),
                 Some(l) => Prompt::new("Specify next fence point", Accept::POINT).kw(&["Undo"]).base(*l),
@@ -610,6 +617,31 @@ impl Interactive for TrimM {
         let extending = self.extend;
         match self.stage.clone() {
             Stage::Mode | Stage::Project | Stage::Edge => self.option(s, i),
+            Stage::Confirm(h, at) => {
+                self.shown = None;
+                self.stage = Stage::Pick;
+                let Input::Point(p) = i else {
+                    // Enter, Undo and the rest as at the first prompt.
+                    return self.input(s, i);
+                };
+                let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
+                let space = s.space();
+                match s.pick_object(&space, p, ap)? {
+                    // The second click on the object: extend it as shown.
+                    Some(again) if again == h => {
+                        let r = self.step(s, |m, s| apply(s, h, at, extending, m.edges(quick, implied), quick).map(|_| ()));
+                        if let Err(e) = r {
+                            s.echo(e.to_string());
+                        }
+                        self.show_edges(s);
+                        Ok(Step::Continue)
+                    }
+                    // Another object: show its extension instead.
+                    Some(_) => self.input(s, Input::Point(p)),
+                    // Empty space: the extension is dropped.
+                    None => Ok(Step::Continue),
+                }
+            }
             Stage::Edges(mut picked) => {
                 match i {
                     Input::Pick(hs) => {
@@ -722,6 +754,15 @@ impl Interactive for TrimM {
                         self.stage = Stage::Line(p);
                         return Ok(Step::Continue);
                     };
+                    // EXTEND from a click: show the extension first, extend on the second click.
+                    if extending
+                        && s.clicked
+                        && let Some(glow) = self.work_out_glow(s, p)
+                    {
+                        self.shown = Some(glow);
+                        self.stage = Stage::Confirm(h, p);
+                        return Ok(Step::Continue);
+                    }
                     let r = self.step(s, |m, s| apply(s, h, p, extending, m.edges(quick, implied), quick).map(|_| ()));
                     if let Err(e) = r {
                         s.echo(e.to_string());
@@ -763,7 +804,11 @@ impl Interactive for TrimM {
         }
     }
     fn glow(&self, s: &Session, c: Vec2) -> Option<Glow> {
-        if self.stage != Stage::Pick {
+        if let Stage::Confirm(..) = self.stage {
+            return self.shown.clone();
+        }
+        // EXTEND shows its extension on a click, not under the cursor.
+        if self.stage != Stage::Pick || self.extend {
             return None;
         }
         let doc = Arc::as_ptr(&s.state().ok()?.doc) as usize;

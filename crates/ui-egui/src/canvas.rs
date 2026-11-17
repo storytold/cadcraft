@@ -843,10 +843,12 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
                 let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
+                app.session.clicked = true;
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
                     None => app.session.input(Input::Point(w)),
                 };
+                app.session.clicked = false;
                 if let Err(e) = result {
                     app.session.echo(e.to_string());
                 }
@@ -990,10 +992,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
+            app.session.clicked = true;
             let result = match app.canvas.snap {
                 Some(hit) => app.session.input_snapped(hit),
                 None => app.session.input(Input::Point(p)),
             };
+            app.session.clicked = false;
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
