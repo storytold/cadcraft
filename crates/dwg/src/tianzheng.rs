@@ -92,6 +92,23 @@ mod native {
         pub rotation: f64,
     }
 
+    /// 真正天正格式（V9）text 流解析结果：GUID + 加密固定字段（解密）+ 命名字段容器。
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct TianzhengFields {
+        /// 产品 GUID（明文，如 `{89F08ED8-8E31-4027-8575-1E50621C7787}`）。
+        pub guid: String,
+        /// 字段容器（`TDBXDATAMAP_BLOCK`）之前的加密固定字段，解密后是 ASCII 数值
+        /// （整数 `%d` 或 double 定点，如 `"0000000000000000.00817"`）。
+        pub fixed_fields: Vec<String>,
+        /// 命名字段（明文）：中文语义字段名 + 值（如 `("门窗用途", "乙级防火门")`），
+        /// 或 `T20xx` 字段名（值在 main 流）。出现在字段容器块前后。
+        pub named_fields: Vec<(String, String)>,
+        /// 关联对象 GUID（明文，6 个产品 GUID 之一）。
+        pub assoc_guid: String,
+        /// 关联 GUID 之后的加密固定字段（解密后 ASCII 数值）。
+        pub tail_fields: Vec<String>,
+    }
+
     /// 从 DWG 字节提取所有天正实体（含 failsafe 读取，坏记录跳过而非整文件失败）。
     ///
     /// 天正自定义实体（`TCH_*`）在 acadrust 里可能是两种形态，取决于文件是否经过
@@ -215,10 +232,13 @@ mod native {
         }
         tips.into_iter()
             .map(|(tx, ty)| {
-                // 方向 = 沿尺寸线方向（从尺寸线端点指向尖端）。箭头尖端在尺寸线的延长线上，
-                // 故找「尖端到端点的方向与线段方向共线」的最近端点；尺寸界线垂直于尺寸线，
-                // 其端点不共线，会被排除（否则斜标注/有尺寸界线时方向算错）。
-                let mut best: Option<(f64, f64, f64)> = None;
+                // 尺寸标注与轴号的箭头几何不同：
+                // - 尺寸标注：箭头在尺寸线端点，箭头尖（零长度点）沿尺寸界线外伸，找「垂直于
+                //   尺寸界线」的线段（= 尺寸线）端点。
+                // - 轴号：零长度点就在轴线端点，找「共线」线段（轴线/引线）端点。
+                // 判据：存在垂直线段端点（尺寸标注有尺寸线）→ 用垂直端点；否则用共线端点。
+                let mut perp: Option<(f64, f64, f64)> = None;
+                let mut collinear: Option<(f64, f64, f64)> = None;
                 for &(x1, y1, x2, y2) in &segs {
                     let (sx, sy) = (x2 - x1, y2 - y1);
                     let slen = (sx * sx + sy * sy).sqrt();
@@ -232,17 +252,20 @@ mod native {
                         if dlen < 1e-6 {
                             continue;
                         }
-                        // 尖端到端点方向与线段方向共线（|cos|≈1）才候选。
                         let cos = (dx * ux + dy * uy).abs() / dlen;
-                        if cos > 0.99 && best.is_none_or(|b| dlen < b.2) {
-                            best = Some((ex, ey, dlen));
+                        if cos < 0.01 && perp.is_none_or(|b| dlen < b.2) {
+                            perp = Some((ex, ey, dlen));
+                        } else if cos > 0.99 && collinear.is_none_or(|b| dlen < b.2) {
+                            collinear = Some((ex, ey, dlen));
                         }
                     }
                 }
-                let (ex, ey) = match best {
-                    Some((ex, ey, _)) => (ex, ey),
-                    // 无共线线段（如孤立尖端）：退化为最近端点。
-                    None => {
+                let (ex, ey, dirx, diry) = match (perp, collinear) {
+                    // 尺寸标注：返回垂直端点（尺寸线），方向指向箭头尖（零长度点）
+                    (Some((ex, ey, _)), _) => (ex, ey, tx - ex, ty - ey),
+                    // 轴号：返回零长度点本身（轴线端点），方向指向共线端点（引线）
+                    (None, Some((cx, cy, _))) => (tx, ty, cx - tx, cy - ty),
+                    (None, None) => {
                         let mut b = (0.0, 0.0, f64::MAX);
                         for &(x1, y1, x2, y2) in &segs {
                             let d1 = (x1 - tx).powi(2) + (y1 - ty).powi(2);
@@ -254,12 +277,11 @@ mod native {
                                 b = (x2, y2, d2);
                             }
                         }
-                        (b.0, b.1)
+                        (b.0, b.1, 0.0, 1.0)
                     }
                 };
-                let (dx, dy) = (tx - ex, ty - ey);
-                let len = (dx * dx + dy * dy).sqrt();
-                if len > 1e-9 { (tx, ty, dx / len, dy / len) } else { (tx, ty, 1.0, 0.0) }
+                let len = (dirx * dirx + diry * diry).sqrt();
+                if len > 1e-9 { (ex, ey, dirx / len, diry / len) } else { (ex, ey, 1.0, 0.0) }
             })
             .collect()
     }
@@ -375,11 +397,11 @@ mod native {
                         text.push(c);
                     }
                 }
-                // char_count(u32) 对齐到 4 字节、读后对齐到 8 字节，然后向后扫描第一个
-                // 「合理高度」的 f64（建筑文字高度 ~50..5000mm）。上标/下标文字在 char_count
-                // 后比主文字多一个字段，固定偏移会读错，故用范围扫描。
-                let mut pos = (i + 3) & !3;
-                pos = (pos + 4 + 7) & !7;
+                // 文字后是 char_count(u32) + raw(u32) = 8 字节，随后紧凑排列 text_size(f64) +
+                // xscale(f64)（Text2 opcode 布局）。之前把 char_count 当 u32 只跳过 4 字节再
+                // 对齐 8，导致 height 扫到错误值（297.5 实为 452.55）：position 是左对齐基线
+                // 插入点，文字居中于 position + (height/2, height/2)。
+                let mut pos = ((i + 3) & !3) + 8;
                 let mut height = 0.0;
                 let mut width_factor = 1.0;
                 while pos + 16 <= data.len() && pos < i + 64 {
@@ -395,6 +417,148 @@ mod native {
             }
         }
         out
+    }
+
+    /// 临时诊断：dump type 2/38 图元的原始 payload 前 64 字节 f64 值。
+    pub fn dump_raw_payload(graphic_data: &[u8]) {
+        use acadrust::entities::ProxyGraphics;
+        let Some(g) = ProxyGraphics::decode(graphic_data) else { return };
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type, data } = r {
+                if *record_type == 2 || *record_type == 38 {
+                    let vals: Vec<f64> = (0..data.len().min(128))
+                        .step_by(8)
+                        .map(|o| f64::from_le_bytes(data[o..o + 8].try_into().unwrap()))
+                        .collect();
+                    eprintln!("type{} (len={}) {:?}", record_type, data.len(), vals);
+                }
+            }
+        }
+    }
+
+    /// 临时诊断：读 DWG 的 DxfVersion（决定加密版本号）。
+    pub fn dump_version(bytes: &[u8]) {
+        use acadrust::DwgReader;
+        use acadrust::DwgReadOptions;
+        if let Ok(o) = DwgReader::from_stream_with_options(std::io::Cursor::new(bytes), DwgReadOptions::failsafe()).read_with_stats() {
+            eprintln!("DxfVersion = {:?}", o.document.version);
+        }
+    }
+
+    /// 临时诊断：按 main 流 = [字段数 BL][逐字段：类型 RC(1字节) + 值] 解析。
+    pub fn dump_main_stream(raw_data: &[u8]) {
+        use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+        use acadrust::io::dwg::DwgVersion;
+        use acadrust::types::DxfVersion;
+        let mut br = DwgBitReader::new(raw_data.to_vec(), DwgVersion::AC24, DxfVersion::AC1032);
+        let count = br.read_bit_long();
+        eprintln!("字段数(BL) = {} @{}", count, br.position_in_bits());
+        for i in 0..count.min(40) {
+            let before = br.position_in_bits();
+            let ty = br.read_raw_char();
+            match ty {
+                0 => {
+                    let v = br.read_bit();
+                    eprintln!("  [{}] @{} 类型0 bool = {}", i, before, v);
+                }
+                1 | 2 => {
+                    let v = br.read_raw_char();
+                    eprintln!("  [{}] @{} 类型{} char = {}", i, before, ty, v);
+                }
+                3 => {
+                    let v = br.read_raw_char();
+                    eprintln!("  [{}] @{} 类型3 byte = {}", i, before, v);
+                }
+                4 => {
+                    let v = br.read_bit_short();
+                    eprintln!("  [{}] @{} 类型4 uint16 = {}", i, before, v);
+                }
+                5 => {
+                    let v = br.read_bit_short();
+                    eprintln!("  [{}] @{} 类型5 int16 = {}", i, before, v);
+                }
+                6 => {
+                    let v = br.read_bit_long();
+                    eprintln!("  [{}] @{} 类型6 int32 = {}", i, before, v);
+                }
+                200..=210 => {
+                    let v = br.read_bit_double();
+                    eprintln!("  [{}] @{} 类型{} double = {:.6}", i, before, ty, v);
+                }
+                _ => {
+                    // default return：不写 main 流值
+                    eprintln!("  [{}] @{} 类型{} (default，不写值)", i, before, ty);
+                }
+            }
+        }
+        eprintln!("字段容器后 @{}", br.position_in_bits());
+        // 子对象几何数据（+0xd0 的 DwgOut 输出）：读 double 看几何坐标
+        for i in 0..10 {
+            let before = br.position_in_bits();
+            let v = br.read_bit_double();
+            eprintln!("  子对象 double[{}] @{} = {:.4}", i, before, v);
+        }
+        eprintln!("后 @{}", br.position_in_bits());
+    }
+
+    /// 临时诊断：精确解析 type 38 的完整字段（position/normal/direction/text/char_count/height）。
+    pub fn dump_type38_detail(graphic_data: &[u8]) {
+        use acadrust::entities::ProxyGraphics;
+        let Some(g) = ProxyGraphics::decode(graphic_data) else { return };
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type, data } = r {
+                if *record_type != 38 {
+                    continue;
+                }
+                let f = |o: usize| f64::from_le_bytes(data[o..o + 8].try_into().unwrap());
+                let pos = (f(0), f(8), f(16));
+                let normal = (f(24), f(32), f(40));
+                let dir = (f(48), f(56), f(64));
+                // 文字 UTF-16 null 结尾
+                let mut text = String::new();
+                let mut i = 72;
+                while i + 1 < data.len() {
+                    let u = u16::from_le_bytes([data[i], data[i + 1]]);
+                    i += 2;
+                    if u == 0 {
+                        break;
+                    }
+                    if let Some(c) = char::from_u32(u as u32) {
+                        text.push(c);
+                    }
+                }
+                // char_count (u32) + 对齐 8，然后 dump 后续 4 个 f64 候选
+                let mut p = (i + 3) & !3;
+                let cc = u32::from_le_bytes(data[p..p + 4].try_into().unwrap());
+                let mut q = (p + 4 + 7) & !7;
+                let cands: Vec<f64> = (0..4).map(|k| f(q + k * 8)).collect();
+                // 从 char_count 之后 dump 原始字节，找 height 精确位置
+                let hex: String = data[p..data.len().min(p + 48)]
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "type38 pos={:?} normal={:?} dir={:?} text=\"{}\" char_count={}@{} 后续f64={:?}",
+                    pos, normal, dir, text, cc, p, cands
+                );
+                eprintln!("  char_count后字节: {}", hex);
+            }
+        }
+    }
+
+    /// 临时诊断：dump 所有图元 record 的类型、长度与前 32 字节（hex）。
+    pub fn dump_records(graphic_data: &[u8]) {
+        use acadrust::entities::ProxyGraphics;
+        let Some(g) = ProxyGraphics::decode(graphic_data) else { return };
+        for r in &g.records {
+            if let acadrust::entities::ProxyGraphicRecord::Unknown { record_type, data } = r {
+                let hex: String = data.iter().take(32).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+                eprintln!("type{:<3} len={:<4} {}", record_type, data.len(), hex);
+            } else {
+                eprintln!("other: {:?}", r);
+            }
+        }
     }
 
     /// 从天正实体的 `raw_data` 提取 text 流（含字段容器明文 + 加密字段）。
@@ -610,6 +774,133 @@ mod native {
         out
     }
 
+    /// 解密真正天正格式（V9）的加密字段：Base-26 偏移 `0xD0`，**无 XOR**。
+    ///
+    /// 真正天正图纸（`02建筑图纸/*.dwg`，AC1032）的加密字段 code unit 范围是
+    /// `U+00D0..U+00E9`（`Ð`..`é`），与 V8 测试文件（`0x18B..0x1A4`）不同。解密：
+    /// `(unit - 0xD0)` 得 Base-26 值（0-25）→ Base-26 解码 `c0*26+c1`，即明文 ASCII 数字
+    /// （整数 `%d` 或 double 定点 `%f`，如 `"0000000000000000.00817"`）。
+    pub fn decrypt_field_v9(code_units: &[u16]) -> Vec<u8> {
+        const OFFSET: u16 = 0xD0;
+        let mut out = Vec::new();
+        for pair in code_units.chunks(2) {
+            if pair.len() < 2 {
+                break;
+            }
+            let c0 = pair[0].wrapping_sub(OFFSET);
+            let c1 = pair[1].wrapping_sub(OFFSET);
+            if c0 >= 26 || c1 >= 26 {
+                continue;
+            }
+            out.push((c0 * 26 + c1) as u8);
+        }
+        out
+    }
+
+    /// 解密 text 流里的加密字段，自动识别 V8（`0x18B` + XOR 0x05）与 V9（`0xD0`，无 XOR）。
+    ///
+    /// 依据首 code unit 的落点判断：V9 密文在 `U+00D0..U+00E9`，V8 密文在 `0x18B..0x1A4`，
+    /// 二者不重叠。
+    pub fn decrypt_field_auto(code_units: &[u16]) -> Vec<u8> {
+        let is_v9 = code_units
+            .first()
+            .is_some_and(|&u| (0xD0..=0xE9).contains(&u));
+        if is_v9 {
+            decrypt_field_v9(code_units)
+        } else {
+            decrypt_field(code_units)
+        }
+    }
+
+    /// 便捷入口：把 [`parse_text_strings`] 读出的一个字符串按 V9 解密（若其 code unit 全在
+    /// 密文范围 `U+00D0..U+00E9`），否则返回 `None`（是明文字段名/GUID，不是加密字段）。
+    pub fn decrypt_v9_str(s: &str) -> Option<Vec<u8>> {
+        if s.is_empty() {
+            return None;
+        }
+        let units: Vec<u16> = s.encode_utf16().collect();
+        if units.len() % 2 != 0 || units.iter().any(|&u| !(0xD0..=0xE9).contains(&u)) {
+            return None;
+        }
+        Some(decrypt_field_v9(&units))
+    }
+
+    /// 解析真正天正格式（V9）的 text 流，返回结构化字段（[`TianzhengFields`]）。
+    ///
+    /// text 流布局（逐串 `read_variable_text`，BS 长度 + UTF-16LE）：
+    /// `[产品 GUID][加密固定字段 × N][字段容器块(明文)][关联 GUID][加密固定字段 × M]`。
+    /// 加密固定字段是 Base-26 偏移 0xD0（[`decrypt_field_v9`]），解出 ASCII 数值；命名字段
+    /// （中文语义字段名/值，或 `T20xx`）是明文，直接收集。
+    pub fn parse_tianzheng_fields_v9(raw_data: &[u8], handle_bits: i64) -> Option<TianzhengFields> {
+        let text = extract_text_stream(raw_data, handle_bits)?;
+        let strings = parse_text_strings(&text);
+        let mut out = TianzhengFields::default();
+        let mut assoc_seen = false;
+        let mut i = 0usize;
+        while i < strings.len() {
+            let s = &strings[i];
+            // GUID（36 hex + 2 花括号）
+            if s.starts_with('{') && s.ends_with('}') {
+                if out.guid.is_empty() {
+                    out.guid = s.clone();
+                } else {
+                    out.assoc_guid = s.clone();
+                    assoc_seen = true;
+                }
+                i += 1;
+                continue;
+            }
+            // 加密固定字段
+            if let Some(plain) = decrypt_v9_str(s) {
+                let ascii = String::from_utf8_lossy(&plain).into_owned();
+                if assoc_seen {
+                    out.tail_fields.push(ascii);
+                } else {
+                    out.fixed_fields.push(ascii);
+                }
+                i += 1;
+                continue;
+            }
+            // 字段容器边界标记
+            if s == "TDBXDATAMAP_BLOCK_BEGIN_" || s == "TDBXDATAMAP_BLOCK_END_" {
+                i += 1;
+                continue;
+            }
+            // 明文命名字段：字段名 + 可选值（值紧随其后且也是明文串）
+            if s.is_empty() || s.starts_with("TDBX") {
+                i += 1;
+                continue;
+            }
+            let name = s.clone();
+            // 明文值 = 非 GUID / 非边界 / 非 T20 字段名 / 非加密密文 / 非空。
+            let is_plain_value = |x: &String| -> bool {
+                !x.starts_with('{')
+                    && !x.starts_with("TDBX")
+                    && !x.starts_with("T20")
+                    && decrypt_v9_str(x).is_none()
+                    && !x.is_empty()
+            };
+            // 字段名后紧跟的明文串是「值」当且仅当它后面不再跟明文串（否则它是中间字段名，
+            // 其值在加密固定字段里，如「门口线偏移距离」的数值）。例：`门窗用途` 后跟
+            // `乙级防火门`（后跟边界）→ 配对；`门口线偏移距离` 后跟 `门窗用途`（后跟
+            // `乙级防火门`）→ 不配对。
+            let value = if i + 1 < strings.len() && is_plain_value(&strings[i + 1]) {
+                let next_is_last = i + 2 >= strings.len() || !is_plain_value(&strings[i + 2]);
+                if next_is_last {
+                    i += 1;
+                    strings[i].clone()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            out.named_fields.push((name, value));
+            i += 1;
+        }
+        Some(out)
+    }
+
     /// 把字符串列表编码回 text 流 bit 流（[`parse_text_strings`] 的逆操作）。
     ///
     /// 明文字符串用 `write_variable_text` 写；加密字段的乱码字符串（UTF-16 code units 在
@@ -719,7 +1010,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_arrow_tips, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengText};
+pub use native::{decrypt_field, decrypt_field_auto, decrypt_field_v9, decrypt_v9_str, dump_main_stream, dump_raw_payload, dump_records, dump_type38_detail, dump_version, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_arrow_tips, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, parse_tianzheng_fields_v9, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengFields, TianzhengText};
 
 #[cfg(test)]
 mod tests {
@@ -777,6 +1068,22 @@ mod tests {
             let units = encode_field(&plain);
             assert_eq!(decrypt_field(&units), plain);
         }
+    }
+
+    /// V9（真正天正格式）加密字段解密：Base-26 偏移 0xD0，无 XOR。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn decrypts_v9_field() {
+        // 真实密文 ÒÔÒÒÒÒÑé → "8663"（code units 0xD2 0xD4 0xD2 0xD2 0xD2 0xD2 0xD1 0xE9）
+        let units = [0xD2u16, 0xD4, 0xD2, 0xD2, 0xD2, 0xD2, 0xD1, 0xE9];
+        assert_eq!(decrypt_field_v9(&units), b"8663");
+        // Ñæ → (1,22) → 48 = '0'
+        assert_eq!(decrypt_field_v9(&[0xD1, 0xE6]), b"0");
+        // decrypt_field_auto 自动识别 V9
+        assert_eq!(decrypt_field_auto(&units), b"8663");
+        // decrypt_v9_str 便捷入口
+        assert_eq!(decrypt_v9_str("ÒÔÒÒÒÒÑé").as_deref(), Some(&b"8663"[..]));
+        assert_eq!(decrypt_v9_str("T20V9_dRealDist2DimLine"), None);
     }
 
     /// parse_text_strings 与 encode_text_strings 互为逆操作。

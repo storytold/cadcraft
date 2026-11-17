@@ -457,7 +457,19 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
     };
     for e in entities {
         let fields = cadcraft_dwg::tianzheng::extract_text_stream(&e.raw_data, e.handle_bits)
-            .map(|text| cadcraft_dwg::tianzheng::parse_tianzheng_fields(&text))
+            .map(|text| {
+                let mut f = cadcraft_dwg::tianzheng::parse_tianzheng_fields(&text);
+                // 真正天正格式（V9）的中文语义字段（如「门窗用途」=「乙级防火门」）：
+                // 旧 parse_tianzheng_fields 只认 T20/XML，对它们返回空，这里补 V9 解析。
+                if f.is_empty() {
+                    if let Some(v9) =
+                        cadcraft_dwg::tianzheng::parse_tianzheng_fields_v9(&e.raw_data, e.handle_bits)
+                    {
+                        f = v9.named_fields;
+                    }
+                }
+                f
+            })
             .unwrap_or_default();
         // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
         let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
