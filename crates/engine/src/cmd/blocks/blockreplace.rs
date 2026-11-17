@@ -15,7 +15,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 pub(super) fn blockreplace_spec() -> CommandSpec {
     CommandSpec::new("blockreplace", "Replace Block...", run_blockreplace)
-        .menu(&["Tools", "Express Tools", "Replace Block..."])
+        .menu(&["Tools", "Additional Tools", "Replace Block..."])
         .alias(&["-blockreplace"])
         .params("{block (the block whose references are replaced), with (the replacement block), purge?: bool (default false: remove the replaced block's definition when nothing references it any more)} → {block, with, replaced, purged}")
         .interactive(|_| Ok(Box::new(BlockreplaceM::default())))
@@ -184,8 +184,10 @@ impl Interactive for BlockreplaceM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.stage {
-            Stage::Old => Prompt::new("Enter the name of the block to replace", Accept::TEXT).kw(&["?", "Select"]),
-            Stage::New => Prompt::new(format!("Enter the name of the replacement block for {}", self.old), Accept::TEXT).kw(&["?", "Select"]),
+            Stage::Old => Prompt::new("Enter the name of the block to replace", Accept::TEXT).kw(&["?", "Select"]).takes_block(),
+            Stage::New => {
+                Prompt::new(format!("Enter the name of the replacement block for {}", self.old), Accept::TEXT).kw(&["?", "Select"]).takes_block()
+            }
             Stage::Select => Prompt::new("Select a block reference", Accept::SELECT),
             Stage::Purge => Prompt::new(format!("Purge the unreferenced block definition {}?", self.old), KW).kw(&["Yes", "No"]).default("Yes"),
         }

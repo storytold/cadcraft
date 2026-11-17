@@ -96,8 +96,9 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         return None;
     }
     let st = app.session.state().ok()?;
-    let refs = st.selection.iter().filter(|h| st.doc.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).count();
-    if refs == 1 && st.selection.len() == 1 {
+    let selection = st.shown_selection();
+    let refs = selection.iter().filter(|h| st.doc.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).count();
+    if refs == 1 && selection.len() == 1 {
         return None;
     }
     // Start on the block last edited if it is still there, else the first one.
@@ -143,7 +144,7 @@ fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
             let inner = rect.shrink(12.0);
             let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
             let scale = (f64::from(inner.width()) / w).min(f64::from(inner.height()) / h);
-            let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale };
+            let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale, twist: 0.0 };
             crate::canvas::draw_list(&p, &xf, l, Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), false);
         }
         None => {

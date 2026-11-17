@@ -8,6 +8,7 @@ mod table;
 
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
+    "ATTREQ",
     "OSMODE",
     "OSNAPHATCH",
     "ANNOAUTOSCALE",
@@ -66,6 +67,9 @@ const SESSION_VARS: &[&str] = &[
     "ZOOMFACTOR",
     "MEASUREINIT",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "FONTALT",
     "FONTFALLBACK",
     "SAVETIME",
@@ -144,6 +148,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
+        "AREA" => json!(s.area),
+        "PERIMETER" => json!(s.perimeter),
+        "DISTANCE" => json!(s.distance),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
@@ -177,6 +184,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The view twist (DVIEW TWist), in degrees counterclockwise.
+        "VIEWTWIST" => json!(s.state().ok()?.view().twist.to_degrees()),
         "EXTMIN" | "EXTMAX" => {
             let d = s.doc().ok()?;
             let e = d.extents(&s.space());
@@ -248,8 +257,12 @@ const READ_ONLY: &[&str] = &[
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "VIEWCTR",
     "VIEWSIZE",
+    "VIEWTWIST",
     "EXTMIN",
     "EXTMAX",
     "UNDOCTL",
@@ -281,7 +294,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
     let st = &mut s.settings;
     match n.as_str() {
-        "OSMODE" => st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(bad)? as u32 & 0x7fff,
+        "OSMODE" => {
+            st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x <= 0x7fff).ok_or_else(bad)? as u32
+        }
         // The `color` command's input: ByLayer, ByBlock, a name, an index or a true colour.
         "CECOLOR" => crate::cmd::set_current_color_value(s, v).ok_or_else(bad)?,
         "OSNAPHATCH" => st.osnaphatch = as_bool(v).ok_or_else(bad)?,
@@ -424,7 +439,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             // Keep the header type stable for known numeric vars.
             match d.header.get(&n) {
                 Some(cadcraft_doc::HVal::Real(_)) => {
-                    d.header.set_f64(&n, val.as_f64().ok_or_else(bad)?);
+                    d.header.set_f64(&n, val.as_f64().filter(|f| f.is_finite()).ok_or_else(bad)?);
                     return Ok(());
                 }
                 Some(cadcraft_doc::HVal::Int(_)) => {
@@ -461,11 +476,6 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
 
 pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
-    for n in SESSION_VARS {
-        if let Some(v) = get(s, n) {
-            m.insert((*n).to_string(), v);
-        }
-    }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
             if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
@@ -473,6 +483,13 @@ pub fn list(s: &Session) -> Value {
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
             }
+        }
+    }
+    // The session's values last: a drawing's header can carry the same names (ORTHOMODE,
+    // LWDISPLAY, an AREA), and `get` reads the session's.
+    for n in SESSION_VARS {
+        if let Some(v) = get(s, n) {
+            m.insert((*n).to_string(), v);
         }
     }
     table::list(s, &mut m);

@@ -59,7 +59,8 @@ pub(super) fn run_new(s: &mut Session, p: &Value) -> Result<Option<Value>> {
         && hi.y > lo.y
     {
         let center = cadcraft_geom::Vec2::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0);
-        st.set_view_quiet(crate::View { center, height: (hi.y - lo.y).max(1e-6) });
+        let twist = st.view().twist;
+        st.set_view_quiet(crate::View { center, height: (hi.y - lo.y).max(1e-6), twist });
     }
     Ok(Some(json!({ "index": i, "title": title, "template": path })))
 }
@@ -73,7 +74,7 @@ fn read_template(path: &str) -> Result<Drawing> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_bytes(path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| bad("new", format!("template {path}: {e}")))
+    crate::capped_read::read_capped(std::path::Path::new(path), super::MAX_DRAWING_BYTES).map_err(|e| bad("new", format!("template {path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]
