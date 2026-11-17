@@ -744,10 +744,11 @@ struct OutlinePoints {
     cells: HashMap<(i64, i64), Vec<(Vec2, Handle, usize)>>,
 }
 
-/// Most points kept in one cell of [`OutlinePoints`], a bound: a file that piles points on one
-/// place would make every vertex look at all of them (CWE-400). Points past it, in the order of the
-/// boundary objects, aren't matched.
-const MAX_CELL_POINTS: usize = 16;
+/// Most boundary points a vertex is matched against: those in its cell of [`OutlinePoints`] and the
+/// eight around it. A vertex with more within reach matches none, and its loop keeps what it has:
+/// it can't tell which object it sits on, and a file that piles points on one place would make
+/// every vertex look at all of them (CWE-400).
+const MAX_NEAR_POINTS: usize = 16;
 
 /// Most boundary points looked through for the loops of one stretched block: a file whose loops
 /// each list many boundary objects multiplies them; past this the remaining loops keep what they
@@ -761,10 +762,7 @@ impl OutlinePoints {
         let mut cells: HashMap<(i64, i64), Vec<(Vec2, Handle, usize)>> = HashMap::new();
         for (p, h, k) in points {
             if p.is_finite() {
-                let cell = cells.entry(Self::cell(p, tol)).or_default();
-                if cell.len() < MAX_CELL_POINTS {
-                    cell.push((p, h, k));
-                }
+                cells.entry(Self::cell(p, tol)).or_default().push((p, h, k));
             }
         }
         OutlinePoints { tol, cells }
@@ -775,22 +773,25 @@ impl OutlinePoints {
         ((p.x / tol).floor() as i64, (p.y / tol).floor() as i64)
     }
 
-    /// The nearest point within the rounding of `p`, if any.
+    /// The nearest point within the rounding of `p`, if any; none when more than
+    /// [`MAX_NEAR_POINTS`] are within reach.
     fn at(&self, p: Vec2) -> Option<(Handle, usize)> {
         if !p.is_finite() {
             return None;
         }
         let (cx, cy) = Self::cell(p, self.tol);
+        let near: Vec<&Vec<(Vec2, Handle, usize)>> = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| (cx.saturating_add(dx), cy.saturating_add(dy))))
+            .filter_map(|key| self.cells.get(&key))
+            .collect();
+        if near.iter().map(|c| c.len()).sum::<usize>() > MAX_NEAR_POINTS {
+            return None;
+        }
         let mut best: Option<(f64, Handle, usize)> = None;
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let key = (cx.saturating_add(dx), cy.saturating_add(dy));
-                for (q, h, k) in self.cells.get(&key).into_iter().flatten() {
-                    let d = q.dist(p);
-                    if d <= self.tol && best.is_none_or(|(bd, ..)| d < bd) {
-                        best = Some((d, *h, *k));
-                    }
-                }
+        for (q, h, k) in near.into_iter().flatten() {
+            let d = q.dist(p);
+            if d <= self.tol && best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, *h, *k));
             }
         }
         best.map(|(_, h, k)| (h, k))

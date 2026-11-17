@@ -744,6 +744,43 @@ fn an_associative_hatch_follows_its_stretched_boundary() {
 }
 
 #[test]
+fn a_hatch_vertex_among_too_many_boundary_points_keeps_its_loop() {
+    // Lines 36 to 39 outline (20,-1)-(35,1), and the stretch acts on 36 (bottom), 37 (right) and 38
+    // (top), whose ends at x = 35 are inside the frame. The hatch's boundary also lists `n` lines
+    // from 40 on, starting `gap` and then 1e-10 more further right of (35, -1) each, and left where
+    // they are. With 14 of them, the vertex at (35, -1) has 16 boundary points within reach (theirs,
+    // and the bottom and right lines' ends) and follows its lines. With 15 it has 17: it can't tell
+    // which line it sits on, so the loop keeps what it has. A gap of 2e-8 puts their starts in the
+    // next cell of the grid, still within a rounding (a billionth of 41) of the vertex.
+    let rect = [(20.0, -1.0), (35.0, -1.0), (35.0, 1.0), (20.0, 1.0)];
+    let line = |h: &str, a: (f64, f64), b: (f64, f64)| {
+        format!("0 LINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbLine\n10 {}\n20 {}\n30 0\n11 {}\n21 {}\n31 0\n", a.0, a.1, b.0, b.1)
+    };
+    let followed = vec![(20.0, -1.0), (29.0, -1.0), (29.0, 1.0), (20.0, 1.0)];
+    for (n, gap, want) in [(14, 0.0, followed), (15, 0.0, rect.to_vec()), (15, 2e-8, rect.to_vec())] {
+        let mut lines = String::new();
+        let mut sources: Vec<String> = Vec::new();
+        for k in 1..=n {
+            let h = format!("{:X}", 0x3F + k);
+            let x = 35.0 + gap + f64::from(k) * 1e-10;
+            lines.push_str(&line(&h, (x, -1.0), (x, -41.0)));
+            sources.push(h);
+        }
+        for (h, a, b) in [("36", rect[0], rect[1]), ("37", rect[1], rect[2]), ("38", rect[2], rect[3]), ("39", rect[3], rect[0])] {
+            lines.push_str(&line(h, a, b));
+            sources.push(h.to_string());
+        }
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let src = fixture()
+            .replace("71 1\n330 30\n1010 40", "71 4\n330 30\n330 36\n330 37\n330 38\n1010 40")
+            .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{lines}{}0 ENDBLK\n", hatch("3A", true, &rect, &sources)));
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(hatch_loops(&d, r), [want], "{n} lines {gap} beside the corner");
+    }
+}
+
+#[test]
 fn a_zero_distance_multiplier_moves_as_one_without_its_angle_offset() {
     // A stretch written with multiplier 0 and angle offset 1 (radian), and group 280 = 1. AutoCAD
     // 2024 moved such an action by the parameter's change, straight along it.
