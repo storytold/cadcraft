@@ -161,11 +161,13 @@ fn system_printers() -> Vec<PlotterConfig> {
         let mut c = printer_cache();
         // A listing that hangs (a driver that never answers) is given up after PRINTERS_WAIT:
         // a new one may start, and nothing waits for the old one any more.
-        if !c.listing_live() && c.at.is_none_or(|at| at.elapsed() >= PRINTERS_TTL) {
+        if !c.listing_live() && c.workers < MAX_LISTING_WORKERS && c.at.is_none_or(|at| at.elapsed() >= PRINTERS_TTL) {
             let started = std::time::Instant::now();
             c.listing = Some(started);
+            c.workers += 1;
             let list = h.list;
             let spawned = std::thread::Builder::new().name("system-printers".into()).spawn(move || {
+                let _worker = ListingWorker;
                 let found: Vec<PlotterConfig> = list().into_iter().filter(|p| p.system && !is_builtin(&p.name)).collect();
                 // Only the latest listing writes: one given up and finishing after a newer one
                 // started would put an older list back.
@@ -176,6 +178,7 @@ fn system_printers() -> Vec<PlotterConfig> {
             });
             if spawned.is_err() {
                 c.listing = None;
+                c.workers = c.workers.saturating_sub(1);
             }
         }
         c.list.clone()
@@ -190,6 +193,23 @@ fn system_printers() -> Vec<PlotterConfig> {
 #[cfg(not(target_arch = "wasm32"))]
 const PRINTERS_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// An expired driver call can remain blocked forever. Permit a replacement, but never let
+/// repeated refreshes or TTL retries accumulate an unbounded number of blocked threads.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_LISTING_WORKERS: usize = 2;
+
+/// Return the worker slot on completion, even if a host's listing hook panics.
+#[cfg(not(target_arch = "wasm32"))]
+struct ListingWorker;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ListingWorker {
+    fn drop(&mut self) {
+        let mut c = printer_cache();
+        c.workers = c.workers.saturating_sub(1);
+    }
+}
+
 /// The last printer list, when it was made, and when a listing under way started.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
@@ -197,6 +217,8 @@ struct PrinterCache {
     list: Vec<PlotterConfig>,
     at: Option<std::time::Instant>,
     listing: Option<std::time::Instant>,
+    /// Running calls, including expired listings whose driver has not returned yet.
+    workers: usize,
     /// A wait for a listing ran out (a driver that never answers): commands stop waiting until a
     /// listing finishes again.
     hung: bool,
@@ -929,7 +951,7 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
         }
-        other => Err(bad(cmd, format!("unknown action `{other}` (list, get, new, set, delete, load, save)"))),
+        other => Err(bad(cmd, format!("unknown action `{other}` (list, get, new, set, delete, load, save, refresh)"))),
     }
 }
 

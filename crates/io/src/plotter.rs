@@ -167,7 +167,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
             raster::blank_outside_pixels(&mut pm, (f64::from(x0), f64::from(y0)), (f64::from(x1), f64::from(y1)));
         }
     }
-    pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
+    raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {

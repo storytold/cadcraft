@@ -186,9 +186,16 @@ pub(crate) fn preview_plot(app: &mut CadApp, ctx: &egui::Context, params: Value,
 fn plot_texture(app: &mut CadApp, ctx: &egui::Context, params: &Value, name: &str) -> Result<TextureHandle, String> {
     let r = app.session.execute("plot", params).map_err(|e| e.to_string())?;
     let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
-    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
+    preview_texture(ctx, &png, name)
+}
+
+fn preview_texture(ctx: &egui::Context, png: &[u8], name: &str) -> Result<TextureHandle, String> {
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("the preview is not a PNG".into());
+    }
+    let img = cadcraft_io::raster::decode(png).map_err(|e| e.to_string())?;
     let size = [img.width() as usize, img.height() as usize];
-    Ok(ctx.load_texture(name, egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR))
+    Ok(ctx.load_texture(name, egui::ColorImage::from_rgba_unmultiplied(size, img.rgba()), egui::TextureOptions::LINEAR))
 }
 
 /// Render the plot preview of the tab being shown, or of the Plot dialog's settings, as it plots
@@ -380,7 +387,16 @@ mod tests {
         (CadApp::new(Session::new(), services), asked)
     }
 
-    /// Typed and menu commands ask for files or open the preview; JSON calls never do.
+    #[test]
+    fn plot_preview_reads_shared_png_and_rejects_other_bytes() {
+        let ctx = egui::Context::default();
+        let mut png = Vec::new();
+        cadcraft_render::raster::write_rgba_png(&mut png, 1, 1, &[10, 20, 30, 255]).unwrap();
+        let texture = super::preview_texture(&ctx, &png, "test-preview").unwrap();
+        assert_eq!(texture.size(), [1, 1]);
+        assert!(super::preview_texture(&ctx, b"not a PNG", "test-preview").is_err());
+    }
+
     #[test]
     fn typed_and_menu_commands_ask_json_calls_never_do() {
         let (mut app, asked) = app();

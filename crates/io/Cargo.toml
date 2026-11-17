@@ -14,15 +14,14 @@ cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
 craft-dwg = { workspace = true }
+craft-svg = { workspace = true }
+craft-image-codecs = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-fonts = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
-miniz_oxide = "0.9"
 craft-pdf = { workspace = true, features = ["write"] }
-quick-xml = { workspace = true }
-image = { workspace = true }
 
 # System printers on Windows (winprint.rs): the job through craft-print; the printers, their
 # papers and printable areas through the same winprint and winsafe craft-print uses (safe
@@ -33,6 +32,9 @@ winprint = { git = "https://github.com/storytold/winprint.rs", rev = "5f80b9baf6
 winsafe = { version = "0.0.29", default-features = false, features = ["winspool"] }
 
 [dev-dependencies]
+miniz_oxide = "0.9"
+tiff = "0.11"
+image = { workspace = true }
 tiny-skia = { workspace = true }
 # Reads plotted PDFs back.
 craft-pdf = { workspace = true, features = ["read"] }

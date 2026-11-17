@@ -4,11 +4,15 @@
 
 use cadcraft_doc::PlotterConfig;
 use cadcraft_engine::Session;
-use cadcraft_engine::cmd::plotters::{PlotterStore, PrintJob, SystemPrinters, set_plotter_store, set_system_printers};
+use cadcraft_engine::cmd::plotters::{PlotterStore, PrintJob, SystemPrinters, refresh_system_printers, set_plotter_store, set_system_printers};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static LISTINGS: AtomicUsize = AtomicUsize::new(0);
 
 /// A listing that hangs far past the wait.
 fn printers() -> Vec<PlotterConfig> {
+    LISTINGS.fetch_add(1, Ordering::SeqCst);
     std::thread::sleep(std::time::Duration::from_secs(120));
     Vec::new()
 }
@@ -39,4 +43,13 @@ fn an_unknown_device_waits_for_a_hung_listing_only_once() {
     let start = std::time::Instant::now();
     let _ = s.execute("plot", &json!({ "layout": "Model", "device": "None" }));
     assert!(start.elapsed() < std::time::Duration::from_secs(2), "no device needs no printer list: {:?}", start.elapsed());
+    // Even after the replacement expires, refreshes must not accumulate blocked driver threads.
+    std::thread::sleep(std::time::Duration::from_millis(10_100));
+    for _ in 0..5 {
+        assert!(refresh_system_printers());
+    }
+    // Let a replacement worker start if one was incorrectly spawned.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let listings = LISTINGS.load(Ordering::SeqCst);
+    assert!((1..=2).contains(&listings), "at most two blocked listings, got {listings}");
 }
