@@ -109,6 +109,21 @@ mod native {
         pub tail_fields: Vec<String>,
     }
 
+    impl TianzhengFields {
+        /// 起终点坐标（mm）：固定字段和尾字段里的大数（>1e14）是「坐标 mm × 2^36」的
+        /// 定点编码，除以 2^36 还原。按出现顺序（点1 X/Y、点2 X/Y、Z 为 0 不写）。
+        ///
+        /// 注意：第一个大数可能是墙的公共常量（如 `9100000100000080`，每墙相同，属
+        /// `sub_1c1d9b87` 的 3 double 属性之一，非坐标）；其后才是点1 X/Y、点2 X/Y。
+        pub fn coords_mm(&self) -> Vec<f64> {
+            self.fixed_fields
+                .iter()
+                .chain(&self.tail_fields)
+                .filter_map(|s| decode_coord_mm(s))
+                .collect()
+        }
+    }
+
     /// 从 DWG 字节提取所有天正实体（含 failsafe 读取，坏记录跳过而非整文件失败）。
     ///
     /// 天正自定义实体（`TCH_*`）在 acadrust 里可能是两种形态，取决于文件是否经过
@@ -825,6 +840,20 @@ mod native {
         Some(decrypt_field_v9(&units))
     }
 
+    /// 坐标大数 → 建筑坐标 mm（÷ 2^36）。
+    ///
+    /// 真正天正格式里，起终点坐标在 setter/构造时乘以 `2^36`（68719476736）存成定点
+    /// 「大数」（如 `140067.393659 × 2^36 = 9625357999999999.97030`），解密后是
+    /// 「16 位整数 + 小数」字符串。除以 `2^36` 还原 mm。非坐标（整数/属性小 double）
+    /// 返回 `None`。
+    pub fn decode_coord_mm(s: &str) -> Option<f64> {
+        let v: f64 = s.parse().ok()?;
+        if v.abs() < 1e14 {
+            return None;
+        }
+        Some(v / 68_719_476_736.0) // 2^36
+    }
+
     /// 解析真正天正格式（V9）的 text 流，返回结构化字段（[`TianzhengFields`]）。
     ///
     /// text 流布局（逐串 `read_variable_text`，BS 长度 + UTF-16LE）：
@@ -1010,7 +1039,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{decrypt_field, decrypt_field_auto, decrypt_field_v9, decrypt_v9_str, dump_main_stream, dump_raw_payload, dump_records, dump_type38_detail, dump_version, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_arrow_tips, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, parse_tianzheng_fields_v9, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengFields, TianzhengText};
+pub use native::{decode_coord_mm, decrypt_field, decrypt_field_auto, decrypt_field_v9, decrypt_v9_str, dump_main_stream, dump_raw_payload, dump_records, dump_type38_detail, dump_version, encode_field, encode_text_strings, encode_text_strings_with_bits, encode_wall_segments, extract_arrow_tips, extract_circles, extract_polys, extract_text_entities, extract_text_stream, extract_wall_segments, parse_text_strings, parse_tianzheng_fields, parse_tianzheng_fields_v9, read_tianzheng, replace_text_stream, update_tianzheng_field_strings, TianzhengEntity, TianzhengFields, TianzhengText};
 
 #[cfg(test)]
 mod tests {
@@ -1084,6 +1113,18 @@ mod tests {
         // decrypt_v9_str 便捷入口
         assert_eq!(decrypt_v9_str("ÒÔÒÒÒÒÑé").as_deref(), Some(&b"8663"[..]));
         assert_eq!(decrypt_v9_str("T20V9_dRealDist2DimLine"), None);
+    }
+
+    /// 坐标大数 ÷ 2^36 解码成建筑坐标 mm。
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn decodes_coord_mm() {
+        // 实测 "9625357999999999.97030" = 140067.393659... × 2^36
+        let mm = decode_coord_mm("9625357999999999.97030").unwrap();
+        assert!((mm - 140067.393659).abs() < 0.001, "mm = {mm}");
+        // 非坐标（整数/小 double）返回 None
+        assert_eq!(decode_coord_mm("8663"), None);
+        assert_eq!(decode_coord_mm("0000000000000000.00817"), None);
     }
 
     /// parse_text_strings 与 encode_text_strings 互为逆操作。
