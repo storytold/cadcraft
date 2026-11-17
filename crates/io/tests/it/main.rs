@@ -33,6 +33,7 @@ mod hatch_pattern_def;
 mod helix_roundtrip;
 mod layout_limits_roundtrip;
 mod layout_paper_units;
+mod layout_plot_flags;
 mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]

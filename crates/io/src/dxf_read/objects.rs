@@ -267,6 +267,8 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     // Plot layout flags: 2 display plot styles, 4 centred, 16 standard scale (75 = 0: scaled
     // to fit), 128 lineweights.
     if let Some(flags) = t.i(70) {
+        // Kept to be written back (a 16-bit group: only those bits).
+        p.file_plot_flags = Some(flags & 0xFFFF);
         p.show_plot_styles = flags & 2 != 0;
         p.center = flags & 4 != 0;
         p.lineweights = flags & 128 != 0;

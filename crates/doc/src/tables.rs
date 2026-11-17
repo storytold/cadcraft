@@ -818,6 +818,12 @@ pub struct PageSetup {
     /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_origin: Option<Vec2>,
+    /// The plot layout flags (DXF group 70 of AcDbPlotSettings) as the file had them. Saving keeps
+    /// the bits CADCraft doesn't model (plot paper space last, plot with plot styles, standard
+    /// scale and the rest) as read instead of forcing its defaults (#3227); `None` for page setups
+    /// made in CADCraft.
+    #[serde(skip)]
+    pub file_plot_flags: Option<i64>,
 }
 
 impl Default for PageSetup {
@@ -841,6 +847,7 @@ impl Default for PageSetup {
             paper_mm: false,
             file_paper: None,
             image_origin: None,
+            file_plot_flags: None,
         }
     }
 }
