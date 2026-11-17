@@ -1,9 +1,10 @@
 //! One CADCraft room served over WebSocket, with an optional health and metrics endpoint.
 //!
-//! The drawing is read once, the room is authoritative from then on, and a snapshot of its DXF is
-//! written to `--state` every `--snapshot-secs`: a restart restores it and replays nothing, because
-//! the journal is not persisted yet. Tokens are verified with the cabinet's HS256 secret from
-//! `--secret-file`; `--dev-token token:role` exists for a single-tenant or test deployment.
+//! The drawing is read once, the room is authoritative from then on, and `--snapshot-secs` runs a
+//! compaction into `--state`: the DXF, the `.version` beside it and an emptied journal, so a
+//! restart restores the drawing and replays only the operations written after that version. Tokens
+//! are verified with the cabinet's HS256 secret from `--secret-file`; `--dev-token token:role`
+//! exists for a single-tenant or test deployment.
 
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;

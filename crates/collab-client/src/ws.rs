@@ -18,6 +18,9 @@ pub struct Connection {
 impl Connection {
     /// Connect, send `hello` and return the server's first message (normally `welcome`).
     pub fn connect(url: &str, hello: &ClientMessage, timeout: Duration) -> Result<(Self, ServerMessage), String> {
+        if let Some(reason) = tls_refusal(url) {
+            return Err(reason.to_string());
+        }
         let (mut socket, _response) = tungstenite::connect(url).map_err(|e| e.to_string())?;
         send_message(&mut socket, hello)?;
         if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
@@ -71,6 +74,19 @@ fn send_message(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, message: &Cli
     socket.send(Message::Text(text.into())).map_err(|e| e.to_string())
 }
 
+/// Why this build cannot connect to `url` in-process, or `None` when it can.
+///
+/// No TLS stack is linked on purpose: the deployment terminates WSS at its ingress, and enabling
+/// TLS here would choose a backend (`native-tls` or `rustls`) and grow `Cargo.lock` — the owner's
+/// supply-chain decision, not a review fix (CodeRabbit on #2936). The refusal names the supported
+/// path instead of leaving tungstenite's generic error.
+fn tls_refusal(url: &str) -> Option<&'static str> {
+    url.trim_start()
+        .to_ascii_lowercase()
+        .starts_with("wss://")
+        .then_some("wss:// is not supported by this build: the deployment terminates TLS at its ingress; connect to the proxy's ws:// address or a local TLS tunnel")
+}
+
 /// Whether a read error is the socket's read timeout: nothing arrived within the timeout, the
 /// socket itself is fine and the caller should keep draining its queue.
 fn is_read_timeout(error: &tungstenite::Error) -> bool {
@@ -79,7 +95,7 @@ fn is_read_timeout(error: &tungstenite::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_read_timeout;
+    use super::{is_read_timeout, tls_refusal};
     use std::io;
 
     /// A read timeout is not a lost connection: Linux and macOS report `WouldBlock`, Windows
@@ -92,5 +108,14 @@ mod tests {
         assert!(!io::Error::from(io::ErrorKind::WouldBlock).to_string().contains("timed out"), "the text check missed it");
         assert!(!is_read_timeout(&tungstenite::Error::Io(io::Error::from(io::ErrorKind::ConnectionReset))));
         assert!(!is_read_timeout(&tungstenite::Error::ConnectionClosed));
+    }
+
+    /// A `wss://` URL is outside the configuration this build ships, and the refusal says where
+    /// TLS lives instead of failing as a broken address (CodeRabbit on #2936).
+    #[test]
+    fn a_wss_url_is_refused_with_the_supported_path() {
+        assert!(tls_refusal("wss://cad.example/room").is_some_and(|reason| reason.contains("ingress")));
+        assert!(tls_refusal(" WS://127.0.0.1:8787 ").is_none(), "a plain socket is this build's transport");
+        assert!(tls_refusal("ws://127.0.0.1:8787").is_none());
     }
 }

@@ -193,3 +193,45 @@ fn a_reconnecting_client_catches_up() {
     assert_eq!(b.version(), 2);
     assert_eq!(b.drawing().space(&Space::Model), a.drawing().space(&Space::Model));
 }
+
+/// After a compaction the journal is empty while the room is ahead: the resync must send the
+/// drawing whole, and the session must hand it to the window as one resync (CodeRabbit on #2936).
+#[test]
+fn a_resync_after_a_compaction_returns_the_drawing() {
+    use cadcraft_collab_client::{Event, Session};
+
+    let dir = std::env::temp_dir().join(format!("cadcraft-collab-resync-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = dir.join("state.dxf");
+    let journal = dir.join("state.jsonl");
+
+    let room = Room::new(Drawing::new_metric()).unwrap().with_journal(&journal).unwrap();
+    let auth = Arc::new(StaticAuthenticator::new([("token-a".to_string(), Claims { sub: "a".into(), doc: "d1".into(), role: Role::Editor })]));
+    let server = Arc::new(Server::new(room, auth, "s1", "cadcraft"));
+    let (addr, _accept_loop) = server.bind("127.0.0.1:0").unwrap();
+    let url = format!("ws://{addr}");
+    let timeout = Duration::from_secs(3);
+
+    let mut a = Session::connect(&url, "token-a", "d1", None, timeout).unwrap();
+    a.submit(line_op("a", "a1", 0.0)).unwrap();
+    let _ = next_session_applied(&mut a, 1);
+
+    // The compaction empties the journal while the drawing is at version 1.
+    server.room().compact(&state).unwrap();
+
+    // The window is still at version 0 and asks for what it lost.
+    a.resync(0).unwrap();
+    let mut resynced = None;
+    for _ in 0..16 {
+        if let Event::Resynced { drawing, version } = a.next_event().unwrap() {
+            resynced = Some((drawing, version));
+            break;
+        }
+    }
+    let (drawing, version) = resynced.expect("the room's drawing comes back");
+    assert_eq!(version, 1, "the resync carries the room's version");
+    assert_eq!(drawing.entity_count(), 1, "the drawing that was compacted away");
+    assert_eq!(drawing.space(&Space::Model), a.drawing().space(&Space::Model));
+    let _ = std::fs::remove_dir_all(&dir);
+}

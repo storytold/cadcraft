@@ -45,6 +45,12 @@ pub enum Event {
     /// A socket read timeout is how a caller polls for its own queued work; it must not end the
     /// session, and the error text cannot tell it from a lost connection (CodeRabbit on #2936).
     Idle,
+    /// The room replaced the replica after a resync: show this drawing at `version`.
+    ///
+    /// A journal tail and a snapshot are both a resync: the caller's drawing could not follow the
+    /// room, so it is replaced wholesale, and a window that keeps its old document would stay at a
+    /// version and with objects the next change set does not name (CodeRabbit on #2936).
+    Resynced { drawing: Box<Drawing>, version: u64 },
     /// The server reports a problem outside an operation.
     Error { code: String, message: String, retryable: bool },
     /// A message this client does not act on (a delta it has already matched, say).
@@ -181,7 +187,7 @@ impl Session {
                     for entry in applied {
                         self.client.applied(&entry)?;
                     }
-                    return Ok(Event::Ignored);
+                    return Ok(Event::Resynced { drawing: Box::new(self.client.drawing().clone()), version: self.client.version() });
                 }
                 ServerMessage::Snapshot { snapshot } => {
                     self.parts.push(snapshot);
@@ -193,7 +199,7 @@ impl Session {
                     let drawing = cadcraft_io::read(&bytes, "snapshot.dxf").map_err(|e| SessionError::Snapshot(e.to_string()))?;
                     let version = parts.first().map(|part| part.version).unwrap_or(self.client.version());
                     self.client.resync(drawing, version);
-                    return Ok(Event::Ignored);
+                    return Ok(Event::Resynced { drawing: Box::new(self.client.drawing().clone()), version });
                 }
                 ServerMessage::Welcome { .. } => return Ok(Event::Ignored),
             }

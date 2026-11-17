@@ -190,6 +190,12 @@ fn worker(url: String, token: String, doc: String, requests: Receiver<Request>, 
             Ok(Event::Committed { version, not_saved, bytes }) => {
                 let _ = updates.send(Update::Committed { version, not_saved, bytes });
             }
+            Ok(Event::Resynced { drawing, version }) => {
+                // The room replaced the replica: the window replaces its document too, or its
+                // version and objects stay behind what the next change set names (CodeRabbit on
+                // #2936).
+                let _ = updates.send(Update::Joined { drawing, version });
+            }
             Ok(Event::Error { message, .. }) => {
                 let _ = updates.send(Update::Lost(message));
                 return;

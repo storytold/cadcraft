@@ -358,7 +358,13 @@ impl Server {
         let (delta, snapshot) = {
             let room = lock(&self.room);
             let tail: Vec<_> = room.journal().filter(|a| a.version > last_version).cloned().collect();
-            let reachable = tail.is_empty() || tail.first().is_some_and(|a| a.version == last_version.saturating_add(1));
+            // An empty tail is reachable only when the room is at that version: after a compaction
+            // the journal is empty while the drawing is ahead, and an empty delta would leave the
+            // caller behind for good (CodeRabbit on #2936).
+            let reachable = match tail.first() {
+                Some(first) => first.version == last_version.saturating_add(1),
+                None => room.version() == last_version,
+            };
             if reachable {
                 (Some(ServerMessage::Delta { version: room.version(), more: false, applied: tail }), None)
             } else {
