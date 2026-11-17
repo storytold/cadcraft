@@ -1378,7 +1378,7 @@ dependencies = [
 [[package]]
 name = "craft-shx"
 version = "0.1.0"
-source = "git+https://github.com/whaslbeck/craft-libs?rev=ef58dd8def1e0701cb10da7eb696f8ac64f4bfd1#ef58dd8def1e0701cb10da7eb696f8ac64f4bfd1"
+source = "git+https://github.com/whaslbeck/craft-libs?rev=95b12714fe41335ad88b73f824486f1f50fc9ba8#95b12714fe41335ad88b73f824486f1f50fc9ba8"
 
 [[package]]
 name = "craft-svg"
