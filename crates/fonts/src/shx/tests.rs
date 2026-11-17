@@ -483,3 +483,121 @@ fn hebrew_letters_draw_from_their_one_byte_places() {
     let stroke = crate::stroke_advance('ב', 6.0, 1.0);
     assert!((draws(cyr, 'ב') - stroke).abs() < 1e-9);
 }
+
+/// A font for AutoCAD's MTEXT measuring (10 units above, so 1 unit per unit at height 10):
+/// `n` draws from x = 2 to 6 of an 8 advance, `c` ends in a quarter arc of radius 4 at its right
+/// (drawn to x = 10, its chord-and-sagitta box to 10 + 2(√2 − 1)), `T` rises to 13 and `g`
+/// reaches 3 below the baseline. A space advances 4.
+const LAYOUT_FONT: &str = "\
+*0,4,cadcraft layout
+10,2,0,0
+*32,3,SPACE
+2,040,0
+*110,9,LCN
+2,020,1,0A4,040,0AC,2,020,0
+*99,13,LCC
+2,8,(2,10),1,040,10,(4,-022),06C,2,020,0
+*84,9,UCT
+2,010,1,0D4,2,8,(1,-13),0
+*103,12,LCG
+2,010,1,8,(0,-3),8,(0,3),2,010,0
+";
+
+/// MTEXT in [`LAYOUT_FONT`] at height 10, laid out by the plain path and by the paragraph path
+/// (an empty `\p;` takes it), which must agree.
+fn layout_both(name: &str, contents: &str, width: f64, attach: u8) -> crate::MTextLayout {
+    reg(name, LAYOUT_FONT);
+    let font = TextFont::resolve_style(name.trim_end_matches(".shx"), "", false);
+    assert!(font.is_shx());
+    let p = crate::MTextParams { width, attach, font, ..crate::MTextParams::new(Vec2::ZERO, 10.0) };
+    let plain = crate::layout_mtext_with(contents, &p);
+    let para = crate::layout_mtext_with(&format!("{contents}\\p;"), &p);
+    assert_eq!(plain.lines, para.lines, "{contents}");
+    for (a, b) in plain.strokes.iter().flatten().zip(para.strokes.iter().flatten()) {
+        assert!(a.dist(*b) < 1e-9, "{contents}: {a:?} vs {b:?}");
+    }
+    plain
+}
+
+/// The least and greatest x and y the layout draws at.
+fn drawn(m: &crate::MTextLayout) -> (f64, f64, f64, f64) {
+    m.strokes
+        .iter()
+        .flatten()
+        .fold((f64::MAX, f64::MIN, f64::MAX, f64::MIN), |(x0, x1, y0, y1), p| (x0.min(p.x), x1.max(p.x), y0.min(p.y), y1.max(p.y)))
+}
+
+#[test]
+fn mtext_wraps_a_word_by_its_drawing_not_its_advances() {
+    // "n n": the second word starts at 8 + 4 = 12 and draws 4 wide, so it needs 16 (its
+    // advances would need 20). AutoCAD keeps it on the line below 16 and wraps at 16 itself.
+    for (w, lines) in [(16.5, 1), (16.0, 2), (15.9, 2), (19.0, 1)] {
+        assert_eq!(layout_both("cadcraft-layout-wrap.shx", "n n", w, 1).lines.len(), lines, "width {w}");
+    }
+    // A quarter arc counts by its chord-and-sagitta box: "n c" needs 12 + 8 + 2(√2 − 1).
+    let need = 20.0 + 4.0 * (2f64.sqrt() - 1.0) / 2.0;
+    assert_eq!(layout_both("cadcraft-layout-arc.shx", "n c", need + 0.01, 1).lines.len(), 1);
+    assert_eq!(layout_both("cadcraft-layout-arc.shx", "n c", need - 0.01, 1).lines.len(), 2);
+    // Every space of a run counts: "n  n" needs 8 + 8 + 4.
+    assert_eq!(layout_both("cadcraft-layout-spaces.shx", "n  n", 20.5, 1).lines.len(), 1);
+    assert_eq!(layout_both("cadcraft-layout-spaces.shx", "n  n", 19.5, 1).lines.len(), 2);
+    // Leading spaces are the line's first word: "  n" needs 8 + 4, so at 11 the spaces stay
+    // alone on the first line.
+    assert_eq!(layout_both("cadcraft-layout-lead.shx", "  n", 11.0, 1).lines, vec![String::new(), "n".to_string()]);
+}
+
+#[test]
+fn mtext_lines_are_justified_by_their_drawing() {
+    // The first character's side bearing is dropped: the drawing starts at, centres on or ends
+    // at the insertion point.
+    let (x0, ..) = drawn(&layout_both("cadcraft-layout-just.shx", "n n", 0.0, 1));
+    assert!(x0.abs() < 1e-9, "{x0}");
+    let (x0, x1, ..) = drawn(&layout_both("cadcraft-layout-just.shx", "n n", 0.0, 2));
+    assert!((x0 + x1).abs() < 1e-9, "{x0} {x1}");
+    let (_, x1, ..) = drawn(&layout_both("cadcraft-layout-just.shx", "n n", 0.0, 3));
+    assert!(x1.abs() < 1e-9, "{x1}");
+    // Leading spaces stay: " n" draws from 4 + 2 left-justified, and ends at the point right-justified.
+    let (x0, ..) = drawn(&layout_both("cadcraft-layout-lead2.shx", " n", 0.0, 1));
+    assert!((x0 - 6.0).abs() < 1e-9, "{x0}");
+    let (_, x1, ..) = drawn(&layout_both("cadcraft-layout-lead2.shx", " n", 0.0, 3));
+    assert!(x1.abs() < 1e-9, "{x1}");
+    // Spaces formatted unlike both neighbouring words: the line is justified by its drawing's
+    // width but drawn from its start, so the bearing stays on both sides.
+    let (x0, ..) = drawn(&layout_both("cadcraft-layout-lone.shx", "{\\C1;n} {\\C3;n}", 0.0, 1));
+    assert!((x0 - 2.0).abs() < 1e-9, "{x0}");
+    let (_, x1, ..) = drawn(&layout_both("cadcraft-layout-lone.shx", "{\\C1;n} {\\C3;n}", 0.0, 3));
+    assert!((x1 - 2.0).abs() < 1e-9, "{x1}");
+    // A space in either word's format does not.
+    let (x0, ..) = drawn(&layout_both("cadcraft-layout-lone.shx", "{\\C1;n} n", 0.0, 1));
+    assert!(x0.abs() < 1e-9, "{x0}");
+}
+
+#[test]
+fn mtext_lines_are_placed_by_their_drawing_vertically() {
+    // A first line rising above the text height drops below the top by its drawing.
+    let (_, _, _, y1) = drawn(&layout_both("cadcraft-layout-top.shx", "T", 0.0, 1));
+    assert!(y1.abs() < 1e-9, "{y1}");
+    // A last line with a descender sits on the bottom by its drawing.
+    let (_, _, y0, _) = drawn(&layout_both("cadcraft-layout-bottom.shx", "n\\Pg", 0.0, 7));
+    assert!(y0.abs() < 1e-9, "{y0}");
+    // The step to a line rising above the height grows by the excess: "n\PT" puts T's top at
+    // -10 - (10 + 10) / 3 - 13 + 13.
+    let m = layout_both("cadcraft-layout-step.shx", "n\\PT", 0.0, 1);
+    let (_, _, _, y1) = drawn(&layout_both("cadcraft-layout-step.shx", "T", 0.0, 7));
+    let t_top = m.strokes.iter().flatten().filter(|p| p.y < -10.0).fold(f64::MIN, |a, p| a.max(p.y));
+    assert!((t_top + 10.0 + 20.0 / 3.0).abs() < 1e-9, "{t_top}");
+    assert!((y1 - 13.0).abs() < 1e-9);
+    // A line twice as high steps 10 more before it and 10/3 more after it.
+    let m = layout_both("cadcraft-layout-h2.shx", "n\\P{\\H2x;n}\\Pn", 0.0, 1);
+    let mut tops: Vec<f64> = Vec::new();
+    for st in &m.strokes {
+        let top = st.iter().fold(f64::MIN, |a, p| a.max(p.y));
+        if !tops.iter().any(|t| (t - top).abs() < 1e-6) {
+            tops.push(top);
+        }
+    }
+    tops.sort_by(|a, b| b.total_cmp(a));
+    let b2 = -10.0 - (20.0 / 3.0 + 20.0);
+    let b3 = b2 - (30.0 / 3.0 + 10.0);
+    assert!((tops[0] - 0.0).abs() < 1e-9 && (tops[1] - (b2 + 20.0)).abs() < 1e-9 && (tops[2] - (b3 + 10.0)).abs() < 1e-9, "{tops:?}");
+}

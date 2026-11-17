@@ -45,7 +45,7 @@ pub use table::{
     set_font_map, set_provider, set_search_path,
 };
 pub use text::ShxText;
-pub(crate) use text::{shape, width};
+pub(crate) use text::{extent, shape, width};
 
 /// A shape's program run into polylines, in font units (pen starts at the origin).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -54,6 +54,12 @@ pub struct ShxGlyph {
     pub strokes: Vec<Vec<Vec2>>,
     /// Where the pen ends: the advance to the next character.
     pub advance: Vec2,
+    /// The box (least and greatest corner) AutoCAD lays text out by, in font units (`None`:
+    /// nothing drawn): see `craft_shx::program::Glyph::extent`.
+    pub extent: Option<(Vec2, Vec2)>,
+    /// The points `extent` is the box of, which slanted text is measured by (see
+    /// `craft_shx::program::Glyph::extent_points`).
+    pub extent_points: Vec<Vec2>,
 }
 
 /// Glyphs cached per font, keyed by (shape, vertical).

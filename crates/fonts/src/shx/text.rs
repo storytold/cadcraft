@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use cadcraft_geom::Vec2;
+use cadcraft_geom::{Bounds2, Vec2};
 use encoding_rs::Encoding;
 
 use super::{ShxFont, ShxKind};
@@ -190,6 +190,42 @@ pub(crate) fn shape(t: &ShxText, s: &str, height: f64, width_factor: f64, obliqu
     }
     out.strokes.extend(crate::decorations(&spans, h));
     out.width = if t.vertical { max_x.max(0.0) } else { pen.x.max(0.0) };
+    out
+}
+
+/// The box of one line as AutoCAD lays text out by it, from the pen's start on the baseline:
+/// each shape's [`super::ShxGlyph::extent_points`] at its pen position, slanted by `oblique`,
+/// characters the stroke font draws by their strokes. `None` when nothing is drawn.
+pub(crate) fn extent(t: &ShxText, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Bounds2> {
+    if t.vertical || bidi::has_rtl(s) {
+        return crate::ink_extent(&shape(t, s, height, width_factor, oblique));
+    }
+    let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
+    let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
+    let shear = finite_or(oblique, 0.0).tan().clamp(-10.0, 10.0);
+    let mut pen = 0.0;
+    let mut out: Option<Bounds2> = None;
+    let mut reach = |b: Bounds2| out = Some(out.map_or(b, |o| o.union(&b)));
+    for (c, _, _) in crate::decode_controls(s) {
+        if bidi::is_format_control(c) {
+            continue;
+        }
+        match pick(t, c).and_then(|(f, n)| Some((f, f.glyph(n, false)?))) {
+            Some((f, g)) => {
+                let k = h / f.units_per_height();
+                if !g.extent_points.is_empty() {
+                    reach(Bounds2::from_points(g.extent_points.iter().map(|p| Vec2::new(pen + p.x * k * wf + p.y * k * shear, p.y * k))));
+                }
+                pen += g.advance.x * k * wf;
+            }
+            None => {
+                if let Some(b) = crate::ink_extent(&crate::shape_stroke(&c.to_string(), h, wf, oblique)) {
+                    reach(Bounds2::new(b.min + Vec2::new(pen, 0.0), b.max + Vec2::new(pen, 0.0)));
+                }
+                pen += crate::stroke_advance(c, h, wf);
+            }
+        }
+    }
     out
 }
 

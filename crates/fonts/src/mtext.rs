@@ -2,7 +2,7 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use crate::{Shaped, TextFont, shape_line, text_width};
+use crate::{Shaped, TextFont, shape_line, text_extent, text_width};
 
 pub(crate) mod para;
 
@@ -443,6 +443,117 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
     }
 }
 
+/// The box AutoCAD measures a segment by, from its left end on the baseline ([`text_extent`],
+/// slanted by an oblique angle); a stacked fraction by its width and the text height.
+fn seg_extent(seg: &Seg, f: &Fmt) -> Option<Bounds2> {
+    match seg {
+        Seg::Text(t) => text_extent(&f.font, t, f.height, f.wf, f.oblique),
+        Seg::Stack(..) => {
+            let k = f.oblique.tan();
+            let k = if k.is_finite() { k } else { 0.0 };
+            let b = Bounds2::new(Vec2::ZERO, Vec2::new(seg_width(seg, f), f.height));
+            Some(Bounds2::from_points(b.corners().map(|p| Vec2::new(p.x + p.y * k, p.y))))
+        }
+    }
+}
+
+/// Union of two optional boxes.
+fn union(a: Option<Bounds2>, b: Option<Bounds2>) -> Option<Bounds2> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.union(&b)),
+        (a, None) => a,
+        (None, b) => b,
+    }
+}
+
+/// `b` moved right by `dx`.
+fn shifted(b: Bounds2, dx: f64) -> Bounds2 {
+    Bounds2::new(b.min + Vec2::new(dx, 0.0), b.max + Vec2::new(dx, 0.0))
+}
+
+/// The box of a word's segments laid end to end from 0, each in its format.
+fn word_extent<'f>(segments: &[(Seg, usize)], fmt: impl Fn(usize) -> &'f Fmt) -> Option<Bounds2> {
+    let mut x = 0.0;
+    let mut out = None;
+    for (segment, format) in segments {
+        let f = fmt(*format);
+        out = union(out, seg_extent(segment, f).map(|b| shifted(b, x)));
+        x += seg_width(segment, f);
+    }
+    out
+}
+
+/// Whether two formats draw alike (AutoCAD merges runs that do into one fragment).
+fn same_format(a: &Fmt, b: &Fmt) -> bool {
+    let same_font = match (&a.font, &b.font) {
+        (TextFont::Stroke, TextFont::Stroke) => true,
+        (TextFont::Outline(x), TextFont::Outline(y)) => x == y,
+        (TextFont::Shx(x), TextFont::Shx(y)) => std::sync::Arc::ptr_eq(x, y),
+        _ => false,
+    };
+    same_font
+        && a.height.to_bits() == b.height.to_bits()
+        && a.wf.to_bits() == b.wf.to_bits()
+        && a.oblique.to_bits() == b.oblique.to_bits()
+        && a.color == b.color
+        && a.under == b.under
+        && a.over == b.over
+        && a.valign == b.valign
+}
+
+/// Whether spaces in formats `spaces` between a word ending in format `before` and one starting
+/// in `after` make a fragment of their own (formatted unlike both neighbours). AutoCAD then
+/// doesn't drop the line's leading side bearing: a line holding such a fragment, like one
+/// starting with spaces, is justified from its start (measured against AutoCAD; a run of
+/// spaces that shares the format of either word does not do this).
+fn lone_spaces<'f>(spaces: &[usize], before: usize, after: usize, fmt: impl Fn(usize) -> &'f Fmt) -> bool {
+    !spaces.is_empty() && spaces.iter().all(|&s| !same_format(fmt(s), fmt(before)) && !same_format(fmt(s), fmt(after)))
+}
+
+/// Whether a word that fits ends the line's room: AutoCAD breaks when the room the word needs
+/// reaches the column exactly, not only when it passes it.
+fn overflows(needed: f64, available: f64) -> bool {
+    needed > available - 1e-9
+}
+
+/// The total width of pending spaces, each in its format (AutoCAD keeps every space of a run).
+fn spaces_width<'f>(pending: &[usize], fmt: impl Fn(usize) -> &'f Fmt) -> f64 {
+    pending.iter().map(|&format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).sum()
+}
+
+/// How far the first line's baseline sits below the top of an MTEXT: its height, or as much
+/// as its drawing reaches above the baseline (accents over capitals), as AutoCAD keeps the
+/// drawing inside the top.
+fn first_drop(height: f64, ext: Option<Bounds2>) -> f64 {
+    ext.map_or(height, |b| height.max(b.max.y))
+}
+
+/// The baseline-to-baseline step from a line of largest text height `prev_h` to the next line
+/// (largest text height `next_h`, drawing `next_ext`) of an MTEXT of height `h`, at AutoCAD's
+/// "at least" spacing with factor 1: a third of `prev_h` and `h` below the baseline, then the
+/// next line's height or its drawing's top if that is higher. Lines all of height `h` step 5/3
+/// `h`; a line twice as high steps `h` more before it and `h`/3 more after it, and a line whose
+/// accents rise above its height steps their excess more before it (measured against AutoCAD
+/// on SHX and TrueType fonts).
+fn line_step(h: f64, prev_h: f64, next_h: f64, next_ext: Option<Bounds2>) -> f64 {
+    (prev_h + h) / 3.0 + first_drop(next_h, next_ext)
+}
+
+/// How far the last line's drawing reaches below its baseline (descenders), which AutoCAD
+/// counts into the MTEXT's height for middle and bottom attachment.
+fn last_descent(ext: Option<Bounds2>) -> f64 {
+    ext.map_or(0.0, |b| (-b.min.y).max(0.0))
+}
+
+/// How much room a word needs at the end of a line, as AutoCAD wraps MTEXT: the width of its
+/// extent, not of its advances. AutoCAD keeps a word on the line when the pen position where the
+/// word starts plus that width fits the column (measured against AutoCAD on SHX and TrueType
+/// fonts: the word's own leading side bearing and the trailing one of its last character don't
+/// count, while the advances before it, spaces included, do).
+fn room_needed(extent: Option<Bounds2>, advance: f64) -> f64 {
+    extent.map_or(advance, |b| b.width())
+}
+
 /// Shape a segment with its left end at `x` on the baseline.
 fn seg_shape(seg: &Seg, format: &Fmt, origin_x: f64) -> Shaped {
     let height = format.height;
@@ -526,6 +637,14 @@ struct Line {
     chars: usize,
     /// Index of the paragraph the line belongs to.
     para: usize,
+    /// What the line draws, from its start ([`seg_extent`] of its words): the line is justified
+    /// by it, as AutoCAD justifies MTEXT lines by their drawn extent rather than their advances.
+    ext: Option<Bounds2>,
+    /// The line holds spaces formatted unlike both neighbouring words ([`lone_spaces`]): AutoCAD
+    /// justifies it by its drawing's width but draws it from its start, without dropping the
+    /// first character's side bearing. (A line starting with spaces is justified from its start
+    /// to the end of its drawing instead: `ext` then reaches back to 0.)
+    keep_start: bool,
 }
 
 impl Line {
@@ -537,6 +656,8 @@ impl Line {
         if !crate::bidi::has_rtl(&self.text) {
             return;
         }
+        // The extent was measured in logical order.
+        self.ext = None;
         let levels = crate::bidi::char_levels(&self.text, base);
         let item_levels: Vec<u8> = self.items.iter().map(|it| levels.get(it.at).copied().unwrap_or(0)).collect();
         let order = crate::bidi::reorder(&item_levels);
@@ -563,7 +684,12 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
     let fmt = |index: usize| fmts.get(index).unwrap_or(base);
     let mut lines = Vec::new();
     let mut line = Line::default();
-    let mut pending_space = None;
+    // Spaces since the last word, each with its format.
+    let mut pending: Vec<usize> = Vec::new();
+    // At the start of a paragraph, where AutoCAD keeps leading spaces (a wrapped line drops them).
+    let mut para_start = true;
+    // Format of the last segment placed on the current line.
+    let mut prev_word_fmt: Option<usize> = None;
     let mut last_fmt = 0usize;
     let mut paragraph = 0usize;
     let finish = |lines: &mut Vec<Line>, line: &mut Line, format: &Fmt, paragraph: usize| {
@@ -577,15 +703,16 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
     for atom in atoms {
         match atom {
             Atom::Space(format) => {
-                if !line.items.is_empty() || pending_space.is_some() {
-                    pending_space = Some(*format);
+                if !line.items.is_empty() || para_start {
+                    pending.push(*format);
                 }
                 last_fmt = *format;
             }
             Atom::Para(format) => {
-                pending_space = None;
+                pending.clear();
                 finish(&mut lines, &mut line, fmt(*format), paragraph);
                 paragraph += 1;
+                para_start = true;
                 last_fmt = *format;
             }
             Atom::Word(word) => {
@@ -601,19 +728,38 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 };
                 for segments in pieces {
                     let word_width = word_width(segments);
-                    let space_width = pending_space.map_or(0.0, |format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf));
-                    if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                    let word_ext = word_extent(segments, fmt);
+                    let space_width = spaces_width(&pending, fmt);
+                    // Leading spaces count as the line's first word: AutoCAD wraps a word that
+                    // doesn't fit after them and leaves the spaces on a line of their own.
+                    if width > 0.0
+                        && (!line.items.is_empty() || !pending.is_empty())
+                        && overflows(line.width + space_width + room_needed(word_ext, word_width), width)
+                    {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
-                    } else if !line.items.is_empty() || pending_space.is_some() {
-                        if let Some(format) = pending_space {
-                            let at = line.chars;
-                            line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
-                            line.text.push(' ');
-                            line.chars += 1;
-                        }
+                        pending.clear();
+                    }
+                    // A line is justified by its drawing (its first character's side bearing
+                    // dropped), unless it starts with spaces or holds spaces formatted unlike
+                    // both neighbouring words: then AutoCAD justifies it from its start.
+                    let lone = !line.items.is_empty()
+                        && prev_word_fmt.zip(segments.first()).is_some_and(|(before, (_, after))| lone_spaces(&pending, before, *after, fmt));
+                    if line.items.is_empty() && !pending.is_empty() {
+                        line.ext = union(line.ext, Some(Bounds2::new(Vec2::ZERO, Vec2::ZERO)));
+                    } else if lone {
+                        line.keep_start = true;
+                    }
+                    if let Some(&format) = pending.first() {
+                        let at = line.chars;
+                        line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
+                        line.text.push_str(&" ".repeat(pending.len()));
+                        line.chars += pending.len();
                         line.width += space_width;
                     }
-                    pending_space = None;
+                    pending.clear();
+                    para_start = false;
+                    let start = line.width;
+                    line.ext = union(line.ext, word_ext.map(|b| shifted(b, start)));
                     for (segment, format) in segments {
                         let segment_width = seg_width(segment, fmt(*format));
                         line.max_h = line.max_h.max(fmt(*format).height);
@@ -624,6 +770,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                         line.items.push(Item { seg: Some(segment.clone()), fmt: *format, x: line.width, w: segment_width, at });
                         line.width += segment_width;
                         last_fmt = *format;
+                        prev_word_fmt = Some(*format);
                     }
                 }
             }
@@ -670,18 +817,20 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     // Baselines below the top of the first line.
     let mut baselines = Vec::with_capacity(lines.len());
     let mut y = 0.0;
+    let mut prev_h = h;
     for (i, l) in lines.iter().enumerate() {
         let lh = if l.max_h > 0.0 { l.max_h } else { h };
         y -= if i == 0 {
-            lh
+            first_drop(lh, l.ext)
         } else if p.line_spacing_exact {
             h * 5.0 / 3.0 * ls
         } else {
-            lh * 5.0 / 3.0 * ls
+            line_step(h, prev_h, lh, l.ext) * ls
         };
+        prev_h = lh;
         baselines.push(y);
     }
-    let block_h = -y;
+    let block_h = -y + last_descent(lines.last().and_then(|l| l.ext));
     let block_w = if width > 0.0 { width } else { lines.iter().map(|l| l.width).fold(0.0, f64::max) };
     let col = (p.attach.clamp(1, 9) - 1) % 3;
     let row = (p.attach.clamp(1, 9) - 1) / 3;
@@ -695,10 +844,17 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
     let mut allowance = Allowance::new();
     for (l, base_y) in lines.iter().zip(baselines) {
+        // Justified by what the line draws: its ink starts at the insertion point (left), is
+        // centred on it, or ends at it (right), as AutoCAD places MTEXT lines.
+        let (lo, hi) = match l.ext {
+            Some(b) if l.keep_start => (0.0, b.width()),
+            Some(b) => (b.min.x, b.max.x),
+            None => (0.0, l.width),
+        };
         let x0 = match col {
-            0 => 0.0,
-            1 => -l.width / 2.0,
-            _ => -l.width,
+            0 => -lo,
+            1 => -(lo + hi) / 2.0,
+            _ => -hi,
         };
         for it in &l.items {
             let Some(sg) = &it.seg else { continue };
