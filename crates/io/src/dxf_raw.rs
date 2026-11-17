@@ -685,11 +685,12 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
 const MAX_CONSTRAINT_NODES: usize = 100_000;
 
 /// Put the status of every node of the kept 2D constraint groups (`ACDBASSOC2DCONSTRAINTGROUP`)
-/// where a DXF of the written version has it: AutoCAD 2013 and later (`modern`) write it after
-/// the node's connections, earlier versions right after its id. The groups are kept as read, so a
-/// 2013+ drawing written as an older DXF (the DWG bridge's R2000 DXF) had them in the wrong order,
-/// and the bridge read every node's status from somewhere else: AutoCAD refused the DWG ("Error
-/// Decrypting Data"). A group whose nodes can't all be found is left as it is.
+/// where a reader of the version the text is read as expects it: AutoCAD 2013 and later
+/// (`modern`) write it after the node's connections, earlier versions right after its id. The
+/// groups are kept as read, so a 2013+ drawing written in an older version's form had them in the
+/// wrong order, and its reader took every node's status from somewhere else: AutoCAD refused the
+/// DWG the bridge made from it ("Error Decrypting Data"). A group whose nodes can't all be found
+/// is left as it is.
 pub(crate) fn constraint_node_order(tags: &mut [Tag], modern: bool) {
     let mut i = 0;
     while i < tags.len() {
