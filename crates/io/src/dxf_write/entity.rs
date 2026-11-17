@@ -356,7 +356,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
 fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Insert(i) = &e.kind {
         w.s(0, "INSERT");
-        common(w, e, owner, paper, "AcDbBlockReference");
+        // A reference repeated in rows or columns (MINSERT, groups 70/71) is an AcDbMInsertBlock;
+        // readers that go by the marker draw only the first copy of an AcDbBlockReference.
+        let array = i.cols > 1 || i.rows > 1;
+        common(w, e, owner, paper, if array { "AcDbMInsertBlock" } else { "AcDbBlockReference" });
         if !i.attribs.is_empty() {
             w.i(66, 1);
         }
@@ -366,7 +369,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
         w.f(42, i.scale.y);
         w.f(43, i.scale.z);
         w.f(50, i.rotation.to_degrees());
-        if i.cols > 1 || i.rows > 1 {
+        if array {
             w.i(70, i64::from(i.cols));
             w.i(71, i64::from(i.rows));
             w.f(44, i.col_spacing);
@@ -708,8 +711,15 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // Within one turn, so a hostile twist (from JSON or MCP) writes a sane angle.
+        let twist = cadcraft_geom::norm_angle(v.view_twist());
+        // The view centre in display coordinates (turned by the twist).
+        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, twist));
         w.f(45, v.view_height);
+        // View twist (degrees), when the viewport has one.
+        if twist != 0.0 {
+            w.f(51, twist.to_degrees());
+        }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());

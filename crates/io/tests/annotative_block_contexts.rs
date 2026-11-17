@@ -420,6 +420,7 @@ fn kept_contexts(d: &Drawing) -> Vec<(f64, f64)> {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+#[ignore = "needs the DWG bridge's annotation context conversion (storytold/craft-libs#2005) in the pinned craft-dwg"]
 fn a_reference_s_contexts_survive_dwg() {
     // Turned 30° first, so the rotation's unit shows (DXF degrees, DWG radians).
     let mut d = read();

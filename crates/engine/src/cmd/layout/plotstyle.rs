@@ -303,11 +303,9 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let meta = std::fs::metadata(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
-                        if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
-                            return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
-                        }
-                        std::fs::read_to_string(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
+                        let bytes = crate::capped_read::read_capped(std::path::Path::new(_path), cadcraft_doc::MAX_TABLE_FILE)
+                            .map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        String::from_utf8(bytes).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
                     }
                     #[cfg(target_arch = "wasm32")]
                     return Err(bad(cmd, "files can't be read here: pass `text`"));
