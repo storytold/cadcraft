@@ -513,7 +513,7 @@ mod tests {
     /// The red-looking pixels of a plotted PNG, and its size.
     fn red_pixels(png: &[u8]) -> (usize, u32, u32) {
         let img = cadcraft_io::raster::decode(png).unwrap();
-        let red = img.rgba().chunks_exact(4).filter(|p| p[0] > 180 && p[1] < 90 && p[2] < 90).count();
+        let red = img.rgba().as_chunks::<4>().0.iter().filter(|p| p[0] > 180 && p[1] < 90 && p[2] < 90).count();
         (red, img.width(), img.height())
     }
 

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use cadcraft_doc::{Drawing, Space};
 use cadcraft_engine::Session;
-use cadcraft_engine::cmd::file::{IoHooks, set_io};
+use cadcraft_engine::cmd::file::set_io;
 use cadcraft_ui_egui::{CadApp, Services};
 use egui::{Event, Modifiers, MouseWheelUnit, vec2};
 use egui_kittest::Harness;
@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 static PLOTS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 
 /// A plot hook that records the options it is given.
-fn recording_plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn recording_plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>, String> {
     if let Ok(mut plots) = PLOTS.lock() {
         plots.push(opts.clone());
     }
@@ -31,7 +31,7 @@ fn plots() -> Vec<Value> {
 #[test]
 fn zooming_in_draws_the_part_in_view_at_the_screens_resolution() {
     let _preview = crate::PLOT_PREVIEW.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    set_io(IoHooks { read: |_, _| Err("no".into()), write: |_, _| Err("no".into()), plot: Some(recording_plot) });
+    set_io(crate::shared_io());
     let mut app = CadApp::new(Session::default(), Services::default());
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;
