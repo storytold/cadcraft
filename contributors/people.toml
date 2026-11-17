@@ -119,5 +119,8 @@ sync_github_name = true
 [people.helenkwok]
 real_name = "Helen Kwok"
 
+[people.V1dalTheAbidal]
+sync_github_name = true
+
 [people.ashokram-si]
 real_name = "Ashok Ram"
