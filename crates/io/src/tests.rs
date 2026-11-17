@@ -3386,7 +3386,7 @@ fn drawing_without_insunits_stays_unitless() {
 /// the nodes are left as they are; nothing panics or loops for long.
 #[test]
 fn hostile_constraint_groups_never_panic() {
-    use cadcraft_dxf::Tag;
+    use craft_dxf::Tag;
     let group = |rest: &[(i32, &str)]| {
         let mut t = vec![Tag::s(0, "ACDBASSOC2DCONSTRAINTGROUP"), Tag::s(100, "AcDbAssoc2dConstraintGroup"), Tag::s(360, "0"), Tag::s(90, "0")];
         t.extend(rest.iter().map(|(c, v)| Tag::s(*c, *v)));
