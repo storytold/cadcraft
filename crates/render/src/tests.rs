@@ -1165,3 +1165,55 @@ fn without_linetypes_every_line_is_drawn_whole() {
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
 }
+
+/// A broken table whose parts, with their repeated labels, together hold more cells than a table may
+/// lay out is drawn as its outline, though the table's own cells are within the limit.
+#[test]
+fn broken_table_cells_count_across_its_parts() {
+    let d = Drawing::new_imperial();
+    let t = cadcraft_doc::Table {
+        col_widths: vec![1.0; 600],
+        row_heights: vec![1.0; 1000],
+        title: true,
+        header: true,
+        breaks: Some(cadcraft_doc::TableBreak { enabled: true, height: 3.0, ..Default::default() }),
+        ..Default::default()
+    };
+    assert!(t.parts().len() > 500 && 1000 * 600 <= crate::MAX_LAYOUT_CELLS);
+    let g = crate::table_geometry(&d, &t);
+    let parts = t.parts();
+    assert_eq!((g.lines.len(), g.texts.len(), g.fills.len()), (4 * parts.len(), 0, 0));
+    // Each part's box starts at its own origin.
+    let top = |i: usize| g.lines[4 * i].a;
+    assert!((0..parts.len()).all(|i| top(i) == parts[i].origin));
+}
+
+#[test]
+fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
+    let ring = |rot: usize, rev: bool| {
+        let mut v: Vec<PolyVertex> = [(0.0, 0.0, 0.5), (4.0, 0.0, -0.25), (4.0, 3.0, 0.0), (0.0, 3.0, 0.1)]
+            .map(|(x, y, bulge)| PolyVertex { bulge, ..PolyVertex::new(Vec2::new(x, y)) })
+            .to_vec();
+        if rev {
+            // The same boundary wound the other way: bulges move to the other end of their edge and flip.
+            let b: Vec<f64> = v.iter().map(|q| q.bulge).collect();
+            v.reverse();
+            let n = v.len();
+            for (j, q) in v.iter_mut().enumerate() {
+                q.bulge = -b[(n - 1 - j + n - 1) % n];
+            }
+        }
+        v.rotate_left(rot);
+        HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+    };
+    let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
+    h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
+    assert_eq!(loops_of(&h).len(), 1);
+    // A different boundary is kept.
+    h.loops.push(HatchLoop {
+        vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
+        outer: true,
+        sources: Vec::new(),
+    });
+    assert_eq!(loops_of(&h).len(), 2);
+}

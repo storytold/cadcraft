@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use cadcraft_doc::{Block, ClipBoundary, Common, Drawing, Entity, EntityKind, Handle, Insert, Line, Space};
-use cadcraft_dxf::Version;
 use cadcraft_geom::{Vec2, Vec3};
 use cadcraft_io::{SaveOptions, read, write_with};
+use craft_dxf::Version;
 
 fn drawing() -> Drawing {
     let mut d = Drawing::new_metric();

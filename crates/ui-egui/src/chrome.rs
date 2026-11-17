@@ -74,7 +74,7 @@ const QAT: &[(Icon, &str, &str, Option<&str>)] = &[
 const QAT_SIZE: f32 = 22.0;
 
 /// Draw the quick access tool bar from `x` on the row centred at `cy`; returns its right edge.
-fn quick_access(ui: &mut egui::Ui, x: f32, cy: f32, clicked: &mut Option<&'static str>) -> f32 {
+fn quick_access(ui: &mut egui::Ui, session: &cadcraft_engine::Session, x: f32, cy: f32, clicked: &mut Option<&'static str>) -> f32 {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
     let mut x = x;
@@ -83,17 +83,19 @@ fn quick_access(ui: &mut egui::Ui, x: f32, cy: f32, clicked: &mut Option<&'stati
             x += 8.0;
         }
         let br = Rect::from_min_size(pos2(x, cy - QAT_SIZE / 2.0), vec2(QAT_SIZE, QAT_SIZE));
-        let resp = ui.interact(br, ui.scope_id().with(("qat", *cmd)), Sense::click());
+        let enabled = cadcraft_engine::find_command(cmd).is_some_and(|command| (command.enabled)(session).is_ok());
+        let resp = ui.add_enabled_ui(enabled, |ui| ui.interact(br, ui.scope_id().with(("qat", *cmd)), Sense::click())).inner;
         if resp.hovered() {
             ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
         }
-        icons::paint(ui.painter(), br.shrink(3.0), *icon, false);
+        icons::paint(ui.painter(), br.shrink(3.0), *icon, !enabled);
         let tip = match shortcut {
             Some(sc) => format!("{} ({})", crate::i18n::t(label), crate::menus::shortcut_label(sc, mac)),
             None => crate::i18n::t(label).to_string(),
         };
         icons::describe_control(ui, &resp, &tip, None, false);
-        if resp.on_hover_text(tip).clicked() {
+        let resp = if enabled { resp.on_hover_text(tip) } else { resp.on_disabled_hover_text(tip) };
+        if resp.clicked() && enabled {
             *clicked = Some(cmd);
         }
         x += QAT_SIZE + 4.0;
@@ -112,7 +114,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
         let r = ui.max_rect();
         let mut qat_clicked = None;
         if qat_h > 0.0 {
-            quick_access(ui, r.left() + 10.0, r.top() + qat_h / 2.0, &mut qat_clicked);
+            quick_access(ui, &app.session, r.left() + 10.0, r.top() + qat_h / 2.0, &mut qat_clicked);
         }
         let r = Rect::from_min_max(pos2(r.left(), r.top() + qat_h), r.max);
         if title_h > 0.0 {
@@ -130,7 +132,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
             // The Windows layout keeps its quick access tool bar in the title row.
             if app.ui.show_ribbon {
-                quick_access(ui, r.left() + MAC_CONTENT_LEFT + 4.0, r.top() + title_h / 2.0, &mut qat_clicked);
+                quick_access(ui, &app.session, r.left() + MAC_CONTENT_LEFT + 4.0, r.top() + title_h / 2.0, &mut qat_clicked);
             }
         }
         if let Some(c) = qat_clicked {
@@ -668,6 +670,34 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn quick_access_exposes_document_availability_to_assistive_technology() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let mut h = Harness::builder().with_size(vec2(400.0, 80.0)).build_ui_state(
+            |ui, (app, clicked): &mut (CadApp, Option<&'static str>)| {
+                quick_access(ui, &app.session, 10.0, 20.0, clicked);
+            },
+            (app, None),
+        );
+        h.run_steps(2);
+        assert!(h.get_by_label("Save As").accesskit_node().is_disabled());
+        let at = h.get_by_label("Save As").rect().center();
+        h.event(egui::Event::PointerMoved(at));
+        h.run_steps(1);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(2);
+        assert_eq!(h.state().1, None, "disabled Save As must not dispatch");
+        h.state_mut().0.run("new", serde_json::json!({})).unwrap();
+        h.run_steps(2);
+        assert!(!h.get_by_label("Save As").accesskit_node().is_disabled());
+        h.get_by_label("Save As").click();
+        h.run_steps(2);
+        assert_eq!(h.state().1, Some("saveas"));
+    }
     #[test]
     fn mac_title_row_centres_and_clears_the_traffic_lights() {
         // The lights are centred in the row, and content keeps the same gap after them.

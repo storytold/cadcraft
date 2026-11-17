@@ -775,7 +775,13 @@ fn paint_icon(p: &egui::Painter, r: Rect, cmd: &Cmd, dim: bool) {
 
 fn tooltip(cmd: &Cmd, enabled: bool) -> String {
     let label = crate::i18n::ribbon(cmd.label);
-    if enabled { format!("{label} ({})", cmd.id.to_uppercase()) } else { format!("{label} — {}", crate::tl!("not available yet")) }
+    if !enabled {
+        format!("{label} — {}", crate::tl!("not available yet"))
+    } else if cmd.id.contains('.') {
+        label.to_string()
+    } else {
+        format!("{label} ({})", cmd.id.to_uppercase())
+    }
 }
 
 /// egui hides `on_hover_text` on a disabled widget, so a greyed-out command needs `on_disabled_hover_text`.
@@ -1194,6 +1200,13 @@ pub fn apply_mac_layout(app: &mut CadApp) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tooltips_show_typed_commands_but_not_internal_ui_ids() {
+        assert_eq!(tooltip(&n("line", "Line"), true), "Line (LINE)");
+        assert_eq!(tooltip(&n("ui.panel.properties", "Properties"), true), "Properties");
+        assert_eq!(tooltip(&n("circle.3p", "Circle"), true), "Circle");
+        assert!(tooltip(&n("missing", "Missing"), false).contains("not available yet"));
+    }
     #[test]
     fn panels_collapse_from_the_right() {
         let full = [100.0, 100.0, 100.0];

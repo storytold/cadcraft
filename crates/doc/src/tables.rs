@@ -486,16 +486,24 @@ impl DimStyle {
 
     /// Set fields from a JSON object of field or DIM* variable names (numbers, booleans as
     /// 0/1, colours as ACI numbers or names). Returns the names that were not recognised or
-    /// had unusable values.
+    /// had unusable values. When several spellings name one field, the last one wins and the
+    /// superseded ones are not validated.
     pub fn apply_fields(&mut self, src: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
         use serde_json::Value;
         let mut rejected = Vec::new();
         let Ok(mut cur) = serde_json::to_value(&*self) else { return src.keys().cloned().collect() };
+        // Spellings of one field (`DIMPOST`, `dimpost`, `textPrefix`…): only the last is applied, so
+        // the style is checked once per field, not once per spelling (each check copies its strings).
+        let last_spelling: std::collections::HashMap<&str, &String> =
+            src.keys().filter_map(|k| DimStyle::field_name(k).filter(|f| *f != "name").map(|f| (f, k))).collect();
         for (k, v) in src {
             let Some(field) = DimStyle::field_name(k).filter(|f| *f != "name") else {
                 rejected.push(k.clone());
                 continue;
             };
+            if last_spelling.get(field) != Some(&k) {
+                continue;
+            }
             let Some(obj) = cur.as_object_mut() else { break };
             let Some(old) = obj.get(field).cloned() else {
                 rejected.push(k.clone());
