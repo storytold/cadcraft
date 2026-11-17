@@ -38,6 +38,24 @@ fn plot_layout_flags_are_saved_as_read() {
 }
 
 #[test]
+fn an_unchanged_standard_scale_keeps_its_flag_and_choice() {
+    // Flags 176 with standard scale 25 (1:50): the scale is 0.02, not 1:1, and still standard.
+    let mut d = drawing(176);
+    let page = &mut d.layouts.last_mut().unwrap().page;
+    page.scale = 0.02;
+    page.file_standard_scale = Some((25, 0.02));
+    for name in ["sheet.dxf", "sheet.dwg"] {
+        let back = read(&write(&d, name).unwrap(), name).unwrap();
+        let page = &back.layouts.iter().find(|l| l.name == "SHEET").unwrap().page;
+        assert_eq!(page.file_plot_flags, Some(176), "{name}");
+        assert_eq!(page.file_standard_scale, Some((25, 0.02)), "{name}");
+    }
+    // A scale changed after reading is a custom one: 16 is cleared and the choice dropped.
+    d.layouts.last_mut().unwrap().page.scale = 0.05;
+    assert_eq!(flags_after_save(&d, "sheet.dxf"), Some(160));
+}
+
+#[test]
 fn the_page_still_decides_the_bits_cadcraft_models() {
     // Lineweights turned on and a custom scale chosen after reading flags 16: 128 is set and the
     // standard scale bit cleared, the rest kept.

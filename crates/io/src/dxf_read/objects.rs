@@ -280,6 +280,13 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     if let Some(s) = pos(ratio).or_else(|| pos(t.f(147))) {
         p.scale = s;
     }
+    // A standard scale (flag 16, group 75 above 0: 0 is scaled to fit, the DXF Reference lists
+    // 1 to 32), kept with the scale it stands for so a save can tell it was not changed.
+    if t.i(70).is_some_and(|f| f & 16 != 0)
+        && let Some(code) = t.i(75).filter(|c| (1..=32).contains(c))
+    {
+        p.file_standard_scale = Some((code, p.scale));
+    }
     p.plot_area = match t.i(74) {
         Some(0) => "display",
         Some(1) => "extents",

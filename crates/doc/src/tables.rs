@@ -824,6 +824,12 @@ pub struct PageSetup {
     /// made in CADCraft.
     #[serde(skip)]
     pub file_plot_flags: Option<i64>,
+    /// The standard scale the file chose (DXF group 75, such as 25 for 1:50) and the plot scale it
+    /// was read with. While the scale is unchanged, saving keeps that choice and the standard scale
+    /// flag instead of writing the scale as a custom one; `None` for a custom scale, scaled to
+    /// fit, or a page setup made in CADCraft.
+    #[serde(skip)]
+    pub file_standard_scale: Option<(i64, f64)>,
 }
 
 impl Default for PageSetup {
@@ -848,6 +854,7 @@ impl Default for PageSetup {
             file_paper: None,
             image_origin: None,
             file_plot_flags: None,
+            file_standard_scale: None,
         }
     }
 }
