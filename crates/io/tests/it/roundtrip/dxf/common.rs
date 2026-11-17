@@ -8,9 +8,9 @@
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Common, Drawing, EntityKind, Layer, Lineweight, Transparency};
-use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::Vec3;
 use cadcraft_io::{SaveOptions, Version, read, write_with};
+use craft_dxf::{Tag, records, sections};
 
 fn fixture(properties: &str) -> Drawing {
     let records = [
@@ -45,7 +45,7 @@ fn output(common: &Common, version: Version, binary: bool) -> Vec<(String, Vec<T
         drawing.model.modify(handle, |e| e.common = common.clone());
     }
     let bytes = write_with(&drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
-    let tags = cadcraft_dxf::parse(&bytes).unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
     let sections = sections(&tags);
     let entities = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
     assert_eq!(entities.iter().map(|(kind, _)| kind.as_str()).collect::<Vec<_>>(), ["LINE", "CIRCLE", "TEXT"]);

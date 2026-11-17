@@ -105,6 +105,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "dialogs",
         "hatchdlg",
         "aliasdlg",
+        "keys",
         "mtext_editor",
         "layers",
         "bedit",
@@ -114,6 +115,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "vpscale",
         "options/dialog",
         "finddlg",
+        "textdlg",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
@@ -159,13 +161,25 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
 
 /// Every `.rs` file under `dir`, at any depth, so code split into submodules stays scanned.
 fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    if !std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.file_type().is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-    paths.sort();
-    for path in paths {
-        if path.is_dir() {
+    // `file_type` doesn't follow links, so a symlink (a directory alias or a file) is skipped,
+    // not walked again as a new subtree.
+    // An unreadable entry must fail the scan, not silently shrink the translation report.
+    let mut paths: Vec<_> = entries
+        .map(|e| {
+            let e = e.expect("read module directory entry");
+            let kind = e.file_type().expect("read module entry type");
+            (e.path(), kind)
+        })
+        .collect();
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in paths {
+        if kind.is_dir() {
             module_files(&path, files);
-        } else if path.extension().is_some_and(|x| x == "rs") {
+        } else if kind.is_file() && path.extension().is_some_and(|x| x == "rs") {
             files.push(path);
         }
     }
@@ -181,12 +195,20 @@ fn assert_primary_locale_aliases() {
     for (tag, code) in [("ru", "ru"), ("ru-RU", "ru"), ("ru_RU.UTF-8", "ru"), ("fr", "fr"), ("fr-FR", "fr"), ("fr_CA.UTF-8", "fr")] {
         assert_eq!(locale_language(tag), Some(code), "{tag}");
     }
+
+    for tag in ["ua", "ukulele", "xx-XX", "", "garbage", "💙"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
+    assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
 }
 
 fn assert_portuguese_and_spanish_aliases() {
     for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
     }
+
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
     }
@@ -203,6 +225,7 @@ fn assert_additional_locale_aliases() {
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -213,18 +236,19 @@ fn assert_additional_locale_aliases() {
 
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
-    let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
-    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish"];
+    let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
+    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
 }
 
 fn assert_auto_locale_precedence() {
-    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
-    let locales = vec!["pl-PL".into(), "uk-UA".into(), "en-US".into()];
+    let locales = vec!["nl-NL".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
@@ -247,7 +271,7 @@ fn assert_preference_resolution(preference: Preference) {
     // A chosen language wins over the system's; Auto takes the first system language there is.
     assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
     if preference != Preference::English {
-        assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), preference.code().into(), "en-US".into()]), preference.code());
+        assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), preference.code().into(), "en-US".into()]), preference.code());
     }
 }
 
@@ -264,6 +288,8 @@ fn assert_saved_preference_persistence(preference: Preference) {
 #[test]
 fn locale_and_saved_preference_resolution() {
     assert_primary_locale_aliases();
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::parse("pl"), Some(Preference::Polish));
     assert_portuguese_and_spanish_aliases();
     assert_additional_locale_aliases();
     assert_unrecognized_locale_tags();
@@ -482,7 +508,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -578,6 +604,22 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
 }
 
+/// A Georgian noun stays singular after a numeral, so one count form; the Dimension menu and the
+/// dimension object take different words. Mtavruli (U+1C90–U+1CBF) is a display style, not upper
+/// case: never in the catalog.
+#[test]
+fn georgian_counts_menu_headings_and_no_mtavruli() {
+    with_language("ka", || {
+        for n in [0, 1, 2, 5, 21, u64::MAX] {
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} კომიტი"));
+        }
+        assert_eq!(menu("Dimension"), "ზომების დატანა");
+        assert_eq!(t("Dimension"), "ზომა");
+    });
+    let mtavruli: Vec<char> = include_str!("ka.tsv").chars().filter(|c| ('\u{1c90}'..='\u{1cbf}').contains(c)).collect();
+    assert!(mtavruli.is_empty(), "{mtavruli:?}");
+}
+
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.
 #[test]
 fn production_font_chain_covers_latin_and_shortcut_symbols() {
@@ -635,5 +677,13 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
     if !shown {
         assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
         assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
+    }
+}
+
+#[test]
+fn polish_plural_forms() {
+    for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
+    {
+        assert_eq!(plural_pl(n), expected, "n={n}");
     }
 }
