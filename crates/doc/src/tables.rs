@@ -565,14 +565,18 @@ impl DimStyle {
         st
     }
 
-    /// DIMTMOVE 0: the dimension line of a linear or aligned dimension follows text the user
-    /// placed (`text_mid`), keeping the DIMTAD / DIMTVP offset. Other kinds, text in its
-    /// default place and other DIMTMOVE values are left alone.
+    /// DIMTMOVE 0: the dimension line follows explicitly placed text. Linear and aligned
+    /// dimensions keep their DIMTAD / DIMTVP offset. A standard radius dimension keeps its
+    /// center and radius while its arrow follows the text around the circle.
     pub fn follow_text(&self, d: &mut crate::Dimension, dimscale: f64) {
         if self.text_move != 0 || !d.user_text_pos {
             return;
         }
         let dir = match d.kind {
+            crate::DimKind::Radius if d.marks.jogged.is_none() => {
+                Self::follow_radius_text(d);
+                return;
+            }
             crate::DimKind::Linear { rotation } => Vec2::from_angle(rotation),
             crate::DimKind::Aligned => (d.p14.xy() - d.p13.xy()).normalized(),
             _ => return,
@@ -601,6 +605,27 @@ impl DimStyle {
         if shift.is_finite() {
             d.defpt.x += shift.x;
             d.defpt.y += shift.y;
+        }
+    }
+
+    fn follow_radius_text(d: &mut crate::Dimension) {
+        let center = d.defpt.xy();
+        let radius = center.dist(d.p15.xy());
+        let dir = (d.text_mid.xy() - center).normalized();
+        if !radius.is_finite() || radius <= cadcraft_geom::EPS || !dir.is_finite() || dir == Vec2::ZERO {
+            return;
+        }
+        let tip = center + dir * radius;
+        if !tip.is_finite() || tip == center {
+            return;
+        }
+        d.p15 = tip.to3(d.p15.z);
+        for attachment in &mut d.assoc {
+            if attachment.point == "p15"
+                && let crate::AssocSnap::OnCircle { angle } = &mut attachment.snap
+            {
+                *angle = dir.angle();
+            }
         }
     }
 

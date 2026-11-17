@@ -121,3 +121,7 @@ real_name = "Helen Kwok"
 
 [people.V1dalTheAbidal]
 sync_github_name = true
+
+[people.absy360]
+display_name = "aBSy Studio"
+sync_github_name = false
