@@ -21,7 +21,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use cadcraft_doc::{AnnoScale, DimKind, Drawing, Entity, EntityKind, HAlign, Handle, MLeader, MTextColumnType, Text, VAlign};
-use cadcraft_dxf::{Section, Tag};
+use craft_dxf::{Section, Tag};
 use cadcraft_geom::Vec3;
 
 /// The context classes: (DXF record name, C++ class name).
