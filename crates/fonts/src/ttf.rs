@@ -1135,11 +1135,40 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
 
 /// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
 fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
-    let g = glyph(face, c);
+    let g = glyph(face, sign_for(Some(face), c));
     if g.mapped || c.is_whitespace() {
         return g;
     }
     fallback_glyph(c).unwrap_or(g)
+}
+
+/// Characters that stand in for a sign a font lacks, best first: the diameter sign of `%%c`
+/// (U+2300) is missing from many fonts (Arial among them), which have the empty-set sign
+/// (U+2205) or at least the letter Ø that it looks like.
+fn sign_substitutes(c: char) -> &'static [char] {
+    match c {
+        '\u{2300}' => &['\u{2205}', '\u{00D8}'],
+        '\u{2205}' => &['\u{2300}', '\u{00D8}'],
+        _ => &[],
+    }
+}
+
+/// The character that draws `c` in `face` (`None`: the stroke font, which has the signs): `c`
+/// when the face has it, else a stand-in the face has ([`sign_substitutes`]), so the sign keeps
+/// the text's font, else `c` when a fallback font has it, else a stand-in a fallback font has.
+pub(crate) fn sign_for(face: Option<&Face>, c: char) -> char {
+    let subs = sign_substitutes(c);
+    let Some(face) = face else { return c };
+    if subs.is_empty() || face.has_glyph(c) {
+        return c;
+    }
+    if let Some(s) = subs.iter().find(|s| face.has_glyph(**s)) {
+        return *s;
+    }
+    if fallback_for(c).is_some() {
+        return c;
+    }
+    subs.iter().copied().find(|s| fallback_for(*s).is_some()).unwrap_or(c)
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
@@ -1476,5 +1505,27 @@ mod scan_tests {
         assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
+    }
+
+    /// A font without the diameter sign of `%%c` draws a stand-in it has (the empty-set sign or
+    /// Ø), not its missing-glyph box (#2330 review: Arial).
+    #[test]
+    fn a_font_without_the_diameter_sign_draws_a_stand_in() {
+        // Any installed font that lacks U+2300 and has Ø; none on this machine: nothing to show.
+        let Some(face) = ["arial", "liberationsans", "dejavusans", "freesans", "carlito"]
+            .iter()
+            .filter_map(|n| find(n))
+            .find(|f| !f.has_glyph('\u{2300}') && f.has_glyph('\u{00D8}'))
+        else {
+            return;
+        };
+        let c = sign_for(Some(&face), '\u{2300}');
+        assert_ne!(c, '\u{2300}');
+        assert!(face.has_glyph(c), "the stand-in is the text's own font's");
+        assert!(glyph_or_fallback(&face, '\u{2300}').mapped);
+        // A sign the font has, and any other character, are left alone.
+        assert_eq!(sign_for(Some(&face), '\u{00B0}'), '\u{00B0}');
+        assert_eq!(sign_for(Some(&face), 'a'), 'a');
+        assert_eq!(sign_for(None, '\u{2300}'), '\u{2300}');
     }
 }

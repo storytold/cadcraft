@@ -83,7 +83,10 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
     let sc = h / stroke::CAP;
-    let cs: Vec<char> = chars.iter().map(|c| c.0).collect();
+    // A sign the font lacks (the diameter sign of `%%c`) is drawn by a stand-in it has; the
+    // directions come from the text as typed (the stand-in Ø is a letter, the sign is not).
+    let typed: Vec<char> = chars.iter().map(|c| c.0).collect();
+    let cs: Vec<char> = typed.iter().map(|c| ttf::sign_for(primary, *c)).collect();
     let flags = |i: usize| chars.get(i).map(|c| (c.1, c.2)).unwrap_or((false, false));
     let mut out = Shaped::default();
     let mut points_left = ttf::MAX_SHAPED_POINTS;
@@ -91,7 +94,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let mut x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
     let mut stroke_last = false;
-    for (run, rtl) in bidi::visual_runs(&cs, base_rtl) {
+    for (run, rtl) in bidi::visual_runs(&typed, base_rtl) {
         let mut pieces = itemize(&cs, run, primary);
         if rtl {
             pieces.reverse();
