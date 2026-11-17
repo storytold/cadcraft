@@ -509,6 +509,79 @@ fn a_stretch_moves_the_points_inside_its_frame_not_the_listed_ones() {
     assert_eq!(shapes(&d, r), want);
 }
 
+/// The outlines of the wipeouts of reference `r`'s block, in its order.
+fn wipeouts(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Wipeout(w) => Some(w.boundary.iter().map(|p| (p.x, p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A WIPEOUT `handle` of the door block whose outline is `points`: a 1 by 1 image at the origin,
+/// whose clip point (x - 0.5, 0.5 - y) the reader maps back to (x, y).
+fn wipeout(handle: &str, points: &[(f64, f64)]) -> String {
+    let mut s = format!(
+        "0 WIPEOUT\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbWipeout\n10 0\n20 0\n30 0\n11 1\n21 0\n31 0\n12 0\n22 1\n32 0\n13 1\n23 1\n71 2\n91 {}\n",
+        points.len()
+    );
+    for (x, y) in points {
+        s.push_str(&format!("14 {}\n24 {}\n", x - 0.5, 0.5 - y));
+    }
+    s
+}
+
+#[test]
+fn a_stretch_moves_the_points_of_a_wipeout_inside_its_frame() {
+    // The stretch (frame (34,-2)-(38,2)) also acts on wipeout 34, whose right side is inside the
+    // frame and whose outline repeats its first point to close, and on wipeout 35, all outside it.
+    // The list stored for 34 names its left side. AutoCAD 2024 moves the points of a wipeout that
+    // are inside the frame and leaves the others, whatever the list says: measured on its own
+    // stretched copies of a dynamic block from another program, where each of three copies moved
+    // the 324 points of the block's 521-point wipeout inside the frame by the distance's change and
+    // left the other 197. A wipeout all outside the frame moves whole, as a line or polyline does
+    // (not measured for a wipeout).
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0), (36.0, -1.0)];
+    let outside = [(0.0, 5.0), (4.0, 5.0), (4.0, 8.0)];
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+        .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 2\n331 30\n74 1\n94 1\n331 34\n74 2\n94 2\n94 3\n75 0")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}{}0 ENDBLK\n", wipeout("34", &crossing), wipeout("35", &outside)));
+    let (mut d, r) = door_reference(&src);
+    assert_eq!(wipeouts(&d, r), [crossing.to_vec(), outside.to_vec()]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let want = [vec![(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0), (30.0, -1.0)], vec![(-6.0, 5.0), (-2.0, 5.0), (-2.0, 8.0)]];
+    assert_eq!(wipeouts(&d, r), want);
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
+fn a_wipeout_moves_whole_when_the_frame_cant_be_tested() {
+    // The frame as a polygon of `n` points, as in the test of the stored lists. Up to 1000 points
+    // the wipeout's points inside it move; past that it moves whole, as before: the list stored for
+    // it (here its first point alone) isn't used, as a wipeout's list isn't measured.
+    let frame = |n: usize| {
+        let mut f = format!("72 {n}\n1011 34\n1021 -2\n1011 38\n1021 -2\n1011 38\n1021 2\n");
+        f.push_str(&"1011 34\n1021 2\n".repeat(n - 3));
+        f
+    };
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0)];
+    let cases = [(1000, [(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0)]), (1001, [(30.0, -1.0), (30.0, 1.0), (14.0, 1.0), (14.0, -1.0)])];
+    for (n, want) in cases {
+        let src = fixture()
+            .replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", &frame(n))
+            .replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 34\n1010 40")
+            .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 2\n331 30\n74 1\n94 1\n331 34\n74 1\n94 0\n75 0")
+            .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}0 ENDBLK\n", wipeout("34", &crossing)));
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(wipeouts(&d, r), [want.to_vec()], "{n} frame points");
+    }
+}
+
 #[test]
 fn a_zero_distance_multiplier_moves_as_one_without_its_angle_offset() {
     // A stretch written with multiplier 0 and angle offset 1 (radian), and group 280 = 1. AutoCAD

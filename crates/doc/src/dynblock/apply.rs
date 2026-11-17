@@ -388,13 +388,21 @@ fn delta(old: &Val, new: &Val, connection: &str) -> f64 {
     }
 }
 
-/// Move entity `e` by `v`: the listed vertices of a line or polyline, else the whole object.
+/// Move entity `e` by `v`: the listed vertices of a line, polyline or wipeout, else the whole
+/// object.
 fn move_entity(e: &mut Entity, vertices: Option<&[i32]>, v: Vec2) {
     match (&mut e.kind, vertices) {
         (EntityKind::LwPolyline(pl), Some(idx)) => {
             for i in idx {
                 if let Some(p) = usize::try_from(*i).ok().and_then(|i| pl.vertices.get_mut(i)) {
                     p.p += v;
+                }
+            }
+        }
+        (EntityKind::Wipeout(w), Some(idx)) => {
+            for i in idx {
+                if let Some(p) = usize::try_from(*i).ok().and_then(|i| w.boundary.get_mut(i)) {
+                    *p += v;
                 }
             }
         }
@@ -542,16 +550,19 @@ fn apply(
                 continue;
             }
             let Some(c) = copy_of(h) else { continue };
-            // The points of a line or polyline that move are those inside the frame where the
-            // dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
+            // The points of a line, polyline or wipeout that move are those inside the frame where
+            // the dynamic block has them, all of them when none is, as AutoCAD 2024 moves them. It
             // doesn't go by the vertex lists the action stores, which a block from another program
             // can get wrong. A polyline's vertices are in its own plane: in the block's when its
             // extrusion is exactly along z (a mirrored one is read flipped into it). Any tilt, however
             // small, moves them by as much as the elevation times the tilt, so a tilted one keeps the
-            // stored list.
+            // stored list. A wipeout's outline is read into the block's plane; when the frame can't
+            // be tested, it moves whole, as before (its stored list isn't measured).
             let idx = match def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
                 Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
                 Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => inside(frame, pl.vertices.iter().map(|v| v.p)),
+                Some((EntityKind::Wipeout(w), _)) if framed => inside(frame, w.boundary.iter().copied()),
+                Some((EntityKind::Wipeout(_), _)) => None,
                 _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
             };
             moves.entry(c).or_default().push((idx, v));
