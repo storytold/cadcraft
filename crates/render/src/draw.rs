@@ -252,35 +252,38 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let tris = fill::triangulate_evenodd(&[pts]);
                 b.tris(ctx, rgb, &tris);
             }
-            // 尺寸/引线箭头（类型 6 零长度点 = 尖端）：天正建筑标记 = 45° 斜线。
-            // 尖端在尺寸线端点外 300mm，斜线从尺寸线端点（尖端往回 300mm）向内侧 45°。
-            // 法线统一朝上（y 分量 ≥ 0），两端斜线关于尺寸线对称：右端左上、左端右上。
+            // 尺寸/引线箭头：天正建筑标记 = 45° 斜线。arrow_tips 已是「尺寸线端点」坐标，
+            // dx/dy 是尺寸线端点→箭头尖方向。斜线中点跨过端点（总长 200mm），方向
+            // (dx-dy, dx+dy)/√2：左侧左下、右侧右上（45° / 形，关于尺寸线镜像对称）。
             for (tx, ty, dx, dy) in &t.arrow_tips {
                 let (tx, ty, dx, dy) = (*tx, *ty, *dx, *dy);
-                let size = 300.0;
+                let half = 100.0;
                 let s = std::f64::consts::FRAC_1_SQRT_2;
-                let (ox, oy) = (tx - dx * size, ty - dy * size);
-                let (nx, ny) = {
-                    let (a, b) = (-dy, dx);
-                    if b < 0.0 { (-a, -b) } else { (a, b) }
-                };
-                let (sx, sy) = ((-dx + nx) * s, (-dy + ny) * s);
-                stroke(b, &[Vec2::new(ox, oy), Vec2::new(ox + sx * size, oy + sy * size)]);
+                let (sx, sy) = ((dx - dy) * s, (dx + dy) * s);
+                stroke(b, &[Vec2::new(tx - sx * half, ty - sy * half), Vec2::new(tx + sx * half, ty + sy * half)]);
             }
-            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 type 38 的方向余弦还原。
+            // 天正文字（标注/轴号/标高等，类型 38 图元）。旋转角从 direction 余弦还原：
+            // 横向文字（rotation≈0，轴号）居中于 position+height/2；竖向文字（rotation≈±90°，
+            // 尺寸标注）左对齐、position 即基线（偏离尺寸线的距离由 position 决定）。
             if b.opts.text {
                 for tx in &t.texts {
+                    let vertical = (tx.rotation.abs() - std::f64::consts::FRAC_PI_2).abs() < 0.01;
+                    let (align_pt, halign, valign) = if vertical {
+                        (None, cadcraft_doc::HAlign::Left, cadcraft_doc::VAlign::Middle)
+                    } else {
+                        (Some(cadcraft_geom::Vec3::new(tx.x + tx.height / 2.0, tx.y + tx.height / 2.0, 0.0)), cadcraft_doc::HAlign::Center, cadcraft_doc::VAlign::Middle)
+                    };
                     let text = cadcraft_doc::Text {
                         insert: cadcraft_geom::Vec3::new(tx.x, tx.y, 0.0),
-                        align_pt: None,
+                        align_pt,
                         height: tx.height,
                         value: tx.text.clone(),
                         rotation: tx.rotation,
                         width_factor: tx.width_factor,
                         oblique: 0.0,
                         style: "Standard".into(),
-                        halign: cadcraft_doc::HAlign::Left,
-                        valign: cadcraft_doc::VAlign::Baseline,
+                        halign,
+                        valign,
                     };
                     let (sh, _) = place_text_entity(ctx.d, &text, &tx.text);
                     b.shaped(ctx, rgb, lw, &sh);
