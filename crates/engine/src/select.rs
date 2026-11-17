@@ -23,18 +23,22 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             if b.is_empty() {
                 return Vec::new();
             }
-            let c = b.corners();
-            let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
+            // Dimensions, block references and multileaders are hit on what they draw, not on
+            // their bounding rectangle: its edges run through empty space (a dimension's reaches
+            // down to the points it measures), so the cursor found them away from any line. The
+            // text of dimensions and multileaders is hit inside its box ([`in_text`]); a block's
+            // text is drawn here to be hit on its letters.
             if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
+                let text = matches!(e.kind, EntityKind::Insert(_));
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
+                    &cadcraft_render::Options { tolerance: tol, text, linetypes: false, ..Default::default() },
                 );
-                v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
-                v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                return list.prims.iter().map(|p| list.points(p).to_vec()).collect();
             }
-            v
+            let c = b.corners();
+            vec![vec![c[0], c[1], c[2], c[3], c[0]]]
         }
         // An OLE object's frame is drawn, so it is picked on its outline (the corners the extents and
         // the renderer use); a frame with no width or height is drawn as a line, so it is picked as
@@ -287,8 +291,9 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
             pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| seg_hits_box(*a, *b, bx)))
         }
     });
-    // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    // A crossing box entirely inside a text's box also selects it (not inside a block's bounding
+    // rectangle: that is mostly empty space).
+    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_))) {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
@@ -565,8 +570,42 @@ mod tests {
         let e = d.entity(h).unwrap();
         let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
         assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
-        // The line, and the block's bounding rectangle.
-        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+        // The line alone (not the block's bounding rectangle).
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 1);
+    }
+
+    /// A block is not picked on its bounding rectangle: a cursor on the empty edge of the
+    /// rectangle around two far-apart lines finds nothing, one on a line finds the block.
+    #[test]
+    fn a_block_is_not_picked_on_its_bounding_rectangle() {
+        use cadcraft_doc::{Block, Insert, Line};
+        let mut d = Drawing::new_imperial();
+        let line = |n: u64, a: (f64, f64), b: (f64, f64)| {
+            Entity::new(Handle(n), EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) }))
+        };
+        let mut blk = Block::new("B");
+        blk.entities.push(line(1, (0.0, 0.0), (10.0, 0.0)));
+        blk.entities.push(line(2, (0.0, 10.0), (0.0, 20.0)));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let insert = Insert {
+            block: "B".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        // The rectangle's right edge (x = 10) at y = 15: far from both lines.
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(10.0, 15.0), 0.2), None);
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(5.0, 0.1), 0.2), Some(h));
+        // A crossing box at that edge selects nothing either.
+        let bx = Bounds2::new(Vec2::new(9.5, 14.0), Vec2::new(10.5, 16.0));
+        assert!(select_window(&d, &Space::Model, bx, true).is_empty());
     }
 
     /// A dashed line in a block is hit across its gaps, as one outside a block is.

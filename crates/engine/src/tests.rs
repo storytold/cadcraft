@@ -1331,6 +1331,45 @@ fn press_and_drag_selection_window() {
     assert!(s.pending_window.is_none());
 }
 
+/// A press-and-drag round the objects closes the window as a lasso: drawn clockwise it selects
+/// what is entirely inside, counter-clockwise what it also crosses; at "Select objects" it feeds
+/// the command.
+#[test]
+fn a_lasso_selects_inside_clockwise_and_crossing_counter_clockwise() {
+    let mut s = Session::new();
+    s.cmdline("line 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("circle 50,50 1").unwrap();
+    let v = |x: f64, y: f64| Vec2::new(x, y);
+    assert!(s.begin_window(v(-1.0, -1.0)));
+    assert!(s.lasso(&[v(-1.0, 1.0), v(11.0, 1.0), v(11.0, -1.0)], false).unwrap());
+    assert_eq!(kinds_of(&s, &s.selection()), vec!["Line"]);
+    assert!(s.pending_window.is_none());
+    // Across the circle, clockwise: it is not inside, so nothing more.
+    s.set_selection(Vec::new());
+    assert!(s.begin_window(v(45.0, 45.0)));
+    s.lasso(&[v(45.0, 50.0), v(55.0, 50.0), v(55.0, 45.0)], false).unwrap();
+    assert!(s.selection().is_empty());
+    // Counter-clockwise: crossing, so the circle it cuts.
+    assert!(s.begin_window(v(45.0, 45.0)));
+    s.lasso(&[v(55.0, 45.0), v(55.0, 50.0), v(45.0, 50.0)], false).unwrap();
+    assert_eq!(kinds_of(&s, &s.selection()), vec!["Circle"]);
+    // A command asking for objects takes them.
+    s.set_selection(Vec::new());
+    s.cmdline("erase").unwrap();
+    assert!(s.begin_window(v(45.0, 45.0)));
+    s.lasso(&[v(55.0, 45.0), v(55.0, 50.0), v(45.0, 50.0)], false).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(kinds(&s), vec!["Line"]);
+    // No window: nothing to close.
+    assert!(!s.lasso(&[v(1.0, 1.0)], false).unwrap());
+}
+
+fn kinds_of(s: &Session, hs: &[cadcraft_doc::Handle]) -> Vec<&'static str> {
+    let d = s.doc().unwrap();
+    hs.iter().filter_map(|h| d.entity(*h)).map(|e| e.kind.type_name()).collect()
+}
+
 #[test]
 fn block_rotation_property_turns_attribute_text() {
     let mut s = Session::new();

@@ -184,6 +184,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// The cursor's path (world points) while that drag goes on: drawn round the objects, it
+    /// selects them as a lasso ([`is_lasso`]).
+    lasso: Vec<Vec2>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -979,19 +982,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {
         app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
+        app.canvas.lasso.clear();
     }
-    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
-        app.canvas.drag_window = false;
-        if app.session.pending_window.is_some()
-            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
-        {
-            let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
-            if let Err(e) = done {
-                app.session.echo(e.to_string());
-            }
-        }
-    }
+    drag_lasso(app, ui, &resp, &xf, mods.shift);
     // Right-click acts as Enter while a command runs (the classic CAD default; held, it opens the
     // command menu); otherwise it opens the shortcut menu (Repeat, Clipboard, …).
     // Shift/Ctrl+right-click opens the object snap menu.
@@ -1204,8 +1197,27 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             draw_list(painter, &xf, &list, bg, false);
         }
     }
-    // Pending selection window.
-    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
+    // Pending selection window: a lasso while a drag goes round, else the box.
+    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world)
+        && app.canvas.drag_window
+        && is_lasso(pw.corner, &app.canvas.lasso)
+    {
+        let outline: Vec<Vec2> = std::iter::once(pw.corner).chain(app.canvas.lasso.iter().copied()).chain(std::iter::once(c)).collect();
+        let crossing = lasso_area(pw.corner, &outline) > 0.0;
+        let pts: Vec<Pos2> = outline.iter().map(|q| xf.to_screen(*q)).collect();
+        if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
+            // Filled as a mesh of the outline's fan (a lasso is seldom convex).
+            painter.add(lasso_fill(&pts, fill));
+        }
+        let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
+        if crossing {
+            painter.extend(dashed_polygon(painter.clip_rect(), &pts, st, 5.0, 3.0));
+        } else {
+            let mut closed = pts.clone();
+            closed.extend(pts.first().copied());
+            painter.add(Shape::line(closed, st));
+        }
+    } else if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
         // The world box it selects (turned in a twisted view).
         let corners = [pw.corner, Vec2::new(c.x, pw.corner.y), c, Vec2::new(pw.corner.x, c.y)].map(|q| xf.to_screen(q));
         let crossing = app.session.window_is_crossing(pw.corner, c);
@@ -1259,3 +1271,94 @@ mod compare;
 /// Background rebuilds of the display list for a new view.
 mod images;
 mod rebuild;
+
+/// While a press-and-drag window is open: keep the cursor's path, and close the window where the
+/// button is let go, as a lasso when the path went round an area ([`is_lasso`]).
+fn drag_lasso(app: &mut CadApp, ui: &egui::Ui, resp: &egui::Response, xf: &Xf, shift: bool) {
+    // The path of the drag, a point every few pixels.
+    if app.canvas.drag_window
+        && let Some(at) = ui.input(|i| i.pointer.interact_pos())
+    {
+        let far = app.canvas.lasso.last().is_none_or(|q| (xf.to_screen(*q) - at).length() >= LASSO_STEP_PX);
+        if far && app.canvas.lasso.len() < LASSO_MAX_POINTS {
+            app.canvas.lasso.push(xf.to_world(at));
+        }
+    }
+    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
+        app.canvas.drag_window = false;
+        let path = std::mem::take(&mut app.canvas.lasso);
+        if let Some(pw) = app.session.pending_window
+            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
+        {
+            let end = xf.to_world(end);
+            let mut path = path;
+            path.push(end);
+            // Drawn round the objects: a lasso; dragged straight across: the window it spans.
+            let done = if is_lasso(pw.corner, &path) {
+                app.session.lasso(&path, shift).map(|_| ())
+            } else if app.session.prompting() {
+                app.session.input(Input::Point(end))
+            } else {
+                app.session.idle_click(end, shift)
+            };
+            if let Err(e) = done {
+                app.session.echo(e.to_string());
+            }
+        }
+    }
+}
+
+/// Screen pixels between the points kept along a lasso drag.
+const LASSO_STEP_PX: f32 = 4.0;
+/// The most points a lasso keeps.
+const LASSO_MAX_POINTS: usize = 4096;
+
+/// Twice the signed area of the outline from `start` along `path` (positive: counter-clockwise).
+fn lasso_area(start: Vec2, path: &[Vec2]) -> f64 {
+    let pts: Vec<Vec2> = std::iter::once(start).chain(path.iter().copied()).collect();
+    pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum()
+}
+
+/// Whether a drag from `start` along `path` goes round an area (a lasso) rather than straight
+/// across (a window from its start to its end): its outline encloses a fair part of the box
+/// around it.
+fn is_lasso(start: Vec2, path: &[Vec2]) -> bool {
+    if path.len() < 4 {
+        return false;
+    }
+    let b = cadcraft_geom::Bounds2::from_points(std::iter::once(start).chain(path.iter().copied()));
+    let boxed = b.width() * b.height();
+    boxed > 0.0 && (lasso_area(start, path).abs() / 2.0) > boxed * 0.2
+}
+
+/// A filled lasso (even-odd where it crosses itself), from at most 256 of its points.
+fn lasso_fill(pts: &[Pos2], fill: egui::Color32) -> Shape {
+    let step = pts.len().div_ceil(256).max(1);
+    let outline: Vec<Vec2> = pts.iter().step_by(step).map(|p| Vec2::new(f64::from(p.x), f64::from(p.y))).collect();
+    let mut mesh = egui::epaint::Mesh::default();
+    for tri in cadcraft_render::triangulate_evenodd(&[outline]).chunks_exact(3) {
+        let base = u32::try_from(mesh.vertices.len()).unwrap_or(u32::MAX);
+        for q in tri {
+            #[allow(clippy::cast_possible_truncation)]
+            mesh.colored_vertex(pos2(q.x as f32, q.y as f32), fill);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
+    }
+    Shape::mesh(mesh)
+}
+
+#[cfg(test)]
+mod lasso_tests {
+    use super::{Vec2, is_lasso, lasso_area};
+
+    /// A drag straight across is a window; one round an area is a lasso, crossing when drawn
+    /// counter-clockwise.
+    #[test]
+    fn a_drag_round_an_area_is_a_lasso() {
+        let straight: Vec<Vec2> = (1..10).map(|i| Vec2::new(f64::from(i), f64::from(i) * 0.5)).collect();
+        assert!(!is_lasso(Vec2::ZERO, &straight));
+        let ring: Vec<Vec2> = (1..40).map(|i| f64::from(i) / 40.0 * std::f64::consts::TAU).map(|a| Vec2::new(a.cos() - 1.0, a.sin())).collect();
+        assert!(is_lasso(Vec2::ZERO, &ring));
+        assert!(lasso_area(Vec2::ZERO, &ring) > 0.0, "counter-clockwise");
+    }
+}
