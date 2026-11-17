@@ -89,22 +89,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     if !changes.is_empty() {
         let _ = app.run("options", Value::Object(changes));
     }
-    if !ui_edits.is_empty() {
-        let result = app.set_ui_state(&ui_edits);
+    if !ui_edits.is_empty() || !edits.is_empty() {
         let error = egui::Id::unique(super::advanced::ERROR);
-        ctx.data_mut(|d| match result {
-            Ok(()) => d.remove::<String>(error),
-            Err(e) => {
-                d.insert_temp(error, e);
-            }
-        });
-    }
-    if !edits.is_empty() {
-        let error = egui::Id::unique(super::advanced::ERROR);
-        let result = app.run("options", Value::Object(edits));
-        ctx.data_mut(|d| match result {
-            Ok(_) => d.remove::<String>(error),
-            Err(e) => {
+        let mut failure = None;
+        if !ui_edits.is_empty() {
+            failure = app.set_ui_state(&ui_edits).err();
+        }
+        if !edits.is_empty() {
+            // A successful settings edit must not hide a refused interface edit.
+            failure = app.run("options", Value::Object(edits)).err().or(failure);
+        }
+        ctx.data_mut(|d| match failure {
+            None => d.remove::<String>(error),
+            Some(e) => {
                 d.insert_temp(error, e);
             }
         });

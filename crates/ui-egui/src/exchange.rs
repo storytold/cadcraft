@@ -70,21 +70,26 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> Result<(TextureHandle, Strin
     if let Some(f) = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))) {
         let r = app.session.execute("plot", &f.params).map_err(|e| e.to_string())?;
         let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
-        let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
-        let size = [img.width() as usize, img.height() as usize];
-        let tex = ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR);
+        let tex = preview_texture(ctx, &png)?;
         return Ok((tex, f.info));
     }
     let r = app.session.execute("preview", &json!({ "width": 1600 })).map_err(|e| e.to_string())?;
     let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
-    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
-    let size = [img.width() as usize, img.height() as usize];
-    let tex = ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR);
+    let tex = preview_texture(ctx, &png)?;
     let mut info = format!("{} · {}", r["layout"].as_str().unwrap_or(""), r["paper"].as_str().unwrap_or(""));
     if r["landscape"].as_bool() == Some(true) {
         info.push_str(" · landscape");
     }
     Ok((tex, info))
+}
+
+fn preview_texture(ctx: &egui::Context, png: &[u8]) -> Result<TextureHandle, String> {
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("the preview is not a PNG".into());
+    }
+    let img = cadcraft_io::raster::decode(png).map_err(|e| e.to_string())?;
+    let size = [img.width() as usize, img.height() as usize];
+    Ok(ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.rgba()), egui::TextureOptions::LINEAR))
 }
 
 /// The Plot Preview window: the sheet as it plots, with Print and Close.
@@ -167,6 +172,16 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked)
+    }
+
+    #[test]
+    fn plot_preview_reads_shared_png_and_rejects_other_bytes() {
+        let ctx = egui::Context::default();
+        let mut png = Vec::new();
+        cadcraft_render::raster::write_rgba_png(&mut png, 1, 1, &[10, 20, 30, 255]).unwrap();
+        let texture = super::preview_texture(&ctx, &png).unwrap();
+        assert_eq!(texture.size(), [1, 1]);
+        assert!(super::preview_texture(&ctx, b"not a PNG").is_err());
     }
 
     #[test]

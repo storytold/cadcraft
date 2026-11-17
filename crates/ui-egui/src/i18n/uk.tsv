@@ -1477,3 +1477,6 @@
 	Fallback fonts (names separated by commas) are searched for characters a text's own font lacks.	У резервних шрифтах (назви через кому) шукаються символи, яких немає у власному шрифті тексту.
 	The automatic save file location is on Open and Save.	Папка файлів автозбереження — на вкладці «Відкриття та збереження».
 	Unknown setting	Невідоме налаштування
+
+# ArtCraft feature naming
+	Additional Tools	Додаткові інструменти

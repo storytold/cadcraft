@@ -244,3 +244,105 @@ fn dragging_a_dimension_value_is_one_undo_step() {
     assert_ne!(after, before, "the drag changed the precision");
     assert_eq!(a.session.state().unwrap().undo.len(), undo_before + 1, "one drag, one undo step");
 }
+
+/// Opening Dimensions preserves valid imported values outside the editor's drag ranges.
+#[test]
+fn opening_dimensions_does_not_change_existing_style_values() {
+    for factor in [-2.0, 0.0, 1.0e-9] {
+        let mut a = app();
+        a.run("options", json!({ "dimStyle": { "DIMLFAC": factor, "DIMTXT": 1.0e-9 } })).unwrap();
+        let before = a.run("options", json!({})).unwrap();
+        let undo = a.session.state().unwrap().undo.len();
+        a.ui.dialog = Some("options:dimensions".into());
+        render(&mut a, &egui::Context::default());
+        let after = a.run("options", json!({})).unwrap();
+        assert_eq!(after["dimStyle"], before["dimStyle"], "factor {factor}");
+        assert_eq!(after["dimDefaults"], before["dimDefaults"]);
+        assert_eq!(a.session.state().unwrap().undo.len(), undo);
+    }
+}
+
+/// Apply preserves either failure in a mixed edit, and clears an old failure on success.
+#[test]
+fn all_settings_apply_keeps_errors_from_either_kind_of_edit() {
+    for (patch, expected_error) in [
+        (json!({ "showToolbar": "maybe", "PICKBOX": 8 }), Some("maybe")),
+        (json!({ "showToolbar": false, "PICKBOX": "bad" }), Some("PICKBOX")),
+        (json!({ "showToolbar": false, "PICKBOX": 9 }), None),
+    ] {
+        let mut a = app();
+        let report = a.run("options", json!({})).unwrap();
+        let before = report["PICKBOX"].clone();
+        let submitted = if expected_error == Some("maybe") {
+            let mut full = report.as_object().unwrap().clone();
+            full.extend(patch.as_object().unwrap().clone());
+            Value::Object(full)
+        } else {
+            patch
+        };
+        a.ui.animations = cadcraft_ui_egui::animation::AnimationPref::Off;
+        a.ui.dialog = Some("options:advanced".into());
+        let ctx = egui::Context::default();
+        let error_id = egui::Id::unique("cc_options_advanced_error");
+        // Hide the long row list to expose the JSON editor and its Apply button.
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::unique("cc_options_advanced_filter"), "no_matching_setting".to_string());
+            d.insert_temp(egui::Id::unique("cc_options_advanced_json_open"), true);
+            d.insert_temp(egui::Id::unique("cc_options_advanced_json"), submitted.to_string());
+            if expected_error.is_none() {
+                d.insert_temp(error_id, "Previous refused edit".to_string());
+            }
+        });
+        // Optional visual inspection of the actual refused Apply state, as with docking tests.
+        let directory = std::env::var("CRAFT_UI_OPTIONS_DIR").ok();
+        let mut renderer = directory.as_ref().map(|_| egui_kittest::LazyRenderer::default());
+        let mut frame = |a: &mut CadApp, events| {
+            use egui_kittest::TestRenderer;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+                events,
+                ..Default::default()
+            };
+            a.logic(&ctx);
+            let mut output = ctx.run_ui(input, |ui| a.ui(ui));
+            if let (Some(renderer), Some(directory)) = (&mut renderer, &directory) {
+                renderer.handle_delta(&mut output.textures_delta);
+                if ctx.data(|d| d.get_temp::<String>(error_id)).is_some() {
+                    std::fs::create_dir_all(directory).unwrap();
+                    let name = expected_error.unwrap_or("success");
+                    renderer.render(&ctx, &output).unwrap().save(format!("{directory}/options-{name}.png")).unwrap();
+                }
+            }
+            output.textures_delta.clear();
+            output.shapes
+        };
+        frame(&mut a, Vec::new());
+        let shapes = frame(&mut a, Vec::new());
+        let pos = *text_pos(&shapes, &|s| s == "Apply").first().expect("JSON Apply button") + egui::vec2(3.0, 6.0);
+        let click = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        frame(&mut a, vec![egui::Event::PointerMoved(pos)]);
+        frame(&mut a, vec![click(true)]);
+        frame(&mut a, vec![click(false)]);
+        let error = ctx.data(|d| d.get_temp::<String>(error_id));
+        let text = ctx.data(|d| d.get_temp::<String>(egui::Id::unique("cc_options_advanced_json"))).expect("the submitted JSON stays editable");
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), submitted);
+        match expected_error {
+            Some(want) => assert!(error.as_deref().is_some_and(|e| e.contains(want)), "refused edit stays visible: {error:?}"),
+            None => assert!(error.is_none(), "a successful edit clears the previous error"),
+        }
+        assert_eq!(a.ui.show_toolbar, expected_error == Some("maybe"));
+        let pickbox = a.run("options", json!({})).unwrap()["PICKBOX"].clone();
+        let expected = match expected_error {
+            Some("maybe") => Some(8.0),
+            Some(_) => before.as_f64(),
+            None => Some(9.0),
+        };
+        assert_eq!(pickbox.as_f64(), expected);
+        frame(&mut a, Vec::new());
+        frame(&mut a, Vec::new());
+        let shapes = frame(&mut a, Vec::new());
+        if let Some(error) = error {
+            assert!(painted_text(&shapes).contains(&error), "the error is painted in the tab");
+        }
+    }
+}

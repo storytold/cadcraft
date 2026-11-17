@@ -107,7 +107,11 @@ fn number(
     let id = egui::Id::unique(("cc_options_dim_number", var));
     let held = ui.data(|d| d.get_temp::<f64>(id));
     let mut x = held.unwrap_or(current);
-    let r = ui.add(egui::DragValue::new(&mut x).range(range).speed(speed).max_decimals(6).update_while_editing(false)).labelled_by(label);
+    // Imported styles can contain valid values outside the drag range; merely showing them
+    // must not change the drawing or add an undo step.
+    let r = ui
+        .add(egui::DragValue::new(&mut x).range(range).clamp_existing_to_range(false).speed(speed).max_decimals(6).update_while_editing(false))
+        .labelled_by(label);
     if let Some(x) = commit(ui, id, &r, held, x, current) {
         dim.insert(var.into(), json!(x));
     }
@@ -118,7 +122,7 @@ fn whole(ui: &mut egui::Ui, label: egui::Id, current: i64, range: std::ops::Rang
     let id = egui::Id::unique(("cc_options_dim_whole", var));
     let held = ui.data(|d| d.get_temp::<i64>(id));
     let mut x = held.unwrap_or(current);
-    let r = ui.add(egui::DragValue::new(&mut x).range(range).update_while_editing(false)).labelled_by(label);
+    let r = ui.add(egui::DragValue::new(&mut x).range(range).clamp_existing_to_range(false).update_while_editing(false)).labelled_by(label);
     if let Some(x) = commit(ui, id, &r, held, x, current) {
         dim.insert(var.into(), json!(x));
     }

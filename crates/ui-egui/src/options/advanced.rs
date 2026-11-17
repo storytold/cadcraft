@@ -236,7 +236,14 @@ fn json_editor(
         };
         let mut text = ui.data(|d| d.get_temp::<String>(text_id)).unwrap_or_else(pretty);
         let edit = egui::TextEdit::multiline(&mut text).code_editor().desired_rows(6).desired_width(f32::INFINITY);
-        if ui.add(edit).changed() {
+        // A full report has hundreds of lines. Keep the error and Apply controls on screen.
+        let response = egui::ScrollArea::vertical()
+            .id_salt("options_advanced_json_text")
+            .max_height(160.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| ui.add(edit))
+            .inner;
+        if response.changed() {
             ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
         }
         ui.horizontal(|ui| {
@@ -247,7 +254,9 @@ fn json_editor(
                             set_error(ui, None);
                             edits.extend(diff);
                             ui_edits.extend(ui_diff);
-                            ui.data_mut(|d| d.remove::<String>(text_id));
+                            // Semantic validation happens after drawing the dialog. Preserve the
+                            // submitted text so refused values can be corrected; Reload refreshes it.
+                            ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
                         }
                         Err(key) => set_error(ui, Some(format!("{}: {key}", crate::tl!("Unknown setting")))),
                     },
