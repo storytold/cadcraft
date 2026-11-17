@@ -208,6 +208,7 @@
 	E	E
 	Edit	编辑
 	Edit Text...	编辑文字...
+	Erase Object Extended Data	删除对象扩展数据
 	Elevation	标高
 	Ellipse	椭圆
 	Elliptical Arc	椭圆弧
@@ -488,6 +489,7 @@
 	Object Snap Tracking (F11)	对象捕捉追踪 (F11)
 	Object type:	对象类型:
 	Off	关闭
+	Object Extended Data	对象扩展数据
 	Offset	偏移
 	On	开启
 	On/Off	开/关
@@ -728,6 +730,7 @@
 	Set Layer Properties	设置图层特性
 	Set Properties	设置特性
 	Set Table Cell	设置表格单元格
+	Set Object Extended Data	设置对象扩展数据
 	Set Variable	设置变量
 	Set View	设置视图
 	Share	共享
