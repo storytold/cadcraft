@@ -170,17 +170,45 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
         EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick)?,
         k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
     };
-    let common = e.common.clone();
-    let space = s.space();
+    replace_with_pieces(s, h, pieces)
+}
+
+/// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
+/// piece (the one holding the object's start, or the only piece of a circle or closed polyline)
+/// is the object itself, keeping its handle, its place in the drawing order, its groups and its
+/// extended data; the others are new objects with its properties, added at the end of its space
+/// (`entlast`); with no pieces the object is erased. Returns the pieces' handles. (A line broken
+/// in its middle keeps its handle on the piece from its start point, the piece to its end point is
+/// new; a circle broken or trimmed becomes an arc with the circle's handle.)
+///
+/// Dimensions attached to the object follow [`crate::assoc::follow_pieces`]. Its parametric
+/// constraints are removed: its new shape no longer meets them, and solving them again would move
+/// the objects they tie it to.
+pub(super) fn replace_with_pieces(s: &mut Session, h: Handle, pieces: Vec<EntityKind>) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
+    let mut pieces = pieces.into_iter();
+    let Some(first) = pieces.next() else {
+        d.remove_entity(h);
+        return Ok(Vec::new());
+    };
+    let (Some(space), Some(old)) = (d.space_of(h), d.entity(h).cloned()) else {
+        return Err(EngineError::Other("no such object".into()));
+    };
+    d.modify_entity(h, |e| e.kind = first)?;
+    let mut out = vec![h];
+    for kind in pieces {
+        let handle = d.new_handle();
         if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
+            st.push(Entity { handle, common: old.common.clone(), kind });
+            out.push(handle);
         }
+    }
+    crate::assoc::follow_pieces(d, &old.kind, &out);
+    let n = d.constraints.len();
+    d.constraints.retain(|c| c.refs.iter().all(|r| r.handle != h));
+    let removed = n - d.constraints.len();
+    if removed > 0 {
+        s.echo(format!("{removed} constraint(s) of the broken or trimmed object removed."));
     }
     Ok(out)
 }

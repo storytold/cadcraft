@@ -45,7 +45,8 @@ fn break_and_breakatpoint_refuse_a_locked_line() {
     let unlocked = snapshot(&s);
     let r = s.execute("break", &json!({"handle": a, "p1": [3, 0], "p2": [7, 0]})).unwrap();
     assert_eq!(r["handles"].as_array().unwrap().len(), 2);
-    assert!(s.doc().unwrap().entity(cadcraft_engine::doc::Handle::parse_hex(&a).unwrap()).is_none());
+    // The line keeps its handle as the piece from its start.
+    assert_eq!(r["handles"][0].as_str(), Some(a.as_str()));
     assert!(s.doc().unwrap().entity(cadcraft_engine::doc::Handle::parse_hex(&control).unwrap()).is_some());
     let broken = snapshot(&s);
     s.execute("undo", &json!({})).unwrap();

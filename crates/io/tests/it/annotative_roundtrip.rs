@@ -45,6 +45,7 @@ fn drawing() -> Drawing {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let on_paper = Common { anno_scales: vec![AnnoScale::unit()], ..Default::default() };
     d.add(&Space::Paper("Layout1".into()), on_paper, EntityKind::Insert(ins)).unwrap();

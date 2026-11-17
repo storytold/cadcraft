@@ -28,6 +28,7 @@ fn insert(d: &mut Drawing, block: &str, at: (f64, f64)) -> Entity {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     Entity { handle: d.new_handle(), common: Common::default(), kind }
 }
