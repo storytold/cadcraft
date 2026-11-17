@@ -48,7 +48,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("publish", "Batch Publish...", run_publish)
             .menu(&["File", "Batch Publish..."])
-            .params("{path?: \"NAME.pdf\" (writes NAME-<sheet>.pdf per sheet; else returns base64 `data` per sheet), layouts?: [name | \"Model\"] (default: Model if it has objects, then every layout in tab order)} → {sheets: [{layout, bytes, path? | data}]}")
+            .params("{path?: \"NAME.pdf\", layouts?: [name | \"Model\"], single_pdf?: bool (default false: writes NAME-<sheet>.pdf per sheet; true: one combined multi-page PDF)}")
             .noundo(),
         CommandSpec::new("pdfbook", "Sheet Books to PDF...", run_pdfbook)
             .menu(&["File", "Sheet Books to PDF..."])
@@ -402,6 +402,13 @@ fn run_publish(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if sheets.len() > MAX_SHEETS {
         return Err(bad("publish", format!("at most {MAX_SHEETS} sheets can be published at once")));
+    }
+    if p.get("single_pdf").and_then(Value::as_bool) == Some(true) {
+        let mut q = json!({ "layouts": sheets });
+        if let Some(path) = str_param(p, "path") {
+            q["path"] = json!(path);
+        }
+        return s.execute("exportpdf", &q).map_err(|e| bad("publish", e.to_string()));
     }
     let base = str_param(p, "path").map(|path| {
         let pb = std::path::Path::new(path);
@@ -921,6 +928,21 @@ mod tests {
         for p in [json!({ "layouts": [] }), json!({ "layouts": ["Nope"] }), json!({ "layouts": "Layout1" }), json!({ "layouts": [1] })] {
             assert!(s.execute("publish", &p).is_err(), "{p}");
         }
+    }
+
+    #[test]
+    fn publish_single_pdf_combines_selected_layouts() {
+        our_hooks();
+        let mut s = session();
+        if io().and_then(|h| h.plot).is_none() {
+            return;
+        }
+        let out = temp("combined.pdf");
+        let r = s.execute("publish", &json!({ "path": out.to_string_lossy(), "layouts": ["Layout1", "Layout2"], "single_pdf": true })).unwrap();
+        assert_eq!(r["pages"].as_u64(), Some(2));
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+        let _ = std::fs::remove_file(&out);
     }
 
     #[test]
