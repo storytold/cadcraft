@@ -94,6 +94,10 @@ pub struct Session {
     /// it resumes when that command ends. One level, as in AutoCAD.
     pub suspended: Option<Running>,
     pub log: Vec<String>,
+    /// The point being input came from a click in the drawing (the window sets it around the
+    /// click), not from typed text, a script or LISP: EXTEND shows its result on a first click
+    /// and extends on a second.
+    pub clicked: bool,
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
@@ -191,6 +195,7 @@ impl Session {
             running: None,
             in_script: false,
             suspended: None,
+            clicked: false,
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
