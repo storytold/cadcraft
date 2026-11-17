@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("pagesetup", "Page Setup Manager...", run_pagesetup)
             .menu(&["File", "Page Setup Manager..."])
             .params(
-                "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
+                "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, paperUnits?: \"mm\"|\"inches\" (one paper-space unit on the layout), margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
             ),
         CommandSpec::new("plot", "Print...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "plot")?, "plot"))
             .menu(&["File", "Print..."])
@@ -641,6 +641,7 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         "width",
         "height",
         "landscape",
+        "paperUnits",
         "margins",
         "lineweights",
         "plotArea",
@@ -694,6 +695,15 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
         page.landscape = l;
+    }
+    // Paper units: what one paper-space unit is on this layout, whatever the paper's own family
+    // (an ARCH D sheet can be drawn in millimetres, #3249).
+    if let Some(v) = p.get("paperUnits") {
+        page.paper_mm = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+            Some("mm" | "millimeters" | "millimetres") => true,
+            Some("in" | "inch" | "inches") => false,
+            _ => return Err(bad(cmd, "`paperUnits` must be \"mm\" or \"inches\"")),
+        };
     }
     if let Some(m) = p.get("margins") {
         let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
