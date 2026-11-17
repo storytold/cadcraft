@@ -489,4 +489,25 @@ mod tests {
         assert!(app.closing.is_none());
         assert!(app.session.docs.is_empty());
     }
+
+    /// CLOSE typed with the Greek keyboard layout active (ΨΛΟΣΕ) is the interface's CLOSE, which
+    /// asks about unsaved changes, not the engine's, which closes at once. A Greek word that is a
+    /// command of its own stays that command.
+    #[test]
+    fn close_typed_with_the_greek_layout_asks_before_it_closes() {
+        let mut app = app_with(&["A", "B"]);
+        dirty(&mut app, 1);
+        app.cmdline("ΨΛΟΣΕ");
+        assert_eq!(app.close_prompt(), Some("B"));
+        assert_eq!(titles(&app), ["A", "B"]);
+        app.answer_close(Choice::Cancel);
+        assert!(app.closing.is_none());
+
+        // The drawing's LISP defines a command of that Greek name: typing it runs that command.
+        app.cmdline("(defun c:ΨΛΟΣΕ () (princ))");
+        app.cmdline("ΨΛΟΣΕ");
+        assert!(app.closing.is_none());
+        assert_eq!(titles(&app), ["A", "B"]);
+        assert!(app.session.docs[1].is_dirty());
+    }
 }

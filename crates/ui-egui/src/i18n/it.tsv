@@ -1408,3 +1408,6 @@ menu	Modify	Edita
 	Imperial (inches)	Imperiali (pollici)
 	Metric (millimetres)	Metriche (millimetri)
 	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nuovo e il primo disegno all'avvio usano queste unità, a meno che non sia impostato un modello predefinito (QNEWTEMPLATE).
+
+# ArtCraft feature naming
+	Additional Tools	Strumenti aggiuntivi
