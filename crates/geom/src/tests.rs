@@ -214,18 +214,30 @@ fn segment_offset() {
     let s = Segment::Arc { arc: Arc::new(Vec2::ZERO, 5.0, 0.0, PI), ccw: true };
     let o = s.offset(1.0).unwrap();
     if let Segment::Arc { arc, .. } = o {
-        assert!(close(arc.radius, 4.0))
+        assert!(close(arc.radius, 4.0));
     } else {
         panic!()
     }
     assert!(s.offset(6.0).is_none());
 }
 
+/// A polyline of many fine arcs samples at most the point budget, then draws chords.
+#[test]
+fn polyline_tessellation_is_bounded() {
+    let vertices: Vec<PolyVertex> = (0..3000).map(|i| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(f64::from(i) * 1e6, 0.0)) }).collect();
+    let pl = Polyline { vertices, closed: false };
+    let pts = pl.tessellate(1e-9);
+    assert!(pts.len() <= MAX_TESSELLATED_POINTS + 2 * 3000 + 4096, "{}", pts.len());
+    assert!(pts.len() > 3000);
+    let mut budget = 10;
+    assert!(pl.tessellate_within(1e-9, &mut budget).len() <= 4096 + 2 * 3000);
+}
+
 #[test]
 fn arc_segments_bounded() {
     assert_eq!(arc_segments(0.0, 1.0, 0.1), 1);
     assert!(arc_segments(1e9, TAU, 1e-12) <= 4096);
-    assert!(arc_segments(f64::NAN, TAU, 0.1) == 1);
+    assert_eq!(arc_segments(f64::NAN, TAU, 0.1), 1);
 }
 
 #[test]
@@ -329,8 +341,8 @@ fn polyline_area_is_stable_far_from_the_origin() {
 fn shoelace_preserves_small_polygon_area_at_large_coordinates() {
     let o = 1.0e12;
     let corners = [Vec2::new(o, o), Vec2::new(o + 10.0, o), Vec2::new(o + 10.0, o + 10.0), Vec2::new(o, o + 10.0)];
-    assert_eq!(shoelace(&corners), 100.0);
-    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()), -100.0);
+    assert_eq!(shoelace(&corners).to_bits(), 100.0_f64.to_bits());
+    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()).to_bits(), (-100.0_f64).to_bits());
 }
 
 #[test]

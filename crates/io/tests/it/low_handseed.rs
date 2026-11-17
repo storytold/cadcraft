@@ -1,32 +1,32 @@
 //! Another program's file can name a $HANDSEED below handles it uses. Entities CADCraft makes
-//! while reading (the faces a polyface mesh becomes) must not take handles that records further
+//! while reading (the faces a polygon mesh becomes) must not take handles that records further
 //! on still have: a DWG keeps one object per handle, so the duplicates were lost on save.
 
 use std::collections::HashSet;
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
 
-/// A block holding a polyface mesh of three triangles (handle 2000) and, in model space after it,
+/// A block holding a 2×4 polygon mesh, three quads (handle 2000) and, in model space after it,
 /// lines with handles 2001–2003 (the next ones after the mesh's), under a $HANDSEED of 10. The
 /// collision is across separately read lists (a block and model space), as in the files it came
 /// from: within one list duplicates were already renumbered.
 fn dxf() -> String {
-    let vertex = |h: &str, x: f64, y: f64| format!("0\nVERTEX\n5\n{h}\n8\n0\n10\n{x}\n20\n{y}\n30\n0.0\n70\n192\n");
-    let face = |h: &str, a: i32, b: i32, c: i32| format!("0\nVERTEX\n5\n{h}\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n70\n128\n71\n{a}\n72\n{b}\n73\n{c}\n");
+    let vertex = |h: &str, x: f64, y: f64| format!("0\nVERTEX\n5\n{h}\n8\n0\n10\n{x}\n20\n{y}\n30\n0.0\n70\n64\n");
     let line = |h: &str| format!("0\nLINE\n5\n{h}\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n1.0\n21\n1.0\n31\n0.0\n");
     format!(
         "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$HANDSEED\n5\n10\n0\nENDSEC\n\
          0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n5\n30\n8\n0\n2\nMESH\n70\n0\n10\n0.0\n20\n0.0\n30\n0.0\n\
-         0\nPOLYLINE\n5\n2000\n8\n0\n66\n1\n10\n0.0\n20\n0.0\n30\n0.0\n70\n64\n71\n4\n72\n3\n\
-         {}{}{}{}{}{}{}0\nSEQEND\n5\n2010\n8\n0\n0\nENDBLK\n5\n31\n8\n0\n0\nENDSEC\n\
+         0\nPOLYLINE\n5\n2000\n8\n0\n66\n1\n10\n0.0\n20\n0.0\n30\n0.0\n70\n16\n71\n2\n72\n4\n\
+         {}{}{}{}{}{}{}{}0\nSEQEND\n5\n2010\n8\n0\n0\nENDBLK\n5\n31\n8\n0\n0\nENDSEC\n\
          0\nSECTION\n2\nENTITIES\n{}{}{}0\nINSERT\n5\n60\n8\n0\n2\nMESH\n10\n0.0\n20\n0.0\n30\n0.0\n0\nENDSEC\n0\nEOF\n",
         vertex("2004", 0.0, 0.0),
-        vertex("2005", 1.0, 0.0),
-        vertex("2006", 1.0, 1.0),
-        vertex("2007", 0.0, 1.0),
-        face("2008", 1, 2, 3),
-        face("2009", 1, 3, 4),
-        face("200A", 2, 3, 4),
+        vertex("2005", 0.0, 1.0),
+        vertex("2006", 0.0, 2.0),
+        vertex("2007", 0.0, 3.0),
+        vertex("2008", 1.0, 0.0),
+        vertex("2009", 1.0, 1.0),
+        vertex("200A", 1.0, 2.0),
+        vertex("200B", 1.0, 3.0),
         line("2001"),
         line("2002"),
         line("2003"),
