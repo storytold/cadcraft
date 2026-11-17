@@ -52,6 +52,13 @@ pub fn sheets_of(d: &cadcraft_doc::Drawing, doc: u64, title: &str) -> Vec<Sheet>
     model.into_iter().chain(layouts.iter().map(|l| l.name.clone())).map(|layout| Sheet { doc, drawing: title.to_string(), layout }).collect()
 }
 
+/// The sheets the list starts with: the drawing's layouts, without Model (which can be added),
+/// unless it has no layouts.
+pub fn default_sheets(d: &cadcraft_doc::Drawing, doc: u64, title: &str) -> Vec<Sheet> {
+    let all = sheets_of(d, doc, title);
+    if all.iter().any(|s| s.layout != "Model") { all.into_iter().filter(|s| s.layout != "Model").collect() } else { all }
+}
+
 /// Move the sheet at `from` to stand before `slot` (0..=len).
 pub fn move_sheet(v: &mut Vec<Sheet>, from: usize, slot: usize) -> Option<usize> {
     if from >= v.len() {
@@ -127,7 +134,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let current_doc = app.session.state().map_or(0, |s| s.uid);
     // Opened for a drawing: its sheets, in tab order (others are added by hand).
     if st.filled_for != Some(current_doc) {
-        st.sheets = app.session.doc().map(|d| sheets_of(d, current_doc, &current)).unwrap_or_default();
+        st.sheets = app.session.doc().map(|d| default_sheets(d, current_doc, &current)).unwrap_or_default();
         st.filled_for = Some(current_doc);
         st.selected.clear();
         st.add_from = Some(current_doc);
@@ -403,17 +410,21 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             });
             let from = st.add_from.filter(|f| uids.contains(f)).unwrap_or(current_doc);
             let available = app.session.docs.iter().find(|d| d.uid == from).map(|d| sheets_of(&d.doc, d.uid, &d.title)).unwrap_or_default();
-            egui::ScrollArea::horizontal().id_salt("cc_batch_add").max_height(34.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    for s in available {
-                        if ui
-                            .button(format!("+ {}", crate::i18n::t(&s.layout)))
-                            .on_hover_text(crate::tl!("Add this sheet to the end of the list"))
-                            .clicked()
-                        {
-                            act = Some(Act::Add(s));
+            egui::ScrollArea::horizontal().id_salt("cc_batch_add").max_height(46.0).show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        for s in available {
+                            if ui
+                                .button(format!("+ {}", crate::i18n::t(&s.layout)))
+                                .on_hover_text(crate::tl!("Add this sheet to the end of the list"))
+                                .clicked()
+                            {
+                                act = Some(Act::Add(s));
+                            }
                         }
-                    }
+                    });
+                    // Room under the buttons for the scroll bar, which floats over the content.
+                    ui.add_space(12.0);
                 });
             });
             ui.separator();
@@ -563,10 +574,24 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sheet, move_sheet, move_sheets, publish_params};
+    use super::{Sheet, default_sheets, move_sheet, move_sheets, publish_params, sheets_of};
 
     fn s(n: &str) -> Sheet {
         Sheet { doc: 1, drawing: "A.dwg".into(), layout: n.into() }
+    }
+
+    /// The list starts with the layouts; Model only when there are none (it can be added).
+    #[test]
+    fn the_list_starts_without_model() {
+        let mut d = cadcraft_doc::Drawing::new_metric();
+        let p = cadcraft_doc::EntityKind::Point(cadcraft_doc::Point { p: cadcraft_geom::Vec3::default(), angle: 0.0 });
+        d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), p).unwrap();
+        let names = |v: Vec<Sheet>| v.into_iter().map(|x| x.layout).collect::<Vec<_>>();
+        assert_eq!(names(sheets_of(&d, 1, "A.dwg")).first().map(String::as_str), Some("Model"));
+        let defaults = names(default_sheets(&d, 1, "A.dwg"));
+        assert!(!defaults.is_empty() && !defaults.iter().any(|n| n == "Model"), "{defaults:?}");
+        d.layouts.clear();
+        assert_eq!(names(default_sheets(&d, 1, "A.dwg")), ["Model"]);
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub mod formula;
 pub mod grip_dims;
 pub mod grips;
 mod guard;
+pub mod keyboard;
 pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
@@ -95,6 +96,10 @@ pub struct Session {
     /// it resumes when that command ends. One level, as in AutoCAD.
     pub suspended: Option<Running>,
     pub log: Vec<String>,
+    /// The point being input came from a click in the drawing (the window sets it around the
+    /// click), not from typed text, a script or LISP: EXTEND shows its result on a first click
+    /// and extends on a second.
+    pub clicked: bool,
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
@@ -192,6 +197,7 @@ impl Session {
             running: None,
             in_script: false,
             suspended: None,
+            clicked: false,
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
@@ -252,11 +258,25 @@ impl Session {
     pub fn space(&self) -> Space {
         self.state().map(DocState::edit_space).unwrap_or_default()
     }
+    /// The layers frozen in the active MSPACE viewport ([`DocState::viewport_frozen`]): what a
+    /// pick or a selection in [`Session::space`] leaves out. Empty with no drawing open.
+    pub fn viewport_frozen(&self) -> &[String] {
+        self.state().map(DocState::viewport_frozen).unwrap_or_default()
+    }
     /// The tab being displayed: Model or a layout, regardless of MSPACE.
     pub fn layout_space(&self) -> Space {
         self.state().map(|s| s.space.clone()).unwrap_or_default()
     }
+    /// The selected objects as the view being edited has them ([`DocState::shown_selection`]):
+    /// inside an MSPACE viewport, without the objects on layers frozen in that viewport. Commands,
+    /// grips and palettes start from this; [`DocState::selection`] holds every selected object.
     pub fn selection(&self) -> Vec<Handle> {
+        self.state().map(DocState::shown_selection).unwrap_or_default()
+    }
+    /// Every selected object ([`DocState::selection`]), also the ones the active MSPACE viewport
+    /// does not draw, which [`Session::selection`] leaves out. Adding to the selection or removing
+    /// from it starts from this, so that it keeps them.
+    pub(crate) fn stored_selection(&self) -> Vec<Handle> {
         self.state().map(|s| s.selection.clone()).unwrap_or_default()
     }
     pub fn set_selection(&mut self, sel: Vec<Handle>) {

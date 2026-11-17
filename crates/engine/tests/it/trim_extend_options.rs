@@ -275,14 +275,39 @@ fn trim_glows_the_part_a_pick_takes_away() {
     assert_eq!(lines(&s).len(), 4);
 }
 
+/// EXTEND shows nothing under the cursor: a click shows the part it adds, a second click on the
+/// object extends it. Typed points (scripts, LISP) extend at once.
 #[test]
-fn extend_glows_the_part_a_pick_adds() {
+fn extend_shows_the_part_a_click_adds_and_extends_on_a_second_click() {
+    use cadcraft_engine::geom::Vec2;
+    use cadcraft_engine::prompt::Input;
     let mut s = session(&["0,0 5,0", "10,-5 10,5"]);
     s.cmdline("EXTEND").unwrap();
-    let (pts, removing) = glow_points(&s, (4.0, 0.0)).expect("a glow over the line");
+    assert!(glow_points(&s, (4.0, 0.0)).is_none(), "no work while the cursor moves");
+    let click = |s: &mut Session, x: f64, y: f64| {
+        s.clicked = true;
+        s.input(Input::Point(Vec2::new(x, y))).unwrap();
+        s.clicked = false;
+    };
+    click(&mut s, 4.0, 0.0);
+    // Shown wherever the cursor is, the drawing unchanged.
+    let (pts, removing) = glow_points(&s, (3.0, 30.0)).expect("the extension shows");
     assert!(!removing);
     let (lo, hi) = pts.iter().flatten().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
     assert!((lo - 5.0).abs() < 1e-2 && (hi - 10.0).abs() < 1e-3, "{lo} {hi}");
+    assert!(lines(&s).contains(&((0.0, 0.0), (5.0, 0.0))));
+    // A click in empty space drops it; a click and a second click extend.
+    click(&mut s, 3.0, 30.0);
+    assert!(glow_points(&s, (3.0, 30.0)).is_none());
+    click(&mut s, 4.0, 0.0);
+    click(&mut s, 2.0, 0.0);
+    assert!(glow_points(&s, (3.0, 30.0)).is_none());
+    assert!(lines(&s).contains(&((0.0, 0.0), (10.0, 0.0))), "{:?}", lines(&s));
+    s.cmdline("").unwrap();
+    // A typed point extends at once.
+    let mut s = session(&["0,0 5,0", "10,-5 10,5"]);
+    s.script("EXTEND 4,0\n\n").unwrap();
+    assert!(lines(&s).contains(&((0.0, 0.0), (10.0, 0.0))), "{:?}", lines(&s));
 }
 
 #[test]

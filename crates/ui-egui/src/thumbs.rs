@@ -361,7 +361,7 @@ fn finish((w, h, rgba): Rgba) -> Option<Vec<u8>> {
     // Opaque pixels: straight and premultiplied are the same.
     let opaque: Vec<u8> =
         rgba.chunks(4).flat_map(|p| [p.first().copied().unwrap_or(0), p.get(1).copied().unwrap_or(0), p.get(2).copied().unwrap_or(0), 255]).collect();
-    cadcraft_render::raster::encode_png(w, h, &opaque)
+    cadcraft_render::raster::encode_rgba_png(w, h, &opaque)
 }
 
 /// The settings folder (as the app keeps its settings): `CADCRAFT_CONFIG_DIR`, `%APPDATA%\CADCraft`,

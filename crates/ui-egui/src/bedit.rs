@@ -96,8 +96,9 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         return None;
     }
     let st = app.session.state().ok()?;
-    let refs = st.selection.iter().filter(|h| st.doc.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).count();
-    if refs == 1 && st.selection.len() == 1 {
+    let selection = st.shown_selection();
+    let refs = selection.iter().filter(|h| st.doc.entity(**h).is_some_and(|e| matches!(e.kind, EntityKind::Insert(_)))).count();
+    if refs == 1 && selection.len() == 1 {
         return None;
     }
     // Start on the block last edited if it is still there, else the first one.
