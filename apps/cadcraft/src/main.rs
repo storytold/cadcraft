@@ -163,6 +163,7 @@ fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| file_dialog(&Pick::Open).pick_file().map(|p| p.to_string_lossy().to_string()))),
         pick_save: Some(Box::new(|name: &str| file_dialog(&Pick::Save(name.into())).save_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string()))),
         // macOS shows the dialogs as sheets (`sheet::start_pick`), set once the window exists.
         start_pick: None,
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.

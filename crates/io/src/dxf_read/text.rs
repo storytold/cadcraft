@@ -74,6 +74,9 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         };
     }
     MText {
+        // Background flags (90): 16 = a frame around the text.
+        frame: own.i(90).is_some_and(|f| f & 16 != 0),
+        formula: crate::dxf_ext::formula(tags),
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
         // An MTEXT's width is one column's: with columns, the column width (48, or 44 of the
@@ -108,6 +111,14 @@ pub(super) fn text_from(t: &T) -> Text {
         _ => VAlign::Baseline,
     };
     let align = if t.f(11).is_some() { Some(t.p(11)) } else { None };
+    // Text generation flags (71: 2 backwards, 4 upside down), from the text's own groups: an
+    // attribute's own section (AcDbAttribute / AcDbAttributeDefinition: a multiline attribute's
+    // type is a 71 too) and its embedded multiline text (after 101) are not the text's.
+    let generation =
+        t.0.iter()
+            .take_while(|g| g.code != 101 && !(g.code == 100 && g.str().trim().starts_with("AcDbAttribute")))
+            .find(|g| g.code == 71)
+            .map_or(0, |g| g.i64());
     let mut text = Text {
         insert: t.p(10),
         align_pt: if h == HAlign::Left && v == VAlign::Baseline { None } else { align },
@@ -119,6 +130,9 @@ pub(super) fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+        backwards: generation & 2 != 0,
+        upside_down: generation & 4 != 0,
+        formula: crate::dxf_ext::formula(t.0),
     };
     let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
     if n.z < 0.0 {
@@ -167,6 +181,8 @@ pub(super) fn attdef(tags: &[Tag], c: &Common) -> Attrib {
     if let Some(m) = &multiline {
         text.value.clone_from(&m.read_as);
     }
+    // The formula's xdata closes the record, after any embedded multiline text.
+    text.formula = crate::dxf_ext::formula(tags);
     Attrib {
         tag: own.s(2).unwrap_or_default(),
         text,

@@ -8,6 +8,8 @@ use craft_dxf::Tag;
 
 fn mtext(contents: &str, rotation: f64, columns: Option<MTextColumns>) -> MText {
     MText {
+        frame: false,
+        formula: None,
         insert: Vec3::new(1.0, 2.0, 0.0),
         height: 0.5,
         width: 6.0,

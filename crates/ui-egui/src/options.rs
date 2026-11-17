@@ -25,6 +25,7 @@
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
+//! | `fontFolders` | folders searched for TrueType/OpenType fonts before the system's, in order (up to 16) |
 //! | `interfaceScale` | the interface's size, 0.5–3 (1: the system's own) |
 //!
 //! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
@@ -233,6 +234,7 @@ struct UiChanges {
     savefilepath: Option<String>,
     isavebak: Option<bool>,
     time_sensitive_right_click: Option<bool>,
+    font_folders: Option<Vec<String>>,
     right_click_hold_ms: Option<u32>,
     right_click_default: Option<IdleClick>,
     right_click_edit: Option<IdleClick>,
@@ -280,6 +282,12 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "fontFolders" => {
+            let list =
+                v.as_array().filter(|a| a.len() <= cadcraft_fonts::ttf::MAX_FONT_DIRS).ok_or("fontFolders must be a list of up to 16 folders")?;
+            let names: Option<Vec<&str>> = list.iter().map(Value::as_str).collect();
+            c.font_folders = Some(cadcraft_fonts::ttf::clean_dirs(&names.ok_or("fontFolders must be a list of folder paths")?));
+        }
         "rightClickDuration" => {
             let (lo, hi) = (f64::from(*RIGHT_CLICK_DURATIONS.start()), f64::from(*RIGHT_CLICK_DURATIONS.end()));
             let n =
@@ -332,6 +340,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("ISAVEBAK".into(), json!(i32::from(cadcraft_engine::autosave::isavebak())));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    m.insert("fontFolders".into(), json!(cadcraft_fonts::ttf::font_dirs()));
     m.insert("rightClickDuration".into(), json!(o.right_click_hold_ms));
     m.insert("rightClickDefault".into(), json!(o.right_click_default.as_str()));
     m.insert("rightClickEdit".into(), json!(o.right_click_edit.as_str()));
@@ -412,6 +421,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(dirs) = &ui.font_folders {
+        cadcraft_fonts::ttf::set_font_dirs(dirs);
+    }
     apply_right_click(&mut app.options, &ui);
     Ok(report(app))
 }
@@ -442,6 +454,37 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
+    cadcraft_fonts::ttf::set_font_dirs::<&str>(&[]);
+}
+
+/// Fonts for font lists, refreshed when the font set changes: (text style font names — the
+/// user's folders' fonts first —, family names of the user's fonts).
+pub fn font_choices() -> (Vec<String>, Vec<String>) {
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<(u64, Vec<String>, Vec<String>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let generation = cadcraft_fonts::ttf::generation();
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some((g, names, families)) = c.as_ref()
+            && *g == generation
+        {
+            return (names.clone(), families.clone());
+        }
+        let fonts = cadcraft_fonts::ttf::installed();
+        let mut names = vec![cadcraft_fonts::BUILTIN_FONT.to_string()];
+        names.extend(fonts.iter().map(|f| f.name.clone()));
+        let mut families: Vec<String> = Vec::new();
+        for f in fonts.iter().filter(|f| f.user) {
+            if let Some(fam) = &f.family
+                && !families.contains(fam)
+            {
+                families.push(fam.clone());
+            }
+        }
+        *c = Some((generation, names.clone(), families.clone()));
+        (names, families)
+    })
 }
 
 impl CadApp {
@@ -460,6 +503,7 @@ impl CadApp {
             "selectionColor": color_json(self.options.selection_color),
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
+            "fontFolders": cadcraft_fonts::ttf::font_dirs(),
             "rightClickDuration": self.options.right_click_hold_ms,
             "rightClickDefault": self.options.right_click_default.as_str(),
             "rightClickEdit": self.options.right_click_edit.as_str(),
@@ -492,6 +536,7 @@ impl CadApp {
             "selectionColor",
             "snapMarkerSize",
             "timeSensitiveRightClick",
+            "fontFolders",
             "rightClickDuration",
             "rightClickDefault",
             "rightClickEdit",
@@ -520,6 +565,9 @@ impl CadApp {
         }
         if let Some(b) = c.time_sensitive_right_click {
             self.options.time_sensitive_right_click = b;
+        }
+        if let Some(dirs) = &c.font_folders {
+            cadcraft_fonts::ttf::set_font_dirs(dirs);
         }
         apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
