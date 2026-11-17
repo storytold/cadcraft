@@ -371,6 +371,65 @@ fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blo
     bounds_in(d, e, depth, blocks, off_counts)
 }
 
+/// The bounds of block reference `ins` in [`bounds_in`]: its block's contents (cached by block and
+/// depth), clipped, repeated over its grid, and its visible attributes.
+fn insert_bounds<'a>(
+    d: &'a Drawing,
+    ins: &crate::Insert,
+    depth: usize,
+    blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    off_counts: bool,
+) -> Bounds2 {
+    if depth >= MAX_BLOCK_DEPTH {
+        return Bounds2::EMPTY;
+    }
+    // A reference to a missing block (an unloaded xref, a purged definition) or to an empty
+    // one draws nothing, so it contributes nothing: ZOOM Extents must not fly off to its
+    // insertion point. Attributes below still count.
+    let mut b = Bounds2::EMPTY;
+    if let Some(blk) = d.block(&ins.block) {
+        let m = ins.transform(blk.base.xy());
+        let inner = match blocks.get(&(blk.name.as_str(), depth)) {
+            Some(b) => *b,
+            None => {
+                let mut inner = Bounds2::EMPTY;
+                for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
+                    inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
+                }
+                blocks.insert((blk.name.as_str(), depth), inner);
+                inner
+            }
+        };
+        b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
+        // XCLIP: the reference app takes the boundary's box, also where it reaches past the
+        // block or misses it (an inverted clip can show anything, so it keeps the block's).
+        if let Some(c) = ins.clip.as_ref().filter(|c| c.active() && !c.inverted)
+            && !b.is_empty()
+        {
+            b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
+        }
+        if ins.cols > 1 || ins.rows > 1 {
+            // The grid's four corner copies (as many as are drawn): turned, the far corner
+            // alone misses the side ones.
+            let (cols, rows) = (f64::from(ins.cols.clamp(1, 10_000).saturating_sub(1)), f64::from(ins.rows.clamp(1, 10_000).saturating_sub(1)));
+            let one = b;
+            for (c, r) in [(cols, 0.0), (0.0, rows), (cols, rows)] {
+                let off = Vec2::new(ins.col_spacing * c, ins.row_spacing * r).rotate(ins.rotation);
+                b = b.union(&Bounds2::from_points(one.corners().map(|p| p + off)));
+            }
+        }
+    }
+    for a in &ins.attribs {
+        if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
+            b = b.union(&match a.multiline_text() {
+                Some(m) => mtext_box(&m),
+                None => text_box(&a.text, a.text.value.chars().count()),
+            });
+        }
+    }
+    b
+}
+
 /// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
 /// by block name and depth: every further reference to a block at that depth reuses them instead of
 /// expanding the block again, so nested or self-referencing blocks cost at most one pass over each
@@ -390,57 +449,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
         EntityKind::Text(t) => text_box(t, t.value.chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
         EntityKind::MText(t) => mtext_box(t),
-        EntityKind::Insert(ins) => {
-            if depth >= MAX_BLOCK_DEPTH {
-                return Bounds2::EMPTY;
-            }
-            // A reference to a missing block (an unloaded xref, a purged definition) or to an empty
-            // one draws nothing, so it contributes nothing: ZOOM Extents must not fly off to its
-            // insertion point. Attributes below still count.
-            let mut b = Bounds2::EMPTY;
-            if let Some(blk) = d.block(&ins.block) {
-                let m = ins.transform(blk.base.xy());
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(b) => *b,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
-                        }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
-                    }
-                };
-                b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
-                // XCLIP: the reference app takes the boundary's box, also where it reaches past the
-                // block or misses it (an inverted clip can show anything, so it keeps the block's).
-                if let Some(c) = ins.clip.as_ref().filter(|c| c.active() && !c.inverted)
-                    && !b.is_empty()
-                {
-                    b = Bounds2::from_points(c.polygon().into_iter().map(|p| m.apply(p)));
-                }
-                if ins.cols > 1 || ins.rows > 1 {
-                    // The grid's four corner copies (as many as are drawn): turned, the far corner
-                    // alone misses the side ones.
-                    let (cols, rows) =
-                        (f64::from(ins.cols.clamp(1, 10_000).saturating_sub(1)), f64::from(ins.rows.clamp(1, 10_000).saturating_sub(1)));
-                    let one = b;
-                    for (c, r) in [(cols, 0.0), (0.0, rows), (cols, rows)] {
-                        let off = Vec2::new(ins.col_spacing * c, ins.row_spacing * r).rotate(ins.rotation);
-                        b = b.union(&Bounds2::from_points(one.corners().map(|p| p + off)));
-                    }
-                }
-            }
-            for a in &ins.attribs {
-                if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
-                    b = b.union(&match a.multiline_text() {
-                        Some(m) => mtext_box(&m),
-                        None => text_box(&a.text, a.text.value.chars().count()),
-                    });
-                }
-            }
-            b
-        }
+        EntityKind::Insert(ins) => insert_bounds(d, ins, depth, blocks, off_counts),
         EntityKind::Dimension(dm) => {
             let pts: Vec<Vec2> = match dm.kind {
                 crate::DimKind::Linear { .. } | crate::DimKind::Aligned | crate::DimKind::ArcLength => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy()],
@@ -489,7 +498,11 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             b
         }
         EntityKind::MLeader(m) => {
-            let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
+            // Hidden leader lines (leader type None) and their landing take no room.
+            let content = m.text.as_ref().map(|t| t.insert.xy()).or_else(|| m.block.as_ref().map(|i| i.insert.xy()));
+            let start = if m.no_leader { content.unwrap_or(m.landing.xy()) } else { m.landing.xy() };
+            let shown = m.leaders.iter().filter(|_| !m.no_leader).flatten().map(|v| v.xy());
+            let mut b = Bounds2::from_points(shown.chain(std::iter::once(start)));
             if let Some(t) = &m.text {
                 b.add(t.insert.xy());
                 if !blank(&t.contents) {
@@ -599,6 +612,9 @@ mod tests {
 
     fn text(halign: HAlign, valign: VAlign) -> Text {
         Text {
+            backwards: false,
+            upside_down: false,
+            formula: None,
             insert: Vec3::new(0.0, 0.0, 0.0),
             align_pt: Some(Vec3::new(0.0, 0.0, 0.0)),
             height: 1.0,
@@ -618,6 +634,8 @@ mod tests {
 
     fn mtext(contents: &str, width: f64) -> crate::MText {
         crate::MText {
+            frame: false,
+            formula: None,
             insert: Vec3::new(10.0, 10.0, 0.0),
             height: 2.5,
             width,
@@ -684,6 +702,8 @@ mod tests {
     #[test]
     fn multileader_text_is_inside_its_bounds() {
         let mtext = crate::MText {
+            frame: false,
+            formula: None,
             insert: Vec3::new(25.45, 0.0, 0.0),
             height: 5.0,
             width: 0.0,
@@ -696,6 +716,8 @@ mod tests {
             columns: None,
         };
         let ml = crate::MLeader {
+            arrow: String::new(),
+            no_leader: false,
             leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
             landing: Vec3::new(25.0, 0.0, 0.0),
             dogleg: 0.45,
@@ -708,9 +730,17 @@ mod tests {
         let b = bounds(EntityKind::MLeader(ml.clone()));
         // The glyph spans x 25.45..28.78, y -2.5..2.5.
         assert!(b.min.x <= 0.0 && b.max.x >= 28.79 && b.min.y <= -2.5 && b.max.y >= 2.5);
-        let mut empty = ml;
+        let mut empty = ml.clone();
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
         assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+        // Leader type None: the hidden leader line and landing take no room.
+        let hidden =
+            crate::MLeader { no_leader: true, leaders: vec![vec![Vec3::new(-500.0, -500.0, 0.0), Vec3::new(-400.0, -500.0, 0.0)]], ..ml.clone() };
+        let b = bounds(EntityKind::MLeader(hidden.clone()));
+        assert!(b.min.x >= 25.0 && b.min.y > -10.0, "{b:?}");
+        assert!(EntityKind::MLeader(hidden).prims().is_empty(), "no snaps on hidden lines");
+        let shown = crate::MLeader { leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0)]], ..ml };
+        assert!(!EntityKind::MLeader(shown).prims().is_empty());
     }
 
     /// An OLE2FRAME counts in the extents through its corner tags (#2422); a missing or

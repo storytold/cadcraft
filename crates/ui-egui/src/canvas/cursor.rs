@@ -59,7 +59,7 @@ pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
     p.text(at + vec2(12.0, 12.0), egui::Align2::LEFT_TOP, crate::i18n::t(hit.name), crate::theme::small(), Color32::BLACK);
     let galley = p.layout_no_wrap(crate::i18n::t(hit.name).to_string(), crate::theme::small(), Color32::BLACK);
     let r = Rect::from_min_size(at + vec2(10.0, 10.0), galley.size() + vec2(6.0, 2.0));
-    p.rect_filled(r, 2.0, Color32::from_rgb(0xff, 0xff, 0xe1));
+    p.rect_filled(r, crate::theme::r(2.0), Color32::from_rgb(0xff, 0xff, 0xe1));
     p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
 }
 
@@ -152,7 +152,7 @@ pub(super) fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, ctx: &egui::
 fn tooltip(p: &egui::Painter, at: Pos2, text: &str) {
     let galley = p.layout_no_wrap(text.to_string(), crate::theme::small(), Color32::from_rgb(0x20, 0x20, 0x20));
     let r = Rect::from_min_size(at, galley.size() + vec2(8.0, 4.0));
-    p.rect_filled(r, 2.0, Color32::from_rgb(0xf4, 0xf4, 0xf4));
+    p.rect_filled(r, crate::theme::r(2.0), Color32::from_rgb(0xf4, 0xf4, 0xf4));
     p.galley(r.min + vec2(4.0, 2.0), galley, Color32::BLACK);
 }
 

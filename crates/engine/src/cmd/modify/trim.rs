@@ -16,13 +16,43 @@ pub(crate) struct Edges<'a> {
 }
 
 /// All primitives of the cutting edges (excluding `exclude`).
-fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segment>> {
+pub(crate) fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segment>> {
+    Ok(edge_segments_owned(s, edges, None)?.into_iter().filter(|(h, _)| *h != exclude).map(|(_, sg)| sg).collect())
+}
+
+/// The cutting edges a trim of `h` can meet: only the objects reaching its extents (all of them
+/// with implied edges, which run on without end).
+pub(crate) fn trim_edges(s: &Session, edges: Edges, h: Handle) -> Result<Vec<Segment>> {
+    let d = s.doc()?;
+    let near = d.entity(h).map(|e| {
+        let b = cadcraft_doc::entity_bounds(d, e, 0);
+        b.expand((b.width() + b.height()) * 0.01 + 1e-6)
+    });
+    Ok(edge_segments_owned(s, edges, near)?.into_iter().filter(|(o, _)| *o != h).map(|(_, sg)| sg).collect())
+}
+
+/// [`edge_segments`] of every edge object (only those reaching `near` when given), each with
+/// the object it comes from.
+pub(crate) fn edge_segments_owned(s: &Session, edges: Edges, near: Option<cadcraft_geom::Bounds2>) -> Result<Vec<(Handle, Segment)>> {
     let d = s.doc()?;
     let space = s.space();
     let store = d.space(&space).ok_or(EngineError::NoDocument)?;
+    let ix = near.filter(|n| !edges.implied && !n.is_empty()).and_then(|_| crate::spatial::index(d, &space));
+    let picked: Option<Vec<std::sync::Arc<Entity>>> = match (&ix, near) {
+        (Some(ix), Some(n)) => ix.query(&n, true).map(|v| v.into_iter().filter_map(|i| ix.entity(i).cloned()).collect()),
+        _ => None,
+    };
+    let all: Vec<std::sync::Arc<Entity>>;
+    let ents: &[std::sync::Arc<Entity>] = match &picked {
+        Some(v) => v,
+        None => {
+            all = store.iter().cloned().collect();
+            &all
+        }
+    };
     let mut out = Vec::new();
-    for e in store.iter() {
-        if e.handle == exclude || !d.is_visible(e) {
+    for e in ents {
+        if !d.is_visible(e) {
             continue;
         }
         if let Some(es) = edges.only
@@ -33,11 +63,26 @@ fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segme
         if edges.implied
             && let Some(segs) = implied_edge(&e.kind)
         {
-            out.extend(segs);
+            out.extend(segs.into_iter().map(|sg| (e.handle, sg)));
+            continue;
+        }
+        if matches!(e.kind, EntityKind::Insert(_) | EntityKind::MLeader(_) | EntityKind::Table(_)) {
+            // A block reference (and a multileader or table) cuts with the lines it draws, its
+            // curves as finely as hatch boundaries are (a fixed step would miss on big blocks).
+            let b = cadcraft_doc::entity_bounds(d, e, 0);
+            let tolerance = if b.is_empty() { 0.001 } else { ((b.width() + b.height()) / 20000.0).max(1e-9) };
+            let list = cadcraft_render::build_entities(
+                d,
+                std::iter::once(&**e),
+                &cadcraft_render::Options { tolerance, text: false, fill: false, continuous: true, ..Default::default() },
+            );
+            for p in list.prims.iter().filter(|p| matches!(p.kind, cadcraft_render::Kind::Polyline)) {
+                out.extend(list.points(p).windows(2).filter_map(|w| Some((e.handle, Segment::Line(Line::new(*w.first()?, *w.get(1)?))))));
+            }
             continue;
         }
         for p in e.kind.prims() {
-            out.extend(prim_to_segments(&p));
+            out.extend(prim_to_segments(&p).into_iter().map(|sg| (e.handle, sg)));
         }
     }
     Ok(out)
@@ -72,7 +117,7 @@ fn implied_edge(k: &EntityKind) -> Option<Vec<Segment>> {
     }
 }
 
-fn prim_to_segments(p: &Prim) -> Vec<Segment> {
+pub(crate) fn prim_to_segments(p: &Prim) -> Vec<Segment> {
     match p {
         Prim::Seg(s) => vec![*s],
         Prim::Circle(c) => vec![Segment::Arc { arc: Arc { center: c.center, radius: c.radius, start: 0.0, end: TAU - 1e-12 }, ccw: true }],
@@ -96,8 +141,26 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
     if crate::cmd::curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
+    let cut = trim_edges(s, edges, h)?;
+    let (_, pieces) = trim_result(s, h, pick, &cut)?;
+    let hatch = pieces.iter().any(|k| matches!(k, EntityKind::Hatch(_)));
+    let out = replace_with_pieces(s, h, pieces)?;
+    // A hatch's new pieces go behind the lines, as a new hatch does.
+    if hatch {
+        let space = s.space();
+        if let Some(st) = s.doc_mut()?.space_mut(&space) {
+            for nh in out.iter().skip(1) {
+                st.send_to_back(*nh);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What trimming `h` at `pick` against the cutting edges `cut` leaves: the object and the
+/// pieces that replace it (the drawing is not changed).
+pub(crate) fn trim_result(s: &Session, h: Handle, pick: Vec2, cut: &[Segment]) -> Result<(Entity, Vec<EntityKind>)> {
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
-    let cut = edge_segments(s, edges, h)?;
     let pieces: Vec<EntityKind> = match &e.kind {
         EntityKind::Line(l) => {
             let ln = Line::new(l.a.xy(), l.b.xy());
@@ -167,10 +230,11 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             }
             keep.into_iter().collect()
         }
-        EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick)?,
-        k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
+        EntityKind::LwPolyline(p) => trim_polyline(p, cut, pick)?,
+        EntityKind::Hatch(hatch) => crate::cmd::trim_hatch::trim_hatch(hatch, cut, pick)?.0.into_iter().collect(),
+        k => crate::cmd::modify2::trim_other(k, cut, pick)?,
     };
-    replace_with_pieces(s, h, pieces)
+    Ok((e, pieces))
 }
 
 /// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
@@ -338,8 +402,16 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
     if crate::cmd::curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
-    let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let cut = edge_segments(s, edges, h)?;
+    let new_kind = extend_result(s, h, pick, &cut)?.1;
+    s.doc_mut()?.modify_entity(h, |e| e.kind = new_kind)?;
+    Ok(())
+}
+
+/// What extending `h` at `pick` to the boundary edges `cut` makes of it: the object and its
+/// new geometry (the drawing is not changed).
+pub(crate) fn extend_result(s: &Session, h: Handle, pick: Vec2, cut: &[Segment]) -> Result<(Entity, EntityKind)> {
+    let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let new_kind = match &e.kind {
         EntityKind::Line(l) => {
             let (a, b) = (l.a.xy(), l.b.xy());
@@ -382,7 +454,7 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             let none = || EngineError::Other("Object does not intersect an edge.".into());
             if let Some((ga, _)) = cadcraft_geom::bulge_to_arc(prev, end, bulge) {
                 // An arc end segment runs on round its circle, as an arc does.
-                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), &cut).ok_or_else(none)?;
+                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), cut).ok_or_else(none)?;
                 if let Some(v) = vs.get_mut(i_end) {
                     v.p = np;
                 }
@@ -405,8 +477,7 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             // Width, elevation and linetype generation stay as they were.
             EntityKind::LwPolyline(cadcraft_doc::LwPolyline { vertices: vs, ..p.clone() })
         }
-        k => crate::cmd::modify2::extend_other(k, &cut, pick)?,
+        k => crate::cmd::modify2::extend_other(k, cut, pick)?,
     };
-    s.doc_mut()?.modify_entity(h, |e| e.kind = new_kind)?;
-    Ok(())
+    Ok((e, new_kind))
 }

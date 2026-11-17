@@ -138,6 +138,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     app.canvas.job = None;
     let t0 = crate::now_ms();
     let opts = cadcraft_render::Options {
+        continuous: false,
         tolerance: 2f64.powi(band(px)) * 0.5,
         // Two pixels at the band's finest zoom: the list serves every zoom in the band, so its
         // level of detail must hold at the finest one.
@@ -160,7 +161,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
             view_height: f64::from(xf.rect.height()) / xf.scale.max(1e-300),
             model_bg: Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()),
             paper_bg: Rgb(t.paper.r(), t.paper.g(), t.paper.b()),
-            lwdisplay,
+            lwdisplay: super::lw_scale(app, xf),
             device: app.canvas.gpu_device.clone(),
         });
         let window = opts.view;

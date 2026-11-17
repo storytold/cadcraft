@@ -27,9 +27,11 @@ fn default_save_version_applies_to_new_drawings_and_persists() {
 
     // The Save dialog saves an untitled drawing in the default version …
     app.run("ui.saveas", Value::Null).unwrap();
+    cadcraft_ui_egui::busy::wait(&mut app);
     assert_eq!(std::fs::read(picked()).unwrap(), b"2010|false");
     // … and a drawing that has a file in its own.
     app.run("ui.saveas", Value::Null).unwrap();
+    cadcraft_ui_egui::busy::wait(&mut app);
     assert_eq!(std::fs::read(picked()).unwrap(), b"plain");
     let _ = std::fs::remove_file(picked());
 
@@ -71,6 +73,7 @@ fn default_save_format_applies_to_opened_drawings() {
         let echo = format!("Save As will suggest {}", format.to_ascii_uppercase());
         assert_eq!(app.session.log.last(), Some(&echo), "{opened} with {format}");
         app.run("ui.saveas", Value::Null).unwrap();
+        cadcraft_ui_egui::busy::wait(&mut app);
         assert_eq!(suggested.lock().unwrap().last().map(String::as_str), Some(expected), "{opened} with {format}");
         let path = app.session.state().unwrap().path.clone().unwrap_or_default();
         assert!(path.ends_with(expected), "{opened}: saved as {path}");

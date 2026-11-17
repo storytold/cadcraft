@@ -125,12 +125,16 @@ fn all_in_space(s: &Session) -> Result<Vec<Handle>> {
 /// Change attribute `k` of block reference `h`; returns whether its value changed.
 fn edit(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&str) -> Option<String>) -> Result<bool> {
     let mut changed = false;
+    let env = crate::textformula::env(s);
     s.doc_mut()?.modify_entity(h, |e| {
         if let EntityKind::Insert(ins) = &mut e.kind
             && let Some(a) = ins.attribs.get_mut(k)
             && let Some(v) = f(&a.text.value).filter(|v| *v != a.text.value)
         {
             set_value(&mut a.text, v);
+            // A typed value replaces the attribute's formula (or field); a typed formula is kept
+            // and shows its result.
+            crate::textformula::apply_text(&mut a.text, &env, true);
             changed = true;
         }
     })?;

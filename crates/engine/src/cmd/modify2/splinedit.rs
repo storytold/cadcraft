@@ -461,13 +461,36 @@ impl SplineditM {
     /// Points the marker walks: fit points in the fit data menus, else distinct control points.
     fn marks(&self, s: &Session) -> Vec<Vec2> {
         let Some(sp) = self.spline(s) else { return Vec::new() };
-        let fit = matches!(self.sub, Sub::FitMove | Sub::FitAddPick | Sub::FitDelete) || (self.sub == Sub::SelectPoint && self.back == Sub::FitMove);
+        // Add's second step marks the fit point picked in its first (#2325: it marked the
+        // control point with that number).
+        let fit = matches!(self.sub, Sub::FitMove | Sub::FitAddPick | Sub::FitAddNew | Sub::FitDelete)
+            || (self.sub == Sub::SelectPoint && self.back == Sub::FitMove);
         if fit {
             sp.fit.clone()
         } else {
             let u = distinct(&sp);
             sp.control.into_iter().take(u).collect()
         }
+    }
+
+    /// Small squares at the fit points while a fit data option picks or moves them.
+    fn fit_grips(&self, s: &Session) -> Vec<EntityKind> {
+        let picking = matches!(self.sub, Sub::FitMove | Sub::FitAddPick | Sub::FitAddNew | Sub::FitDelete)
+            || (self.sub == Sub::SelectPoint && self.back == Sub::FitMove);
+        if !picking {
+            return Vec::new();
+        }
+        let r = s.pixel_size() * 4.0;
+        let Some(sp) = self.spline(s) else { return Vec::new() };
+        sp.fit
+            .iter()
+            .take(2000)
+            .map(|p| {
+                let corners = [Vec2::new(-r, -r), Vec2::new(r, -r), Vec2::new(r, r), Vec2::new(-r, r)];
+                let vertices = corners.iter().map(|d| PolyVertex::new(*p + *d)).collect();
+                EntityKind::LwPolyline(LwPolyline { vertices, closed: true, const_width: 0.0, elevation: 0.0, plinegen: false })
+            })
+            .collect()
     }
 
     fn apply(&mut self, s: &mut Session, p: Value) -> Result<()> {
@@ -828,10 +851,13 @@ impl Interactive for SplineditM {
     }
 
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        // While fit points are picked or edited they stay shown as grip squares, so the point
+        // to pick can be seen (#2325, butzzi-art's request).
+        let mut out = self.fit_grips(s);
         let marked = matches!(self.sub, Sub::FitMove | Sub::VertexMove | Sub::VertexWeight | Sub::FitAddNew);
-        let Some(v) = marked.then(|| self.marks(s).get(self.mark).copied()).flatten() else { return Vec::new() };
+        let Some(v) = marked.then(|| self.marks(s).get(self.mark).copied()).flatten() else { return out };
         let k = s.pixel_size() * 8.0;
-        let mut out = vec![line(v - Vec2::new(k, k), v + Vec2::new(k, k)), line(v - Vec2::new(k, -k), v + Vec2::new(k, -k))];
+        out.extend([line(v - Vec2::new(k, k), v + Vec2::new(k, k)), line(v - Vec2::new(k, -k), v + Vec2::new(k, -k))]);
         if matches!(self.sub, Sub::FitMove | Sub::VertexMove | Sub::FitAddNew) {
             out.push(line(v, c));
         }
