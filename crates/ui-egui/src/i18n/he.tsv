@@ -395,3 +395,39 @@
 	This format can't keep these objects yet: {objects}.	הפורמט אינו תומך עדיין בשמירת האובייקטים הבאים: {objects}.
 	Type something to find	יש להקליד טקסט לחיפוש
 	Viewport {id}	חלון תצוגה {id}
+# Night L04 tick7: original source-linked Native save, backup, preferences and update controls
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	קובצי DXF מגרסת 2010 ומטה שומרים אותם. השתמש בשמירה בשם כדי לשמר אותם בשרטוט.
+	DXF keeps them. Use Save As to keep them in the drawing.	פורמט DXF שומר אותם. השתמש בשמירה בשם כדי לשמר אותם בשרטוט.
+	Backup copies are off, so the current file will be replaced.	יצירת עותקי גיבוי כבויה, ולכן הקובץ הנוכחי יוחלף.
+	Save Anyway	שמור בכל זאת
+	Your changes will be lost if you don't save them.	אם לא תשמור את השינויים, הם יאבדו.
+	Don't Save	אל תשמור
+	Changes apply at once and are kept for next time.	השינויים חלים מייד ונשמרים להפעלה הבאה.
+	Use System Setting	השתמש בהגדרת המערכת
+	Light	בהיר
+	Dark	כהה
+	Animation effects	אפקטי הנפשה
+	Interface scale	קנה מידה של הממשק
+	Crosshair size	גודל הכוונת
+	Command line history	היסטוריית שורת הפקודה
+	Keep the system cursor visible over the drawing area	השאר את סמן המערכת גלוי מעל אזור השרטוט
+	Screen magnifiers, screen readers and recorders follow the system cursor.	תוכנות הגדלת מסך, קוראי מסך ותוכנות הקלטה עוקבים אחר סמן המערכת.
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	הפקודה חדש והשרטוט הראשון בהפעלה משתמשים ביחידות אלה, אלא אם הוגדרה תבנית ברירת מחדל (QNEWTEMPLATE).
+	A drawing opened from a file keeps that file's format.	שרטוט שנפתח מקובץ שומר על פורמט הקובץ.
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	שרטוטים שטרם נשמרו לקובץ יישמרו בגרסת ברירת המחדל. ערך של 0 דקות משבית שמירה אוטומטית.
+	DXF	DXF
+	DWG	DWG
+	Default save version	גרסת ברירת המחדל לשמירה
+	Units of new drawings	יחידות בשרטוטים חדשים
+	Imperial (inches)	אימפריאליות (אינצ׳ים)
+	Metric (millimetres)	מטריות (מילימטרים)
+	Automatic save every	שמירה אוטומטית בכל
+	min	דקות
+	Backup copy	עותק גיבוי
+	Automatic save file location	מיקום קובץ השמירה האוטומטית
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft שומר את ההעדפות, מצבי ההצמדה לאובייקטים והגדרות השרטוט בחשבון המשתמש ומשחזר אותם בהפעלה.
+	Reset to Defaults	אפס לברירות המחדל
+	Copy as JSON	העתק כ־JSON
+	Reset keeps the interface language.	האיפוס משאיר את שפת הממשק ללא שינוי.
+	CADCraft is up to date.	CADCraft מעודכן.
+	Could not check for updates.	לא ניתן היה לבדוק אם קיימים עדכונים.
