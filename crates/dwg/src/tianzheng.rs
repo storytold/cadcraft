@@ -111,16 +111,41 @@ mod native {
 
     impl TianzhengFields {
         /// 起终点坐标（mm）：固定字段和尾字段里的大数（>1e14）是「坐标 mm × 2^36」的
-        /// 定点编码，除以 2^36 还原。按出现顺序（点1 X/Y、点2 X/Y、Z 为 0 不写）。
+        /// 定点编码，除以 2^36 还原。按出现顺序，注意 `TDWriteItem`(AcGePoint3d 版) 把
+        /// AcGePoint3d 重排成 (Y,Z,X)（`movups [r9+8]` 先入栈），故顺序是 **Y1、X1、Y2、X2**
+        /// （Z=0 不写，2D 图）。
         ///
-        /// 注意：第一个大数可能是墙的公共常量（如 `9100000100000080`，每墙相同，属
-        /// `sub_1c1d9b87` 的 3 double 属性之一，非坐标）；其后才是点1 X/Y、点2 X/Y。
+        /// 第一个大数可能是墙的公共常量（如 `9100000100000080`，每墙相同，属
+        /// `sub_1c1d9b87` 的 3 double 属性之一，非坐标）；其后才是 Y1、X1、Y2、X2。
+        /// 实测 WALL 1A32D：Y1=Y2=140067.39（水平墙），X1=115912.55、X2=79150.22，
+        /// 墙长 36.8m。
         pub fn coords_mm(&self) -> Vec<f64> {
             self.fixed_fields
                 .iter()
                 .chain(&self.tail_fields)
                 .filter_map(|s| decode_coord_mm(s))
                 .collect()
+        }
+
+        /// 墙几何线段（`(x1,y1,z1,x2,y2,z2)`，建筑坐标 mm）：跳过第一个公共常量
+        /// （如 `9100000100000080`，每墙相同），剩余按 Y1、X1、Y2、X2 配对成线段。
+        ///
+        /// 与 `extract_wall_segments`（报存格式，从 proxy graphics）互补：真正格式的墙
+        /// 几何在 text 流大数里（本方法），报存格式在 proxy graphics 里。
+        pub fn wall_segments_mm(&self) -> Vec<(f64, f64, f64, f64, f64, f64)> {
+            let coords = self.coords_mm();
+            if coords.is_empty() {
+                return Vec::new();
+            }
+            let mut segs = Vec::new();
+            // 跳过第一个（公共常量），剩余每 4 个（Y1,X1,Y2,X2）配成一条线段
+            for chunk in coords[1..].chunks(4) {
+                if chunk.len() == 4 {
+                    let (y1, x1, y2, x2) = (chunk[0], chunk[1], chunk[2], chunk[3]);
+                    segs.push((x1, y1, 0.0, x2, y2, 0.0));
+                }
+            }
+            segs
         }
     }
 

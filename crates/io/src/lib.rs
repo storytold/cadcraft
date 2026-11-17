@@ -471,8 +471,15 @@ fn attach_tianzheng(d: &mut Drawing, dwg_bytes: &[u8]) {
                 f
             })
             .unwrap_or_default();
-        // 墙几何（真实图纸在 proxy graphics 类型 6 图元；binary 在加密固定字段，此处为空）。
-        let segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
+        // 墙几何：报存格式在 proxy graphics 类型 6 图元；真正格式在 text 流大数（V9 字段）。
+        let mut segments = cadcraft_dwg::tianzheng::extract_wall_segments(&e.graphic_data);
+        if segments.is_empty() {
+            if let Some(f) =
+                cadcraft_dwg::tianzheng::parse_tianzheng_fields_v9(&e.raw_data, e.handle_bits)
+            {
+                segments = f.wall_segments_mm();
+            }
+        }
         // 天正圆（类型 2）与填充多边形（类型 9）。
         let circles = cadcraft_dwg::tianzheng::extract_circles(&e.graphic_data);
         let polys = cadcraft_dwg::tianzheng::extract_polys(&e.graphic_data);
