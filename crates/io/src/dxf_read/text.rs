@@ -73,6 +73,16 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
             a => a,
         };
     }
+    let background = own.i(90).filter(|&m| (m & 0x03) != 0).map(|m| {
+        let mask = (m & 0x03) as u8;
+        let color = if let Some(tc) = own.i(421) {
+            Some(cadcraft_color::Color::True(cadcraft_color::Rgb::from_u32(tc as u32)))
+        } else {
+            own.i(63).map(|aci| cadcraft_color::Color::from_aci(aci as i16))
+        };
+        let scale = own.fd(45, 1.5).clamp(1.0, 5.0);
+        cadcraft_doc::MTextBackground { mask, color, scale }
+    });
     MText {
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
@@ -89,6 +99,7 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         line_spacing: t.fd(44, 1.0),
         line_spacing_exact: t.i(73) == Some(2),
         columns: columns.map(|(c, _)| c),
+        background,
     }
 }
 

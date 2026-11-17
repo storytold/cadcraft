@@ -340,6 +340,7 @@ fn truetype_mtext_and_dimension_text() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }),
     )
     .unwrap();
@@ -875,6 +876,7 @@ fn mtext_exact_spacing_ignores_taller_lines() {
         line_spacing,
         line_spacing_exact,
         columns: None,
+        background: None,
     };
     let d = Drawing::new_imperial();
     let height = |contents: &str, ls: f64, exact: bool| layout_mtext_entity(&d, &mtext(contents, ls, exact)).bounds.height();
@@ -1216,4 +1218,84 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
         sources: Vec::new(),
     });
     assert_eq!(loops_of(&h).len(), 2);
+}
+
+#[test]
+fn mtext_background_mask_emits_mask_before_text() {
+    let mut d = Drawing::new_metric();
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::ZERO,
+            height: 2.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.25,
+            style: "Standard".into(),
+            contents: "ANCHOR".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: Some(cadcraft_doc::MTextBackground { mask: 2, color: None, scale: 1.5 }),
+        }),
+    )
+    .unwrap();
+    let list = build(&d, &Space::Model, &Options::default());
+    let mask_idx = list.prims.iter().position(|p| p.kind == Kind::Mask).expect("background mask");
+    assert_eq!(mask_idx, 0, "mask must precede text primitives");
+
+    let mut d2 = Drawing::new_metric();
+    d2.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::ZERO,
+            height: 2.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "COLORED".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: Some(cadcraft_doc::MTextBackground { mask: 1, color: Some(Color::Index(3)), scale: 1.5 }),
+        }),
+    )
+    .unwrap();
+    let list2 = build(&d2, &Space::Model, &Options::default());
+    assert!(list2.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(0, 255, 0)), "green background fill");
+    assert!(!list2.prims.iter().any(|p| p.kind == Kind::Mask));
+}
+
+#[test]
+fn mtext_background_mask_stays_paper_mask_under_monochrome_ctb() {
+    let mut d = Drawing::new_metric();
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::new(5.0, 5.0, 0.0),
+            height: 2.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.5,
+            style: "Standard".into(),
+            contents: "MASKED".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: Some(cadcraft_doc::MTextBackground { mask: 3, color: None, scale: 1.5 }),
+        }),
+    )
+    .unwrap();
+    let opts = Options {
+        plot_style_table: Some(std::sync::Arc::new(cadcraft_doc::PlotStyleTable::builtin("monochrome.ctb").unwrap())),
+        ..Default::default()
+    };
+    let list = build_plot(&d, &Space::Model, &opts);
+    let mask_idx = list.prims.iter().position(|p| p.kind == Kind::Mask).expect("Kind::Mask must remain");
+    let text_idx = list.prims.iter().position(|p| p.kind != Kind::Mask).expect("text prims");
+    assert!(mask_idx < text_idx, "Kind::Mask must precede text under monochrome.ctb");
 }

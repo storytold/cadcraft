@@ -57,6 +57,7 @@ fn sample() -> Drawing {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }),
     )
     .unwrap();
@@ -1998,6 +1999,7 @@ fn intl_sample() -> Drawing {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }),
     )
     .unwrap();
@@ -2240,6 +2242,7 @@ fn mleader_is_written_as_multileader() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     };
     let m = cadcraft_doc::MLeader {
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],

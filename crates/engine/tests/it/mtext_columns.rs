@@ -103,6 +103,7 @@ fn scale_scales_multileader_text_width_and_columns() {
             heights: vec![3.0, 4.0],
             flow_reversed: false,
         }),
+        background: None,
     };
     let mut s = Session::new();
     let ml = MLeader {

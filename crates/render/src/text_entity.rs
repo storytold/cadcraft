@@ -71,9 +71,42 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
 
 pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
     let l = layout_mtext_entity(ctx.d, t);
+    if b.opts.fill
+        && let Some(bg) = &t.background
+        && (bg.mask & 0x03) != 0
+        && let Some([p0, p1, p2, p3]) = mtext_bg_quad(ctx.d, t, &l, bg.scale)
+    {
+        let n = b.list.prims.len();
+        let use_mask = (bg.mask & 2) != 0 || bg.color.is_none();
+        let fill_ink = match bg.color {
+            Some(c) if !use_mask => ink(c, Color::Index(7), Color::Index(7)),
+            _ => Ink { rgb: Rgb(255, 255, 255), aci7: false, aci: 0 },
+        };
+        b.tris(ctx, fill_ink, &[p0, p1, p2, p0, p2, p3]);
+        if use_mask && let Some(p) = b.list.prims.get_mut(n) {
+            p.kind = super::Kind::Mask;
+        }
+    }
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
+}
+
+fn mtext_bg_quad(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MTextLayout, scale: f64) -> Option<[cadcraft_geom::Vec2; 4]> {
+    let bounds = if t.rotation == 0.0 {
+        l.bounds
+    } else {
+        layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, background: None, ..t.clone() }).bounds
+    };
+    if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+        return None;
+    }
+    let gap = (scale - 1.0).clamp(0.0, 4.0) * 0.5 * t.height.max(0.0);
+    let (lo, hi) = (bounds.min - cadcraft_geom::Vec2::new(gap, gap), bounds.max + cadcraft_geom::Vec2::new(gap, gap));
+    let at = t.insert.xy();
+    let (x, y) = (cadcraft_geom::Vec2::from_angle(t.rotation), cadcraft_geom::Vec2::from_angle(t.rotation).perp());
+    let turn = |p: cadcraft_geom::Vec2| at + x * (p.x - at.x) + y * (p.y - at.y);
+    Some([turn(lo), turn(cadcraft_geom::Vec2::new(hi.x, lo.y)), turn(hi), turn(cadcraft_geom::Vec2::new(lo.x, hi.y))])
 }
 
 /// A TEXT's justification as the fonts' alignment (used where text is placed outside a build).
