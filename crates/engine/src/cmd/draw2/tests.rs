@@ -1114,6 +1114,41 @@ fn rectang_center_mode_command_line() {
     assert!(near(b.min, 10.0, 10.0) && near(b.max, 14.0, 16.0), "{b:?}");
 }
 
+/// Guards #3185: the rubber-band rectangle stays on screen while the Dimensions option asks
+/// for the length and then the width, following the cursor for the value still to be typed.
+#[test]
+fn rectang_dimensions_keeps_preview() {
+    let bounds = |s: &Session, c: Vec2| match s.preview(c).first().map(|e| &e.kind) {
+        Some(EntityKind::LwPolyline(p)) => cadcraft_geom::Bounds2::from_points(p.vertices.iter().map(|v| v.p).collect::<Vec<_>>()),
+        k => panic!("no rubber band: {k:?}"),
+    };
+    let mut s = Session::new();
+    s.start("rectang").unwrap();
+    s.cmdline("10,10").unwrap();
+    s.cmdline("d").unwrap();
+    assert!(s.prompt_text().contains("Specify length for rectangles"), "{}", s.prompt_text());
+    let b = bounds(&s, Vec2::new(14.0, 16.0));
+    assert!(near(b.min, 10.0, 10.0) && near(b.max, 14.0, 16.0), "{b:?}");
+    s.cmdline("8").unwrap();
+    assert!(s.prompt_text().contains("Specify width for rectangles"), "{}", s.prompt_text());
+    // The length typed is kept; the width follows the cursor.
+    let b = bounds(&s, Vec2::new(14.0, 13.0));
+    assert!(near(b.min, 10.0, 10.0) && near(b.max, 18.0, 13.0), "{b:?}");
+    s.cmdline("5").unwrap();
+    let b = bounds(&s, Vec2::new(14.0, 13.0));
+    assert!(near(b.min, 10.0, 10.0) && near(b.max, 18.0, 15.0), "{b:?}");
+    s.cmdline("14,13").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
+    assert!(near(b.min, 10.0, 10.0) && near(b.max, 18.0, 15.0), "{b:?}");
+    // Other options still hide it while they ask.
+    s.start("rectang").unwrap();
+    s.cmdline("10,10").unwrap();
+    s.cmdline("a").unwrap();
+    assert!(s.preview(Vec2::new(14.0, 16.0)).is_empty());
+    s.cancel();
+}
+
 // ---------------- 3DPOLY / MLINE / HELIX / SPLINE CV ----------------
 
 #[test]
