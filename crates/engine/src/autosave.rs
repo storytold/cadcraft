@@ -405,10 +405,11 @@ mod native {
     pub fn prune_locks(dir: &Path) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         let names: Vec<String> = entries.flatten().take(10_000).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        // The instances that own autosave files, parsed once rather than once per lock file.
+        let with_files: std::collections::HashSet<&str> = names.iter().filter_map(|f| parse_file_name(f)).map(|(_, i, _)| i).collect();
         for n in &names {
             let Some(instance) = parse_lock_name(n) else { continue };
-            let has_files = names.iter().any(|f| parse_file_name(f).is_some_and(|(_, i, _)| i == instance));
-            if !has_files && !owner_alive(dir, instance) {
+            if !with_files.contains(instance) && !owner_alive(dir, instance) {
                 let _ = std::fs::remove_file(dir.join(n));
             }
         }
@@ -435,7 +436,22 @@ mod native {
         }
         // Create a fresh temporary file exclusively and rename it into place, so a planted
         // `<path>.tmp` symlink in a shared autosave directory cannot redirect the write (CWE-59).
-        crate::atomic_write::write_atomic(Path::new(path), &bytes).map_err(|e| e.to_string())
+        // The file holds unsaved work: owner-only from its creation, whatever the umask.
+        crate::atomic_write::write_atomic_with(Path::new(path), private_mode(), |f| f.write_all(&bytes)).map_err(|e| e.to_string())
+    }
+
+    /// Owner read/write only (`None` where file modes don't exist).
+    fn private_mode() -> Option<std::fs::Permissions> {
+        #[cfg(unix)]
+        return Some(std::os::unix::fs::PermissionsExt::from_mode(0o600));
+        #[cfg(not(unix))]
+        None
+    }
+
+    /// Write this app's lock file at `path` without following a link planted there: the file is
+    /// replaced (exclusive temporary file, then rename), never written through (CWE-59).
+    fn write_lock(path: &Path, id: u32) -> std::io::Result<()> {
+        crate::atomic_write::write_atomic_with(path, private_mode(), |f| f.write_all(id.to_string().as_bytes()))
     }
 
     impl Autosaver {
@@ -586,7 +602,7 @@ mod native {
             for (held, file) in &self.locks {
                 let refreshed = match file {
                     Some(file) => file.set_modified(SystemTime::now()),
-                    None => std::fs::write(held, id.to_string()),
+                    None => write_lock(held, id),
                 };
                 if held == path {
                     current = Some(refreshed);
@@ -595,10 +611,22 @@ mod native {
             if let Some(refreshed) = current {
                 return refreshed;
             }
-            let mut file = OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                // A symlink planted at the lock path must not be opened (and truncated) through,
+                // nor a FIFO wait for a reader.
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).mode(0o600);
+            }
+            let mut file = options.open(path)?;
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "the lock file is not a plain file"));
+            }
             if file.try_lock().is_err() {
                 self.locks.push((path.to_path_buf(), None));
-                return std::fs::write(path, id.to_string());
+                return write_lock(path, id);
             }
             file.set_len(0)?;
             file.write_all(format!("{id}{LOCK_HELD}").as_bytes())?;
@@ -625,6 +653,30 @@ mod native {
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
             }
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+
+        /// A symlink planted at the lock path is neither opened through nor written through.
+        #[test]
+        fn lock_writes_do_not_follow_a_planted_link() {
+            let dir = std::env::temp_dir().join(format!("cadcraft-lock-link-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let victim = dir.join("victim.txt");
+            std::fs::write(&victim, b"precious").unwrap();
+            let link = dir.join("1-a.lock");
+            std::os::unix::fs::symlink(&victim, &link).unwrap();
+            let mut a = Autosaver::new("1-a");
+            assert!(a.refresh_lock(&link).is_err());
+            assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+            write_lock(&link, 42).unwrap();
+            assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+            assert!(!std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+            assert_eq!(std::fs::read(&link).unwrap(), b"42");
+            std::fs::remove_dir_all(dir).unwrap();
         }
     }
 }

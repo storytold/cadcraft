@@ -145,8 +145,8 @@ pub(super) fn vports() -> Case {
     drawing.vports.push(VportConfig {
         name: "Split".into(),
         tiles: vec![
-            VportTile { min: Vec2::ZERO, max: Vec2::new(0.5, 1.0), center: Vec2::new(2.0, 3.0), height: 20.0, aspect: 0.75 },
-            VportTile { min: Vec2::new(0.5, 0.0), max: Vec2::new(1.0, 1.0), center: Vec2::new(7.0, 8.0), height: 30.0, aspect: 0.75 },
+            VportTile { min: Vec2::ZERO, max: Vec2::new(0.5, 1.0), center: Vec2::new(2.0, 3.0), height: 20.0, aspect: 0.75, twist: 0.0 },
+            VportTile { min: Vec2::new(0.5, 0.0), max: Vec2::new(1.0, 1.0), center: Vec2::new(7.0, 8.0), height: 30.0, aspect: 0.75, twist: 0.0 },
         ],
     });
     Case { name: "drawing/tiled-viewports".into(), drawing }
@@ -256,7 +256,9 @@ pub(super) fn assert_layouts(a: &Drawing, b: &Drawing, context: &str) {
     for layout in &a.layouts {
         let back = b.layouts.iter().find(|l| l.name == layout.name).expect("layout must survive");
         assert_eq!(back.tab_order, layout.tab_order, "{context}.{}.tab_order", layout.name);
-        assert_eq!(back.page, layout.page, "{context}.{}.page", layout.name);
+        // The groups 44, 45 and 73 the file stored are provenance, not a setting.
+        let setting = |p: &cadcraft_doc::PageSetup| cadcraft_doc::PageSetup { file_paper: None, ..p.clone() };
+        assert_eq!(setting(&back.page), setting(&layout.page), "{context}.{}.page", layout.name);
         assert_eq!(back.view, layout.view, "{context}.{}.view", layout.name);
         compare::entities(a, b, &layout.entities, &back.entities, &format!("{context}.layout[{}]", layout.name));
     }
