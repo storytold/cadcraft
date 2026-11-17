@@ -1534,10 +1534,6 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
-/// What the Attributes panel shows for attributes that differ between the selected block
-/// references, as the Properties palette does for any property.
-const VARIES: &str = "*VARIES*";
-
 /// The block references the Attributes panel edits: the selected objects, when every one of them
 /// is a block reference that has attributes.
 pub(crate) fn attributes_targets(app: &CadApp) -> Vec<cadcraft_engine::doc::Handle> {
