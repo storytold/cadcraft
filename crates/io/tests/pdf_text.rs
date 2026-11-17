@@ -385,3 +385,56 @@ fn hostile_text_never_panics() {
     pdf(&d, &Space::Model, json!({}));
     pdf(&d, &Space::Model, json!({"compress": true}));
 }
+
+#[test]
+fn pdf_plots_raster_image_xobject() {
+    let mut d = drawing();
+    let rgba = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
+    d.rasters.insert("test.png", std::sync::Arc::new(cadcraft_doc::Raster::new(2, 2, rgba.to_vec()).unwrap()));
+    let img = cadcraft_doc::Image {
+        insert: Vec3::new(0.0, 0.0, 0.0),
+        u: Vec3::new(10.0, 0.0, 0.0),
+        v: Vec3::new(0.0, 5.0, 0.0),
+        size: cadcraft_geom::Vec2::new(2.0, 2.0),
+        path: "test.png".into(),
+        name: "test".into(),
+        clip: Vec::new(),
+        clipping: false,
+        display: 1,
+        brightness: 50,
+        contrast: 50,
+        fade: 0,
+        pixel_size: cadcraft_geom::Vec2::ZERO,
+        resolution_units: 0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Image(img)).unwrap();
+    let bytes = plot(&d, &Space::Model, &json!({"compress": false})).unwrap();
+    let p = pdf_read::read(&bytes);
+    assert!(pdf_read::count(p.content(), "Do") >= 1, "page stream must invoke Image XObject with Do: {}", p.content());
+}
+
+#[test]
+fn pdf_plots_crossed_frame_when_image_file_is_missing() {
+    let mut d = drawing();
+    let img = cadcraft_doc::Image {
+        insert: Vec3::new(0.0, 0.0, 0.0),
+        u: Vec3::new(10.0, 0.0, 0.0),
+        v: Vec3::new(0.0, 5.0, 0.0),
+        size: cadcraft_geom::Vec2::new(2.0, 2.0),
+        path: "missing.png".into(),
+        name: "missing".into(),
+        clip: Vec::new(),
+        clipping: false,
+        display: 1,
+        brightness: 50,
+        contrast: 50,
+        fade: 0,
+        pixel_size: cadcraft_geom::Vec2::ZERO,
+        resolution_units: 0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Image(img)).unwrap();
+    let bytes = plot(&d, &Space::Model, &json!({"compress": false})).unwrap();
+    let p = pdf_read::read(&bytes);
+    assert_eq!(pdf_read::count(p.content(), "Do"), 0, "missing image must not emit Do: {}", p.content());
+    assert!(pdf_read::count(p.content(), "S") >= 1, "missing image must draw crossed placeholder strokes: {}", p.content());
+}

@@ -25,7 +25,8 @@ use craft_pdf::write::{self, Metadata, WriteError, Writer};
 use kr::action::LinkAction;
 use kr::annotation::{Annotation, LinkAnnotation, Target};
 use kr::error::KrillaError;
-use kr::geom::{Path, PathBuilder, Point, Rect, Transform};
+use kr::geom::{Path, PathBuilder, Point, Rect, Size, Transform};
+use kr::image::Image as KrillaImage;
 use kr::num::NormalizedF32;
 use kr::optional_content::OcgId;
 use kr::page::{PageLabel, PageSettings};
@@ -791,6 +792,117 @@ struct StrokeStyle {
     transparency: u8,
 }
 
+/// Encode opaque RGBA8 pixels as an RGB PNG so the PDF carries no redundant alpha `/SMask`.
+/// `KrillaImage::from_rgba8` unconditionally sets `has_alpha: true` and emits an `/SMask` stream.
+fn encode_rgb_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Image as CodecImage, PngRows};
+    let (w, h) = (r.width(), r.height());
+    let stride = usize::try_from(w).ok()?.checked_mul(4).filter(|n| *n > 0)?;
+    let expected = stride.checked_mul(usize::try_from(h).ok()?)?;
+    if h == 0 || r.rgba().len() != expected {
+        return None;
+    }
+    let mut rows = r.rgba().chunks_exact(stride);
+    let make_row = |rgba_row: &[u8]| -> Option<CodecImage> {
+        let mut rgb = Vec::with_capacity(usize::try_from(w).ok()?.checked_mul(3)?);
+        for px in rgba_row.as_chunks::<4>().0 {
+            rgb.extend_from_slice(&px[..3]);
+        }
+        CodecImage::from_u8(w, 1, ChannelLayout::Rgb, rgb).ok()
+    };
+    let first = make_row(rows.next()?)?;
+    let mut out = Vec::new();
+    let mut encoder = PngRows::new(&mut out, &first, h, &EncodeOptions::default()).ok()?;
+    encoder.push(&first).ok()?;
+    for row in rows {
+        encoder.push(&make_row(row)?).ok()?;
+    }
+    encoder.finish().ok()?;
+    Some(out)
+}
+
+fn krilla_image(r: &std::sync::Arc<cadcraft_doc::Raster>, cache: &mut std::collections::HashMap<usize, KrillaImage>) -> KrillaImage {
+    let key = std::sync::Arc::as_ptr(r) as usize;
+    if let Some(existing) = cache.get(&key) {
+        return existing.clone();
+    }
+    let img = if r.opaque()
+        && let Some(png) = encode_rgb_png(r)
+        && let Ok(kimg) = KrillaImage::from_png(png.into(), true)
+    {
+        kimg
+    } else {
+        KrillaImage::from_rgba8(r.rgba().to_vec(), r.width(), r.height())
+    };
+    cache.insert(key, img.clone());
+    img
+}
+
+/// Draw a raster image onto the Y-up PDF surface, respecting its world-to-page transform,
+/// clip outlines and fade/transparency.
+fn draw_raster_image(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    img: &cadcraft_render::DImage,
+    t: u8,
+    cache: &mut std::collections::HashMap<usize, KrillaImage>,
+) {
+    let (w, h) = (img.raster.width(), img.raster.height());
+    if w == 0 || h == 0 {
+        return;
+    }
+    let Some(size) = Size::from_wh(w as f32, h as f32) else { return };
+    let scale = p.map.s * p.map.k;
+    let Some((ox, oy)) = coord(p.map.pt(img.origin)) else { return };
+    let Some((rx, ry)) = coord(img.right * scale) else { return };
+    let Some((dx, dy)) = coord(img.down * scale) else { return };
+    let det = rx * dy - ry * dx;
+    if !det.is_finite() || det == 0.0 {
+        return;
+    }
+    let mut clip_paths = Vec::with_capacity(img.clips.len());
+    for outline in &img.clips {
+        let mut pb = PathBuilder::new();
+        let mut count = 0usize;
+        for &q in outline {
+            let Some((x, y)) = coord(p.map.pt(q)) else { return };
+            if count == 0 {
+                pb.move_to(x, y);
+            } else {
+                pb.line_to(x, y);
+            }
+            count += 1;
+        }
+        if count < 3 {
+            return;
+        }
+        pb.close();
+        let Some(path) = pb.finish() else { return };
+        clip_paths.push(path);
+    }
+    let k_img = krilla_image(&img.raster, cache);
+    let clips_pushed = clip_paths.len();
+    for path in &clip_paths {
+        s.push_clip_path(path, &FillRule::EvenOdd);
+    }
+    s.push_transform(&Transform::from_row(rx, ry, dx, dy, ox, oy));
+    let op = opacity(t).get() * (1.0 - f32::from(img.fade.min(100)) / 100.0);
+    let pushed_opacity = if op < 1.0 {
+        s.push_opacity(NormalizedF32::new(op.max(0.0)).unwrap_or(NormalizedF32::ONE));
+        true
+    } else {
+        false
+    };
+    s.draw_image(k_img, size);
+    if pushed_opacity {
+        s.pop();
+    }
+    s.pop();
+    for _ in 0..clips_pushed {
+        s.pop();
+    }
+}
+
 /// Opacity of a transparency in percent.
 fn opacity(t: u8) -> NormalizedF32 {
     NormalizedF32::new(f32::from(100 - t.min(cadcraft_render::MAX_TRANSPARENCY)) / 100.0).unwrap_or(NormalizedF32::ONE)
@@ -856,6 +968,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
     let mut layer: Option<OcgId> = None;
+    let mut images: std::collections::HashMap<usize, KrillaImage> = std::collections::HashMap::new();
     for (i, prim) in list.prims.iter().enumerate() {
         let want = list.prim_layers.get(i).and_then(|l| groups.ids.get(l)).copied();
         if want != layer {
@@ -887,8 +1000,12 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
-            // Raster images are not written to PDF yet: their frame is.
-            Kind::Image { .. } => {}
+            Kind::Image { index } => {
+                flush(s, &mut batch);
+                if let Some(img) = list.images.get(index as usize) {
+                    draw_raster_image(s, p, img, t, &mut images);
+                }
+            }
         }
     }
     flush(s, &mut batch);
@@ -999,7 +1116,8 @@ fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, ma
 fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, rgb: Rgb, transparency: u8) {
     let k = map.s * map.k;
     let g = &t.glyph;
-    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(map.pt(g.origin))) else { return };
+    let pt = map.pt(g.origin);
+    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(pt)) else { return };
     let det = a * d - b * c;
     if !det.is_finite() || det == 0.0 {
         return;
