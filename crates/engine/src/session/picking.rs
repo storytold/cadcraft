@@ -51,6 +51,38 @@ impl Session {
         Ok(())
     }
 
+    /// Close the selection window [`Self::begin_window`] opened as a lasso: the objects inside
+    /// the freehand outline `path` (from where the drag started), drawn clockwise on screen, or
+    /// inside or crossing it, drawn counter-clockwise (as AutoCAD's lasso). They go to the command
+    /// asking for objects, else into the selection with [`Self::idle_click`]'s PICKADD and Shift
+    /// rules. Returns whether there was a window to close.
+    pub fn lasso(&mut self, path: &[Vec2], shift: bool) -> Result<bool> {
+        let Some(pw) = self.pending_window.take() else { return Ok(false) };
+        // At most this many points: the outline is tested against every object it reaches.
+        const MAX_POINTS: usize = 512;
+        let step = path.len().div_ceil(MAX_POINTS).max(1);
+        let poly: Vec<Vec2> = std::iter::once(pw.corner).chain(path.iter().step_by(step).copied()).filter(|p| p.is_finite()).collect();
+        // Shoelace: positive when counter-clockwise (twisting the view turns, never mirrors, it).
+        let twice_area: f64 = poly.iter().zip(poly.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum();
+        let crossing = twice_area > 0.0;
+        let space = self.space();
+        let hs = select::select_polygon(self.doc()?, &space, &poly, crossing);
+        let hs = cmd::groups::expand(self, hs);
+        if self.running.is_some() {
+            self.input(Input::Pick(hs))?;
+            return Ok(true);
+        }
+        let pickadd = self.settings.pickadd;
+        let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+        if shift && pickadd {
+            sel.retain(|h| !hs.contains(h));
+        } else {
+            sel.extend(hs);
+        }
+        self.set_selection(sel);
+        Ok(true)
+    }
+
     /// An idle click that picked `h`, with [`Self::idle_click`]'s PICKADD and Shift rules.
     fn idle_pick(&mut self, h: Handle, shift: bool) {
         let pickadd = self.settings.pickadd;
