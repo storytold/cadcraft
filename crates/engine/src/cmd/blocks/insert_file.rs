@@ -12,8 +12,6 @@ use std::sync::Arc;
 use cadcraft_doc::{Block, Drawing, Entity, EntityKind, Handle};
 use serde_json::{Value, json};
 
-#[cfg(not(target_arch = "wasm32"))]
-use super::super::file::MAX_DRAWING_BYTES;
 use super::super::file::io;
 use super::super::modify::explode_kind;
 use super::purge::{Kind, candidates, is_arrow_override, override_arrows, override_name, scan_reads_everything};
@@ -93,7 +91,8 @@ pub(super) fn read_drawing(path: &str) -> Result<Drawing> {
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        crate::capped_read::read_capped(std::path::Path::new(_path), MAX_DRAWING_BYTES).map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
+            .map_err(|e| bad("insert", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("insert", "paths are not available on the web"))

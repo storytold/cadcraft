@@ -20,7 +20,8 @@ mod vec;
 
 pub use bounds::Bounds2;
 pub use curve::{
-    Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon, polygon_centroid, shoelace,
+    Arc, Circle, Ellipse, Line, MAX_TESSELLATED_POINTS, PolyVertex, Polyline, Segment, arc_to_bulge, bulge_to_arc, point_in_polygon,
+    polygon_centroid, shoelace,
 };
 pub use fillet::{CornerFit, TanCurve, tangent_circles};
 pub use intersect::{circle_circle, intersect_ext, intersect_segments, line_circle, line_line, line_line_infinite};
@@ -64,6 +65,11 @@ pub fn rad(d: f64) -> f64 {
 }
 
 /// Number of segments needed to approximate an arc of `radius` and `sweep` within `tol`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "The segment count is nonnegative and immediately clamped to 1..=4096; float-to-usize saturation handles out-of-range values."
+)]
 pub fn arc_segments(radius: f64, sweep: f64, tol: f64) -> usize {
     let r = radius.abs();
     if !(r.is_finite() && sweep.is_finite()) || r <= EPS {
