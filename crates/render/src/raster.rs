@@ -202,10 +202,10 @@ fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Encode premultiplied RGBA pixels as a PNG.
-pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let size = tiny_skia::IntSize::from_wh(width, height)?;
     let pm = Pixmap::from_vec(rgba.to_vec(), size)?;
-    pm.encode_png().ok()
+    encode_png(&pm)
 }
 
 /// Whether tiny-skia strokes a line `width` pixels wide (untransformed) as a hairline: zero
@@ -439,7 +439,7 @@ mod png_tests {
 
     #[test]
     fn a_huge_png_is_refused_from_its_header() {
-        let ok = encode_png(2, 3, &[255; 2 * 3 * 4]).unwrap_or_default();
+        let ok = encode_rgba_png(2, 3, &[255; 2 * 3 * 4]).unwrap_or_default();
         assert_eq!(png_size(&ok), Some((2, 3)));
         assert_eq!(decode_png(&ok).map(|(w, h, _)| (w, h)), Some((2, 3)));
         // The header says 100000 x 100000: refused before any pixel is decoded.
