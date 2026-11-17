@@ -202,10 +202,10 @@ fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Encode premultiplied RGBA pixels as a PNG.
-pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let size = tiny_skia::IntSize::from_wh(width, height)?;
     let pm = Pixmap::from_vec(rgba.to_vec(), size)?;
-    pm.encode_png().ok()
+    encode_png(&pm)
 }
 
 /// Whether tiny-skia strokes a line `width` pixels wide (untransformed) as a hairline: zero
@@ -383,9 +383,54 @@ fn premultiplied(r: &cadcraft_doc::Raster) -> Option<Pixmap> {
     Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(r.width(), r.height())?)
 }
 
+/// Write straight-alpha RGBA8 pixels as PNG a row at a time.
+pub fn write_rgba_png(mut output: impl std::io::Write, width: u32, height: u32, pixels: &[u8]) -> Option<()> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Image, PngRows};
+    let stride = usize::try_from(width).ok()?.checked_mul(4).filter(|n| *n > 0)?;
+    let expected = stride.checked_mul(usize::try_from(height).ok()?)?;
+    if height == 0 || pixels.len() != expected {
+        return None;
+    }
+    let mut rows = pixels.chunks_exact(stride);
+    let row = |data: &[u8]| Image::from_u8(width, 1, ChannelLayout::Rgba, data.to_vec()).ok();
+    let first = row(rows.next()?)?;
+    let mut encoder = PngRows::new(&mut output, &first, height, &EncodeOptions::default()).ok()?;
+    encoder.push(&first).ok()?;
+    for data in rows {
+        encoder.push(&row(data)?).ok()?;
+    }
+    encoder.finish().ok()
+}
+
+/// Encode a premultiplied pixmap as PNG without a second full-frame copy.
+pub fn encode_png(pixmap: &Pixmap) -> Option<Vec<u8>> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Image, PngRows};
+    let width = usize::try_from(pixmap.width()).ok()?.max(1);
+    let mut rows = pixmap.pixels().chunks_exact(width);
+    let make_row = |row: &[tiny_skia::PremultipliedColorU8]| {
+        let rgba = row
+            .iter()
+            .flat_map(|p| {
+                let c = p.demultiply();
+                [c.red(), c.green(), c.blue(), c.alpha()]
+            })
+            .collect();
+        Image::from_u8(pixmap.width(), 1, ChannelLayout::Rgba, rgba).ok()
+    };
+    let first = make_row(rows.next()?)?;
+    let mut out = Vec::new();
+    let mut encoder = PngRows::new(&mut out, &first, pixmap.height(), &EncodeOptions::default()).ok()?;
+    encoder.push(&first).ok()?;
+    for row in rows {
+        encoder.push(&make_row(row)?).ok()?;
+    }
+    encoder.finish().ok()?;
+    Some(out)
+}
+
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
-    render(list, view, o)?.encode_png().ok()
+    encode_png(&render(list, view, o)?)
 }
 
 #[cfg(test)]
@@ -394,7 +439,7 @@ mod png_tests {
 
     #[test]
     fn a_huge_png_is_refused_from_its_header() {
-        let ok = encode_png(2, 3, &[255; 2 * 3 * 4]).unwrap_or_default();
+        let ok = encode_rgba_png(2, 3, &[255; 2 * 3 * 4]).unwrap_or_default();
         assert_eq!(png_size(&ok), Some((2, 3)));
         assert_eq!(decode_png(&ok).map(|(w, h, _)| (w, h)), Some((2, 3)));
         // The header says 100000 x 100000: refused before any pixel is decoded.
