@@ -1400,3 +1400,6 @@ menu	Modify	Edita
 	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni
 	Check for updates when CADCraft starts	Controlla gli aggiornamenti all'avvio di CADCraft
 	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Se disattivato, CADCraft non propone mai un aggiornamento da solo; Aiuto ▸ Verifica aggiornamenti… continua a controllare.
+
+# ArtCraft feature naming
+	Additional Tools	Strumenti aggiuntivi
