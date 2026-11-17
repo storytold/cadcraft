@@ -9,37 +9,6 @@ use crate::theme::Tokens;
 
 pub mod annoscale;
 
-const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
-    &[
-        (Icon::New, "new", "New Drawing", Some("Cmd+N")),
-        (Icon::Open, "open", "Open", Some("Cmd+O")),
-        (Icon::Save, "qsave", "Save", Some("Cmd+S")),
-        (Icon::SaveAs, "saveas", "Save As", None),
-    ],
-    &[(Icon::Undo, "u", "Undo", Some("Cmd+Z")), (Icon::Redo, "redo", "Redo", Some("Cmd+Shift+Z"))],
-    &[
-        (Icon::Plot, "plot", "Print", None),
-        (Icon::Publish, "publish", "Batch Publish", None),
-        (Icon::PageSetup, "pagesetup", "Page Setup Manager", None),
-        (Icon::Preview, "preview", "Plot Preview", None),
-    ],
-    &[
-        (Icon::Import, "import", "Import", None),
-        (Icon::Export, "export", "Export", None),
-        (Icon::Attach, "attach", "Attach", None),
-        (Icon::Share, "share", "Share", None),
-    ],
-    &[(Icon::ZoomWindow, "zoom.window", "Zoom Window", None), (Icon::Pan, "pan", "Pan", None), (Icon::Orbit, "3dorbit", "Orbit", None)],
-    &[
-        (Icon::ZoomExtents, "zoom.extents", "Zoom Extents", None),
-        (Icon::Properties, "ui.toggle.palettes", "Properties", None),
-        (Icon::Layers, "ui.dialog.layers", "Layer Properties Manager", None),
-        (Icon::Blocks, "ui.dialog.blocks", "Blocks", None),
-    ],
-    &[(Icon::Measure, "dist", "Measure Distance", None), (Icon::List, "list", "List", None), (Icon::Area, "area", "Area", None)],
-    &[(Icon::Help, "ui.dialog.about", "Help", None)],
-];
-
 /// Height of the macOS integrated title row (#161). AppKit draws the traffic lights itself,
 /// centred in the standard 28 pt title-bar band at the top of the window; moving them would take
 /// AppKit calls (`unsafe`, which the workspace forbids). So the title row is that band, and what
@@ -61,109 +30,154 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
-/// Title row (with the integrated macOS title bar) and the Tool Bar.
+/// Title row (with the integrated macOS title bar, or the app's own on Windows) and the Tool Bar.
+/// With a title bar of the app's own the Tool Bar sits in it, after the logo and the app's name,
+/// with the drawing's name at the right and, on Windows, the caption buttons.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
-    let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
-    egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+    let tb_shown = app.ui.show_toolbar && app.ui.toolbar_dock == crate::toolbar::Dock::Top;
+    if !app.integrated_titlebar && !app.custom_titlebar {
+        if tb_shown {
+            egui::Panel::top("cc_title_toolbar").exact_size(crate::toolbar::THICKNESS).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+                let r = ui.max_rect();
+                crate::toolbar::top(app, ui, Rect::from_min_max(pos2(r.left() + 12.0, r.top()), r.max));
+            });
+        }
+        return;
+    }
+    let h = if tb_shown { crate::toolbar::THICKNESS.max(MAC_TITLE_BAR) } else { MAC_TITLE_BAR.max(if app.custom_titlebar { 32.0 } else { 0.0 }) };
+    let captions = if app.custom_titlebar { CAPTIONS_W } else { 0.0 };
+    egui::Panel::top("cc_title_toolbar").exact_size(h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
-        if title_h > 0.0 {
-            // The empty row moves the window; it goes first so later widgets take their own clicks.
-            craft_window::title_bar::empty_area(ui, Rect::from_min_size(r.min, vec2(r.width(), title_h)));
-            let title = match app.session.state() {
-                Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
-                _ => format!("CADCraft      {}", crate::tl!("Start")),
-            };
+        // The empty row moves the window; it goes first so later widgets take their own clicks.
+        craft_window::title_bar::empty_area(ui, Rect::from_min_max(r.min, pos2(r.right() - captions, r.bottom())));
+        let name = match app.session.state() {
+            Ok(st) if !app.ui.start_tab => format!("{}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
+            _ => crate::tl!("Start").to_string(),
+        };
+        let left = r.left() + if app.integrated_titlebar { MAC_CONTENT_LEFT } else { 6.0 };
+        let right = r.right() - captions - 12.0;
+        if tb_shown {
+            let galley = ui.painter().layout_job(crate::i18n::job(&name, egui::FontId::proportional(13.0), t.text_dim));
+            // The drawing's name keeps its room unless the bar would get less than a few buttons.
+            let tb_right = (right - galley.size().x - 24.0).max(left + 260.0).min(right);
+            crate::toolbar::top_in_title(app, ui, Rect::from_min_max(pos2(left, r.top()), pos2(tb_right, r.bottom())));
+            if tb_right + 24.0 + galley.size().x <= right + 0.5 {
+                ui.painter().galley(pos2(right - galley.size().x, r.center().y - galley.size().y / 2.0), galley, t.text_dim);
+            }
+        } else {
+            let title = format!("CADCraft      {name}");
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
-            let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
-            let x = title_left(r.left(), r.width(), galley.size().x);
-            ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
+            let galley = ui.painter().layout_job(crate::i18n::job(&title, egui::FontId::proportional(13.0), t.text_dim));
+            let x = title_left(r.left(), r.width() - captions, galley.size().x);
+            ui.painter().galley(pos2(x, r.center().y - galley.size().y / 2.0), galley, t.text_dim);
         }
-        if tb_h > 0.0 {
-            let row = Rect::from_min_size(pos2(r.left(), r.top() + title_h), vec2(r.width(), tb_h));
-            let mut x = r.left() + if app.integrated_titlebar { 120.0 } else { 12.0 };
-            let size = 26.0;
-            let mut clicked = None;
-            let mac = ui.ctx().os().is_mac();
-            let widths: Vec<_> = TOOLBAR.iter().map(|group| group.len() as f32 * (size + 6.0) - 6.0).collect();
-            let available = (row.right() - 12.0 - x).max(0.0);
-            let Some(fit) = craft_ui::layout::fit_toolbar(&widths, available, 24.0, 30.0) else {
-                // Very small windows still expose the complete command row by scrolling.
-                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink2(vec2(4.0, 0.0))), |ui| {
-                    egui::ScrollArea::horizontal().id_salt("toolbar_small").show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for group in TOOLBAR {
-                                for (icon, cmd, tip, _) in *group {
-                                    if icons::button(ui, *icon, size, tip, false).clicked() {
-                                        clicked = Some(*cmd);
-                                    }
-                                }
-                                ui.add_space(18.0);
-                            }
-                        });
-                    });
-                });
-                if let Some(command) = clicked {
-                    app.start(command);
-                }
-                return;
-            };
-            for (index, _) in &fit.shown {
-                let Some(group) = TOOLBAR.get(*index) else { continue };
-                for (icon, cmd, label, shortcut) in group.iter() {
-                    let br = Rect::from_min_size(pos2(x, row.center().y - size / 2.0), vec2(size, size));
-                    let resp = ui.interact(br, ui.scope_id().with(("tb", *cmd)), Sense::click());
-                    if resp.hovered() {
-                        ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
-                    }
-                    icons::paint(ui.painter(), br.shrink(4.0), *icon, false);
-                    let tip = match shortcut {
-                        Some(sc) => format!("{} ({})", crate::i18n::t(label), crate::menus::shortcut_label(sc, mac)),
-                        None => crate::i18n::t(label).to_string(),
-                    };
-                    icons::describe_control(ui, &resp, &tip, None, false);
-                    if resp.on_hover_text(tip).clicked() {
-                        clicked = Some(*cmd);
-                    }
-                    x += size + 6.0;
-                }
-                x += 18.0;
-            }
-            if !fit.overflow.is_empty() {
-                let br = Rect::from_min_size(pos2(x, row.center().y - size / 2.0), vec2(fit.overflow_width, size));
-                let response = ui.interact(br, ui.scope_id().with("toolbar_more"), Sense::click());
-                if response.hovered() {
-                    ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
-                }
-                for offset in [-5.0, 0.0, 5.0] {
-                    ui.painter().circle_filled(br.center() + vec2(offset, 0.0), 1.5, t.text);
-                }
-                icons::describe_control(ui, &response, "More toolbar commands", None, false);
-                egui::Popup::menu(&response).show(|ui| {
-                    for (position, index) in fit.overflow.iter().enumerate() {
-                        let Some(group) = TOOLBAR.get(*index) else { continue };
-                        if position > 0 {
-                            ui.separator();
-                        }
-                        for (_, command, label, _) in *group {
-                            let response = ui.button(crate::i18n::t(label));
-                            crate::control::record_widget(ui, &response, label, "button", None);
-                            if response.clicked() {
-                                clicked = Some(*command);
-                                ui.close();
-                            }
-                        }
-                    }
-                });
-                response.on_hover_text(crate::tl!("More toolbar commands"));
-            }
-            if let Some(c) = clicked {
-                app.start(c);
-            }
+        if app.custom_titlebar {
+            caption_buttons(ui, r);
         }
     });
+}
+
+/// One caption button, as wide as Windows' own.
+const CAPTION_W: f32 = 46.0;
+/// The three caption buttons together.
+const CAPTIONS_W: f32 = 3.0 * CAPTION_W;
+
+fn maximized(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().maximized.unwrap_or(false))
+}
+
+/// Minimize, Maximize/Restore and Close at the right end of `bar`, full bar height, flush with
+/// the window's edge so a maximized window's corner hits Close. Close asks the window to close,
+/// which asks about unsaved drawings first.
+///
+/// Adapted from SolidCraft's `crates/ui-egui/src/window_chrome.rs` (MIT OR Apache-2.0).
+fn caption_buttons(ui: &mut egui::Ui, bar: Rect) {
+    let t = Tokens::get();
+    let max = maximized(ui.ctx());
+    for (i, label) in ["Minimize", if max { "Restore" } else { "Maximize" }, "Close"].into_iter().enumerate() {
+        let r = Rect::from_min_size(pos2(bar.right() - CAPTIONS_W + i as f32 * CAPTION_W, bar.top()), vec2(CAPTION_W, bar.height()));
+        let resp = ui.interact(r, egui::Id::unique(("cc_caption", i)), Sense::click());
+        let close = i == 2;
+        if resp.hovered() || resp.has_focus() {
+            let fill = if close { egui::Color32::from_rgb(196, 43, 28) } else { t.control_hover };
+            ui.painter().rect_filled(r, 0.0, fill);
+        }
+        let ink = if close && resp.hovered() { egui::Color32::WHITE } else { t.text };
+        let s = Stroke::new(1.0, ink);
+        let c = r.center();
+        match i {
+            0 => {
+                ui.painter().hline(c.x - 5.0..=c.x + 5.0, c.y, s);
+            }
+            1 if max => {
+                ui.painter().rect_stroke(Rect::from_center_size(c + vec2(-1.0, 1.0), vec2(8.0, 8.0)), 0.0, s, egui::StrokeKind::Inside);
+                ui.painter().line(
+                    vec![
+                        pos2(c.x - 3.0, c.y - 3.0),
+                        pos2(c.x - 3.0, c.y - 5.0),
+                        pos2(c.x + 5.0, c.y - 5.0),
+                        pos2(c.x + 5.0, c.y + 3.0),
+                        pos2(c.x + 3.0, c.y + 3.0),
+                    ],
+                    s,
+                );
+            }
+            1 => {
+                ui.painter().rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 0.0, s, egui::StrokeKind::Inside);
+            }
+            _ => {
+                ui.painter().line_segment([c + vec2(-5.0, -5.0), c + vec2(5.0, 5.0)], s);
+                ui.painter().line_segment([c + vec2(-5.0, 5.0), c + vec2(5.0, -5.0)], s);
+            }
+        }
+        icons::describe_control(ui, &resp, label, None, false);
+        if resp.on_hover_text(crate::i18n::t(label)).clicked() {
+            let cmd = match i {
+                0 => egui::ViewportCommand::Minimized(true),
+                1 => egui::ViewportCommand::Maximized(!max),
+                _ => egui::ViewportCommand::Close,
+            };
+            ui.ctx().send_viewport_cmd(cmd);
+        }
+    }
+}
+
+/// Invisible resize zones along the edges of a window without OS decorations, above everything
+/// else; a press in one starts the OS's resize in that direction. None while the window is
+/// maximized or full screen. Windows' own resize border: 8 px at 96 DPI.
+///
+/// Adapted from SolidCraft's `crates/ui-egui/src/window_chrome.rs` (MIT OR Apache-2.0).
+pub fn resize_zones(ui: &mut egui::Ui) {
+    use egui::{CursorIcon as C, ResizeDirection as D};
+    let ctx = ui.ctx().clone();
+    if maximized(&ctx) || ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+        return;
+    }
+    let w = ctx.content_rect();
+    let ppp = ctx.pixels_per_point();
+    let native = ctx.input(|i| i.viewport().native_pixels_per_point).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0);
+    let e = ((8.0 * native).round().max(1.0)) / ppp.max(0.01);
+    let c = 2.0 * e;
+    let zones = [
+        (Rect::from_min_max(w.left_top(), pos2(w.right(), w.top() + e)), D::North, C::ResizeVertical),
+        (Rect::from_min_max(pos2(w.left(), w.bottom() - e), w.right_bottom()), D::South, C::ResizeVertical),
+        (Rect::from_min_max(w.left_top(), pos2(w.left() + e, w.bottom())), D::West, C::ResizeHorizontal),
+        (Rect::from_min_max(pos2(w.right() - e, w.top()), w.right_bottom()), D::East, C::ResizeHorizontal),
+        (Rect::from_min_size(w.left_top(), vec2(c, c)), D::NorthWest, C::ResizeNwSe),
+        (Rect::from_min_size(w.right_top() - vec2(c, 0.0), vec2(c, c)), D::NorthEast, C::ResizeNeSw),
+        (Rect::from_min_size(w.left_bottom() - vec2(0.0, c), vec2(c, c)), D::SouthWest, C::ResizeNeSw),
+        (Rect::from_min_size(w.right_bottom() - vec2(c, c), vec2(c, c)), D::SouthEast, C::ResizeNwSe),
+    ];
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("cc_resize_edges"));
+    let zui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(w));
+    for (i, (r, dir, cursor)) in zones.into_iter().enumerate() {
+        let resp = zui.interact(r, egui::Id::unique(("cc_resize_edge", i)), Sense::drag()).on_hover_cursor(cursor);
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+        }
+    }
 }
 
 /// File tabs: switcher, "+", Start, open drawings.
@@ -262,7 +276,7 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
 /// `text` laid out on one line no wider than `max_width`, ending in "…" when it had to be cut;
 /// and whether it was.
 fn elided(p: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_width: f32) -> (std::sync::Arc<egui::Galley>, bool) {
-    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    let mut job = crate::i18n::job(text, font, color);
     job.wrap = egui::text::TextWrapping { max_width: max_width.max(0.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     let galley = p.layout_job(job);
     let cut = galley.elided;
@@ -304,9 +318,9 @@ fn draw_status_toggles(
         let br = Rect::from_min_size(pos2(rx, rect.center().y - size / 2.0), vec2(size, size));
         let resp = ui.interact(br, ui.scope_id().with(("tg", tip)), Sense::click());
         if on {
-            painter.rect_filled(br, 3.0, t.toggle_on.gamma_multiply(0.35));
+            painter.rect_filled(br, crate::theme::r(3.0), t.toggle_on.gamma_multiply(0.35));
         } else if resp.hovered() {
-            painter.rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.5));
+            painter.rect_filled(br, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.5));
         }
         icons::paint(painter, br.shrink(2.5), icon, false);
         if on {
@@ -400,7 +414,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let label = if model { "MODEL" } else { "PAPER" };
             let br = Rect::from_min_max(pos2(rx - 60.0, r.center().y - 9.0), pos2(rx - 6.0, r.center().y + 9.0));
             let resp = ui.interact(br, ui.scope_id().with("mspace_toggle"), Sense::click());
-            p.rect_filled(br, 3.0, if resp.hovered() { t.control_hover } else { t.toggle_on.gamma_multiply(0.25) });
+            p.rect_filled(br, crate::theme::r(3.0), if resp.hovered() { t.control_hover } else { t.toggle_on.gamma_multiply(0.25) });
             p.text(br.center(), egui::Align2::CENTER_CENTER, crate::i18n::t(label), crate::theme::small(), t.text);
             icons::describe_control(ui, &resp, label, None, false);
             if resp.on_hover_text(crate::tl!("Switch between model space in a viewport and paper space")).clicked() {
@@ -441,6 +455,10 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         let clip = Rect::from_min_max(r.min, pos2(limit.max(r.left()), r.bottom()));
         let tp = p.with_clip_rect(clip);
         let mut switch = None;
+        // Layout tabs drag to a new place in the order: (name, rect) of each shown, the one
+        // dragged and whether its drag ended this frame.
+        let mut tab_rects: Vec<(String, Rect)> = Vec::new();
+        let mut dragged: Option<(String, bool)> = None;
         for (i, (name, (g, cut))) in tabs.iter().zip(labels).enumerate() {
             if i > 0 && !shown.contains(&(i - 1)) {
                 continue;
@@ -448,11 +466,12 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let w = g.size().x + 26.0;
             let tr = Rect::from_min_size(pos2(x, r.top() + 1.0), vec2(w, r.height() - 2.0)).intersect(clip);
             let active = active_tab == Some(i);
-            let resp = ui.interact(tr, ui.scope_id().with(("lt", i)), Sense::click());
+            let resp = ui.interact(tr, ui.scope_id().with(("lt", i)), [Sense::click(), Sense::click_and_drag()][usize::from(i > 0)]);
+            note_tab_drag(i, name, tr, &resp, &mut tab_rects, &mut dragged);
             if active {
-                tp.rect_filled(tr, 2.0, t.tab_active);
+                tp.rect_filled(tr, crate::theme::r(2.0), t.tab_active);
             } else if resp.hovered() {
-                tp.rect_filled(tr, 2.0, t.control.gamma_multiply(0.5));
+                tp.rect_filled(tr, crate::theme::r(2.0), t.control.gamma_multiply(0.5));
             }
             tp.galley(pos2(tr.left() + 13.0, tr.center().y - g.size().y / 2.0), g, if active { t.text } else { t.text_dim });
             icons::describe_control(ui, &resp, name, Some(active), true);
@@ -476,12 +495,16 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 x += 22.0;
             }
         }
+        // A dragged layout tab: a marker where it would go; dropped, it moves there.
+        if let Some((name, dropped)) = dragged {
+            drag_layout_tab(app, ui, &tp, (r.top(), r.bottom()), &tab_rects, &name, dropped);
+        }
         // The layouts that didn't fit, behind a button after the last tab shown.
         let more = hidden.then(|| {
             let mr = Rect::from_min_size(pos2(x + 2.0, r.top() + 5.0), vec2(16.0, 16.0));
             let resp = ui.interact(mr, ui.scope_id().with("layout_more"), Sense::click());
             if resp.hovered() {
-                p.rect_filled(mr, 3.0, t.control_hover.gamma_multiply(0.5));
+                p.rect_filled(mr, crate::theme::r(3.0), t.control_hover.gamma_multiply(0.5));
             }
             icons::paint(&p, mr.shrink(2.0), Icon::ChevronDown, false);
             icons::describe_control(ui, &resp, "Layout list", None, false);
@@ -527,6 +550,212 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Recent files as cards: a preview of the drawing (or the "file not found" picture), its name
+/// and folder. A click opens it.
+fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>) {
+    let t = Tokens::get();
+    let card = vec2(crate::thumbs::W as f32 + 16.0, crate::thumbs::H as f32 + 58.0);
+    let per_row = ((ui.available_width() + 12.0) / (card.x + 12.0)).floor().max(1.0) as usize;
+    let ctx = ui.ctx().clone();
+    for chunk in files.chunks(per_row) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            for path in chunk {
+                let (r, resp) = ui.allocate_exact_size(card, Sense::click());
+                let p = ui.painter();
+                p.rect_filled(r, crate::theme::r(4.0), if resp.hovered() { t.control_hover } else { t.chrome_dark });
+                let img = Rect::from_min_size(r.min + vec2(8.0, 8.0), vec2(crate::thumbs::W as f32, crate::thumbs::H as f32));
+                let thumb = crate::thumbs::get(&ctx, path);
+                match &thumb {
+                    crate::thumbs::Thumb::Ready(tex) => {
+                        // Kept in proportion (a file's own preview has its own size).
+                        let [tw, th] = tex.size();
+                        let k = (img.width() / tw.max(1) as f32).min(img.height() / th.max(1) as f32);
+                        let fit = Rect::from_center_size(img.center(), vec2(tw as f32 * k, th as f32 * k));
+                        p.rect_filled(img, crate::theme::r(2.0), egui::Color32::BLACK);
+                        p.image(tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+                    }
+                    crate::thumbs::Thumb::Missing => {
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
+                        crate::thumbs::paint_missing(p, img.shrink(14.0), t.text_dim);
+                    }
+                    crate::thumbs::Thumb::Pending => {
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
+                        p.text(img.center(), egui::Align2::CENTER_CENTER, crate::tl!("Making a preview..."), crate::theme::small(), t.text_faint);
+                    }
+                    crate::thumbs::Thumb::Failed => {
+                        p.rect_filled(img, crate::theme::r(2.0), t.chrome);
+                        icons::paint(p, Rect::from_center_size(img.center(), vec2(48.0, 48.0)), Icon::Open, true);
+                    }
+                }
+                p.rect_stroke(img, crate::theme::r(2.0), Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
+                let missing = matches!(thumb, crate::thumbs::Thumb::Missing);
+                let clip = p.with_clip_rect(Rect::from_min_max(pos2(r.left() + 6.0, img.bottom()), pos2(r.right() - 6.0, r.bottom())));
+                let name_color = if missing { t.text_faint } else { t.text };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(img.left(), img.bottom() + 16.0),
+                    egui::Align2::LEFT_CENTER,
+                    &crate::menus::file_name(path),
+                    crate::theme::body(),
+                    name_color,
+                );
+                let second = if missing {
+                    crate::tl!("File not found").to_string()
+                } else {
+                    std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default()
+                };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(img.left(), img.bottom() + 34.0),
+                    egui::Align2::LEFT_CENTER,
+                    &second,
+                    crate::theme::small(),
+                    t.text_faint,
+                );
+                if resp
+                    .on_hover_ui(|ui| {
+                        ui.label(crate::i18n::widget(ui, path, egui::TextStyle::Body));
+                    })
+                    .clicked()
+                {
+                    *recent = Some(path.clone());
+                }
+            }
+        });
+        ui.add_space(12.0);
+    }
+}
+
+/// Layout tab `i` (not Model) for the drag: its place, and whether it is the one dragged.
+fn note_tab_drag(i: usize, name: &str, tr: Rect, resp: &egui::Response, tab_rects: &mut Vec<(String, Rect)>, dragged: &mut Option<(String, bool)>) {
+    if i == 0 {
+        return;
+    }
+    tab_rects.push((name.to_string(), tr));
+    if resp.dragged() || resp.drag_stopped() {
+        *dragged = Some((name.to_string(), resp.drag_stopped()));
+    }
+}
+
+/// A layout tab being dragged: the marker where it would go and, dropped, the move.
+fn drag_layout_tab(
+    app: &mut CadApp,
+    ui: &egui::Ui,
+    tp: &egui::Painter,
+    (top, bottom): (f32, f32),
+    tab_rects: &[(String, Rect)],
+    name: &str,
+    dropped: bool,
+) {
+    let t = Tokens::get();
+    let Some(px) = ui.ctx().pointer_latest_pos().map(|q| q.x) else { return };
+    let target = layout_drop_target(tab_rects, px);
+    let mark_x = match &target {
+        Some(b) => tab_rects.iter().find(|(n, _)| n == b).map(|(_, r)| r.left() - 1.0),
+        None => tab_rects.last().map(|(_, r)| r.right() + 1.0),
+    };
+    if let Some(mx) = mark_x {
+        tp.line_segment([pos2(mx, top + 2.0), pos2(mx, bottom - 2.0)], Stroke::new(2.0, t.accent));
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    // Its place now: the tab after it (or the end) leaves the order as it is.
+    let now = tab_rects.iter().position(|(n, _)| n == name).map(|i| tab_rects.get(i + 1).map(|(n, _)| n.clone()));
+    if !dropped || target.as_deref() == Some(name) || now == Some(target.clone()) {
+        return;
+    }
+    // Hidden layouts keep their places: dropped after the last tab shown, it goes before the
+    // first hidden one (or to the end).
+    let before = target.or_else(|| {
+        let all = layout_names(app);
+        let last = tab_rects.last().map(|(n, _)| n.clone());
+        last.and_then(|l| all.iter().position(|n| *n == l)).and_then(|i| all.get(i + 1)).filter(|n| n.as_str() != name).cloned()
+    });
+    let p = match before {
+        Some(b) => json!({ "name": name, "before": b }),
+        None => json!({ "name": name }),
+    };
+    if let Err(e) = app.run("layout.move", p) {
+        app.session.echo(e);
+    }
+}
+
+/// Where a layout tab dropped at `x` goes: before the first tab whose middle is right of it, or
+/// to the end (`None`).
+fn layout_drop_target(tabs: &[(String, Rect)], x: f32) -> Option<String> {
+    tabs.iter().find(|(_, r)| x < r.center().x).map(|(n, _)| n.clone())
+}
+
+/// The layouts' names in tab order.
+fn layout_names(app: &CadApp) -> Vec<String> {
+    let Ok(st) = app.session.state() else { return Vec::new() };
+    let mut ls: Vec<_> = st.doc.layouts.iter().collect();
+    ls.sort_by_key(|l| l.tab_order);
+    ls.into_iter().map(|l| l.name.clone()).collect()
+}
+
+/// Move to... (a layout tab's menu): the layouts to put `name` before, and (move to end).
+pub fn layout_move_dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool) {
+    let names = layout_names(app);
+    let sel_id = egui::Id::unique(("layout_move_before", name));
+    // The layout after it, at first: where it is now.
+    let mut sel: Option<Option<String>> = ctx.data(|d| d.get_temp(sel_id));
+    if sel.is_none() {
+        let next = names.iter().position(|n| n == name).and_then(|i| names.get(i + 1)).cloned();
+        sel = Some(next);
+    }
+    let mut chosen = sel.clone().flatten();
+    let mut done = false;
+    egui::Window::new(crate::tl!("Move Layout")).id(egui::Id::unique("layout_move")).open(open).resizable(false).collapsible(false).show(ctx, |ui| {
+        ui.label(egui::RichText::new(name).strong());
+        ui.label(crate::tl!("Move before layout:"));
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height(260.0).min_scrolled_height(120.0).show(ui, |ui| {
+                ui.set_min_width(220.0);
+                for n in names.iter().filter(|n| *n != name) {
+                    let r = ui.selectable_label(chosen.as_deref() == Some(n.as_str()), n);
+                    if r.clicked() {
+                        chosen = Some(n.clone());
+                    }
+                    if r.double_clicked() {
+                        done = true;
+                    }
+                }
+                let r = ui.selectable_label(chosen.is_none(), crate::tl!("(move to end)"));
+                if r.clicked() {
+                    chosen = None;
+                }
+                if r.double_clicked() {
+                    done = true;
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui.button(crate::tl!("OK")).clicked() {
+                done = true;
+            }
+            if ui.button(crate::tl!("Cancel")).clicked() {
+                app.ui.dialog = None;
+            }
+        });
+    });
+    ctx.data_mut(|d| d.insert_temp(sel_id, Some(chosen.clone())));
+    if done {
+        let p = match &chosen {
+            Some(b) => json!({ "name": name, "before": b }),
+            None => json!({ "name": name }),
+        };
+        if let Err(e) = app.run("layout.move", p) {
+            app.session.echo(e);
+        }
+        ctx.data_mut(|d| d.remove::<Option<Option<String>>>(sel_id));
+        app.ui.dialog = None;
+    } else if app.ui.dialog.is_none() || !*open {
+        ctx.data_mut(|d| d.remove::<Option<Option<String>>>(sel_id));
+    }
+}
+
 /// The Start page (no drawing open, or the Start tab).
 pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -539,7 +768,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     p.text(
         pos2(left.left() + 34.0, left.top() + 98.0),
         egui::Align2::LEFT_CENTER,
-        crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")),
+        crate::tf!("Version {version}", version = crate::VERSION),
         crate::theme::small(),
         t.text_faint,
     );
@@ -548,7 +777,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     for (label, cmd) in [("Open...", "open"), ("New", "new"), ("New (metric)", "new.metric"), ("Open sample drawing", "sample")] {
         let br = Rect::from_min_size(pos2(left.left() + 34.0, y), vec2(220.0, 34.0));
         let resp = ui.interact(br, ui.scope_id().with(("start", cmd)), Sense::click());
-        p.rect_stroke(br, 2.0, Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim }), egui::StrokeKind::Inside);
+        p.rect_stroke(br, crate::theme::r(2.0), Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim }), egui::StrokeKind::Inside);
         p.text(pos2(br.left() + 16.0, br.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(label), crate::theme::body(), t.text);
         if resp.clicked() {
             action = Some(cmd);
@@ -556,24 +785,76 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
         y += 44.0;
     }
     let main = Rect::from_min_max(pos2(left.right() + 36.0, r.top() + 40.0), r.max);
-    p.text(main.min, egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
-    let mut recent = None;
-    let mut y = main.top() + 44.0;
-    for (i, path) in app.ui.recent_files.iter().enumerate() {
-        let row = Rect::from_min_size(pos2(main.left(), y), vec2((r.right() - main.left() - 36.0).clamp(0.0, 640.0), 42.0));
-        let resp = ui.interact(row, ui.scope_id().with(("recent", i)), Sense::click());
-        if resp.hovered() {
-            p.rect_filled(row, 2.0, t.control_hover.gamma_multiply(0.5));
+    let heading = p.text(main.min, egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
+    // List or grid of previews: two toggle buttons right of the heading (however long it is in
+    // the interface language).
+    if !app.ui.recent_files.is_empty() {
+        let x0 = (heading.right() + 16.0).max(main.left() + 110.0);
+        for (i, (grid, icon, tip)) in
+            [(false, Icon::List, crate::tl!("List")), (true, Icon::Grid, crate::tl!("Grid with previews"))].into_iter().enumerate()
+        {
+            let br = Rect::from_min_size(pos2(x0 + i as f32 * 30.0, main.top() + 1.0), vec2(26.0, 26.0));
+            let resp = ui.interact(br, ui.scope_id().with(("recent_view", i)), Sense::click()).on_hover_text(tip);
+            let on = app.ui.recent_grid == grid;
+            if on || resp.hovered() {
+                p.rect_filled(br, crate::theme::r(3.0), if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
+            }
+            icons::paint(&p, br.shrink(4.0), icon, false);
+            if resp.clicked() {
+                app.ui.recent_grid = grid;
+            }
         }
-        let dir = std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default();
-        let clip = p.with_clip_rect(row.shrink(2.0));
-        clip.text(pos2(row.left() + 10.0, row.top() + 13.0), egui::Align2::LEFT_CENTER, crate::menus::file_name(path), crate::theme::body(), t.text);
-        clip.text(pos2(row.left() + 10.0, row.top() + 30.0), egui::Align2::LEFT_CENTER, dir, crate::theme::small(), t.text_faint);
-        if resp.on_hover_text(path).clicked() {
-            recent = Some(path.clone());
-        }
-        y += 46.0;
     }
+    let mut recent = None;
+    let body = Rect::from_min_max(pos2(main.left(), main.top() + 44.0), pos2(r.right() - 12.0, r.bottom() - 8.0));
+    let files = app.ui.recent_files.clone();
+    let grid = app.ui.recent_grid;
+    let now = ui.input(|i| i.time);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+    egui::ScrollArea::vertical().id_salt("cc_recent").auto_shrink([false, false]).show(&mut child, |ui| {
+        if grid {
+            recent_grid(ui, &files, &mut recent);
+        } else {
+            for (i, path) in files.iter().enumerate() {
+                let w = (ui.available_width() - 24.0).clamp(0.0, 640.0);
+                let (row, resp) = ui.allocate_exact_size(vec2(w, 42.0), Sense::click());
+                ui.add_space(4.0);
+                let _ = i;
+                let p = ui.painter();
+                if resp.hovered() {
+                    p.rect_filled(row, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
+                }
+                let there = crate::thumbs::exists(path, now);
+                let dir = std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default();
+                let clip = p.with_clip_rect(row.shrink(2.0));
+                let name_color = if there { t.text } else { t.text_faint };
+                let x = if there {
+                    row.left() + 10.0
+                } else {
+                    crate::thumbs::paint_missing(&clip, Rect::from_min_size(pos2(row.left() + 4.0, row.top() + 3.0), vec2(30.0, 36.0)), t.text_dim);
+                    row.left() + 42.0
+                };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(x, row.top() + 13.0),
+                    egui::Align2::LEFT_CENTER,
+                    &crate::menus::file_name(path),
+                    crate::theme::body(),
+                    name_color,
+                );
+                let second = if there { dir } else { format!("{} — {dir}", crate::tl!("File not found")) };
+                crate::i18n::paint(&clip, pos2(x, row.top() + 30.0), egui::Align2::LEFT_CENTER, &second, crate::theme::small(), t.text_faint);
+                if resp
+                    .on_hover_ui(|ui| {
+                        ui.label(crate::i18n::widget(ui, path, egui::TextStyle::Body));
+                    })
+                    .clicked()
+                {
+                    recent = Some(path.clone());
+                }
+            }
+        }
+    });
     if let Some(path) = recent {
         app.open_path(std::path::Path::new(&path));
     } else if app.ui.recent_files.is_empty() {
@@ -612,6 +893,26 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A layout tab dropped goes before the first tab whose middle is right of the pointer, or
+    /// to the end; Move to... in its menu opens the list and OK moves it.
+    #[test]
+    fn layout_tabs_move_by_drag_and_by_move_to() {
+        let tab = |n: &str, x: f32| (n.to_string(), Rect::from_min_size(pos2(x, 0.0), vec2(60.0, 20.0)));
+        let tabs = [tab("A", 100.0), tab("B", 162.0), tab("C", 224.0)];
+        assert_eq!(layout_drop_target(&tabs, 120.0).as_deref(), Some("A"));
+        assert_eq!(layout_drop_target(&tabs, 140.0).as_deref(), Some("B"));
+        assert_eq!(layout_drop_target(&tabs, 300.0), None);
+
+        let mut app = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).unwrap();
+        app.run("layout.new", json!({ "name": "Last" })).unwrap();
+        let first = layout_names(&app).first().cloned().unwrap();
+        crate::shortcut_menus::choose(&mut app, &egui::Context::default(), "layout:move:Last");
+        assert_eq!(app.ui.dialog.as_deref(), Some("layoutmove:Last"));
+        app.run("layout.move", json!({ "name": "Last", "before": first })).unwrap();
+        assert_eq!(layout_names(&app).first().map(String::as_str), Some("Last"));
+    }
 
     #[test]
     fn mac_title_row_centres_and_clears_the_traffic_lights() {

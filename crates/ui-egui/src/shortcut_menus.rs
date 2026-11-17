@@ -101,6 +101,9 @@ pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
         new.push(layout("template", "From Template..."));
         if !model {
             new.extend([layout("delete", "Delete Layout"), layout("rename", "Rename Layout"), layout("copy", "Copy Layout")]);
+            if find_command("layout.move").is_some() {
+                new.push(layout("move", "Move to..."));
+            }
         }
     }
     push(&mut groups, new);
@@ -212,6 +215,8 @@ fn layout_action(app: &mut CadApp, op: &str, name: &str) {
             activate(app, op);
         }
         // LAYOUT's options, as typed: Template asks for the file, Rename and Copy for the new name.
+        // Move to...: the layout list to put it before.
+        "move" => app.ui.dialog = Some(format!("layoutmove:{name}")),
         "template" | "delete" | "rename" | "copy" => {
             activate(app, "layout");
             if app.session.running.as_ref().is_some_and(|r| r.id == "layout") {

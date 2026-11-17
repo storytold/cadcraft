@@ -233,7 +233,7 @@ pub fn paint_glyph(p: &egui::Painter, r: Rect, kind: &str, c: Color32) {
 pub fn lock(p: &egui::Painter, r: Rect, c: Color32) {
     let k = r.width() / 16.0;
     let body = Rect::from_min_max(pos2(r.left() + 3.5 * k, r.top() + 7.0 * k), pos2(r.left() + 12.5 * k, r.top() + 14.0 * k));
-    p.rect_filled(body, 1.0, c);
+    p.rect_filled(body, crate::theme::r(1.0), c);
     let pts: Vec<Pos2> = (0..=10)
         .map(|i| {
             let a = std::f32::consts::PI * i as f32 / 10.0;
@@ -391,7 +391,7 @@ fn draw_dimensional_constraints(frame: DimensionalContext<'_>) -> Option<Act> {
         let galley = painter.layout_no_wrap(label.clone(), crate::theme::small(), col);
         let size = galley.size() + vec2(22.0, 4.0);
         let r = Rect::from_center_size(at, size);
-        painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
+        painter.rect_filled(r, crate::theme::r(2.0), t.canvas.gamma_multiply(0.85));
         lock(painter, Rect::from_min_size(r.min + vec2(3.0, (r.height() - 13.0) / 2.0), vec2(13.0, 13.0)), col);
         painter.galley(r.min + vec2(19.0, 2.0), galley, col);
         let resp = ui.interact(r, ui.scope_id().with(("dimcon", c.id)), Sense::click());
@@ -469,13 +469,18 @@ fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::P
         }
         placed.push(r);
         let fill = Color32::from_rgb(0xb9, 0xbe, 0xc6).gamma_multiply(alpha);
-        painter.rect_filled(r, 4.0, fill);
-        painter.rect_stroke(r, 4.0, Stroke::new(1.0, Color32::from_rgb(0x6e, 0x75, 0x80).gamma_multiply(alpha)), egui::StrokeKind::Inside);
+        painter.rect_filled(r, crate::theme::r(4.0), fill);
+        painter.rect_stroke(
+            r,
+            crate::theme::r(4.0),
+            Stroke::new(1.0, Color32::from_rgb(0x6e, 0x75, 0x80).gamma_multiply(alpha)),
+            egui::StrokeKind::Inside,
+        );
         for (i, (kind, id)) in kinds.iter().take(16).enumerate() {
             let cr = Rect::from_min_size(r.min + vec2(2.0 + i as f32 * cell, 2.0), vec2(cell, cell));
             let resp = ui.interact(cr, ui.scope_id().with(("cbar", h.0, *id)), Sense::hover());
             if resp.hovered() {
-                painter.rect_filled(cr.shrink(1.0), 3.0, Color32::from_rgb(0xf2, 0xf4, 0xf7));
+                painter.rect_filled(cr.shrink(1.0), crate::theme::r(3.0), Color32::from_rgb(0xf2, 0xf4, 0xf7));
             }
             paint_glyph(painter, cr.shrink(2.0), kind, Color32::from_rgb(0x26, 0x2b, 0x33));
             resp.on_hover_text(crate::tf!("{kind} (constraint {id})", kind = crate::i18n::t(kind), id = id));
@@ -483,7 +488,7 @@ fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::P
         // The object's constraint state: a coloured strip at the end of its bar.
         if let Some((text, col)) = status {
             let sr = Rect::from_min_max(pos2(r.right() - strip - 1.0, r.top() + 3.0), pos2(r.right() - 2.0, r.bottom() - 3.0));
-            painter.rect_filled(sr, 2.0, col.gamma_multiply(alpha.max(0.5)));
+            painter.rect_filled(sr, crate::theme::r(2.0), col.gamma_multiply(alpha.max(0.5)));
             ui.interact(sr.expand(2.0), ui.scope_id().with(("cbar_dof", h.0)), Sense::hover()).on_hover_text(text);
         }
     }
@@ -494,7 +499,7 @@ fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::P
         let galley = painter.layout_no_wrap(text, crate::theme::small(), col);
         let at = pos2(xf.rect.left() + 96.0, xf.rect.bottom() - 10.0 - galley.size().y);
         let r = Rect::from_min_size(at, galley.size() + vec2(8.0, 4.0));
-        painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
+        painter.rect_filled(r, crate::theme::r(2.0), t.canvas.gamma_multiply(0.85));
         painter.galley(at + vec2(4.0, 2.0), galley, col);
     }
 }

@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 craft-pdf = { workspace = true, features = ["write"] }
+miniz_oxide = "0.9"
 
 [dev-dependencies]
 miniz_oxide = "0.9"

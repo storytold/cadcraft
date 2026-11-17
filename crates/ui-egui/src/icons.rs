@@ -1188,7 +1188,7 @@ pub fn describe_control(ui: &egui::Ui, response: &egui::Response, label: &str, s
         // Keyboard focus still shows its outline below when the tab gets it another way.
     }
     if response.has_focus() && response.rect.width() > 4.0 && response.rect.height() > 4.0 {
-        ui.painter().rect_stroke(response.rect.shrink(2.0), 2.0, Stroke::new(1.0, Tokens::get().accent), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(response.rect.shrink(2.0), crate::theme::r(2.0), Stroke::new(1.0, Tokens::get().accent), egui::StrokeKind::Inside);
     }
     crate::control::record_widget(ui, response, label, if tab { "tab" } else { "button" }, selected);
 }

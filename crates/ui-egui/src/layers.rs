@@ -38,8 +38,8 @@ pub fn swatch(p: &egui::Painter, r: Rect, c: Color) {
 }
 
 fn swatch_rgb(p: &egui::Painter, r: Rect, c: Rgb) {
-    p.rect_filled(r, 1.0, rgb32(c));
-    p.rect_stroke(r, 1.0, Stroke::new(1.0, Color32::from_gray(25)), egui::StrokeKind::Inside);
+    p.rect_filled(r, crate::theme::r(1.0), rgb32(c));
+    p.rect_stroke(r, crate::theme::r(1.0), Stroke::new(1.0, Color32::from_gray(25)), egui::StrokeKind::Inside);
 }
 
 /// A colour button (swatch + name) that opens the Select Color popup: the AutoCAD Color Index
@@ -57,7 +57,7 @@ pub fn color_button_resolved(ui: &mut egui::Ui, id: egui::Id, current: Color, re
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 20.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
-        p.rect_filled(rect, 2.0, t.control_hover.gamma_multiply(0.5));
+        p.rect_filled(rect, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
     }
     swatch_rgb(p, Rect::from_min_size(pos2(rect.left() + 3.0, rect.center().y - 6.0), vec2(12.0, 12.0)), resolved);
     p.text(pos2(rect.left() + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(label), crate::theme::body(), t.text);
@@ -460,7 +460,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
         .allocate_ui(vec2(130.0, 20.0), |ui| {
             let (r, resp) = ui.allocate_exact_size(vec2(130.0, 20.0), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(r, 2.0, t.control_hover.gamma_multiply(0.5));
+                ui.painter().rect_filled(r, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
             }
             lt_sample(
                 ui.painter(),
@@ -481,7 +481,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
             for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
                 let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
                 if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
-                    ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
+                    ui.painter().rect_filled(r, crate::theme::r(2.0), t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
                 }
                 lt_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(50.0, r.height())), Some(lt), t.text);
                 ui.painter().text(pos2(r.left() + 62.0, r.center().y), egui::Align2::LEFT_CENTER, &lt.name, crate::theme::body(), t.text);
@@ -492,7 +492,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
             }
             if !library.is_empty() {
                 ui.separator();
-                ui.menu_button("Load...", |ui| {
+                crate::palettes::menu_list(ui, "Load...", |ui| {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                         for n in library {
                             if ui.button(n).clicked() {
@@ -515,7 +515,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
         .allocate_ui(vec2(100.0, 20.0), |ui| {
             let (r, resp) = ui.allocate_exact_size(vec2(100.0, 20.0), Sense::click());
             if resp.hovered() {
-                ui.painter().rect_filled(r, 2.0, t.control_hover.gamma_multiply(0.5));
+                ui.painter().rect_filled(r, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
             }
             lw_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 3.0, r.top()), vec2(22.0, r.height())), l.lineweight, t.text);
             ui.painter().text(
@@ -538,7 +538,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
                 for lw in opts {
                     let (r, resp) = ui.allocate_exact_size(vec2(160.0, 20.0), Sense::click());
                     if resp.hovered() || lw == l.lineweight {
-                        ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
+                        ui.painter().rect_filled(r, crate::theme::r(2.0), t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
                     }
                     lw_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(40.0, r.height())), lw, t.text);
                     ui.painter().text(
@@ -643,7 +643,7 @@ fn layer_identity(
     // Status.
     let (sr, sresp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
     if selected {
-        ui.painter().rect_filled(sr, 2.0, t.accent.gamma_multiply(0.35));
+        ui.painter().rect_filled(sr, crate::theme::r(2.0), t.accent.gamma_multiply(0.35));
     }
     status_icon(ui.painter(), sr.shrink(2.0), current, is_used);
     let tip = if current {
@@ -679,9 +679,9 @@ fn layer_identity(
         _ => {
             let (nr, r) = ui.allocate_exact_size(vec2(150.0, 20.0), Sense::click());
             if selected {
-                ui.painter().rect_filled(nr, 2.0, t.accent.gamma_multiply(0.45));
+                ui.painter().rect_filled(nr, crate::theme::r(2.0), t.accent.gamma_multiply(0.45));
             } else if r.hovered() {
-                ui.painter().rect_filled(nr, 2.0, t.control_hover.gamma_multiply(0.5));
+                ui.painter().rect_filled(nr, crate::theme::r(2.0), t.control_hover.gamma_multiply(0.5));
             }
             ui.painter().text(pos2(nr.left() + 4.0, nr.center().y), egui::Align2::LEFT_CENTER, &name, crate::theme::body(), t.text);
             if r.clicked() {

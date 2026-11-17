@@ -12,6 +12,9 @@ use serde_json::json;
 fn session() -> Session {
     let mut d = cadcraft_engine::doc::Drawing::new_imperial();
     let text = Text {
+        backwards: false,
+        upside_down: false,
+        formula: None,
         insert: Vec3::new(2.0, 2.0, 0.0),
         align_pt: None,
         height: 2.0,
@@ -24,6 +27,8 @@ fn session() -> Session {
         valign: Default::default(),
     };
     let mtext = MText {
+        frame: false,
+        formula: None,
         insert: Vec3::new(10.0, 3.0, 0.0),
         height: 2.0,
         width: 0.0,
@@ -91,4 +96,25 @@ fn a_value_given_on_insert_replaces_the_definition_text() {
     let r = s.execute("insert", &json!({ "name": "TAG", "at": [0, 0], "attribs": { "LABEL": "NORTH" } })).unwrap();
     let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
     assert_eq!(label(&s, h).multiline_text().map(|m| m.contents), Some("NORTH".to_string()));
+}
+
+/// A multiline attribute definition and attribute without Backwards / Upside down come back
+/// without them: the attribute type (a 71 of the attribute's own section) is not read as the
+/// text's generation flags (#2326 review).
+#[test]
+fn multiline_attributes_reopen_upright() {
+    let mut s = session();
+    s.execute("insert", &json!({ "name": "TAG", "at": [10, 5] })).unwrap();
+    let bytes = cadcraft_io::write(s.doc().unwrap(), "tags.dxf").unwrap();
+    let back = cadcraft_io::read(&bytes, "tags.dxf").unwrap();
+    let def = back
+        .blocks
+        .values()
+        .flat_map(|b| b.entities.iter())
+        .find_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None })
+        .unwrap();
+    assert!(def.multiline.is_some());
+    assert!(!def.text.upside_down && !def.text.backwards, "definition");
+    let att = back.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { i.attribs.first().cloned() } else { None }).unwrap();
+    assert!(!att.text.upside_down && !att.text.backwards, "attribute");
 }

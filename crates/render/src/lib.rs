@@ -21,6 +21,7 @@ mod plotstyle;
 mod point;
 pub mod raster;
 mod text;
+pub mod textformula;
 mod tolerance;
 pub mod units;
 mod wide;
@@ -34,6 +35,7 @@ pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, d
 pub use fill::triangulate_evenodd;
 pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
+pub use text::triangulate_placed as triangulate_glyph;
 pub use tolerance::{gdt_points, tolerance_in};
 
 /// A resolved colour: its RGB, whether it is colour 7, and its index colour (0 = a true
@@ -385,12 +387,12 @@ mod props;
 mod text_entity;
 mod viewports;
 
-pub use dim_draw::{dim_text, dimension_in};
+pub use dim_draw::{arrow_block, dim_text, dimension_in, measurement_text, named_arrow};
 pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, style_font, text_align};
+pub use text_entity::{layout_mtext_entity, mtext_frame, place_text_entity, style_font, text_align};
 use viewports::{Clip, append_clipped_keep};
 pub use viewports::{clip_list, viewport_clip, viewport_content};
 

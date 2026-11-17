@@ -205,8 +205,13 @@ fn field(p: &egui::Painter, at: Pos2, text: &str, font: &egui::FontId, active: b
     let g = p.layout_no_wrap(text.to_owned(), font.clone(), if live { t.text_faint } else { t.text });
     let lock_w = if locked { 11.0 } else { 0.0 };
     let r = Rect::from_center_size(at, vec2((g.size().x + 10.0 + lock_w).max(40.0), g.size().y + 6.0));
-    p.rect_filled(r, 2.0, t.chrome_dark);
-    p.rect_stroke(r, 2.0, if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.text_faint) }, egui::StrokeKind::Inside);
+    p.rect_filled(r, crate::theme::r(2.0), t.chrome_dark);
+    p.rect_stroke(
+        r,
+        crate::theme::r(2.0),
+        if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.text_faint) },
+        egui::StrokeKind::Inside,
+    );
     let gw = g.size().x;
     p.galley(pos2(r.left() + 5.0, r.center().y - g.size().y / 2.0), g, t.text);
     if active {
