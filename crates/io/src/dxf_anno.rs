@@ -19,8 +19,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use cadcraft_doc::{AnnoScale, DimKind, Drawing, Entity, EntityKind, HAlign, Handle, MTextColumnType, Text, VAlign};
-use craft_dxf::{Section, Tag};
 use cadcraft_geom::Vec3;
+use craft_dxf::{Section, Tag};
 
 /// The context classes: (DXF record name, C++ class name).
 const TEXT: (&str, &str) = ("ACDB_TEXTOBJECTCONTEXTDATA_CLASS", "AcDbTextObjectContextData");
