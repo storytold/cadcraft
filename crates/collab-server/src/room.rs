@@ -177,6 +177,12 @@ impl Room {
         }
         let before = self.drawing()?.clone();
         if let Err(error) = self.session.execute_intent(&op.command, &op.params, &op.context) {
+            // A command can change the drawing and then fail (a later object it refused): put the
+            // drawing back, as the paths below do, so the room keeps the version it answers for
+            // (CodeRabbit on #2937).
+            if let Ok(doc) = self.session.doc_mut() {
+                *doc = before;
+            }
             return Ok(Outcome::Rejected(Reject { op_id: op.op_id.clone(), code: "invalid".into(), message: error.to_string(), retryable: false }));
         }
         let after = self.drawing()?.clone();

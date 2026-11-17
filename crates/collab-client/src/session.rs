@@ -42,6 +42,9 @@ pub enum Event {
     Pong,
     /// The server reports a problem outside an operation.
     Error { code: String, message: String, retryable: bool },
+    /// Nothing arrived within the read timeout: the socket is still open and the caller should
+    /// drain its queue and come back.
+    Idle,
     /// A message this client does not act on (a delta it has already matched, say).
     Ignored,
 }
@@ -167,7 +170,11 @@ impl Session {
     /// Wait for one message and apply it to the replica.
     pub fn next_event(&mut self) -> Result<Event, SessionError> {
         loop {
-            let message = self.connection.receive().map_err(SessionError::Transport)?;
+            let Some(message) = self.connection.try_receive().map_err(SessionError::Transport)? else {
+                // A read timeout is the normal way round a caller's loop, not a lost connection:
+                // the kind of the `io::Error` decides, and the OS text does not say `timed out`.
+                return Ok(Event::Idle);
+            };
             match message {
                 ServerMessage::Applied { applied } => {
                     self.client.applied(&applied)?;

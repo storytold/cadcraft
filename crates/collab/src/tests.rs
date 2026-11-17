@@ -273,6 +273,30 @@ fn renaming_a_layout_keeps_its_entities() {
     assert_eq!(applied.space(&Space::Paper("Sheet".into())), after.space(&Space::Paper("Sheet".into())));
 }
 
+/// The spaces of a renamed layout are paired whatever the casing a client sent: every other
+/// layout lookup is case-insensitive, so the rename must be too, or the layout's entity edits
+/// are dropped (CodeRabbit on #2937).
+#[test]
+fn a_layout_rename_pairs_its_space_whatever_the_casing() {
+    let mut before = Drawing::new_metric();
+    before.layouts.push(Layout::new("Plan", 1));
+    before.add(&Space::Paper("Plan".into()), Common::default(), point(1.0)).unwrap();
+    let mut after = before.clone();
+    after.layouts.iter_mut().find(|l| l.name == "Plan").unwrap().name = "Sheet".into();
+
+    let mut registry = crate::TableRegistry::new();
+    registry.reconcile(&before);
+    // The client names the layout it renamed in another casing.
+    let renames = crate::TableRenames { layers: vec![], layouts: vec![("PLAN".into(), "Sheet".into())] };
+    let changes = crate::diff_all(&before, &after, &mut registry, &renames).unwrap();
+    assert!(changes.iter().any(|c| matches!(c, Change::LayoutRename { .. })), "{changes:?}");
+    assert!(!changes.iter().any(|c| matches!(c, Change::EntityDelete { .. })), "the renamed layout keeps its objects: {changes:?}");
+
+    let mut applied = before.clone();
+    apply(&mut applied, &changes).unwrap();
+    assert_eq!(applied.space(&Space::Paper("Sheet".into())), after.space(&Space::Paper("Sheet".into())));
+}
+
 #[test]
 fn deleting_a_layout_removes_its_space_and_its_objects() {
     let mut before = Drawing::new_metric();

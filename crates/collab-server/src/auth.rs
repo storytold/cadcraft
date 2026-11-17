@@ -17,6 +17,27 @@ pub struct Claims {
     pub role: Role,
 }
 
+/// The claims of a `--dev-token` entry.
+///
+/// The token is the secret: using it as the actor id would hand it to every participant (the
+/// server sends `actorId` in `welcome`, `applied` and `presence`), and anyone who read it could
+/// reconnect with that role. The id is a label derived from the token instead — stable for the
+/// same token, and no use to a reader (CodeRabbit on #2937).
+pub fn dev_claims(token: &str, role: Role) -> Claims {
+    Claims { sub: format!("dev-{:016x}", label(token)), doc: String::new(), role }
+}
+
+/// FNV-1a over the token: the label needs no key material and no dependency, and it must not be
+/// reversible back into the token by reading a `welcome`.
+fn label(token: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in token.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// Verifies a session token.
 pub trait Authenticator: Send + Sync {
     /// The claims of `jwt`, or why it is not acceptable.
@@ -117,6 +138,17 @@ mod tests {
         let auth = StaticAuthenticator::new([("a".to_string(), Claims { sub: "u1".into(), doc: "d".into(), role: Role::Editor })]);
         assert_eq!(auth.verify("a").unwrap().sub, "u1");
         assert!(auth.verify("b").is_err());
+    }
+
+    #[test]
+    fn a_dev_token_is_not_the_participant_id() {
+        let claims = dev_claims("s3cret", Role::Editor);
+        assert_ne!(claims.sub, "s3cret", "the token is the secret, not the actor's name");
+        assert!(!claims.sub.contains("s3cret"));
+        assert_eq!(claims.sub, dev_claims("s3cret", Role::Owner).sub, "the same token keeps one id");
+        assert_ne!(claims.sub, dev_claims("another", Role::Editor).sub);
+        assert_eq!(claims.role, Role::Editor);
+        assert!(claims.doc.is_empty(), "a dev token names no drawing");
     }
 
     #[test]

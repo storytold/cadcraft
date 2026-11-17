@@ -14,11 +14,15 @@
 #![forbid(unsafe_code)]
 
 mod client;
+/// The socket-backed session is native only: it owns a `tungstenite` connection. A web build
+/// reaches the room through its own transport, so the module and its exports share the gate.
+#[cfg(not(target_arch = "wasm32"))]
 mod session;
 #[cfg(not(target_arch = "wasm32"))]
 mod ws;
 
 pub use client::{Client, ClientError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use session::{Event, Session, SessionError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use ws::Connection;

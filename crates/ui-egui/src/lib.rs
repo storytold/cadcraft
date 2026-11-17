@@ -304,6 +304,10 @@ pub struct CadApp {
     pub remote_presence: std::collections::BTreeMap<String, cadcraft_collab::Presence>,
     /// The version of the shared drawing this app shows.
     pub collab_version: u64,
+    /// This window's id for the operation ids it sends: the room deduplicates by `op_id` alone,
+    /// so a counter that starts at zero in every window would answer one window with another's
+    /// result (ADR 0003, CodeRabbit on #2937).
+    pub(crate) collab_run: u64,
     collab_seq: u64,
     last_presence: Option<web_time::Instant>,
     /// Fresh surface and identity snapshot (see [`capture`]).
@@ -403,6 +407,7 @@ impl CadApp {
             collab: None,
             remote_presence: std::collections::BTreeMap::new(),
             collab_version: 0,
+            collab_run: collab::run_id(),
             collab_seq: 0,
             last_presence: None,
             capture_geometry: None,
@@ -641,11 +646,6 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
-        if self.is_shared() {
-            let message = "a shared session takes commands with explicit parameters; the interactive command line is not available yet".to_string();
-            self.session.echo(message.clone());
-            return Some(message);
-        }
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -659,6 +659,15 @@ impl CadApp {
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }
+        }
+        if self.is_shared() {
+            // A view command (`find`) is the window's own and was dispatched above; everything
+            // else here is a line the parser would turn into an interactive prompt, which a shared
+            // session has no one to answer (CodeRabbit on #2937). JSON-form lines are not UI
+            // commands, so they stay refused instead of running locally.
+            let message = "a shared session takes commands with explicit parameters; the interactive command line is not available yet".to_string();
+            self.session.echo(message.clone());
+            return Some(message);
         }
         let e = match (self.session.cmdline(text), fallback) {
             (Ok(()), _) => return None,

@@ -133,14 +133,14 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 |---|---|---|---|
 | `hello` | C→S | `{app:"cadcraft", doc, jwt, client{name,ver}, lastVersion?}` | JWT первым сообщением, не в URL (ADR-0008) |
 | `welcome` | S→C | `{sessionId, actorId, role, lease, version, participants[], capabilities, snapshot?}` | `snapshot` — ссылка на базу, если `lastVersion` вытеснен |
-| `op` | C→S | `{opId, baseVersion, kind, target, payload, preview?}` | намерение; `target` несёт `space`/`layout`/`selection` (§3) |
+| `op` | C→S | `{op: {opId, baseVersion, kind, command, params, context}}` | намерение; `context` несёт `space`/`selection`/`clay` (§3); поля операции — во вложенном `op`, как в `ClientMessage::Op` |
 | `undo` | C→S | `{opId}` | отменить последнюю операцию участника; ответ — `applied` или `rejected{code:"undo-conflict"}`; это не `op` с командой `undo`, а отдельное сообщение конверта |
 | `redo` | C→S | `{opId}` | вернуть последнюю отменённую операцию; ответ — `applied` или `rejected{code:"redo-conflict"}` |
-| `applied` | S→C | `{opId, version, actorId, result:{command?|delta?|both}, more?}` | авторитетный результат: автору — `command`, остальным — `delta`; длинная дельта дробится с `more:true` |
-| `rejected` | S→C | `{opId, code, message, retryable, hint?}` | отказ (`stale|conflict|forbidden|invalid|auth|lease`) |
+| `applied` | S→C | `{applied: {opId, version, actor, changes[]}}` | результат операции: `changes` — шаг к этой версии. Уходит всем, включая автора: правка применяется только после ответа сервера, оптимистичного локального состояния нет. Длинный хвост догона едет в `delta{more}` (§4.5) |
+| `rejected` | S→C | `{opId, code, message, retryable, hint?}` | отказ (`stale`/`conflict`/`forbidden`/`invalid`/`auth`/`lease`) |
 | `presence` | C↔S | `{space, layout, cursor:[x,y], viewport, selection[], layer, mspace}` | не журналируется, без подтверждений |
 | `resync` | C→S | `{lastVersion}` | догон или база + хвост |
-| `snapshot` | S→C | `{version, seq, more, bytesBase64, sha256}` | чанки по 1 MiB (`seq` с 0, `more` у всех кроме последнего); клиент сбрасывает непринятую очередь |
+| `snapshot` | S→C | `{version, seq, more, bytesBase64, sha256}` | чанки по 1 MiB (`seq` с 0, `more` у всех кроме последнего); клиент сохраняет непринятую очередь и переотправляет её с теми же `opId` (§4.5) |
 | `commit` | C→S | `{expectedVersion}` | запрос сборки файла (ADR-0009) |
 | `commit-result` | S→C | `{version, sha256, bytes?, notSaved, path?}` | результат commit |
 | `error` | S→C | `{code, message, retryable}` | общие ошибки (auth, lease, лимиты) |
@@ -239,8 +239,9 @@ Native-клиент — Rust WebSocket; WASM — `web-sys::WebSocket`, всё в
 
 ## 7. Роли и права (ADR-0008)
 
-JWT первым сообщением; claims `{iss, aud:"office-sync", sub, fileId, app:"cadcraft",
-role, sessionId, iat, exp}`. Проверка `aud/exp/fileId/sessionId` при подключении,
+JWT первым сообщением; claims `{iss, aud:"office-sync", sub, doc, app:"cadcraft",
+role, sessionId, iat, exp}` — `doc` это id файла кабинета (его же несёт `hello`,
+имя `doc` проверяет `TokenClaims`). Проверка `aud/exp/doc/sessionId` при подключении,
 **роль — на каждую операцию**. `viewer`: `applied`, `snapshot`, `presence` — да,
 `op`/`commit`/`undo`/`redo` — `rejected{forbidden}`. Клиент блокирует команды до
 движка в единой точке (`CadApp::run` → `collab_command`), поэтому клавиатура,

@@ -110,8 +110,10 @@ fn paired_spaces(before: &Drawing, after: &Drawing, renames: &TableRenames) -> V
             .find(|(_, to)| to.eq_ignore_ascii_case(&layout.name))
             .map(|(from, _)| from.clone())
             .unwrap_or_else(|| layout.name.clone());
-        if before.layouts.iter().any(|l| l.name == old_name) {
-            pairs.push((Space::Paper(old_name), Space::Paper(layout.name.clone())));
+        // The rename's own spelling is only a hint: every other layout lookup is case-insensitive,
+        // so the space is paired with the layout the drawing actually holds (CodeRabbit on #2937).
+        if let Some(old) = before.layouts.iter().find(|l| l.name.eq_ignore_ascii_case(&old_name)) {
+            pairs.push((Space::Paper(old.name.clone()), Space::Paper(layout.name.clone())));
         }
     }
     pairs

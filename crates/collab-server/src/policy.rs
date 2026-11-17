@@ -55,6 +55,18 @@ pub fn deny_reason(command: &str) -> Option<&'static str> {
         "mcp",
         "control",
         "document.bytes",
+        // Commands that read or write a file on the server: `appload` loads a `.lsp` from a path,
+        // `wblock` writes one, and the rest import or export a file (ADR-0001).
+        "appload",
+        "wblock",
+        "-wblock",
+        "tableexport",
+        "dataextraction",
+        "eattext",
+        "datalink",
+        "datalinkupdate",
+        "drawingrecovery",
+        "exportpdf",
     ];
     if DENIED.contains(&command.as_str()) {
         return Some("the command changes the file or the session, not the shared drawing");
@@ -122,6 +134,15 @@ mod tests {
             "document.bytes",
         ] {
             assert!(deny_reason(command).is_some(), "`{command}` must not be a shared operation");
+        }
+    }
+
+    #[test]
+    fn appload_and_the_file_commands_are_denied() {
+        for command in
+            ["appload", "wblock", "-wblock", "tableexport", "dataextraction", "eattext", "datalink", "datalinkupdate", "drawingrecovery", "exportpdf"]
+        {
+            assert!(deny_reason(command).is_some(), "`{command}` reads or writes a file on the server");
         }
     }
 

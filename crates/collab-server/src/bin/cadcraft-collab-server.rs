@@ -12,7 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use cadcraft_collab::Role;
-use cadcraft_collab_server::auth::{Authenticator, Claims, JwtAuthenticator, StaticAuthenticator};
+use cadcraft_collab_server::auth::{Authenticator, JwtAuthenticator, StaticAuthenticator, dev_claims};
 use cadcraft_collab_server::{Room, Server, Snapshot};
 use clap::Parser;
 
@@ -164,7 +164,7 @@ fn authenticator(args: &Args) -> Result<Arc<dyn Authenticator>, String> {
             "viewer" => Role::Viewer,
             other => return Err(format!("`{other}` is not owner, editor or viewer")),
         };
-        entries.push((token.to_string(), Claims { sub: token.to_string(), doc: String::new(), role }));
+        entries.push((token.to_string(), dev_claims(token, role)));
     }
     Ok(Arc::new(StaticAuthenticator::new(entries)))
 }
