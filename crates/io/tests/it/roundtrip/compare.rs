@@ -265,7 +265,7 @@ fn attrib(expected: &Attrib, actual: &Attrib, context: &str) {
 }
 
 fn insert(expected: &Insert, actual: &Insert, context: &str) {
-    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing } = expected;
+    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing, clip } = expected;
     equal(block, &actual.block, context, "insert.block");
     equal(insert, &actual.insert, context, "insert.insert");
     equal(scale, &actual.scale, context, "insert.scale");
@@ -274,6 +274,7 @@ fn insert(expected: &Insert, actual: &Insert, context: &str) {
     equal(rows, &actual.rows, context, "insert.rows");
     equal(col_spacing, &actual.col_spacing, context, "insert.col_spacing");
     equal(row_spacing, &actual.row_spacing, context, "insert.row_spacing");
+    equal(clip, &actual.clip, context, "insert.clip");
     equal(&attribs.len(), &actual.attribs.len(), context, "insert.attribs.len");
     for (index, (a, b)) in attribs.iter().zip(&actual.attribs).enumerate() {
         attrib(a, b, &format!("{context}.attrib[{index}]"));
