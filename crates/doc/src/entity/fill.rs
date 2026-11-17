@@ -54,8 +54,3 @@ pub struct Gradient {
     #[serde(default)]
     pub centered: bool,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Wipeout {
-    pub boundary: Vec<Vec2>,
-}

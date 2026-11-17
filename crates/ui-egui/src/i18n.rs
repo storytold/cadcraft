@@ -19,6 +19,8 @@ pub enum Preference {
     Greek,
     #[serde(rename = "uk")]
     Ukrainian,
+    #[serde(rename = "pl")]
+    Polish,
     #[serde(rename = "pt-BR")]
     BrazilianPortuguese,
     #[serde(rename = "de")]
@@ -45,14 +47,20 @@ pub enum Preference {
     Hungarian,
     #[serde(rename = "tr")]
     Turkish,
+    #[serde(rename = "ka")]
+    Georgian,
+    #[serde(rename = "bs")]
+    Bosnian,
+    #[serde(rename = "vi")]
+    Vietnamese,
 }
-
 impl Preference {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
         Self::Ukrainian,
+        Self::Polish,
         Self::BrazilianPortuguese,
         Self::German,
         Self::Spanish,
@@ -66,6 +74,9 @@ impl Preference {
         Self::Arabic,
         Self::Hungarian,
         Self::Turkish,
+        Self::Georgian,
+        Self::Bosnian,
+        Self::Vietnamese,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -100,6 +111,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -113,6 +125,9 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Georgian => "ka",
+            Self::Bosnian => "bs",
+            Self::Vietnamese => "vi",
         }
     }
 
@@ -122,6 +137,7 @@ impl Preference {
             Self::English => "English",
             Self::Greek => "Ελληνικά",
             Self::Ukrainian => "Українська",
+            Self::Polish => "Polski",
             Self::BrazilianPortuguese => "Português (Brasil)",
             Self::German => "Deutsch",
             Self::Spanish => "Español",
@@ -141,6 +157,24 @@ impl Preference {
             Self::Arabic => "العربية",
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
+            // Georgian letters come from the craft-fonts Georgian face; a build without it shows
+            // the English name (as Korean does) and keeps the interface in English.
+            Self::Georgian => {
+                if crate::theme::can_show("ka") {
+                    "ქართული"
+                } else {
+                    "Georgian"
+                }
+            }
+            Self::Bosnian => "Bosanski",
+            // Its letters need a font egui doesn't bundle ([`crate::theme::vietnamese_font`]).
+            Self::Vietnamese => {
+                if crate::theme::shows_vietnamese(CURRENT.with(Cell::get)) {
+                    "Tiếng Việt"
+                } else {
+                    "Vietnamese"
+                }
+            }
         }
     }
 
@@ -158,6 +192,7 @@ impl Preference {
             Self::English => "en",
             Self::Greek => "el",
             Self::Ukrainian => "uk",
+            Self::Polish => "pl",
             Self::BrazilianPortuguese => "pt-BR",
             Self::German => "de",
             Self::Spanish => "es",
@@ -171,6 +206,9 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Georgian => "ka",
+            Self::Bosnian => "bs",
+            Self::Vietnamese => "vi",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -187,8 +225,9 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 16] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
         code: "el", name: "Ελληνικά", source: include_str!("i18n/el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
@@ -234,6 +273,18 @@ pub static LANGUAGES: [Language; 16] = [
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
     Language { code: "tr", name: "Türkçe", source: include_str!("i18n/tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // Georgian keeps a noun singular after a numeral ("5 კომიტი"), so one form, the Korean rule.
+    // Its letters come from the craft-fonts `Geor` face (`theme::can_show`).
+    Language {
+        code: "ka", name: "ქართული", source: include_str!("i18n/ka.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
+    },
+    // Bosnian (Latin script, Ijekavian): one (1, 21), few (2–4, 22–24, not 12–14), other — the
+    // Ukrainian rule for integer counts.
+    Language { code: "bs", name: "Bosanski", source: include_str!("i18n/bs.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
+    // Vietnamese doesn't inflect a noun for number ("3 commit"), so like Korean it has one form.
+    Language {
+        code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
+    },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
@@ -328,6 +379,17 @@ pub fn format(source: &str, values: &[(&str, String)]) -> String {
     }
     result.push_str(rest);
     result
+}
+
+/// Polish plurals: one (1), few (2–4, 22–24), many (0, 5–21, 25–31).
+pub fn plural_pl(n: u64) -> usize {
+    if n == 1 {
+        0
+    } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
+        1
+    } else {
+        2
+    }
 }
 
 /// Ukrainian integer plurals: one (1, 21), few (2–4, 22–24), many (0, 5–20, 25…).
@@ -437,6 +499,9 @@ mod picker_order_tests {
         assert!(pos(Preference::Czech) < pos(Preference::German), "Čeština sorts under C");
         assert!(pos(Preference::Italian) < pos(Preference::Hungarian), "Magyar sorts under M");
         assert!(pos(Preference::Turkish) < pos(Preference::Greek), "Latin names come before Greek");
+        assert!(pos(Preference::Bosnian) < pos(Preference::Czech), "Bosanski sorts under B");
+        assert!(pos(Preference::Swedish) < pos(Preference::Vietnamese), "Tiếng Việt sorts under T");
+        assert!(pos(Preference::Vietnamese) < pos(Preference::Turkish), "Tiếng comes before Türkçe");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
     }
 }

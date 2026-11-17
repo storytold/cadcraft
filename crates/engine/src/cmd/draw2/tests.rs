@@ -270,6 +270,118 @@ fn ellipse_arc_typed_angles_are_true_angles() {
     }
 }
 
+/// Typed ELLIPSE input against what AutoCAD 2024 stores for the same input (black-box: synthetic
+/// input in accoreconsole, read back with `entget`). The major axis points at the first axis
+/// endpoint; a point at the distance prompt gives its distance from the center; an other axis
+/// longer than the first becomes the major axis, the first turned 90° counterclockwise; the
+/// Included angle is added to the start angle.
+#[test]
+fn ellipse_axis_endpoints_match_autocad() {
+    type Case = (&'static str, [f64; 2], [f64; 2], f64, Option<[f64; 2]>);
+    // (input after ELLIPSE, center, major axis, ratio, arc start/end parameters)
+    let cases: [Case; 10] = [
+        // The other axis (27.02) is longer than the first half axis (26.42).
+        (
+            "16.459468652708743,28.120073391143574 -5.034438825478263,-20.14843889196848 27.021868057769268",
+            [5.712514913615239, 3.985817249587547],
+            [-24.6850622596004, 10.99222700689644],
+            0.9776866627982613,
+            None,
+        ),
+        (
+            "33.45015752893423,-27.997665254733153 1.0902141405158297,-9.876490849047837 _R 36.361957504949",
+            [17.27018583472502, -18.93707805189049],
+            [16.1799716942092, -9.060587202842658],
+            0.8052876303433125,
+            None,
+        ),
+        (
+            "0.5161247992610992,0.27380397971284964 0.49874786589184156,0.23294359917255586 0.0026647279687818256",
+            [0.5074363325764704, 0.2533737894427027],
+            [0.00868846668462886, 0.02043019027014691],
+            0.1200276615332929,
+            None,
+        ),
+        // Arcs: the angles are taken from the major axis, so a reversed axis draws the arc
+        // on the opposite side of the center.
+        (
+            "_A 612354.66928411,2398796.595432055 612364.9910379789,2398751.70959102 3.5361631006792016 259.40675054209663 162.0895061623204",
+            [612359.8301610444, 2398774.152511537],
+            [-5.160876934416592, 22.44292051764205],
+            0.1535548572193783,
+            Some([4.683678586016272, 2.014340486820176]),
+        ),
+        (
+            "_A -32.49789607178266,25.826299666765127 16.360636510348964,-6.670894598441254 9.326202777586586 _P 235.35128996877393 341.0349294763654",
+            [-8.068629780716847, 9.577702534161936],
+            [-24.42926629106581, 16.24859713260318],
+            0.317871961092373,
+            Some([4.107654908771007, 5.952182383669234]),
+        ),
+        (
+            "_A _C 15.895131938563559,-16.135236520373613 1.9672122380661037,-18.61293795336168 14.456880177932417 214.65903577683966 _I 232.7163597705933",
+            [15.89513193856356, -16.13523652037361],
+            [2.53204749973717, -14.23341561039267],
+            0.9785367111972643,
+            Some([3.756694588158375, 1.5259701966906878]),
+        ),
+        (
+            "_A _C 1.8822645373261935,-7.920292708078534 28.89115893105938,-23.280023918605742 38.7551404612689 136.20071263173944 _I 129.90755425686075",
+            [1.882264537326193, -7.920292708078534],
+            [19.15838502833398, 33.68853210335513],
+            0.8017236937148501,
+            Some([2.267136066480607, 4.657903136501946]),
+        ),
+        // The other axis given by a point.
+        (
+            "-16.377480557612035,55.44699770062272 -15.579405511585826,-24.406726331471475 -4.27081078679767,42.69814401696656",
+            [-15.97844303459893, 15.52013568457562],
+            [-0.3990375230131046, 39.92686201604709],
+            0.7411292927991227,
+            None,
+        ),
+        (
+            "8.137326847228081,16.045209411091605 -2.4500932561568627,22.585405165312338 -2.4956573993017335,12.374292543621266",
+            [2.843616795535609, 19.31530728820197],
+            [4.602217644463162, 7.450176331143755],
+            0.7105482899194384,
+            None,
+        ),
+        (
+            "_C 15.418189586495892,-18.741133769301225 43.29367724019212,5.337090633133826 12.043993630141971,-7.0535727363182446",
+            [15.41818958649589, -18.74113376930122],
+            [27.87548765369622, 24.07822440243505],
+            0.3302549104883693,
+            None,
+        ),
+    ];
+    use std::f64::consts::{PI, TAU};
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    let same_angle = |a: f64, b: f64| {
+        let d = (a - b).rem_euclid(TAU);
+        d < 1e-9 || TAU - d < 1e-9
+    };
+    for (input, center, major, ratio, arc) in cases {
+        let mut s = Session::new();
+        s.cmdline(&format!("ellipse {input}")).unwrap();
+        assert!(s.running.is_none(), "{input}: {}", s.prompt_text());
+        let EntityKind::Ellipse(e) = last(&s) else { panic!("{input}: no ellipse") };
+        assert!(same(e.center.x, center[0]) && same(e.center.y, center[1]), "{input}: center {:?}", e.center);
+        assert!(same(e.major.x, major[0]) && same(e.major.y, major[1]), "{input}: major {:?}", e.major);
+        assert!(same(e.ratio, ratio), "{input}: ratio {}", e.ratio);
+        let [start, end] = arc.unwrap_or([0.0, TAU]);
+        assert!(same_angle(e.start, start) && same_angle(e.end, end), "{input}: {} {}", e.start, e.end);
+    }
+    // Enter takes the default included angle, 180°: half the ellipse.
+    let mut s = Session::new();
+    s.cmdline("ellipse _A 10,0 -10,0 5 30 _I").unwrap();
+    assert!(s.prompt_text().contains("included angle"), "{}", s.prompt_text());
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let EntityKind::Ellipse(e) = last(&s) else { panic!("no ellipse") };
+    assert!(same_angle(e.end, e.start + PI), "{} {}", e.start, e.end);
+}
+
 // ---------------- DIVIDE / MEASURE ----------------
 
 #[test]
@@ -300,6 +412,279 @@ fn divide_and_measure_json() {
     assert!(s.execute("divide", &json!({"handle": l, "segments": 1})).is_err());
     assert!(s.execute("measure", &json!({"handle": l, "length": 0})).is_err());
     assert!(s.execute("measure", &json!({"handle": l, "length": 1e-300})).is_err());
+}
+
+/// DIVIDE and MEASURE against the points AutoCAD 2024 places for the same object and pick
+/// (black-box: synthetic objects in accoreconsole, `(command "_.MEASURE" (list ename point) …)`,
+/// every POINT read back with `entget`). The pick chooses the end by the curve's parameter, not
+/// by distance; a closed polyline runs from its first vertex, a circle from angle 0.
+#[test]
+fn divide_and_measure_match_autocad() {
+    type Case = ((&'static str, serde_json::Value), &'static str, f64, [f64; 2], usize, &'static [[f64; 2]]);
+    // ((seed command, params), command, segments or length, pick, POINT count, AutoCAD points)
+    let cases: Vec<Case> = vec![
+        // DIVIDE-001: (list ename point).
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 30.0, "end": 250.0})),
+            "divide",
+            5.0,
+            [-2.090569265353071, 19.890437907365467],
+            4,
+            &[
+                [-19.021130325903, 6.180339887499],
+                [-17.975880925983, -8.767422935782],
+                [-9.389431255718, 17.658951857179],
+                [5.51274711634, 19.225233918766],
+            ],
+        ),
+        // DIVIDE-002: (list ename point).
+        (
+            ("circle", json!({"center": [0.0, 0.0], "radius": 15.0})),
+            "divide",
+            5.0,
+            [-4.63525491562421, 14.265847744427305],
+            5,
+            &[
+                [-12.135254915624, -8.816778784387],
+                [-12.135254915624, 8.816778784387],
+                [4.635254915624, -14.265847744427],
+                [4.635254915624, 14.265847744427],
+                [15.0, 0.0],
+            ],
+        ),
+        // MEASURE-016: (list ename point).
+        (
+            ("line", json!({"points": [[0.0, 0.0], [37.0, 13.0]]})),
+            "measure",
+            7.688652713279647,
+            [25.9, 9.1],
+            5,
+            &[
+                [0.730313187001, 0.256596525162],
+                [7.984250549601, 2.80527722013],
+                [15.2381879122, 5.353957915097],
+                [22.4921252748, 7.902638610065],
+                [29.7460626374, 10.451319305032],
+            ],
+        ),
+        // MEASURE-024: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [100.0, 0.0], "bulge": 0.0}, {"p": [100.0, 10.0], "bulge": 0.0}, {"p": [5.0, 10.0], "bulge": 0.0}], "closed": false}),
+            ),
+            "measure",
+            7.0,
+            [90.0, 0.0],
+            29,
+            &[[7.0, 0.0], [7.0, 10.0], [14.0, 0.0], [98.0, 0.0], [98.0, 10.0], [100.0, 5.0]],
+        ),
+        // MEASURE-026: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [10.0, 0.0], "bulge": 0.0}, {"p": [10.0, 100.0], "bulge": 0.0}], "closed": false}),
+            ),
+            "measure",
+            7.0,
+            [10.0, 30.0],
+            15,
+            &[[5.0, 0.0], [10.0, 2.0], [10.0, 9.0], [10.0, 79.0], [10.0, 86.0], [10.0, 93.0]],
+        ),
+        // MEASURE-030: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [10.0, 35.0], "bulge": 0.0}], "closed": true}),
+            ),
+            "measure",
+            7.5,
+            [5.0, 17.5],
+            17,
+            &[
+                [2.06040845923, 7.211429607306],
+                [4.120816918461, 14.422859214612],
+                [5.957390538273, 0.0],
+                [41.854257779673, 5.445746712402],
+                [45.137412221497, 19.497902817843],
+                [45.215233654661, 12.07010340037],
+            ],
+        ),
+        // DIVIDE-028: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [10.0, 35.0], "bulge": 0.0}], "closed": true}),
+            ),
+            "divide",
+            5.0,
+            [37.5, 10.0],
+            5,
+            &[
+                [0.0, 0.0],
+                [7.332712970983, 25.664495398441],
+                [25.609294779385, 28.310302237406],
+                [26.691478107655, 0.0],
+                [45.58190593662, 14.465330916891],
+            ],
+        ),
+        // MEASURE-041: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [10.0, 35.0], "bulge": 0.0}], "closed": true}),
+            ),
+            "measure",
+            7.5,
+            [45.54951565955276, 17.15901034980981],
+            17,
+            &[
+                [1.636621047999, 5.728173667998],
+                [3.69702950723, 12.939603275304],
+                [5.75743796646, 20.15103288261],
+                [42.799868254703, 6.663750217618],
+                [44.060611317761, 20.402595149531],
+                [45.491536690495, 13.587129550966],
+            ],
+        ),
+        // MEASURE-042: (list ename point).
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [10.0, 35.0], "bulge": 0.0}], "closed": true}),
+            ),
+            "measure",
+            7.5,
+            [44.0, 20.5],
+            17,
+            &[
+                [2.06040845923, 7.211429607306],
+                [4.120816918461, 14.422859214612],
+                [5.957390538273, 0.0],
+                [41.854257779673, 5.445746712402],
+                [45.137412221497, 19.497902817843],
+                [45.215233654661, 12.07010340037],
+            ],
+        ),
+    ];
+    for ((seed, params), what, value, pick, count, want) in cases {
+        let mut s = Session::new();
+        let r = s.execute(seed, &params).unwrap();
+        let handle = r.get("handle").or_else(|| r["handles"].get(0)).and_then(serde_json::Value::as_str).unwrap().to_string();
+        // AutoLISP's (list ename point): the object and where it was picked.
+        let params = if what == "divide" {
+            json!({"handle": handle, "segments": value as u64, "from": pick})
+        } else {
+            json!({"handle": handle, "length": value, "from": pick})
+        };
+        s.execute(what, &params).unwrap();
+        let pts: Vec<Vec2> =
+            s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Point(p) = &e.kind { Some(p.p.xy()) } else { None }).collect();
+        assert_eq!(pts.len(), count, "{what} {pick:?}: {pts:?}");
+        for w in want {
+            let tol = 1e-9 * w[0].abs().max(w[1].abs()).max(1.0);
+            assert!(pts.iter().any(|p| p.near(Vec2::new(w[0], w[1]), tol)), "{what} {pick:?}: no point at {w:?} in {pts:?}");
+        }
+    }
+}
+
+/// A spline's end is chosen by its own parameter: this one spends half its parameter range on a
+/// zero-length first span, so a pick at x = 3 is already past its middle (parameter 1.3 of 0..2) and
+/// MEASURE runs from the end, though x = 3 is short of the middle of the drawn length.
+#[test]
+fn measure_spline_by_its_own_parameter() {
+    let mut s = Session::new();
+    let sp = h(&s.execute("spline", &json!({"control": [[0, 0], [0, 0], [10, 0]], "degree": 1})).unwrap());
+    s.execute("measure", &json!({"handle": sp, "length": 3, "from": [3, 0]})).unwrap();
+    let pts: Vec<Vec2> =
+        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Point(p) = &e.kind { Some(p.p.xy()) } else { None }).collect();
+    assert!(pts.len() == 3 && [7.0, 4.0, 1.0].iter().all(|x| pts.iter().any(|p| near(*p, *x, 0.0))), "{pts:?}");
+}
+
+/// MEASURE counts every vertex in a polyline's parameter, coincident ones too (AutoCAD's polyline
+/// parameter is the vertex index; the chain drops zero-length spans), and picks an ellipse's end
+/// by the ellipse parameter like any other curve: AutoCAD 2024 runs both measured cases below from
+/// the end (black-box, accoreconsole, POINTs read back with `entget`).
+#[test]
+fn measure_counts_coincident_vertices_and_runs_ellipses_by_parameter() {
+    let pts = |s: &Session| -> Vec<Vec2> {
+        s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Point(p) = &e.kind { Some(p.p.xy()) } else { None }).collect()
+    };
+    // (0,0) (1,0) (101,0) (101,0) picked at x = 1.1: parameter 1.001 of 3, before the middle, so
+    // from the start (the chain alone, 1.001 of 2, ran it from the end).
+    let mut s = Session::new();
+    let pl = h(&s.execute("pline", &json!({"vertices": [[0, 0], [1, 0], [101, 0], [101, 0]]})).unwrap());
+    s.execute("measure", &json!({"handle": pl, "length": 30, "from": [1.1, 0]})).unwrap();
+    assert!(pts(&s).iter().any(|p| near(*p, 30.0, 0.0)), "{:?}", pts(&s));
+    // (0,0) (0,0) (10,0) (20,0) picked at x = 7: parameter 1.7 of 3, past the middle, so from the
+    // end; the same as a 3D polyline.
+    for (cmd, params) in [
+        ("pline", json!({"vertices": [[0, 0], [0, 0], [10, 0], [20, 0]]})),
+        ("3dpoly", json!({"points": [[0, 0, 0], [0, 0, 0], [10, 0, 0], [20, 0, 0]]})),
+    ] {
+        let mut s = Session::new();
+        let pl = h(&s.execute(cmd, &params).unwrap());
+        s.execute("measure", &json!({"handle": pl, "length": 3, "from": [7, 0]})).unwrap();
+        assert!(pts(&s).iter().any(|p| near(*p, 17.0, 0.0)), "{cmd}: {:?}", pts(&s));
+    }
+    // AutoCAD's points. CADCraft measures along a tessellation (1e-4 of the major axis), so its
+    // points sit within 2e-4 of the axis of AutoCAD's; the other end is 4 to 200 units away.
+    type Ellipse = ([f64; 2], [f64; 2], f64, f64, f64);
+    let cases: [((Ellipse, f64, [f64; 2]), &[[f64; 2]]); 2] = [
+        // MEASURE-032-TO: a full ellipse picked at t = pi.
+        (
+            (([-35000.0, 81000.0], [1000.0, 250.0], 0.5, 0.0, std::f64::consts::TAU), 325.0, [-36000.0, 80750.0]),
+            &[
+                [-36005.13895764338, 80852.59066530415],
+                [-35871.99367437639, 80574.74515309861],
+                [-35846.48143804769, 81129.79467385833],
+                [-35585.0606965763, 81321.20806711384],
+                [-35570.69066464184, 80460.16118260568],
+                [-35288.01208649818, 81451.990340526],
+                [-35246.80459288685, 80443.34080344986],
+                [-34973.3365764063, 81531.8855660685],
+                [-34925.28109250207, 80488.09750605426],
+                [-34649.89308676404, 81558.94977503068],
+                [-34615.08169799787, 80583.88008545575],
+                [-34328.55263503237, 81517.06267451325],
+                [-34326.49236487653, 80732.20222770158],
+                [-34085.24055588816, 80947.67206458953],
+                [-34052.78599900089, 81354.8654746607],
+            ],
+        ),
+        // MEASURE-033: an elliptical arc picked past its middle.
+        (
+            (([0.0, 0.0], [20.0, 5.0], 0.5, 0.5, 4.0), 4.25, [-14.28970951093154, -10.073417468999274]),
+            &[
+                [-20.14815072114992, -3.432193431111516],
+                [-18.74987859459168, -7.329883069345779],
+                [-18.68559214389327, 0.5029121733397516],
+                [-15.81338990685036, 3.617741906558092],
+                [-15.26656288688172, -9.70206428611582],
+                [-12.33992351852055, 6.057945492888583],
+                [-8.547503008323163, 7.9699830580747],
+                [-4.557798848614094, 9.428419587410612],
+                [-0.4368018715850841, 10.45983604769949],
+                [3.769519107506058, 11.05284388252232],
+                [8.015496424961295, 11.15319778065308],
+                [12.22912105170455, 10.6383262710487],
+                [16.23125506912425, 9.247174221779819],
+            ],
+        ),
+    ];
+    for (((center, major, ratio, t0, t1), length, from), want) in cases {
+        let mut s = Session::new();
+        let e = h(&s
+            .execute("ellipse", &json!({"center": center, "major": major, "ratio": ratio, "start": t0.to_degrees(), "end": t1.to_degrees()}))
+            .unwrap());
+        s.execute("measure", &json!({"handle": e, "length": length, "from": from})).unwrap();
+        let got = pts(&s);
+        let tol = 2e-4 * major[0].hypot(major[1]);
+        assert_eq!(got.len(), want.len(), "{got:?}");
+        for w in want {
+            assert!(got.iter().any(|p| p.dist(Vec2::new(w[0], w[1])) < tol), "no point near {w:?} in {got:?}");
+        }
+    }
 }
 
 #[test]
@@ -611,7 +996,8 @@ fn rectang_options_command_line() {
     s.cmdline("rectang 0,0 r p 0,0 1,1 d 2 2 5,5").unwrap();
     let pts = rect_pts(&s);
     assert!(pts.iter().any(|p| near(*p, 0.0, 8f64.sqrt())), "{pts:?}");
-    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 4,4").unwrap();
+    // RECTANG keeps the rotation of the rectangle before (45 degrees), as AutoCAD does: back to 0.
+    s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 r 0 4,4").unwrap();
     match last(&s) {
         EntityKind::LwPolyline(p) => assert!(p.const_width == 0.5 && p.vertices.len() == 8),
         k => panic!("{k:?}"),

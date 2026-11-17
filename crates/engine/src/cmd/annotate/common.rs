@@ -22,6 +22,7 @@ pub(super) fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2,
         overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 
@@ -47,6 +48,19 @@ pub(super) fn add_dim(s: &mut Session, k: EntityKind) -> Result<Handle> {
         && assoc_enabled(s)
     {
         dm.assoc = crate::assoc::reassociate(s.doc()?, &s.space(), dm);
+    }
+    // The measurement is what the DXF/DWG writer computes from the geometry (group 42); filling it
+    // in now means queries show it before the drawing is saved and reopened (#2421).
+    if let EntityKind::Dimension(dm) = &mut k
+        && let Ok(d) = s.doc()
+    {
+        let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
+        let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
+        dm.measurement = g.measurement;
+        // The text position the writer puts in group 11 when the user has not placed the text.
+        if !dm.user_text_pos {
+            dm.text_mid = g.text_pos.to3(0.0);
+        }
     }
     let h = s.add_entity(k)?;
     s.last_dim = Some(h);
@@ -94,7 +108,7 @@ pub(super) fn hex_param(p: &Value, key: &str) -> Option<Handle> {
 
 pub(super) fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-    crate::select::pick(s.doc().ok()?, &s.space(), p, ap)
+    s.pick_object(&s.space(), p, ap).ok().flatten()
 }
 
 /// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.

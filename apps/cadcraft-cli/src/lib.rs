@@ -16,6 +16,7 @@ mod info;
 mod mcp;
 mod output;
 mod perf;
+mod roundtrip;
 mod run;
 mod sample;
 
@@ -32,6 +33,7 @@ use output::Streams;
 #[cfg(test)]
 use output::{export_window, model_views, write_atomic};
 use perf::perf;
+use roundtrip::roundtrip;
 use run::run_cmds;
 #[cfg(test)]
 use run::{fill_last, returned_handle};
@@ -43,6 +45,7 @@ fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    cadcraft_engine::cmd::file::set_image_decoder(|b| cadcraft_io::raster::decode(b).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
@@ -99,7 +102,7 @@ where
         Command::Run(a) => a.settings.apply(),
         Command::Mcp(a) => a.settings.apply(),
         Command::Sample(a) => a.settings.apply(),
-        Command::Info(_) | Command::Commands(_) | Command::Perf(_) => {}
+        Command::Info(_) | Command::Commands(_) | Command::Perf(_) | Command::Roundtrip(_) => {}
     }
     let mut io = Streams::new(out, err);
     let result = match &cli.command {
@@ -110,6 +113,7 @@ where
         Command::Mcp(a) => mcp(a),
         Command::Perf(a) => perf(a.target.as_ref(), &mut io),
         Command::Sample(a) => sample(a, &mut io),
+        Command::Roundtrip(a) => roundtrip(a, &mut io),
     };
     let mut code = 0;
     if let Err(e) = result {
