@@ -7,10 +7,10 @@
 //!
 //! System fonts are searched in the platform's own directories: `/System/Library/Fonts` and
 //! friends on macOS, `C:\Windows\Fonts` on Windows, `/system/fonts` and the product/vendor
-//! partitions on Android and HarmonyOS, and the XDG directories elsewhere. Web builds have no
+//! partitions on Android and `HarmonyOS`, and the XDG directories elsewhere. Web builds have no
 //! system fonts.
 //!
-//! Two process-wide settings (like AutoCAD's profile variables) control substitution:
+//! Two process-wide settings (like `AutoCAD`'s profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
 //!   file we don't read, a missing TTF). Empty = the built-in stroke font.
 //! - [`fallback_fonts`] (`FONTFALLBACK`): fonts tried first for characters the text's font
@@ -97,7 +97,7 @@ impl Face {
     pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
         let Some(f) = self.font() else { return vec![None; chars.len()] };
         let map = f.charmap();
-        chars.iter().map(|c| map.map(*c).map(|g| g.to_u32())).collect()
+        chars.iter().map(|c| map.map(*c).map(skrifa::GlyphId::to_u32)).collect()
     }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
@@ -838,7 +838,13 @@ fn key(name: &str) -> String {
 
 /// Names that mean a stroke font: never looked up as TrueType.
 fn is_stroke_name(k: &str) -> bool {
-    k.is_empty() || k.ends_with(".shx") || k == crate::BUILTIN_FONT.to_ascii_lowercase() || k == "txt" || k == "simplex" || k == "romans"
+    k.is_empty()
+        || k.ends_with(".shx")
+        || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
+        || k == crate::BUILTIN_FONT.to_ascii_lowercase()
+        || k == "txt"
+        || k == "simplex"
+        || k == "romans"
 }
 
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names
@@ -1025,26 +1031,31 @@ impl OutlinePen for Pen {
         self.push(Self::pt(x, y));
     }
     /// Flatten a quadratic segment into six samples, charging each retained point to the glyph budget.
-    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        let a = self.cur.last().copied().unwrap_or_default();
-        let c = Self::pt(cx0, cy0);
-        let b = Self::pt(x, y);
-        for i in 1..=6 {
-            let t = f64::from(i) / 6.0;
-            let u = 1.0 - t;
-            self.push(a * (u * u) + c * (2.0 * u * t) + b * (t * t));
+    fn quad_to(&mut self, cx0: f32, cy0: f32, end_x: f32, end_y: f32) {
+        let start = self.cur.last().copied().unwrap_or_default();
+        let control = Self::pt(cx0, cy0);
+        let end = Self::pt(end_x, end_y);
+        for step in 1..=6 {
+            let ratio = f64::from(step) / 6.0;
+            let inverse_ratio = 1.0 - ratio;
+            self.push(start * (inverse_ratio * inverse_ratio) + control * (2.0 * inverse_ratio * ratio) + end * (ratio * ratio));
         }
     }
     /// Flatten a cubic segment into eight samples, charging each retained point to the glyph budget.
-    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
-        let a = self.cur.last().copied().unwrap_or_default();
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, end_x: f32, end_y: f32) {
+        let start = self.cur.last().copied().unwrap_or_default();
         let c0 = Self::pt(cx0, cy0);
         let c1 = Self::pt(cx1, cy1);
-        let b = Self::pt(x, y);
-        for i in 1..=8 {
-            let t = f64::from(i) / 8.0;
-            let u = 1.0 - t;
-            self.push(a * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + b * (t * t * t));
+        let end = Self::pt(end_x, end_y);
+        for step in 1..=8 {
+            let ratio = f64::from(step) / 8.0;
+            let inverse_ratio = 1.0 - ratio;
+            self.push(
+                start * (inverse_ratio * inverse_ratio * inverse_ratio)
+                    + c0 * (3.0 * inverse_ratio * inverse_ratio * ratio)
+                    + c1 * (3.0 * inverse_ratio * ratio * ratio)
+                    + end * (ratio * ratio * ratio),
+            );
         }
     }
     fn close(&mut self) {
@@ -1054,7 +1065,7 @@ impl OutlinePen for Pen {
 
 /// How far below the baseline a face reaches, as a fraction of the text height (which is the
 /// face's cap height): its descent over its cap height. A bottom-justified text's alignment
-/// point is there, as AutoCAD places it (#2229). `None` when the face has no usable descent.
+/// point is there, as `AutoCAD` places it (#2229). `None` when the face has no usable descent.
 pub fn descent_ratio(face: &Face) -> Option<f64> {
     let f = face.font()?;
     let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
@@ -1135,11 +1146,40 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
 
 /// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
 fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
-    let g = glyph(face, c);
+    let g = glyph(face, sign_for(Some(face), c));
     if g.mapped || c.is_whitespace() {
         return g;
     }
     fallback_glyph(c).unwrap_or(g)
+}
+
+/// Characters that stand in for a sign a font lacks, best first: the diameter sign of `%%c`
+/// (U+2300) is missing from many fonts (Arial among them), which have the empty-set sign
+/// (U+2205) or at least the letter Ø that it looks like.
+fn sign_substitutes(c: char) -> &'static [char] {
+    match c {
+        '\u{2300}' => &['\u{2205}', '\u{00D8}'],
+        '\u{2205}' => &['\u{2300}', '\u{00D8}'],
+        _ => &[],
+    }
+}
+
+/// The character that draws `c` in `face` (`None`: the stroke font, which has the signs): `c`
+/// when the face has it, else a stand-in the face has ([`sign_substitutes`]), so the sign keeps
+/// the text's font, else `c` when a fallback font has it, else a stand-in a fallback font has.
+pub(crate) fn sign_for(face: Option<&Face>, c: char) -> char {
+    let subs = sign_substitutes(c);
+    let Some(face) = face else { return c };
+    if subs.is_empty() || face.has_glyph(c) {
+        return c;
+    }
+    if let Some(s) = subs.iter().find(|s| face.has_glyph(**s)) {
+        return *s;
+    }
+    if fallback_for(c).is_some() {
+        return c;
+    }
+    subs.iter().copied().find(|s| fallback_for(*s).is_some()).unwrap_or(c)
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
@@ -1388,6 +1428,13 @@ mod family_tests {
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
     }
+
+    #[test]
+    fn dotfile_shx_names_are_stroke_names() {
+        for name in [".shx", ".shx.ttf", ".SHX", ".SHX.TTF", "sub/.shx", "sub/.SHX"] {
+            assert!(is_stroke_name(&key(name)), "{name}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1476,5 +1523,27 @@ mod scan_tests {
         assert!(dirs.iter().any(|d| d == std::path::Path::new("C:\\Windows\\Fonts")), "{dirs:?}");
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_env = "ohos"))))]
         assert!(dirs.iter().any(|d| d == std::path::Path::new("/usr/share/fonts")), "{dirs:?}");
+    }
+
+    /// A font without the diameter sign of `%%c` draws a stand-in it has (the empty-set sign or
+    /// Ø), not its missing-glyph box (#2330 review: Arial).
+    #[test]
+    fn a_font_without_the_diameter_sign_draws_a_stand_in() {
+        // Any installed font that lacks U+2300 and has Ø; none on this machine: nothing to show.
+        let Some(face) = ["arial", "liberationsans", "dejavusans", "freesans", "carlito"]
+            .iter()
+            .filter_map(|n| find(n))
+            .find(|f| !f.has_glyph('\u{2300}') && f.has_glyph('\u{00D8}'))
+        else {
+            return;
+        };
+        let c = sign_for(Some(&face), '\u{2300}');
+        assert_ne!(c, '\u{2300}');
+        assert!(face.has_glyph(c), "the stand-in is the text's own font's");
+        assert!(glyph_or_fallback(&face, '\u{2300}').mapped);
+        // A sign the font has, and any other character, are left alone.
+        assert_eq!(sign_for(Some(&face), '\u{00B0}'), '\u{00B0}');
+        assert_eq!(sign_for(Some(&face), 'a'), 'a');
+        assert_eq!(sign_for(None, '\u{2300}'), '\u{2300}');
     }
 }
