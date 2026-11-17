@@ -94,6 +94,8 @@ pub struct Tokens {
     /// Grips of dynamic block references (AutoCAD's GRIPDYNCOLOR).
     pub grip_dyn: Color32,
     pub snap: Color32,
+    /// The warning sign of notice windows.
+    pub warning: Color32,
     /// COMPARE: objects only in this drawing, only in the other one, and the areas of change.
     pub compare_this: Color32,
     pub compare_other: Color32,
@@ -153,6 +155,7 @@ impl Tokens {
         grip_hot: Color32::from_rgb(0xff, 0x3b, 0x3b),
         grip_dyn: Color32::from_rgb(0x26, 0xc6, 0xe8),
         snap: Color32::from_rgb(0x2f, 0xd0, 0x62),
+        warning: Color32::from_rgb(0xf2, 0xb2, 0x33),
         compare_this: Color32::from_rgb(0x4c, 0xd9, 0x7b),
         compare_other: Color32::from_rgb(0xff, 0x5c, 0x5c),
         compare_area: Color32::from_rgb(0xff, 0xb4, 0x3c),

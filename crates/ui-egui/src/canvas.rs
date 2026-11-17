@@ -104,6 +104,9 @@ pub struct CanvasState {
     /// The font set the list was drawn with ([`cadcraft_fonts::ttf::generation`] and
     /// [`cadcraft_fonts::shx::generation`]): a new font folder redraws the text.
     font_generation: u64,
+    /// What a pick would trim away or extend by (TRIM, EXTEND) under the cursor this frame, and
+    /// whether it is taken away.
+    glow: Option<(Vec<cadcraft_doc::Entity>, bool)>,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -737,6 +740,15 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         app.canvas.cycle_badge = false;
         app.canvas.cycle_badge_at = None;
     }
+    // What a pick would trim away or extend by (TRIM, EXTEND) glows instead of the whole object
+    // under the cursor highlighting.
+    app.canvas.glow = match (app.canvas.cursor, app.session.prompting()) {
+        (Some(c), true) => app.session.glow(c),
+        _ => None,
+    };
+    if app.canvas.glow.is_some() {
+        app.canvas.hover = None;
+    }
 }
 
 struct PromptClickContext<'a> {
@@ -769,10 +781,12 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
                 let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
+                app.session.clicked = true;
                 let result = match app.canvas.snap {
                     Some(hit) => app.session.input_snapped(hit),
                     None => app.session.input(Input::Point(w)),
                 };
+                app.session.clicked = false;
                 if let Err(e) = result {
                     app.session.echo(e.to_string());
                 }
@@ -916,10 +930,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
+            app.session.clicked = true;
             let result = match app.canvas.snap {
                 Some(hit) => app.session.input_snapped(hit),
                 None => app.session.input(Input::Point(p)),
             };
+            app.session.clicked = false;
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
@@ -1144,6 +1160,21 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             }
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
+    }
+    // What a pick would trim away or extend by (TRIM, EXTEND), glowing under the cursor.
+    if let Some((ents, removing)) = app.canvas.glow.take()
+        && let Ok(st) = app.session.state()
+    {
+        let list = rebuilt_preview(&st.doc, ents.iter(), scale);
+        let all: Vec<usize> = (0..list.prims.len()).collect();
+        // The halo around lines only; a filled area (a hatch) is tinted once.
+        let lines: Vec<usize> =
+            all.iter().copied().filter(|&i| list.prims.get(i).is_some_and(|p| !matches!(p.kind, Kind::Tris | Kind::Mask))).collect();
+        let col = if removing { Color32::from_rgb(0xff, 0x5a, 0x3c) } else { Color32::from_rgb(0x3c, 0xc8, 0xff) };
+        for (width, alpha) in [(11.0, 0.12), (7.0, 0.22)] {
+            draw_highlight(painter, &xf, &list, &lines, col.gamma_multiply(alpha), Look { width, dashed: false });
+        }
+        draw_highlight(painter, &xf, &list, &all, col, Look { width: 2.0, dashed: false });
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
