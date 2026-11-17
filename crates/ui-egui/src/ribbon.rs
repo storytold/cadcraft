@@ -1044,14 +1044,25 @@ fn panel_commands(panel: &PanelDef) -> Vec<Cmd> {
     let mut v = Vec::new();
     for cell in panel.cells {
         match cell {
-            Cell::Big(cmd, _) => v.push(*cmd),
-            Cell::Small(rows) => v.extend(rows.iter().map(|(cmd, _)| *cmd)),
+            Cell::Big(cmd, variants) => {
+                v.push(*cmd);
+                v.extend(variants.iter().copied());
+            }
+            Cell::Small(rows) => {
+                for (cmd, variants) in *rows {
+                    v.push(*cmd);
+                    v.extend(variants.iter().copied());
+                }
+            }
             Cell::Icons(cmds) => v.extend(cmds.iter().copied()),
             Cell::Lists(..) => {}
             Cell::ListIcons(_, _, cmds) => v.extend(cmds.iter().copied()),
         }
     }
     v.extend(panel.more.iter().copied());
+    // Variant lists may repeat their primary command or a panel expander entry.
+    let mut seen = std::collections::BTreeSet::new();
+    v.retain(|cmd| seen.insert(cmd.id));
     v
 }
 
@@ -1207,6 +1218,50 @@ mod tests {
         assert_eq!(tooltip(&n("circle.3p", "Circle"), true), "Circle");
         assert!(tooltip(&n("missing", "Missing"), false).contains("not available yet"));
     }
+    #[test]
+    fn collapsed_panels_keep_big_and_small_button_variants() {
+        let draw = panel_commands(&TABS[0].panels[0]);
+        assert!(draw.iter().any(|cmd| cmd.id == "circle.3p"));
+        let modify = panel_commands(&TABS[0].panels[1]);
+        for id in ["extend", "arraypolar"] {
+            assert!(modify.iter().any(|cmd| cmd.id == id), "missing {id}");
+        }
+    }
+
+    #[test]
+    fn collapsed_panels_keep_all_commands_once_in_cell_order() {
+        for tab in TABS {
+            for panel in tab.panels {
+                let mut expected = Vec::new();
+                for cell in panel.cells {
+                    match cell {
+                        Cell::Big(cmd, variants) => {
+                            expected.push(cmd.id);
+                            expected.extend(variants.iter().map(|cmd| cmd.id));
+                        }
+                        Cell::Small(rows) => {
+                            for (cmd, variants) in *rows {
+                                expected.push(cmd.id);
+                                expected.extend(variants.iter().map(|cmd| cmd.id));
+                            }
+                        }
+                        Cell::Icons(cmds) | Cell::ListIcons(_, _, cmds) => expected.extend(cmds.iter().map(|cmd| cmd.id)),
+                        Cell::Lists(..) => {}
+                    }
+                }
+                expected.extend(panel.more.iter().map(|cmd| cmd.id));
+                let mut unique = Vec::new();
+                for id in expected {
+                    if !unique.contains(&id) {
+                        unique.push(id);
+                    }
+                }
+                let actual: Vec<_> = panel_commands(panel).iter().map(|cmd| cmd.id).collect();
+                assert_eq!(actual, unique, "{} / {}", tab.id, panel.title);
+            }
+        }
+    }
+
     #[test]
     fn panels_collapse_from_the_right() {
         let full = [100.0, 100.0, 100.0];
