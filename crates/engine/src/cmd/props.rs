@@ -854,17 +854,28 @@ pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
+            out.extend(super::blocks::object_attribs(e).iter().flat_map(attrib_text_styles));
             match &e.kind {
                 EntityKind::Text(t) => out.push(t.style.clone()),
                 EntityKind::MText(t) => out.push(t.style.clone()),
-                EntityKind::AttDef(a) => out.push(a.text.style.clone()),
-                EntityKind::Insert(i) => out.extend(i.attribs.iter().map(|a| a.text.style.clone())),
+                EntityKind::AttDef(a) => out.extend(attrib_text_styles(a)),
                 EntityKind::MLeader(m) => out.extend(m.text.iter().map(|t| t.style.clone())),
+                EntityKind::Dimension(dm) => out.extend(
+                    dm.overrides
+                        .iter()
+                        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
+                        .filter_map(|(_, v)| super::blocks::purge::override_name(v)),
+                ),
                 _ => {}
             }
         }
     }
     out
+}
+
+/// The text styles of an attribute or attribute definition, its multiline text included.
+fn attrib_text_styles(a: &cadcraft_doc::Attrib) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(a.text.style.clone()).chain(a.multiline.iter().map(|m| m.mtext.style.clone()))
 }
 
 fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
