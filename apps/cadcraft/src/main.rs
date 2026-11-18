@@ -295,6 +295,14 @@ fn main() -> eframe::Result {
     // standard error and exits 2 before the window opens.
     let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
     let vars = env::Env::read();
+    let collab = match launch_args::collab_config(&launch) {
+        Ok(config) => config,
+        // A usage error, like a bad flag: named on standard error, exit 2, before the window.
+        Err(message) => {
+            eprintln!("cadcraft: {message}");
+            std::process::exit(2);
+        }
+    };
     let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
@@ -373,6 +381,22 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "macos")]
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
+            if let Some((url, token, doc)) = collab.clone() {
+                // A shared session's drawing comes from the server; a local empty drawing gives the
+                // change sets somewhere to land until the first snapshot arrives.
+                if app.session.doc().is_err() {
+                    app.session.new_drawing(false);
+                }
+                match cadcraft_ui_egui::collab::Collab::connect(&url, &token, &doc) {
+                    Ok(collab) => {
+                        app = app.with_collab(collab);
+                    }
+                    Err(error) => {
+                        eprintln!("collab: {error}");
+                        app.set_status(format!("collab: {error}"));
+                    }
+                }
             }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {

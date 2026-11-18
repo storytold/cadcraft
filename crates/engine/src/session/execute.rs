@@ -66,19 +66,22 @@ impl Session {
             (r, _) => r,
         };
         let grouped = self.lisp_groups_undo();
+        let record = self.record_undo;
         let mut in_routine = None;
         if spec.undoable
             && let Some((doc, sel, uid)) = before
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
-            let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel };
-            // Inside a LISP routine the routine's single undo step records it, and the routine
-            // keeps it for U inside it.
-            if grouped {
-                in_routine = Some(snap);
-            } else {
-                st.push_undo(snap);
+            if record {
+                let snap = Snapshot { label: spec.label.to_string(), doc, selection: sel };
+                // Inside a LISP routine the routine's single undo step records it, and the routine
+                // keeps it for U inside it.
+                if grouped {
+                    in_routine = Some(snap);
+                } else {
+                    st.push_undo(snap);
+                }
             }
             st.revision += 1;
         }
