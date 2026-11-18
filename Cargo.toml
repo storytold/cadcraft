@@ -70,8 +70,14 @@ encoding_rs = "0.8.35"
 quick-xml = "0.42"
 
 # ui
-craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["serde"] }
+# craft-ui's `cloud` feature (CloudApp/CloudBackend/ShareBackend) landed in
+# storytold/craft-libs#160 and #665; bumped to a main commit that carries both.
+craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "52fc6b5b3d2179239664136e84543231f8576f8d", features = ["serde", "cloud"] }
 craft-window = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
+# Vendor-neutral cloud types (Entry, EntryKind, Capability) the CloudApp contract passes around.
+craft-cloud = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "52fc6b5b3d2179239664136e84543231f8576f8d" }
+# Reference CloudBackend over a local folder; only ever used by this workspace's own tests.
+craft-cloud-local = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "52fc6b5b3d2179239664136e84543231f8576f8d" }
 egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
 # Resizable table columns (About ▸ Contributors / Models); no image loaders.
 egui_extras = { version = "0.37", default-features = false }

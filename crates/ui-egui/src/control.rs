@@ -248,7 +248,7 @@ fn methods_json() -> Value {
 pub fn all_commands(app: &CadApp) -> Value {
     let mut v: Vec<Value> = cadcraft_engine::command_specs().iter().map(|c| serde_json::to_value(c.info(&app.session)).unwrap_or_default()).collect();
     for (id, label, menu, sc) in crate::menus::UI_COMMANDS {
-        v.push(json!({"id": id, "label": label, "menu": menu, "shortcut": sc, "enabled": true, "ui": true}));
+        v.push(json!({"id": id, "label": label, "menu": menu, "shortcut": sc, "enabled": crate::menus::ui_command_enabled(app, id), "ui": true}));
     }
     Value::Array(v)
 }
