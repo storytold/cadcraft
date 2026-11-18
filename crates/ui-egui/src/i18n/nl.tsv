@@ -1667,3 +1667,30 @@ menu	Modify	Wijzigen
 	ENTER	ENTER
 	Shortcut Menu: always enabled	Snelmenu: altijd ingeschakeld
 	Shortcut Menu: enabled when command options are present	Snelmenu: ingeschakeld wanneer opdrachtopties beschikbaar zijn
+	Add a drawing file as a block library	Tekenbestand als blokbibliotheek toevoegen
+	Add a folder of drawings or a drawing file to use its blocks.	Voeg een map met tekeningen of een tekenbestand toe om de blokken ervan te gebruiken.
+	Block Libraries	Blokbibliotheken
+	Block Library	Blokbibliotheek
+	Blocks Palette	Blokkenpalet
+	Click a block, then pick its insertion point.	Klik op een blok en kies vervolgens het invoegpunt.
+	Current Drawing	Huidige tekening
+	Details	Details
+	Extra Large Icons	Extra grote pictogrammen
+	Folder or file	Map of bestand
+	Import Library Block	Bibliotheekblok importeren
+	Insert and Explode	Invoegen en exploderen
+	Large Icons	Grote pictogrammen
+	Libraries	Bibliotheken
+	Medium Icons	Gemiddelde pictogrammen
+	No block matches the filter.	Geen enkel blok komt overeen met het filter.
+	This block is already in the drawing, so its definition is used.	Dit blok staat al in de tekening, dus de definitie ervan wordt gebruikt.
+	Open Library...	Bibliotheek openen...
+	Read the library again	Bibliotheek opnieuw inlezen
+	Reading the library...	Bibliotheek wordt ingelezen...
+	Refresh	Vernieuwen
+	Remove from the list	Uit de lijst verwijderen
+	Repeat Placement	Plaatsing herhalen
+	Small Icons	Kleine pictogrammen
+	This drawing has no blocks.	Deze tekening bevat geen blokken.
+	This library has no drawings or blocks.	Deze bibliotheek bevat geen tekeningen of blokken.
+	Only the first {n} are shown.	Alleen de eerste {n} worden weergegeven.

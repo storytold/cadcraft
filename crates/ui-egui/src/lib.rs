@@ -46,6 +46,8 @@ pub mod textdlg;
 pub mod xdedit;
 pub mod xrefs;
 
+pub mod blocks_palette;
+
 pub mod dyngrips;
 pub mod dyninput;
 pub mod gpu;
