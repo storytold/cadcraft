@@ -9,6 +9,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+craft-mcp = { workspace = true }
+craft-jsonrpc = { workspace = true }
 cadcraft-engine = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-io = { workspace = true }

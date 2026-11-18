@@ -557,9 +557,15 @@ fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
 fn run_selectall(s: &mut Session, _p: &Value) -> Result<Value> {
     let space = s.space();
     let d = s.doc()?;
+    let frozen = s.viewport_frozen();
     let hs: Vec<Handle> = d
         .space(&space)
-        .map(|st| st.iter().filter(|e| d.is_visible(e) && d.layer(&e.common.layer).is_none_or(|l| !l.locked)).map(|e| e.handle).collect())
+        .map(|st| {
+            st.iter()
+                .filter(|e| crate::select::selectable(d, e, frozen) && d.layer(&e.common.layer).is_none_or(|l| !l.locked))
+                .map(|e| e.handle)
+                .collect()
+        })
         .unwrap_or_default();
     let n = hs.len();
     s.set_selection(hs);
@@ -580,16 +586,19 @@ fn run_select(s: &mut Session, p: &Value) -> Result<Value> {
     let add = bool_or(p, "add", false);
     let picked: Vec<Handle> = if let Some(w) = points_param(p, "window") {
         let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return Err(bad("select", "window needs 2 corners")) };
-        crate::select::select_window(s.doc()?, &space, Bounds2::new(*a, *b), bool_or(p, "crossing", false))
+        crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), Bounds2::new(*a, *b), bool_or(p, "crossing", false))
     } else if let Some(at) = point_param(p, "at") {
         let ap = f64_or(p, "aperture", s.pixel_size() * s.settings.pickbox * 1.5);
-        crate::select::pick(s.doc()?, &space, at, ap).into_iter().collect()
+        crate::select::pick_in(s.doc()?, &space, s.viewport_frozen(), at, ap).into_iter().collect()
     } else if let Some(f) = points_param(p, "fence") {
-        crate::select::select_fence(s.doc()?, &space, &f)
-    } else {
+        crate::select::select_fence_in(s.doc()?, &space, s.viewport_frozen(), &f)
+    } else if ["handles", "handle"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
         targets(s, p)?
+    } else {
+        // Nothing to select with: the selection stays, also what the active viewport does not draw.
+        s.stored_selection()
     };
-    let mut sel = if add { s.selection() } else { Vec::new() };
+    let mut sel = if add { s.stored_selection() } else { Vec::new() };
     sel.extend(picked);
     s.set_selection(sel);
     let sel = s.selection();
