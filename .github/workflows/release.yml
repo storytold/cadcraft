@@ -1,6 +1,10 @@
 name: Release
 
 on:
+  # A nightly dry run on main: every release build except macOS, nothing signed or released
+  # (craft-common-actions release.yml `dry-run`). Finds release-only breakage before release day.
+  schedule:
+    - cron: "8 1 * * *"
   push:
     branches: [release]
   workflow_dispatch:
@@ -18,47 +22,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  git-sources:
-    name: Git dependencies come from storytold
-    runs-on: ubuntu-latest
+  # Regenerates contributors/contributors.json for the release commit; every build bundles it.
+  credits:
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Git dependencies come from storytold
-        run: |
-          set -euo pipefail
-          test -f Cargo.lock || { echo "Cargo.lock is missing"; exit 1; }
-          # Source replacement, patches and path overrides in cargo config never show up
-          # in Cargo.lock. Parsed rather than grepped: TOML has many spellings of one key.
-          # Cargo still reads the legacy .cargo/config.
-          python3 - <<'PY'
-          import os, sys, tomllib
-          for path in (".cargo/config", ".cargo/config.toml"):
-              if not os.path.exists(path):
-                  continue
-              config = tomllib.load(open(path, "rb"))
-              replaced = [name for name, source in config.get("source", {}).items()
-                          if isinstance(source, dict) and "replace-with" in source]
-              if replaced or "patch" in config or "paths" in config:
-                  print(f"{path} replaces, patches or overrides a source")
-                  sys.exit(1)
-          PY
-          # Fails when Cargo.lock is out of date with the manifests.
-          cargo metadata --locked --format-version 1 > /dev/null
-          python3 - <<'PY'
-          import sys, tomllib
-          lock = tomllib.load(open("Cargo.lock", "rb"))
-          bad = sorted({p["source"] for p in lock.get("package", [])
-                        if p.get("source", "").startswith("git+")
-                        and not p["source"].startswith("git+https://github.com/storytold/")})
-          if bad:
-              print("Git dependencies outside github.com/storytold:", *bad, sep="\n")
-              sys.exit(1)
-          PY
+      pull-requests: read
+    uses: storytold/craft-common-actions/.github/workflows/refresh-contributors.yml@main
 
   release:
-    needs: git-sources
+    needs: credits
     permissions:
       # The reusable release workflow tags and uploads the draft release.
       contents: write
@@ -66,10 +38,12 @@ jobs:
     # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
     uses: storytold/craft-common-actions/.github/workflows/release.yml@main
     with:
+      dry-run: ${{ github.event_name == 'schedule' }}
       app-name: cadcraft
       app-title: CADCraft
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
+      contributors-artifact: ${{ needs.credits.outputs.artifact-name }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

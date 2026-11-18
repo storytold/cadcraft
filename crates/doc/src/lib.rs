@@ -29,7 +29,10 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached};
+pub use extents::{
+    BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame, ole_frame_accepts,
+    ole_frame_transform,
+};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
@@ -206,11 +209,21 @@ impl Drawing {
         }
     }
 
-    /// Allocate a fresh handle.
+    /// Allocate a fresh handle. It skips the handles the drawing's file gave the objects CADCraft
+    /// writes itself ([`foreign::Foreign::handles`]): AutoLISP names those objects by them, and a
+    /// file CADCraft wrote numbers them above its `$HANDSEED` (#495).
     pub fn new_handle(&mut self) -> Handle {
-        let h = Handle(self.handseed);
-        self.handseed = self.handseed.saturating_add(1);
+        let h = self.next_handle();
+        self.handseed = h.0.saturating_add(1);
         h
+    }
+    /// The handle [`Drawing::new_handle`] gives out next (AutoCAD's `HANDSEED`), without taking it.
+    pub fn next_handle(&self) -> Handle {
+        let mut h = self.handseed;
+        while self.foreign.handles.contains_key(&Handle(h)) && h < u64::MAX {
+            h = h.saturating_add(1);
+        }
+        Handle(h)
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
     pub fn bump_handseed(&mut self, h: Handle) {

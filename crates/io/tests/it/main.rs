@@ -14,6 +14,7 @@ mod codepages;
 mod dim_block_resave_roundtrip;
 mod dim_block_text;
 mod dim_marks_roundtrip;
+mod dim_text_frame;
 mod dimstyle_vars_roundtrip;
 mod dimtfill_roundtrip;
 mod drafting_spacing;
@@ -37,6 +38,7 @@ mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
 mod low_handseed;
+mod minsert_marker;
 mod mleader_content;
 mod mleader_roundtrip;
 mod mline_roundtrip;
@@ -49,6 +51,8 @@ mod mtext_line_spacing;
 mod multiline_attributes;
 #[cfg(not(target_arch = "wasm32"))]
 mod ole2frame_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
@@ -69,6 +73,7 @@ mod spline_fit_data;
 mod split_entities_section;
 mod style_typeface;
 mod svg_arc_budget;
+mod svg_ellipse_transform_axis;
 mod svg_tiny_extents;
 mod table_cellstyle_roundtrip;
 mod tables_objects_roundtrip;
