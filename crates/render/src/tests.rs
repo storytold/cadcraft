@@ -1267,6 +1267,30 @@ fn mtext_background_mask_emits_mask_before_text() {
     let list2 = build(&d2, &Space::Model, &Options::default());
     assert!(list2.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(0, 255, 0)), "green background fill");
     assert!(!list2.prims.iter().any(|p| p.kind == Kind::Mask));
+    // Border offset factor 1.5 with height 2.0 expands each side by (1.5 - 1.0) * 2.0 = 1.0.
+    let mut d2_plain = Drawing::new_metric();
+    d2_plain
+        .add(
+            &Space::Model,
+            Common::default(),
+            EntityKind::MText(cadcraft_doc::MText {
+                insert: Vec3::ZERO,
+                height: 2.0,
+                width: 0.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "COLORED".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+                background: None,
+            }),
+        )
+        .unwrap();
+    let plain_list = build(&d2_plain, &Space::Model, &Options::default());
+    assert!((list2.bounds.width() - plain_list.bounds.width() - 2.0).abs() < 1e-6, "expected +2.0 width margin");
+    assert!((list2.bounds.height() - plain_list.bounds.height() - 2.0).abs() < 1e-6, "expected +2.0 height margin");
 }
 
 #[test]

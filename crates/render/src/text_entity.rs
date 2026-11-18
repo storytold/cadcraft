@@ -101,7 +101,7 @@ fn mtext_bg_quad(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MText
     if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
         return None;
     }
-    let gap = (scale - 1.0).clamp(0.0, 4.0) * 0.5 * t.height.max(0.0);
+    let gap = (scale - 1.0).clamp(0.0, 4.0) * t.height.max(0.0);
     let (lo, hi) = (bounds.min - cadcraft_geom::Vec2::new(gap, gap), bounds.max + cadcraft_geom::Vec2::new(gap, gap));
     let at = t.insert.xy();
     let (x, y) = (cadcraft_geom::Vec2::from_angle(t.rotation), cadcraft_geom::Vec2::from_angle(t.rotation).perp());
