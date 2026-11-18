@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod clip;
+pub mod depth3d;
 mod dim;
 mod fill;
 mod hatch;
@@ -23,6 +24,8 @@ pub mod raster;
 mod text;
 mod tolerance;
 pub mod units;
+pub mod view3d;
+pub use view3d::{Projection3d, Render3dOptions, VisualStyle3d};
 mod wide;
 
 use cadcraft_color::{Color, Rgb};

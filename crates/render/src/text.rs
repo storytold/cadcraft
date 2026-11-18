@@ -203,7 +203,7 @@ pub(super) fn triangulate_placed(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
         let d = *p - origin;
         !p.is_finite() || d.x.abs().max(d.y.abs()) > 1.0e6
     };
-    if !points.is_some_and(|n| n <= MAX_POINTS) || contours.iter().flatten().any(out_of_range) {
+    if points.is_none_or(|n| n > MAX_POINTS) || contours.iter().flatten().any(out_of_range) {
         return crate::fill::triangulate_evenodd(contours);
     }
     let local: Vec<Vec<Vec2>> = contours.iter().map(|c| c.iter().map(|&p| p - origin).collect()).collect();

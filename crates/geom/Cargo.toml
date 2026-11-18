@@ -10,3 +10,8 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
+
+# Analytic curves/surfaces and boundary topology (Apache-2.0).
+truck-modeling = "0.6"
+truck-topology = "0.6"
+truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation"] }

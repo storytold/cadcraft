@@ -781,3 +781,36 @@ fn a_small_and_a_large_selection_leave_out_the_same_objects() {
     s.set_selection(all.clone());
     assert_eq!(s.selection(), all);
 }
+
+/// A 3D point given at "Select objects" (a click in a 3D view, or a typed X,Y,Z) selects like a 2D
+/// one: a pick and a window through the viewport that freezes "Hidden" leave the frozen line out,
+/// and the window takes both lines through the viewport that draws both.
+#[test]
+fn three_d_points_at_select_objects_leave_out_what_the_viewport_does_not_draw() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::geom::Vec3;
+    let Sheet { mut s, shown, hidden, a, b } = sheet();
+    s.settings.pickstyle = 0;
+    let ways: [&[Vec3]; 2] = [&[Vec3::new(5.0, 0.0, 0.0)], &[Vec3::new(-1.0, -1.0, 0.0), Vec3::new(11.0, 1.0, 0.0)]];
+    for points in ways {
+        for (viewport, both_drawn) in [(&a, false), (&b, true)] {
+            enter(&mut s, viewport);
+            s.cmdline("ERASE").unwrap();
+            for p in points {
+                s.input(Input::Point3(*p)).unwrap();
+            }
+            s.cmdline("").unwrap();
+            assert!(s.running.is_none(), "{points:?} left a prompt open: {}", s.prompt_text());
+            let pick = points.len() == 1;
+            let expected = match (both_drawn, pick) {
+                // The frozen line is on top, so the pick finds the one under it.
+                (false, _) => (false, true),
+                (true, true) => (true, false),
+                (true, false) => (false, false),
+            };
+            assert_eq!((exists(&s, shown), exists(&s, hidden)), expected, "{points:?} in viewport {viewport}");
+            s.execute("undo", &json!({})).unwrap();
+            assert!(exists(&s, shown) && exists(&s, hidden));
+        }
+    }
+}

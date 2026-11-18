@@ -22,9 +22,17 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 craft-pdf = { workspace = true, features = ["write"] }
+# 3MF packages: the zip container and its XML model.
+miniz_oxide = "0.9"
+quick-xml = { workspace = true }
+# IGES global-section time stamps (all calendar conversion goes through chrono).
+chrono = { workspace = true }
+
+# Exact STEP geometry exchange (Apache-2.0).
+truck-stepio = "0.3"
+truck-topology = "0.6"
 
 [dev-dependencies]
-miniz_oxide = "0.9"
 tiff = "0.11"
 image = { workspace = true }
 tiny-skia = { workspace = true }
