@@ -359,36 +359,41 @@ const NOTE_STYLES: usize = 3;
 /// that use them, what is drawn instead and how to add the font's folder. `None` when none is missing.
 #[cfg(not(target_arch = "wasm32"))]
 fn missing_fonts_note(d: &Drawing) -> Option<String> {
-    // (font as written, styles that name it), in order of first use.
-    let mut missing: Vec<(String, Vec<&str>)> = Vec::new();
+    // (file name as first written, its font, styles that name it), in order of first use. Spellings of
+    // one font (`ROMANS`, `C:\Fonts\romans.shx`) are one entry, unless the font is both a main font and a
+    // big font with different replacements: then each replacement has its entry.
+    let mut missing: Vec<(String, cadcraft_fonts::MissingShx, Vec<&str>)> = Vec::new();
     for st in &d.text_styles {
         for font in cadcraft_fonts::TextFont::missing_shx(&st.font, &st.big_font) {
-            let file = font.rsplit(['/', '\\']).next().unwrap_or(&font).to_string();
-            match missing.iter_mut().find(|(f, _)| f.eq_ignore_ascii_case(&file)) {
-                Some((_, styles)) => styles.push(&st.name),
-                None => missing.push((file, vec![&st.name])),
+            match missing.iter_mut().find(|(_, f, _)| f.key == font.key && f.substitute == font.substitute) {
+                Some((_, _, styles)) => styles.push(&st.name),
+                None => missing.push((font.name.rsplit(['/', '\\']).next().unwrap_or(&font.name).to_string(), font, vec![&st.name])),
             }
         }
     }
     if missing.is_empty() {
         return None;
     }
+    // One replacement for every font is said once; otherwise each font says its own.
+    let one_sub = missing.iter().all(|(_, f, _)| f.substitute == missing[0].1.substitute);
     let list: Vec<String> = missing
         .iter()
         .take(NOTE_FONTS)
-        .map(|(font, styles)| {
+        .map(|(file, font, styles)| {
             let more = styles.len().saturating_sub(NOTE_STYLES);
             let shown = styles.iter().take(NOTE_STYLES).copied().collect::<Vec<_>>().join(", ");
-            if more > 0 { format!("{font} (styles {shown} and {more} more)") } else { format!("{font} (style {shown})") }
+            let styles = match (more, styles.len()) {
+                (0, 1) => format!("style {shown}"),
+                (0, _) => format!("styles {shown}"),
+                _ => format!("styles {shown} and {more} more"),
+            };
+            if one_sub { format!("{file} ({styles})") } else { format!("{file} ({styles}), drawn with {}", font.substitute) }
         })
         .collect();
     let more = missing.len().saturating_sub(NOTE_FONTS);
     let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
-    Some(format!(
-        "Font not found, drawn with {} instead: {}{tail}. Add its folder with SETVAR SUPPORTPATH.",
-        cadcraft_fonts::TextFont::substitute_name(),
-        list.join("; ")
-    ))
+    let head = if one_sub { format!("Font not found, drawn with {} instead", missing[0].1.substitute) } else { "Font not found".to_string() };
+    Some(format!("{head}: {}{tail}. Add its folder with SETVAR SUPPORTPATH.", list.join("; ")))
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {

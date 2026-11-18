@@ -47,6 +47,9 @@ fn a_missing_shx_font_is_reported_when_the_drawing_is_opened() {
     let note = warnings.iter().find(|w| w.contains("not found")).unwrap_or_else(|| panic!("no note in {warnings:?}"));
     assert!(note.contains("cadcraft-note-lost") && note.contains("cadcraft-note-lostbig.shx"), "{note}");
     assert!(note.contains("Notes") && note.contains("Titles"), "the styles that use the font: {note}");
+    // `C:\Fonts\Cadcraft-Note-Lost.SHX` and `cadcraft-note-lost` are one font, listed once.
+    assert_eq!(note.to_ascii_lowercase().matches("cadcraft-note-lost").count(), 2, "the font and the big font: {note}");
+    assert!(note.contains("Cadcraft-Note-Lost.SHX (styles Notes, Titles)"), "{note}");
     assert!(note.contains("CADCraft Stroke"), "what replaces it: {note}");
     assert!(note.contains("SUPPORTPATH"), "how to fix it: {note}");
     assert!(!note.contains("beside") && !note.contains("Plain"), "a font that is found is not reported: {note}");
