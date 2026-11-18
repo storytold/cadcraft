@@ -502,15 +502,16 @@ fn entlast_keeps_its_order_across_property_edits() {
     let mut s = session();
     ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entlast)");
     let uid = s.state().unwrap().uid;
-    let order = |s: &Session| std::sync::Arc::as_ptr(&s.lisp.envs[&uid].order.as_ref().unwrap().1);
+    // The cached order itself is held, so a rebuilt one can't take its address.
+    let order = |s: &Session| s.lisp.envs[&uid].order.as_ref().unwrap().1.clone();
     let before = order(&s);
     assert_eq!(
         ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"MOVED\") (assoc 8 d) d)) (cdr (assoc 8 (entget (entlast))))"),
         "\"MOVED\""
     );
-    assert_eq!(order(&s), before, "a layer change keeps the order");
+    assert!(std::sync::Arc::ptr_eq(&order(&s), &before), "a layer change keeps the order");
     ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 2.0 0.0 0.0))) (entlast)");
-    assert_ne!(order(&s), before, "a new entity rebuilds it");
+    assert!(!std::sync::Arc::ptr_eq(&order(&s), &before), "a new entity rebuilds it");
 }
 
 /// Closing a drawing drops its LISP environment, and with it the entity stores its cached
@@ -529,7 +530,7 @@ fn closing_a_drawing_drops_its_environment() {
 #[test]
 fn handseed_follows_new_objects() {
     let mut s = session();
-    let seed = |s: &Session| format!("\"{:X}\"", s.doc().unwrap().handseed);
+    let seed = |s: &Session| format!("\"{:X}\"", s.doc().unwrap().next_handle().0);
     let before = ok(&mut s, "(getvar \"HANDSEED\")");
     assert_eq!(before, seed(&s));
     ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0)))");
@@ -537,6 +538,13 @@ fn handseed_follows_new_objects() {
     assert_eq!(after, seed(&s));
     assert_ne!(after, before);
     assert!(eval(&mut s, "(setvar \"HANDSEED\" \"FFFFFF\")").is_err(), "read-only");
+    // A handle the file's own objects hold is skipped, as allocation skips it.
+    let d = s.doc_mut().unwrap();
+    let held = d.handseed;
+    std::sync::Arc::make_mut(&mut d.foreign).handles.insert(cadcraft_doc::Handle(held), ("NOD".into(), String::new()));
+    assert_eq!(ok(&mut s, "(getvar \"HANDSEED\")"), format!("\"{:X}\"", held + 1));
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0)))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 5 (entget (entlast))))"), format!("\"{:X}\"", held + 1));
 }
 
 #[test]
