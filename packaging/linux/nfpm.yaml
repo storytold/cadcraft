@@ -52,13 +52,16 @@ overrides:
       - libgcc_s.so.1()(64bit)
       - libxkbcommon.so.0()(64bit)
       - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
-    # The windowing libraries by soname too, so the recommendations resolve on openSUSE as well.
+    # The windowing libraries the GUI loads at runtime, by soname too, so the recommendations resolve on
+    # openSUSE as well. Without libX11-xcb and libxkbcommon-x11 the GUI cannot start on X11.
     recommends:
       - libwayland-client.so.0()(64bit)
       - libX11.so.6()(64bit)
       - libXcursor.so.1()(64bit)
       - libXi.so.6()(64bit)
-      - libXrandr.so.2()(64bit)
+      - libX11-xcb.so.1()(64bit)
+      - libxkbcommon-x11.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
       - mesa-vulkan-drivers
       - xdg-desktop-portal
 
