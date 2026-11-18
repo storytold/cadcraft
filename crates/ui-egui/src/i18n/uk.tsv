@@ -1552,8 +1552,6 @@
 	Adjust...	Налаштувати...
 	Angstroms	Ангстреми
 	Apply to Layout	Застосувати до аркуша
-	Architectural	Архітектурні
-	Arrow size	Розмір стрілки
 	Associate	Асоціювати
 	Astronomical Units	Астрономічні одиниці
 	Attach Image...	Приєднати зображення...
@@ -1567,20 +1565,16 @@
 	Change Properties	Змінити властивості
 	Clip Image	Підрізати зображення
 	Decameters	Декаметри
-	Decimal	Десяткові
 	Decimal Degrees	Десяткові градуси
 	Decimeters	Дециметри
 	Deg/Min/Sec	Град/Хв/Сек
-	Dim scale overall	Загальний масштаб розмірів
 	Drawing Units	Одиниці креслення
-	Engineering	Інженерні
 	Enter block names to extract	Введіть імена блоків для вилучення
 	Enter geometric characteristic	Введіть геометричну характеристику
 	Enter name of LISP file to load	Введіть ім'я файлу LISP для завантаження
 	Feet	Фути
 	First corner	Перший кут
 	Fit to paper	Вписати в аркуш
-	Fractional	Дробові
 	Frame	Контур
 	Front	Спереду
 	Gigameters	Гігаметри
@@ -1594,7 +1588,6 @@
 	Landscape	Альбомна
 	Layouts	Аркуші
 	Light Years	Світлові роки
-	Limits	Ліміти
 	Load .NET DLL / LISP Application (NETLOAD)...	Завантажити застосунок .NET DLL / LISP (NETLOAD)...
 	Load Application (NETLOAD)...	Завантажити застосунок (NETLOAD)...
 	Meters	Метри
@@ -1616,13 +1609,10 @@
 	Plot offset	Зміщення друку
 	Plot transparency	Друкувати прозорість
 	Portrait	Книжкова
-	Precision	Точність
 	Printer/plotter	Принтер/плотер
-	Radians	Радіани
 	SE Isometric	ПдСх ізометрія
 	SW Isometric	ПдЗх ізометрія
 	Sample output	Приклад виводу
-	Scientific	Наукові
 	Surveyor's Units	Геодезичні одиниці
 	Top (2D Plan)	Зверху (2D-план)
 	US Survey Feet	Геодезичні фути США
@@ -1649,7 +1639,6 @@
 	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	Середовище розробки AutoLISP / VB.NET / C# та студія NETLOAD
 	AutoLISP Commands (click to run)	Команди AutoLISP (натисніть для запуску)
 	AutoLISP Editor (.lsp)	Редактор AutoLISP (.lsp)
-	Bottom	Знизу
 	C# Plugin Editor (.cs)	Редактор плагінів C# (.cs)
 	C# source opened	Вихідний код C# відкрито
 	Clear Log	Очистити журнал
