@@ -242,14 +242,25 @@ struct Sizes {
     text: f64,
     above: bool,
     text_style: String,
+    /// An annotative style: the annotation scale takes DIMSCALE's place, as for an annotative
+    /// dimension, so the sizes are unscaled and the text is annotative.
+    annotative: bool,
 }
 
 fn sizes(s: &Session) -> Sizes {
     // The current style with the drawing's DIM* overrides (what SETVAR DIMTXT… sets).
     let st = s.doc().ok().and_then(|d| d.dim_style(&style(s)).map(|st| st.with_overrides(&d.dim_overrides()))).unwrap_or_default();
-    let k = if st.scale > 0.0 { st.scale } else { 1.0 };
+    let dimscale = s.doc().map_or(1.0, |d| d.header.f64("DIMSCALE", 1.0));
+    let k = if st.annotative { 1.0 } else { st.effective_scale(dimscale) };
     let text_style = if st.text_style.is_empty() { "Standard".to_string() } else { st.text_style.clone() };
-    Sizes { arrow: st.arrow_size * k, gap: st.text_gap.abs() * k, text: st.text_height * k, above: st.text_above != 0, text_style }
+    Sizes {
+        arrow: st.arrow_size * k,
+        gap: st.text_gap.abs() * k,
+        text: st.text_height * k,
+        above: st.text_above != 0,
+        text_style,
+        annotative: st.annotative,
+    }
 }
 
 /// LEADER's JSON form: a straight leader with an arrow through `pts`, and `text` (lines split at
@@ -326,5 +337,12 @@ fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: bool, ann: Ann
         }
         Annotation::None => None,
     };
+    if let (true, Some(t)) = (z.annotative, annotation)
+        && matches!(s.doc()?.entity(t).map(|e| &e.kind), Some(EntityKind::MText(_)))
+    {
+        let d = s.doc_mut()?;
+        let cur = d.current_anno_scale();
+        d.modify_entity(t, |e| cadcraft_doc::set_annotative(e, true, &cur))?;
+    }
     Ok(std::iter::once(leader).chain(annotation).collect())
 }
