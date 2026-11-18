@@ -1479,3 +1479,12 @@ menu	View	视图
 
 # ArtCraft feature naming
 	Additional Tools	其他工具
+
+# Command plug-ins (RFC-0046) — AI-assisted translation, native review pending
+	Plug-ins	插件
+	Install Plug-in	安装插件
+	Update Plug-ins	更新插件
+	Remove Plug-in	移除插件
+	Run Plug-in	运行插件
+	Plug-in Catalogs	插件目录
+	Add Plug-in Catalog	添加插件目录

@@ -650,11 +650,7 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
 /// translated, so no menu shows English entries.
 #[test]
 fn chinese_menus_and_commands_are_fully_translated() {
-    // The plug-in commands (RFC-0046) are new and in no menu; their labels wait for a translator
-    // (`cargo xtask i18n` lists them) rather than for a translation made up here.
-    let plugins: Vec<&str> = cadcraft_engine::command_specs().iter().filter(|c| c.id.starts_with("plugin.")).map(|c| c.label).collect();
-    let missing: Vec<String> = missing_commands_menus_tools_and_snap_labels("zh").into_iter().filter(|s| !plugins.contains(&s.as_str())).collect();
-    assert_eq!(missing, Vec::<String>::new());
+    assert_eq!(missing_commands_menus_tools_and_snap_labels("zh"), Vec::<String>::new());
 }
 
 /// Bosnian counts: 1, 21 `one`; 2–4, 22–24 (not 12–14) `few`; everything else `other`.
