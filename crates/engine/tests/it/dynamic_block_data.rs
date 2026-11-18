@@ -83,6 +83,10 @@ fn blocks_without_dynamic_data_and_bad_names() {
     s.execute("block", &json!({ "name": "Window", "base": [0, 0], "handles": [l] })).unwrap();
     assert_eq!(s.execute("blocks.dynamic", &json!({ "name": "Window" })).unwrap(), json!(null));
     assert_eq!(s.execute("blocks.dynamic", &json!({ "name": "*Model_Space" })).unwrap(), json!(null));
+    let list = s.execute("blocks.list", &json!({})).unwrap();
+    let flags: Vec<_> = list["blocks"].as_array().unwrap().iter().map(|b| (b["name"].as_str().unwrap().to_string(), b["dynamic"].clone())).collect();
+    assert!(flags.contains(&("Window".into(), json!(false))), "{flags:?}");
+    assert!(flags.contains(&("Door".into(), json!(true))), "{flags:?}");
     for p in [json!({}), json!({ "name": 3 }), json!({ "name": "Nope" }), json!(null)] {
         assert!(s.execute("blocks.dynamic", &p).is_err(), "{p}");
     }

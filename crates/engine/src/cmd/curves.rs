@@ -18,10 +18,9 @@ pub fn pick_aperture(s: &Session) -> f64 {
     s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5
 }
 
-/// The object under `p` in the current space.
+/// The object under `p` in the current space (or the one named for `p`: [`Session::pick_object`]).
 pub fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
-    let space = s.space();
-    crate::select::pick(s.doc().ok()?, &space, p, pick_aperture(s))
+    s.pick_object(&s.space(), p, pick_aperture(s)).ok().flatten()
 }
 
 pub fn entity(s: &Session, h: Handle) -> Result<Entity> {
@@ -454,14 +453,32 @@ impl Chain {
     }
     /// Point and unit tangent at arc length `d` from the start (clamped).
     pub fn at_length(&self, d: f64) -> Option<(Vec2, Vec2)> {
-        let mut acc = 0.0;
-        for s in &self.segs {
-            let l = s.len();
-            if d <= acc + l + 1e-12 && l > 0.0 {
-                let t = ((d - acc) / l).clamp(0.0, 1.0);
-                return Some((s.at(t), s.tangent(t)));
-            }
-            acc += l;
+        self.at_length_in(&self.end_lengths(), d)
+    }
+    /// The arc length from the chain's start to the end of each segment, for [`Self::at_length_in`].
+    pub fn end_lengths(&self) -> Vec<f64> {
+        self.segs
+            .iter()
+            .scan(0.0, |acc, s| {
+                *acc += s.len();
+                Some(*acc)
+            })
+            .collect()
+    }
+    /// [`Self::at_length`] with the segment end lengths computed once (`ends` from
+    /// [`Self::end_lengths`]), so many samples along one chain each cost a binary search.
+    pub fn at_length_in(&self, ends: &[f64], d: f64) -> Option<(Vec2, Vec2)> {
+        let first = ends.partition_point(|e| d > e + 1e-12);
+        // A segment of no length can't hold the point; the next one that has length does.
+        // `ends` never decreases, so the first segment past `first` with length is found by search
+        // (a run of zero-length segments can be long) instead of a scan.
+        let base = first.checked_sub(1).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
+        let i = first + ends.get(first..).unwrap_or_default().partition_point(|e| *e <= base);
+        let i = (i < self.segs.len()).then_some(i);
+        if let Some(s) = i.and_then(|i| self.segs.get(i)) {
+            let start = i.and_then(|i| i.checked_sub(1)).and_then(|p| ends.get(p)).copied().unwrap_or(0.0);
+            let t = ((d - start) / s.len()).clamp(0.0, 1.0);
+            return Some((s.at(t), s.tangent(t)));
         }
         self.segs.last().map(|s| (s.end(), s.tangent(1.0)))
     }
@@ -476,6 +493,19 @@ impl Chain {
                 best = (dd, acc + seg_param(s, c) * s.len());
             }
             acc += s.len();
+        }
+        best.1
+    }
+    /// The curve parameter of the point on the chain nearest `p`: the index of its segment plus
+    /// the fraction along it (AutoCAD's polyline parameter; 0..1 along a line or an arc).
+    pub fn param_of(&self, p: Vec2) -> f64 {
+        let mut best = (f64::INFINITY, 0.0);
+        for (i, s) in self.segs.iter().enumerate() {
+            let c = s.closest(p);
+            let dd = c.dist(p);
+            if dd < best.0 {
+                best = (dd, i as f64 + seg_param(s, c));
+            }
         }
         best.1
     }
@@ -504,6 +534,29 @@ impl Chain {
         }
         vs
     }
+}
+
+/// The polyline parameter of the point nearest `p` on spans `(start, end, bulge)` taken from the
+/// source vertices: the span's index plus the fraction along it. Unlike [`Chain::param_of`] it
+/// counts zero-length spans, which a polyline's parameter range includes (one per vertex) but its
+/// chain drops.
+pub fn vertex_param_of(spans: &[(Vec2, Vec2, f64)], p: Vec2) -> f64 {
+    let mut best = (f64::INFINITY, 0.0);
+    for (i, &(a, b, bulge)) in spans.iter().enumerate() {
+        if a.near(b, EPS) {
+            continue;
+        }
+        let seg = match cadcraft_geom::bulge_to_arc(a, b, bulge) {
+            Some((arc, ccw)) => Segment::Arc { arc, ccw },
+            None => Segment::Line(Line::new(a, b)),
+        };
+        let c = seg.closest(p);
+        let dd = c.dist(p);
+        if dd < best.0 {
+            best = (dd, i as f64 + seg_param(&seg, c));
+        }
+    }
+    best.1
 }
 
 /// Parameter (0..1 along travel) of a point on a segment.
@@ -604,6 +657,34 @@ pub fn reverse_vertices(vs: &[PolyVertex], closed: bool) -> Vec<PolyVertex> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The indexed lookup gives the point and tangent a scan from the start gives, also past the
+    /// ends and over a segment of no length.
+    #[test]
+    fn at_length_in_matches_a_scan() {
+        let l = |a: (f64, f64), b: (f64, f64)| Segment::Line(Line::new(Vec2::new(a.0, a.1), Vec2::new(b.0, b.1)));
+        let c = Chain {
+            segs: vec![l((0.0, 0.0), (0.0, 0.0)), l((0.0, 0.0), (4.0, 0.0)), l((4.0, 0.0), (4.0, 0.0)), l((4.0, 0.0), (4.0, 3.0))],
+            closed: false,
+        };
+        let ends = c.end_lengths();
+        for d in [-1.0, 0.0, 1.5, 4.0, 4.0 + 1e-13, 5.0, 7.0, 9.0] {
+            // The scan this replaced.
+            let mut acc = 0.0;
+            let mut want = c.segs.last().map(|s| (s.end(), s.tangent(1.0)));
+            for s in &c.segs {
+                let len = s.len();
+                if d <= acc + len + 1e-12 && len > 0.0 {
+                    let t = ((d - acc) / len).clamp(0.0, 1.0);
+                    want = Some((s.at(t), s.tangent(t)));
+                    break;
+                }
+                acc += len;
+            }
+            assert_eq!(c.at_length_in(&ends, d), want, "d = {d}");
+            assert_eq!(c.at_length(d), want);
+        }
+    }
 
     #[test]
     fn arc_builders() {

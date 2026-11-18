@@ -26,6 +26,42 @@ impl Accept {
     pub const SELECT: Accept = Accept { point: true, number: false, text: false, select: true, enter: true };
 }
 
+/// Prompts that ask for one of their keywords, which AutoCAD 2024 writes without "or" before them:
+/// "Enter an option [?/Make/Set/…]:", "Enter layout option [Copy/Delete/…/?] <set>:", "New color
+/// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
+/// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
+/// AutoCAD's command line over measured runs, where no prompt was written both ways.
+const NO_OR: [&str; 28] = [
+    "Bring to front",
+    "Calculate rectangle dimensions based on",
+    "Choose mode for selected object conversion",
+    "Create annotative block",
+    "Enter a configuration option",
+    "Enter a plotting preference",
+    "Enter an annotation option",
+    "Enter an option",
+    "Enter an option to change",
+    "Enter attribute visibility setting",
+    "Enter justification",
+    "Enter layout option",
+    "Enter leader format option",
+    "Enter line spacing type",
+    "Enter object ordering option",
+    "Enter option",
+    "Enter polyline linetype generation option",
+    "Enter property to change",
+    "Enter the type of array",
+    "Enter type of unused objects to purge",
+    "Enter viewport arrangement",
+    "Explode block",
+    "New color",
+    "Orient relative to sheet in paper space viewports",
+    "Select a content type",
+    "Select a leader type",
+    "Use landing",
+    "Viewport View Locking",
+];
+
 /// A prompt shown on the command line.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +102,10 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The prompt takes a block's name as well as its keywords: a Greek word that is an existing
+    /// block's name is that block, not a keyword read from its Latin keys.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub takes_block: bool,
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -98,6 +138,11 @@ impl Prompt {
     /// The visual chooser the UI can show (the `picker` field).
     pub fn picker(mut self, p: Picker) -> Self {
         self.picker = Some(p);
+        self
+    }
+    /// Takes a block's name besides its keywords (the `takes_block` field).
+    pub fn takes_block(mut self) -> Self {
+        self.takes_block = true;
         self
     }
     pub fn kw(mut self, k: &[&str]) -> Self {
@@ -148,15 +193,7 @@ impl Prompt {
         }
         let mut s = self.message.clone();
         if !self.keywords.is_empty() {
-            // A question offers its answers ("Fix any errors detected? [Yes/No]"); anything else
-            // offers options besides what it asks for ("Specify next point or [Undo]").
-            s.push_str(if self.message.is_empty() {
-                "["
-            } else if self.message.ends_with('?') {
-                " ["
-            } else {
-                " or ["
-            });
+            s.push_str(self.keyword_lead());
             s.push_str(&self.keywords.join("/"));
             s.push(']');
         }
@@ -166,6 +203,20 @@ impl Prompt {
         s.push(':');
         s
     }
+    /// What goes between the message and its keywords. A question offers its answers ("Fix any
+    /// errors detected? [Yes/No]"), and so does a prompt for an option ([`NO_OR`]): " [". Anything
+    /// else offers options besides what it asks for ("Specify next point or [Undo]"): " or [". With
+    /// no message, "[". The command line in the window draws the keywords itself and takes this
+    /// too.
+    pub fn keyword_lead(&self) -> &'static str {
+        if self.message.is_empty() {
+            "["
+        } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
+            " ["
+        } else {
+            " or ["
+        }
+    }
     /// Match typed text against keywords: full word or the capitalised shortcut, case-insensitive.
     pub fn match_keyword(&self, text: &str) -> Option<String> {
         let t = text.trim();
@@ -173,6 +224,24 @@ impl Prompt {
             return None;
         }
         let tl = t.to_ascii_lowercase();
+        // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys, unless
+        // the prompt offers that spelling itself (a Greek keyword in a LISP program's list): its word
+        // or a prefix of it as typed (ΘΝ for ΘΝΔΟ, not UN for Undo) is read before the Latin keys.
+        if let Some(latin) = crate::keyboard::latin_keys(t) {
+            // Greek letters have case, accents and a final sigma, which the ASCII-only folding above does not see.
+            let typed = crate::keyboard::greek_fold(t).unwrap_or_else(|| latin.clone());
+            let greek = || self.keywords.iter().filter_map(|k| crate::keyboard::greek_fold(k).map(|fold| (k, fold)));
+            return greek()
+                .find(|(_, k)| *k == typed)
+                .or_else(|| greek().find(|(_, k)| k.starts_with(&typed)))
+                .map(|(k, _)| k.clone())
+                .or_else(|| self.match_latin_keyword(&latin));
+        }
+        self.match_latin_keyword(&tl)
+    }
+
+    /// [`Prompt::match_keyword`] for text already read as Latin letters, in lower case.
+    fn match_latin_keyword(&self, tl: &str) -> Option<String> {
         let keys = self.keywords.iter().map(|k| {
             let shortcut: String = k.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect::<String>().to_ascii_lowercase();
             let shortcut =
@@ -180,10 +249,13 @@ impl Prompt {
             (k, k.to_ascii_lowercase(), shortcut)
         });
         // A whole keyword or its capital-letter shortcut wins over a prefix of another keyword
-        // (`M` is Multiple, not a prefix of mEthod).
+        // (`M` is Multiple, not a prefix of mEthod). A prefix reaches past the keyword's last
+        // capital, as in AutoCAD: `L` is none of LAyer, LType, ltScale or LWeight (AutoCAD 2024's
+        // CHPROP: "Ambiguous response, please clarify..."), `LTS` is ltScale.
+        let past_capitals = |k: &str| k.char_indices().rfind(|(_, c)| c.is_ascii_uppercase() || c.is_ascii_digit()).map_or(1, |(i, _)| i + 1);
         keys.clone()
-            .find(|(_, kl, sc)| tl == *kl || tl == *sc)
-            .or_else(|| keys.clone().find(|(_, kl, sc)| tl.len() >= sc.len() && kl.starts_with(&tl)))
+            .find(|(_, kl, sc)| tl == kl.as_str() || tl == sc.as_str())
+            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(tl)))
             .map(|(k, _, _)| k.clone())
     }
 }
@@ -222,6 +294,9 @@ pub trait Interactive: Send {
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
+    /// Called when the command is cancelled from outside (Esc, or another command starting),
+    /// before it finishes: what it records on every exit path.
+    fn cancelled(&mut self, _s: &mut Session) {}
     /// Rubber-band geometry for the cursor position.
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
@@ -238,11 +313,28 @@ pub trait Interactive: Send {
     fn drag(&self, _s: &Session, _cursor: Vec2) -> Option<Drag> {
         None
     }
-    /// The multiline text being typed (MTEXT, once its box is known) with empty contents: where
-    /// the UI places its in-place editor and with which height, width and justification.
+    /// The multiline text being typed (MTEXT, once its box is known, with empty contents) or edited
+    /// (TEXTEDIT on an MTEXT or a multileader's text, with its contents): where the UI places its
+    /// in-place editor and with which height, width, justification and starting text.
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
+    /// only its preview set); `None` shows the drawing.
+    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
+        None
+    }
+}
+
+/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
+/// runs. The whole drawing is drawn again when it ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DisplayOnly {
+    /// Objects of the drawing, drawn as they are.
+    pub handles: Vec<Handle>,
+    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
+    /// DVIEWBLOCK block), with its own properties.
+    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// See [`Interactive::drag`].
@@ -329,17 +421,74 @@ mod tests {
         assert_eq!(parse_point("1,2,3,4", last), None);
     }
 
+    /// A keyword the prompt offers in Greek is matched as spelled (any case, accent or final sigma,
+    /// or a prefix) before the Latin reading of the same keys; without one, the keys answer the
+    /// Latin keyword.
+    #[test]
+    fn a_greek_keyword_is_matched_as_spelled_before_its_latin_reading() {
+        // ΘΝΔΟ is the keys U-N-D-O, so it answers Undo, unless the prompt offers the Greek word itself
+        // (a LISP program's keyword list).
+        let both = Prompt::new("", Accept::TEXT).kw(&["Undo", "ΘΝΔΟ"]);
+        assert_eq!(both.match_keyword("ΘΝΔΟ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θνδο").as_deref(), Some("ΘΝΔΟ"), "Greek case is folded like Latin case");
+        assert_eq!(both.match_keyword("Undo").as_deref(), Some("Undo"));
+        // A prefix of the Greek word as typed (ΘΝ) is that keyword, not the Latin prefix UN of Undo.
+        assert_eq!(both.match_keyword("ΘΝ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θν").as_deref(), Some("ΘΝΔΟ"), "in either case");
+        assert_eq!(both.match_keyword("θνδό").as_deref(), Some("ΘΝΔΟ"), "with an accent");
+        let sigma = Prompt::new("", Accept::TEXT).kw(&["Last", "ΛΑΣΤ"]);
+        assert_eq!(sigma.match_keyword("λας").as_deref(), Some("ΛΑΣΤ"), "a final sigma folds too");
+        let latin = Prompt::new("", Accept::TEXT).kw(&["Undo"]);
+        assert_eq!(latin.match_keyword("ΘΝ").as_deref(), Some("Undo"));
+        assert_eq!(latin.match_keyword("ΘΝΔΟ").as_deref(), Some("Undo"));
+        assert_eq!(latin.match_keyword("Θ").as_deref(), Some("Undo"), "a Greek-layout shortcut still works");
+    }
+
     #[test]
     fn keywords() {
         let p = Prompt::new("Specify next point", Accept::POINT).kw(&["Undo", "Close"]);
         assert_eq!(p.display(), "Specify next point or [Undo/Close]:");
         let q = Prompt::new("Erase polyline?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         assert_eq!(q.display(), "Erase polyline? [Yes/No] <No>:");
+        // A prompt for an option has no "or", as AutoCAD writes it.
+        let o = Prompt::new("Enter an option", Accept::TEXT).kw(&["Close", "Join"]);
+        assert_eq!(o.display(), "Enter an option [Close/Join]:");
+        let c = Prompt::new("New color", Accept::TEXT).kw(&["Truecolor", "COlorbook"]).default("BYLAYER");
+        assert_eq!(c.display(), "New color [Truecolor/COlorbook] <BYLAYER>:");
+        let b = Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]);
+        assert_eq!(b.display(), "Enter block name or [?]:");
         assert_eq!(p.match_keyword("u").as_deref(), Some("Undo"));
         assert_eq!(p.match_keyword("CL").as_deref(), Some("Close"));
         assert_eq!(p.match_keyword("x"), None);
         let q = Prompt::new("", Accept::POINT).kw(&["3P", "2P", "Ttr"]);
         assert_eq!(q.match_keyword("3p").as_deref(), Some("3P"));
         assert_eq!(q.match_keyword("t").as_deref(), Some("Ttr"));
+        // A prefix reaches past the last capital (AutoCAD 2024's CHPROP: `L` is ambiguous).
+        let c =
+            Prompt::new("Enter property to change", Accept::TEXT).kw(&["Color", "LAyer", "LType", "ltScale", "LWeight", "Thickness", "TRansparency"]);
+        assert_eq!(c.match_keyword("l"), None);
+        assert_eq!(c.match_keyword("la").as_deref(), Some("LAyer"));
+        assert_eq!(c.match_keyword("lts").as_deref(), Some("ltScale"));
+        assert_eq!(c.match_keyword("s").as_deref(), Some("ltScale"));
+        assert_eq!(c.match_keyword("tr").as_deref(), Some("TRansparency"));
+        // Even when no other keyword starts with it: AutoCAD 2024 answers QDIM's `DA` with "Point or
+        // option keyword required." and PEDIT's vertex `E` with "Invalid option keyword.".
+        let q = Prompt::new("", Accept::POINT).kw(&[
+            "Continuous",
+            "Staggered",
+            "Baseline",
+            "Ordinate",
+            "Radius",
+            "Diameter",
+            "datumPoint",
+            "Edit",
+            "seTtings",
+        ]);
+        assert_eq!(q.match_keyword("da"), None);
+        assert_eq!(q.match_keyword("datump").as_deref(), Some("datumPoint"));
+        assert_eq!(q.match_keyword("p").as_deref(), Some("datumPoint"));
+        let v = Prompt::new("", Accept::TEXT).kw(&["Next", "Previous", "Break", "Insert", "Move", "Regen", "Straighten", "Tangent", "Width", "eXit"]);
+        assert_eq!(v.match_keyword("e"), None);
+        assert_eq!(v.match_keyword("ex").as_deref(), Some("eXit"));
     }
 }

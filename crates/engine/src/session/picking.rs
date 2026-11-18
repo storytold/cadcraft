@@ -1,4 +1,4 @@
-use super::{Bounds2, Handle, Input, PendingWindow, Result, Session, Vec2, cmd, select};
+use super::{Bounds2, Drawing, Entity, Handle, Input, PendingWindow, Result, Session, Space, Vec2, cmd, select};
 
 impl Session {
     // ---------------- picking without a command ----------------
@@ -16,6 +16,13 @@ impl Session {
         true
     }
 
+    /// Whether a selection window from `corner` to `p` is a crossing window: it was dragged
+    /// leftwards on screen (in a twisted view, not along the drawing's X axis).
+    pub fn window_is_crossing(&self, corner: Vec2, p: Vec2) -> bool {
+        let twist = self.state().map_or(0.0, |st| st.view().twist);
+        (p - corner).rotate(twist).x < 0.0
+    }
+
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///
     /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
@@ -24,10 +31,10 @@ impl Session {
         let space = self.space();
         let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
-            let crossing = p.x < pw.corner.x;
-            let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+            let crossing = self.window_is_crossing(pw.corner, p);
+            let hs = select::select_window_in(self.doc()?, &space, self.viewport_frozen(), Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
-            let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+            let mut sel = if pickadd || shift { self.stored_selection() } else { Vec::new() };
             if shift && pickadd {
                 sel.retain(|h| !hs.contains(h));
             } else {
@@ -37,7 +44,7 @@ impl Session {
             return Ok(());
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
-        match select::pick(self.doc()?, &space, p, ap) {
+        match select::pick_in(self.doc()?, &space, self.viewport_frozen(), p, ap) {
             Some(h) => self.idle_pick(h, shift),
             None => self.pending_window = Some(PendingWindow { corner: p, during_command: false }),
         }
@@ -49,7 +56,7 @@ impl Session {
         let pickadd = self.settings.pickadd;
         // With group selection the object's selectable groups come (or go) with it.
         let hs = cmd::groups::expand(self, vec![h]);
-        let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+        let mut sel = if pickadd || shift { self.stored_selection() } else { Vec::new() };
         let had = sel.contains(&h);
         if shift && (pickadd || had) {
             sel.retain(|x| !hs.contains(x));
@@ -86,7 +93,7 @@ impl Session {
             return Vec::new();
         }
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
-        self.doc().map(|d| select::pick_all(d, &self.space(), p, ap)).unwrap_or_default()
+        self.doc().map(|d| select::pick_all_in(d, &self.space(), self.viewport_frozen(), p, ap)).unwrap_or_default()
     }
 
     /// Whether selection cycling marks `p` with its badge (SELECTIONCYCLING 1 or 2): overlapping
@@ -125,4 +132,50 @@ impl Session {
             st.previous_selection = sel.to_vec();
         }
     }
+
+    // ---------------- one object by name ----------------
+
+    /// Give the running command an object by name, as AutoLISP's `command` does with an entity
+    /// name or an `entsel` list (name and point). A prompt picking one object with a point
+    /// (BREAK's "Select object", MEASURE's "Select object to measure"…) takes the point, and a
+    /// pick there finds that object ([`Session::pick_object`]) wherever it lies. A bare name
+    /// stands at the object's DXF group 10 point (a line's start, a circle's centre, a
+    /// polyline's first vertex), the point AutoCAD picks it at. The name holds for that input
+    /// only: a later pick at the same point finds what lies there. Other prompts take the object
+    /// as a pick.
+    pub fn input_object(&mut self, h: Handle, at: Option<Vec2>) -> Result<()> {
+        let one = self.current_prompt().is_some_and(|p| p.accept.point && !p.accept.select && p.picks_objects());
+        let p = if one { at.or_else(|| self.doc().ok().and_then(|d| group_10(d, d.entity(h)?))) } else { None };
+        let Some(p) = p.filter(|p| p.is_finite()) else { return self.input(Input::Pick(vec![h])) };
+        self.pick_hint = Some((h, p));
+        let r = self.input(Input::Point(p));
+        self.pick_hint = None;
+        r
+    }
+
+    /// The object a prompt picking one object finds at `p` in `space`: the one named for that
+    /// point ([`Session::input_object`]), which is none when it lies in another space, else the
+    /// object under `p` within `aperture`. Inside an MSPACE viewport a pick in model space finds
+    /// what that viewport draws: not the objects on the layers frozen in it.
+    pub fn pick_object(&self, space: &Space, p: Vec2, aperture: f64) -> Result<Option<Handle>> {
+        let d = self.doc()?;
+        if let Some((h, q)) = self.pick_hint
+            && q == p
+        {
+            return Ok((d.space_of(h).as_ref() == Some(space)).then_some(h));
+        }
+        // The viewport shows model space only: its frozen layers hide nothing on the sheet.
+        let frozen = if *space == Space::Model { self.viewport_frozen() } else { &[] };
+        Ok(select::pick_in(d, space, frozen, p, aperture))
+    }
+}
+
+/// An object's DXF group 10 point: the first point of its entity list, or its first grip where
+/// entity lists are not built in.
+pub(crate) fn group_10(d: &Drawing, e: &Entity) -> Option<Vec2> {
+    let Some(codec) = cmd::file::entity_codec() else { return e.kind.grips().first().copied() };
+    let (_, tags) = (codec.groups)(d, e);
+    let i = tags.iter().position(|t| t.code == 10)?;
+    let y = tags.get(i + 1).filter(|t| t.code == 20)?;
+    Some(Vec2::new(tags[i].value.as_f64(), y.value.as_f64()))
 }
