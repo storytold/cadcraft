@@ -2,11 +2,9 @@
 //! from the content. Files are hostile input: the size is read from the header and checked
 //! before any pixel is decoded.
 
-use std::io::Cursor;
-
-use cadcraft_doc::Raster;
-
 use crate::{IoError, Result};
+use cadcraft_doc::Raster;
+use craft_image_codecs::{ChannelLayout, DecodeOptions, DecodeWarning, Format, Limits, SampleType};
 
 /// Largest image file read (bytes).
 pub const MAX_IMAGE_BYTES: usize = 256 << 20;
@@ -17,22 +15,18 @@ fn bad(e: impl std::fmt::Display) -> IoError {
     IoError::Format(format!("image: {e}"))
 }
 
-/// A reader over an image file, once it is small enough and of a format we read.
-fn reader(bytes: &[u8]) -> Result<image::ImageReader<Cursor<&[u8]>>> {
+/// The width and height in pixels of the first stored image, read without decoding pixels.
+pub fn probe(bytes: &[u8]) -> Result<(u32, u32)> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(bad(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
     }
-    // The format comes from the file's first bytes, not from its name.
-    let file = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(bad)?;
-    if file.format().is_none() {
+    let format = craft_image_codecs::detect(bytes).ok_or_else(|| bad("not a PNG, JPEG, BMP or TIFF file"))?;
+    if !matches!(format, Format::Png | Format::Jpeg | Format::Bmp | Format::Tiff) {
         return Err(bad("not a PNG, JPEG, BMP or TIFF file"));
     }
-    Ok(file)
-}
-
-/// The width and height in pixels of the image in `bytes`, read from its header.
-pub fn probe(bytes: &[u8]) -> Result<(u32, u32)> {
-    let (width, height) = reader(bytes)?.into_dimensions().map_err(bad)?;
+    // Match ImageReader's original header budget; check pixels ourselves for the existing diagnostic.
+    let limits = Limits::new(u32::MAX, u32::MAX, u64::MAX, 512 << 20);
+    let (width, height) = craft_image_codecs::probe_stored_size(bytes, &limits).map_err(bad)?;
     if width == 0 || height == 0 {
         return Err(bad("the image is empty"));
     }
@@ -42,38 +36,32 @@ pub fn probe(bytes: &[u8]) -> Result<(u32, u32)> {
     Ok((width, height))
 }
 
-/// Decode the image in `bytes`.
+/// Decode the first image, keeping its stored orientation.
 pub fn decode(bytes: &[u8]) -> Result<Raster> {
-    // The size is checked first, from the header alone.
     let (width, height) = probe(bytes)?;
-    let mut file = reader(bytes)?;
-    file.limits(decode_limits(width, height));
-    let pixels = file.decode().map_err(bad)?.into_rgba8();
-    Raster::new(pixels.width(), pixels.height(), pixels.into_raw()).ok_or_else(|| bad("the image is empty"))
-}
-
-/// What the decoder may allocate for an image of this size: the pixels themselves (up to 16
-/// bytes each before they become 8-bit RGBA) and its own working buffers.
-fn decode_limits(width: u32, height: u32) -> image::Limits {
     let pixels = u64::from(width).saturating_mul(u64::from(height));
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(width);
-    limits.max_image_height = Some(height);
-    limits.max_alloc = Some(pixels.saturating_mul(16).saturating_add(64 << 20));
-    limits
+    let limits = Limits::new(width, height, MAX_IMAGE_PIXELS, pixels.saturating_mul(16).saturating_add(64 << 20));
+    let opts = DecodeOptions { limits, keep_orientation: true };
+    let format = craft_image_codecs::detect(bytes).ok_or_else(|| bad("not an image"))?;
+    let image = if format == Format::Tiff {
+        craft_image_codecs::decode_tiff_page(bytes, 0, &opts)
+    } else {
+        craft_image_codecs::decode_as_with(format, bytes, &opts)
+    }
+    .map_err(bad)?;
+    if image.warnings.iter().any(|w| matches!(w, DecodeWarning::Truncated { .. })) {
+        return Err(bad("image data is truncated"));
+    }
+    if image.dimensions() != (width, height) {
+        return Err(bad("decoded image size does not match its header"));
+    }
+    let rgba = if image.layout() == ChannelLayout::Rgba && image.sample_type() == SampleType::U8 { image.into_data() } else { image.to_rgba8() };
+    Raster::new(width, height, rgba).ok_or_else(|| bad("the image is empty"))
 }
 
-/// `raster` as a PNG file.
+/// `raster` as a PNG file, encoded in rows to avoid a full extra image copy.
 pub fn encode_png(raster: &Raster) -> Result<Vec<u8>> {
-    let mut out = Cursor::new(Vec::new());
-    image::write_buffer_with_format(
-        &mut out,
-        raster.rgba(),
-        raster.width(),
-        raster.height(),
-        image::ExtendedColorType::Rgba8,
-        image::ImageFormat::Png,
-    )
-    .map_err(bad)?;
-    Ok(out.into_inner())
+    let mut out = Vec::new();
+    cadcraft_render::raster::write_rgba_png(&mut out, raster.width(), raster.height(), raster.rgba()).ok_or_else(|| bad("PNG encoding failed"))?;
+    Ok(out)
 }

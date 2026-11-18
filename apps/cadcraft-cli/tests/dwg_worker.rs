@@ -16,6 +16,13 @@ fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     let read = cadcraft_io::read(&written, "a.dwg").unwrap();
     assert_eq!(read.model.len(), drawing.model.len());
 
+    // A drawing whose kept objects came from a 2018 file: the worker gets that version with the
+    // request and reads the bridge DXF as it, as this process does.
+    let mut kept = drawing.clone();
+    kept.foreign = std::sync::Arc::new(cadcraft_engine::doc::foreign::Foreign { version: Some("AC1032".into()), ..Default::default() });
+    let written = cadcraft_io::write(&kept, "a.dwg").unwrap();
+    assert_eq!(cadcraft_io::read(&written, "a.dwg").unwrap().model.len(), drawing.model.len());
+
     // A decode error comes back as that error, not as the worker stopping.
     let mut bad = in_process.clone();
     bad.truncate(64);

@@ -537,8 +537,8 @@ mod tests {
             for k in 0..400 {
                 let p = Vec2::new(r.r(-5.0, 105.0), r.r(-5.0, 105.0));
                 let ap = [0.05, 0.3, 1.5][k % 3];
-                let a = select::pick_with(&d, &Space::Model, &ix, p, ap);
-                let b = select::pick_with(&d, &Space::Model, &None, p, ap);
+                let a = select::pick_with(&d, &Space::Model, &ix, &[], p, ap);
+                let b = select::pick_with(&d, &Space::Model, &None, &[], p, ap);
                 assert_eq!(a, b, "seed {seed} p {p:?} ap {ap}");
                 hits += usize::from(a.is_some());
             }
@@ -594,9 +594,9 @@ mod tests {
             for k in 0..240 {
                 let p = Vec2::new(r.r(-5.0, 105.0), r.r(-5.0, 105.0));
                 let ap = [0.05, 0.3, 1.5, 30.0][k % 4];
-                let want = select::pick_with(&d, &Space::Model, &None, p, ap);
+                let want = select::pick_with(&d, &Space::Model, &None, &[], p, ap);
                 for (sorted_max, budget) in [(0, 0), (0, 1), (0, 50), (0, usize::MAX), (3, 7), (1024, 4096), (usize::MAX, 0)] {
-                    let got = select::pick_scanning(&d, &Space::Model, &ix, p, ap, sorted_max, budget);
+                    let got = select::pick_scanning(&d, &Space::Model, &ix, &[], p, ap, sorted_max, budget);
                     assert_eq!(got, want, "p {p:?} ap {ap} sorted_max {sorted_max} budget {budget}");
                 }
                 hits += usize::from(want.is_some());
@@ -616,12 +616,15 @@ mod tests {
                 let b = a + Vec2::new(r.r(-40.0, 40.0), r.r(-40.0, 40.0));
                 let bx = Bounds2::new(a, b);
                 for crossing in [false, true] {
-                    let x = select::select_window_with(&d, &Space::Model, &ix, bx, crossing);
-                    let y = select::select_window_with(&d, &Space::Model, &None, bx, crossing);
+                    let x = select::select_window_with(&d, &Space::Model, &ix, &[], bx, crossing);
+                    let y = select::select_window_with(&d, &Space::Model, &None, &[], bx, crossing);
                     assert_eq!(x, y, "seed {seed} box {bx:?} crossing {crossing}");
                 }
                 let fence: Vec<Vec2> = (0..(2 + k % 3)).map(|_| Vec2::new(r.r(0.0, 100.0), r.r(0.0, 100.0))).collect();
-                assert_eq!(select::select_fence_with(&d, &Space::Model, &ix, &fence), select::select_fence_with(&d, &Space::Model, &None, &fence));
+                assert_eq!(
+                    select::select_fence_with(&d, &Space::Model, &ix, &[], &fence),
+                    select::select_fence_with(&d, &Space::Model, &None, &[], &fence)
+                );
             }
         }
     }
@@ -656,10 +659,13 @@ mod tests {
         for (p, ap) in
             [(Vec2::new(f64::NAN, 1.0), 1.0), (Vec2::new(1.0, 1.0), f64::NAN), (Vec2::new(f64::INFINITY, 0.0), 1.0), (Vec2::new(50.0, 50.0), 1e300)]
         {
-            assert_eq!(select::pick_with(&d, &Space::Model, &ix, p, ap), select::pick_with(&d, &Space::Model, &None, p, ap));
+            assert_eq!(select::pick_with(&d, &Space::Model, &ix, &[], p, ap), select::pick_with(&d, &Space::Model, &None, &[], p, ap));
         }
         let bx = Bounds2 { min: Vec2::new(f64::NEG_INFINITY, 0.0), max: Vec2::new(f64::INFINITY, 50.0) };
-        assert_eq!(select::select_window_with(&d, &Space::Model, &ix, bx, true), select::select_window_with(&d, &Space::Model, &None, bx, true));
+        assert_eq!(
+            select::select_window_with(&d, &Space::Model, &ix, &[], bx, true),
+            select::select_window_with(&d, &Space::Model, &None, &[], bx, true)
+        );
     }
 
     #[test]
