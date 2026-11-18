@@ -39,6 +39,10 @@ craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-l
 craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", default-features = false }
 # TrueType embedding-permission classification for plotted fonts (craft-libs#778).
 craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "c07e38090879ffa994f893df9956c6d5b96c049c", default-features = false }
+# WebAssembly command plug-ins (RFC-0046): sandbox, manifest, permissions, store, catalogs and
+# GitHub installs (crates/engine/src/plugin.rs). Pinned to the fork commit the RFC's reference
+# implementation uses until the upstream pull request lands.
+craft-plugin = { git = "https://github.com/Dasemu/craft-libs", rev = "93428fbe5d11b735365fa87068a9e1fc85fb3550" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }

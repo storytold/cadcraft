@@ -25,6 +25,7 @@ mod guard;
 pub mod keyboard;
 pub mod lisp;
 pub mod mtext_edit;
+pub mod plugin;
 pub mod pointmod;
 pub mod prompt;
 mod recent;
@@ -154,6 +155,8 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// Installed plug-ins, their store, settings and catalogs, and the last run ([`plugin`]).
+    pub plugins: plugin::Runtime,
 }
 
 impl Default for Session {
@@ -208,6 +211,7 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             pick_hint: None,
+            plugins: plugin::Runtime::default(),
         }
     }
 

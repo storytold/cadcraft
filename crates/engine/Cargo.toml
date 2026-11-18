@@ -24,10 +24,14 @@ thiserror = { workspace = true }
 log = { workspace = true }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
 rstar = { version = "0.13", default-features = false }
+# WebAssembly command plug-ins (`plugin`).
+craft-plugin = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
+# Test plug-ins are written in WebAssembly text.
+wat = "1.261"
 # Real DXF files for the external reference tests (io is a lower layer).
 cadcraft-io = { workspace = true }
