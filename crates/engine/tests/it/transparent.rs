@@ -47,3 +47,27 @@ fn transparent_zoom_resumes_the_running_command() {
     assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("line"));
     assert!(s.suspended.is_none());
 }
+
+/// #3273 review: GETVAR typed transparently inside LINE reads the command state LINE is in, and
+/// LINE then carries on.
+#[test]
+fn transparent_getvar_sees_the_command_it_runs_inside() {
+    let mut s = Session::new();
+    s.cmdline("LINE 0,0").unwrap();
+    s.cmdline("'GETVAR CMDNAMES").unwrap();
+    // The value, then LINE resuming.
+    let tail = |s: &Session| s.log[s.log.len().saturating_sub(2)..].to_vec();
+    assert_eq!(tail(&s), ["CMDNAMES = LINE", "Resuming LINE command."]);
+    s.cmdline("'GETVAR CMDACTIVE").unwrap();
+    assert_eq!(tail(&s), ["CMDACTIVE = 3", "Resuming LINE command."], "a command, and a transparent one in it");
+    // A transparent command still prompting is named after the one it runs inside.
+    s.cmdline("'PAN").unwrap();
+    assert_eq!(cadcraft_engine::sysvars::get(&s, "CMDNAMES"), Some(serde_json::json!("LINE'PAN")));
+    s.cmdline("").unwrap();
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("line"), "{}", s.prompt_text());
+    s.cmdline("10,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(lines(&s), 1);
+    assert_eq!(cadcraft_engine::sysvars::get(&s, "CMDACTIVE"), Some(serde_json::json!(0)));
+}
