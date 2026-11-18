@@ -151,6 +151,8 @@ pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         selected: sheets.iter().map(|s| s.name.clone()).collect(),
         single_pdf: true,
     });
+    let valid: std::collections::HashSet<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
+    state.selected.retain(|name| valid.contains(name.as_str()));
 
     let mut do_publish: Option<(Vec<String>, bool)> = None;
     let mut keep_open = *open;
@@ -168,22 +170,20 @@ pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
         ui.separator();
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-            egui::Grid::new("publish_sheets_grid").num_columns(4).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
-                ui.strong("");
+            egui::Grid::new("publish_sheets_grid").num_columns(3).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
                 ui.strong("Layout");
                 ui.strong("Page Setup");
                 ui.strong("Plot Style");
                 ui.end_row();
                 for s in &sheets {
                     let mut checked = state.selected.contains(&s.name);
-                    if ui.checkbox(&mut checked, "").changed() {
+                    if ui.checkbox(&mut checked, &s.name).changed() {
                         if checked {
                             state.selected.insert(s.name.clone());
                         } else {
                             state.selected.remove(&s.name);
                         }
                     }
-                    ui.label(&s.name);
                     ui.label(&s.paper);
                     ui.label(&s.ctb);
                     ui.end_row();
@@ -210,9 +210,14 @@ pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     ctx.data_mut(|d| d.insert_temp(id, state));
     if let Some((chosen, single_pdf)) = do_publish {
         *open = false;
-        let _ = app.pick_then(Pick::Save(format!("{stem}.pdf")), move |app, path| {
-            app.run("publish", json!({ "path": path, "layouts": chosen, "single_pdf": single_pdf }))
-        });
+        let res = app
+            .pick_then(Pick::Save(format!("{stem}.pdf")), move |app, path| {
+                app.run("publish", json!({ "path": path, "layouts": chosen, "single_pdf": single_pdf }))
+            })
+            .unwrap_or_else(|| no_picker(app, "PUBLISH", r#"publish {"path": "sheets.pdf", "single_pdf": true}"#));
+        if let Err(err) = res {
+            app.status = Some((err, crate::now_ms()));
+        }
     }
 }
 
