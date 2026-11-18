@@ -61,6 +61,9 @@ pub mod options;
 pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod plugin_http;
+pub mod plugins;
 pub mod quick;
 pub mod save_loss;
 pub mod shortcut_menus;
@@ -242,16 +245,21 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// Pick a `.craftplugin` bundle for Tools ▸ Plug-ins ▸ Manage Plug-ins… ▸ From File…; `None`
+    /// where there is no native file dialog (the web).
+    pub pick_plugin: Option<Box<dyn Fn() -> Option<String>>>,
 }
 
-/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
-/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
+/// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker,
+/// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one), or a
+/// plug-in bundle (`.craftplugin`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pick {
     Open,
     Save(String),
     Lisp(String),
     Pgp(String),
+    Plugin,
 }
 
 /// Shows a file dialog without waiting for it and calls the callback (from any thread) with the
@@ -370,6 +378,8 @@ pub struct CadApp {
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
+    /// The Plug-ins window's state, the install confirmation and the parameter dialog ([`plugins`]).
+    pub plugins: plugins::PluginsWindow,
 }
 
 impl CadApp {
@@ -428,6 +438,7 @@ impl CadApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
+            plugins: plugins::PluginsWindow::default(),
         }
     }
 
@@ -466,6 +477,7 @@ impl CadApp {
             Pick::Save(_) => self.services.pick_save.is_some(),
             Pick::Lisp(_) => self.services.pick_lisp.is_some(),
             Pick::Pgp(_) => self.services.pick_pgp.is_some(),
+            Pick::Plugin => self.services.pick_plugin.is_some(),
         };
         if !available {
             return None;
@@ -498,6 +510,7 @@ impl CadApp {
             Pick::Save(name) => self.services.pick_save.as_ref().and_then(|f| f(name)),
             Pick::Lisp(dir) => self.services.pick_lisp.as_ref().and_then(|f| f(dir)),
             Pick::Pgp(dir) => self.services.pick_pgp.as_ref().and_then(|f| f(Some(dir.as_str()).filter(|d| !d.is_empty()))),
+            Pick::Plugin => self.services.pick_plugin.as_ref().and_then(|f| f()),
         };
         Some(match path {
             Some(path) => then(self, path),
@@ -679,6 +692,10 @@ impl CadApp {
         if !self.ui.shortcuts.is_empty() {
             prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
+        // Each plug-in's settings and the catalogs added (the engine keeps them while the app runs)
+        if self.session.plugins.prefs != Default::default() {
+            prefs["plugins"] = json!(self.session.plugins.prefs);
+        }
         prefs.to_string()
     }
 
@@ -717,6 +734,9 @@ impl CadApp {
         }
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
+        }
+        if let Some(Ok(plugins)) = v.get("plugins").map(|p| serde_json::from_value(p.clone())) {
+            self.session.plugins.prefs = plugins;
         }
     }
 

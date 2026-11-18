@@ -162,6 +162,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::plugins::route(app, id, params) {
+        return Some(r);
+    }
     if id == "ui.shortcuts" {
         return Some(crate::keys::command(app, params));
     }
@@ -692,6 +695,10 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
         if !menu.is_empty() {
             add(menu, label, id, *sc, true);
         }
+    }
+    // Tools ▸ Plug-ins is built from the installed plug-ins, after the reference's items.
+    if let Some((_, tools)) = out.iter_mut().find(|(m, _)| m == "Tools") {
+        tools.push(crate::plugins::menu(app));
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);

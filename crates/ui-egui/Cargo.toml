@@ -35,6 +35,8 @@ web-time = { workspace = true }
 craft-update = { workspace = true }
 
 [dev-dependencies]
+# Test plug-ins are written in WebAssembly text.
+wat = "1.261"
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in

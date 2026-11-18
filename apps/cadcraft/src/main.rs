@@ -171,6 +171,7 @@ fn services() -> Services {
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        pick_plugin: Some(Box::new(|| file_dialog(&Pick::Plugin).pick_file().map(|p| p.to_string_lossy().to_string()))),
     }
 }
 
@@ -186,6 +187,7 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
         Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
         Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+        Pick::Plugin => vec![(i18n::t("Plug-ins (CRAFTPLUGIN)"), vec!["craftplugin"])],
     }
 }
 
@@ -405,7 +407,12 @@ fn main() -> eframe::Result {
                     log::warn!("no LISP support folder {}: {e}", support.display());
                 }
                 app.session.set_lisp_support_dir(Some(support));
+                // Plug-ins are kept in `<settings>/Plug-ins`; without a settings directory they
+                // are kept for the session only.
+                app.session.plugins.open_store(dir);
             }
+            // Plug-in catalogs and releases download over the update checker's HTTPS client.
+            app.session.plugins.set_fetch(cadcraft_ui_egui::plugin_http::http_fetch());
             app.integrated_titlebar = cfg!(target_os = "macos");
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
