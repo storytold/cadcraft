@@ -605,6 +605,32 @@ mod tests {
         }
     }
 
+    /// Past 1,024 candidates a pick through a viewport skips the layers frozen there, both where
+    /// it reads the index topmost first and where it sorts the candidates below those it read.
+    #[test]
+    fn a_frozen_layer_is_skipped_on_the_topmost_first_path() {
+        let mut d = Drawing::new_imperial();
+        d.ensure_layer("FROZEN");
+        let mut handles = Vec::new();
+        for i in 0..2000 {
+            let common = if i >= 1990 { Common { layer: "FROZEN".into(), ..Common::default() } } else { Common::default() };
+            let y = f64::from(i) * 1e-4;
+            handles.push(d.add(&Space::Model, common, EntityKind::Line(cadcraft_doc::Line { a: v3(0.0, y), b: v3(10.0, y) })).unwrap());
+        }
+        let (topmost, shown) = (handles[1999], handles[1989]);
+        let ix = forced(&d);
+        let (p, ap) = (Vec2::new(5.0, 0.1), 0.5);
+        let query = Bounds2::new(p, p).expand(2.0 * ap);
+        assert!(matches!(ix.as_ref().unwrap().query_at_most(&query, true, 1024), Some(None)), "test needs more than 1024 candidates");
+        let frozen = ["frozen".to_string()];
+        assert_eq!(select::pick_with(&d, &Space::Model, &ix, &[], p, ap), Some(topmost));
+        assert_eq!(select::pick_with(&d, &Space::Model, &ix, &frozen, p, ap), Some(shown), "topmost-first read");
+        assert_eq!(select::pick_with(&d, &Space::Model, &None, &frozen, p, ap), Some(shown), "no index");
+        for budget in [0, 1, 3, 9] {
+            assert_eq!(select::pick_scanning(&d, &Space::Model, &ix, &frozen, p, ap, 1024, budget), Some(shown), "below the floor, budget {budget}");
+        }
+    }
+
     #[test]
     fn window_and_fence_parity_with_scan() {
         for seed in [5, 23] {
