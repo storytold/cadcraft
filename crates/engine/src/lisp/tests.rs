@@ -286,6 +286,35 @@ fn reaching_a_callback_slice_boundary_does_not_grant_another_slice() {
     assert!(counts[1] >= counts[0] && counts[1] - counts[0] <= 1, "{counts:?}");
 }
 
+/// Callbacks that call callbacks share one allowance: a branching routine can't multiply it.
+#[test]
+fn nested_callbacks_share_one_step_allowance() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000_000;
+    // 4^14 leaf calls if every callback took a fresh allowance; the whole tree gets one.
+    let started = std::time::Instant::now();
+    let e = eval(&mut s, "(defun f (n) (if (> n 0) (vl-every '(lambda (x) (f (1- n)) t) '(1 2 3 4)) t)) (f 14)").unwrap_err();
+    assert!(e.contains("callback stopped after 1000000 steps"), "{e}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    // The next run starts afresh.
+    assert_eq!(ok(&mut s, "(f 1)"), "T");
+}
+
+/// An outer callback's own steps count against the allowance before the callbacks it calls run.
+#[test]
+fn an_outer_callbacks_steps_are_charged_before_a_nested_one() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    ok(&mut s, "(setq inner-steps 0)");
+    // The outer callback spends ~600 steps, then a nested one tries to spend ~600 more.
+    let r = eval(
+        &mut s,
+        "(vl-remove-if '(lambda (x) (repeat 150 (setq a 1)) (vl-remove-if '(lambda (y) (repeat 150 (setq inner-steps (1+ inner-steps)))) '(1)) nil) '(1))",
+    );
+    assert_eq!(r, Err("callback stopped after 1000 steps".into()));
+    assert!(ok(&mut s, "inner-steps").parse::<i64>().unwrap() < 150);
+}
+
 /// System-variable conversion rejects a shared list whose owned JSON expansion would exceed its budget.
 #[test]
 fn setvar_rejects_an_oversized_shared_structure() {
@@ -305,6 +334,16 @@ fn printing() {
     assert_eq!(out, ["Hello world", "\"q\"", "", "3 "]);
     assert_eq!(ok(&mut s, "(vl-prin1-to-string '(1 \"a\"))"), "\"(1 \\\"a\\\")\"");
     assert_eq!(ok(&mut s, "(rtos 12.5 2 2)"), "\"12.50\"");
+}
+
+/// Output with many lines moves to the history in one pass, not one buffer shift per line.
+#[test]
+fn printing_many_lines_is_linear() {
+    let mut s = session();
+    let started = std::time::Instant::now();
+    ok(&mut s, "(setq x \"a\\r\\n\") (repeat 17 (setq x (strcat x x))) (princ x) (princ)");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    assert_eq!(s.log.last().map(String::as_str), Some("a"));
 }
 
 #[test]
@@ -497,7 +536,7 @@ fn entity_lists_hold_angles_in_radians() {
     // MTEXT: 50 before the column type (75) is the rotation, after it a column height.
     ok(
         &mut s,
-        "(entmake (list '(0 . \"MTEXT\") '(10 0.0 0.0 0.0) '(40 . 2.5) '(41 . 10.0) '(1 . \"abc\") (cons 50 (/ pi 3)) '(75 . 2) '(76 . 2) '(79 . 0) '(48 . 10.0) '(49 . 1.0) '(50 . 30.0) '(50 . 20.0)))",
+        "(entmake (list '(0 . \"MTEXT\") '(10 0.0 0.0 0.0) '(40 . 2.5) '(41 . 10.0) '(1 . \"abc\") (cons 50 (/ pi 3)) '(75 . 2) '(76 . 2) '(79 . 0) '(48 . 10.0) '(49 . 1.0) '(50 . 2.0) '(50 . 30.0) '(50 . 20.0)))",
     );
     let mtext = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
         cadcraft_doc::EntityKind::MText(t) => Some((t.rotation, t.columns.as_ref().map(|c| c.heights.clone()))),
@@ -1069,6 +1108,9 @@ fn strings_are_capped() {
     assert!(e.contains("too much text"), "{e}");
     let e = eval(&mut s, "(repeat 200000 (princ \"0123456789\"))").unwrap_err();
     assert!(e.contains("too much text"), "{e}");
+    // READ makes new strings inside the list it returns: they count, though the result is a list.
+    let e = eval(&mut s, "(setq a \"(\\\"0123456789\\\")\") (repeat 100000 (setq b (read a)))").unwrap_err();
+    assert!(e.contains("too much text"), "{e}");
     // The budget is per run: the next one starts afresh.
     assert_eq!(ok(&mut s, "(strcat \"a\" \"b\")"), "\"ab\"");
 }
@@ -1096,6 +1138,88 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
     assert!(!s.lisp_running());
     assert!(s.log.iter().any(|l| l.contains("internal error")), "{:?}", s.log);
     assert_eq!(ok(&mut s, "(+ 1 2)"), "3");
+}
+
+// ---------------- entities of block definitions (#1700) ----------------
+
+/// A drawing with one linear dimension measuring 100 whose `*D1` block, as stored in the file,
+/// says 99.5 (a stale block: the defpoints moved, the block wasn't rebuilt).
+fn stale_dimension() -> Session {
+    let mut s = session();
+    s.execute("dimlinear", &serde_json::json!({"p1": [0, 0], "p2": [100, 0], "at": [50, -20], "rotation": 0})).unwrap();
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    // The *D1 block's MTEXT says 100 (100.0000 here); make the file say 99.5.
+    let lines: Vec<&str> = dxf.lines().collect();
+    let (mut kind, mut block, mut out, mut changed) = (String::new(), String::new(), Vec::new(), 0);
+    for (i, l) in lines.iter().enumerate() {
+        let code = if i % 2 == 0 { l.trim() } else { "" };
+        let value = lines.get(i + 1).map(|v| v.trim()).unwrap_or("");
+        if code == "0" {
+            kind = value.to_string();
+        }
+        if code == "2" && kind == "BLOCK" {
+            block = value.to_string();
+        }
+        if i % 2 == 1 && kind == "MTEXT" && block == "*D1" && lines.get(i - 1).map(|c| c.trim()) == Some("1") && l.trim().starts_with("100") {
+            out.push("99.5".to_string());
+            changed += 1;
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    assert_eq!(changed, 1, "the fixture found the *D1 text");
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read_dxf(out.join("\n").as_bytes()).unwrap(), "stale", None);
+    s
+}
+
+/// The issue's use: a routine reads the text a dimension's block stores and compares it with the
+/// measurement, so it finds the stale block.
+#[test]
+fn a_routine_reads_the_text_a_dimension_block_stores() {
+    let mut s = stale_dimension();
+    let code = r#"(progn
+      (defun dtext (dim / e txt)
+        (setq e (cdr (assoc -2 (tblsearch "BLOCK" (cdr (assoc 2 (entget dim)))))))
+        (while e
+          (if (= (cdr (assoc 0 (entget e))) "MTEXT") (setq txt (cdr (assoc 1 (entget e)))))
+          (setq e (entnext e)))
+        txt)
+      (setq dim (entlast))
+      (list (dtext dim) (cdr (assoc 42 (entget dim)))))"#;
+    assert_eq!(ok(&mut s, code), "(\"99.5\" 100.0)");
+}
+
+/// tblsearch names a block's first entity (-2); entnext walks the definition in order and ends
+/// with nil; entget lists each one (without a layout); handent finds them by handle.
+#[test]
+fn entnext_and_entget_walk_a_block_definition() {
+    let mut s = session();
+    let l = s.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap()["handles"][0].as_str().unwrap().to_string();
+    let c = s.execute("circle", &serde_json::json!({"center": [5, 5], "radius": 2})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.execute("block", &serde_json::json!({"name": "B", "base": [0, 0], "handles": [l, c], "keep": "delete"})).unwrap();
+    s.execute("line", &serde_json::json!({"points": [[50, 0], [60, 0]]})).unwrap();
+    let walk = r#"(progn (setq e (cdr (assoc -2 (tblsearch "BLOCK" "B"))) types nil)
+      (while e (setq types (cons (cdr (assoc 0 (entget e))) types) e (entnext e)))
+      (reverse types))"#;
+    assert_eq!(ok(&mut s, walk), "(\"LINE\" \"CIRCLE\")", "the block's own entities, not the drawing's");
+    let first = "(cdr (assoc -2 (tblsearch \"BLOCK\" \"B\")))";
+    assert_eq!(ok(&mut s, &format!("(assoc 410 (entget {first}))")), "nil", "no layout");
+    assert_eq!(ok(&mut s, &format!("(equal (handent (cdr (assoc 5 (entget {first})))) {first})")), "T");
+    // The drawing's own entities walk as before.
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext))))"), "\"LINE\"");
+    assert_eq!(ok(&mut s, "(entnext (entlast))"), "nil");
+    // Editing a block's entity through entmod or entdel isn't offered: nil, nothing changes.
+    assert_eq!(ok(&mut s, &format!("(entdel {first})")), "nil");
+    assert_eq!(ok(&mut s, &format!("(entmod (entget {first}))")), "nil");
+    assert_eq!(s.doc().unwrap().block("B").unwrap().entities.len(), 2);
+}
+
+#[test]
+fn an_empty_block_has_no_first_entity() {
+    let mut s = session();
+    s.doc_mut().unwrap().blocks.insert("EMPTY".into(), std::sync::Arc::new(cadcraft_doc::Block::new("EMPTY")));
+    assert_eq!(ok(&mut s, "(assoc -2 (tblsearch \"BLOCK\" \"EMPTY\"))"), "nil");
 }
 
 #[test]
@@ -1130,4 +1254,13 @@ fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
         _ => None,
     });
     assert_eq!(r, Some(4.0));
+}
+
+#[test]
+fn atof_out_of_range_exponent_reads_whole_token() {
+    let mut s = Session::new();
+    // Overflow must not fall back to a shorter prefix such as "1e40".
+    assert_eq!(ok(&mut s, "(> (atof \"1e400\") 1e300)"), "T");
+    assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
+    assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
