@@ -17,6 +17,8 @@ use crate::{CadApp, Pick};
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// The Dimension Style Manager (DIMSTYLE).
+mod dimstyle;
 /// Named Viewports (View > Viewports > Named Viewports...).
 mod named_vports;
 
@@ -54,7 +56,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
-        "dimstyle" => dim_style(app, ctx, open),
+        "dimstyle" => dimstyle::dialog(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -325,8 +327,6 @@ enum NumRule {
     NonNegative,
     /// Values must be strictly greater than 0 (e.g. text height).
     Positive,
-    /// Dimension precision (DIMDEC): integer 0 to 8.
-    Decimals,
 }
 
 impl NumRule {
@@ -334,13 +334,6 @@ impl NumRule {
         match self {
             NumRule::NonNegative if v < 0.0 => Err("must be 0 or greater"),
             NumRule::Positive if v <= 0.0 => Err("must be greater than 0"),
-            NumRule::Decimals => {
-                if v < 0.0 {
-                    return Err("precision must be between 0 and 8");
-                }
-                let r = v.round();
-                if (0.0..=8.0).contains(&r) { Ok(r) } else { Err("precision must be between 0 and 8") }
-            }
             _ => Ok(v),
         }
     }
@@ -382,45 +375,6 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
     style_manager(ctx, open, "Text Style", "style", &current, &styles)
-}
-
-fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
-    let Ok(d) = app.session.doc() else {
-        no_drawing(ctx, "Dimension Style", open);
-        return None;
-    };
-    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
-    let mut styles: Vec<Style> = d
-        .dim_styles
-        .iter()
-        .map(|s| Style {
-            name: s.name.clone(),
-            fields: vec![
-                Field::Num("scale", "Overall scale (DIMSCALE)", s.scale, NumRule::NonNegative),
-                Field::Num("arrowSize", "Arrow size (DIMASZ)", s.arrow_size, NumRule::NonNegative),
-                Field::Num("textHeight", "Text height (DIMTXT)", s.text_height, NumRule::Positive),
-                Field::Num("extExtend", "Extension line extend (DIMEXE)", s.ext_extend, NumRule::NonNegative),
-                Field::Num("extOffset", "Extension line offset (DIMEXO)", s.ext_offset, NumRule::NonNegative),
-                Field::Num("textGap", "Text gap (DIMGAP)", s.text_gap, NumRule::NonNegative),
-                Field::Num("baselineSpacing", "Baseline spacing (DIMDLI)", s.baseline_spacing, NumRule::NonNegative),
-                Field::Num("decimals", "Precision decimals (DIMDEC)", s.decimals as f64, NumRule::Decimals),
-                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
-                Field::Bool("annotative", "Annotative", s.annotative),
-                Field::Bool("suppressExt1", "Suppress ext line 1", s.suppress_ext1),
-                Field::Bool("suppressExt2", "Suppress ext line 2", s.suppress_ext2),
-                Field::Bool("suppressDim1", "Suppress dim line 1", s.suppress_dim1),
-                Field::Bool("suppressDim2", "Suppress dim line 2", s.suppress_dim2),
-                Field::Bool("textInsideHorizontal", "Text inside horizontal", s.text_inside_horizontal),
-                Field::Bool("textOutsideHorizontal", "Text outside horizontal", s.text_outside_horizontal),
-            ],
-        })
-        .collect();
-    if styles.is_empty() {
-        let s = cadcraft_doc::DimStyle::default();
-        styles.push(Style { name: s.name, fields: Vec::new() });
-    }
-    let current = d.header.str("DIMSTYLE", "Standard");
-    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
 }
 
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
@@ -1409,12 +1363,5 @@ mod plot_dialog_tests {
         assert_eq!(NumRule::Positive.validate(0.1), Ok(0.1));
         assert!(NumRule::Positive.validate(0.0).is_err());
         assert!(NumRule::Positive.validate(-1.0).is_err());
-
-        assert_eq!(NumRule::Decimals.validate(0.0), Ok(0.0));
-        assert_eq!(NumRule::Decimals.validate(4.4), Ok(4.0));
-        assert_eq!(NumRule::Decimals.validate(8.0), Ok(8.0));
-        assert!(NumRule::Decimals.validate(-0.1).is_err());
-        assert!(NumRule::Decimals.validate(-1.0).is_err());
-        assert!(NumRule::Decimals.validate(8.5).is_err());
     }
 }
