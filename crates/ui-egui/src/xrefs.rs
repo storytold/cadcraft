@@ -197,7 +197,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
 fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>) {
     let name = r.name.clone();
     let loaded = r.status == "Loaded" || r.status == "Unreferenced";
-    let op = |option: &str| json!({ "option": option, "names": name });
+    let op = |option: &str| json!({ "option": option, "names": name, "exact": true });
     ui.horizontal_wrapped(|ui| {
         ui.add_space(8.0);
         if ui.button(crate::tl!("Reload")).clicked() {
@@ -221,7 +221,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
             .on_hover_text(crate::tl!("Make it a block of this drawing, keeping its layer names"))
             .clicked()
         {
-            *act = Some(Act::Run("-xref", json!({ "option": "bind", "names": name, "insert": true })));
+            *act = Some(Act::Run("-xref", json!({ "option": "bind", "names": name, "exact": true, "insert": true })));
         }
         if ui.add_enabled(r.status != "Not Found", egui::Button::new(crate::tl!("Open"))).clicked() {
             *act = Some(Act::Run("xopen", json!({ "name": name })));
@@ -235,7 +235,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
         let a = ui.radio_value(&mut overlay, false, crate::tl!("Attach")).clicked();
         let o = ui.radio_value(&mut overlay, true, crate::tl!("Overlay")).clicked();
         if (a || o) && overlay != r.overlay {
-            *act = Some(Act::Run("-xref", json!({ "option": "type", "names": name, "overlay": overlay })));
+            *act = Some(Act::Run("-xref", json!({ "option": "type", "names": name, "exact": true, "overlay": overlay })));
         }
     });
     ui.add_space(4.0);
@@ -248,7 +248,7 @@ fn details(ui: &mut egui::Ui, r: &Row, path_id: egui::Id, act: &mut Option<Act>)
         let apply = ui.add_enabled(!text.trim().is_empty() && text != r.path, egui::Button::new(crate::tl!("Apply"))).clicked()
             || (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && text != r.path);
         if apply {
-            *act = Some(Act::Run("-xref", json!({ "option": "path", "names": name, "path": text.trim() })));
+            *act = Some(Act::Run("-xref", json!({ "option": "path", "names": name, "exact": true, "path": text.trim() })));
             ui.data_mut(|d| d.remove::<String>(path_id));
         } else if text != r.path {
             ui.data_mut(|d| d.insert_temp(path_id, text));

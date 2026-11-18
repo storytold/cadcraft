@@ -116,7 +116,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         // PDF clips a placed plot to the printable area: blank the rest of the sheet.
         raster::blank_outside_printable(&mut pm, &sheet.printable, k);
     }
-    pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
+    raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {

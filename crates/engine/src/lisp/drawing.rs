@@ -10,8 +10,8 @@
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::{Entity, Handle, Space};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec2;
+use craft_dxf::Tag;
 
 use super::LispError;
 use super::builtins::args_err;
@@ -253,20 +253,20 @@ fn convert_angles(kind: &str, tags: &mut [Tag], f: fn(f64) -> f64) {
             continue;
         }
         let v = match t.value {
-            cadcraft_dxf::Value::Real(r) => r,
-            cadcraft_dxf::Value::Int(i) => i as f64,
+            craft_dxf::Value::Real(r) => r,
+            craft_dxf::Value::Int(i) => i as f64,
             _ => continue,
         };
-        t.value = cadcraft_dxf::Value::Real(f(v));
+        t.value = craft_dxf::Value::Real(f(v));
     }
 }
 
 fn tag_value(t: &Tag) -> Value {
     match &t.value {
-        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Value::str(s),
-        cadcraft_dxf::Value::Real(r) => Value::Real(*r),
-        cadcraft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
-        cadcraft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
+        craft_dxf::Value::Str(s) | craft_dxf::Value::Hex(s) => Value::str(s),
+        craft_dxf::Value::Real(r) => Value::Real(*r),
+        craft_dxf::Value::Int(i) => Value::Int(i32::try_from(*i).unwrap_or(if *i < 0 { i32::MIN } else { i32::MAX })),
+        craft_dxf::Value::Bool(b) => Value::Int(i32::from(*b)),
     }
 }
 
@@ -651,15 +651,19 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         Some("X") => all(s, true),
         Some("L") => {
             let order = handles_in_order(ctx);
-            order.last().copied().into_iter().collect()
+            // Inside an MSPACE viewport, the objects that viewport does not draw are passed over.
+            let st = ctx.s.state().ok();
+            let drawn = |h: &Handle| st.is_none_or(|st| st.doc.entity(*h).is_none_or(|e| !st.hidden_in_viewport(e)));
+            order.iter().rev().copied().find(drawn).into_iter().collect()
         }
-        Some("P") => ctx.s.state().map(|st| st.previous_selection.clone()).unwrap_or_default(),
+        Some("P") => ctx.s.state().map(|st| st.drawn_in_viewport(&st.previous_selection)).unwrap_or_default(),
         Some("I") => ctx.s.selection(),
         Some("W") | Some("C") => {
             let (p1, p2) = (point(0)?, point(1)?);
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-            crate::select::select_window(d, &space, cadcraft_geom::Bounds2::from_points([p1, p2]), mode.as_deref() == Some("C"))
+            let bx = cadcraft_geom::Bounds2::from_points([p1, p2]);
+            crate::select::select_window_in(d, &space, s.viewport_frozen(), bx, mode.as_deref() == Some("C"))
         }
         Some("F") | Some("WP") | Some("CP") => {
             let poly: Vec<Vec2> =
@@ -667,8 +671,8 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             let s = &*ctx.s;
             let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
             match mode.as_deref() {
-                Some("F") => crate::select::select_fence(d, &space, &poly),
-                m => crate::select::select_polygon(d, &space, &poly, m == Some("CP")),
+                Some("F") => crate::select::select_fence_in(d, &space, s.viewport_frozen(), &poly),
+                m => crate::select::select_polygon_in(d, &space, s.viewport_frozen(), &poly, m == Some("CP")),
             }
         }
         Some(":S") | Some("A") | None => {
@@ -684,7 +688,7 @@ pub fn ssget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                 let s = &*ctx.s;
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let Ok(d) = s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-                crate::select::pick(d, &space, p, ap).into_iter().collect()
+                crate::select::pick_in(d, &space, s.viewport_frozen(), p, ap).into_iter().collect()
             }
         }
         Some(m) => return Err(LispError::new(format!("bad argument value: ssget mode {m}"))),
