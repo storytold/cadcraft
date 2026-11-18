@@ -27,6 +27,7 @@ pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
+pub mod properties;
 mod recent;
 pub mod render_look;
 pub mod sample;
