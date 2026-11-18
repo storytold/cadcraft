@@ -64,6 +64,10 @@ pub struct Env {
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
+    /// Application names `regapp` registered (upper case). A drawing's APPID table is written
+    /// from the xdata its objects carry, so this only makes `regapp` answer like AutoCAD's and
+    /// shows the names in the APPID table `tblsearch` lists.
+    pub regapps: std::collections::BTreeSet<String>,
 }
 
 impl Default for Env {
@@ -80,6 +84,7 @@ impl Default for Env {
             tblnext: HashMap::new(),
             pending_block: None,
             printed_at: None,
+            regapps: std::collections::BTreeSet::new(),
         };
         builtins::install(&mut e);
         e

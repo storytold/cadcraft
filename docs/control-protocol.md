@@ -107,6 +107,34 @@ The existing response is unchanged: `count` is all matches, `returned` is the pa
 `entities` contains handles, layers and geometry. This query does not change selection, drawing
 contents or undo history. `entities` is a command, not a top-level protocol method.
 
+## Extended data (xdata)
+
+Other applications' extended data travels with an entity (it is read from the file, kept on
+copies and written back with an APPID record for each application). `entities` leaves it out
+unless asked: `xdata: true` adds an `xdata` object to each entity that has any, by application,
+each group as a `[code, value]` pair typed by its code — strings for 1000, 1002 (`{` / `}`),
+1003 (a layer name), 1004 (hex) and 1005 (a handle), a point `[x, y, z]` for 1010–1013 (its
+1020 and 1030 groups folded in), numbers for 1040–1042, integers for 1070 and 1071. An
+application name (or a list of names) instead of `true` keeps only the entities carrying that
+application's data and shows just it. `properties` lists every application's data of the
+objects it reports.
+
+```json
+{"id":8,"method":"engine.execute","params":{"command":"entities","params":{"xdata":"PE_URL","limit":100}}}
+{"id":9,"method":"engine.execute","params":{"command":"properties.set","params":{"handles":["2A"],"xdata":{"ACME":[[1000,"D-07"],[1070,3],[1010,[1.5,2.5,0]]],"PE_URL":null}}}}
+```
+
+`properties.set` takes the same form: each application named is replaced by the groups given
+(their `1001` left out) or removed by `null` (or an empty list); applications not named stay.
+Names, codes, value types and ranges, brace nesting and sizes (16,384 groups per object, 255
+bytes per string) are checked and a bad `xdata` changes nothing. The applications CADCraft
+writes from its own model (`CADCRAFT`, `AcadAnnotative`, the layer transparency and
+description applications) can't be set this way, nor can `ACAD` on a dimension, whose `ACAD`
+run holds its dimension-style overrides (set those through `textHeight`, `arrowSize` and the
+other dimension properties); `ACAD` data on any other object is kept as it is. The change is
+one undo step, like any other property edit. In AutoLISP the same data is the `-3` group of `entget`, `entmod` and `entmake`
+(see [autolisp.md](autolisp.md)).
+
 The MCP server (`cadcraft-cli mcp --connect 127.0.0.1:PORT`) wraps this protocol; headless
 (`cadcraft-cli mcp`) it serves the same methods from an in-process session.
 MCP tool names are another interface: `execute` maps to `engine.execute`, `list_commands` to
