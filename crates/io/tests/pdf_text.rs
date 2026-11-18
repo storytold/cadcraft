@@ -438,3 +438,43 @@ fn pdf_plots_crossed_frame_when_image_file_is_missing() {
     assert_eq!(pdf_read::count(p.content(), "Do"), 0, "missing image must not emit Do: {}", p.content());
     assert!(pdf_read::count(p.content(), "S") >= 1, "missing image must draw crossed placeholder strokes: {}", p.content());
 }
+
+#[test]
+fn pdf_keeps_distinct_xobjects_for_2x1_and_1x2_transparent_rasters() {
+    use craft_pdf::syntax::object::{Dict, Stream};
+    let mut d = drawing();
+    // Same RGBA bytes, different dimensions (2x1 vs 1x2) with alpha < 255.
+    let rgba = vec![255, 0, 0, 128, 0, 0, 255, 128];
+    d.rasters.insert("r2x1.png", std::sync::Arc::new(cadcraft_doc::Raster::new(2, 1, rgba.clone()).unwrap()));
+    d.rasters.insert("r1x2.png", std::sync::Arc::new(cadcraft_doc::Raster::new(1, 2, rgba).unwrap()));
+    let make_img = |path: &str, x: f64| cadcraft_doc::Image {
+        insert: Vec3::new(x, 0.0, 0.0),
+        u: Vec3::new(10.0, 0.0, 0.0),
+        v: Vec3::new(0.0, 10.0, 0.0),
+        size: cadcraft_geom::Vec2::new(1.0, 1.0),
+        path: path.into(),
+        name: path.into(),
+        clip: Vec::new(),
+        clipping: false,
+        display: 1,
+        brightness: 50,
+        contrast: 50,
+        fade: 0,
+        pixel_size: cadcraft_geom::Vec2::ZERO,
+        resolution_units: 0,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Image(make_img("r2x1.png", 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Image(make_img("r1x2.png", 20.0))).unwrap();
+    let bytes = plot(&d, &Space::Model, &json!({"compress": false})).unwrap();
+    let pdf = craft_pdf::open_slice(&bytes, None).expect("valid PDF");
+    let xobjs = pdf.pages()[0].raw().get::<Dict<'_>>(b"Resources").unwrap().get::<Dict<'_>>(b"XObject").unwrap();
+    let mut dims: Vec<(i64, i64)> = xobjs
+        .keys()
+        .filter_map(|k| {
+            let st = xobjs.get::<Stream<'_>>(k.as_ref())?;
+            Some((st.dict().get::<i64>(b"Width")?, st.dict().get::<i64>(b"Height")?))
+        })
+        .collect();
+    dims.sort_unstable();
+    assert_eq!(dims, vec![(1, 2), (2, 1)], "2x1 and 1x2 transparent rasters must not collide");
+}

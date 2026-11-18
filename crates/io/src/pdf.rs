@@ -792,9 +792,9 @@ struct StrokeStyle {
     transparency: u8,
 }
 
-/// Encode opaque RGBA8 pixels as an RGB PNG so the PDF carries no redundant alpha `/SMask`.
-/// `KrillaImage::from_rgba8` unconditionally sets `has_alpha: true` and emits an `/SMask` stream.
-fn encode_rgb_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
+/// Encode a raster as PNG so the PDF preserves exact `(width, height)` in `IHDR` (avoiding
+/// `KrillaImage::from_rgba8`'s dimension-blind pixel hash) and omits `/SMask` for opaque images.
+fn encode_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
     use craft_image_codecs::{ChannelLayout, EncodeOptions, Image as CodecImage, PngRows};
     let (w, h) = (r.width(), r.height());
     let stride = usize::try_from(w).ok()?.checked_mul(4).filter(|n| *n > 0)?;
@@ -802,13 +802,20 @@ fn encode_rgb_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
     if h == 0 || r.rgba().len() != expected {
         return None;
     }
+    let opaque = r.opaque();
+    let layout = if opaque { ChannelLayout::Rgb } else { ChannelLayout::Rgba };
     let mut rows = r.rgba().chunks_exact(stride);
     let make_row = |rgba_row: &[u8]| -> Option<CodecImage> {
-        let mut rgb = Vec::with_capacity(usize::try_from(w).ok()?.checked_mul(3)?);
-        for px in rgba_row.as_chunks::<4>().0 {
-            rgb.extend_from_slice(&px[..3]);
-        }
-        CodecImage::from_u8(w, 1, ChannelLayout::Rgb, rgb).ok()
+        let bytes = if opaque {
+            let mut rgb = Vec::with_capacity(usize::try_from(w).ok()?.checked_mul(3)?);
+            for px in rgba_row.as_chunks::<4>().0 {
+                rgb.extend_from_slice(&px[..3]);
+            }
+            rgb
+        } else {
+            rgba_row.to_vec()
+        };
+        CodecImage::from_u8(w, 1, layout, bytes).ok()
     };
     let first = make_row(rows.next()?)?;
     let mut out = Vec::new();
@@ -821,13 +828,12 @@ fn encode_rgb_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn krilla_image(r: &std::sync::Arc<cadcraft_doc::Raster>, cache: &mut std::collections::HashMap<usize, KrillaImage>) -> KrillaImage {
-    let key = std::sync::Arc::as_ptr(r) as usize;
+fn krilla_image(r: &std::sync::Arc<cadcraft_doc::Raster>, cache: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>) -> KrillaImage {
+    let key = (std::sync::Arc::as_ptr(r) as usize, r.width(), r.height());
     if let Some(existing) = cache.get(&key) {
         return existing.clone();
     }
-    let img = if r.opaque()
-        && let Some(png) = encode_rgb_png(r)
+    let img = if let Some(png) = encode_png(r)
         && let Ok(kimg) = KrillaImage::from_png(png.into(), true)
     {
         kimg
@@ -845,7 +851,7 @@ fn draw_raster_image(
     p: &SheetPage,
     img: &cadcraft_render::DImage,
     t: u8,
-    cache: &mut std::collections::HashMap<usize, KrillaImage>,
+    cache: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
 ) {
     let (w, h) = (img.raster.width(), img.raster.height());
     if w == 0 || h == 0 {
@@ -968,7 +974,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
     let mut layer: Option<OcgId> = None;
-    let mut images: std::collections::HashMap<usize, KrillaImage> = std::collections::HashMap::new();
+    let mut images: std::collections::HashMap<(usize, u32, u32), KrillaImage> = std::collections::HashMap::new();
     for (i, prim) in list.prims.iter().enumerate() {
         let want = list.prim_layers.get(i).and_then(|l| groups.ids.get(l)).copied();
         if want != layer {
