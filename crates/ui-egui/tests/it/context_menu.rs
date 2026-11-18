@@ -202,3 +202,38 @@ fn shift_right_click_opens_the_snap_menu() {
     }
     assert!(app.session.prompt_text().contains("Specify next point"), "no Enter: {}", app.session.prompt_text());
 }
+
+/// A quick right-click on the canvas at the insertion point of an INSERT the Blocks palette started
+/// cancels it; the same click during a typed INSERT is Enter, which asks the point again.
+#[test]
+fn quick_right_click_cancels_a_palette_placement_only() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
+    app.session.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
+    let handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    app.session.execute("block", &json!({ "name": "BOLT", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+    let at = egui::pos2(800.0, 500.0);
+    let click = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE };
+    let right_click = |app: &mut CadApp| {
+        painted(app, &ctx, vec![egui::Event::PointerMoved(at)], egui::Modifiers::NONE);
+        painted(app, &ctx, vec![click(true), click(false)], egui::Modifiers::NONE);
+        painted(app, &ctx, Vec::new(), egui::Modifiers::NONE);
+    };
+
+    app.cmdline("INSERT");
+    app.cmdline("BOLT");
+    assert!(app.session.prompt_text().contains("Specify insertion point"), "{}", app.session.prompt_text());
+    right_click(&mut app);
+    assert!(app.session.prompt_text().contains("Specify insertion point"), "a typed INSERT asks again: {}", app.session.prompt_text());
+    app.session.cancel();
+
+    app.cmdline("INSERT");
+    app.cmdline("BOLT");
+    app.canvas.palette_insert = Some(app.session.commands_started);
+    app.cmd.buffer = "12,".into();
+    right_click(&mut app);
+    assert!(!app.session.prompting(), "the palette's placement ends: {}", app.session.prompt_text());
+    assert!(app.cmd.buffer.is_empty(), "the half-typed point goes too: {}", app.cmd.buffer);
+}
