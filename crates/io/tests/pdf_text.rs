@@ -385,3 +385,27 @@ fn hostile_text_never_panics() {
     pdf(&d, &Space::Model, json!({}));
     pdf(&d, &Space::Model, json!({"compress": true}));
 }
+
+#[test]
+fn pdf_culls_text_outside_plot_window() {
+    let mut d = drawing();
+    text(&mut d, &Space::Model, "Real", (5.0, 5.0), "AB", (0.0, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (200.0, 200.0), "AB", (0.0, 1.0, 0.0));
+    let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [30.0, 30.0]] }));
+    assert_eq!(
+        pdf_read::count(p.content(), "Tj"),
+        2,
+        "only in-window AB (2 glyphs) should be emitted, out-of-window AB must be culled: {}",
+        p.content()
+    );
+}
+
+#[test]
+fn pdf_keeps_glyph_when_origin_outside_but_bounds_intersect_clip() {
+    let mut d = drawing();
+    // 'A' origin at x = -15 is outside [0, 30], but width_factor = 3.0 extends its outline into [0, 30].
+    text(&mut d, &Space::Model, "Real", (-15.0, 5.0), "A", (0.0, 3.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (-100.0, 5.0), "B", (0.0, 1.0, 0.0));
+    let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [30.0, 30.0]] }));
+    assert_eq!(pdf_read::count(p.content(), "Tj"), 1, "clipped-in A must be retained and far-outside B must be culled: {}", p.content());
+}
