@@ -573,8 +573,9 @@ impl CadApp {
     /// `CreationContext::wgpu_render_state`). Without it the canvas draws on the CPU. `stencil`:
     /// the format of the render pass's stencil buffer when the app asked for one (eframe
     /// `NativeOptions::stencil_buffer`); clipped viewports are clipped with it.
-    pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, stencil: Option<egui_wgpu::wgpu::TextureFormat>) {
-        self.canvas.gpu = Some(gpu::install(rs, &self.gpu_faults, stencil));
+    /// `samples` must match the render pass sample count.
+    pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, stencil: Option<egui_wgpu::wgpu::TextureFormat>, samples: u32) {
+        self.canvas.gpu = Some(gpu::install(rs, &self.gpu_faults, stencil, samples));
         self.canvas.gpu_device = Some(rs.device.clone());
     }
 
@@ -1075,7 +1076,17 @@ impl CadApp {
             for file in dropped {
                 let path = file.path();
                 if !path.as_os_str().is_empty() {
-                    self.open_path(path);
+                    if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf")) {
+                        match path.to_str() {
+                            Some(path) => match self.run("import", json!({"path": path})) {
+                                Ok(_) => self.ui.start_tab = false,
+                                Err(e) => self.set_status(e),
+                            },
+                            None => self.open_failed("Page import: the file path is not valid Unicode"),
+                        }
+                    } else {
+                        self.open_path(path);
+                    }
                 }
             }
         }

@@ -84,12 +84,26 @@ pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash:
 
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
+    draw_list_faded(p, xf, list, bg, lwdisplay, &[], 1.0);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_list_faded(
+    p: &egui::Painter,
+    xf: &Xf,
+    list: &DisplayList,
+    bg: Rgb,
+    lwdisplay: bool,
+    faded: &[cadcraft_doc::Handle],
+    opacity: f32,
+) {
     let vis = xf.world_bounds();
     super::images::draw(p, xf, list);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
     for prim in &list.prims {
         let col = prim_color32(prim, bg);
+        let col = if faded.contains(&prim.handle) { col.gamma_multiply(opacity) } else { col };
         let pts = list.points(prim);
         match prim.kind {
             Kind::Polyline => {
@@ -220,13 +234,14 @@ pub(super) fn draw_drag_gpu(
     clipboard: (&[cadcraft_doc::Entity], u64),
     bg: Rgb,
     transparency: bool,
+    fade_pages: bool,
 ) {
     // Tessellate for a power-of-two zoom band so zooming mid-drag rebuilds only every 2x.
     let band = xf.scale.max(1e-300).log2().round() as i32;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, fade_pages, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -241,7 +256,12 @@ pub(super) fn draw_drag_gpu(
             cadcraft_render::build_entities(doc, drag.handles.iter().filter_map(|h| doc.entity(*h)).map(|e| e.as_ref()), &opts)
         };
         let origin = if list.bounds.is_empty() { Vec2::ZERO } else { list.bounds.center() };
-        let mesh = crate::gpu::build_mesh(&list, origin, bg, false);
+        let pages: Vec<_> = if fade_pages {
+            drag.handles.iter().copied().filter(|h| doc.entity(*h).is_some_and(|e| doc.imported_page_frame(e).is_some())).collect()
+        } else {
+            Vec::new()
+        };
+        let mesh = crate::gpu::build_mesh_faded(&list, origin, bg, false, &pages, 0.65);
         if let Ok(mut slot) = c.drag_slot.lock() {
             *slot = Some(mesh);
         }
@@ -277,13 +297,18 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
 
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
-pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
+pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool, faded: &[cadcraft_doc::Handle]) {
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
-    let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        (list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay), faded).hash(&mut hash);
+        hash.finish()
+    };
     if c.mesh_key != Some(key) {
         let t0 = crate::now_ms();
-        let mesh = crate::gpu::build_mesh(list, origin, bg, lwdisplay);
+        let mesh = crate::gpu::build_mesh_faded(list, origin, bg, lwdisplay, faded, 0.15);
         if let Ok(mut slot) = c.mesh_slot.lock() {
             *slot = Some(mesh);
         }

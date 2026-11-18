@@ -181,6 +181,11 @@ fn premultiplied(c: Rgb, a: u8) -> [u8; 4] {
 
 /// Convert a display list into vertex data relative to `origin`, colours resolved against `bg`.
 pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) -> MeshData {
+    build_mesh_faded(list, origin, bg, lwdisplay, &[], 1.0)
+}
+
+/// Apply display-only opacity to selected top-level objects while dragging them.
+pub(crate) fn build_mesh_faded(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool, faded: &[cadcraft_doc::Handle], opacity: f32) -> MeshData {
     let mut m = MeshData {
         lines: Vec::with_capacity(list.segment_count().saturating_mul(2 * VERTEX_SIZE)),
         tris: Vec::with_capacity(list.tris.len().saturating_mul(VERTEX_SIZE)),
@@ -189,7 +194,8 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
         uploaded: None,
     };
     for prim in &list.prims {
-        let col = premultiplied(prim.display_rgb(bg), prim.alpha());
+        let alpha = if faded.contains(&prim.handle) { (f32::from(prim.alpha()) * opacity.clamp(0.0, 1.0)).round() as u8 } else { prim.alpha() };
+        let col = premultiplied(prim.display_rgb(bg), alpha);
         let pts = list.points(prim);
         match prim.kind {
             Kind::Polyline => match wide_width(prim.lw, lwdisplay) {
@@ -508,7 +514,7 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 impl Resources {
-    fn new(device: &wgpu::Device, target: GpuTarget) -> Self {
+    fn new(device: &wgpu::Device, target: GpuTarget, samples: u32) -> Self {
         let module =
             device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("cad_canvas"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let entry = |binding: u32| wgpu::BindGroupLayoutEntry {
@@ -573,7 +579,7 @@ impl Resources {
                 },
                 primitive: wgpu::PrimitiveState { topology, ..Default::default() },
                 depth_stencil: stencil_state(s),
-                multisample: wgpu::MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
+                multisample: wgpu::MultisampleState { count: samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
                     entry_point: Some("fs_main"),
@@ -685,13 +691,13 @@ impl GpuFaults {
 /// device loss to `faults` instead of panicking. Call once with the app's render state (eframe
 /// `CreationContext::wgpu_render_state`) and the format of its render pass's stencil buffer,
 /// if it has one (eframe `NativeOptions::stencil_buffer`).
-pub fn install(rs: &egui_wgpu::RenderState, faults: &Arc<GpuFaults>, stencil: Option<wgpu::TextureFormat>) -> GpuTarget {
+pub fn install(rs: &egui_wgpu::RenderState, faults: &Arc<GpuFaults>, stencil: Option<wgpu::TextureFormat>, samples: u32) -> GpuTarget {
     let f = Arc::clone(faults);
     rs.device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| f.error(e.to_string())));
     let f = Arc::clone(faults);
     rs.device.set_device_lost_callback(move |reason, message| f.device_lost(reason, message));
     let target = GpuTarget { format: rs.target_format, stencil: stencil.filter(|s| s.has_stencil_aspect()) };
-    let res = Resources::new(&rs.device, target);
+    let res = Resources::new(&rs.device, target, samples);
     rs.renderer.write().callback_resources.insert(res);
     log::info!("gpu canvas: target {:?}, stencil {:?}", rs.target_format, target.stencil);
     target
@@ -842,6 +848,18 @@ mod tests {
             l.bounds.add(v);
         }
         l
+    }
+
+    #[test]
+    fn fading_a_dragged_page_is_display_only() {
+        let list = list();
+        let ordinary = build_mesh(&list, Vec2::ZERO, Rgb(0, 0, 0), false);
+        let faded = build_mesh_faded(&list, Vec2::ZERO, Rgb(0, 0, 0), false, &[Handle(1)], 0.15);
+        assert_eq!(ordinary.tris[11], 255);
+        assert_eq!(faded.tris[11], 38);
+        assert_eq!(list.prims[1].alpha(), 255, "drawing data retains its original opacity");
+        let other = build_mesh_faded(&list, Vec2::ZERO, Rgb(0, 0, 0), false, &[Handle(2)], 0.15);
+        assert_eq!(ordinary.tris, other.tris);
     }
 
     #[test]

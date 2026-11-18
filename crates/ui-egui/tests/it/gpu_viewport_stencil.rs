@@ -120,7 +120,7 @@ fn dark(px: &[bool], x: u32, y: u32) -> bool {
 fn clipped_viewport_contents_draw_only_inside_their_outline() {
     let rs = egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup(), Default::default());
     let faults = Arc::new(GpuFaults::default());
-    let target = gpu::install(&rs, &faults, Some(STENCIL));
+    let target = gpu::install(&rs, &faults, Some(STENCIL), 1);
     assert_eq!(target.stencil, Some(STENCIL));
     // The contents: a black square over the whole target.
     let square = |key| {

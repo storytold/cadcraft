@@ -26,7 +26,7 @@ fn dragged_objects_keep_their_transparency() {
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
     let mut alpha = |transparency: bool| {
-        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency);
+        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency, false);
         let mesh = c.drag_slot.lock().unwrap().take().unwrap();
         // The first line vertex's colour alpha (after its 2 × f32 position).
         mesh.lines[11]

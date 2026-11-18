@@ -183,7 +183,7 @@ mod web {
                         {
                             // eframe's web runner has no stencil buffer: clipped layout
                             // viewports stay in the layout's display list.
-                            app.set_wgpu(rs, None);
+                            app.set_wgpu(rs, None, 1);
                         }
                         if query().contains("sample") {
                             let _ = app.run("ui.sample", serde_json::json!({}));

@@ -8,6 +8,9 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    if let Some(frame) = d.imported_page_frame(e) {
+        return vec![frame.to_vec()];
+    }
     match &e.kind {
         EntityKind::Text(_)
         | EntityKind::MText(_)
@@ -93,6 +96,9 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
+    if let Some(frame) = d.imported_page_frame(e) {
+        return if point_in_polygon(&frame, p) { 0.0 } else { dist_to_polyline(&frame, p) };
+    }
     let polys = hit_polylines(d, e, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
@@ -180,7 +186,7 @@ pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| entity_bounds(d, e, 0))
+    known.unwrap_or_else(|| d.imported_page_frame(e).map_or_else(|| entity_bounds(d, e, 0), Bounds2::from_points))
 }
 
 pub(crate) fn is_infinite(e: &Entity) -> bool {
@@ -609,6 +615,34 @@ mod tests {
         assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
         assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
         assert_eq!(pick(&d, &Space::Model, Vec2::new(60.0, -20.0), 0.2), Some(line), "a frame with no width is drawn as a line and picked as one");
+    }
+
+    #[test]
+    fn page_import_picks_the_paper_without_expanding_its_contents() {
+        let mut drawing = Drawing::new_metric();
+        let mut block = cadcraft_doc::Block::new("PDF_ANTET_1");
+        let background =
+            cadcraft_doc::Solid { corners: [Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)] };
+        let mut page = Entity::new(Handle(1), EntityKind::Solid(background));
+        page.common.color = cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb(255, 255, 255));
+        block.entities.push(page);
+        block
+            .entities
+            .push(Entity::new(Handle(2), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(2.0, 2.0, 0.0), b: Vec3::new(5.0, 5.0, 0.0) })));
+        drawing.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "PDF_ANTET_1".into(),
+            insert: Vec3::new(100.0, 200.0, 0.0),
+            rotation: std::f64::consts::FRAC_PI_2,
+            ..Default::default()
+        };
+        let handle = drawing.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        let page = drawing.entity(handle).unwrap();
+        let outlines = hit_polylines(&drawing, page, 0.01);
+        assert_eq!(outlines.len(), 1, "only the page frame is considered");
+        assert_eq!(outlines[0].len(), 5);
+        assert_eq!(pick(&drawing, &Space::Model, Vec2::new(95.0, 215.0), 0.1), Some(handle));
+        assert_eq!(pick(&drawing, &Space::Model, Vec2::new(102.0, 215.0), 0.1), None);
     }
 
     /// A block holding a diagonal dashed line, inserted at `scale`.

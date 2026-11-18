@@ -14,7 +14,7 @@ cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
 craft-dwg = { workspace = true }
-craft-svg = { workspace = true }
+craft-svg = { workspace = true, features = ["tree-system-fonts"] }
 craft-image-codecs = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-fonts = { workspace = true }
@@ -35,3 +35,20 @@ craft-pdf = { workspace = true, features = ["read"] }
 # dev-dependency also builds acadrust during --all-targets, breaking FreeBSD aarch64 (#2526).
 [target.'cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))'.dev-dependencies]
 acadrust = "0.6.6"
+
+[dependencies.cfb]
+version = "0.16"
+[dependencies.emf-core]
+version = "0.1.1"
+default-features = false
+features = ["svg"]
+[dependencies.lyon_tessellation]
+workspace = true
+[dependencies.roxmltree]
+version = "0.21"
+[dependencies.base64]
+version = "0.22"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tempfile = "3"
+url = "2"

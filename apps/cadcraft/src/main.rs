@@ -247,6 +247,7 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         system_font_fallback: false,
         // A stencil buffer clips the contents of clipped layout viewports on the GPU.
         stencil_buffer: STENCIL_BITS,
+        multisampling: CANVAS_SAMPLES,
         ..Default::default()
     }
 }
@@ -258,6 +259,9 @@ const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
+
+/// Subpixel coverage for the canvas geometry drawn in the window render pass.
+const CANVAS_SAMPLES: u16 = 4;
 
 #[cfg(target_os = "macos")]
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-macos-512.png");
@@ -411,7 +415,7 @@ fn main() -> eframe::Result {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
             if let Some(rs) = &cc.wgpu_render_state {
-                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, STENCIL_BITS));
+                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, STENCIL_BITS), u32::from(CANVAS_SAMPLES));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());

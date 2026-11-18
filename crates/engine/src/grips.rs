@@ -565,3 +565,24 @@ pub fn polyline_grip_count(p: &LwPolyline) -> usize {
 
 #[cfg(test)]
 mod tests;
+
+/// Resize an imported page from one corner, keeping the opposite corner fixed.
+/// Orthogonal projection onto the original diagonal preserves its aspect ratio.
+pub fn page_resize_transform(frame: &[Vec2; 5], corner: usize, to: Vec2) -> Option<Mat3> {
+    let moving = *frame.get(corner)?;
+    if corner >= 4 || !to.is_finite() {
+        return None;
+    }
+    let anchor = *frame.get((corner + 2) % 4)?;
+    let diagonal = moving - anchor;
+    let length_squared = diagonal.x * diagonal.x + diagonal.y * diagonal.y;
+    if !length_squared.is_finite() || length_squared < 1e-18 {
+        return None;
+    }
+    let delta = to - anchor;
+    let factor = (delta.x * diagonal.x + delta.y * diagonal.y) / length_squared;
+    if !factor.is_finite() || !(1e-6..=1e6).contains(&factor) {
+        return None;
+    }
+    Some(Mat3::scale_about(anchor, factor))
+}
