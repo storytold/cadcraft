@@ -48,7 +48,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("publish", "Batch Publish...", run_publish)
             .menu(&["File", "Batch Publish..."])
-            .params("{path?: \"NAME.pdf\", layouts?: [name | \"Model\"], single_pdf?: bool (default false: writes NAME-<sheet>.pdf per sheet; true: one combined multi-page PDF)}")
+            .params("{path?: \"NAME.pdf\", layouts?: [name | \"Model\"], single_pdf?: bool (default false: writes NAME-<sheet>.pdf per sheet or returns base64 `data` in each `sheets` entry when `path` is omitted; true: one combined multi-page PDF, or top-level `data` and `pages` when `path` is omitted)}")
             .noundo(),
         CommandSpec::new("pdfbook", "Sheet Books to PDF...", run_pdfbook)
             .menu(&["File", "Sheet Books to PDF..."])
