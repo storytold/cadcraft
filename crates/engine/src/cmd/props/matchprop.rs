@@ -228,6 +228,15 @@ fn copy_props(src: &Entity, dst: &mut Entity, m: &MatchProps) {
 /// Copy the chosen properties from `src` to `targets`, skipping the source itself and objects on
 /// locked layers. Returns how many objects changed.
 fn match_onto(s: &mut Session, src: Handle, targets: &[Handle], m: &MatchProps) -> Result<usize> {
+    if (m.color || m.layer || m.linetype)
+        && targets.iter().filter(|h| **h != src).any(|h| {
+            s.doc().is_ok_and(|d| {
+                d.entity(*h).is_some_and(|e| d.is_editor_construction(e) && d.layer(&e.common.layer).is_none_or(|layer| !layer.locked))
+            })
+        })
+    {
+        return Err(bad("matchprop", "revert construction geometry before matching its color, layer or linetype"));
+    }
     let d = s.doc_mut()?;
     let source = d.entity(src).map(|e| (**e).clone()).ok_or_else(|| bad("matchprop", "no such source object"))?;
     if m.layer {

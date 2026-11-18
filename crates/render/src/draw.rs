@@ -8,6 +8,22 @@ use super::{
     mline, point, table, tolerance, wide,
 };
 
+/// The editor's construction style uses its own pattern, independent of drawing linetypes.
+/// A renderer that takes the colours or linetypes of its lines and text from a style (a
+/// dimension style, a multiline style) passes them through here too. Colours that belong to one
+/// part of an object stay: colour codes inside MTEXT, the cell style colours of a table, a
+/// hatch's gradient and background, a multiline's fill, the background of dimension text.
+pub(crate) fn construction_style(ctx: &Ctx, e: &Entity, ordinary: (Ink, Option<cadcraft_doc::Linetype>)) -> (Ink, Option<cadcraft_doc::Linetype>) {
+    // Only in the Block Editor: elsewhere a marked object is an ordinary one (`ctx.construction`
+    // is only ever set for a reference that is itself editor construction).
+    if !ctx.construction && !ctx.d.is_editor_construction(e) {
+        return ordinary;
+    }
+    let gray = super::Color::Index(8);
+    let dashed = cadcraft_doc::Linetype::simple("CONSTRUCTION", "Construction geometry", &[0.5, -0.25]);
+    (super::ink(gray, gray, ctx.block_color), Some(dashed))
+}
+
 /// The layer `e` is drawn on, as an index in the layer table: layer 0 inside a block is the
 /// block reference's layer.
 fn entity_layer(ctx: &Ctx, e: &Entity) -> u32 {
@@ -18,7 +34,7 @@ fn entity_layer(ctx: &Ctx, e: &Entity) -> u32 {
 pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // Hidden by ISOLATEOBJECTS / HIDEOBJECTS (and so in viewports and plots too). A cancelled
     // build stops here (block contents come through here too).
-    if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
+    if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() || (e.common.is_construction() && (ctx.depth > 0 || ctx.d.block_construction_hidden)) {
         return;
     }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
@@ -66,6 +82,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if !visible {
         return;
     }
+    // Construction remains ordinary authoring data. Only its presentation changes at the
+    // top level; references never reach this point with a marked descendant.
+    let (rgb, lt) = construction_style(ctx, e, (rgb, lt));
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
     }
