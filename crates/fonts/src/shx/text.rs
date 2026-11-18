@@ -88,6 +88,11 @@ fn candidates(c: char, font: &ShxFont) -> [Option<u16>; 4] {
         _ => None,
     };
     if let Some((s, latin, old)) = special {
+        // In a DOS 862 Hebrew font 128–129 are letters and 0xB0.. box drawing: shape 256–258,
+        // and the old degree sign 127 (not a letter there).
+        if !unicode && font.kind() == ShxKind::Shapes && font.hebrew_places().1 {
+            return [Some(s), (old == 127).then_some(old), None, None];
+        }
         return if unicode {
             [code(u), code(if c == '⌀' { 0x2205 } else { latin }), Some(s), Some(old)]
         } else {
@@ -96,6 +101,11 @@ fn candidates(c: char, font: &ShxFont) -> [Option<u16>; 4] {
     }
     if unicode || u < 0x80 {
         return [code(u), None, None, None];
+    }
+    // A Hebrew letter in an Israeli one-byte font: its Windows-1255 or DOS 862 place.
+    if (0x05D0..=0x05EA).contains(&u) && font.kind() == ShxKind::Shapes {
+        let (win, dos) = font.hebrew_places();
+        return [win.then(|| code(u - 0x05D0 + 0xE0)).flatten(), dos.then(|| code(u - 0x05D0 + 0x80)).flatten(), None, None];
     }
     // A single-byte font: the Windows Latin-1 code of the character (not the old special
     // codes 127–129).
