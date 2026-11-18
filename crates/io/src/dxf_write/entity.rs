@@ -688,18 +688,40 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
         // Within one turn, so a hostile twist (from JSON or MCP) writes a sane angle.
-        let twist = cadcraft_geom::norm_angle(v.view_twist());
-        // The view centre in display coordinates (turned by the twist).
-        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, twist));
+        let twist = if v.camera.is_top_plan() {
+            // The view centre in display coordinates (turned by the twist).
+            let t2 = cadcraft_geom::norm_angle(v.view_twist());
+            w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, t2));
+            if v.view_target_z() != 0.0 {
+                w.p(17, Vec3::new(0.0, 0.0, v.view_target_z()));
+            }
+            t2
+        } else {
+            let eff = v.effective_camera();
+            let (view_dir, t3) = dxf_ext::viewport_3d_dxf_params(eff);
+            w.p2(12, Vec2::ZERO);
+            w.p(16, view_dir);
+            w.p(17, v.target());
+            t3
+        };
         w.f(45, v.view_height);
         // View twist (degrees), when the viewport has one.
         if twist != 0.0 {
             w.f(51, twist.to_degrees());
         }
-        // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
-        // 340 entity, 131072 = off.
+        w.i(71, i64::from(v.ucs_per_viewport));
+        w.i(281, i64::from(v.render_mode));
+        if cx.target >= Version::R2004 {
+            w.i(170, i64::from(v.shade_plot));
+        }
+        // Status flags: 512 = grid on, 16384 = display locked, 32768 = always set, 65536 = clipped
+        // by the 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
-        let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
+        let flags = 32768
+            | if v.grid { 512 } else { 0 }
+            | if v.locked { 16384 } else { 0 }
+            | if clip.is_some() { 65536 } else { 0 }
+            | if v.on { 0 } else { 131072 };
         // AutoCAD's frozen-layer list, before group 90 as in the DXF Reference: one pointer per
         // layer, to its LAYER record. A name with no record goes in CADCraft's xdata below.
         let mut unrecorded: Vec<String> = Vec::new();

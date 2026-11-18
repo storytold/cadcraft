@@ -197,7 +197,9 @@ impl GripEdit {
             return Err(other("The object is on a locked layer."));
         }
         let (h, k) = self.acted(s, action, to, value).ok_or_else(|| other("That would make a degenerate object."))?;
-        s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;
+        let d = s.doc_mut()?;
+        d.modify_entity(h, |e| e.kind = k)?;
+        super::layout::viewports::sync_clipped_viewports(d, &[h])?;
         Ok(Step::Done)
     }
 
@@ -253,10 +255,32 @@ impl GripEdit {
                 }
                 "Undo" => match self.undo.pop() {
                     Some(doc) => {
-                        // Settings changed meanwhile stay.
+                        // Settings changed meanwhile stay, including per-viewport grid flags toggled transparently.
                         let header = s.doc()?.header.clone();
+                        let space = s.state()?.space.clone();
+                        let vp_grids: Vec<(Handle, bool)> = s
+                            .doc()?
+                            .space(&space)
+                            .into_iter()
+                            .flat_map(|sp| sp.iter())
+                            .filter_map(|e| match &e.kind {
+                                cadcraft_doc::EntityKind::Viewport(vp) => Some((e.handle, vp.grid)),
+                                _ => None,
+                            })
+                            .collect();
                         s.state_mut()?.doc = doc;
                         s.doc_mut()?.header = header;
+                        if !vp_grids.is_empty()
+                            && let Some(store) = s.doc_mut()?.space_mut(&space)
+                        {
+                            for (h, on) in vp_grids {
+                                store.modify(h, |e| {
+                                    if let cadcraft_doc::EntityKind::Viewport(vp) = &mut e.kind {
+                                        vp.grid = on;
+                                    }
+                                });
+                            }
+                        }
                         Ok(Step::Continue)
                     }
                     None => Err(other("Nothing to undo.")),

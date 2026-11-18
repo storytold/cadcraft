@@ -1,5 +1,7 @@
 //! System variables: session settings plus drawing header variables, by name.
 
+use std::collections::BTreeSet;
+
 use serde_json::{Value, json};
 
 use crate::{EngineError, Result, Session};
@@ -21,6 +23,7 @@ const SESSION_VARS: &[&str] = &[
     "AUTOSNAP",
     "QNEWTEMPLATE",
     "GRIDMODE",
+    "GRIDORTHO",
     "SNAPMODE",
     "SNAPSTYL",
     "SNAPISOPAIR",
@@ -44,6 +47,7 @@ const SESSION_VARS: &[&str] = &[
     "HIGHLIGHT",
     "SELECTIONEFFECT",
     "SELECTIONPREVIEW",
+    "SELECTIONPREVIEWLIMIT",
     "PREVIEWEFFECT",
     "PREVIEWFILTER",
     "GRIPS",
@@ -65,6 +69,8 @@ const SESSION_VARS: &[&str] = &[
     "CURSORSIZE",
     "MAXARRAY",
     "ZOOMFACTOR",
+    "ORBITAUTOTARGET",
+    "ORBITFREECAM",
     "MEASUREINIT",
     "LASTPOINT",
     "AREA",
@@ -95,7 +101,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Marker, tooltip and tracking tooltip always on (1 + 4 + 32); polar 8, tracking 16.
         "AUTOSNAP" => json!(37 + 8 * u32::from(st.polarmode) + 16 * u32::from(st.otrack)),
         "POLARANG" => json!(st.polarang.to_degrees()),
-        "GRIDMODE" => json!(i32::from(st.gridmode)),
+        "GRIDMODE" => json!(i32::from(s.effective_gridmode())),
+        "GRIDORTHO" => json!(i32::from(st.ortho_plane_grid)),
         "SNAPMODE" => json!(i32::from(st.snapmode)),
         "SNAPSTYL" => json!(i32::from(st.isodraft)),
         "SNAPISOPAIR" => json!(st.isoplane.index()),
@@ -125,6 +132,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "HIGHLIGHT" => json!(i32::from(st.highlight)),
         "SELECTIONEFFECT" => json!(st.selectioneffect),
         "SELECTIONPREVIEW" => json!(st.selectionpreview),
+        "SELECTIONPREVIEWLIMIT" => json!(st.selectionpreviewlimit),
         "PREVIEWEFFECT" => json!(st.previeweffect),
         "PREVIEWFILTER" => json!(st.previewfilter),
         "GRIPS" => json!(st.grips),
@@ -146,6 +154,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CURSORSIZE" => json!(st.cursorsize),
         "MAXARRAY" => json!(st.maxarray),
         "ZOOMFACTOR" => json!(st.zoomfactor),
+        "ORBITAUTOTARGET" => json!(i32::from(st.orbitautotarget)),
+        "ORBITFREECAM" => json!(i32::from(st.orbit_free_camera)),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
         "AREA" => json!(s.area),
@@ -181,7 +191,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "UNDOMARKS" => json!(s.state().ok()?.undo_marks()),
         "VIEWCTR" => {
             let v = s.state().ok()?.view();
-            json!([v.center.x, v.center.y, 0.0])
+            json!([v.center.x, v.center.y, v.target_z])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
         // The view twist (DVIEW TWist), in degrees counterclockwise.
@@ -319,7 +329,11 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
-        "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,
+        "GRIDMODE" => {
+            let on = as_bool(v).ok_or_else(bad)?;
+            s.set_effective_gridmode(on);
+        }
+        "GRIDORTHO" => st.ortho_plane_grid = as_bool(v).ok_or_else(bad)?,
         "SNAPMODE" => st.snapmode = as_bool(v).ok_or_else(bad)?,
         "SNAPSTYL" => st.isodraft = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "SNAPISOPAIR" => st.isoplane = as_i(v).and_then(crate::snap::iso::IsoPlane::from_index).ok_or_else(bad)?,
@@ -355,6 +369,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "HIGHLIGHT" => st.highlight = as_bool(v).ok_or_else(bad)?,
         "SELECTIONEFFECT" => st.selectioneffect = small(v, 1).ok_or_else(bad)?,
         "SELECTIONPREVIEW" => st.selectionpreview = small(v, 3).ok_or_else(bad)?,
+        "SELECTIONPREVIEWLIMIT" => {
+            st.selectionpreviewlimit = as_i(v).filter(|n| (0..=200_000).contains(n)).and_then(|n| u32::try_from(n).ok()).ok_or_else(bad)?;
+        }
         "PREVIEWEFFECT" => st.previeweffect = small(v, 2).ok_or_else(bad)?,
         "PREVIEWFILTER" => st.previewfilter = small(v, 63).ok_or_else(bad)?,
         "GRIPS" => st.grips = small(v, 2).ok_or_else(bad)?,
@@ -376,6 +393,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "CURSORSIZE" => st.cursorsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0),
         "MAXARRAY" => st.maxarray = as_f64(v).ok_or_else(bad)?.clamp(100.0, 10_000_000.0) as u64,
         "ZOOMFACTOR" => st.zoomfactor = as_i(v).filter(|z| (3..=100).contains(z)).ok_or_else(bad)? as u32,
+        "ORBITAUTOTARGET" => st.orbitautotarget = as_bool(v).ok_or_else(bad)?,
+        "ORBITFREECAM" => st.orbit_free_camera = as_bool(v).ok_or_else(bad)?,
         "MEASUREINIT" => st.measureinit = small(v, 1).ok_or_else(bad)? == 1,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
@@ -494,4 +513,64 @@ pub fn list(s: &Session) -> Value {
     }
     table::list(s, &mut m);
     Value::Object(m)
+}
+
+/// System variable match returned by [`suggest_vars`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VarSuggestion {
+    pub name: String,
+    pub read_only: bool,
+}
+
+fn collect_names(s: Option<&Session>) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = SESSION_VARS.iter().copied().chain(table::names()).map(str::to_string).collect();
+    if let Some(d) = s.and_then(|sess| sess.doc().ok()) {
+        for k in d.header.vars.keys() {
+            if !k.starts_with("CADCRAFT_") {
+                names.insert(k.to_ascii_uppercase());
+            }
+        }
+    }
+    names
+}
+
+/// Suggest known system variables whose names start with `prefix`, ordered by shortest match
+/// then alphabetically.
+pub fn suggest_vars(s: Option<&Session>, prefix: &str) -> Vec<VarSuggestion> {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() || trimmed.contains(' ') {
+        return Vec::new();
+    }
+    let p = trimmed.to_ascii_uppercase();
+    let mut matches: Vec<String> = collect_names(s).into_iter().filter(|n| n.starts_with(&p)).collect();
+    matches.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+    matches
+        .into_iter()
+        .map(|name| VarSuggestion { read_only: is_read_only(&name), name })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggest_vars_finds_v3_and_dim_vars_sorted_shortest_first() {
+        let or_vars = suggest_vars(None, "orb");
+        let names: Vec<&str> = or_vars.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["ORBITFREECAM", "ORBITAUTOTARGET"]);
+        assert!(!or_vars[0].read_only);
+
+        let grid_vars = suggest_vars(None, "grid");
+        assert!(grid_vars.iter().any(|v| v.name == "GRIDORTHO"));
+        assert!(grid_vars.iter().any(|v| v.name == "GRIDMODE"));
+
+        let dim_vars = suggest_vars(None, "dimsc");
+        assert!(dim_vars.iter().any(|v| v.name == "DIMSCALE"));
+
+        let ro_vars = suggest_vars(None, "area");
+        assert!(ro_vars.iter().any(|v| v.name == "AREA" && v.read_only));
+        assert!(suggest_vars(None, "   ").is_empty());
+        assert!(suggest_vars(None, "a b").is_empty());
+    }
 }

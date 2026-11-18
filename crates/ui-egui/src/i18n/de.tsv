@@ -1084,6 +1084,36 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Die Zeichnung hat sich geändert. Schließen Sie das Fenster und öffnen Sie es erneut.
+	BOTTOM	UNTEN
+	FRONT	VORNE
+	BACK	HINTEN
+	LEFT	LINKS
+	RIGHT	RECHTS
+	Wireframe	Drahtmodell
+	Misc	Sonstiges
+	Clipped	Zugeschnitten
+	Display locked	Anzeige gesperrt
+	Standard scale	Standardmaßstab
+	Custom scale	Benutzerdef. Maßstab
+	Scale to fit	Anpassen
+	Custom	Benutzerdefiniert
+	UCS per viewport	BKS pro Ansichtsfenster
+	Layer property overrides	Layer-Eigenschaftsüberschreibungen
+	Visual style	Visueller Stil
+	2D Wireframe	2D-Drahtmodell
+	3D Wireframe	3D-Drahtmodell
+	Hidden	Verdeckt
+	Flat Shaded	Flach schattiert
+	Gouraud Shaded	Gouraud-schattiert
+	Flat Shaded with Edges	Flach schattiert mit Kanten
+	Gouraud Shaded with Edges	Gouraud-schattiert mit Kanten
+	Shade plot	Schattiert plotten
+	As Displayed	Wie angezeigt
+	Legacy wireframe	Vorversion Drahtmodell
+	Legacy hidden	Vorversion Verdeckt
+	Rendered	Gerendert
+	Linked to sheet view	Mit Planansicht verknüpft
+	Custom...	Benutzerdefiniert...
 
 # ArtCraft feature naming
 	Additional Tools	Zusätzliche Werkzeuge

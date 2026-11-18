@@ -16,7 +16,7 @@ use viewports::MviewM;
 
 mod plotstyle;
 mod prompts;
-mod viewports;
+pub(crate) mod viewports;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -70,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{p1?, p2?, layout?}")
             .interactive(|s| Ok(super::view::model_vports(s, Some(4)).unwrap_or_else(|| Box::new(MviewM::new(4, false))))),
         CommandSpec::new("viewport.set", "Viewport Properties", run_viewport_set).params(
-            "{handle? (default: selected viewports), scale?: paper units per model unit | \"1:50\", viewHeight?, center?: [x,y], locked?, freeze?: [layer], thaw?: [layer], colors?: {layer: color | null}}",
+            "{handle? (default: selected viewports), scale?: paper units per model unit | \"1:50\", scaleToFit?: bool, viewHeight?, center?: [x,y], locked?, on?, ucsPerViewport?, shadePlot?, freeze?: [layer], thaw?: [layer], colors?: {layer: color | null}}",
         ),
         CommandSpec::new("vplayer", "Viewport Layer Freeze", run_viewport_set)
             .params("{handle?, freeze?: [layer], thaw?: [layer], colors?: {layer: color (\"red\" | 1..255 | \"r,g,b\") | null to clear}} (typed: option prompts)")
@@ -528,6 +528,10 @@ fn viewport_json(h: Handle, v: &Viewport) -> Value {
         "scale": if v.view_height > 0.0 { v.height / v.view_height } else { 0.0 },
         "locked": v.locked,
         "on": v.on,
+        "grid": v.grid,
+        "ucsPerViewport": v.ucs_per_viewport,
+        "shadePlot": v.shade_plot,
+        "renderMode": v.render_mode,
         "clip": v.clip.map(|h| h.hex()),
         "frozenLayers": v.frozen_layers,
         "layerColors": v.layer_colors.iter().map(|(l, c)| json!({ "layer": l, "color": c.name() })).collect::<Vec<_>>(),
@@ -566,6 +570,14 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let locked = p.get("locked").and_then(Value::as_bool);
+    let on = p.get("on").and_then(Value::as_bool);
+    let ucs_per_viewport = p.get("ucsPerViewport").and_then(Value::as_bool);
+    let shade_plot = match p.get("shadePlot") {
+        None => None,
+        Some(Value::Number(n)) => Some(n.as_u64().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 3).ok_or_else(|| bad(cmd, "`shadePlot` must be 0..=3 or a shade plot name"))?),
+        Some(Value::String(s)) => Some(Viewport::parse_shade_plot(s).ok_or_else(|| bad(cmd, "`shadePlot` must be 0..=3 or a shade plot name"))?),
+        Some(_) => return Err(bad(cmd, "`shadePlot` must be 0..=3 or a shade plot name")),
+    };
     let freeze = layer_list(p, "freeze");
     let thaw = layer_list(p, "thaw");
     // Per-viewport layer colours: {layer: colour} (null clears the override).
@@ -590,7 +602,9 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
             colors.push((layer.clone(), col));
         }
     }
-    let changes_view = scale.is_some() || view_height.is_some() || center.is_some();
+    let scale_to_fit = p.get("scaleToFit").and_then(Value::as_bool) == Some(true);
+    let fit_model = if scale_to_fit { Some(super::props::model_fit_bounds(s.doc()?)) } else { None };
+    let changes_view = scale.is_some() || view_height.is_some() || center.is_some() || scale_to_fit;
     let mut out = Vec::new();
     for h in hs {
         let Some(EntityKind::Viewport(cur)) = s.doc()?.entity(h).map(|e| e.kind.clone()) else { continue };
@@ -598,6 +612,9 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, format!("viewport {} is locked", h.hex())));
         }
         let mut v = cur;
+        if let Some((ext, z_range)) = fit_model {
+            super::props::fit_viewport_to_model(&mut v, ext, z_range);
+        }
         if let Some(sc) = scale {
             let vh = v.height / sc;
             if vh.is_finite() && vh > 0.0 {
@@ -612,6 +629,15 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(l) = locked {
             v.locked = l;
+        }
+        if let Some(o) = on {
+            v.on = o;
+        }
+        if let Some(u) = ucs_per_viewport {
+            v.ucs_per_viewport = u;
+        }
+        if let Some(sp) = shade_plot {
+            v.shade_plot = sp;
         }
         for f in &freeze {
             if !v.frozen_layers.iter().any(|x| x.eq_ignore_ascii_case(f)) {

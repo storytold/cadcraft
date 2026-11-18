@@ -102,17 +102,39 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions_in(&app.session, &app.cmd.buffer).first() {
+    } else if show_suggestions(&app.session)
+        && let Some(s) = suggestions_for(Some(&app.session), &app.cmd.buffer).first()
+    {
         app.cmd.buffer = s.id.clone();
     }
+}
+
+fn is_setvar_name_prompt(session: &cadcraft_engine::Session) -> bool {
+    session.running.as_ref().is_some_and(|r| r.id == "setvar") && session.current_prompt().is_some_and(|p| p.message == "Enter variable name")
+}
+
+fn show_suggestions(session: &cadcraft_engine::Session) -> bool {
+    !session.prompting() || is_setvar_name_prompt(session)
+}
+
+fn var_suggestions(session: Option<&cadcraft_engine::Session>, prefix: &str, seen_ids: &HashSet<&'static str>) -> Vec<Suggestion> {
+    cadcraft_engine::sysvars::suggest_vars(session, prefix)
+        .into_iter()
+        .filter(|v| !seen_ids.contains(v.name.to_ascii_lowercase().as_str()))
+        .map(|v| Suggestion {
+            id: v.name.clone(),
+            display: v.name,
+            label: if v.read_only { "Read-only" } else { "System Variable" },
+        })
+        .collect()
 }
 
 /// An AutoComplete suggestion for the command line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
-    /// Command identifier (uppercase, e.g. "RECTANG"), used for buffer completion and execution.
+    /// Command or variable identifier (uppercase, e.g. "RECTANG"), used for completion and execution.
     pub id: String,
-    /// Display text shown in the AutoComplete list (e.g. "REC (RECTANG)" or "RECOVER").
+    /// Display text shown in the AutoComplete list (e.g. "REC (RECTANG)" or "ORBITFREECAM").
     pub display: String,
     /// Human-readable command label (e.g. "Rectangle").
     pub label: &'static str,
@@ -120,13 +142,23 @@ pub struct Suggestion {
 
 /// [`suggestions`] for what `session` can run: a Greek word that is a command of its own there (an
 /// alias, a command the drawing's LISP defines) stays as typed.
+#[cfg_attr(not(test), allow(dead_code))]
 fn suggestions_in(session: &cadcraft_engine::Session, prefix: &str) -> Vec<Suggestion> {
     suggestions(prefix, &|word| session.greek_word_is_a_command(word))
 }
 
 /// Matching command names/aliases for AutoComplete. `is_own_command` tells whether a Greek-layout
 /// word is a command of its own rather than the Latin name its keys type.
+#[cfg_attr(not(test), allow(dead_code))]
 fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
+    suggestions_for_with(None, prefix, is_own_command)
+}
+
+fn suggestions_for(session: Option<&cadcraft_engine::Session>, prefix: &str) -> Vec<Suggestion> {
+    suggestions_for_with(session, prefix, &|word| session.is_some_and(|s| s.greek_word_is_a_command(word)))
+}
+
+fn suggestions_for_with(session: Option<&cadcraft_engine::Session>, prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
@@ -138,6 +170,12 @@ fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Sugge
     } else {
         cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_own_command(prefix)).unwrap_or(typed)
     };
+    let seen_empty: HashSet<&'static str> = HashSet::new();
+    if session.is_some_and(is_setvar_name_prompt) {
+        let mut out = var_suggestions(session, &p, &seen_empty);
+        out.truncate(8);
+        return out;
+    }
 
     let mut out: Vec<Suggestion> = Vec::new();
     let mut seen_ids: HashSet<&'static str> = HashSet::new();
@@ -183,6 +221,9 @@ fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Sugge
             });
         }
     }
+
+    // 4. System variable prefix matches (delegated to SETVAR when run).
+    out.extend(var_suggestions(session, &p, &seen_ids));
 
     out.truncate(8);
     out
@@ -298,7 +339,7 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
 
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() || app.frame_started_with_keyboard_input {
         app.cmd.preedit.clear();
         app.cmd.ime_on = false;
         return;
@@ -461,9 +502,16 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
-    // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
-    let completion = if app.session.prompting() { None } else { suggestions_in(&app.session, text.trim()).into_iter().next() };
-    app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
+    // A partly typed command or variable name completes to the highlighted (first) AutoComplete suggestion.
+    let setvar_prompt = is_setvar_name_prompt(&app.session);
+    let completion =
+        if show_suggestions(&app.session) { suggestions_for(Some(&app.session), text.trim()).into_iter().next() } else { None };
+    if setvar_prompt {
+        let entry = completion.map(|s| s.id).unwrap_or(text);
+        app.cmdline_or(&entry, None);
+    } else {
+        app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
+    }
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -602,8 +650,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         false,
     );
     // AutoComplete list.
-    if !app.session.prompting() {
-        let sug = suggestions_in(&app.session, &app.cmd.buffer);
+    if show_suggestions(&app.session) {
+        let sug = suggestions_for(Some(&app.session), &app.cmd.buffer);
+        let in_setvar = is_setvar_name_prompt(&app.session);
         if !sug.is_empty() {
             let rh = 20.0;
             let lr = Rect::from_min_size(
@@ -631,7 +680,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 );
                 if resp.clicked() {
                     app.cmd.buffer.clear();
-                    app.start(&s.id.to_ascii_lowercase());
+                    if in_setvar {
+                        if let Err(e) = app.session.input(Input::Text(s.id.clone())) {
+                            app.session.echo(e.to_string());
+                        }
+                    } else {
+                        app.start(&s.id.to_ascii_lowercase());
+                    }
                 }
             }
         }
@@ -664,8 +719,8 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let top = window.or(lines).map_or(bar.top(), |r| r.top());
     let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
     let mut all = bar.union(grip);
-    if !app.session.prompting() {
-        let k = suggestions_in(&app.session, &app.cmd.buffer).len();
+    if show_suggestions(&app.session) {
+        let k = suggestions_for(Some(&app.session), &app.cmd.buffer).len();
         if k > 0 {
             let above = if n == 0 { 0.0 } else { LINE_H * n as f32 + 6.0 };
             all = all.union(Rect::from_min_size(pos2(bar.left(), bar.top() - 6.0 - 20.0 * k as f32 - above), vec2(bar.width(), 1.0)));
@@ -1029,5 +1084,27 @@ mod autocomplete_tests {
         submit(&mut app);
         assert!(app.session.running.is_none());
         assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+
+    #[test]
+    fn idle_and_setvar_suggestions_include_v3_system_variables() {
+        let mut app = app();
+        let orb = suggestions_for(Some(&app.session), "orbi");
+        assert!(orb.iter().any(|s| s.id == "ORBITFREECAM"), "{orb:?}");
+        assert!(orb.iter().any(|s| s.id == "ORBITAUTOTARGET"), "{orb:?}");
+
+        let gri = suggestions_for(Some(&app.session), "grid");
+        assert!(gri.iter().any(|s| s.id == "GRIDORTHO"), "{gri:?}");
+
+        // Start SETVAR and verify the "Enter variable name" prompt autocompletes sysvars.
+        app.start("setvar");
+        assert!(is_setvar_name_prompt(&app.session));
+        app.cmd.buffer = "orbitf".to_string();
+        let sv = suggestions_for(Some(&app.session), &app.cmd.buffer);
+        assert_eq!(sv.first().map(|s| s.id.as_str()), Some("ORBITFREECAM"));
+        tab(&mut app);
+        assert_eq!(app.cmd.buffer, "ORBITFREECAM");
+        submit(&mut app);
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter new value for ORBITFREECAM".to_string()));
     }
 }

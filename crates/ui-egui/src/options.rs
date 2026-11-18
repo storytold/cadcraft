@@ -215,12 +215,41 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     Some(run_json(app, params))
 }
 
+/// Standard ViewCube Home presets offered in Options ▸ Display (`(preset_id, display_label)`).
+pub(crate) const HOME_VIEW_PRESETS: [(&str, &str); 10] = [
+    ("top", "Top (2D)"),
+    ("se_isometric", "SE Isometric"),
+    ("sw_isometric", "SW Isometric"),
+    ("ne_isometric", "NE Isometric"),
+    ("nw_isometric", "NW Isometric"),
+    ("front", "Front"),
+    ("back", "Back"),
+    ("left", "Left"),
+    ("right", "Right"),
+    ("bottom", "Bottom"),
+];
+
+/// Validate and normalize a ViewCube Home preset name (or alias) to its canonical key.
+pub(crate) fn normalize_home_preset(raw: &str) -> Option<String> {
+    let cam = cadcraft_geom::Camera3D::preset(raw)?;
+    for (id, _) in HOME_VIEW_PRESETS {
+        if let Some(p) = cadcraft_geom::Camera3D::preset(id)
+            && (cam.z - p.z).len() < 1e-6
+            && (cam.x - p.x).len() < 1e-6
+        {
+            return Some(id.to_owned());
+        }
+    }
+    Some(raw.trim().to_ascii_lowercase().replace(['-', ' '], "_"))
+}
+
 /// The interface preferences a JSON call may set, parsed before anything changes.
 #[derive(Default)]
 struct UiChanges {
     theme: Option<ThemePref>,
     animations: Option<AnimationPref>,
     language: Option<crate::i18n::Preference>,
+    viewcube_home_preset: Option<String>,
     save_format: Option<crate::SaveFormat>,
     system_cursor: Option<bool>,
     history_lines: Option<usize>,
@@ -257,6 +286,12 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.language = Some(
                 crate::i18n::Preference::parse(text()?).ok_or_else(|| format!("interfaceLanguage must be {}", crate::i18n::Preference::codes()))?,
             )
+        }
+        "viewcubeHomePreset" => {
+            c.viewcube_home_preset = Some(
+                normalize_home_preset(text()?)
+                    .ok_or("viewcubeHomePreset must be a valid camera preset (e.g. top, se_isometric, front)")?,
+            );
         }
         "saveFormat" => c.save_format = Some(crate::SaveFormat::parse(text()?).ok_or("saveFormat must be dxf or dwg")?),
         "systemCursor" => c.system_cursor = Some(v.as_bool().ok_or("systemCursor must be true or false")?),
@@ -319,6 +354,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("theme".into(), json!(app.ui.theme.as_str()));
     m.insert("animations".into(), json!(app.ui.animations.as_str()));
     m.insert("interfaceLanguage".into(), json!(app.ui.interface_language.code()));
+    m.insert("viewcubeHomePreset".into(), json!(app.ui.viewcube_home_preset));
     m.insert("saveFormat".into(), json!(app.ui.save_format.as_str()));
     m.insert("systemCursor".into(), json!(app.ui.system_cursor));
     m.insert("historyLines".into(), json!(app.ui.history_lines));
@@ -372,6 +408,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     }
     if let Some(l) = ui.language {
         app.ui.interface_language = l;
+    }
+    if let Some(p) = &ui.viewcube_home_preset {
+        app.ui.viewcube_home_preset = p.clone();
     }
     if let Some(f) = ui.save_format {
         app.ui.save_format = f;
@@ -437,6 +476,7 @@ fn reset_ui(app: &mut CadApp) {
     let d = crate::UiState::default();
     app.ui.theme = d.theme;
     app.ui.animations = d.animations;
+    app.ui.viewcube_home_preset = d.viewcube_home_preset;
     app.ui.save_format = d.save_format;
     app.ui.save_version = d.save_version;
     app.ui.system_cursor = app.system_cursor_default;
@@ -465,6 +505,7 @@ impl CadApp {
             "rightClickEdit": self.options.right_click_edit.as_str(),
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
+            "viewcubeHomePreset": self.ui.viewcube_home_preset,
         })
         .to_string()
     }
@@ -497,6 +538,7 @@ impl CadApp {
             "rightClickEdit",
             "rightClickCommand",
             "interfaceScale",
+            "viewcubeHomePreset",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -525,6 +567,9 @@ impl CadApp {
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
+        if let Some(p) = c.viewcube_home_preset {
+            self.ui.viewcube_home_preset = p;
+        }
     }
 }
 
@@ -552,5 +597,27 @@ mod tests {
         }
         assert_eq!(IdleClick::parse("enter"), None);
         assert_eq!(CommandClick::parse("repeat"), None);
+    }
+
+    #[test]
+    fn viewcube_home_preset_round_trips_options_prefs_and_profile() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        assert_eq!(app.ui.viewcube_home_preset, "top");
+
+        app.run("options", json!({"viewcubeHomePreset": "iso_sw"})).unwrap();
+        assert_eq!(app.ui.viewcube_home_preset, "sw_isometric");
+        assert_eq!(report(&app).get("viewcubeHomePreset").and_then(Value::as_str), Some("sw_isometric"));
+        assert!(app.run("options", json!({"viewcubeHomePreset": "invalid_preset"})).is_err());
+
+        let mut from_prefs = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        from_prefs.load_prefs(&app.prefs_json());
+        assert_eq!(from_prefs.ui.viewcube_home_preset, "sw_isometric");
+
+        let mut from_profile = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        from_profile.load_profile(&app.profile_json());
+        assert_eq!(from_profile.ui.viewcube_home_preset, "sw_isometric");
+
+        app.run("options", json!({"reset": true})).unwrap();
+        assert_eq!(app.ui.viewcube_home_preset, "top");
     }
 }

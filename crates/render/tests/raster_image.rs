@@ -259,6 +259,7 @@ fn a_layout_viewport_cuts_the_image_to_its_outline() {
         clip: None,
         on: true,
         twist: 0.0,
+        ..Viewport::default()
     };
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
     let list = build(&d, &Space::Paper("Layout1".into()), &Options::default());

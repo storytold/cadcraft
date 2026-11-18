@@ -103,6 +103,8 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
+    /// Camera preset activated by clicking the ViewCube Home button ("top", "sw_isometric", ...).
+    pub viewcube_home_preset: String,
     pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
@@ -201,6 +203,7 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
+            viewcube_home_preset: "top".into(),
             show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,
@@ -339,6 +342,9 @@ pub struct CadApp {
     /// The interface scale last handed to egui (`None` until the first frame).
     shown_interface_scale: Option<f32>,
     pub frame_ms: f64,
+    /// Whether an egui widget already owned keyboard focus at the start of the current draw pass;
+    /// keeps a confirming Enter/Escape that surrenders focus before canvas runs from also firing on the command line.
+    pub(crate) frame_started_with_keyboard_input: bool,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
     /// quit came from the control channel, which never asks).
@@ -413,6 +419,7 @@ impl CadApp {
             shown_animations: None,
             shown_interface_scale: None,
             frame_ms: 0.0,
+            frame_started_with_keyboard_input: false,
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
@@ -678,6 +685,9 @@ impl CadApp {
         if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
             prefs["lastPgpDir"] = json!(dir);
         }
+        if self.ui.viewcube_home_preset != "top" {
+            prefs["viewcubeHomePreset"] = json!(self.ui.viewcube_home_preset);
+        }
         if !self.ui.shortcuts.is_empty() {
             prefs["shortcuts"] = json!(self.ui.shortcuts);
         }
@@ -716,6 +726,9 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_pgp_dir = Some(dir.to_string());
+        }
+        if let Some(preset) = v.get("viewcubeHomePreset").and_then(Value::as_str).and_then(options::normalize_home_preset) {
+            self.ui.viewcube_home_preset = preset;
         }
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
@@ -1087,6 +1100,7 @@ impl CadApp {
     /// Draw one UI pass: title/toolbar, optional menu/status bar/file tabs, the standalone tool-set strip when a drawing is shown but Tool Sets is not docked, docking or the start page, and the floating overlays; record `frame_ms`. Runs on every pass, including one egui later discards.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        self.frame_started_with_keyboard_input = ui.ctx().egui_wants_keyboard_input();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);

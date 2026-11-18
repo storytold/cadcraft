@@ -160,9 +160,11 @@ impl Session {
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
         if self.lisp_input(input.clone()) {
+            self.pending_cursor_uv = None;
             return Ok(());
         }
         let r = self.input_to_command(input);
+        self.pending_cursor_uv = None;
         self.lisp_after_command_input();
         r
     }
@@ -259,15 +261,22 @@ impl Session {
         match input {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
+                let proj = self.pick_projection();
+                let uv = self.take_pick_uv(p);
                 if let Some(pw) = self.pending_window.take() {
-                    let crossing = self.window_is_crossing(pw.corner, p);
-                    let hs = select::select_window_in(self.doc()?, &space, self.viewport_frozen(), Bounds2::new(pw.corner, p), crossing);
+                    let a_uv = proj.project_3d_point(pw.corner_3d);
+                    let crossing = self.window_is_crossing_uv(a_uv, uv);
+                    let hs = select::select_window_projected_in(self.doc()?, &space, self.viewport_frozen(), Bounds2::new(a_uv, uv), crossing, &proj);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
-                match select::pick_in(self.doc()?, &space, self.viewport_frozen(), p, ap) {
+                match select::pick_projected_in(self.doc()?, &space, self.viewport_frozen(), uv, ap, &proj) {
                     Some(h) => Ok(Some(Input::Pick(cmd::groups::expand(self, vec![h])))),
                     None => {
-                        self.pending_window = Some(PendingWindow { corner: p, during_command: true });
+                        self.pending_window = Some(PendingWindow {
+                            corner: p,
+                            corner_3d: proj.unproject_target_plane(uv),
+                            during_command: true,
+                        });
                         Ok(None)
                     }
                 }
@@ -325,15 +334,20 @@ impl Session {
         }
         match input {
             Input::Point(p) => {
-                if mode.push(p) {
-                    return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick));
+                let anchor = self.take_pick_anchor(p);
+                if mode.push_with_anchor(p, anchor) {
+                    let proj = self.pick_projection();
+                    return Ok(mode.select_projected_in(self.doc()?, &self.space(), self.viewport_frozen(), &proj).map(Input::Pick));
                 }
             }
             Input::Keyword(k) if k == "Undo" => {
-                mode.pts.pop();
+                mode.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select_in(self.doc()?, &self.space(), self.viewport_frozen()).map(Input::Pick)),
+            Input::Enter => {
+                let proj = self.pick_projection();
+                return Ok(mode.select_projected_in(self.doc()?, &self.space(), self.viewport_frozen(), &proj).map(Input::Pick));
+            }
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
@@ -557,11 +571,15 @@ impl Session {
     }
 
     /// Whether the object under the cursor is highlighted (SELECTIONPREVIEW): the cursor picks
-    /// objects ([`Self::picking_objects`]) and the bit for a command asking for them (2) or for
-    /// no command (1) is on.
+    /// objects ([`Self::picking_objects`]) or an active selection mode/window is open, and the bit
+    /// for a command asking for them (2) or for no command (1) is on.
     pub fn previews_selection(&self) -> bool {
         let bit = if self.current_prompt().is_some() { 2 } else { 1 };
-        self.picking_objects() && self.settings.selectionpreview & bit != 0
+        let active = self.picking_objects()
+            || self.select_mode.is_some()
+            || self.pending_window.is_some()
+            || self.running.as_ref().is_some_and(|r| r.machine.is_selecting_objects());
+        active && self.settings.selectionpreview & bit != 0
     }
 
     /// Whether selected objects show grips while `selected` objects are selected (GRIPS,

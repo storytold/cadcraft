@@ -1,10 +1,76 @@
 //! Hit testing and window/crossing selection.
 
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
-use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
+use cadcraft_geom::{Bounds2, Camera3D, Line, Vec2, Vec3, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
 use crate::{Accept, Prompt};
+
+/// Camera/view projection parameters used so 2D and 3D picking and selection match what the canvas draws.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PickProjection {
+    pub camera: Camera3D,
+    pub target: Vec3,
+    pub twist: f64,
+}
+
+impl PickProjection {
+    /// Unrotated 2D Top plan projection centered at the world origin.
+    pub const fn top() -> Self {
+        Self { camera: Camera3D::TOP, target: Vec3::ZERO, twist: 0.0 }
+    }
+
+    /// Build a projection matching the active view parameters.
+    pub fn from_view(camera: Camera3D, center: Vec2, target_z: f64, twist: f64) -> Self {
+        Self { camera, target: center.to3(target_z), twist }
+    }
+
+    /// True when the projection is an untwisted 2D Top plan view aligned with world XY.
+    pub fn is_plan_axis_aligned(&self) -> bool {
+        self.camera.is_top_plan() && self.twist.abs() <= 1e-12
+    }
+
+    /// Project a 2D world point `p` (at `Z = 0`) into camera UV coordinates relative to `target`.
+    pub fn project(&self, p: Vec2) -> Vec2 {
+        if !self.camera.is_top_plan() {
+            self.camera.project_3d(p.to3(0.0), self.target)
+        } else {
+            let d = p - self.target.xy();
+            if self.twist == 0.0 { d } else { d.rotate(self.twist) }
+        }
+    }
+
+    /// Project a 3D world point `p` into camera UV coordinates relative to `target`.
+    pub fn project_3d_point(&self, p: Vec3) -> Vec2 {
+        if !self.camera.is_top_plan() {
+            self.camera.project_3d(p, self.target)
+        } else {
+            let d = p.xy() - self.target.xy();
+            if self.twist == 0.0 { d } else { d.rotate(self.twist) }
+        }
+    }
+
+    /// Unproject a camera UV coordinate onto the target plane `(target, camera.z)`.
+    pub fn unproject_target_plane(&self, uv: Vec2) -> Vec3 {
+        if !self.camera.is_top_plan() {
+            self.target + self.camera.x * uv.x + self.camera.y * uv.y
+        } else {
+            let d = if self.twist == 0.0 { uv } else { uv.rotate(-self.twist) };
+            (self.target.xy() + d).to3(self.target.z)
+        }
+    }
+
+    fn shift_bounds(&self, bx: &Bounds2) -> Bounds2 {
+        Bounds2::new(bx.min + self.target.xy(), bx.max + self.target.xy())
+    }
+
+    fn project_bounds(&self, b: &Bounds2) -> Bounds2 {
+        if b.is_empty() {
+            return *b;
+        }
+        Bounds2::from_points(b.corners().map(|c| self.project(c)))
+    }
+}
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
@@ -91,25 +157,59 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
     pts.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?).dist(p))).fold(f64::INFINITY, f64::min)
 }
 
+fn projected_hit_polylines(d: &Drawing, e: &Entity, tol: f64, proj: Option<&PickProjection>) -> Vec<Vec<Vec2>> {
+    let polys = hit_polylines(d, e, tol);
+    match proj {
+        Some(pr) => polys.into_iter().map(|pl| pl.into_iter().map(|q| pr.project(q)).collect()).collect(),
+        None => polys,
+    }
+}
+
+fn in_quad_with(eb: &Bounds2, offset: Vec2, p: Vec2, proj: Option<&PickProjection>) -> bool {
+    if eb.is_empty() {
+        return false;
+    }
+    match proj {
+        Some(pr) => point_in_polygon(&eb.corners().map(|c| pr.project(c + offset)), p),
+        None => eb.contains(p - offset),
+    }
+}
+
+fn in_polygon_with(poly: &[Vec2], p: Vec2, proj: Option<&PickProjection>) -> bool {
+    match proj {
+        Some(pr) => {
+            let mapped: Vec<Vec2> = poly.iter().map(|&q| pr.project(q)).collect();
+            point_in_polygon(&mapped, p)
+        }
+        None => point_in_polygon(poly, p),
+    }
+}
+
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
-    let polys = hit_polylines(d, e, tol);
+    entity_distance_in(d, e, p, tol, None)
+}
+
+fn entity_distance_in(d: &Drawing, e: &Entity, p: Vec2, tol: f64, proj: Option<&PickProjection>) -> f64 {
+    let polys = projected_hit_polylines(d, e, tol, proj);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
-    if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
+    if (filled && in_quad_with(&entity_bounds(d, e, 0), Vec2::ZERO, p, proj)) || in_text_in(d, e, p, proj) {
         best = 0.0;
     }
     // A solid hatch fills its loops with odd parity under its island style, as it is drawn, not
     // its bounding rectangle.
     if let EntityKind::Hatch(h) = &e.kind
         && h.solid
-        && cadcraft_render::hatch_fill_loops(h, tol).iter().filter(|l| point_in_polygon(l, p)).count() % 2 == 1
+        && cadcraft_render::hatch_fill_loops(h, tol).iter().filter(|l| in_polygon_with(l, p, proj)).count() % 2 == 1
     {
         best = 0.0;
     }
     // A SOLID fills its polygon, not its bounding rectangle (half of which is empty for a triangle).
-    if matches!(e.kind, EntityKind::Solid(_)) && e.kind.prims().iter().any(|prim| matches!(prim, Prim::Fill(poly) if point_in_polygon(poly, p))) {
+    if matches!(e.kind, EntityKind::Solid(_))
+        && e.kind.prims().iter().any(|prim| matches!(prim, Prim::Fill(poly) if in_polygon_with(poly, p, proj)))
+    {
         best = 0.0;
     }
     best
@@ -119,37 +219,46 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
 /// turned with the text, as plain text is hit anywhere inside its box. Their other geometry is
 /// hit along its lines, so without this the cursor found the object only between the letters'
 /// edges and the lines.
-fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
+fn in_text_in(d: &Drawing, e: &Entity, p: Vec2, proj: Option<&PickProjection>) -> bool {
     match &e.kind {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
             // The block draws translated by the insertion point (group 12): test there (#2634).
             Some(blk) => {
-                let p = p - dm.insertion_point.xy();
+                let offset = dm.insertion_point.xy();
                 blk.entities.iter().any(|be| match &be.kind {
-                    EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
-                    EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
+                    EntityKind::MText(t) => {
+                        in_box_in(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, offset, p, proj)
+                    }
+                    EntityKind::Text(_) => in_quad_with(&entity_bounds(d, be, 0), offset, p, proj),
                     _ => false,
                 })
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
-                in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
+                in_box_in(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, Vec2::ZERO, p, proj)
             }
         },
-        EntityKind::MLeader(m) => {
-            m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
-        }
+        EntityKind::MLeader(m) => m
+            .text
+            .as_ref()
+            .is_some_and(|t| in_box_in(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, Vec2::ZERO, p, proj)),
         _ => false,
     }
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
-fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
+fn in_box_in(pts: impl Iterator<Item = Vec2>, angle: f64, offset: Vec2, p: Vec2, proj: Option<&PickProjection>) -> bool {
     let turn = |q: Vec2| q.rotate(-angle);
     let b = Bounds2::from_points(pts.filter(|q| q.is_finite()).map(turn));
-    !b.is_empty() && b.contains(turn(p))
+    if b.is_empty() {
+        return false;
+    }
+    match proj {
+        Some(pr) => point_in_polygon(&b.corners().map(|c| pr.project(c.rotate(angle) + offset)), p),
+        None => b.contains(turn(p - offset)),
+    }
 }
 
 /// Whether `e` is on one of the layers in `frozen`: the layers frozen in a layout viewport, which
@@ -212,6 +321,22 @@ pub(crate) fn candidates<'a>(
     }
 }
 
+fn projected_candidates<'a>(
+    d: &'a Drawing,
+    space: &Space,
+    ix: &'a Option<std::sync::Arc<SpatialIndex>>,
+    uv_query: &Bounds2,
+    proj: &PickProjection,
+    infinite: bool,
+    rev: bool,
+) -> Option<Cands<'a>> {
+    if proj.camera.is_top_plan() {
+        let world_query = Bounds2::from_points(uv_query.corners().map(|c| proj.unproject_target_plane(c).xy()));
+        return candidates(d, space, ix, &world_query, infinite, rev);
+    }
+    candidates(d, space, &None, uv_query, infinite, rev)
+}
+
 /// The topmost entity within `aperture` of `p`: the one drawn last (on top in the draw order), not
 /// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
 /// picked, and DRAWORDER changes which).
@@ -269,6 +394,57 @@ pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, apert
         .collect()
 }
 
+/// Collect entities under camera-plane coordinate `uv` within `aperture`, topmost first.
+pub fn pick_all_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, proj: &PickProjection) -> Vec<Handle> {
+    pick_all_projected_in(d, space, &[], uv, aperture, proj)
+}
+
+/// [`pick_all_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn pick_all_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv: Vec2, aperture: f64, proj: &PickProjection) -> Vec<Handle> {
+    if proj.is_plan_axis_aligned() {
+        return pick_all_in(d, space, frozen, uv + proj.target.xy(), aperture);
+    }
+    let ix = spatial::index(d, space);
+    let probe = Bounds2::new(uv, uv).expand(aperture);
+    let Some(cands) = projected_candidates(d, space, &ix, &probe.expand(aperture), proj, true, true) else {
+        return Vec::new();
+    };
+    cands
+        .filter(|(e, known)| {
+            selectable(d, e, frozen) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).expand(aperture).intersects(&probe))
+        })
+        .filter(|(e, _)| entity_distance_in(d, e, uv, aperture / 4.0, Some(proj)) <= aperture)
+        .map(|(e, _)| e.handle)
+        .collect()
+}
+
+/// The topmost entity under camera-plane coordinate `uv` within `aperture`.
+pub fn pick_projected(d: &Drawing, space: &Space, uv: Vec2, aperture: f64, proj: &PickProjection) -> Option<Handle> {
+    pick_projected_in(d, space, &[], uv, aperture, proj)
+}
+
+/// [`pick_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn pick_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv: Vec2, aperture: f64, proj: &PickProjection) -> Option<Handle> {
+    if proj.is_plan_axis_aligned() {
+        return pick_in(d, space, frozen, uv + proj.target.xy(), aperture);
+    }
+    let ix = spatial::index(d, space);
+    let probe = Bounds2::new(uv, uv).expand(aperture);
+    for (e, known) in projected_candidates(d, space, &ix, &probe.expand(aperture), proj, true, true)? {
+        if !selectable(d, e, frozen) {
+            continue;
+        }
+        let infinite = is_infinite(e);
+        if !infinite && !proj.project_bounds(&bounds_of(d, e, known)).expand(aperture).intersects(&probe) {
+            continue;
+        }
+        if entity_distance_in(d, e, uv, aperture / 4.0, Some(proj)) <= aperture {
+            return Some(e.handle);
+        }
+    }
+    None
+}
+
 /// Whether PREVIEWFILTER keeps `e` from being highlighted under the cursor: bits 1 objects on
 /// locked layers, 2 xrefs, 4 tables, 8 multiline text, 16 hatches, 32 objects in groups.
 pub fn preview_filtered(d: &Drawing, e: &Entity, filter: u8) -> bool {
@@ -314,6 +490,32 @@ pub(crate) fn select_window_with(
     cands.filter(|(e, known)| selectable(d, e, frozen) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
 }
 
+/// Window or crossing selection in camera-plane coordinates `uv_bx`.
+pub fn select_window_projected(d: &Drawing, space: &Space, uv_bx: Bounds2, crossing: bool, proj: &PickProjection) -> Vec<Handle> {
+    select_window_projected_in(d, space, &[], uv_bx, crossing, proj)
+}
+
+/// [`select_window_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_window_projected_in(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    uv_bx: Bounds2,
+    crossing: bool,
+    proj: &PickProjection,
+) -> Vec<Handle> {
+    if proj.is_plan_axis_aligned() {
+        return select_window_in(d, space, frozen, proj.shift_bounds(&uv_bx), crossing);
+    }
+    let ix = spatial::index(d, space);
+    let Some(cands) = projected_candidates(d, space, &ix, &uv_bx, proj, crossing, false) else { return Vec::new() };
+    let tol = window_tol(&uv_bx);
+    cands
+        .filter(|(e, known)| selectable(d, e, frozen) && in_window_in(d, e, *known, &uv_bx, crossing, tol, Some(proj)))
+        .map(|(e, _)| e.handle)
+        .collect()
+}
+
 /// The tessellation tolerance window and crossing tests use for a box.
 pub(crate) fn window_tol(bx: &Bounds2) -> f64 {
     (bx.width() + bx.height()).max(1e-9) / 2000.0
@@ -322,15 +524,37 @@ pub(crate) fn window_tol(bx: &Bounds2) -> f64 {
 /// Whether a window box (`crossing` false: entirely inside) or a crossing box (inside or
 /// touching its geometry, not just its bounding box) selects `e`.
 pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bounds2, crossing: bool, tol: f64) -> bool {
+    in_window_in(d, e, known, bx, crossing, tol, None)
+}
+
+fn in_window_in(
+    d: &Drawing,
+    e: &Entity,
+    known: Option<Bounds2>,
+    bx: &Bounds2,
+    crossing: bool,
+    tol: f64,
+    proj: Option<&PickProjection>,
+) -> bool {
     let infinite = is_infinite(e);
-    let eb = bounds_of(d, e, known);
+    let raw_eb = bounds_of(d, e, known);
+    let eb = match proj {
+        Some(pr) => pr.project_bounds(&raw_eb),
+        None => raw_eb,
+    };
     if !infinite && bx.contains_box(&eb) {
         return true;
     }
-    if !crossing || (!infinite && !eb.intersects(bx)) {
+    if !infinite && !eb.intersects(bx) {
         return false;
     }
-    let polys = hit_polylines(d, e, tol);
+    if !crossing && proj.is_none() {
+        return false;
+    }
+    let polys = projected_hit_polylines(d, e, tol, proj);
+    if !crossing {
+        return !infinite && !polys.is_empty() && polys.iter().flatten().all(|p| bx.contains(*p));
+    }
     let hit = polys.iter().any(|pl| {
         if pl.len() == 1 {
             pl.first().is_some_and(|p| bx.contains(*p))
@@ -339,7 +563,11 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
         }
     });
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    if hit
+        || (eb.contains_box(bx)
+            && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))
+            && bx.corners().iter().all(|c| in_quad_with(&raw_eb, Vec2::ZERO, *c, proj)))
+    {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
@@ -348,11 +576,21 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
     // space around triangular solids).
     if matches!(e.kind, EntityKind::Solid(_) | EntityKind::Trace(_)) && eb.contains_box(bx) {
         return e.kind.prims().iter().any(|prim| match prim {
-            Prim::Fill(poly) => bx.corners().iter().all(|p| cadcraft_geom::point_in_polygon(poly, *p)),
+            Prim::Fill(poly) => bx.corners().iter().all(|p| in_polygon_with(poly, *p, proj)),
             _ => false,
         });
     }
     false
+}
+
+fn polys_hit_fence(polys: &[Vec<Vec2>], fence: &[Vec2]) -> bool {
+    fence.windows(2).any(|f| {
+        let (Some(a), Some(b)) = (f.first(), f.get(1)) else { return false };
+        let fl = Line::new(*a, *b);
+        polys.iter().any(|pl| {
+            pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| cadcraft_geom::line_line(&fl, &Line::new(*p, *q)).is_some()))
+        })
+    })
 }
 
 /// Fence selection: entities crossed by the fence polyline.
@@ -378,25 +616,47 @@ pub(crate) fn select_fence_with(
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
     let Some(cands) = candidates(d, space, ix, &probe, true, false) else { return Vec::new() };
-    let mut out = Vec::new();
-    for (e, known) in cands {
-        // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
-            continue;
-        }
-        let polys = hit_polylines(d, e, tol);
-        let hit = fence.windows(2).any(|f| {
-            let (Some(a), Some(b)) = (f.first(), f.get(1)) else { return false };
-            let fl = Line::new(*a, *b);
-            polys.iter().any(|pl| {
-                pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| cadcraft_geom::line_line(&fl, &Line::new(*p, *q)).is_some()))
-            })
-        });
-        if hit {
-            out.push(e.handle);
-        }
+    cands
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).intersects(&probe)))
+        .filter(|(e, _)| polys_hit_fence(&hit_polylines(d, e, tol), fence))
+        .map(|(e, _)| e.handle)
+        .collect()
+}
+
+/// Fence selection in camera-plane coordinates `uv_fence`.
+pub fn select_fence_projected(d: &Drawing, space: &Space, uv_fence: &[Vec2], proj: &PickProjection) -> Vec<Handle> {
+    select_fence_projected_in(d, space, &[], uv_fence, proj)
+}
+
+/// [`select_fence_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_fence_projected_in(d: &Drawing, space: &Space, frozen: &[String], uv_fence: &[Vec2], proj: &PickProjection) -> Vec<Handle> {
+    if proj.is_plan_axis_aligned() {
+        let shifted: Vec<Vec2> = uv_fence.iter().map(|&p| p + proj.target.xy()).collect();
+        return select_fence_in(d, space, frozen, &shifted);
     }
-    out
+    let fb = Bounds2::from_points(uv_fence.iter().copied());
+    let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
+    let probe = fb.expand(tol);
+    let ix = spatial::index(d, space);
+    let Some(cands) = projected_candidates(d, space, &ix, &probe, proj, true, false) else { return Vec::new() };
+    cands
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || proj.project_bounds(&bounds_of(d, e, *known)).intersects(&probe)))
+        .filter(|(e, _)| polys_hit_fence(&projected_hit_polylines(d, e, tol, Some(proj)), uv_fence))
+        .map(|(e, _)| e.handle)
+        .collect()
+}
+
+fn polys_hit_polygon(polys: &[Vec<Vec2>], poly: &[Vec2], edges: &[Line], crossing: bool) -> bool {
+    let crosses = polys.iter().any(|pl| {
+        pl.windows(2)
+            .any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line(f, &Line::new(*p, *q)).is_some())))
+    });
+    let mut pts = polys.iter().flatten();
+    if crossing {
+        crosses || pts.any(|p| point_in_polygon(poly, *p))
+    } else {
+        !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
+    }
 }
 
 /// Window polygon selection (entities entirely inside `poly`) or crossing polygon selection
@@ -408,11 +668,47 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
 /// [`select_polygon`] through a layout viewport that freezes the layers in `frozen`
 /// ([`select_window_in`]).
 pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[Vec2], crossing: bool) -> Vec<Handle> {
+    select_polygon_with_proj(d, space, frozen, poly, crossing, None)
+}
+
+/// Window polygon or crossing polygon selection in camera-plane coordinates `uv_poly`.
+pub fn select_polygon_projected(d: &Drawing, space: &Space, uv_poly: &[Vec2], crossing: bool, proj: &PickProjection) -> Vec<Handle> {
+    select_polygon_projected_in(d, space, &[], uv_poly, crossing, proj)
+}
+
+/// [`select_polygon_projected`] through a layout viewport that freezes the layers in `frozen`.
+pub fn select_polygon_projected_in(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    uv_poly: &[Vec2],
+    crossing: bool,
+    proj: &PickProjection,
+) -> Vec<Handle> {
+    if proj.is_plan_axis_aligned() {
+        let shifted: Vec<Vec2> = uv_poly.iter().map(|&p| p + proj.target.xy()).collect();
+        return select_polygon_in(d, space, frozen, &shifted, crossing);
+    }
+    select_polygon_with_proj(d, space, frozen, uv_poly, crossing, Some(proj))
+}
+
+fn select_polygon_with_proj(
+    d: &Drawing,
+    space: &Space,
+    frozen: &[String],
+    poly: &[Vec2],
+    crossing: bool,
+    proj: Option<&PickProjection>,
+) -> Vec<Handle> {
     let (Some(first), true) = (poly.first(), poly.len() >= 3) else { return Vec::new() };
     let ix = spatial::index(d, space);
     let pb = Bounds2::from_points(poly.iter().copied());
     let tol = (pb.width() + pb.height()).max(1e-9) / 2000.0;
-    let Some(cands) = candidates(d, space, &ix, &pb, crossing, false) else { return Vec::new() };
+    let cands = match proj {
+        Some(pr) => projected_candidates(d, space, &ix, &pb, pr, crossing, false),
+        None => candidates(d, space, &ix, &pb, crossing, false),
+    };
+    let Some(cands) = cands else { return Vec::new() };
     let edges: Vec<Line> =
         poly.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?))).chain(poly.last().map(|l| Line::new(*l, *first))).collect();
     let mut out = Vec::new();
@@ -421,23 +717,20 @@ pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[
         if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
-        let eb = bounds_of(d, e, known);
-        if !infinite && if crossing { !eb.intersects(&pb) } else { !pb.contains_box(&eb) } {
+        let eb = match proj {
+            Some(pr) => pr.project_bounds(&bounds_of(d, e, known)),
+            None => bounds_of(d, e, known),
+        };
+        let reject = if !infinite {
+            if crossing || proj.is_some() { !eb.intersects(&pb) } else { !pb.contains_box(&eb) }
+        } else {
+            false
+        };
+        if reject {
             continue;
         }
-        let polys = hit_polylines(d, e, tol);
-        let crosses = polys.iter().any(|pl| {
-            pl.windows(2).any(|w| {
-                w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line(f, &Line::new(*p, *q)).is_some()))
-            })
-        });
-        let mut pts = polys.iter().flatten();
-        let hit = if crossing {
-            crosses || pts.any(|p| point_in_polygon(poly, *p))
-        } else {
-            !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
-        };
-        if hit {
+        let polys = projected_hit_polylines(d, e, tol, proj);
+        if polys_hit_polygon(&polys, poly, &edges, crossing) {
             out.push(e.handle);
         }
     }
@@ -485,6 +778,8 @@ pub(crate) const MAX_MODE_POINTS: usize = 10_000;
 pub struct SelectMode {
     pub kind: SelectKind,
     pub pts: Vec<Vec2>,
+    /// Target-plane 3D anchors corresponding 1:1 to `pts`, preserving full screen UV in 3D/edge-on views.
+    pub pts_3d: Vec<Vec3>,
 }
 
 impl SelectMode {
@@ -500,7 +795,7 @@ impl SelectMode {
             "g" | "group" => SelectKind::Group,
             _ => return None,
         };
-        Some(SelectMode { kind, pts: Vec::new() })
+        Some(SelectMode { kind, pts: Vec::new(), pts_3d: Vec::new() })
     }
     fn is_box(&self) -> bool {
         matches!(self.kind, SelectKind::Window | SelectKind::Crossing | SelectKind::Box)
@@ -520,14 +815,43 @@ impl SelectMode {
             Some(p) => Prompt::new(next, Accept::POINT).kw(&["Undo"]).base(p),
         }
     }
-    /// Add a point. Returns whether the mode is complete (the second corner of W/C).
-    pub fn push(&mut self, p: Vec2) -> bool {
+    /// Add a point together with its target-plane 3D anchor. Returns whether the mode is complete.
+    pub fn push_with_anchor(&mut self, p: Vec2, anchor_3d: Vec3) -> bool {
         if p.is_finite() && self.pts.len() < MAX_MODE_POINTS {
             self.pts.push(p);
+            self.pts_3d.push(if anchor_3d.is_finite() { anchor_3d } else { p.to3(0.0) });
         }
         self.is_box() && self.pts.len() >= 2
     }
-    /// The objects the mode selects, or `None` while it has too few points.
+    /// Add a point. Returns whether the mode is complete (the second corner of W/C).
+    pub fn push(&mut self, p: Vec2) -> bool {
+        self.push_with_anchor(p, p.to3(0.0))
+    }
+    /// Remove the last entered point (Undo).
+    pub fn pop(&mut self) {
+        self.pts.pop();
+        self.pts_3d.pop();
+    }
+    /// Current vertices projected into camera UV under `proj`.
+    pub fn uv_points(&self, proj: &PickProjection) -> Vec<Vec2> {
+        if self.pts_3d.len() == self.pts.len() {
+            self.pts_3d.iter().map(|&p| proj.project_3d_point(p)).collect()
+        } else {
+            self.pts.iter().map(|&p| proj.project(p)).collect()
+        }
+    }
+    /// Whether `Box` (or `Crossing`/`CPolygon`) evaluates as crossing in camera UV under `proj`.
+    pub fn is_crossing_projected(&self, proj: &PickProjection) -> bool {
+        match self.kind {
+            SelectKind::Crossing | SelectKind::CPolygon => true,
+            SelectKind::Box => {
+                let uvs = self.uv_points(proj);
+                uvs.first().zip(uvs.get(1)).is_some_and(|(a, b)| b.x < a.x)
+            }
+            _ => false,
+        }
+    }
+    /// The objects the mode selects in unrotated 2D plan view, or `None` while it has too few points.
     pub fn select(&self, d: &Drawing, space: &Space) -> Option<Vec<Handle>> {
         self.select_in(d, space, &[])
     }
@@ -542,6 +866,29 @@ impl SelectMode {
             (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_in(d, space, frozen, pts)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
                 Some(select_polygon_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon))
+            }
+            _ => None,
+        }
+    }
+    /// The objects the mode selects under `proj`, or `None` while it has too few points.
+    pub fn select_projected(&self, d: &Drawing, space: &Space, proj: &PickProjection) -> Option<Vec<Handle>> {
+        self.select_projected_in(d, space, &[], proj)
+    }
+    /// [`SelectMode::select_projected`] through a layout viewport that freezes the layers in `frozen`.
+    pub fn select_projected_in(&self, d: &Drawing, space: &Space, frozen: &[String], proj: &PickProjection) -> Option<Vec<Handle>> {
+        let use_uv = proj.is_plan_axis_aligned() && self.pts_3d.len() != self.pts.len();
+        if use_uv {
+            return self.select_in(d, space, frozen);
+        }
+        let uvs = self.uv_points(proj);
+        match (self.kind, uvs.as_slice()) {
+            (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
+                Some(select_window_projected_in(d, space, frozen, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing, proj))
+            }
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_projected_in(d, space, frozen, Bounds2::new(*a, *b), b.x < a.x, proj)),
+            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_projected_in(d, space, frozen, pts, proj)),
+            (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
+                Some(select_polygon_projected_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon, proj))
             }
             _ => None,
         }
@@ -808,5 +1155,84 @@ mod hatch_pattern_pick_tests {
         // Ignore style fills over the island.
         let d = solid_hatch(loops(), 2);
         assert!(pick(&d, &Space::Model, Vec2::new(5.0, 5.0), 0.05).is_some());
+    }
+
+    #[test]
+    fn projected_pick_works_in_edge_on_front_and_left_views_across_depth() {
+        let mut d = Drawing::new_metric();
+        // Two vertical-depth lines in XY (one at Y=-500, one at Y=+500) plus a circle at (15, 200) r=4.
+        let h_back = d
+            .add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(-5.0, -500.0, 0.0), b: Vec3::new(5.0, -500.0, 0.0) }))
+            .unwrap();
+        let h_front = d
+            .add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(2.0, 500.0, 0.0), b: Vec3::new(8.0, 500.0, 0.0) }))
+            .unwrap();
+        let h_circle = d
+            .add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 200.0, 0.0), radius: 4.0 }))
+            .unwrap();
+
+        let front = PickProjection::from_view(Camera3D::preset("front").unwrap(), Vec2::ZERO, 0.0, 0.0);
+        // At UV = (3.0, 0.0), both h_back and h_front project to Z=0; topmost (h_front) is picked first.
+        assert_eq!(pick_projected(&d, &Space::Model, Vec2::new(3.0, 0.0), 0.5, &front), Some(h_front));
+        assert_eq!(pick_all_projected(&d, &Space::Model, Vec2::new(3.0, 0.0), 0.5, &front), vec![h_front, h_back]);
+        // Outside h_front at UV = (-3.0, 0.0) only h_back hits.
+        assert_eq!(pick_projected(&d, &Space::Model, Vec2::new(-3.0, 0.0), 0.5, &front), Some(h_back));
+        // Circle at X=15, R=4 projects to horizontal span U=[11..19], V=0 in Front view.
+        assert_eq!(pick_projected(&d, &Space::Model, Vec2::new(12.0, 0.0), 0.5, &front), Some(h_circle));
+        // Above V=0 outside aperture misses in Front view.
+        assert_eq!(pick_projected(&d, &Space::Model, Vec2::new(3.0, 2.0), 0.5, &front), None);
+
+        // In Left view (looking along +X, so camera +U is world -Y): h_back (Y=-500) projects to U=+500,
+        // h_front (Y=+500) to U=-500, and h_circle (Y=196..204) to U=-204..-196.
+        let left = PickProjection::from_view(Camera3D::preset("left").unwrap(), Vec2::ZERO, 0.0, 0.0);
+        assert_eq!(pick_projected(&d, &Space::Model, left.project(Vec2::new(5.0, 500.0)), 0.5, &left), Some(h_front));
+        assert_eq!(pick_projected(&d, &Space::Model, left.project(Vec2::new(-2.0, -500.0)), 0.5, &left), Some(h_back));
+        assert_eq!(pick_projected(&d, &Space::Model, left.project(Vec2::new(15.0, 200.0)), 0.5, &left), Some(h_circle));
+    }
+
+    #[test]
+    fn projected_selection_modes_and_windows_match_view_in_edge_on_iso_and_twist() {
+        let mut d = Drawing::new_metric();
+        // Add >260 decoy entities to trigger the R-tree spatial index in rotated/3D views too.
+        for i in 0..270 {
+            let x = 1000.0 + f64::from(i) * 5.0;
+            d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, -10.0, 0.0), b: Vec3::new(x, 10.0, 0.0) }))
+                .unwrap();
+        }
+        // Diagonal line (0,0)-(10,10) becomes vertical at U=0, V=[0, sqrt(200)] under +45deg twist.
+        let diag = d
+            .add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 10.0, 0.0) }))
+            .unwrap();
+        let far_y = d
+            .add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(2.0, 400.0, 0.0), b: Vec3::new(8.0, 400.0, 0.0) }))
+            .unwrap();
+
+        // 1) DVIEW Twist = +45deg: (10, 10) rotates to (0, sqrt(200)) ≈ (0, 14.142).
+        let twist_proj = PickProjection::from_view(Camera3D::TOP, Vec2::ZERO, 0.0, std::f64::consts::FRAC_PI_4);
+        let narrow_uv_win = Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 15.0));
+        assert_eq!(select_window_projected(&d, &Space::Model, narrow_uv_win, false, &twist_proj), vec![diag]);
+
+        // 2) Front edge-on view: window across U=[1..9], V=[-1..1] captures far_y (even with R-tree present on >260 ents),
+        //    and misses diag's U=[0..10] for strict Window while Crossing catches both diag and far_y.
+        let front = PickProjection::from_view(Camera3D::preset("front").unwrap(), Vec2::ZERO, 0.0, 0.0);
+        let uv_box = Bounds2::new(Vec2::new(1.0, -1.0), Vec2::new(9.0, 1.0));
+        assert_eq!(select_window_projected(&d, &Space::Model, uv_box, false, &front), vec![far_y]);
+        assert_eq!(select_window_projected(&d, &Space::Model, uv_box, true, &front), vec![diag, far_y]);
+
+        // 3) WPolygon, CPolygon, and Fence in Front view: a diamond around (U=5, V=0) selects far_y (WP) or both (CP/Fence).
+        let poly_uv = vec![Vec2::new(1.0, -2.0), Vec2::new(9.0, -2.0), Vec2::new(9.0, 2.0), Vec2::new(1.0, 2.0)];
+        assert_eq!(select_polygon_projected(&d, &Space::Model, &poly_uv, false, &front), vec![far_y]);
+        assert_eq!(select_polygon_projected(&d, &Space::Model, &poly_uv, true, &front), vec![diag, far_y]);
+        let fence_uv = vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 2.0)];
+        assert_eq!(select_fence_projected(&d, &Space::Model, &fence_uv, &front), vec![diag, far_y]);
+
+        // 4) SelectMode with target-plane anchors works in Iso view too.
+        let iso = PickProjection::from_view(Camera3D::preset("sw_isometric").unwrap(), Vec2::ZERO, 0.0, 0.0);
+        let mut mode = SelectMode::from_keyword("fence").unwrap();
+        let a = iso.project(Vec2::new(4.0, 6.0));
+        let b = iso.project(Vec2::new(6.0, 4.0));
+        mode.push_with_anchor(Vec2::ZERO, iso.unproject_target_plane(a));
+        mode.push_with_anchor(Vec2::ZERO, iso.unproject_target_plane(b));
+        assert!(mode.select_projected(&d, &Space::Model, &iso).unwrap().contains(&diag));
     }
 }

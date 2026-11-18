@@ -60,7 +60,7 @@ pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf
     for (list, color) in [(&cache.theirs, t.compare_other), (&cache.ours, t.compare_this)] {
         if let Some(l) = list {
             let all: Vec<usize> = (0..l.prims.len()).collect();
-            draw_highlight(p, xf, l, &all, color, super::Look { width: 2.0, dashed: false });
+            draw_highlight(p, xf, l, &all, color, super::Look::plain(2.0, false));
         }
     }
     // The areas holding differences; the one shown last by next/previous stands out.

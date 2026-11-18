@@ -65,6 +65,7 @@ pub use doc_state::{DocState, Snapshot};
 pub use error::{EngineError, Result};
 pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
+pub use session::picking::{PreviewAction, SelectionOverlayUv, SelectionPreview};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
 
@@ -159,6 +160,9 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// Transient camera-plane UV coordinate and projection set by the canvas before dispatching
+    /// a cursor click or drag, so 3D/edge-on picking matches the visual projection.
+    pending_cursor_uv: Option<(Vec2, select::PickProjection)>,
 }
 
 impl Default for Session {
@@ -215,6 +219,7 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             pick_hint: None,
+            pending_cursor_uv: None,
         }
     }
 
@@ -231,9 +236,42 @@ impl Session {
     pub fn doc_mut(&mut self) -> Result<&mut Drawing> {
         Ok(Arc::make_mut(&mut self.state_mut()?.doc))
     }
+    /// Grid state (`GRIDMODE`) for the currently active context: active `MSPACE` layout viewport,
+    /// Paper Space sheet (`paper_gridmode`, off by default), or Model Space (`settings.gridmode`).
+    pub fn effective_gridmode(&self) -> bool {
+        if let Ok(st) = self.state()
+            && !matches!(st.space, Space::Model)
+        {
+            return match st.active_viewport() {
+                Some((_, vp)) => vp.grid,
+                None => self.settings.paper_gridmode,
+            };
+        }
+        self.settings.gridmode
+    }
+    /// Set `GRIDMODE` exclusively for the currently active context without affecting other
+    /// viewports or spaces.
+    pub fn set_effective_gridmode(&mut self, on: bool) {
+        let layout_state = self.state().ok().map(|st| (!matches!(st.space, Space::Model), st.active_viewport().is_some()));
+        match layout_state {
+            Some((true, true)) => {
+                if let Ok(st) = self.state_mut() {
+                    st.set_active_viewport_grid(on);
+                }
+            }
+            Some((true, false)) => {
+                self.settings.paper_gridmode = on;
+            }
+            _ => {
+                self.settings.gridmode = on;
+            }
+        }
+        self.touch();
+    }
     /// Settings for the active drawing, without caching drawing variables in the profile.
     pub fn drafting_settings(&self) -> Settings {
         let mut settings = self.settings.clone();
+        settings.gridmode = self.effective_gridmode();
         if let Ok(d) = self.doc() {
             settings.snapunit = d.header.snap_unit();
             settings.gridunit = d.header.grid_unit();

@@ -279,25 +279,43 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
         "VIEWPORT" => EntityKind::Viewport({
-            // View twist (group 51, degrees).
-            let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
+            // View twist (group 51, degrees) and optional 3D view direction (16/26/36).
+            let raw_twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
+            let has_dir = t.f(16).is_some() || t.f(26).is_some() || t.f(36).is_some();
+            let (camera, twist, is_3d_dcs) = crate::dxf_ext::viewport_camera_from_dxf(has_dir, t.p(16), raw_twist);
+            let target3 = t.p(17);
+            let (view_center, target_z) = if is_3d_dcs {
+                let dcs_c = t.p(12).xy();
+                let world_center = target3 + camera.x * dcs_c.x + camera.y * dcs_c.y;
+                if world_center.is_finite() { (world_center.xy(), world_center.z) } else { (dcs_c, 0.0) }
+            } else {
+                // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+                (t.view_center(12, 17, twist), if target3.z.is_finite() { target3.z } else { 0.0 })
+            };
+            let pos = |code: i32| t.f(code).filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0);
             Viewport {
                 center: t.p(10),
-                width: t.fd(40, 1.0),
-                height: t.fd(41, 1.0),
-                // 12/22 is in display coordinates, whose origin is the view target 17/27/37.
-                view_center: t.view_center(12, 17, twist),
-                view_height: t.fd(45, 1.0),
+                width: pos(40),
+                height: pos(41),
+                view_center,
+                view_height: pos(45),
                 // ZWCAD writes -1 (unknown): 0 here, numbered in order by the reader (#1463).
                 // Group 69 is 16-bit: other out-of-range values are unknown too, never truncated.
                 id: t.i(69).filter(|i| (1..=32767).contains(i)).unwrap_or(0) as u32,
                 locked: t.i(90).unwrap_or(0) & 16384 != 0,
                 frozen_layers: crate::dxf_ext::read_frozen(tags),
                 layer_colors: crate::dxf_ext::read_layer_colors(tags),
-                // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                // Status flags: 512 = grid on, 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                // Also honor group 68 == 0 (DWG / AutoCAD off status) when status bit 0x20000 is absent.
                 clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
-                on: t.i(90).unwrap_or(0) & 131072 == 0,
+                on: (t.i(90).unwrap_or(0) & 131072 == 0) && t.i(68) != Some(0),
                 twist,
+                camera,
+                target_z,
+                grid: t.i(90).unwrap_or(0) & 512 != 0,
+                ucs_per_viewport: t.i(71).map_or(true, |v| v != 0),
+                shade_plot: t.i(170).and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 3).unwrap_or(0),
+                render_mode: t.i(281).and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 6).unwrap_or(0),
             }
         }),
         "WIPEOUT" => {

@@ -56,7 +56,7 @@ fn a_hidden_selection_paints_no_grips_while_an_ordinary_selection_does() {
     // Settle the dock layout, then keep both objects comfortably within the canvas.
     painted_grips(&mut app, &ctx);
     painted_grips(&mut app, &ctx);
-    assert!(app.session.state_mut().unwrap().set_view(View { center: Vec2::new(50.0, 15.0), height: 120.0, twist: 0.0 }));
+    assert!(app.session.state_mut().unwrap().set_view(View::plan(Vec2::new(50.0, 15.0), 120.0, 0.0)));
     app.session.set_selection(vec![regular]);
     painted_grips(&mut app, &ctx);
     let ordinary_grips = painted_grips(&mut app, &ctx);

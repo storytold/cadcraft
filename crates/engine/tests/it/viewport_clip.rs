@@ -241,3 +241,110 @@ fn polygonal_viewport_menu_item_asks_for_points() {
     s.execute("mview.polygonal", &json!({"points": [[120, 10], [200, 10], [160, 80]]})).unwrap();
     assert_eq!(layout_viewports(&s).len(), 2);
 }
+
+#[test]
+fn resizing_viewport_border_keeps_model_camera_and_scale_fixed() {
+    use cadcraft_geom::{Camera3D, Vec3};
+
+    let mut s = session();
+    s.execute("mview", &json!({"p1": [50, 50], "p2": [150, 150]})).unwrap();
+    let (h, _) = layout_viewports(&s).pop().unwrap();
+    let vh = h.hex();
+
+    // Give the viewport a 3D camera + target_z + lock it: border resize must still keep the
+    // model fixed on the sheet (`locked` only blocks MSPACE navigation).
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                v.camera = Camera3D::preset("se_isometric").unwrap();
+                v.target_z = 12.0;
+                v.locked = true;
+            }
+        })
+        .unwrap();
+    let probe = Vec3::new(25.0, 40.0, 9.0);
+    let before = viewport(&s, &vh);
+    let paper_before = before.model_to_paper_3d(probe);
+
+    // Corner grip stretch on grip 0 (bottom-left at [50, 50]) -> [20, 30].
+    s.execute("grip.move", &json!({"handle": vh, "index": 0, "to": [20, 30]})).unwrap();
+    let after_grip = viewport(&s, &vh);
+    assert!((after_grip.width - 130.0).abs() < 1e-9 && (after_grip.height - 120.0).abs() < 1e-9);
+    assert!((after_grip.scale() - before.scale()).abs() < 1e-12);
+    assert!(after_grip.model_to_paper_3d(probe).near(paper_before, 1e-9));
+
+    // Partial STRETCH expanding only the left edge outward (left corners [20, 30] and [20, 150]).
+    s.execute("stretch", &json!({"window": [[15, 25], [30, 155]], "delta": [-15, 0]})).unwrap();
+    let after_partial = viewport(&s, &vh);
+    assert!((after_partial.width - 145.0).abs() < 1e-9);
+    assert!((after_partial.scale() - before.scale()).abs() < 1e-12);
+    assert!(after_partial.model_to_paper_3d(probe).near(paper_before, 1e-9));
+
+    // Partial STRETCH of only 1 corner inward (grip 0 at [5, 30] -> [25, 50]) also shrinks inward.
+    s.execute("stretch", &json!({"window": [[0, 25], [10, 35]], "delta": [20, 20]})).unwrap();
+    let after_inward = viewport(&s, &vh);
+    assert!((after_inward.width - 125.0).abs() < 1e-9 && (after_inward.height - 100.0).abs() < 1e-9);
+    assert!(after_inward.model_to_paper_3d(probe).near(paper_before, 1e-9));
+
+    // Full STRETCH enclosing all 4 corners translates frame and contents rigidly.
+    let paper_before_move = after_inward.model_to_paper_3d(probe);
+    s.execute("stretch", &json!({"window": [[0, 0], [200, 200]], "delta": [40, -10]})).unwrap();
+    let after_full = viewport(&s, &vh);
+    assert!(after_full.model_to_paper_3d(probe).near(paper_before_move + Vec2::new(40.0, -10.0), 1e-9));
+
+    // Option A: SCALE on an unclipped viewport scales both frame and display scale by factor.
+    let scale_before = after_full.scale();
+    s.execute("scale", &json!({"handles": [vh], "base": [after_full.center.x, after_full.center.y], "factor": 2.0})).unwrap();
+    let after_scale = viewport(&s, &vh);
+    assert!((after_scale.scale() - scale_before * 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn clipped_viewport_syncs_with_boundary_and_blocks_direct_grips() {
+    use cadcraft_geom::{Camera3D, Vec3};
+
+    let mut s = session();
+    s.execute("mview", &json!({"p1": [40, 40], "p2": [140, 140]})).unwrap();
+    let (h, _) = layout_viewports(&s).pop().unwrap();
+    let vh = h.hex();
+
+    // Verify VPCLIP on a Front edge-on viewport with target_z != 0 preserves 3D target & scale.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                v.camera = Camera3D::preset("front").unwrap();
+                v.target_z = 25.0;
+            }
+        })
+        .unwrap();
+    let probe = Vec3::new(35.0, 0.0, 22.0);
+    let before = viewport(&s, &vh);
+    let paper_before = before.model_to_paper_3d(probe);
+
+    let clip = s.execute("vpclip", &json!({"handle": vh, "points": [[50, 50], [130, 50], [130, 120], [50, 120]]})).unwrap();
+    let bh = clip["clip"].as_str().unwrap().to_string();
+    let after_clip = viewport(&s, &vh);
+    assert!((after_clip.scale() - before.scale()).abs() < 1e-12);
+    assert!(after_clip.model_to_paper_3d(probe).near(paper_before, 1e-9));
+
+    // Direct grip move on a clipped viewport is rejected (edit the clip boundary instead).
+    let before_direct = viewport(&s, &vh);
+    let _ = s.execute("grip.move", &json!({"handle": vh, "index": 0, "to": [10, 10]}));
+    assert_eq!(viewport(&s, &vh).width, before_direct.width);
+
+    // Grip-stretching a vertex of the clip boundary resizes the viewport while keeping camera fixed.
+    s.execute("grip.move", &json!({"handle": bh, "index": 0, "to": [20, 30]})).unwrap();
+    let after_bd_grip = viewport(&s, &vh);
+    assert!((after_bd_grip.width - 110.0).abs() < 1e-9 && (after_bd_grip.height - 90.0).abs() < 1e-9);
+    assert!((after_bd_grip.scale() - before.scale()).abs() < 1e-12);
+    assert!(after_bd_grip.model_to_paper_3d(probe).near(paper_before, 1e-9));
+
+    // Stretching the clip boundary via STRETCH also updates the linked viewport without moving the model.
+    s.execute("stretch", &json!({"window": [[125, 45], [135, 125]], "delta": [30, 0]})).unwrap();
+    let after_bd_stretch = viewport(&s, &vh);
+    assert!((after_bd_stretch.width - 140.0).abs() < 1e-9);
+    assert!((after_bd_stretch.scale() - before.scale()).abs() < 1e-12);
+    assert!(after_bd_stretch.model_to_paper_3d(probe).near(paper_before, 1e-9));
+}

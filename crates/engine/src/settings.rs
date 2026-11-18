@@ -11,6 +11,11 @@ pub struct Settings {
     /// POLARANG (radians).
     pub polarang: f64,
     pub gridmode: bool,
+    /// Paper-space grid display flag (default `false` so layouts match the plot preview).
+    pub paper_gridmode: bool,
+    /// When `true`, orthogonal elevation/side views (`Front`/`Back`/`Left`/`Right`) switch the grid
+    /// onto `XZ`/`YZ` (MATCAD style). Defaults to `false` (AutoCAD XY ground plane only).
+    pub ortho_plane_grid: bool,
     pub snapmode: bool,
     /// SNAPUNIT in a drafting settings snapshot; stored in the drawing header.
     pub snapunit: Vec2,
@@ -103,6 +108,9 @@ pub struct Settings {
     /// PREVIEWFILTER bits: objects the cursor never highlights: 1 on locked layers, 2 xrefs,
     /// 4 tables, 8 multiline text, 16 hatches, 32 in groups.
     pub previewfilter: u8,
+    /// SELECTIONPREVIEWLIMIT: maximum number of objects highlighted in a window/polygon/fence
+    /// preview (0: no limit).
+    pub selectionpreviewlimit: u32,
     /// GRIPS: selected objects show their grips (0 off; AutoCAD's 2, more grips on polylines,
     /// shows them as 1 does).
     pub grips: u8,
@@ -130,6 +138,13 @@ pub struct Settings {
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
     /// (default: 1).
     pub attreq: bool,
+    /// ORBITAUTOTARGET: automatically picks a 3D orbit pivot instead of fixing the target at the
+    /// viewport centre (default: true).
+    pub orbitautotarget: bool,
+    /// ORBITFREECAM: 1 (default, MATCAD mode) orbits freely around the projected cursor point on
+    /// the camera target plane unless the drag starts on an object; 0 (AutoCAD mode) falls back to
+    /// selection / overall scene extents centre.
+    pub orbit_free_camera: bool,
 }
 
 impl Default for Settings {
@@ -140,6 +155,8 @@ impl Default for Settings {
             polarmode: true,
             polarang: std::f64::consts::FRAC_PI_2,
             gridmode: true,
+            paper_gridmode: false,
+            ortho_plane_grid: false,
             snapmode: false,
             snapunit: Vec2::new(0.5, 0.5),
             osnaphatch: false,
@@ -182,7 +199,8 @@ impl Default for Settings {
             selectioneffect: 1,
             selectionpreview: 3,
             previeweffect: 2,
-            previewfilter: 3,
+            previewfilter: 1,
+            selectionpreviewlimit: 2000,
             grips: 1,
             gripobjlimit: 100,
             selectionarea: true,
@@ -195,6 +213,8 @@ impl Default for Settings {
             polardist: 0.0,
             auditctl: false,
             attreq: true,
+            orbitautotarget: true,
+            orbit_free_camera: true,
         }
     }
 }

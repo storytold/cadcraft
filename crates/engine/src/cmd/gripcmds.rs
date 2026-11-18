@@ -64,6 +64,7 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
         }
     }
     let d = s.doc_mut()?;
+    let mut edited = Vec::with_capacity(edits.len());
     for (o, k) in &mut edits {
         // A dimension's text moved by its grip: with DIMTMOVE 0 the dimension line follows.
         if let cadcraft_doc::EntityKind::Dimension(dm) = k
@@ -74,8 +75,10 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
             st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
         }
         d.modify_entity(*o, |e| e.kind = k.clone())?;
+        edited.push(*o);
     }
-    Ok(json!({ "handle": h.hex(), "handles": edits.iter().map(|(o, _)| o.hex()).collect::<Vec<_>>() }))
+    super::layout::viewports::sync_clipped_viewports(d, &edited)?;
+    Ok(json!({ "handle": h.hex(), "handles": edited.iter().map(|o| o.hex()).collect::<Vec<_>>() }))
 }
 
 /// Base point: `base`, or grip `index` of `baseHandle` (default: the first target).
@@ -146,7 +149,9 @@ fn run_grip_option(s: &mut Session, p: &Value) -> Result<Value> {
     let value = p.get("value").and_then(Value::as_f64);
     let k = grip_action(&e.kind, i, action, point_param(p, "to"), value)
         .ok_or_else(|| bad(cmd, "that option doesn't apply to this grip, or the result would be degenerate"))?;
-    s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;
+    let d = s.doc_mut()?;
+    d.modify_entity(h, |e| e.kind = k)?;
+    super::layout::viewports::sync_clipped_viewports(d, &[h])?;
     Ok(json!({ "handle": h.hex() }))
 }
 
@@ -224,6 +229,9 @@ pub(super) fn stretch_grips(s: &mut Session, hot: &[(Handle, usize)], others: &[
             d.modify_entity(h, |e| e.kind = k)?;
             out.push(h);
         }
+    }
+    if !copy && !out.is_empty() {
+        super::layout::viewports::sync_clipped_viewports(d, &out)?;
     }
     Ok(out)
 }

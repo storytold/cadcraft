@@ -363,8 +363,9 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         let s = app.session.settings.clone();
         let anno_all = app.session.doc().is_ok_and(|d| d.anno_all_visible());
         use cadcraft_engine::snap::mode;
+        let grid_on = app.session.effective_gridmode();
         let toggles: Vec<(Icon, bool, &str, &str)> = vec![
-            (Icon::Grid, s.gridmode, "grid", "Grid (F7)"),
+            (Icon::Grid, grid_on, "grid", "Grid (F7)"),
             (Icon::Snap, s.snapmode, "snap", "Snap Mode (F9)"),
             (Icon::Ortho, s.orthomode, "ortho", "Ortho Mode (F8)"),
             (Icon::Polar, s.polarmode, "polar", "Polar Tracking (F10)"),

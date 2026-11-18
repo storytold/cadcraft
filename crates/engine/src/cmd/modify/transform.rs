@@ -80,6 +80,9 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
             out.push(*h);
         }
     }
+    if !copy && !out.is_empty() {
+        crate::cmd::layout::viewports::sync_clipped_viewports(d, &out)?;
+    }
     Ok(out)
 }
 

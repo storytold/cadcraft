@@ -26,39 +26,45 @@ pub(super) fn wheel_zoom_points(events: &[egui::Event], opts: &egui::InputOption
 }
 
 /// The model space tiles on screen (none without tiling): each tile's rectangle in `full`.
-/// Start TEXTEDIT on the text, mtext, attribute definition or multileader text at `p` (the objects
-/// its shortcut menu offers Edit Text for, and multileaders, #1081); false when there is none.
-pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
+/// Start TEXTEDIT on the text, mtext, attribute definition or multileader text at cursor
+/// `(p, uv)` under `proj` (the objects its shortcut menu offers Edit Text for, and multileaders,
+/// #1081); false when there is none.
+pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2, uv: Vec2, proj: &cadcraft_engine::select::PickProjection) -> bool {
     use cadcraft_engine::doc::EntityKind;
-    let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        app.session.doc().ok()?.entity(h).map(|e| match &e.kind {
-            EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) => true,
-            EntityKind::MLeader(m) => m.text.is_some(),
-            _ => false,
+    let ap = app.session.pixel_size() * app.session.settings.pickbox.max(1.0) * 1.5;
+    let is_text = app.session.doc().ok().and_then(|d| {
+        cadcraft_engine::select::pick_projected(d, &app.session.space(), uv, ap, proj).and_then(|h| {
+            d.entity(h).map(|e| match &e.kind {
+                EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) => true,
+                EntityKind::MLeader(m) => m.text.is_some(),
+                _ => false,
+            })
         })
     });
     if is_text != Some(true) {
         return false;
     }
     app.start("textedit");
+    app.session.set_pending_pick(uv, *proj);
     if let Err(e) = app.session.input(Input::Point(p)) {
         app.session.echo(e.to_string());
     }
     true
 }
 
-/// The hatch under world point `w` within the pick aperture (PICKBOX × 1.5 pixels at `scale`
+/// The hatch under camera UV `uv` within the pick aperture (PICKBOX × 1.5 pixels at `scale`
 /// pixels per unit), if any.
-pub(super) fn hatch_at(app: &CadApp, w: Vec2, scale: f64) -> Option<Handle> {
+pub(super) fn hatch_at(app: &CadApp, uv: Vec2, proj: &cadcraft_engine::select::PickProjection, scale: f64) -> Option<Handle> {
     let st = app.session.state().ok()?;
     let aperture = app.session.settings.pickbox.max(1.0) * 1.5 / scale.max(1e-12);
-    let h = cadcraft_engine::select::pick_in(&st.doc, &st.edit_space(), st.viewport_frozen(), w, aperture)?;
+    let h = cadcraft_engine::select::pick_projected_in(&st.doc, &st.edit_space(), st.viewport_frozen(), uv, aperture, proj)?;
     matches!(st.doc.entity(h)?.kind, cadcraft_doc::EntityKind::Hatch(_)).then_some(h)
 }
 
 #[cfg(test)]
 mod hatch_pick_tests {
     use cadcraft_engine::Session;
+    use cadcraft_engine::select::PickProjection;
     use cadcraft_geom::Vec2;
     use serde_json::json;
 
@@ -70,9 +76,10 @@ mod hatch_pick_tests {
         app.session.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
         let hx = app.session.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "SOLID" })).unwrap()["handle"].as_str().unwrap().to_string();
         app.session.execute("line", &json!({ "points": [[20, 0], [30, 0]] })).unwrap();
-        assert_eq!(super::hatch_at(&app, Vec2::new(5.0, 5.0), 10.0).map(|h| h.hex()), Some(hx));
-        assert_eq!(super::hatch_at(&app, Vec2::new(25.0, 0.0), 10.0), None, "a line is not a hatch");
-        assert_eq!(super::hatch_at(&app, Vec2::new(60.0, 60.0), 10.0), None);
+        let top = PickProjection::top();
+        assert_eq!(super::hatch_at(&app, Vec2::new(5.0, 5.0), &top, 10.0).map(|h| h.hex()), Some(hx));
+        assert_eq!(super::hatch_at(&app, Vec2::new(25.0, 0.0), &top, 10.0), None, "a line is not a hatch");
+        assert_eq!(super::hatch_at(&app, Vec2::new(60.0, 60.0), &top, 10.0), None);
     }
 
     #[test]

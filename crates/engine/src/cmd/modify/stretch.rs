@@ -76,12 +76,50 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
             }
             dm.block = None;
         }
+        EntityKind::Viewport(v) => stretch_viewport(v, &inside, d),
         k => {
             let g = k.grips();
             if g.first().is_some_and(|p| inside(*p)) {
                 k.transform(&Mat3::translate(d));
             }
         }
+    }
+}
+
+/// Stretch a layout viewport by its 4 corners `[BL, BR, TR, TL]`:
+/// - All 4 inside: move frame and content rigidly together.
+/// - Edge pair (2 adjacent) or 1/3 corners inside (when unclipped): resize edges and compensate the
+///   model camera so displayed geometry stays pinned at the same paper position and scale.
+fn stretch_viewport(v: &mut cadcraft_doc::Viewport, inside: &dyn Fn(Vec2) -> bool, d: Vec2) {
+    let half = Vec2::new(v.width / 2.0, v.height / 2.0);
+    let min = v.center.xy() - half;
+    let max = v.center.xy() + half;
+    let corners = cadcraft_geom::Bounds2::new(min, max).corners();
+    let m = corners.map(inside);
+    let count = m.iter().filter(|b| **b).count();
+    if count == 0 {
+        return;
+    }
+    if count == 4 {
+        v.center.x += d.x;
+        v.center.y += d.y;
+        return;
+    }
+    if v.clip.is_some() {
+        return;
+    }
+    let left_moved = (m[0] && m[3]) || (count == 1 && (m[0] || m[3]));
+    let right_moved = (m[1] && m[2]) || (count == 1 && (m[1] || m[2]));
+    let bottom_moved = (m[0] && m[1]) || (count == 1 && (m[0] || m[1]));
+    let top_moved = (m[2] && m[3]) || (count == 1 && (m[2] || m[3]));
+    let left = min.x + if left_moved { d.x } else { 0.0 };
+    let right = max.x + if right_moved { d.x } else { 0.0 };
+    let bottom = min.y + if bottom_moved { d.y } else { 0.0 };
+    let top = max.y + if top_moved { d.y } else { 0.0 };
+    let new_w = (right - left).abs();
+    let new_h = (top - bottom).abs();
+    if new_w > 1e-6 && new_h > 1e-6 {
+        v.resize_border_keeping_camera(Vec2::new(0.5 * (left + right), 0.5 * (bottom + top)), new_w, new_h);
     }
 }
 
@@ -116,6 +154,7 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     for h in &hs {
         doc.modify_entity(*h, |e| stretch_entity(e, &areas, d))?;
     }
+    crate::cmd::layout::viewports::sync_clipped_viewports(doc, &hs)?;
     Ok(json!({ "stretched": hs.len() }))
 }
 
@@ -143,8 +182,8 @@ pub(super) struct StretchM {
     removing: bool,
     /// `C`, `W`, `BOX`, `CP`, `WP` or `F` was typed: the next points are that kind of selection.
     mode: Option<SelectMode>,
-    /// First corner of the window being drawn.
-    corner: Option<Vec2>,
+    /// First corner of the window being drawn, paired with its target-plane 3D anchor.
+    corner: Option<(Vec2, cadcraft_geom::Vec3)>,
     base: Option<Vec2>,
 }
 
@@ -176,12 +215,9 @@ impl StretchM {
     /// of two) the mode is dropped.
     fn finish_mode(&mut self, s: &mut Session, m: SelectMode) -> Result<()> {
         let space = s.space();
-        let Some(mut hs) = m.select_in(s.doc()?, &space, s.viewport_frozen()) else { return Ok(()) };
-        let crossing = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
-            (SelectKind::Crossing | SelectKind::CPolygon, _) => true,
-            (SelectKind::Box, Some((a, b))) => b.x < a.x,
-            _ => false,
-        };
+        let proj = s.pick_projection();
+        let Some(mut hs) = m.select_projected_in(s.doc()?, &space, s.viewport_frozen(), &proj) else { return Ok(()) };
+        let crossing = m.is_crossing_projected(&proj);
         let area = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
             (SelectKind::WPolygon | SelectKind::CPolygon, _) => Some(StretchArea::Polygon(m.pts)),
             (SelectKind::Window | SelectKind::Crossing | SelectKind::Box, Some((a, b))) => {
@@ -205,7 +241,8 @@ impl StretchM {
         if let Some(mut m) = self.mode.take() {
             match &i {
                 Input::Point(p) => {
-                    if m.push(*p) {
+                    let anchor = s.take_pick_anchor(*p);
+                    if m.push_with_anchor(*p, anchor) {
                         self.finish_mode(s, m)?;
                     } else {
                         self.mode = Some(m);
@@ -213,7 +250,7 @@ impl StretchM {
                     return Ok(Step::Continue);
                 }
                 Input::Text(t) | Input::Keyword(t) if matches!(t.trim().to_ascii_lowercase().as_str(), "u" | "undo") => {
-                    m.pts.pop();
+                    m.pop();
                     self.mode = Some(m);
                     return Ok(Step::Continue);
                 }
@@ -228,12 +265,23 @@ impl StretchM {
         }
         match i {
             Input::Point(p) => match self.corner.take() {
-                Some(c) => {
+                Some((c, c3d)) => {
+                    let proj = s.pick_projection();
+                    let a_uv = proj.project_3d_point(c3d);
+                    let b_uv = s.take_pick_uv(p);
+                    let crossing = s.window_is_crossing_uv(a_uv, b_uv);
                     let bx = cadcraft_geom::Bounds2::new(c, p);
                     let space = s.space();
-                    let mut hs = crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), bx, p.x < c.x);
+                    let mut hs = crate::select::select_window_projected_in(
+                        s.doc()?,
+                        &space,
+                        s.viewport_frozen(),
+                        cadcraft_geom::Bounds2::new(a_uv, b_uv),
+                        crossing,
+                        &proj,
+                    );
                     if !self.removing {
-                        if p.x < c.x {
+                        if crossing {
                             add_mline_vertex_hits(s, &StretchArea::Box(bx), &mut hs);
                         }
                         self.windows.push(StretchArea::Box(bx));
@@ -243,9 +291,11 @@ impl StretchM {
                 None => {
                     let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
-                    match crate::select::pick_in(s.doc()?, &space, s.viewport_frozen(), p, aperture) {
+                    let proj = s.pick_projection();
+                    let uv = s.take_pick_uv(p);
+                    match crate::select::pick_projected_in(s.doc()?, &space, s.viewport_frozen(), uv, aperture, &proj) {
                         Some(h) => self.add(s, vec![h], true),
-                        None => self.corner = Some(p),
+                        None => self.corner = Some((p, proj.unproject_target_plane(uv))),
                     }
                 }
             },
@@ -309,6 +359,7 @@ impl StretchM {
                 doc.modify_entity(*h, |e| stretch_entity(e, &self.windows, d))?;
             }
         }
+        crate::cmd::layout::viewports::sync_clipped_viewports(doc, &self.objs)?;
         s.set_selection(Vec::new());
         Ok(Step::Done)
     }
@@ -328,7 +379,7 @@ impl Interactive for StretchM {
             return m.prompt();
         }
         match (self.phase, self.corner) {
-            (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
+            (StretchPhase::Select, Some((c, _))) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
             (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
@@ -358,27 +409,35 @@ impl Interactive for StretchM {
             _ => Ok(Step::Continue),
         }
     }
-    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        let rect = |a: Vec2| {
-            let (b, d) = (Vec2::new(c.x, a.y), Vec2::new(a.x, c.y));
-            vec![line(a, b), line(b, c), line(c, d), line(d, a)]
-        };
-        if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
-            let Some(first) = m.pts.first().copied() else { return Vec::new() };
-            if !matches!(m.kind, SelectKind::Fence | SelectKind::WPolygon | SelectKind::CPolygon) {
-                return rect(first);
-            }
-            // The fence or polygon so far, on to the cursor; a polygon closes back to its start.
-            let mut out: Vec<EntityKind> = m.pts.windows(2).filter_map(|w| Some(line(*w.first()?, *w.get(1)?))).collect();
-            out.extend(m.pts.last().map(|l| line(*l, c)));
-            if m.kind != SelectKind::Fence && m.pts.len() >= 2 {
-                out.push(line(c, first));
-            }
-            return out;
+    fn is_selecting_objects(&self) -> bool {
+        self.phase == StretchPhase::Select
+    }
+    fn is_removing_selection(&self) -> bool {
+        self.phase == StretchPhase::Select && self.removing
+    }
+    fn custom_selection_overlay_uv(
+        &self,
+        s: &Session,
+        cursor_uv: Vec2,
+        proj: &crate::select::PickProjection,
+    ) -> Option<crate::SelectionOverlayUv> {
+        if self.phase != StretchPhase::Select {
+            return None;
         }
-        match (self.phase, self.corner, self.base) {
-            (StretchPhase::Select, Some(a), _) => rect(a),
-            (StretchPhase::Second, _, Some(base)) => {
+        if let Some(m) = &self.mode {
+            return s.mode_overlay_uv(m, cursor_uv, proj);
+        }
+        let (_, c3d) = self.corner?;
+        let a_uv = proj.project_3d_point(c3d);
+        Some(crate::SelectionOverlayUv::Box {
+            a_uv,
+            b_uv: cursor_uv,
+            crossing: s.window_is_crossing_uv(a_uv, cursor_uv),
+        })
+    }
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        match (self.phase, self.base) {
+            (StretchPhase::Second, Some(base)) => {
                 let Ok(doc) = s.doc() else { return Vec::new() };
                 let m = Mat3::translate(c - base);
                 let mut out: Vec<EntityKind> = self

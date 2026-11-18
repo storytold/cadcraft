@@ -24,7 +24,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(always)
             .noundo()
             .transparent(),
-        CommandSpec::new("grid", "Grid Display", |s, p| toggle(s, p, |st| &mut st.gridmode, "Grid"))
+        CommandSpec::new("grid", "Grid Display", |s, p| {
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!s.effective_gridmode());
+            s.set_effective_gridmode(on);
+            Ok(json!({ "on": on, "message": format!("<Grid {}>", if on { "on" } else { "off" }) }))
+        })
             .key("F7")
             .params("{on?: bool}")
             .enabled(always)

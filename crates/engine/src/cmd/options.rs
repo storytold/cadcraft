@@ -35,6 +35,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "QPMODE",
     "SELECTIONEFFECT",
     "SELECTIONPREVIEW",
+    "SELECTIONPREVIEWLIMIT",
     "PREVIEWEFFECT",
     "PREVIEWFILTER",
     "GRIPS",
@@ -53,6 +54,8 @@ pub const PROFILE_VARS: &[&str] = &[
     "PICKDRAG",
     "MAXARRAY",
     "MEASUREINIT",
+    "ORBITAUTOTARGET",
+    "ORBITFREECAM",
 ];
 
 /// The most profile entries [`restore`] reads (a saved profile is untrusted input).
@@ -130,6 +133,8 @@ pub fn reset(s: &mut Session) {
     st.orthomode = d.orthomode;
     st.snapmode = d.snapmode;
     st.gridmode = d.gridmode;
+    st.paper_gridmode = d.paper_gridmode;
+    st.ortho_plane_grid = d.ortho_plane_grid;
     st.gridmajor = d.gridmajor;
     st.dynmode = d.dynmode;
     st.dynpi_cartesian = d.dynpi_cartesian;
@@ -137,6 +142,7 @@ pub fn reset(s: &mut Session) {
     st.osnaphatch = d.osnaphatch;
     st.lwdisplay = d.lwdisplay;
     st.qpmode = d.qpmode;
+    st.selectionpreviewlimit = d.selectionpreviewlimit;
     st.pickbox = d.pickbox;
     st.aperture = d.aperture;
     st.gripsize = d.gripsize;
@@ -145,6 +151,8 @@ pub fn reset(s: &mut Session) {
     st.pickadd = d.pickadd;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
+    st.orbitautotarget = d.orbitautotarget;
+    st.orbit_free_camera = d.orbit_free_camera;
 }
 
 fn run_options(s: &mut Session, p: &Value) -> Result<Value> {

@@ -104,7 +104,7 @@ fn rect(t: &VportTile) -> Rect {
 }
 
 fn view_of(t: &VportTile) -> View {
-    View { center: t.center, height: t.height, twist: if t.twist.is_finite() { t.twist } else { 0.0 } }
+    View::plan(t.center, t.height, if t.twist.is_finite() { t.twist } else { 0.0 })
 }
 
 fn active_config(d: &Drawing) -> Option<&VportConfig> {
@@ -117,7 +117,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, twist: now.twist }], 0);
+        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, twist: now.twist, ..VportTile::default() }], 0);
     };
     let mut tiles = cfg.tiles.clone();
     let synced =

@@ -91,11 +91,49 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
     read_source(bytes, name.as_ref()).map(|(d, _)| d)
 }
 
+/// `acadrust::DxfWriter` (inside `craft_dwg::decode`) omits DXF group `71` on `VIEWPORT` entities
+/// when `ucs_per_viewport` is `false` while always emitting `71 = 1` when `true`, which otherwise
+/// makes the DXF reader fall back to AutoCAD's default (`true`). Emit `71 = 0` so per-viewport UCS
+/// off survives DWG decoding.
+fn viewport_ucs_off(dxf: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(dxf.len() + 64);
+    let mut lines = dxf.split_inclusive(|b| *b == b'\n');
+    let (mut in_vp, mut has_71, mut injected) = (false, false, false);
+    while let Some(code) = lines.next() {
+        let value = lines.next().unwrap_or_default();
+        let c = code.trim_ascii();
+        let v = value.trim_ascii();
+        match c {
+            b"0" => {
+                if in_vp && !has_71 && !injected {
+                    out.extend_from_slice(b" 71\r\n     0\r\n");
+                }
+                in_vp = v == b"VIEWPORT";
+                has_71 = false;
+                injected = false;
+            }
+            b"71" if in_vp => has_71 = true,
+            b"1001" if in_vp && !has_71 && !injected => {
+                out.extend_from_slice(b" 71\r\n     0\r\n");
+                injected = true;
+            }
+            _ => {}
+        }
+        out.extend_from_slice(code);
+        out.extend_from_slice(value);
+    }
+    if in_vp && !has_71 && !injected {
+        out.extend_from_slice(b" 71\r\n     0\r\n");
+    }
+    out
+}
+
 /// [`read`], also returning the DXF rendition a DWG was read through (`None` for other files),
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if craft_dwg::is_dwg(bytes) {
         let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
+        let dxf = viewport_ucs_off(dxf);
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));

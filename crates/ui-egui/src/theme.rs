@@ -80,6 +80,7 @@ pub struct Tokens {
     pub grid_major: Color32,
     pub axis_x: Color32,
     pub axis_y: Color32,
+    pub axis_z: Color32,
     pub text: Color32,
     pub text_dim: Color32,
     pub text_faint: Color32,
@@ -140,6 +141,7 @@ impl Tokens {
         grid_major: Color32::from_rgb(0x31, 0x39, 0x45),
         axis_x: Color32::from_rgb(0x56, 0x28, 0x29),
         axis_y: Color32::from_rgb(0x28, 0x4a, 0x2e),
+        axis_z: Color32::from_rgb(0x28, 0x3c, 0x5c),
         text: Color32::from_rgb(0xd7, 0xdb, 0xe0),
         text_dim: Color32::from_rgb(0xa3, 0xaa, 0xb4),
         text_faint: Color32::from_rgb(0x87, 0x8d, 0x96),
@@ -229,6 +231,7 @@ impl Tokens {
             grid_major: mix(bg, ink, 0.11),
             axis_x: mix(bg, Color32::from_rgb(0xd0, 0x30, 0x30), 0.3),
             axis_y: mix(bg, Color32::from_rgb(0x30, 0xb0, 0x40), 0.3),
+            axis_z: mix(bg, Color32::from_rgb(0x30, 0x60, 0xd0), 0.3),
             canvas_ink: if light { Color32::from_rgb(0x47, 0x50, 0x5c) } else { Tokens::DARK.canvas_ink },
             crosshair: crosshair_color(bg),
             ..self

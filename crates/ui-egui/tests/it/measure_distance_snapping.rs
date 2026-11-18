@@ -31,6 +31,7 @@ fn harness(paper: bool, render: bool) -> Harness<'static, CadApp> {
             clip: None,
             on: true,
             twist: 0.0,
+            ..Viewport::default()
         }),
     )
     .unwrap();

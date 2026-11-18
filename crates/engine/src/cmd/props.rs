@@ -137,6 +137,13 @@ pub(super) fn entity_props(d: &cadcraft_doc::Drawing, e: &cadcraft_doc::Entity) 
                     o.insert("area".into(), json!(pl.area().abs()));
                 }
             }
+            EntityKind::Viewport(vp) => {
+                o.insert("customScale".into(), json!(vp.scale()));
+                o.insert("clipped".into(), json!(vp.clip.is_some()));
+                o.insert("layerOverrides".into(), json!(vp.has_layer_overrides()));
+                o.insert("visualStyle".into(), json!(vp.render_mode_name()));
+                o.insert("shadePlotName".into(), json!(vp.shade_plot_name()));
+            }
             _ => {}
         }
     }
@@ -293,19 +300,66 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         // Every object was left out: the drawing stays as it was, with no undo step.
         return Ok(left_out.result(0));
     }
+    let fit_model = if p.get("scaleToFit").and_then(Value::as_bool) == Some(true) {
+        Some(model_fit_bounds(d))
+    } else {
+        None
+    };
     let d = s.doc_mut()?;
     if let Some(l) = str_param(p, "layer") {
         d.ensure_layer(l);
     }
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
+    let mut clip_shifts: Vec<(Handle, cadcraft_geom::Vec2)> = Vec::new();
     for h in &hs {
+        let old_center_clip = d.entity(*h).and_then(|e| match &e.kind {
+            EntityKind::Viewport(vp) => vp.clip.filter(|ch| *ch != *h).map(|ch| (ch, vp.center.xy())),
+            _ => None,
+        });
+        let mut new_vp_center = None;
         d.modify_entity(*h, |e| {
             set_common_properties(e, p, &common);
-            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
+            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over, fit_model);
+            if let EntityKind::Viewport(vp) = &e.kind {
+                new_vp_center = Some(vp.center.xy());
+            }
         })?;
+        if let (Some((clip_h, old_c)), Some(new_c)) = (old_center_clip, new_vp_center) {
+            let delta = new_c - old_c;
+            if delta.is_finite() && (delta.x != 0.0 || delta.y != 0.0) && !hs.contains(&clip_h) {
+                clip_shifts.push((clip_h, delta));
+            }
+        }
+    }
+    for (clip_h, delta) in clip_shifts {
+        if d.entity(clip_h).is_some() {
+            let xf = cadcraft_geom::Mat3::translate(delta);
+            d.modify_entity(clip_h, |ce| ce.kind.transform(&xf))?;
+        }
     }
     Ok(left_out.result(hs.len()))
+}
+
+pub(super) fn model_fit_bounds(d: &cadcraft_doc::Drawing) -> (cadcraft_geom::Bounds2, (f64, f64)) {
+    let ext = d.extents(&cadcraft_doc::Space::Model);
+    if ext.is_empty() {
+        let lo = d.header.point("LIMMIN").map(|q| q.xy()).unwrap_or(cadcraft_geom::Vec2::ZERO);
+        let hi = d.header.point("LIMMAX").map(|q| q.xy()).unwrap_or(cadcraft_geom::Vec2::new(12.0, 9.0));
+        return (cadcraft_geom::Bounds2::new(lo, hi), (0.0, 0.0));
+    }
+    (ext, crate::session::space_z_range(d, &cadcraft_doc::Space::Model))
+}
+
+pub(super) fn fit_viewport_to_model(vp: &mut cadcraft_doc::Viewport, ext: cadcraft_geom::Bounds2, z_range: (f64, f64)) {
+    let (target, bw, bh) = crate::View::projected_box_3d(ext, z_range, vp.camera, vp.view_twist());
+    let aspect = (vp.width / vp.height.max(1e-12)).max(1e-12);
+    let vh = (bh.max(bw / aspect) * 1.02).max(1e-9);
+    if target.is_finite() && vh.is_finite() {
+        vp.view_center = target.xy();
+        vp.target_z = target.z;
+        vp.view_height = vh;
+    }
 }
 
 fn apply_kind_properties(
@@ -313,6 +367,7 @@ fn apply_kind_properties(
     params: &Value,
     dim_style: Option<&String>,
     dim_overrides: &serde_json::Map<String, Value>,
+    fit_model: Option<(cadcraft_geom::Bounds2, (f64, f64))>,
 ) {
     let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
     match &mut entity.kind {
@@ -424,7 +479,82 @@ fn apply_kind_properties(
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
         EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
+        EntityKind::Viewport(viewport) => set_viewport_properties(viewport, params, fit_model),
         _ => {}
+    }
+}
+
+fn parse_shade_plot_param(params: &Value) -> Option<u8> {
+    match params.get("shadePlot")? {
+        Value::Number(n) => n.as_u64().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 3),
+        Value::String(s) => cadcraft_doc::Viewport::parse_shade_plot(s),
+        _ => None,
+    }
+}
+
+fn set_viewport_properties(
+    vp: &mut cadcraft_doc::Viewport,
+    params: &Value,
+    fit_model: Option<(cadcraft_geom::Bounds2, (f64, f64))>,
+) {
+    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|v| v.is_finite());
+    if let Some(c) = params.get("center") {
+        set_xy(&mut vp.center, c);
+        if let Some(a) = c.as_array()
+            && let Some(z) = a.get(2).and_then(Value::as_f64).filter(|v| v.is_finite())
+        {
+            vp.center.z = z;
+        }
+    }
+    if let Some(x) = number("centerX") {
+        vp.center.x = x;
+    }
+    if let Some(y) = number("centerY") {
+        vp.center.y = y;
+    }
+    if let Some(z) = number("centerZ") {
+        vp.center.z = z;
+    }
+    if let Some(on) = params.get("on").and_then(Value::as_bool) {
+        vp.on = on;
+    }
+    if let Some(locked) = params.get("locked").and_then(Value::as_bool) {
+        vp.locked = locked;
+    }
+    if let Some(ucs) = params.get("ucsPerViewport").and_then(Value::as_bool) {
+        vp.ucs_per_viewport = ucs;
+    }
+    if let Some(sp) = parse_shade_plot_param(params) {
+        vp.shade_plot = sp;
+    }
+    if vp.clip.is_none() {
+        if let Some(w) = number("width").filter(|x| *x > 0.0) {
+            vp.width = w;
+        }
+        if let Some(h) = number("height").filter(|x| *x > 0.0) {
+            // Variant A (AutoCAD OPM): unlocked viewports keep `view_height` constant (Scale changes);
+            // locked viewports preserve their display scale proportionally.
+            if vp.locked && vp.height > 0.0 && vp.view_height > 0.0 {
+                let next_vh = vp.view_height * (h / vp.height);
+                if next_vh.is_finite() && next_vh > 0.0 {
+                    vp.view_height = next_vh;
+                }
+            }
+            vp.height = h;
+        }
+    }
+    if !vp.locked {
+        if params.get("scaleToFit").and_then(Value::as_bool) == Some(true)
+            && let Some((ext, z_range)) = fit_model
+        {
+            fit_viewport_to_model(vp, ext, z_range);
+        }
+        if let Some(cs) = number("customScale").filter(|x| *x > 0.0) {
+            let vh = vp.height / cs;
+            if vh.is_finite() && vh > 0.0 {
+                vp.view_height = vh;
+            }
+        }
     }
 }
 
@@ -1378,5 +1508,100 @@ mod tests {
             s.execute("properties.set", &json!({ "handles": [h], "linetype": ok })).unwrap();
             assert_eq!(lt(&s), ok);
         }
+    }
+
+    #[test]
+    fn viewport_properties_set_variant_a_clip_sync_lock_and_matchprop() {
+        let mut s = Session::new();
+        s.execute("line", &json!({ "points": [[0, 0], [100, 50]] })).unwrap();
+        s.execute("layout.new", &json!({ "name": "L1", "viewport": false })).unwrap();
+        let mv = s.execute("mview", &json!({ "layout": "L1", "p1": [10, 10], "p2": [110, 60] })).unwrap();
+        let vh = mv["viewports"][0].as_str().unwrap().to_string();
+        let h = Handle::parse_hex(&vh).unwrap();
+        let get_vp = |s: &Session| match &s.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::Viewport(v) => v.clone(),
+            _ => panic!("not viewport"),
+        };
+
+        // Set known customScale = 0.5 -> view_height = 50 / 0.5 = 100.
+        s.execute("properties.set", &json!({ "handles": [vh.clone()], "customScale": 0.5 })).unwrap();
+        let before = get_vp(&s);
+        assert!((before.height - 50.0).abs() < 1e-9);
+        assert!((before.view_height - 100.0).abs() < 1e-9);
+
+        // Variant A: editing height on an unlocked rectangular viewport keeps view_height constant, updating scale.
+        s.execute("properties.set", &json!({ "handles": [vh.clone()], "height": 80.0, "width": 120.0 })).unwrap();
+        let after_h = get_vp(&s);
+        assert!((after_h.width - 120.0).abs() < 1e-9);
+        assert!((after_h.height - 80.0).abs() < 1e-9);
+        assert!((after_h.view_height - 100.0).abs() < 1e-9, "Variant A keeps view_height unchanged");
+        assert!((after_h.scale() - 0.8).abs() < 1e-9);
+
+        // Locking blocks customScale and scaleToFit, while height preserves the locked scale.
+        s.execute(
+            "properties.set",
+            &json!({ "handles": [vh.clone()], "locked": true, "on": false, "ucsPerViewport": false, "shadePlot": 3 }),
+        )
+        .unwrap();
+        let locked_vp = get_vp(&s);
+        assert!(locked_vp.locked && !locked_vp.on && !locked_vp.ucs_per_viewport && locked_vp.shade_plot == 3);
+        s.execute("properties.set", &json!({ "handles": [vh.clone()], "customScale": 2.0, "scaleToFit": true })).unwrap();
+        assert!((get_vp(&s).scale() - 0.8).abs() < 1e-9, "locked viewport ignores customScale/scaleToFit");
+        s.execute("properties.set", &json!({ "handles": [vh.clone()], "height": 40.0 })).unwrap();
+        assert!((get_vp(&s).scale() - 0.8).abs() < 1e-9, "locked viewport preserves scale when height changes");
+
+        // Second clipped viewport: Center X/Y moves both viewport and clip boundary; width/height stay protected.
+        let mv2 = s.execute("mview", &json!({ "layout": "L1", "p1": [130, 10], "p2": [170, 50] })).unwrap();
+        let vh2 = mv2["viewports"][0].as_str().unwrap().to_string();
+        let h2 = Handle::parse_hex(&vh2).unwrap();
+        s.execute(
+            "vpclip",
+            &json!({ "layout": "L1", "handle": vh2.clone(), "points": [[130, 10], [170, 10], [170, 50], [130, 50]] }),
+        )
+        .unwrap();
+        let clip_h = match &s.doc().unwrap().entity(h2).unwrap().kind {
+            EntityKind::Viewport(v) => v.clip.unwrap(),
+            _ => panic!(),
+        };
+        let old_bounds = cadcraft_doc::entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(clip_h).unwrap(), 0);
+        s.execute(
+            "properties.set",
+            &json!({ "handles": [vh2.clone()], "centerX": 170.0, "centerY": 40.0, "width": 999.0, "height": 999.0 }),
+        )
+        .unwrap();
+        let moved_vp = match &s.doc().unwrap().entity(h2).unwrap().kind {
+            EntityKind::Viewport(v) => v.clone(),
+            _ => panic!(),
+        };
+        let new_bounds = cadcraft_doc::entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(clip_h).unwrap(), 0);
+        assert!((moved_vp.center.x - 170.0).abs() < 1e-9 && (moved_vp.center.y - 40.0).abs() < 1e-9);
+        assert!((moved_vp.width - 40.0).abs() < 1e-9 && (moved_vp.height - 40.0).abs() < 1e-9, "clipped vp ignores width/height");
+        assert!((new_bounds.center().x - old_bounds.center().x - 20.0).abs() < 1e-9);
+        assert!((new_bounds.center().y - old_bounds.center().y - 10.0).abs() < 1e-9);
+        // Undo restores both the viewport center and the clip boundary position.
+        s.execute("undo", &json!({})).unwrap();
+        let undone_bounds = cadcraft_doc::entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(clip_h).unwrap(), 0);
+        assert!((undone_bounds.center().x - old_bounds.center().x).abs() < 1e-9);
+        assert!((undone_bounds.center().y - old_bounds.center().y).abs() < 1e-9);
+
+        // MATCHPROP copies locked, ucs_per_viewport, shade_plot, and scale.
+        s.execute("matchprop", &json!({ "source": vh, "targets": [vh2.clone()] })).unwrap();
+        let matched = match &s.doc().unwrap().entity(h2).unwrap().kind {
+            EntityKind::Viewport(v) => v.clone(),
+            _ => panic!(),
+        };
+        assert!(matched.locked);
+        assert!(!matched.ucs_per_viewport);
+        assert_eq!(matched.shade_plot, 3);
+        assert!((matched.scale() - 0.8).abs() < 1e-9);
+
+        // viewport.set supports scaleToFit and refuses when locked.
+        assert!(s.execute("viewport.set", &json!({ "handle": vh2, "scaleToFit": true })).is_err());
+        s.execute("viewport.set", &json!({ "handle": vh2, "locked": false, "scaleToFit": true })).unwrap();
+        let fitted = match &s.doc().unwrap().entity(h2).unwrap().kind {
+            EntityKind::Viewport(v) => v.clone(),
+            _ => panic!(),
+        };
+        assert!(fitted.view_height > 0.0 && (fitted.scale() - 0.8).abs() > 1e-3);
     }
 }

@@ -43,7 +43,7 @@ fn sheet() -> Sheet {
     let (a, b) = (viewport(0), viewport(1));
     app.run("vplayer", json!({ "handles": [a], "freeze": ["Hidden"] })).unwrap();
     // Show the part of the sheet that holds both viewports, with room around them.
-    assert!(app.session.state_mut().unwrap().set_view(View { center: Vec2::new(120.0, 70.0), height: 300.0, twist: 0.0 }));
+    assert!(app.session.state_mut().unwrap().set_view(View { center: Vec2::new(120.0, 70.0), height: 300.0, ..View::default() }));
     app.session.set_selection(Vec::new());
     Sheet { app, shown, hidden, a, b }
 }

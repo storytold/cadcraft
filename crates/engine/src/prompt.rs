@@ -319,6 +319,20 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// Whether the command is actively selecting objects right now (even when a sub-prompt like
+    /// `STRETCH`'s opposite corner or remove prompt temporarily sets `Accept::POINT`).
+    fn is_selecting_objects(&self) -> bool {
+        false
+    }
+    /// Whether the active object selection removes objects instead of adding them.
+    fn is_removing_selection(&self) -> bool {
+        false
+    }
+    /// Custom camera-plane selection rubberband (`Box`, `Polygon`, `Fence`) when the command
+    /// manages its own selection mode/window outside `Session::select_mode`.
+    fn custom_selection_overlay_uv(&self, _s: &Session, _cursor_uv: Vec2, _proj: &crate::select::PickProjection) -> Option<crate::SelectionOverlayUv> {
+        None
+    }
     /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
     /// only its preview set); `None` shows the drawing.
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {

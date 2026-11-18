@@ -33,9 +33,11 @@ pub(super) struct VpContent {
     /// What the list was built from: drawing, revision, document, viewport, tessellation band
     /// and lineweight display.
     pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool)>,
-    /// The viewport's view (centre, height) the list was built for, and the paper area it covers.
+    /// The viewport's view (centre, height, target Z) the list was built for, and the paper area it covers.
     view: (Vec2, f64),
-    /// The view twist it was built for: [`vp_motion`] moves and scales a list, it can't turn it.
+    target_z: f64,
+    /// The 3D camera & twist it was built for: [`vp_motion`] moves and scales a list, it can't turn it.
+    cam: cadcraft_geom::Camera3D,
     twist: f64,
     area: Bounds2,
     /// The view on the previous frame and when it last changed (ms).
@@ -62,13 +64,17 @@ impl VpContent {
     }
 }
 
-/// How a list built for view `built` (centre, height) of viewport `vp` maps to its current
-/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 R(m − c0) in the list and
-/// belongs at p = c + s R(m − vc), with c the viewport's centre, R its view twist and s, s0 paper
-/// units per model unit, so k = s / s0 and b = c (1 − k) + s R(c0 − vc).
-fn vp_motion(vp: &cadcraft_doc::Viewport, built: (Vec2, f64)) -> Option<(f64, Vec2)> {
-    let (s, k) = (vp.height / vp.view_height, built.1 / vp.view_height);
-    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center).rotate(vp.view_twist()) * s;
+/// How a list built for view `(built_center, built_target_z, built_height)` of viewport `vp` maps
+/// to its current view at the same camera orientation, as `p = k·p0 + b` on paper.
+fn vp_motion(vp: &cadcraft_doc::Viewport, built_center: Vec2, built_target_z: f64, built_height: f64) -> Option<(f64, Vec2)> {
+    let (s, k) = (vp.height / vp.view_height, built_height / vp.view_height);
+    let eff = vp.effective_camera();
+    let b = if eff.is_top_plan() && built_target_z == 0.0 && vp.view_target_z() == 0.0 {
+        vp.center.xy() * (1.0 - k) + (built_center - vp.view_center).rotate(vp.view_twist()) * s
+    } else {
+        let target0 = cadcraft_geom::Vec3::new(built_center.x, built_center.y, built_target_z);
+        vp.center.xy() * (1.0 - k) + eff.project_3d(target0, vp.target()) * s
+    };
     (k.is_finite() && k > 0.0 && b.is_finite()).then_some((k, b))
 }
 
@@ -108,7 +114,9 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.last_view = view;
         c.moved_at = now;
     }
-    let rebuild = match vp_motion(&vp, c.view).filter(|_| c.key == Some(key) && c.twist == vp.view_twist()) {
+    let rebuild = match vp_motion(&vp, c.view.0, c.target_z, c.view.1)
+        .filter(|_| c.key == Some(key) && c.twist == vp.view_twist() && c.cam == vp.camera)
+    {
         Some((k, b)) => {
             // The viewport in the list's own coordinates.
             let visible = Bounds2::new((rect.min - b) / k, (rect.max - b) / k);
@@ -143,16 +151,18 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
         c.view = view;
+        c.target_z = vp.view_target_z();
+        c.cam = vp.camera;
         c.twist = vp.view_twist();
         c.area = area;
         c.builds = c.builds.wrapping_add(1);
         app.canvas.build_ms = crate::now_ms() - t0;
     }
     let c = &mut app.canvas.vp;
-    let (k, b) = vp_motion(&vp, c.view)?;
+    let (k, b) = vp_motion(&vp, c.view.0, c.target_z, c.view.1)?;
     c.motion = Some((k, b));
     // Paper p = k·p0 + b, so the list is drawn by the paper transform scaled by k about b.
-    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k, twist: xf_paper.twist };
+    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k, twist: xf_paper.twist, target_z: xf_paper.target_z, cam: xf_paper.cam };
     let on_screen = Rect::from_two_pos(xf_paper.to_screen(Vec2::new(rect.min.x, rect.max.y)), xf_paper.to_screen(Vec2::new(rect.max.x, rect.min.y)));
     Some(VpFrame { xf, on_screen, outline: clip.map(|p| p.polygon().to_vec()) })
 }

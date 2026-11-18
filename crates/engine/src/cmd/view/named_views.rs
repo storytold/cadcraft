@@ -178,7 +178,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             let st = s.state_mut()?;
             st.mspace = None;
             let height = v.height.max(v.width / (w / h.max(1.0)).max(1e-9));
-            st.set_view(View { center: v.center, height, twist: 0.0 });
+            st.set_view(View::plan(v.center, height, 0.0));
         }
         None => {
             // A model space view: into the active MSPACE viewport, else on the Model tab.
@@ -191,7 +191,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             // viewport, recorded as the command's undo step).
             let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-9);
             let twist = cadcraft_geom::norm_angle(v.twist);
-            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect), twist });
+            st.set_zoom_frame(View::plan(v.center, v.height.max(v.width / aspect), twist));
         }
     }
     let mut msg = format!("View \"{}\" restored.", v.name);

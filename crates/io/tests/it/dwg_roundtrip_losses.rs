@@ -28,6 +28,7 @@ fn viewport(id: u32) -> EntityKind {
         clip: None,
         on: true,
         twist: 0.0,
+        ..Viewport::default()
     })
 }
 
