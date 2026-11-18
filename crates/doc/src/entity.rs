@@ -433,7 +433,14 @@ impl EntityKind {
                     }
                 }
                 h.scale *= s;
-                h.angle = cadcraft_geom::norm_angle(h.angle + rot);
+                // A rotation turns a direction; a mirror reflects it about the mirror line
+                // (`rot` is twice that line's angle), so a reflection maps `a` to `rot - a`.
+                let turned = |a: f64| if mirror { rot - a } else { a + rot };
+                h.angle = cadcraft_geom::norm_angle(turned(h.angle));
+                // The gradient fill's direction is its own angle: it follows the hatch.
+                if let Some(g) = &mut h.gradient {
+                    g.angle = cadcraft_geom::norm_angle(turned(g.angle));
+                }
                 h.origin = m.apply(h.origin);
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
