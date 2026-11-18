@@ -410,3 +410,14 @@ fn pdf_keeps_glyph_when_origin_outside_but_bounds_intersect_clip() {
     let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [30.0, 30.0]] }));
     assert_eq!(pdf_read::count(p.content(), "Tj"), 1, "clipped-in A must be retained and far-outside B must be culled: {}", p.content());
 }
+
+#[test]
+fn pdf_culls_text_in_paper_margin_outside_aspect_mismatched_window() {
+    let mut d = drawing();
+    // Square 100x100 window centered on landscape paper leaves horizontal paper margins inside clip_pt.
+    // (120, 10) lies inside the landscape paper's printable clip_pt but outside the [0..100] window.
+    text(&mut d, &Space::Model, "Real", (10.0, 10.0), "A", (0.0, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (120.0, 10.0), "B", (0.0, 1.0, 0.0));
+    let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [100.0, 100.0]] }));
+    assert_eq!(pdf_read::count(p.content(), "Tj"), 1, "only in-window A must be emitted; paper-margin B must be culled: {}", p.content());
+}
