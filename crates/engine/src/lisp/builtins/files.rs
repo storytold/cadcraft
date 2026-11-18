@@ -136,13 +136,13 @@ mod newline_tests {
     /// The CR LF path is checked on every platform, not only on Windows (#2986).
     #[test]
     fn text_files_get_cr_lf_only_when_asked() {
-        let path = std::env::temp_dir().join(format!("cadcraft-lisp-newlines-{}.txt", std::process::id()));
-        let p = path.to_string_lossy();
+        // In the test's own folder, not straight in the shared temp directory.
+        let dir = crate::temp_dir::TempDir::new("lisp-newlines");
+        let p = dir.path_str("newlines.txt");
         super::write_text_file_with(&p, "a\nb\n", false, true);
-        let crlf = std::fs::read(&path);
+        let crlf = std::fs::read(&p);
         super::write_text_file_with(&p, "c\n", true, false);
-        let appended = std::fs::read(&path);
-        let _ = std::fs::remove_file(&path);
+        let appended = std::fs::read(&p);
         assert_eq!(crlf.unwrap(), b"a\r\nb\r\n");
         assert_eq!(appended.unwrap(), b"a\r\nb\r\nc\n");
     }
