@@ -38,6 +38,7 @@ fn dimension(label: &str) -> Dimension {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     }
 }
 
@@ -113,7 +114,7 @@ fn entget_shows_plain_carets_and_entmake_takes_them() {
     // entmod of entget changes nothing; entmake takes a plain string.
     let (_, back) = cadcraft_io::entity_from_groups(&kind, &groups).unwrap();
     assert_eq!(strings(&back), ["x^ y 10^2"]);
-    let made = [cadcraft_dxf::Tag::s(1, "p^ q")];
+    let made = [craft_dxf::Tag::s(1, "p^ q")];
     assert_eq!(strings(&cadcraft_io::entity_from_groups("TEXT", &made).unwrap().1), ["p^ q"]);
     // Every kind, and a DIMENSION's style name (also group 3) as it is.
     let d = drawing();

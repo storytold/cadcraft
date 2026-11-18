@@ -344,7 +344,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
 fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Insert(i) = &e.kind {
         w.s(0, "INSERT");
-        common(w, e, owner, paper, "AcDbBlockReference");
+        // A reference repeated in rows or columns (MINSERT, groups 70/71) is an AcDbMInsertBlock;
+        // readers that go by the marker draw only the first copy of an AcDbBlockReference.
+        let array = i.cols > 1 || i.rows > 1;
+        common(w, e, owner, paper, if array { "AcDbMInsertBlock" } else { "AcDbBlockReference" });
         if !i.attribs.is_empty() {
             w.i(66, 1);
         }
@@ -354,7 +357,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
         w.f(42, i.scale.y);
         w.f(43, i.scale.z);
         w.f(50, i.rotation.to_degrees());
-        if i.cols > 1 || i.rows > 1 {
+        if array {
             w.i(70, i64::from(i.cols));
             w.i(71, i64::from(i.rows));
             w.f(44, i.col_spacing);
@@ -399,6 +402,12 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
         let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
         w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+        // Group 12: a block read from a file keeps the dimension's moved-by offset (AutoCAD
+        // draws the block translated by it); regenerated geometry already sits where the
+        // definition points place it, so it writes no offset.
+        if dm.block.is_some() && dm.insertion_point != Vec3::ZERO {
+            w.p(12, dm.insertion_point);
+        }
         let ty: i64 = match dm.kind {
             DimKind::Linear { .. } => 0,
             DimKind::Aligned => 1,
@@ -594,6 +603,9 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
     }
 }
 
+/// Writes a HATCH: its pattern name, solid and associative flags, its boundary loops, and the
+/// pattern angle, scale and double flag (written for solid hatches too). Pattern lines are written
+/// only for non-solid hatches.
 fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
     if let EntityKind::Hatch(h) = &e.kind {
         w.s(0, "HATCH");
@@ -628,10 +640,12 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         }
         w.i(75, i64::from(h.style));
         w.i(76, 1);
+        // Angle, scale and double flag are written for solid fills too, as read (AutoCAD and
+        // other writers keep them on SOLID hatches; readers ignore them there).
+        w.f(52, h.angle.to_degrees());
+        w.f(41, h.scale);
+        w.i(77, 0);
         if !h.solid {
-            w.f(52, h.angle.to_degrees());
-            w.f(41, h.scale);
-            w.i(77, 0);
             // The lines read from the file, else the library's pattern of that name.
             let lines = if h.pattern_lines.is_empty() {
                 cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
@@ -673,8 +687,15 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // Within one turn, so a hostile twist (from JSON or MCP) writes a sane angle.
+        let twist = cadcraft_geom::norm_angle(v.view_twist());
+        // The view centre in display coordinates (turned by the twist).
+        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, twist));
         w.f(45, v.view_height);
+        // View twist (degrees), when the viewport has one.
+        if twist != 0.0 {
+            w.f(51, twist.to_degrees());
+        }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());

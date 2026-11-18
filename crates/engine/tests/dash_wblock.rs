@@ -242,3 +242,62 @@ fn the_json_form_of_dash_wblock_erases_what_it_writes() {
     assert!(s.execute("-wblock", &json!({ "path": none })).is_err());
     assert!(!std::path::Path::new(&none).exists());
 }
+
+#[test]
+fn oops_brings_back_what_it_erased_where_it_was() {
+    // OOPSW-001 to OOPSW-005 (the drawing's `entnext` order read back): OOPS brings back what
+    // -WBLOCK erased, each where it was, as after ERASE. Only the last erase counts, and "*" (the
+    // whole drawing) erases nothing.
+    const OOPS: &str = "(command \"_.OOPS\")";
+    // (script with @A to @D for the objects and @F for a new file, the order afterwards)
+    let cases: [(&[&str], &str); 5] = [
+        (&["(command \"_.-WBLOCK\" @F \"\" '(0.0 0.0) @B @C \"\")", OOPS], "A B C D"),
+        (&["(command \"_.-WBLOCK\" @F \"\" '(0.0 0.0) @B \"\")", "(command \"_.ERASE\" @D \"\")", OOPS], "A C D"),
+        (&["(command \"_.ERASE\" @D \"\")", "(command \"_.-WBLOCK\" @F \"\" '(0.0 0.0) @B \"\")", OOPS], "A B C"),
+        (&["(command \"_.ERASE\" @D \"\")", "(command \"_.-WBLOCK\" @F \"*\")", OOPS], "A B C D"),
+        (&["(command \"_.-WBLOCK\" @F \"\" \"_O\" \"_R\" '(0.0 0.0) @A @C \"\")", OOPS], "A B C D"),
+    ];
+    let dir = TempDir::new("dash-wblock");
+    for (i, (script, want)) in cases.into_iter().enumerate() {
+        let (mut s, a, b, c) = drawing();
+        let v = s.execute("line", &json!({ "points": [[0, 40], [10, 40]] })).unwrap();
+        let d = Handle::parse_hex(v["handles"][0].as_str().or(v["handle"].as_str()).unwrap()).unwrap();
+        let hs = [a, b, c, d];
+        for line in script {
+            let mut line = line.to_string();
+            for (n, h) in ["@A", "@B", "@C", "@D"].into_iter().zip(hs) {
+                line = line.replace(n, &ent(h));
+            }
+            let line = line.replace("@F", &format!("\"{}\"", file(&dir, &format!("OOPSW{i}.dwg"))));
+            lisp(&mut s, &line);
+            assert!(s.running.is_none(), "{line}: {}", s.prompt_text());
+        }
+        let order: Vec<&str> =
+            s.doc().unwrap().model.iter().map(|e| hs.iter().position(|h| *h == e.handle).map_or("E", |k| ["A", "B", "C", "D"][k])).collect();
+        assert_eq!(order.join(" "), want, "{script:?}");
+    }
+    // The JSON form too.
+    let (mut s, a, b, c) = drawing();
+    s.execute("-wblock", &json!({ "path": file(&dir, "json.dwg"), "handles": [b.hex()] })).unwrap();
+    assert!(!alive(&s, b));
+    s.execute("oops", &json!({})).unwrap();
+    let order: Vec<Handle> = s.doc().unwrap().model.iter().map(|e| e.handle).collect();
+    assert_eq!(order, [a, b, c]);
+}
+
+#[test]
+fn a_dash_wblock_refused_during_refedit_leaves_oops_as_it_was() {
+    let (mut s, a, b, c) = drawing();
+    let dir = TempDir::new("dash-wblock");
+    s.execute("block", &json!({ "name": "BK", "base": [0, 0], "handles": [a.hex()], "keep": "convert" })).unwrap();
+    let ins = Handle::parse_hex(s.execute("entities", &json!({ "type": "INSERT" })).unwrap()["entities"][0]["handle"].as_str().unwrap()).unwrap();
+    s.execute("erase", &json!({ "handles": [c.hex()] })).unwrap();
+    s.execute("refedit", &json!({ "handle": ins.hex() })).unwrap();
+    // B isn't in the working set: -WBLOCK is refused and the drawing put back.
+    assert!(s.execute("-wblock", &json!({ "path": file(&dir, "out.dwg"), "handles": [b.hex()] })).is_err());
+    assert!(alive(&s, b));
+    s.execute("refclose", &json!({ "save": false })).unwrap();
+    // OOPS still has C, the last erase that stood.
+    s.execute("oops", &json!({})).unwrap();
+    assert!(alive(&s, c));
+}

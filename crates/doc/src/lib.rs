@@ -16,9 +16,11 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod raster;
 mod refedit;
 mod store;
 mod tables;
+mod xclip;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,15 +29,20 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds};
+pub use extents::{
+    BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame, ole_frame_accepts,
+    ole_frame_transform,
+};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
+pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
 
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
@@ -136,6 +143,8 @@ pub struct Drawing {
     /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
     /// drawing reopens with it. Never set on an open drawing.
     pub portable_fonts: bool,
+    /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
+    pub rasters: Rasters,
 }
 
 impl Default for Drawing {
@@ -196,14 +205,25 @@ impl Drawing {
             refedit: None,
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
+            rasters: Rasters::default(),
         }
     }
 
-    /// Allocate a fresh handle.
+    /// Allocate a fresh handle. It skips the handles the drawing's file gave the objects CADCraft
+    /// writes itself ([`foreign::Foreign::handles`]): AutoLISP names those objects by them, and a
+    /// file CADCraft wrote numbers them above its `$HANDSEED` (#495).
     pub fn new_handle(&mut self) -> Handle {
-        let h = Handle(self.handseed);
-        self.handseed = self.handseed.saturating_add(1);
+        let h = self.next_handle();
+        self.handseed = h.0.saturating_add(1);
         h
+    }
+    /// The handle [`Drawing::new_handle`] gives out next (AutoCAD's `HANDSEED`), without taking it.
+    pub fn next_handle(&self) -> Handle {
+        let mut h = self.handseed;
+        while self.foreign.handles.contains_key(&Handle(h)) && h < u64::MAX {
+            h = h.saturating_add(1);
+        }
+        Handle(h)
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
     pub fn bump_handseed(&mut self, h: Handle) {
@@ -383,10 +403,13 @@ impl Drawing {
     /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
+        // One block-bounds cache for the whole space: every reference to a block reuses its
+        // measured contents instead of measuring the definition again.
+        let mut cache = BlockBoundsCache::default();
         if let Some(store) = self.space(space) {
             for e in store.iter() {
                 if self.in_extents(e) {
-                    b = b.union(&extent_bounds(self, e));
+                    b = b.union(&extent_bounds_cached(self, e, &mut cache));
                 }
             }
         }

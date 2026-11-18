@@ -398,7 +398,7 @@ impl Interactive for PeditM {
     fn prompt(&self, s: &Session) -> Prompt {
         match self.phase {
             PPhase::MSelect | PPhase::MConvert | PPhase::MMain | PPhase::MWidth | PPhase::MFuzz => self.multi_prompt(),
-            PPhase::Select => Prompt::new("Select polyline or", Accept::POINT).kw(&["Multiple"]),
+            PPhase::Select => Prompt::new("Select polyline", Accept::POINT).kw(&["Multiple"]),
             PPhase::Convert => {
                 Prompt::new("Object selected is not a polyline. Do you want to turn it into one?", curves::KW).kw(&["Yes", "No"]).default("Y")
             }

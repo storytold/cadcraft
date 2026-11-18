@@ -27,6 +27,7 @@ fn dim(kind: DimKind, defpt: Vec3, p13: Vec3, p14: Vec3, p15: Vec3, p16: Vec3, a
         overrides: Default::default(),
         assoc,
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 
@@ -284,7 +285,7 @@ fn standard_dimassoc_associates_in_dxf_and_dwg() {
     let back = read_dxf(plain.as_bytes()).unwrap();
     assert_standard_assoc(&c, &back, "DXF");
 
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
     let back = read(&dwg, "case.dwg").unwrap();
     assert_standard_assoc(&c, &back, "DWG");
 }
