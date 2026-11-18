@@ -388,6 +388,7 @@ fn hostile_text_never_panics() {
 
 #[test]
 fn pdf_culls_text_outside_plot_window() {
+    // Text outside the plot window should be omitted from the PDF stream instead of bloating the page.
     let mut d = drawing();
     text(&mut d, &Space::Model, "Real", (5.0, 5.0), "AB", (0.0, 1.0, 0.0));
     text(&mut d, &Space::Model, "Real", (200.0, 200.0), "AB", (0.0, 1.0, 0.0));
