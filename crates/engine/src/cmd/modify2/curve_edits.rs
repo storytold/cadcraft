@@ -316,6 +316,32 @@ pub(crate) fn join_curves(s: &mut Session, hs: &[Handle]) -> Result<Option<Handl
     Ok(Some(keep))
 }
 
+/// What JOIN's Close option makes of a single arc (its circle) or elliptical arc (its full
+/// ellipse); `None` for anything else.
+pub(crate) fn closed_kind(k: &EntityKind) -> Option<EntityKind> {
+    match k {
+        EntityKind::Arc(a) => Some(EntityKind::Circle(cadcraft_doc::Circle { center: a.center, radius: a.radius })),
+        EntityKind::Ellipse(e) if !ellipse_of(e).is_full() => Some(ellipse_kind(&Ellipse { start: 0.0, end: TAU, ..ellipse_of(e) })),
+        _ => None,
+    }
+}
+
+/// JOIN Close: the single arc or elliptical arc in `hs` becomes its circle or full ellipse,
+/// keeping its handle.
+pub(crate) fn join_close(s: &mut Session, hs: &[Handle]) -> Result<Handle> {
+    let mut seen = std::collections::HashSet::new();
+    let hs: Vec<Handle> = hs.iter().copied().filter(|h| seen.insert(*h)).collect();
+    let refuse = || other("Close works on a single arc or elliptical arc.");
+    let [h] = hs[..] else { return Err(refuse()) };
+    let k = s.doc()?.entity(h).and_then(|e| closed_kind(&e.kind)).ok_or_else(refuse)?;
+    if curves::is_locked(s, h) {
+        return Err(other("An object is on a locked layer."));
+    }
+    set_kind(s, h, k)?;
+    s.set_selection(Vec::new());
+    Ok(h)
+}
+
 // ---------------- FILLET with elliptical arcs and splines ----------------
 
 /// An entity as a tangency target for FILLET (lines infinite, arcs as their circle, elliptical

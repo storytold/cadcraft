@@ -12,7 +12,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 command -v sips >/dev/null || { echo "error: sips not found (macOS only)" >&2; exit 1; }
 
-resize() { sips -s format png -z "$2" "$2" "$1" --out "$3" >/dev/null; }
+resize() {
+  local src="$1" size="$2" out="$3"
+  sips -s format png -z "$size" "$size" "$src" --out "$out" >/dev/null
+}
 
 for s in 16 24 32 48 64 128 256 512; do
   mkdir -p "$DIR/hicolor/${s}x${s}/apps"

@@ -73,6 +73,7 @@ impl Mat3 {
     pub fn det(&self) -> f64 {
         self.a * self.d - self.b * self.c
     }
+    #[expect(clippy::many_single_char_names, reason = "Matrix coefficients use the same a–f notation as Mat3 and the affine-transform formula.")]
     pub fn inverse(&self) -> Option<Mat3> {
         let det = self.det();
         if det.abs() < 1e-300 || !det.is_finite() {
@@ -97,6 +98,14 @@ impl Mat3 {
     }
     pub fn is_mirroring(&self) -> bool {
         self.det() < 0.0
+    }
+    /// The rotation-and-uniform-scale factor of the linear part (mirroring allowed), or `None`
+    /// when it distorts shapes (non-uniform scale or shear).
+    pub fn similarity_scale(&self) -> Option<f64> {
+        let (u, v) = (Vec2::new(self.a, self.b), Vec2::new(self.c, self.d));
+        let (lu, lv) = (u.len(), v.len());
+        let tol = 1e-9 * lu.max(lv);
+        ((lu - lv).abs() <= tol && u.dot(v).abs() <= tol * lu.max(lv) && lu > 0.0).then_some(lu)
     }
 }
 

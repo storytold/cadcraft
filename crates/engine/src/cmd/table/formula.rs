@@ -646,6 +646,20 @@ pub enum Shift {
     DeleteCol(usize),
 }
 
+/// The `lo..=hi` extent of a range after inserting a row/column at `at`.
+fn shift_span(lo: usize, hi: usize, at: usize) -> (usize, usize) {
+    (if lo >= at { lo + 1 } else { lo }, if hi >= at { hi + 1 } else { hi })
+}
+
+/// The `lo..=hi` extent of a range after deleting row/column `at` (the start stays, the next
+/// row moves up into it; the end moves up); `None` when the range was only that row/column.
+fn shift_span_delete(lo: usize, hi: usize, at: usize) -> Option<(usize, usize)> {
+    if lo == at && hi == at {
+        return None;
+    }
+    Some((if lo > at { lo - 1 } else { lo }, if hi >= at { hi.checked_sub(1)? } else { hi }))
+}
+
 /// `formula` with its references moved for a row/column insertion or deletion; references to a
 /// deleted row/column become `#REF` (range corners move inward instead).
 pub fn shift_refs(formula: &str, shift: Shift) -> String {
@@ -655,24 +669,42 @@ pub fn shift_refs(formula: &str, shift: Shift) -> String {
     let body = src.get(body_start..).unwrap_or("");
     let mut out = String::from(src.get(..body_start).unwrap_or(""));
     let mut last = 0;
+    let mut skip_to = 0;
     for (k, (tok, span)) in toks.iter().enumerate() {
+        if k < skip_to {
+            continue;
+        }
         let Tok::Cell(r, c) = *tok else { continue };
-        let range_start = toks.get(k + 1).is_some_and(|t| t.0 == Tok::Op(':'));
-        let range_end = k > 0 && toks.get(k - 1).is_some_and(|t| t.0 == Tok::Op(':'));
+        // `A5:A2` is the same range as `A2:A5`: move the normalised corners as one unit.
+        if let (Some((Tok::Op(':'), _)), Some((Tok::Cell(r2, c2), end))) = (toks.get(k + 1), toks.get(k + 2)) {
+            skip_to = k + 3;
+            let (rlo, rhi, clo, chi) = (r.min(*r2), r.max(*r2), c.min(*c2), c.max(*c2));
+            let moved = match shift {
+                Shift::InsertRow(at) => Some((shift_span(rlo, rhi, at), (clo, chi))),
+                Shift::DeleteRow(at) => shift_span_delete(rlo, rhi, at).map(|rr| (rr, (clo, chi))),
+                Shift::InsertCol(at) => Some(((rlo, rhi), shift_span(clo, chi, at))),
+                Shift::DeleteCol(at) => shift_span_delete(clo, chi, at).map(|cc| ((rlo, rhi), cc)),
+            };
+            out.push_str(body.get(last..span.start).unwrap_or(""));
+            match moved {
+                Some(((r0, r1), (c0, c1))) if (r0, r1, c0, c1) == (rlo, rhi, clo, chi) => {
+                    out.push_str(body.get(span.start..end.end).unwrap_or(""));
+                }
+                Some(((r0, r1), (c0, c1))) => {
+                    out.push_str(&format!("{}:{}", cell_name(r0, c0), cell_name(r1, c1)));
+                }
+                None => out.push_str("#REF"),
+            }
+            last = end.end;
+            continue;
+        }
         let moved = |v: usize, at: usize, insert: bool| -> Option<usize> {
             if insert {
                 Some(if v >= at { v + 1 } else { v })
             } else if v > at {
                 Some(v - 1)
             } else if v == at {
-                // A range's start stays (the next row moves up into it); its end moves up.
-                if range_start {
-                    Some(v)
-                } else if range_end {
-                    v.checked_sub(1)
-                } else {
-                    None
-                }
+                None
             } else {
                 Some(v)
             }
@@ -728,5 +760,13 @@ mod tests {
         assert_eq!(shift_refs("=Sum(A2:A5)", Shift::DeleteRow(4)), "=Sum(A2:A4)");
         assert_eq!(shift_refs("=B2*2", Shift::DeleteCol(1)), "=#REF*2");
         assert_eq!(shift_refs("=C1", Shift::InsertCol(0)), "=D1");
+        assert_eq!(shift_refs("=Sum(A3:A3)", Shift::DeleteRow(2)), "=Sum(#REF)");
+        assert_eq!(shift_refs("=Sum(A3:C3)", Shift::DeleteCol(1)), "=Sum(A3:B3)");
+        assert_eq!(shift_refs("=Sum(B3:B3)", Shift::DeleteCol(1)), "=Sum(#REF)");
+        assert_eq!(shift_refs("=Sum(A5:A2)", Shift::DeleteRow(1)), "=Sum(A2:A4)");
+        assert_eq!(shift_refs("=Sum(A5:A2)", Shift::DeleteRow(4)), "=Sum(A2:A4)");
+        assert_eq!(shift_refs("=Sum(C1:A1)", Shift::DeleteCol(0)), "=Sum(A1:B1)");
+        assert_eq!(shift_refs("=Sum(A5:A2)", Shift::InsertRow(2)), "=Sum(A2:A6)");
+        assert_eq!(shift_refs("=Sum(A5:A2)", Shift::InsertRow(9)), "=Sum(A5:A2)");
     }
 }

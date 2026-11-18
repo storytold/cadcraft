@@ -86,9 +86,10 @@ fn refill(before: &Drawing, after: &Drawing, l: &HatchLoop) -> Refill {
     if nb.is_empty() {
         return Refill::Open;
     }
-    let tol = (nb.width() + nb.height()).max(1e-9) / 20000.0;
-    let polys: Vec<Vec<Vec2>> = live.iter().filter_map(|h| after.entity(*h)).flat_map(|e| object_polys(after, e, tol, nb)).collect();
+    let tol = super::outline_tol(nb);
     let snap = ((nb.width() + nb.height()) * 1e-9).max(1e-9);
+    let polys: Vec<Vec<Vec2>> = live.iter().filter_map(|h| after.entity(*h)).flat_map(|e| object_polys(after, e, tol, nb)).collect();
+    let polys = region::snap_ends(&polys, tol, snap);
     let gap = gap_tolerance(after);
     let found = if l.outer {
         // The face around a point inside the old loop, carried along with the objects.
@@ -120,7 +121,7 @@ pub(super) fn same_shape(a: &[PolyVertex], b: &[PolyVertex]) -> bool {
     ba.min.dist(bb.min) <= eps && ba.max.dist(bb.max) <= eps && (shoelace(&pa).abs() - shoelace(&pb).abs()).abs() <= eps * (1.0 + size)
 }
 
-pub(super) fn detach(h: &mut Hatch) {
+pub(crate) fn detach(h: &mut Hatch) {
     h.associative = false;
     h.loops.iter_mut().for_each(|l| l.sources.clear());
 }
@@ -135,6 +136,18 @@ fn reshaped(prev: &Hatch, h: &Hatch) -> bool {
         return true;
     }
     h.loops.iter().any(|l| !prev.loops.iter().any(|q| q.vertices == l.vertices))
+}
+
+/// HATCHEDIT may add or remove whole loops without moving the ones it kept. New associative
+/// loops must still match their source objects; a hatch moved on its own must not keep its link.
+fn valid_loop_edit(prev: &Hatch, h: &Hatch, after: &Drawing) -> bool {
+    if prev.loops.len().saturating_mul(h.loops.len()) > 4_000_000 {
+        return false;
+    }
+    h.loops.iter().all(|l| {
+        prev.loops.iter().any(|old| old.vertices == l.vertices)
+            || (!l.sources.is_empty() && matches!(refill(after, after, l), Refill::Loop(vs) if same_shape(&vs, &l.vertices)))
+    })
 }
 
 /// What happens to one associative hatch after a command; `None` when nothing changes.
@@ -153,7 +166,7 @@ fn follow(before: &Drawing, after: &Drawing, handle: Handle, h: &Hatch, checked:
         }
         match prev {
             // Moved or reshaped on its own: no longer tied to the boundary.
-            Some(p) if reshaped(p, h) => {
+            Some(p) if reshaped(p, h) && !valid_loop_edit(p, h, after) => {
                 detach(&mut nh);
                 return Some((nh, None));
             }

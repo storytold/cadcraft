@@ -124,18 +124,19 @@ pub fn menu(ui: &mut egui::Ui, current: &str) -> Option<String> {
 /// HATCHEDIT's pattern prompt): a click enters the pattern's name at the prompt.
 pub fn prompt_picker(app: &mut CadApp, ctx: &egui::Context) {
     let Some(Picker::HatchPattern(current)) = app.session.current_prompt().and_then(|p| p.picker) else { return };
-    let filter_id = egui::Id::new("hatch_pattern_filter");
+    let filter_id = egui::Id::unique("hatch_pattern_filter");
     let mut filter: String = ctx.data_mut(|d| d.get_temp(filter_id)).unwrap_or_default();
     let mut chosen = None;
     let area = ctx.content_rect();
     egui::Window::new(crate::tl!("Hatch Pattern"))
-        .id(egui::Id::new("Hatch Pattern"))
+        .id(egui::Id::unique("Hatch Pattern"))
         .collapsible(true)
         .resizable(true)
         .default_size(vec2(5.0 * (CELL + GAP) + 12.0, 5.0 * (CELL + LABEL_H + GAP) + 40.0))
         .default_pos(pos2(area.max.x - 5.0 * (CELL + GAP) - 330.0, area.min.y + 120.0))
         .show(ctx, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::tl!("Search for pattern")).desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::tl!("Search for pattern")).desired_width(f32::INFINITY))
+                .on_hover_text(crate::tl!("Search for pattern"));
             ui.add_space(4.0);
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 chosen = grid(ui, &current, &filter);

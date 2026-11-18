@@ -1,5 +1,6 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
+//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings and Named
+//! Viewports.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -10,12 +11,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use egui::{RichText, Sense, Stroke, vec2};
 use serde_json::{Value, json};
 
-use crate::CadApp;
 use crate::parametric::expr_field;
 use crate::theme::Tokens;
+use crate::{CadApp, Pick};
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// Named Viewports (View > Viewports > Named Viewports...).
+mod named_vports;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -32,6 +35,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
+        "vports.named" => "namedvports",
         "plot" | "print" => {
             PLOT_GEN.fetch_add(1, Ordering::Relaxed);
             "plot"
@@ -53,6 +57,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
+        "namedvports" => named_vports::dialog(app, ctx, open),
         "plot" => plot(app, ctx, open),
         _ => {
             *open = false;
@@ -74,16 +79,18 @@ fn fmt_num(v: f64) -> String {
 }
 
 /// A number field that commits on Enter or focus loss.
-fn num_field(ui: &mut egui::Ui, id: impl egui::AsId, v: f64) -> Option<f64> {
-    expr_field(ui, egui::Id::new(id), &fmt_num(v)).and_then(|t| t.parse::<f64>().ok()).filter(|v| v.is_finite())
+///
+/// `label` is the visible label's widget id (see [`expr_field`]).
+fn num_field(ui: &mut egui::Ui, id: impl egui::AsIdSalt, v: f64, label: Option<egui::Id>) -> Option<f64> {
+    expr_field(ui, ui.make_persistent_id(id), &fmt_num(v), label).and_then(|t| t.parse::<f64>().ok()).filter(|v| v.is_finite())
 }
 
 fn temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str) -> Option<T> {
-    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::new(id)))
+    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::unique(id)))
 }
 
 fn set_temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str, v: T) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id), v));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id), v));
 }
 
 fn no_drawing(ctx: &egui::Context, title: &str, open: &mut bool) {
@@ -94,6 +101,7 @@ fn no_drawing(ctx: &egui::Context, title: &str, open: &mut bool) {
 
 // ---------- Linetype Manager ----------
 
+/// Linetype Manager: current linetype and global scale, loaded linetypes, and load/current actions; returns the command to run after drawing.
 fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
     let Ok(d) = app.session.doc() else {
@@ -113,9 +121,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let library: Vec<String> = cadcraft_doc::library::standard_linetypes().into_iter().map(|l| l.name).filter(|n| d.linetype(n).is_none()).collect();
     let mut sel = temp::<String>(ctx, "ltmgr_sel").filter(|s| rows.iter().any(|r| r.0.eq_ignore_ascii_case(s))).unwrap_or_else(|| current.clone());
     let mut action = None;
+    let mut pick_lin = false;
     egui::Window::new("Linetype Manager").open(open).default_size(vec2(520.0, 360.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("ltmgr_load").selected_text("Load...").width(110.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("ltmgr_load").selected_text("Load...").width(110.0).show_ui(ui, |ui| {
                 if library.is_empty() {
                     ui.label("Every library linetype is loaded.");
                 } else if ui.selectable_label(false, "All").clicked() {
@@ -127,12 +136,10 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     }
                 }
                 // The user's own .lin file (where the host has a file picker).
-                if let Some(pick) = app.services.pick_open.as_ref() {
+                if app.services.pick_open.is_some() {
                     ui.separator();
-                    if ui.selectable_label(false, "From File...").clicked()
-                        && let Some(path) = pick()
-                    {
-                        action = Some(("linetype", json!({ "load": "*", "file": path })));
+                    if ui.selectable_label(false, "From File...").clicked() {
+                        pick_lin = true;
                     }
                 }
             });
@@ -172,13 +179,17 @@ fn linetype(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         });
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label("Global scale factor");
-            if let Some(v) = num_field(ui, "ltmgr_scale", ltscale).filter(|v| *v > 0.0) {
+            let label = ui.label("Global scale factor");
+            if let Some(v) = num_field(ui, "ltmgr_scale", ltscale, Some(label.id)).filter(|v| *v > 0.0) {
                 action = Some(("ltscale", json!({ "scale": v })));
             }
         });
     });
     set_temp(ctx, "ltmgr_sel", sel);
+    // The user's .lin file, asked for once the window is drawn. Errors are echoed by `run`.
+    if pick_lin {
+        let _ = app.pick_then(Pick::Open, |app, path| app.run("linetype", json!({ "load": "*", "file": path })));
+    }
     action
 }
 
@@ -240,6 +251,7 @@ fn draw_point(p: &egui::Painter, c: egui::Pos2, r: f32, mode: i64, stroke: Strok
     }
 }
 
+/// Point Style dialog for the PDMODE/PDSIZE presets; returns the `ddptype` action.
 fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
     let Ok(d) = app.session.doc() else {
@@ -275,8 +287,8 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label("Point Size");
-            if let Some(v) = num_field(ui, "ptype_size", size).filter(|v| *v > 0.0) {
+            let label = ui.label("Point Size");
+            if let Some(v) = num_field(ui, "ptype_size", size, Some(label.id)).filter(|v| *v > 0.0) {
                 action = set(mode, v, rel);
             }
             ui.label(if rel { "%" } else { "units" });
@@ -297,7 +309,7 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
 enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
-    Choice(&'static str, &'static str, String, Vec<String>),
+    Choice(&'static str, &'static str, String, std::sync::Arc<[String]>),
 }
 
 struct Style {
@@ -362,7 +374,8 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         no_drawing(ctx, "Multileader Style", open);
         return None;
     };
-    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    // One list shared by every row: a copy per style multiplied the two counts.
+    let text_styles: std::sync::Arc<[String]> = d.text_styles.iter().map(|s| s.name.clone()).collect();
     let mut styles: Vec<Style> = d
         .mleader_styles
         .iter()
@@ -373,7 +386,7 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
                 Field::Num("textHeight", "Text height", s.text_height),
                 Field::Num("landingGap", "Landing gap", s.landing_gap),
                 Field::Num("dogleg", "Landing length", s.dogleg),
-                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), std::sync::Arc::clone(&text_styles)),
             ],
         })
         .collect();
@@ -415,7 +428,7 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                 action = Some((cmd, json!({ "name": sel })));
             }
             left.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0));
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0)).on_hover_text("New style name");
                 let name = new_name.trim().to_string();
                 let ok = !name.is_empty() && !styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name));
                 if ui.add_enabled(ok, egui::Button::new("New")).clicked() {
@@ -430,8 +443,8 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                 for f in &style.fields {
                     let change = match f {
                         Field::Num(key, label, v) => {
-                            ui.label(*label);
-                            num_field(ui, (cmd, &style.name, *key), *v).filter(|v| *v >= 0.0).map(|v| (*key, json!(v)))
+                            let field_label = ui.label(*label);
+                            num_field(ui, (cmd, &style.name, *key), *v, Some(field_label.id)).filter(|v| *v >= 0.0).map(|v| (*key, json!(v)))
                         }
                         Field::Bool(key, label, v) => {
                             ui.label("");
@@ -441,8 +454,8 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                         Field::Choice(key, label, v, choices) => {
                             ui.label(*label);
                             let mut picked = None;
-                            egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices {
+                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                                for c in choices.iter() {
                                     if ui.selectable_label(c == v, c).clicked() && c != v {
                                         picked = Some(c.clone());
                                     }
@@ -466,6 +479,7 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
 
 // ---------- Page Setup Manager ----------
 
+/// Page Setup Manager over layouts sorted by tab order; returns the selected setup command.
 fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
     let Ok(d) = app.session.doc() else {
@@ -502,7 +516,7 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             // Layout plotting always prints the whole sheet, so only that area is offered.
             let rows = PageRows { areas: &["layout"], scale: true, center: true };
             egui::Grid::new("pagesetup_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
-                if let Some((k, v)) = page_rows(ui, egui::Id::new(("pagesetup", name)), page, &rows, &choices, None) {
+                if let Some((k, v)) = page_rows(ui, egui::Id::unique(("pagesetup", name)), page, &rows, &choices, None) {
                     action = Some(("pagesetup", json!({ "layout": name, k: v })));
                 }
             });
@@ -594,7 +608,7 @@ fn page_rows(
 ) -> Option<(&'static str, Value)> {
     let mut change = None;
     ui.label("Printer/plotter");
-    egui::ComboBox::from_id_salt(salt.with("device")).selected_text(device_label(page)).width(190.0).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt(salt.with("device")).selected_text(device_label(page)).width(190.0).show_ui(ui, |ui| {
         if ui.selectable_label(device_label(page) == "None", "None").on_hover_text("PDF on the paper chosen below").clicked()
             && device_label(page) != "None"
         {
@@ -613,7 +627,7 @@ fn page_rows(
     // The device's papers, else the standard sizes.
     let device = choices.devices.iter().find(|dv| dv.name.eq_ignore_ascii_case(&page.device));
     ui.label("Paper size");
-    egui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| match device {
+    craft_ui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| match device {
         Some(dev) => {
             for p in &dev.papers {
                 if ui.selectable_label(p.name == page.paper, &p.name).clicked() && p.name != page.paper {
@@ -642,7 +656,7 @@ fn page_rows(
     ui.end_row();
     ui.label("Plot area");
     ui.add_enabled_ui(rows.areas.len() > 1, |ui| {
-        egui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
             for a in rows.areas {
                 if ui.selectable_label(page.plot_area == *a, area_label(a)).clicked() && page.plot_area != *a {
                     change = Some(("plotArea", json!(a)));
@@ -666,9 +680,9 @@ fn page_rows(
         });
         ui.end_row();
         for (i, label) in [(0, "X offset (mm)"), (1, "Y offset (mm)")] {
-            ui.label(label);
+            let field_label = ui.label(label);
             ui.add_enabled_ui(supported && !*center, |ui| {
-                if let Some(v) = num_field(ui, ("plot_offset", i), offset_mm[i]) {
+                if let Some(v) = num_field(ui, ("plot_offset", i), offset_mm[i], Some(field_label.id)) {
                     offset_mm[i] = v;
                 }
             })
@@ -683,9 +697,9 @@ fn page_rows(
         }
     }
     if rows.scale {
-        ui.label("Scale");
+        let label = ui.label("Scale");
         ui.add_enabled_ui(!page.scale_to_fit, |ui| {
-            if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale)).and_then(|t| parse_ratio(&t)) {
+            if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale), Some(label.id)).and_then(|t| parse_ratio(&t)) {
                 change = Some(("scale", json!(v)));
             }
         })
@@ -718,7 +732,7 @@ fn page_rows(
     }
     ui.end_row();
     ui.label("Plot style table");
-    egui::ComboBox::from_id_salt(salt.with("styles")).selected_text(style_label(page)).width(190.0).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt(salt.with("styles")).selected_text(style_label(page)).width(190.0).show_ui(ui, |ui| {
         if ui.selectable_label(style_label(page) == "None", "None").clicked() && style_label(page) != "None" {
             change = Some(("plotStyleTable", json!("None")));
         }
@@ -936,7 +950,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     egui::Window::new("Plot").open(open).collapsible(false).resizable(false).pivot(egui::Align2::CENTER_CENTER).default_pos(center).show(ctx, |ui| {
         egui::Grid::new("plot_target").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
             ui.label("Layout");
-            egui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(ui, |ui| {
                 for n in &targets {
                     if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
                         st.page = plot_page(d, n);
@@ -955,7 +969,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     PageRows { areas: &["layout"], scale: false, center: false }
                 };
                 let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
-                if let Some((k, v)) = page_rows(ui, egui::Id::new(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
+                if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {
                     apply_page_change(&mut st.page, k, &v);
                 }
                 if model && st.page.plot_area == "window" {
@@ -963,10 +977,10 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                         ui.label(label);
                         ui.horizontal(|ui| {
                             for (j, axis) in ["X", "Y"].iter().enumerate() {
-                                ui.label(*axis);
+                                let axis_label = ui.label(*axis);
                                 let k = i + j;
                                 if let Some(slot) = st.window.get_mut(k)
-                                    && let Some(v) = num_field(ui, ("plot_window", k), *slot)
+                                    && let Some(v) = num_field(ui, ("plot_window", k), *slot, Some(axis_label.id))
                                 {
                                     *slot = v;
                                 }
@@ -1028,31 +1042,44 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         return action;
     }
     if ok {
-        let mut params = plot_params(&st, None);
-        if let Some(pick) = app.services.pick_save.as_ref() {
+        let params = plot_params(&st, None);
+        let target = st.target.clone();
+        if app.services.pick_save.is_some() {
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let suggested = format!("{}-{}.{ext}", stem.unwrap_or_else(|| "Drawing".into()), st.target);
             // Cancelling the file dialog keeps the Plot dialog open with its settings.
-            let Some(path) = pick(&suggested) else { return action };
-            if let Some(o) = params.as_object_mut() {
-                o.insert("path".into(), json!(path));
-            }
-        }
-        *open = false;
-        match app.run("plot", params) {
-            Ok(r) => {
-                let msg = match r.get("path").and_then(Value::as_str) {
-                    Some(path) => format!("Plotted {} to {path}", st.target),
-                    None => format!("Plotted {} ({} bytes of PDF; there is no file dialog here)", st.target, r["bytes"]),
-                };
-                app.session.echo(msg);
-            }
-            // `run` already echoed the error; keep the dialog open to fix the settings.
-            Err(_) => *open = true,
+            let _ = app.pick_then(Pick::Save(suggested), move |app, path| {
+                let mut params = params;
+                if let Some(o) = params.as_object_mut() {
+                    o.insert("path".into(), json!(path));
+                }
+                run_plot(app, params, &target);
+                Ok(Value::Null)
+            });
+        } else {
+            run_plot(app, params, &target);
         }
     }
     action
+}
+
+/// Plot with the Plot dialog's settings: it closes, and opens again when the plot fails.
+fn run_plot(app: &mut CadApp, params: Value, target: &str) {
+    if app.ui.dialog.as_deref() == Some("plot") {
+        app.ui.dialog = None;
+    }
+    match app.run("plot", params) {
+        Ok(r) => {
+            let msg = match r.get("path").and_then(Value::as_str) {
+                Some(path) => format!("Plotted {target} to {path}"),
+                None => format!("Plotted {target} ({} bytes of PDF; there is no file dialog here)", r["bytes"]),
+            };
+            app.session.echo(msg);
+        }
+        // `run` already echoed the error; keep the dialog open to fix the settings.
+        Err(_) => app.ui.dialog = Some("plot".into()),
+    }
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.
@@ -1075,6 +1102,7 @@ fn sheet_sketch(ui: &mut egui::Ui, page: &cadcraft_doc::PageSetup, t: &Tokens) {
 
 // ---------- Constraint Settings ----------
 
+/// Constraint Settings dialog editing the drawing's parametric settings; returns the `constraintsettings` action.
 fn constraint_settings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
     let Ok(d) = app.session.doc() else {
@@ -1096,8 +1124,8 @@ fn constraint_settings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -
             action = set("barsVisible", json!(bars));
         }
         ui.horizontal(|ui| {
-            ui.label("Constraint bar transparency (%)");
-            if let Some(v) = num_field(ui, "csettings_transp", f64::from(s.bar_transparency)) {
+            let label = ui.label("Constraint bar transparency (%)");
+            if let Some(v) = num_field(ui, "csettings_transp", f64::from(s.bar_transparency), Some(label.id)) {
                 action = set("barTransparency", json!(v));
             }
         });
@@ -1124,13 +1152,13 @@ fn constraint_settings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -
             }
         });
         egui::Grid::new("csettings_tol").num_columns(2).show(ui, |ui| {
-            ui.label("Distance tolerance");
-            if let Some(v) = num_field(ui, "csettings_dist", s.distance_tolerance) {
+            let label = ui.label("Distance tolerance");
+            if let Some(v) = num_field(ui, "csettings_dist", s.distance_tolerance, Some(label.id)) {
                 action = set("distanceTolerance", json!(v));
             }
             ui.end_row();
-            ui.label("Angle tolerance (degrees)");
-            if let Some(v) = num_field(ui, "csettings_angle", s.angle_tolerance) {
+            let label = ui.label("Angle tolerance (degrees)");
+            if let Some(v) = num_field(ui, "csettings_angle", s.angle_tolerance, Some(label.id)) {
                 action = set("angleTolerance", json!(v));
             }
             ui.end_row();

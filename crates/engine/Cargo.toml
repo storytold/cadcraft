@@ -12,16 +12,18 @@ workspace = true
 cadcraft-geom = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
-cadcraft-dxf = { workspace = true }
+craft-mime = { workspace = true }
+craft-dxf = { workspace = true }
 cadcraft-constraints = { workspace = true }
 cadcraft-fonts = { workspace = true }
 cadcraft-render = { workspace = true }
+craft-docpath = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
-rstar = { version = "0.12", default-features = false }
+rstar = { version = "0.13", default-features = false }
 # Deflate for drawing-history versions: DXF is verbose text, so a gzipped snapshot is roughly a
 # tenth of the size (MIT OR Apache-2.0, pure Rust backend, builds for wasm).
 flate2 = "1"
@@ -29,6 +31,9 @@ flate2 = "1"
 # database needed): the history names and lists moments in UTC and nothing here hand-rolls the
 # conversion (issue #1785). No `clock` feature: `now` reads the process clock, the crate formats.
 chrono = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # Real DXF files for the external reference tests (io is a lower layer).

@@ -121,31 +121,50 @@ impl SelectPhase {
 }
 
 /// "Select objects:", then run a JSON command on them as `{handles}`. With a pickfirst selection it
-/// runs at once, exactly like the JSON form does on the current selection.
+/// runs at once, exactly like the JSON form does on the current selection. A repeating run acts on
+/// every pick and asks for the next object, the way AutoCAD's LAYOFF does.
 pub struct SelectRun {
     id: &'static str,
     name: &'static str,
     /// Single-object prompt (e.g. LAYFRZ's "Select an object on the layer to be frozen").
     single: Option<&'static str>,
+    /// Stay active after each pick, until Enter or Esc (LAYOFF).
+    repeat: bool,
     sel: SelectPhase,
 }
 
 impl SelectRun {
     pub fn new(id: &'static str, name: &'static str) -> Self {
-        SelectRun { id, name, single: None, sel: SelectPhase::default() }
+        SelectRun { id, name, single: None, repeat: false, sel: SelectPhase::default() }
     }
     /// Pick one object, with a command-specific prompt.
     pub fn single(id: &'static str, name: &'static str, msg: &'static str) -> Self {
         SelectRun { single: Some(msg), ..SelectRun::new(id, name) }
     }
-    fn run(&self, s: &mut Session, hs: &[Handle]) -> Result<Step> {
+    /// Get an object, act on it and ask again, until Enter or Esc: AutoCAD's Layer Off (LAYOFF)
+    /// turns off the layer of every object picked, one after another, in one command.
+    pub fn repeat(id: &'static str, name: &'static str, msg: &'static str) -> Self {
+        SelectRun { single: Some(msg), repeat: true, ..SelectRun::new(id, name) }
+    }
+    fn run(&self, s: &mut Session, hs: &[Handle]) -> Result<()> {
         let spec = super::find_command(self.id).ok_or_else(|| EngineError::UnknownCommand(self.id.into()))?;
         // Call the command body directly: the running command records the single undo step.
         let r = (spec.run)(s, &json!({ "handles": hs.iter().map(|h| h.hex()).collect::<Vec<_>>() }))?;
         if let Some(m) = r.get("message").and_then(Value::as_str) {
             s.echo(m.to_string());
         }
-        Ok(Step::Done)
+        Ok(())
+    }
+    /// One pick of a repeating run: act on it at once and keep the prompt up.
+    fn pick(&self, s: &mut Session, hs: &[Handle]) -> Result<Step> {
+        if hs.is_empty() {
+            s.echo("0 found");
+            return Ok(Step::Continue);
+        }
+        self.run(s, hs)?;
+        // Objects picked at the prompt don't stay selected afterwards.
+        s.set_selection(Vec::new());
+        Ok(Step::Continue)
     }
 }
 
@@ -157,26 +176,37 @@ impl Interactive for SelectRun {
         self.sel = SelectPhase::begin(s);
         if self.sel.done {
             let hs = self.sel.picked.clone();
-            return self.run(s, &hs);
+            self.run(s, &hs)?;
+            return Ok(Step::Done);
         }
-        self.sel.single = self.single.is_some();
+        // A repeating run acts on every pick, so no single pick may finish it.
+        self.sel.single = self.single.is_some() && !self.repeat;
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.single {
-            Some(msg) if !self.sel.removing => Prompt::new(msg, Accept::SELECT),
+            // A repeating run keeps asking for the next object, whatever selection keywords were typed.
+            Some(msg) if self.repeat || !self.sel.removing => Prompt::new(msg, Accept::SELECT),
             _ => self.sel.prompt(),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // A repeating run acts on each pick and prompts again; Enter (or Esc) ends it.
+        if self.repeat {
+            return match i {
+                Input::Pick(hs) => self.pick(s, &hs),
+                Input::Enter => Ok(Step::Done),
+                other => self.sel.feed(s, &other).map(|_| Step::Continue),
+            };
+        }
         match self.sel.feed(s, &i)? {
             SelOutcome::More => Ok(Step::Continue),
             SelOutcome::Empty => Ok(Step::Done),
             SelOutcome::Done(hs) => {
                 // Objects picked at the prompt don't stay selected afterwards.
-                let step = self.run(s, &hs)?;
+                self.run(s, &hs)?;
                 s.set_selection(Vec::new());
-                Ok(step)
+                Ok(Step::Done)
             }
         }
     }

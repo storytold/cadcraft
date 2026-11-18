@@ -230,10 +230,15 @@ impl Tokens {
             axis_x: mix(bg, Color32::from_rgb(0xd0, 0x30, 0x30), 0.3),
             axis_y: mix(bg, Color32::from_rgb(0x30, 0xb0, 0x40), 0.3),
             canvas_ink: if light { Color32::from_rgb(0x47, 0x50, 0x5c) } else { Tokens::DARK.canvas_ink },
-            crosshair: if light { Color32::from_rgb(0x20, 0x20, 0x20) } else { Tokens::DARK.crosshair },
+            crosshair: crosshair_color(bg),
             ..self
         }
     }
+}
+
+/// The thin crosshair and pickbox contrast with the surface under their centre.
+pub(crate) fn crosshair_color(background: Color32) -> Color32 {
+    if luminance(background) > 0.5 { Color32::from_rgb(0x20, 0x20, 0x20) } else { Tokens::DARK.crosshair }
 }
 
 /// The user's drawing-area preferences (Options ▸ Display and Drafting); `None` keeps the theme's
@@ -302,39 +307,40 @@ pub fn mono() -> FontId {
     FontId::new(12.0, FontFamily::Monospace)
 }
 
-/// Load a system UI font at run time when one is installed (not bundled), else keep egui's;
-/// then CJK fonts after the Latin ones, so Latin text keeps its look, in every interface
+/// Load a system UI font at run time when one is installed (not bundled), else keep egui's
+/// bundled bounded Latin/icon faces (`default_fonts` + `monochrome_emoji_fonts`, enabled in the
+/// workspace manifest for native and web); then CJK fonts after the Latin ones, so Latin text
+/// keeps its look, in every interface
 /// language: file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513). In a Chinese interface (`language` "zh…") the Chinese font comes first, else a
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
-/// Arabic font follows. A font embedded from craft-fonts comes
+/// Arabic font follows. The embedded Georgian face loads in every language, so the language
+/// picker can show ქართული. A font embedded from craft-fonts comes
 /// last, for systems without any (and the web build, which has no system fonts). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
+    crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
     let mut added: Vec<(String, std::sync::Arc<egui::FontData>)> = Vec::new();
     #[cfg(not(target_arch = "wasm32"))]
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let candidates: &[&str] = if cfg!(target_os = "macos") {
-            &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf"]
-        } else if cfg!(windows) {
-            &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf"]
-        } else {
-            &[
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/TTF/DejaVuSans.ttf",
-                "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            ]
-        };
-        for path in candidates {
+        for path in system_ui_candidates() {
+            // A Vietnamese interface takes the first one with its letters.
+            if language == "vi" && vietnamese_font() != Some(std::path::Path::new(path)) {
+                continue;
+            }
             if let Ok(bytes) = std::fs::read(path) {
                 fonts.font_data.insert("system-ui".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
                     f.insert(0, "system-ui".into());
+                }
+                // Keep Hack first in Monospace, then use the system face for glyphs Hack lacks.
+                if let Some(f) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    let at = f.iter().position(|name| name == "Hack").map_or(0, |i| i + 1);
+                    f.insert(at, "system-ui".into());
                 }
                 break;
             }
@@ -360,13 +366,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
     }
-    let mut embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS
-        .iter()
-        .filter(|f| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant")))
-        .collect();
-    // A sans-serif face reads best in the interface.
-    embedded.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
-    added.extend(embedded.first().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
+    added.extend(
+        embedded_ui_faces(&embedded, language)
+            .into_iter()
+            .map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))),
+    );
     // Korean: Noto Sans CJK and most CJK fonts above already cover Hangul; else a Hangul font.
     if language == "ko"
         && !cjk_covers_hangul()
@@ -384,7 +389,114 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             }
         }
     }
+    // `default_fonts` supplies Ubuntu-Light (Proportional) and Hack (Monospace). Hack also
+    // carries the modifier symbols (⇧) that proportional shortcut labels use; keep it as a
+    // bounded late fallback when Ubuntu-Light lacks one. The monochrome emoji face (enabled by
+    // `monochrome_emoji_fonts`) supplies ⌘ in both families.
+    if fonts.font_data.contains_key("Hack")
+        && let Some(f) = fonts.families.get_mut(&FontFamily::Proportional)
+        && !f.iter().any(|name| name == "Hack")
+    {
+        f.push("Hack".into());
+    }
     ctx.set_fonts(fonts);
+}
+
+/// The system interface fonts [`install_fonts`] looks for, in order; it loads the first installed
+/// one ahead of egui's bundled faces.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_ui_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf"]
+    } else if cfg!(windows) {
+        &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf"]
+    } else {
+        &[
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ]
+    }
+}
+
+/// The first of `candidates` that is `installed` and, for the Vietnamese interface, has the
+/// Vietnamese letters: the system interface font [`install_fonts`] loads ahead of egui's faces.
+#[cfg(not(target_arch = "wasm32"))]
+fn ui_font_choice<'a>(
+    candidates: &[&'a str],
+    vietnamese: bool,
+    installed: impl Fn(&str) -> bool,
+    has_vietnamese: impl Fn(&str) -> bool,
+) -> Option<&'a str> {
+    candidates.iter().copied().find(|p| installed(p) && (!vietnamese || has_vietnamese(p)))
+}
+
+/// Whether `face` has every letter Vietnamese adds to Latin: the tone-marked vowels of Latin
+/// Extended Additional (U+1EA0–U+1EF9), and ơ, ư, đ.
+#[cfg(not(target_arch = "wasm32"))]
+fn covers_vietnamese(face: &cadcraft_fonts::ttf::Face) -> bool {
+    ('\u{1ea0}'..='\u{1ef9}').chain(['ơ', 'Ơ', 'ư', 'Ư', 'đ', 'Đ']).all(|c| face.has_glyph(c))
+}
+
+/// The system interface font the Vietnamese interface takes: the first of
+/// [`system_ui_candidates`] whose first face (the one egui uses) has every Vietnamese letter.
+/// Segoe UI, Arial, SF, DejaVu Sans and Noto Sans do; egui's bundled faces stop at Latin
+/// Extended-A, so without one the interface stays English (as the web build does). Checked once.
+pub fn vietnamese_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let has_vietnamese = |p: &str| {
+                    read_capped(std::path::Path::new(p), MAX_UI_FONT_BYTES)
+                        .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
+                        .is_some_and(|face| covers_vietnamese(&face))
+                };
+                ui_font_choice(system_ui_candidates(), true, |p| std::path::Path::new(p).is_file(), has_vietnamese).map(std::path::PathBuf::from)
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// Whether the interface in `language` shows the Vietnamese letters (Tiếng Việt in the language
+/// picker): the Vietnamese interface with [`vietnamese_font`], any other when the system interface
+/// font it loads is that one.
+pub fn shows_vietnamese(language: &str) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let loaded = || ui_font_choice(system_ui_candidates(), false, |p| std::path::Path::new(p).is_file(), |_| true);
+        vietnamese_font().is_some_and(|v| language == "vi" || loaded().is_some_and(|p| std::path::Path::new(p) == v))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = language;
+        false
+    }
+}
+
+/// The faces `build.rs` embedded from craft-fonts that the interface loads, in order: every CJK
+/// face, because file, layout and layer names can be Japanese or Chinese whatever the interface
+/// shows (#513), with the interface's own face leading. A sans-serif face reads best, and a
+/// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
+/// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
+/// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
+/// the picker names the language ქართული); العربية adds its Arabic face after those.
+fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
+    let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
+    let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
+    out.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
+    if language.starts_with("zh") {
+        out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
+    }
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
+    if language == "ar" {
+        out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
+    }
+    out
 }
 
 /// Largest interface font file read or embedded face copied (CJK collections are 15–60 MB).
@@ -616,15 +728,34 @@ pub fn shows_hangul(language: &str) -> bool {
     cjk_covers_hangul() || (language == "ko" && korean_font().is_some())
 }
 
-/// Whether the interface can show `language` without missing-glyph boxes: Chinese needs an
-/// installed CJK font, Korean a font with Hangul, العربية an installed Arabic font.
+/// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
+/// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
+/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face, Tiếng Việt a
+/// system interface font with its tone-marked letters ([`vietnamese_font`]), ქართული the
+/// embedded Georgian face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
-        "ar" => arabic_font().is_some(),
-        l if l.starts_with("zh") => cjk_font().is_some(),
+        "vi" => vietnamese_font().is_some(),
+        "ar" => arabic_font().is_some() || embedded_script("Arab"),
+        "ka" => embedded_script("Geor"),
+        l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
+}
+
+/// Whether a face this build embedded from craft-fonts carries `script` (ISO 15924). The web
+/// build has no system fonts, so there the interface rides on the embedded faces alone; the
+/// Korean gate already asks this way ([`korean_font`]) and Arabic and Chinese match it. Only a
+/// build made with `CRAFT_FONTS_DIR` embeds any (`build.rs`), so the rest is unchanged.
+fn embedded_script(script: &str) -> bool {
+    any_script(cadcraft_fonts::CRAFT_FONTS, script)
+}
+
+/// Whether any face of `faces` carries `script` (ISO 15924), the question [`embedded_script`]
+/// asks of the table this build embedded.
+fn any_script(faces: &[cadcraft_fonts::CraftFont], script: &str) -> bool {
+    faces.iter().any(|f| f.style == "Regular" && f.scripts.contains(&script))
 }
 
 /// egui's visuals for `theme`, from its tokens.
@@ -681,10 +812,94 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    /// The system interface font loaded: the first installed one, and for Vietnamese the first
+    /// installed one with its letters (a later one when the first lacks them).
+    #[test]
+    fn the_vietnamese_interface_takes_the_first_installed_font_with_its_letters() {
+        let candidates = ["a.ttf", "b.ttf", "c.ttf", "d.ttf"];
+        let installed = |p: &str| p != "a.ttf";
+        let has_vietnamese = |p: &str| p == "c.ttf" || p == "d.ttf";
+        assert_eq!(super::ui_font_choice(&candidates, false, installed, has_vietnamese), Some("b.ttf"));
+        assert_eq!(super::ui_font_choice(&candidates, true, installed, has_vietnamese), Some("c.ttf"));
+        assert_eq!(super::ui_font_choice(&candidates, true, installed, |_| false), None);
+    }
+
+    use cadcraft_fonts::CraftFont;
+
+    /// A face shaped like `build.rs` writes them, with no font file (as in `cadcraft-fonts`).
+    fn face(family: &'static str, scripts: &'static [&'static str]) -> CraftFont {
+        CraftFont { family, style: "Regular", scripts, bytes: &[] }
+    }
+
+    fn families<'a>(faces: &[&'a CraftFont]) -> Vec<&'a str> {
+        faces.iter().map(|f| f.family).collect()
+    }
+
     #[test]
     fn korean_font_rejects_invalid_or_glyphless_files() {
         for bytes in [vec![], vec![0xff; 32], vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] {
             assert!(super::korean_face(std::sync::Arc::new(bytes)).is_none());
+        }
+    }
+
+    /// The interface's own script leads the embedded faces it loads, and العربية adds its face.
+    #[test]
+    fn embedded_faces_lead_with_the_interfaces_own_script() {
+        let japanese = face("BIZ UDPGothic", &["Jpan", "Latn"]);
+        let chinese = face("Han Test Face", &["Hans", "Latn"]);
+        let arabic = face("Noto Sans Arabic", &["Arab"]);
+        let georgian = face("Noto Sans Georgian", &["Geor"]);
+        let faces = [&japanese, &chinese, &arabic, &georgian];
+        // Every interface reads CJK names, so both CJK faces load, the sans-serif face first.
+        // The Georgian face loads in every interface too, after them: the picker shows ქართული.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        // A Chinese interface takes the Han face first: a Japanese face lacks 图 园 测.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Noto Sans Georgian"]);
+        // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Arabic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        // Another weight is a style of a face, not an interface face of its own.
+        let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
+        assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
+    }
+
+    /// What the gate asks of the table: an embedded face of the script stands in for an installed
+    /// font, which the web build never has. The default (no `CRAFT_FONTS_DIR`) table answers no,
+    /// leaving the installed-font answer the gate had before.
+    #[test]
+    fn embedded_faces_answer_for_their_scripts() {
+        let faces = [face("BIZ UDPGothic", &["Jpan", "Latn"]), face("Noto Sans Arabic", &["Arab"]), face("Noto Sans Georgian", &["Geor"])];
+        assert!(super::any_script(&faces, "Jpan") && super::any_script(&faces, "Arab") && super::any_script(&faces, "Geor"));
+        assert!(!super::any_script(&faces, "Hans") && !super::any_script(&faces, "Hant"));
+        // A `Bold`-only face is not the interface's, and a script code is matched whole.
+        let bold = CraftFont { family: "Some Han Bold", style: "Bold", scripts: &["Hans"], bytes: &[] };
+        assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
+        assert!(!super::embedded_script("Hans") || super::can_show("zh"));
+        // ქართული rides on the embedded Georgian face alone.
+        assert_eq!(super::can_show("ka"), super::embedded_script("Geor"));
+        assert!(super::can_show("en") && super::can_show("uk"));
+    }
+
+    /// With the craft-fonts Georgian face (release and web builds), every Mkhedruli letter and the
+    /// picker's ქართული render in both families, in a Georgian and in an English interface.
+    #[test]
+    fn embedded_georgian_face_covers_the_alphabet_in_every_interface() {
+        if !super::embedded_script("Geor") {
+            return;
+        }
+        let letters: Vec<char> = ('ა'..='ჰ').chain("ქართული".chars()).collect();
+        for language in ["ka", "en"] {
+            let ctx = egui::Context::default();
+            super::install_fonts(&ctx, language);
+            let mut output = ctx.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+            ctx.fonts_mut(|view| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    for c in &letters {
+                        assert!(view.has_glyph(&egui::FontId::new(12.0, family.clone()), *c), "{language}: missing Georgian glyph {c} in {family:?}");
+                    }
+                }
+            });
         }
     }
 }

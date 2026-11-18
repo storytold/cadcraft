@@ -11,8 +11,8 @@ use std::collections::HashSet;
 use cadcraft_doc::{Constraint, Drawing, Handle};
 use serde::Serialize;
 
-use crate::model::Model;
-use crate::{Comp, MAX_CONSTRAINTS, SolveError, SolveOptions, build, lm};
+use crate::model::{Model, Prep};
+use crate::{Comp, MAX_CONSTRAINTS, MAX_EVAL_WORK, SolveError, SolveOptions, build_with, lm};
 
 /// Most free parameters for which per-object freedom is analysed (null-space basis size).
 const MAX_NULL_COLS: usize = 600;
@@ -86,12 +86,22 @@ struct CompDof {
     objects: Vec<Option<usize>>,
 }
 
+/// Compute component and object freedom only when rank and residual-evaluation work fit their budgets.
+/// Return unknown freedom before building the Jacobian when either work limit is exceeded.
 fn analyse(comp: &Comp) -> CompDof {
     let free = comp.free(None);
     let rows = comp.rows(None);
     let nf = free.len();
     let unknown = CompDof { dof: None, redundant: 0, objects: vec![None; comp.model.slots.len()] };
     if rows > lm::MAX_ROWS || (rows as f64) * (nf as f64) * (rows.min(nf) as f64) > MAX_RANK_WORK {
+        return unknown;
+    }
+    // Numerical differentiation evaluates every residual about `rows × free` times, and each
+    // spline-end residual reconstructs its spline through a dense solve. Account for that
+    // reconstruction cost before building the Jacobian so a component with few equations but large
+    // splines cannot pass the rank-work check yet still require billions of operations (row 43).
+    let eval_work = (rows as f64) * (nf as f64) * (1.0 + comp.built.iter().map(|b| b.spline_reconstruct_cost(&comp.model)).sum::<f64>());
+    if eval_work > MAX_EVAL_WORK {
         return unknown;
     }
     let f = |x: &[f64], out: &mut Vec<f64>| comp.eval(x, out, None);
@@ -126,8 +136,11 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// (constrained or not) and the constraint components they belong to.
 pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
     let cons: Vec<&Constraint> = d.constraints.iter().take(MAX_CONSTRAINTS).collect();
-    let (comps, _) = build(d, &cons, &SolveOptions::default())?;
-    let want = |h: Handle| handles.is_empty() || handles.contains(&h);
+    let mut prep = Prep::new(crate::model::MAX_RIGID_WORK);
+    let (comps, _) = build_with(d, &cons, &SolveOptions::default(), &mut prep)?;
+    // The selection as a set, built once: a scan of the list per slot multiplied the two sizes.
+    let selected: HashSet<Handle> = handles.iter().copied().collect();
+    let want = |h: Handle| handles.is_empty() || selected.contains(&h);
     let mut objects = Vec::new();
     let mut seen = HashSet::new();
     let mut total = Some(0usize);
@@ -165,7 +178,7 @@ pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
         if seen.contains(&h) {
             continue;
         }
-        let m = Model::build(d, &[h]);
+        let m = Model::build_with(d, &[h], &mut prep);
         let Some(s) = m.slots.first() else { continue };
         seen.insert(h);
         free_objects = true;
@@ -192,4 +205,67 @@ pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
         (_, None) => "Too large to analyse".to_string(),
     };
     Ok(DofReport { dof: total, status, redundant, constraints, objects, message })
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::residual::{Built, Form};
+    use cadcraft_doc::{Common, ConstraintKind, EntityKind, GeomRef, Space};
+    use cadcraft_geom::{Spline, Vec2};
+
+    /// An expensive fit-spline endpoint residual produces unknown freedom before numerical differentiation.
+    #[test]
+    fn endpoint_analysis_rejects_cubic_fit_work_before_differentiation() {
+        let mut d = Drawing::default();
+        let pts: Vec<_> = (0..500).map(|i| Vec2::new(i as f64, (i % 3) as f64)).collect();
+        let mut spline = Spline::from_control(pts.clone(), 3);
+        spline.fit = pts;
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Spline(spline)).unwrap();
+        let model = Model::build(&d, &[h]);
+        let endpoint = Built {
+            id: 1,
+            kind: ConstraintKind::Tangent,
+            refs: vec![GeomRef::whole(h)],
+            form: Form::EndOn { spline: 0, at_end: false },
+            target: 0.0,
+            sign: 1.0,
+            rows: 2,
+            aux_init: Vec::new(),
+            aux: 0,
+        };
+        let comp = Comp { model, built: vec![endpoint], weights: vec![1.0; 2], held: Vec::new(), tol: 1e-9 };
+        assert!(analyse(&comp).dof.is_none());
+        // Solving it is refused for the same reason, before any Jacobian is built.
+        assert!(matches!(comp.run(None), Err(SolveError::TooLarge)));
+    }
+
+    /// Many Tangent constraints on one large fit spline rebuild it once while being interpreted,
+    /// and the solve is refused by its rebuild budget instead of running.
+    #[test]
+    fn repeated_spline_tangents_rebuild_once_and_solve_is_bounded() {
+        use cadcraft_doc::{Constraint, Line};
+        use cadcraft_geom::Vec3;
+        let mut d = Drawing::default();
+        let pts: Vec<_> = (0..400).map(|i| Vec2::new(i as f64, (i % 3) as f64)).collect();
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Spline(Spline::fit_with(&pts, false, Default::default()))).unwrap();
+        let l =
+            d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(-1.0, 0.0, 0.0), b: Vec3::new(-1.0, 5.0, 0.0) })).unwrap();
+        for id in 1..=200 {
+            d.constraints.push(Constraint {
+                id,
+                kind: ConstraintKind::Tangent,
+                refs: vec![GeomRef::whole(h), GeomRef::whole(l)],
+                name: String::new(),
+                expr: String::new(),
+            });
+        }
+        let cons: Vec<&Constraint> = d.constraints.iter().collect();
+        let (comps, skipped) = crate::build(&d, &cons, &SolveOptions::default()).unwrap();
+        assert!(skipped.is_empty());
+        let comp = comps.first().unwrap();
+        assert_eq!(comp.built.len(), 200);
+        assert!(matches!(comp.run(None), Err(SolveError::TooLarge)));
+        assert!(crate::purge_invalid(&mut d).is_empty());
+    }
 }

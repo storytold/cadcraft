@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_geom::{Vec2, Vec3};
 use serde::Serialize;
 
-use super::{ParameterKind, Value, custom_properties, dynamic_block, reference};
+use super::{DynamicBlock, ParameterKind, Value, custom_properties, dynamic_block, reference};
 use crate::{Drawing, EntityKind, Handle};
 
 /// Most grips listed for one reference.
@@ -79,6 +79,29 @@ pub struct DynGrip {
     pub choices: Vec<String>,
 }
 
+/// Which ends of two-point parameter `node` the block's actions follow, as (base, end): a
+/// connection to one point's change (BaseXDelta, EndYDelta, UpdatedEnd…) follows that end, one to
+/// the value itself (a distance, an angle) follows both. None when no action is attached to the
+/// parameter: its grips are all kept, as the block has them.
+fn ends_used(m: &DynamicBlock, node: i32) -> Option<(bool, bool)> {
+    let mut used: Option<(bool, bool)> = None;
+    for (n, name) in m.actions.iter().flat_map(|a| a.connections.iter()) {
+        if *n != node {
+            continue;
+        }
+        let c = name.to_ascii_lowercase();
+        let (base, end) = used.unwrap_or((false, false));
+        used = Some(if c.starts_with("base") || c.starts_with("updatedbase") {
+            (true, end)
+        } else if c.starts_with("end") || c.starts_with("updatedend") {
+            (base, true)
+        } else {
+            (true, true)
+        });
+    }
+    used
+}
+
 fn point<S: serde::Serializer>(p: &Vec2, s: S) -> Result<S::Ok, S::Error> {
     [p.x, p.y].serialize(s)
 }
@@ -112,8 +135,15 @@ pub fn grips(d: &Drawing, insert: Handle) -> Vec<DynGrip> {
             break;
         }
     }
+    // A grip shows in the current visibility state when the state lists it, or lists its
+    // parameter (AutoCAD shows a listed parameter's grips though the grips aren't listed).
+    let param_handle: HashMap<i32, Handle> = m.parameters.iter().map(|p| (p.node, p.handle)).collect();
     let shown = |node: i32, id: i32| {
-        id != 0 && (Some(node) == visibility_node || shown_in_state.as_ref().is_none_or(|a| objects.get(&id).is_some_and(|h| a.contains(h))))
+        id != 0
+            && (Some(node) == visibility_node
+                || shown_in_state
+                    .as_ref()
+                    .is_none_or(|a| objects.get(&id).is_some_and(|h| a.contains(h)) || param_handle.get(&node).is_some_and(|h| a.contains(h))))
     };
     let choices: HashMap<String, Vec<String>> =
         custom_properties(d, insert).map(|(_, ps)| ps.into_iter().map(|p| (p.name.to_ascii_uppercase(), p.choices)).collect()).unwrap_or_default();
@@ -121,15 +151,21 @@ pub fn grips(d: &Drawing, insert: Handle) -> Vec<DynGrip> {
     for p in &m.parameters {
         let grip = |i: usize| p.grips.get(i).copied().unwrap_or(0);
         match &p.kind {
-            ParameterKind::Linear { base, end, label, .. } => {
+            ParameterKind::Linear { base, end, label, from_midpoint, .. } => {
                 let (b, e) = match r.values.get(&p.node) {
                     Some(Value::Points { base, end }) => (*base, *end),
                     _ => (*base, *end),
                 };
                 let u = e - b;
                 let u = if u.len() > 1e-12 { u * (1.0 / u.len()) } else { Vec3::new(1.0, 0.0, 0.0) };
+                // An end no action follows has no grip (dragging it would change nothing); a
+                // distance from its midpoint moves both ends.
+                let used = match ends_used(&m, p.node) {
+                    Some((base, end)) if !*from_midpoint => [base, end],
+                    _ => [true, true],
+                };
                 for (i, part, at, way) in [(0, GripPart::Base, b, u * -1.0), (1, GripPart::End, e, u)] {
-                    if shown(p.node, grip(i)) {
+                    if used[i] && shown(p.node, grip(i)) {
                         let (at, dir) = (world(at), toward(at, way));
                         out.push(DynGrip { node: p.node, part, shape: GripShape::Linear, at, dir, property: label.clone(), choices: Vec::new() });
                     }

@@ -3,8 +3,9 @@
 //! grip begins, with the reference re-evaluated under the cursor as its preview. Typing a number
 //! at a distance's grip sets the distance.
 
+use cadcraft_doc::color::Color;
 use cadcraft_doc::dynblock::{self, GripPart, GripShape};
-use cadcraft_doc::{Drawing, EntityKind, Handle};
+use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Lineweight, Transparency};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -50,26 +51,59 @@ fn drag(s: &mut Session, h: Handle, node: i32, part: GripPart, to: Vec2) -> std:
     Ok(())
 }
 
-/// The reference `h` as drawn in drawing `d`: its block's shown objects placed by it, and its
-/// attributes (what a preview draws, in the preview colour: solid fills are left out so they
-/// don't cover the outline and text).
-fn drawn(d: &Drawing, h: Handle) -> Vec<EntityKind> {
-    let Some(EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { return Vec::new() };
+/// The properties an object of a block draws with in reference `r`: on layer 0 it is on the
+/// reference's layer, and its ByBlock colour, linetype, lineweight and transparency are the
+/// reference's (as the renderer draws a block's contents).
+fn under(c: &Common, r: &Common) -> Common {
+    let mut c = c.clone();
+    if c.layer == "0" {
+        c.layer.clone_from(&r.layer);
+    }
+    if c.color == Color::ByBlock {
+        c.color = r.color;
+    }
+    if c.linetype.eq_ignore_ascii_case("ByBlock") {
+        c.linetype.clone_from(&r.linetype);
+    }
+    if c.lineweight == Lineweight::ByBlock {
+        c.lineweight = r.lineweight;
+    }
+    if c.transparency == Transparency::ByBlock {
+        c.transparency = r.transparency;
+    }
+    c
+}
+
+/// The reference `h` as drawn in drawing `d`: its block's shown objects placed by it, in the
+/// block's order (fills under the outline and text), and its attributes, each with the
+/// properties it draws with.
+fn drawn(d: &Drawing, h: Handle) -> Vec<Entity> {
+    let Some(e) = d.entity(h) else { return Vec::new() };
+    let EntityKind::Insert(ins) = &e.kind else { return Vec::new() };
     let Some(b) = d.block(&ins.block) else { return Vec::new() };
+    let r = &e.common;
     let m = ins.transform(b.base.xy());
-    let mut out: Vec<EntityKind> = b
+    let mut out: Vec<Entity> = b
         .entities
         .iter()
         .filter(|e| e.common.visible && !matches!(&e.kind, EntityKind::AttDef(_) | EntityKind::Wipeout(_)))
-        .filter(|e| !matches!(&e.kind, EntityKind::Hatch(h) if h.solid))
         .take(MAX_PREVIEW)
         .map(|e| {
-            let mut k = e.kind.clone();
-            k.transform(&m);
-            k
+            let mut kind = e.kind.clone();
+            kind.transform(&m);
+            Entity { handle: Handle(0), common: under(&e.common, r), kind }
         })
         .collect();
-    out.extend(ins.attribs.iter().filter(|a| !a.invisible).map(|a| EntityKind::Text(a.text.clone())));
+    // An attribute draws with its definition's properties, except those set on it.
+    let by_block = Common { layer: "0".into(), color: Color::ByBlock, linetype: "ByBlock".into(), lineweight: Lineweight::ByBlock, ..r.clone() };
+    out.extend(ins.attribs.iter().filter(|a| !a.invisible).map(|a| {
+        let def = b.entities.iter().find_map(|e| match &e.kind {
+            EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag) => Some(&e.common),
+            _ => None,
+        });
+        let common = under(&a.props.over(def.unwrap_or(&by_block)), r);
+        Entity { handle: Handle(0), common, kind: EntityKind::Text(a.text.clone()) }
+    }));
     out
 }
 
@@ -121,15 +155,20 @@ impl Interactive for DynGripEdit {
         Ok(Step::Done)
     }
 
-    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+    /// The rubber band from the grip.
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        vec![crate::cmd::helpers::line(self.from, c)]
+    }
+
+    /// The reference re-evaluated at the cursor, drawn as it will look (its own colours, so
+    /// text stays readable on a filled block).
+    fn preview_objects(&self, s: &Session, c: Vec2) -> Vec<Entity> {
         let Ok(d) = s.doc() else { return Vec::new() };
         let mut d = d.clone();
-        let mut out = match dynblock::drag_grip(&mut d, self.handle, self.node, self.part, c) {
+        match dynblock::drag_grip(&mut d, self.handle, self.node, self.part, c) {
             Ok(()) => drawn(&d, self.handle),
             Err(_) => Vec::new(),
-        };
-        out.push(crate::cmd::helpers::line(self.from, c));
-        out
+        }
     }
 }
 

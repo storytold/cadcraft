@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks; blocks evidence updated, numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-27 · **Change:** minor (XCLIP; re-audit of the evidence text against main 41d9b5e95; percentages, hours and breadth counts not re-measured) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -12,7 +12,7 @@ and the deep checklists are [geometry-parity.md](geometry-parity.md),
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (AutoCAD for Mac menu items with a live command) | **245 / 491 = 50%** (233 = 47% counted by `cargo xtask parity`, which sees engine commands only; +12 UI-only items) | measured ([parity-checklist.md](parity-checklist.md), source scan) |
+| **Feature breadth** (AutoCAD for Mac menu items with a live command) | **245 / 491 = 50%** at the 2026-10-10 re-measure, not re-measured since (the generated checklist now reads 298 / 491, engine commands only; 233 = 47% counted by `cargo xtask parity`, which sees engine commands only; +12 UI-only items) | measured ([parity-checklist.md](parity-checklist.md), source scan) |
 | Feature breadth, 2D menus only (excluding 150 3D items) | **≈ 65%** (222 / 341 by `cargo xtask parity`'s rule) | measured (source scan, 2026-10-10) |
 | Feature depth, weighted by use (features dimension) | **≈ 41%** | estimated (table below) |
 | **Ready for real work** | **≈ 38%** | estimated (dimension table below; weighted 37.7%) |
@@ -59,14 +59,13 @@ mainstream and essentials numbers use multiplicative discounts.
   geometry kernel, DXF/DWG paths, interaction code. Plus the 88 GitHub issues and 47 open PRs.
   Disk was nearly full, so nothing was built or run: `cargo xtask parity` was reproduced by a
   Python scan of `CommandSpec` menus with the xtask's matching rule, which gives exactly the same
-  uncovered list as the last generated report (233 / 491). Re-run `cargo xtask parity` to
+  uncovered list as the last generated report (233 / 491 at the 2026-10-10 scan, a historical figure). Re-run `cargo xtask parity` to
   confirm.
 
 ## Mainstream practitioner
 
 The typical AutoCAD professional is a 2D drafter or detailer: draw, modify, dimension, use
-blocks, manage layers, plot sheets, and exchange DWGs with colleagues, every week. Excluded per
-the standard: 3D, AutoLISP and plug-ins, cloud/AI (Autodesk Assistant, Smart Blocks, Traces,
+blocks, manage layers, plot sheets, and exchange DWGs with colleagues, every week. Excluded: 3D, AutoLISP and plug-ins, cloud/AI (Autodesk Assistant, Smart Blocks, Traces,
 Share), Sheet Set Manager administration, specialist hardware, languages other than English.
 
 | Area (weekly use) | Weight | Depth | Weighted |
@@ -146,17 +145,17 @@ presence: an option that prints "not available yet" doesn't count.
 
 | Area | Weight | Parity | Remaining (Opus 5.5 h) | Evidence and main gaps | Doc |
 |---|---:|---:|---|---|---|
-| Draw (2D) | 13% | 60% | 15–25 | ARC 11/11 methods, CIRCLE 6/6, RECTANG all options, REVCLOUD, WIPEOUT, XLINE; PLINE arc options and SPLINE options done (#397, #408); MLINE, REGION and HELIX are objects (#510); isometric drafting (#556) | [gaps](gaps.md#features) |
+| Draw (2D) | 13% | 60% | 15–25 | ARC 11/11 methods, CIRCLE 6/6, RECTANG all options plus a centre construction mode (#1127), REVCLOUD, WIPEOUT, XLINE; PLINE arc options and SPLINE options done (#397, #408); MLINE, REGION and HELIX are objects (#510); isometric drafting (#556) | [gaps](gaps.md#features) |
 | Modify | 15% | 50% | 40–60 | TRIM/EXTEND, OFFSET, ROTATE, PEDIT and SPLINEDIT options done (#397, #558, #559); associative arrays with ARRAYEDIT (#448), no array grips; MATCHPROP picker and Settings (#439) | [gaps](gaps.md#features) |
-| Geometry precision | 10% | 40% | 70–110 | exact for lines/arcs/circles; ellipse and spline intersections, offsets, closest points tessellated; absolute tolerances; polyline offset doesn't recompute bulges | [geometry-parity](geometry-parity.md) |
-| Layers and properties | 7% | 70% | 10–15 | Layer Properties Manager with filters, states, VP overrides; QSELECT; Quick Properties; transparency; linetype manager thin; 19 linetypes of ~45 | [gaps](gaps.md#features) |
+| Geometry precision | 10% | 40% | 70–110 | exact for lines/arcs/circles; ellipse and spline intersections, offsets, closest points tessellated; absolute tolerances; polyline offset recomputes arc bulges since #825 but has no loop cleanup | [geometry-parity](geometry-parity.md) |
+| Layers and properties | 7% | 70% | 10–15 | Layer Properties Manager with filters, states, VP overrides; QSELECT; Quick Properties; object transparency drawn on screen, in exports and in plots (#764); linetype manager thin; 19 linetypes of ~45 | [gaps](gaps.md#features) |
 | Dimensions | 9% | 45% | 25–35 | all core DIM types and associativity; style variables, DIMJOGGED, DIMJOGLINE, DIMBREAK, DIMEDIT, DIMINSPECT, QDIM modes (#507) and TOLERANCE (#420); no DIMSTYLE manager dialog or smart DIM | [gaps](gaps.md#features) |
-| Text and MTEXT | 6% | 35% | 30–45 | TrueType, formatting codes, stacking; MTEXT prompt options (#408), indents, tabs, bullets, numbering and columns (#547), annotative scaling (#468); editor is a dialog, not in place; no fields or SPELL (open PR #551), no SHX | [gaps](gaps.md#features) |
-| Leaders, tables, fields | 4% | 25% | 25–35 | MLEADER options and block content (#408), native MULTILEADER in DXF (#459); tables with cell styles, formulas, breaking and CSV data links (#534); no MLEADEREDIT/ALIGN/COLLECT, no FIELD | [gaps](gaps.md#features) |
+| Text and MTEXT | 6% | 35% | 30–45 | TrueType, formatting codes, stacking; MTEXT prompt options (#408), indents, tabs, bullets, numbering and columns (#547), annotative scaling (#468); in-place editor with formatting toolbar and ruler for new MTEXT (#792; existing TEXT is edited on the command line with TEXTEDIT; an existing MTEXT opens in the in-place editor with its contents, #1002); no fields or SPELL (open PR #551), no SHX | [gaps](gaps.md#features) |
+| Leaders, tables, fields | 4% | 25% | 25–35 | MLEADER options and block content (#408), native MULTILEADER in DXF (#459); MLEADEREDIT, MLEADERALIGN and MLEADERCOLLECT (#816); tables with cell styles, formulas, breaking and CSV data links (#534); no FIELD (open PR #551) | [gaps](gaps.md#features) |
 | Hatch and gradients | 5% | 35% | 15–25 | pick points with islands; 23 patterns of ~85; gradients render flat; origin, gap tolerance, separate hatches, island styles and HATCHEDIT options (#451); Hatch and Gradient / Hatch Edit dialogs (no Preview or Inherit Properties) | [gaps](gaps.md#features) |
-| Blocks, attributes, xrefs, groups | 9% | 25% | 80–120 | static blocks and attributes; ATTSYNC, BATTMAN editing, DATAEXTRACTION/EATTEXT (#433); xrefs (#525); groups (#417); Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); REFEDIT; dynamic block references read and edited; no dynamic-block authoring, XCLIP, DesignCenter | [gaps](gaps.md#features) |
-| Layouts, viewports, plotting | 9% | 35% | 35–50 | layouts, per-VP layers, page setups, plot styles (CTB/STB), Plot dialog (#160), Plot Preview and PUBLISH (#186), plotter devices (#564), PDF with text, layers and sheets (#567, #571), polygonal/object/clipped viewports (#453), annotative scales (#468); no MVIEW Restore, no system printers | [gaps](gaps.md#features) |
-| Inquiry and utilities | 4% | 30% | 30–45 | DIST, AREA, ID, LIST, MEASUREGEOM, CAL, FIND, COUNT across layouts, QuickCalc, COMPARE (#563), MASSPROP on regions (#510), autosave/recovery, AUDIT, RECOVER (#406), OPTIONS (#23); no SPELL (open PR #551), ETRANSMIT | [gaps](gaps.md#features) |
+| Blocks, attributes, xrefs, groups | 9% | 25% | 80–120 | static blocks and attributes; ATTSYNC, BATTMAN editing, DATAEXTRACTION/EATTEXT (#433); xrefs (#525); groups (#417); Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); REFEDIT, REFSET and REFCLOSE (#818); XCLIP and XCLIPFRAME (#2354); dynamic block references read and edited, with grips (#838–#883); no dynamic-block authoring, DesignCenter | [gaps](gaps.md#features) |
+| Layouts, viewports, plotting | 9% | 35% | 35–50 | layouts, per-VP layers, page setups, plot styles (CTB/STB), Plot dialog (#160), Plot Preview and PUBLISH (#186), plotter devices (#564), PDF with text, layers and sheets (#567, #571), polygonal/object/clipped viewports (#453), annotative scales (#468), MVIEW Restore (#633); no system printers (CUPS printing is open PR #755) | [gaps](gaps.md#features) |
+| Inquiry and utilities | 4% | 30% | 30–45 | DIST, AREA, ID, LIST, MEASUREGEOM, CAL, FIND, COUNT across layouts, QuickCalc, COMPARE (#563) and COMPAREEXPORT, MASSPROP on regions (#510), autosave/recovery, AUDIT, RECOVER (#406), OPTIONS (#23); no SPELL (open PR #551), ETRANSMIT | [gaps](gaps.md#features) |
 | Parametric constraints | 2% | 50% | 20–30 | all 12 geometric and the dimensional constraints, own solver; DOF report, G2 Smooth, ellipse/spline/block geometry and CONSTRAINTINFER landed (#546) | [geometry-parity](geometry-parity.md#constraint-solver--50) |
 | 3D modelling, visualisation, rendering | 5% | 2% | 300–450 | no UCS, 3D views, orbit, solids, surfaces, meshes, sections, visual styles, materials, lights or rendering; 150 of the 491 menu items | [gaps](gaps.md#features) |
 | Collaboration and cloud (Sheet Set Manager, Share, Traces, Markup Import, Activity Insights, DWG Compare) | 2% | 5% | 40–70 | none of these exist | [gaps](gaps.md#features) |
@@ -169,12 +168,12 @@ presence: an option that prints "not available yet" doesn't count.
 | Features (table above) | 35% | 41% | 735–1,115 | estimated | this file |
 | UI/UX fidelity (point entry, snaps, tracking, dynamic input, grips, selection, command line, chrome) | 15% | 43% | 100–160 | estimated, weighted in the doc | [ui-parity](ui-parity.md) |
 | File formats (DWG/DXF fidelity first) | 20% | 30% | 170–280 | estimated | [file-format-parity](file-format-parity.md) |
-| Stability and correctness | 10% | 35% | 30–50 | estimated: about 60 bug fixes merged on 2026-10-10 alone, 30 open issues, `cargo fmt` failing on main (PR #194), no CI runs the Rust tests on pull requests | [gaps](gaps.md#stability) |
+| Stability and correctness | 10% | 35% | 30–50 | estimated: about 60 bug fixes merged on 2026-10-10 alone, 415 open issues (`gh issue list`, 2026-10-24), `cargo fmt` fixed on main, CI runs `cargo xtask ci` on every pull request (#1987) | [gaps](gaps.md#stability) |
 | Performance | 5% | 60% | 20–40 | internal numbers only (200k entities fluent); 1M entities and large DWG loads untested; a 10 MB DWG took ~2 min to fail (#57) | [hardware-parity](hardware-parity.md#performance-on-hardware-internal-numbers-only) |
-| Ecosystem and automation (AutoLISP/Visual LISP, .NET/ObjectARX, CUI, APPLOAD, Express Tools, App Store) | 5% | 10% | 120–200 | estimated; MCP, CLI and the control channel are ahead of AutoCAD, but no LISP, CUI or plug-ins | [gaps](gaps.md#ecosystem-and-automation) |
+| Ecosystem and automation (AutoLISP/Visual LISP, .NET/ObjectARX, CUI, APPLOAD, Express Tools, App Store) | 5% | 10% | 120–200 | estimated; MCP, CLI and the control channel are ahead of AutoCAD; AutoLISP core (#855) and SCRIPT (#693) landed, but no Visual LISP, CUI or plug-ins | [gaps](gaps.md#ecosystem-and-automation) |
 | Hardware | 3% | 45% | 15–25 | estimated | [hardware-parity](hardware-parity.md) |
-| Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build can't open or save files reliably (#55, #133, #134) and has no DWG, and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
-| Localization | 3% | 5% | 60–100 | measured: string catalog with Ukrainian (936 rows, #36); none of AutoCAD for Mac's 7 other languages | [localization-parity](localization-parity.md) |
+| Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build's plot shows raw PDF bytes (#134; open and save fixed, #55, #133) and it has no DWG, and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
+| Localization | 3% | 5% | 60–100 | string catalog with eighteen languages (Ukrainian 1,414 rows, #36; six of AutoCAD for Mac's 7 other languages, all but Japanese); the 5% and the hours are from 2026-10-10 and not re-scored | [localization-parity](localization-parity.md) |
 | AI features (Autodesk Assistant, Smart Blocks, Markup Assist) | 1% | 20% | 40–80 | none of AutoCAD's in-app AI; agent control over MCP is a different strength | [gaps](gaps.md#ai-features) |
 | **Ready for real work** | 100% | **≈ 38%** | **≈ 1,300–2,100** | | |
 
@@ -215,7 +214,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 | Date | Feature breadth | Weighted parity | Remaining | Note |
 |---|---|---|---|---|
 | 2026-10-10 (merge) | unchanged (233/491 re-scanned) | ready ≈ 38% (37.7%), mainstream ≈ 28%, essentials ≈ 46% | unchanged within rounding | main landed dynamic input pointer boxes (#60), the Ukrainian catalog (#36), WIPEOUT/gradient DXF fixes (#147, #162): UI/UX 40% → 43%, localization 3% → 5% |
-| 2026-10-10 (later) | unchanged | ready for real work ≈ 37% (unchanged: already built from the written dimension weights, no hidden judgement); mainstream practitioner ≈ 27%; essentials user ≈ 45% | unchanged | mainstream and essentials numbers added (craftrules standard) |
+| 2026-10-10 (later) | unchanged | ready for real work ≈ 37% (unchanged: already built from the written dimension weights, no hidden judgement); mainstream practitioner ≈ 27%; essentials user ≈ 45% | unchanged | mainstream and essentials numbers added |
 | 2026-10-10 | 245/491 (50%), engine-only 233/491 | features ≈ 41%, ready for real work ≈ 37% | 1,300–2,100 h | full re-measure in this format (this file) |
 | 2026-10-07 | 233/491 (47%) | ≈ 29% overall, 2D ≈ 55% | ≈ 570 h | old ROADMAP: milestone percentages reported by the building agents |
 
@@ -223,6 +222,10 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Blocks, attributes, xrefs, groups row: XCLIP and XCLIPFRAME clip block and xref references; parity percentages and hours not re-measured |
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text of the feature, stability, platforms and localization rows refreshed against main 41d9b5e95; percentages, hours and breadth counts (245/491, 233/491) not re-measured |
+| 2026-10-24 | minor | Inquiry and utilities row: COMPAREEXPORT exports a comparison to a new drawing; parity percentages and hours not re-measured |
+| 2026-10-22 | minor | Draw row: RECTANG gained a centre construction mode (`Center` keyword, `center: true`) beside its corner mode (#1127); parity percentages and hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |
 | 2026-10-12 | minor | Blocks row evidence: Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); percentages and hours not re-measured |
 | 2026-10-11 | minor | Evidence text of the feature-area rows refreshed for merged work (#397, #406, #408, #417, #420, #433, #448, #451, #453, #459, #468, #507, #510, #525, #534, #546, #547, #558, #563, #564, #567, #571); parity percentages and hours not re-measured |

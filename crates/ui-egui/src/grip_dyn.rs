@@ -5,6 +5,10 @@
 //!
 //! The command-line text is the active field's text, so Backspace and Escape behave as usual;
 //! text that isn't a value (a keyword such as `C` for Copy) goes to the command as typed.
+//!
+//! A prompt that asks for a distance from its base ([`cadcraft_engine::Prompt::distance`]: a
+//! circle's radius, a polyline arc's) shows the same way, as one length field from the base, and
+//! Enter sends the typed value to the command as a number.
 
 use cadcraft_doc::Handle;
 use cadcraft_engine::Input;
@@ -20,22 +24,31 @@ use crate::theme::Tokens;
 pub struct GripDyn {
     /// The grip the fields belong to; another grip starts over.
     grip: Option<(Handle, usize)>,
+    /// The base of the distance prompt the field belongs to; another one starts over.
+    base: Option<Vec2>,
     /// The active field.
     pub active: usize,
     /// Locked fields: (field, value as typed).
     pub locked: Vec<(usize, String)>,
 }
 
+/// The base of the prompt on show when it asks for a distance from it (a circle's radius, a
+/// polyline arc's): its one field is that distance.
+fn distance_base(app: &CadApp) -> Option<Vec2> {
+    crate::cmdline::dyn_frame(app).and_then(|_| app.session.current_prompt()).filter(|p| p.distance).and_then(|p| p.base)
+}
+
 /// The dimensions on show, after bringing the fields' state up to date with the prompt (empty when
-/// no grip is stretched or the value boxes aren't live).
+/// no grip is stretched, no distance is asked for, or the value boxes aren't live).
 pub fn dims(app: &mut CadApp) -> Vec<GripDim> {
     let grip = crate::cmdline::dyn_frame(app).and_then(|_| app.session.current_prompt()).and_then(|p| p.grip);
+    let base = distance_base(app);
     let st = &mut app.canvas.grip_dyn;
-    if st.grip != grip {
-        *st = GripDyn { grip, ..GripDyn::default() };
+    if st.grip != grip || st.base != base {
+        *st = GripDyn { grip, base, ..GripDyn::default() };
     }
     if grip.is_none() {
-        return Vec::new();
+        return base.map(|b| vec![GripDim { kind: GripDimKind::Length, anchor: b, original: 0.0 }]).unwrap_or_default();
     }
     let dims = grip_dims(&app.session);
     if app.canvas.grip_dyn.active >= dims.len() {
@@ -95,6 +108,17 @@ pub fn submit(app: &mut CadApp) -> bool {
     }
     let typed = app.cmd.buffer.trim();
     if !typed.is_empty() && dims.get(app.canvas.grip_dyn.active).and_then(|d| d.parse(&app.session, typed)).is_none() {
+        return false;
+    }
+    // A distance prompt takes the value as typed (or as Tab locked it), so the command reads the
+    // number itself: a negative arc radius, a radius of zero refused.
+    if distance_base(app).is_some() {
+        if typed.is_empty()
+            && let Some((_, l)) = app.canvas.grip_dyn.locked.first()
+        {
+            app.cmd.buffer = l.clone();
+        }
+        app.canvas.grip_dyn = GripDyn::default();
         return false;
     }
     let vals = values(app, &dims);
@@ -276,6 +300,45 @@ mod tests {
         app.session.input(Input::Point(Vec2::new(10.0, 10.0))).unwrap();
         let lines = app.session.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count();
         assert_eq!(lines, 2, "Copy mode stretched a copy");
+    }
+
+    /// CIRCLE's radius prompt shows one distance field from the centre, not the pointer boxes
+    /// (X/Y, or distance and angle), and a typed value is the radius (#1135).
+    #[test]
+    fn circle_radius_shows_one_distance_field_and_typed_value_is_the_radius() {
+        for cartesian in [true, false] {
+            let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+            app.session.settings.dynpi_cartesian = cartesian;
+            // The UCS icon paints "X" and "Y" too.
+            app.ui.show_ucs_icon = false;
+            let ctx = egui::Context::default();
+            crate::canvas::tests::painted_text(&mut app, &ctx, pos2(700.0, 450.0));
+            let at = app.canvas.xf.unwrap().to_screen(Vec2::ZERO) + vec2(130.0, -70.0);
+            let labels = |text: &str| text.lines().filter(|l| matches!(*l, "X" | "Y" | "<")).map(str::to_owned).collect::<Vec<_>>();
+
+            app.session.cmdline("circle").unwrap();
+            crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            let text = crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            assert_eq!(labels(&text), ["X", "Y"], "the centre is a point:\n{text}");
+
+            app.session.input(Input::Point(Vec2::ZERO)).unwrap();
+            crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            let text = crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            assert!(labels(&text).is_empty(), "pointer boxes at the radius prompt (DYNPIFORMAT {cartesian}):\n{text}");
+            assert_eq!(dims(&mut app).len(), 1, "one distance field");
+            let r = cadcraft_engine::units::format_distance(app.canvas.cursor.unwrap().len(), 2, 4);
+            assert!(text.contains(&r), "no radius {r} in:\n{text}");
+            assert!(text.contains("Specify radius of circle"), "{text}");
+
+            run_frame(&mut app, &ctx, vec![Event::Text("25".into())]);
+            run_frame(&mut app, &ctx, key(egui::Key::Enter));
+            assert!(app.session.running.is_none());
+            let radius = app.session.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+                EntityKind::Circle(ci) => Some(ci.radius),
+                _ => None,
+            });
+            assert_eq!(radius, Some(25.0));
+        }
     }
 
     /// The grip's length fields read the drawing's length units (LUNITS/LUPREC) (#841).

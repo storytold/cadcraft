@@ -189,6 +189,19 @@ impl EntityStore {
             None => false,
         }
     }
+    /// The objects directly under and above `h` in the draw order (None at the bottom or the
+    /// top), when `h` is here.
+    pub fn neighbours(&self, h: Handle) -> Option<(Option<Handle>, Option<Handle>)> {
+        let pos = self.chunk_pos(self.chunk_id(h)?)?;
+        let items = &self.chunks.get(pos)?.items;
+        let i = items.iter().position(|e| e.handle == h)?;
+        let below = match i.checked_sub(1) {
+            Some(j) => items.get(j),
+            None => pos.checked_sub(1).and_then(|p| self.chunks.get(p)).and_then(|c| c.items.last()),
+        };
+        let above = items.get(i + 1).or_else(|| self.chunks.get(pos + 1).and_then(|c| c.items.first()));
+        Some((below.map(|e| e.handle), above.map(|e| e.handle)))
+    }
     /// Move `h` directly above (`above`) or under `anchor` in the draw order. False (and nothing
     /// moves) when either is absent or they are the same object.
     pub fn move_next_to(&mut self, h: Handle, anchor: Handle, above: bool) -> bool {
@@ -363,5 +376,27 @@ mod tests {
         for h in 1..=3000 {
             assert_eq!(s.get(Handle(h)).map(|e| e.handle.0), Some(h));
         }
+    }
+
+    #[test]
+    fn neighbours_across_chunks() {
+        let mut s = EntityStore::new();
+        for h in 1..=3000 {
+            s.push(ent(h));
+        }
+        assert_eq!(s.neighbours(Handle(1)), Some((None, Some(Handle(2)))));
+        assert_eq!(s.neighbours(Handle(1500)), Some((Some(Handle(1499)), Some(Handle(1501)))));
+        // The first and last objects of a chunk look into the chunks next to it.
+        let k = CHUNK_MAX as u64;
+        assert_eq!(s.neighbours(Handle(k)), Some((Some(Handle(k - 1)), Some(Handle(k + 1)))));
+        assert_eq!(s.neighbours(Handle(k + 1)), Some((Some(Handle(k)), Some(Handle(k + 2)))));
+        assert_eq!(s.neighbours(Handle(3000)), Some((Some(Handle(2999)), None)));
+        assert_eq!(s.neighbours(Handle(9999)), None);
+        assert!(s.move_next_to(Handle(3000), Handle(1), false));
+        assert_eq!(s.neighbours(Handle(1)), Some((Some(Handle(3000)), Some(Handle(2)))));
+        assert_eq!(s.neighbours(Handle(3000)), Some((None, Some(Handle(1)))));
+        let mut one = EntityStore::new();
+        one.push(ent(7));
+        assert_eq!(one.neighbours(Handle(7)), Some((None, None)));
     }
 }

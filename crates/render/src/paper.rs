@@ -1,7 +1,7 @@
 //! Paper sizes and the layout sheet (paper rectangle, printable area) for paper space.
 //!
-//! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and inches
-//! otherwise. The sheet's lower-left corner is the paper-space origin.
+//! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and on layouts whose
+//! page setup is in millimetres, and inches otherwise. The sheet's lower-left corner is the paper-space origin.
 
 use cadcraft_doc::{Drawing, PageSetup};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -81,6 +81,19 @@ pub fn paper_unit_mm(d: &Drawing) -> f64 {
     if d.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 25.4 }
 }
 
+/// Millimetres per paper-space unit on a layout with page setup `page`: millimetres when the
+/// page says so (plot paper units mm), else as the drawing's MEASUREMENT says. Drawings from
+/// AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
+pub fn page_unit_mm(d: &Drawing, page: &PageSetup) -> f64 {
+    if page.paper_mm { 1.0 } else { paper_unit_mm(d) }
+}
+
+/// Millimetres per paper-space unit on the layout holding the paper-space entity `h` (the
+/// drawing's when no layout holds it).
+pub fn unit_mm_of(d: &Drawing, h: cadcraft_doc::Handle) -> f64 {
+    d.layouts.iter().find(|l| l.entities.contains(h)).map_or_else(|| paper_unit_mm(d), |l| page_unit_mm(d, &l.page))
+}
+
 /// The paper sheet of a layout, in paper-space units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sheet {
@@ -119,7 +132,7 @@ impl Sheet {
 /// The sheet of a named layout (`None` if there is no such layout).
 pub fn sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     let l = d.layouts.iter().find(|l| l.name == layout).or_else(|| d.layout(layout))?;
-    Some(Sheet::from_page(&l.page, paper_unit_mm(d)))
+    Some(Sheet::from_page(&l.page, page_unit_mm(d, &l.page)))
 }
 
 #[cfg(test)]
@@ -141,4 +154,31 @@ mod tests {
         let s = Sheet::from_page(&hostile, 0.0);
         assert!(s.size.x > 0.0 && s.printable == s.bounds());
     }
+}
+
+/// What a layout's saved page setup says about how to plot it, for a plot that was not given the
+/// matching options (#2493): the plot window, whether to scale to fit, the saved scale, and
+/// centring.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SavedPlot {
+    /// The saved plot window, when the plot area is "window" and its corners are a real box.
+    pub window: Option<Bounds2>,
+    /// Scale to fit the window (or the extents) on the printable area.
+    pub fit: bool,
+    /// The saved plot scale, paper units per drawing unit, when it isn't scale to fit or 1:1.
+    pub scale: Option<f64>,
+    /// Centre the plot on the printable area.
+    pub center: bool,
+}
+
+/// The saved plot settings of `page`. A layout plotted over its whole sheet ("layout" plot area)
+/// has nothing to fit, so scale to fit only counts for a window or the extents.
+pub fn saved_plot(page: &PageSetup) -> SavedPlot {
+    let [x1, y1, x2, y2] = page.plot_window;
+    let window = (page.plot_area.eq_ignore_ascii_case("window") && [x1, y1, x2, y2].iter().all(|v| v.is_finite()))
+        .then(|| Bounds2::new(Vec2::new(x1, y1), Vec2::new(x2, y2)))
+        .filter(|w| w.width() > 0.0 && w.height() > 0.0);
+    let fit = page.scale_to_fit && (window.is_some() || page.plot_area.eq_ignore_ascii_case("extents"));
+    let scale = Some(page.scale).filter(|s| !page.scale_to_fit && s.is_finite() && *s > 0.0 && (*s - 1.0).abs() > 1e-9);
+    SavedPlot { window, fit, scale, center: page.center }
 }

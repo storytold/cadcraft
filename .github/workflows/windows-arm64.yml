@@ -1,0 +1,34 @@
+# Windows on ARM: package the ARM64 release the way release.yml does (cross-compiled on an x64
+# runner, unsigned here), then install that MSI on a Windows 11 ARM64 runner, check the installed
+# binaries are ARM64, run the CLI natively, and uninstall.
+name: Windows ARM64
+
+# Nightly on main and on pushes to `release` (dependency and runner-image drift shows up within a
+# day, and always before a release ships), and on PRs that change the Windows packaging itself.
+on:
+  schedule:
+    - cron: "3 5 * * *"
+  push:
+    branches: [release]
+  pull_request:
+    paths:
+      - .github/workflows/windows-arm64.yml
+      - packaging/windows/**
+  workflow_dispatch:
+
+concurrency:
+  group: windows-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-arm64:
+    # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
+    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@main
+    with:
+      app-name: cadcraft
+      app-dir: CADCraft
+      install-relative-path: Programs/ArtCraft/CADCraft
+      install-scope: perUser

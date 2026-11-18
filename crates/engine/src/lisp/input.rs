@@ -67,6 +67,12 @@ impl GetRequest {
         let mut p = Prompt::new(message, accept).base_opt(base);
         p.keywords = self.initget.keywords.clone();
         p.raw = true;
+        // `entsel`/`nentsel` pick one object. The routine writes the message, so the prompt says
+        // so itself rather than being read for the word "Select" -- with a message of its own
+        // ("\nSelect the second line: ", or no mention of selecting at all) the pick box went
+        // missing, while the same call without one got it from the default "Select object: "
+        // (#1598).
+        p.picks_one = matches!(self.kind, GetKind::EntSel);
         p
     }
 
@@ -135,7 +141,7 @@ impl GetRequest {
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let space = s.state().map(|st| st.edit_space()).map_err(|e| Again::Msg(e.to_string()))?;
                 let d = s.doc().map_err(|e| Again::Msg(e.to_string()))?;
-                match crate::select::pick(d, &space, Vec2::new(p[0], p[1]), ap) {
+                match crate::select::pick_in(d, &space, s.viewport_frozen(), Vec2::new(p[0], p[1]), ap) {
                     Some(h) => Ok(Value::list(vec![Value::Ename(h), Value::point(&p)])),
                     None => Err("Missed, try again.".into()),
                 }
@@ -161,6 +167,7 @@ impl GetRequest {
                 let t = if spaces { t } else { t.split(' ').next().unwrap_or("") };
                 Ok(Value::str(t))
             }
+            GetKind::Kword if any => Ok(Value::str(t)),
             GetKind::Kword => Err("Invalid option keyword.".into()),
             GetKind::Int => match t.trim().parse::<i32>() {
                 Ok(i) if (-32768..=32767).contains(&i) => self.check_number(f64::from(i), true),
@@ -254,7 +261,7 @@ fn keyword(keywords: &[String], t: &str) -> Option<String> {
 impl Session {
     /// ANGBASE (radians).
     fn lisp_angbase(&self) -> f64 {
-        crate::sysvars::get(self, "ANGBASE").and_then(|v| v.as_f64()).unwrap_or(0.0)
+        self.doc().map(|d| d.header.f64("ANGBASE", 0.0)).unwrap_or(0.0)
     }
 }
 

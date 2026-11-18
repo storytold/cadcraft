@@ -343,25 +343,53 @@ pub fn eq(a: &Value, b: &Value) -> bool {
 
 /// `equal`: the same structure, numbers within `fuzz`.
 pub fn equal(a: &Value, b: &Value, fuzz: f64) -> bool {
-    equal_depth(a, b, fuzz, 0)
+    // A shared cons DAG can expand into exponentially many node visits when compared as a tree.
+    // Bound the total comparisons so `equal` on adversarial shared structure cannot monopolise the
+    // thread (CWE-407); exhausting the budget reports "not equal" rather than looping.
+    equal_within(a, b, fuzz, EQUAL_BUDGET)
 }
 
-fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize) -> bool {
-    if depth > MAX_DEPTH {
+/// [`equal`] with its work allowance (node visits plus string bytes / 64) given.
+fn equal_within(a: &Value, b: &Value, fuzz: f64, mut budget: u64) -> bool {
+    equal_depth(a, b, fuzz, 0, &mut budget)
+}
+
+/// Largest number of node comparisons one `equal` call may perform.
+const EQUAL_BUDGET: u64 = 50_000_000;
+
+/// Compare nested values within depth and node-work limits, returning false when either limit is reached.
+fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize, budget: &mut u64) -> bool {
+    if depth > MAX_DEPTH || *budget == 0 {
         return false;
     }
+    *budget -= 1;
     let (mut a, mut b) = (a.clone(), b.clone());
     loop {
+        if *budget == 0 {
+            return false;
+        }
         match (&a, &b) {
             (Value::Cons(x), Value::Cons(y)) => {
-                if !equal_depth(&x.car, &y.car, fuzz, depth + 1) {
+                if !equal_depth(&x.car, &y.car, fuzz, depth + 1, budget) {
                     return false;
                 }
                 let (na, nb) = (x.cdr.clone(), y.cdr.clone());
                 a = na;
                 b = nb;
             }
-            _ => return atom_equal(&a, &b, fuzz),
+            _ => {
+                // Comparing two strings costs their length, not one visit: a shared list of long
+                // equal strings must spend the allowance by the bytes it compares (one unit per 64).
+                if let (Value::Str(x), Value::Str(y)) = (&a, &b) {
+                    let cost = (x.len().min(y.len()) / 64) as u64;
+                    if cost >= *budget {
+                        *budget = 0;
+                        return false;
+                    }
+                    *budget -= cost;
+                }
+                return atom_equal(&a, &b, fuzz);
+            }
         }
     }
 }
@@ -398,16 +426,20 @@ pub fn real_text(r: f64) -> String {
     if r == 0.0 {
         return "0.0".into();
     }
-    let exp = r.abs().log10().floor() as i32;
+    // Round to six significant digits first so the exponent already includes any carry
+    // (999999.5 -> 1.00000e6) and subnormals never divide by an underflowed power of ten.
+    let sci = format!("{:.5e}", r.abs());
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
     // As C's %g with six digits: exponent form outside 1e-5 ..< 1e6.
     if !(-5..6).contains(&exp) {
         // Exponent form: d.ddddde+NNN
-        let m = r / 10f64.powi(exp);
-        let mut s = trim_fraction(&format!("{m:.5}"));
+        let mut s = trim_fraction(mantissa);
         if !s.contains('.') {
             s.push_str(".0");
         }
-        return format!("{s}e{}{:03}", if exp < 0 { '-' } else { '+' }, exp.abs());
+        let sign = if r < 0.0 { "-" } else { "" };
+        return format!("{sign}{s}e{}{:03}", if exp < 0 { '-' } else { '+' }, exp.abs());
     }
     let decimals = (5 - exp).max(0) as usize;
     let mut s = trim_fraction(&format!("{r:.decimals$}"));
@@ -523,6 +555,20 @@ fn write_value(out: &mut String, v: &Value, escape: bool, depth: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `equal` charges the bytes of the strings it compares: a list of long equal strings fits a
+    /// big allowance but not a small one, though it has few nodes.
+    #[test]
+    fn equal_spends_its_allowance_on_string_bytes() {
+        let long = Value::str(&"x".repeat(6_400));
+        let other = Value::str(&"x".repeat(6_400));
+        let list = |v: &Value| Value::list(vec![v.clone(); 100]);
+        let (a, b) = (list(&long), list(&other));
+        // 100 strings x 100 units each, plus about 100 node visits.
+        assert!(equal_within(&a, &b, 0.0, 20_000));
+        assert!(!equal_within(&a, &b, 0.0, 5_000));
+        assert!(equal(&a, &b, 0.0));
+    }
 
     #[test]
     fn reals_print_with_six_significant_digits() {

@@ -115,6 +115,39 @@ pub(super) fn forget_in_viewports(d: &mut Drawing, set: &HashSet<String>) {
     }
 }
 
+/// Point every layout viewport's frozen list and colour overrides at a renamed layer.
+pub(super) fn rename_in_viewports(d: &mut Drawing, old: &str, new: &str) {
+    for layout in &mut d.layouts {
+        let hs: Vec<Handle> = layout
+            .entities
+            .iter()
+            .filter(|e| match &e.kind {
+                EntityKind::Viewport(v) => {
+                    v.frozen_layers.iter().any(|l| l.eq_ignore_ascii_case(old)) || v.layer_colors.iter().any(|(l, _)| l.eq_ignore_ascii_case(old))
+                }
+                _ => false,
+            })
+            .map(|e| e.handle)
+            .collect();
+        for h in hs {
+            layout.entities.modify(h, |e| {
+                if let EntityKind::Viewport(v) = &mut e.kind {
+                    for l in &mut v.frozen_layers {
+                        if l.eq_ignore_ascii_case(old) {
+                            *l = new.to_string();
+                        }
+                    }
+                    for (l, _) in &mut v.layer_colors {
+                        if l.eq_ignore_ascii_case(old) {
+                            *l = new.to_string();
+                        }
+                    }
+                }
+            });
+        }
+    }
+}
+
 fn lower_set(names: &[String]) -> HashSet<String> {
     names.iter().map(|n| n.to_ascii_lowercase()).collect()
 }

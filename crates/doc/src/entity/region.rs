@@ -9,6 +9,9 @@ use super::HatchLoop;
 /// Most loops one region has (hostile files and edits).
 pub const MAX_REGION_LOOPS: usize = 10_000;
 
+/// Most polygon edges [`Region::renest`] tests, over all its point-in-loop tests.
+pub const MAX_RENEST_EDGE_VISITS: usize = 50_000_000;
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Region {
     /// Closed loops with bulges; `outer` false for islands.
@@ -76,20 +79,49 @@ impl Region {
     }
 
     /// Set each loop's `outer` flag from how deeply other loops enclose it: an even depth is
-    /// an outer loop, odd an island.
-    pub fn renest(&mut self) {
+    /// an outer loop, odd an island. `false`, with the flags left as they were, when that takes
+    /// more than [`MAX_RENEST_EDGE_VISITS`] polygon edge tests.
+    #[must_use]
+    pub fn renest(&mut self) -> bool {
         let polys = self.tessellate(self.fine_tol());
-        let depth: Vec<usize> = polys
+        // A loop's probe can only be inside loops whose box holds it: test only those. A box with
+        // a non-finite corner says nothing (an edge through a non-finite point never counts, so
+        // such a polygon need not be closed), so its loop is always tested.
+        let boxes: Vec<Option<Bounds2>> = polys
             .iter()
-            .enumerate()
-            .map(|(i, l)| {
-                let Some(p) = probe(l) else { return 0 };
-                polys.iter().enumerate().filter(|(j, o)| *j != i && point_in_polygon(o, p)).count()
+            .map(|l| {
+                let b = Bounds2::from_points(l.iter().copied());
+                (l.iter().all(|p| p.is_finite()) && b.min.is_finite() && b.max.is_finite()).then_some(b)
             })
             .collect();
+        let mut visits = 0usize;
+        let mut depth = Vec::with_capacity(polys.len());
+        for (i, l) in polys.iter().enumerate() {
+            let Some(p) = probe(l) else {
+                depth.push(0);
+                continue;
+            };
+            let mut d = 0;
+            for (j, (o, b)) in polys.iter().zip(&boxes).enumerate() {
+                if j == i || b.is_some_and(|b| !b.contains(p)) {
+                    continue;
+                }
+                // Each loop against every other is loops x vertices: bounded so a region of many
+                // large nested loops cannot hold the thread (CWE-407).
+                visits = visits.saturating_add(o.len());
+                if visits > MAX_RENEST_EDGE_VISITS {
+                    return false;
+                }
+                if point_in_polygon(o, p) {
+                    d += 1;
+                }
+            }
+            depth.push(d);
+        }
         for (l, d) in self.loops.iter_mut().zip(depth) {
             l.outer = d % 2 == 0;
         }
+        true
     }
 
     /// Area, perimeter, bounding box, centroid and second moments (outer loops counted
@@ -127,4 +159,38 @@ fn probe(l: &[Vec2]) -> Option<Vec2> {
         let (a, b) = (*l.get(i)?, *l.get((i + 1) % n)?);
         (a.dist(b) > 1e-12).then(|| (a + b) * 0.5).filter(|m| m.is_finite())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn square(c: f64, half: f64, n: usize, outer: bool) -> HatchLoop {
+        // `n` vertices along the bottom edge, then the other three corners.
+        let mut vertices: Vec<PolyVertex> =
+            (0..n).map(|k| PolyVertex::new(Vec2::new(c - half + 2.0 * half * k as f64 / n as f64, c - half))).collect();
+        vertices.extend([Vec2::new(c + half, c - half), Vec2::new(c + half, c + half), Vec2::new(c - half, c + half)].map(PolyVertex::new));
+        HatchLoop { vertices, outer, sources: Vec::new() }
+    }
+
+    #[test]
+    fn renest_sets_depth_parity_and_skips_loops_far_away() {
+        // Three nested squares, and one beside them.
+        let mut r =
+            Region { loops: vec![square(0.0, 3.0, 1, false), square(0.0, 2.0, 1, false), square(0.0, 1.0, 1, false), square(10.0, 1.0, 1, false)] };
+        assert!(r.renest());
+        assert_eq!(r.loops.iter().map(|l| l.outer).collect::<Vec<_>>(), [true, false, true, true]);
+    }
+
+    #[test]
+    fn renest_of_many_large_nested_loops_stops_at_its_budget() {
+        // Concentric loops of many vertices each: each probe is inside the box of every larger
+        // loop (about loops² / 2 pairs), so each of those tests is a full polygon scan.
+        let loops = 300;
+        let n = 3 * MAX_RENEST_EDGE_VISITS / (loops * loops);
+        let mut r = Region { loops: (0..loops).map(|i| square(0.0, 1.0 + i as f64, n, false)).collect() };
+        let before = r.clone();
+        assert!(!r.renest());
+        assert_eq!(r, before, "flags left as they were");
+    }
 }

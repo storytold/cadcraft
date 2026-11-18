@@ -125,3 +125,49 @@ fn data_links_fill_and_update() {
     assert!(table(&s, &h).data_link.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn data_links_saved_in_a_drawing_are_read_beside_it_or_on_this_computer_only() {
+    cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
+        read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
+        write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
+        plot: None,
+    });
+    let base = std::env::temp_dir().join(format!("cadcraft-datalink-saved-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (dir, elsewhere) = (base.join("plans"), base.join("elsewhere"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(dir.join("parts.csv"), "Part,Qty\nbolt,4\n").unwrap();
+    std::fs::write(elsewhere.join("far.csv"), "Part,Qty\nnut,8\n").unwrap();
+
+    let mut links = vec![r"\\192.0.2.1\share\far.csv".to_string(), "file://192.0.2.1/s/far.csv".to_string(), "parts.csv".to_string()];
+    if cfg!(unix) {
+        // Read as a local path by Linux, and as a network path by the resolver.
+        links.push(format!("/{}", elsewhere.join("far.csv").display()));
+    }
+    let mut s = Session::new();
+    for (i, link) in links.iter().enumerate() {
+        let r = s.execute("table", &json!({ "at": [0, 10.0 * i as f64], "cols": 2, "rows": 1 })).unwrap();
+        let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Table(t) = &mut e.kind {
+                    t.data_link = Some(cadcraft_engine::doc::DataLink { path: link.clone(), start_row: 0 });
+                }
+            })
+            .unwrap();
+    }
+    let host = dir.join("host.dxf");
+    s.execute("saveas", &json!({ "path": host.to_str().unwrap() })).unwrap();
+    let mut s = Session::new();
+    s.execute("open", &json!({ "path": host.to_str().unwrap() })).unwrap();
+
+    let r = s.execute("datalinkupdate", &json!({})).unwrap();
+    assert_eq!(r["updated"], 1, "only the file beside the drawing: {r}");
+    let errors: Vec<&str> = r["errors"].as_array().unwrap().iter().filter_map(|e| e.as_str()).collect();
+    assert_eq!(errors.len(), links.len() - 1, "{errors:?}");
+    assert!(errors.iter().all(|e| e.contains("another computer")), "{errors:?}");
+    let _ = std::fs::remove_dir_all(&base);
+}

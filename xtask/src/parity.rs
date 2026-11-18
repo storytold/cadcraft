@@ -28,25 +28,39 @@ pub fn leaves(catalog: &str) -> Vec<String> {
 /// Where the generated checklist goes.
 pub const OUT: &str = "docs/parity-checklist.md";
 
-/// Today's UTC date as `YYYY-MM-DD` (from the system clock; no date crate needed).
+/// Today's UTC date as `YYYY-MM-DD` (from the system clock).
 fn today() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let (y, m, d) = civil_from_days((secs / 86_400) as i64);
+    date(std::time::SystemTime::now())
+}
+
+/// `t` as a UTC `YYYY-MM-DD`. A clock before 1970 reads as 1970-01-01 (the `unwrap_or(0)` clamp);
+/// past chrono's year 262143 range the proleptic Gregorian date is kept via the 400-year cycle
+/// rather than falling back to the epoch.
+fn date(t: std::time::SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (y, m, d) = civil_from_days(secs / 86_400);
+    // `{y:04}` rather than `%Y`, which writes a `+` before years past 9999.
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// Days since 1970-01-01 → (year, month, day) in the proleptic Gregorian calendar.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    (y, m, d)
+/// Days since 1970-01-01 → proleptic Gregorian (year, month, day).
+///
+/// `date` clamps a pre-1970 clock to the epoch, so `days` is an unsigned count that can run past
+/// `NaiveDate`'s ±262143-year range. The Gregorian calendar repeats every 400 years (146_097
+/// days), so chrono converts the day within one cycle and whole cycles go back into the year (an
+/// `i128`, then saturated into `i64`), keeping chrono as the only calendar logic and reproducing
+/// the old `civil_from_days` result exactly. 1970-01-01 is `num_days_from_ce` 719_163.
+fn civil_from_days(days: u64) -> (i64, u32, u32) {
+    use chrono::Datelike;
+    let (cycles, rest) = (days / 146_097, days % 146_097);
+    // `rest + 719_163` is 719_163..865_259, always a valid CE day.
+    match i32::try_from(rest + 719_163).ok().and_then(chrono::NaiveDate::from_num_days_from_ce_opt) {
+        Some(d) => {
+            let y = i128::from(d.year()) + i128::from(cycles) * 400;
+            (i64::try_from(y).unwrap_or(i64::MAX), d.month(), d.day())
+        }
+        None => (1970, 1, 1), // unreachable
+    }
 }
 
 pub fn run(root: &Path) -> Result<(), String> {
@@ -116,9 +130,19 @@ mod tests {
 
     #[test]
     fn civil_dates() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
-        assert_eq!(civil_from_days(20_736), (2026, 10, 10));
+        let day = |d: u64| date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(d * 86_400));
+        assert_eq!(day(0), "1970-01-01");
+        assert_eq!(day(11_016), "2000-02-29");
+        assert_eq!(day(20_736), "2026-10-10");
+        assert_eq!(date(std::time::UNIX_EPOCH - std::time::Duration::from_secs(86_400)), "1970-01-01");
+        // Past chrono's range keeps the proleptic Gregorian date, not the epoch (old `civil_from_days`).
+        // Checked on the day count: Windows' SystemTime ends in the year 30828, so building that
+        // SystemTime panics there.
+        assert_eq!(civil_from_days(115_740_740), (318_857, 5, 20));
+        // Windows' SystemTime can't hold u64::MAX / 2 seconds, so it is only checked where it exists.
+        if let Some(far) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(u64::MAX / 2)) {
+            assert_eq!(date(far), "292277026596-12-04");
+        }
     }
 
     #[test]

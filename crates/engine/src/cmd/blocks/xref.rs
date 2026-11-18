@@ -34,7 +34,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("-xref", "External References", run_dash_xref)
             .alias(&["-xr"])
-            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
+            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), exact?: bool (names are literal xref names, no wildcards or commas), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
             .interactive(|_| Ok(Box::new(XrefM::new("-XREF", XStage::Option)))),
         CommandSpec::new("xbind", "Bind...", run_xbind)
             .menu(&["Modify", "Object", "External Reference", "Bind..."])
@@ -50,7 +50,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 }
 
 /// Load the xrefs of drawing `i`, just opened (OPEN): the opened state counts as saved, and the
-/// view frames the drawing with them.
+/// view frames the drawing with them, unless the drawing opened on the view it was saved at.
 pub(crate) fn after_open(s: &mut Session, i: usize) {
     let px = s.viewport_px;
     let Some(st) = s.docs.get_mut(i) else { return };
@@ -61,10 +61,19 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     let out = load::load_all(Arc::make_mut(&mut st.doc), path.as_deref());
     st.saved = st.doc.clone();
     let ext = st.doc.extents(&cadcraft_doc::Space::Model);
-    if !ext.is_empty() {
-        st.set_view_quiet(crate::View { center: ext.center(), height: (ext.height().max(ext.width() * px.1 / px.0.max(1.0)) * 1.1).max(1e-6) });
+    if !ext.is_empty() && crate::view::saved_view(&st.doc).is_none() {
+        // Fit in the frame of the saved twist, which open_drawing has restored.
+        let twist = st.view().twist;
+        let (center, w, h) = crate::View::twisted_box(ext, twist);
+        st.set_view_quiet(crate::View { center, height: (h.max(w * px.1 / px.0.max(1.0)) * 1.1).max(1e-6), twist });
     }
     echo_all(s, &out);
+}
+
+/// The file a reference saved as `path` in a drawing at `host` is read from, if there is one
+/// (xrefs and raster images look in the same places).
+pub(crate) fn find_file(path: &str, host: Option<&str>) -> Option<std::path::PathBuf> {
+    load::find(path, host.map(std::path::Path::new), false).ok()
 }
 
 /// The open drawing's path (xref paths are relative to its folder).
@@ -104,8 +113,8 @@ fn reference_count(d: &Drawing, key: &str) -> usize {
 fn describe(d: &Drawing, b: &Block, host: Option<&str>) -> Value {
     let refs = reference_count(d, &b.name);
     let status = if refs == 0 && b.xref_status == XrefStatus::Loaded { "Unreferenced" } else { b.xref_status.label() };
-    let dir = host.and_then(|h| std::path::Path::new(h).parent().map(std::path::Path::to_path_buf));
-    let found = b.xref_path.as_deref().and_then(|p| load::find(p, dir.as_deref())).map(|f| f.to_string_lossy().into_owned());
+    let found =
+        b.xref_path.as_deref().and_then(|p| load::find(p, host.map(std::path::Path::new), false).ok()).map(|f| f.to_string_lossy().into_owned());
     json!({
         "name": b.name,
         "path": b.xref_path,
@@ -146,7 +155,7 @@ fn attach(s: &mut Session, name: &str, path: &str, overlay: bool) -> Result<Stri
     b.xref_path = Some(path.to_string());
     b.xref_overlay = overlay;
     d.blocks.insert(name.to_string(), Arc::new(b));
-    let out = load::load(&mut d, name, host.as_deref());
+    let out = load::load(&mut d, name, host.as_deref(), true);
     match out.first() {
         Some(o) if o.status == XrefStatus::Loaded => {}
         Some(o) => return Err(bad("xattach", format!("{path} can't be attached: {}", o.detail))),
@@ -192,6 +201,46 @@ fn run_xattach(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The xrefs a JSON call names (`names`, default all); an error when none match.
 fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
+    if p.get("exact").and_then(Value::as_bool) == Some(true) {
+        let lits: Vec<&str> = match p.get("names") {
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
+            Some(Value::String(t)) => vec![t.as_str()],
+            _ => str_param(p, "name").into_iter().collect(),
+        };
+        let d = s.doc()?;
+        let mut names = Vec::new();
+        let mut selected = std::collections::HashSet::new();
+        // Symbol names are case-insensitive: two xrefs that differ only by case can't be loaded together.
+        let mut folded = std::collections::HashMap::new();
+        for literal in &lits {
+            if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
+                }
+                if selected.insert(block.name.clone()) {
+                    names.push(block.name.clone());
+                }
+                continue;
+            }
+            let normalized = literal.to_ascii_lowercase();
+            let mut matches = xrefs(d).filter(|block| block.name.to_ascii_lowercase() == normalized);
+            if let Some(block) = matches.next() {
+                if matches.next().is_some() {
+                    return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
+                }
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
+                }
+                if selected.insert(block.name.clone()) {
+                    names.push(block.name.clone());
+                }
+            }
+        }
+        if names.is_empty() {
+            return Err(bad(cmd, format!("no xref named \"{}\"", lits.join(","))));
+        }
+        return Ok(names);
+    }
     let pattern = match p.get("names") {
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","),
         Some(Value::String(t)) => t.clone(),
@@ -214,6 +263,19 @@ fn run_xref(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// An error when two of `names` (or, with `all`, one of them and any other attached xref) differ only
+/// by case: symbol names are case-insensitive, so such xrefs cannot be handled together, and the
+/// command must refuse before it changes anything.
+fn refuse_case_clash(d: &Drawing, cmd: &str, names: &[String], all: bool) -> Result<()> {
+    let others: Vec<&str> = if all { xrefs(d).map(|b| b.name.as_str()).collect() } else { names.iter().map(String::as_str).collect() };
+    for n in names {
+        if let Some(o) = others.iter().find(|o| *o != n && o.eq_ignore_ascii_case(n)) {
+            return Err(bad(cmd, format!("xref names \"{n}\" and \"{o}\" differ only by case")));
+        }
+    }
+    Ok(())
+}
+
 fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
     let option = str_param(p, "option").unwrap_or("?").trim().to_ascii_lowercase();
     let host = host(s);
@@ -227,11 +289,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "reload" | "r" => {
             let names = named(s, "-xref", p)?;
-            let mut out = Vec::new();
-            for n in &names {
-                let d = s.doc_mut()?;
-                out.extend(load::load(d, n, host.as_deref()));
-            }
+            let out = load::load_each(s.doc_mut()?, &names, host.as_deref(), false);
             echo_all(s, &out);
             Ok(
                 json!({ "xrefs": out.iter().filter(|o| !o.name.is_empty()).map(|o| json!({"name": o.name, "status": o.status.label(), "detail": o.detail})).collect::<Vec<_>>() }),
@@ -247,6 +305,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "detach" | "d" => {
             let names = named(s, "-xref", p)?;
+            refuse_case_clash(s.doc()?, "-xref", &names, true)?;
             let mut erased = 0;
             for n in &names {
                 erased += load::detach(s.doc_mut()?, n);
@@ -271,14 +330,14 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         "path" | "p" => {
             let path = str_param(p, "path").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("-xref", "`path` is required"))?.to_string();
             let names = named(s, "-xref", p)?;
-            let mut out = Vec::new();
+            refuse_case_clash(s.doc()?, "-xref", &names, false)?;
+            let d = s.doc_mut()?;
             for n in &names {
-                let d = s.doc_mut()?;
                 if let Some(b) = d.blocks.get_mut(n) {
                     Arc::make_mut(b).xref_path = Some(path.clone());
                 }
-                out.extend(load::load(d, n, host.as_deref()));
             }
+            let out = load::load_each(d, &names, host.as_deref(), true);
             echo_all(s, &out);
             Ok(json!({ "xrefs": names, "path": path }))
         }
@@ -367,8 +426,10 @@ fn run_xopen(s: &mut Session, p: &Value) -> Result<Value> {
     let b = d.block(&name).ok_or_else(|| bad("xopen", format!("no xref \"{name}\"")))?;
     let path = b.xref_path.clone().ok_or_else(|| bad("xopen", format!("\"{name}\" is not an xref")))?;
     let host = host(s);
-    let dir = host.as_deref().and_then(|h| std::path::Path::new(h).parent().map(std::path::Path::to_path_buf));
-    let file = load::find(&path, dir.as_deref()).ok_or_else(|| bad("xopen", format!("{path}: file not found")))?;
+    let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|m| match m {
+        load::Missing::NotFound => bad("xopen", format!("{path}: file not found")),
+        load::Missing::Refused(r) => bad("xopen", format!("{path}: not opened, {r}")),
+    })?;
     s.execute("open", &json!({ "path": file.to_string_lossy() }))
 }
 

@@ -329,7 +329,7 @@ pub(super) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
     let k = cur.view_height / cur.height.max(1e-12);
     let mut v = cur;
     let c = b.center();
-    let view_center = v.view_center + (c - v.center.xy()) * k;
+    let view_center = v.paper_to_model(c);
     let view_height = b.height() * k;
     if view_center.is_finite() && view_height.is_finite() && view_height > 0.0 {
         v.view_center = view_center;
@@ -637,13 +637,13 @@ impl Interactive for MviewM {
             Stage::Arrange => Prompt::new("Enter viewport arrangement", curves::KW)
                 .kw(&["Horizontal", "Vertical", "Above", "Below", "Left", "Right"])
                 .default("Right"),
-            Stage::Opposite(a) => Prompt::new("Specify opposite corner", Accept::POINT).base(*a),
+            Stage::Opposite(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(*a),
             Stage::Polygon(pi) => pi.prompt(),
             Stage::Object => Prompt::new("Select object to clip viewport", Accept::POINT),
             Stage::Lock => Prompt::new("Lock the view of viewports?", curves::KW).kw(&["ON", "OFF"]),
             Stage::RestoreName => Prompt::new("Enter viewport configuration name", Accept::TEXT).kw(&["?"]).default(VportConfig::ACTIVE),
             Stage::RestoreCorner(_) => Prompt::new("Specify first corner", Accept::POINT).kw(&["Fit"]).default("Fit"),
-            Stage::RestoreOpposite(_, a) => Prompt::new("Specify opposite corner", Accept::POINT).base(*a),
+            Stage::RestoreOpposite(_, a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(*a),
             Stage::Select { .. } => Prompt::new("Select viewports", Accept::POINT),
         }
     }
