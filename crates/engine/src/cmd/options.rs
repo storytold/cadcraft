@@ -15,6 +15,7 @@ use crate::{Result, Session, Settings};
 pub const PROFILE_VARS: &[&str] = &[
     "OSMODE",
     "AUTOSNAP",
+    "APBOX",
     "POLARMODE",
     "POLARANG",
     "POLARADDANG",
@@ -115,6 +116,12 @@ pub fn restore(s: &mut Session, saved: &Value) {
             }
         }
     }
+    // Profiles saved before APBOX was a profile variable wrote AUTOSNAP without bit 2, yet always
+    // showed the snap tooltip: keep showing it.
+    let has = |name: &str| obj.keys().any(|k| k.trim().eq_ignore_ascii_case(name));
+    if has("AUTOSNAP") && !has("APBOX") {
+        s.settings.autosnap_tooltip = true;
+    }
 }
 
 /// Put every profile variable back to its default.
@@ -124,6 +131,11 @@ pub fn reset(s: &mut Session) {
     st.osmode = d.osmode;
     st.polarmode = d.polarmode;
     st.otrack = d.otrack;
+    st.autosnap_marker = d.autosnap_marker;
+    st.autosnap_tooltip = d.autosnap_tooltip;
+    st.autosnap_magnet = d.autosnap_magnet;
+    st.autotrack_tooltip = d.autotrack_tooltip;
+    st.apbox = d.apbox;
     st.polar_flags = d.polar_flags;
     st.polarang = d.polarang;
     st.polaraddang = d.polaraddang;
@@ -190,5 +202,21 @@ mod tests {
         let mut b = Session::new();
         restore(&mut b, &saved);
         assert_eq!(profile(&b), saved);
+    }
+
+    /// A profile saved before APBOX existed wrote AUTOSNAP without the tooltip bit, although the
+    /// tooltip always showed: restoring it keeps the tooltip on. A profile that knows APBOX is
+    /// taken as written, and reset puts the AutoSnap settings back to their defaults.
+    #[test]
+    fn old_profiles_keep_the_autosnap_tooltip_and_reset_restores_autosnap_defaults() {
+        let mut old = Session::new();
+        restore(&mut old, &json!({"AUTOSNAP": 37, "OSMODE": 3}));
+        assert!(old.settings.autosnap_tooltip && old.settings.autosnap_marker && old.settings.autosnap_magnet);
+        let mut new = Session::new();
+        restore(&mut new, &json!({"AUTOSNAP": 37, "APBOX": 1}));
+        assert!(!new.settings.autosnap_tooltip && new.settings.apbox);
+        reset(&mut new);
+        assert!(new.settings.autosnap_tooltip && !new.settings.apbox);
+        assert_eq!(new.settings.autosnap(), Settings::default().autosnap());
     }
 }
