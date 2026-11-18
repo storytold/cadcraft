@@ -1,5 +1,6 @@
 //! Drawing access from LISP: `command`, system variables, entity lists (`entget`, `entmake`,
-//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`), selection sets (`ssget` and friends),
+//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`; non-graphic objects are in
+//! [`super::objects`]), selection sets (`ssget` and friends),
 //! symbol tables (`tblsearch`, `tblnext`) and unit conversions (`rtos`, `angtos`, `distof`,
 //! `angtof`).
 //!
@@ -21,7 +22,7 @@ use super::value::{PickSet, Value, to_text};
 use super::{BlockSlots, LispError};
 use crate::{Input, Session};
 
-fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
+pub(super) fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     if a.len() < min {
         return Err(args_err(true));
     }
@@ -31,14 +32,14 @@ fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     Ok(())
 }
 
-fn ename(v: &Value) -> Result<Handle, LispError> {
+pub(super) fn ename(v: &Value) -> Result<Handle, LispError> {
     match v {
         Value::Ename(h) => Ok(*h),
         other => Err(LispError::bad_arg("lentityp", other)),
     }
 }
 
-fn string(v: &Value) -> Result<String, LispError> {
+pub(super) fn string(v: &Value) -> Result<String, LispError> {
     match v {
         Value::Str(s) => Ok(s.to_string()),
         other => Err(LispError::bad_arg("stringp", other)),
@@ -273,7 +274,7 @@ fn tag_value(t: &Tag) -> Value {
 }
 
 /// DXF groups as an association list: points combined into lists `(10 x y z)`.
-fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
+pub(super) fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     let mut out = Vec::new();
     let mut i = 0;
     while let Some(t) = tags.get(i) {
@@ -365,7 +366,8 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let (e, in_block) = match (d.entity(h), &from_block) {
         (Some(e), _) => (e, false),
         (None, Some(e)) => (e, true),
-        (None, None) => return Ok(Flow::Value(Value::Nil)),
+        // Not an entity: a table record, layout or dictionary (#1659, #1661).
+        (None, None) => return Ok(Flow::Value(super::objects::entget(ctx, h))),
     };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
@@ -651,8 +653,9 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()) || block_entity(ctx, *h).is_some());
-    Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+    let Some(h) = Handle::parse_hex(&s) else { return Ok(Flow::Value(Value::Nil)) };
+    let found = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) || block_entity(ctx, h).is_some() || super::objects::exists(ctx, h);
+    Ok(Flow::Value(if found { Value::Ename(h) } else { Value::Nil }))
 }
 
 /// Entity `h` of a block definition (#1700), by the cached index.
