@@ -534,13 +534,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     app.cmd.selected_index = 0;
                     submit(app);
                 }
-                Key::Escape => {
-                    app.cmd.history_pos = None;
-                    app.cmd.selected_index = 0;
-                    app.cmd.buffer.clear();
-                    app.cmd.preedit.clear();
-                    app.session.cancel();
-                }
+                Key::Escape => escape(app),
                 Key::Backspace => {
                     let press = KeyPress { repeat, plain: !(modifiers.alt || modifiers.ctrl || modifiers.command) };
                     let erase = backspace_erases(
@@ -650,6 +644,16 @@ fn handle_options_event(app: &mut CadApp, ev: &egui::Event, keep_space: bool) ->
         }
         _ => false,
     }
+}
+
+/// What Escape does, and the right-click or menu "Cancel" that stand for it: what was typed so far
+/// goes, and so does the running command.
+pub fn escape(app: &mut CadApp) {
+    app.cmd.history_pos = None;
+    app.cmd.selected_index = 0;
+    app.cmd.buffer.clear();
+    app.cmd.preedit.clear();
+    app.session.cancel();
 }
 
 /// Submit the current command-line buffer to the CAD session.
@@ -1318,12 +1322,12 @@ mod autocomplete_tests {
         assert!(app.cmdline("clear").is_none());
         assert!(app.session.log.is_empty());
 
-        let cls = suggestions("cls", &|_| false);
+        let cls = suggestions("cls");
         assert!(!cls.is_empty());
         assert_eq!(cls[0].id, "CLEAR");
         assert_eq!(cls[0].display, "CLS (CLEAR)");
 
-        let cle = suggestions("cle", &|_| false);
+        let cle = suggestions("cle");
         assert!(!cle.is_empty());
         assert_eq!(cle[0].id, "CLEAR");
         assert_eq!(cle[0].display, "CLEAR");
