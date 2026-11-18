@@ -27,6 +27,21 @@ fn set_temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str, v: 
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id), v));
 }
 
+/// The colours the drawing uses, cached for the document revision they were found at: the filter
+/// walks every object of every space and block, and the dialog redraws each frame.
+fn used_colors(app: &CadApp, ctx: &egui::Context, d: &cadcraft_doc::Drawing) -> std::collections::BTreeSet<u8> {
+    let Ok(st) = app.session.state() else { return cadcraft_doc::plot_style_colors_in_use(d) };
+    let key = (st.uid, st.revision);
+    if let Some((uid, rev, colors)) = temp::<(u64, u64, std::collections::BTreeSet<u8>)>(ctx, "pstyle_used_colors")
+        && (uid, rev) == key
+    {
+        return colors;
+    }
+    let colors = cadcraft_doc::plot_style_colors_in_use(d);
+    set_temp(ctx, "pstyle_used_colors", (key.0, key.1, colors.clone()));
+    colors
+}
+
 /// Lineweights offered for a style, in millimetres.
 const LINEWEIGHTS: [f64; 12] = [0.0, 0.09, 0.13, 0.18, 0.25, 0.3, 0.35, 0.5, 0.7, 1.0, 1.4, 2.11];
 
@@ -64,6 +79,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let linetypes: Vec<String> =
         d.linetypes.iter().map(|l| l.name.clone()).filter(|n| !n.eq_ignore_ascii_case("ByLayer") && !n.eq_ignore_ascii_case("ByBlock")).collect();
     let mut new_style = temp::<String>(ctx, "pstyle_new").unwrap_or_default();
+    let mut only_used = temp::<bool>(ctx, "pstyle_used").unwrap_or(false);
     let mut action: Action = None;
     let set = |table: &str, style: Value| Some(("stylesmanager", json!({ "action": "set", "name": table, "style": style })));
     egui::Window::new(title).id(egui::Id::unique("Plot Style Manager")).open(open).default_size(vec2(760.0, 460.0)).resizable(true).show(ctx, |ui| {
@@ -117,8 +133,25 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         };
         let named = !table.is_color_dependent();
         ui.label(RichText::new(&table.description).color(t.text_dim));
+        if !named {
+            ui.checkbox(&mut only_used, crate::tl!("Show only colors used in the current drawing"))
+                .on_hover_text(crate::tl!("Hides the plot styles of colors no object uses. Their settings stay in the table."));
+        }
         if !in_drawing {
             ui.label(RichText::new(crate::tl!("A built-in table: editing it keeps an edited copy in the drawing.")).color(t.text_faint));
+        }
+        let used = if only_used && !named { used_colors(app, ctx, d) } else { std::collections::BTreeSet::new() };
+        let filter = only_used && !named;
+        let shown: Vec<&cadcraft_doc::PlotStyle> = table
+            .styles
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !filter || u8::try_from(i + 1).is_ok_and(|n| used.contains(&n)))
+            .map(|(_, s)| s)
+            .collect();
+        if filter && shown.is_empty() {
+            ui.label(crate::tl!("No colors used in the drawing."));
+            return;
         }
         egui::ScrollArea::vertical().id_salt("pstyle_rows").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("pstyle_grid").striped(true).num_columns(if named { 7 } else { 6 }).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
@@ -136,7 +169,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     ui.label("");
                 }
                 ui.end_row();
-                for st in &table.styles {
+                for st in shown {
                     let style = |k: &str, v: Value| json!({ "name": st.name, k: v });
                     ui.label(&st.name);
                     ui.horizontal(|ui| {
@@ -208,6 +241,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         }
     });
     set_temp(ctx, "pstyle_sel", sel);
+    set_temp(ctx, "pstyle_used", only_used);
     set_temp(ctx, "pstyle_new", new_style);
     action
 }
