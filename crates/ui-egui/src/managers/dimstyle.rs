@@ -75,6 +75,8 @@ struct State {
     after_ok: Option<String>,
     /// Why OK's command refused the edits, or left a value out, shown on the editing page.
     error: Option<String>,
+    /// The drawing the pages were opened on ([`cadcraft_engine::DocState::uid`]).
+    doc: u64,
 }
 
 /// The tab a variable is edited on.
@@ -140,6 +142,13 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
         return None;
     };
     let mut st: State = super::temp(ctx, STATE).unwrap_or_default();
+    // A page left open while another drawing became active (its file tab) is cancelled, back to
+    // the list: its values are the first drawing's, and OK would write them into this one.
+    let uid = app.session.state().map_or(0, |s| s.uid);
+    if st.page != Page::List && st.doc != uid {
+        st = State::default();
+    }
+    st.doc = uid;
     let current = d.header.str("DIMSTYLE", "Standard");
     let overrides = d.dim_overrides();
     let valid = |n: &str| n == OVERRIDES && !overrides.is_empty() || d.dim_style(n).is_some();

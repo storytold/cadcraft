@@ -178,6 +178,28 @@ fn modify_keeps_the_editor_and_says_so_when_a_value_is_left_out() {
     assert!(h.query_by_label_contains("Ignored invalid value").is_none());
 }
 
+/// The editing pages belong to the drawing they were opened on: another drawing becoming active
+/// cancels them, so OK can't write the first drawing's style into the second.
+#[test]
+fn the_editor_is_cancelled_when_another_drawing_becomes_active() {
+    let mut h = manager(|app| {
+        app.run("dimstyle", json!({ "name": "Standard", "textHeight": 7.0 })).unwrap();
+        app.run("new", json!({})).unwrap();
+        app.run("dimstyle", json!({ "name": "Standard", "textHeight": 3.0 })).unwrap();
+        // The manager opens on the first of the two drawings.
+        app.session.active = app.session.docs.len() - 2;
+    });
+    click(&mut h, "Modify...");
+    click(&mut h, "Text");
+    field(&h, "7.0000");
+    let other = h.state().session.docs.len() - 1;
+    h.state_mut().session.active = other;
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("Modify Dimension Style:").is_none(), "the editor is cancelled");
+    assert!(h.query_by_label("OK").is_none(), "no OK left to press");
+    assert_eq!(text_height(&h, "Standard"), 3.0, "the second drawing keeps its own style");
+}
+
 #[test]
 fn a_new_style_takes_a_name_dimstyle_takes() {
     let mut h = manager(|_| {});
