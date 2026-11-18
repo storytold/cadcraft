@@ -1323,3 +1323,56 @@ fn mtext_background_mask_stays_paper_mask_under_monochrome_ctb() {
     let text_idx = list.prims.iter().position(|p| p.kind != Kind::Mask).expect("text prims");
     assert!(mask_idx < text_idx, "Kind::Mask must precede text under monochrome.ctb");
 }
+
+#[test]
+fn mtext_background_mask_resolves_bylayer_byblock_and_nonfinite_rotation() {
+    let mut d = Drawing::new_metric();
+    d.layers.push(cadcraft_doc::Layer { name: "RED_LAYER".into(), color: Color::Index(1), ..Default::default() });
+    d.add(
+        &Space::Model,
+        Common { layer: "RED_LAYER".into(), ..Default::default() },
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::ZERO,
+            height: 2.0,
+            width: 0.0,
+            attach: 1,
+            rotation: f64::NAN,
+            style: "Standard".into(),
+            contents: "BYLAYER".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: Some(cadcraft_doc::MTextBackground { mask: 1, color: Some(Color::ByLayer), scale: 1.5 }),
+        }),
+    )
+    .unwrap();
+    let mut blk = cadcraft_doc::Block::new("BG_BLK");
+    blk.entities.push(block_entity(
+        8001,
+        Common { layer: "0".into(), ..Default::default() },
+        EntityKind::MText(cadcraft_doc::MText {
+            insert: Vec3::new(0.0, 20.0, 0.0),
+            height: 2.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "BYBLOCK".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: Some(cadcraft_doc::MTextBackground { mask: 1, color: Some(Color::ByBlock), scale: 1.5 }),
+        }),
+    ));
+    d.blocks.insert("BG_BLK".into(), std::sync::Arc::new(blk));
+    let mut ins = insert_of("BG_BLK");
+    if let EntityKind::Insert(ref mut i) = ins {
+        i.insert = Vec3::new(0.0, 20.0, 0.0);
+    }
+    d.add(&Space::Model, Common { color: Color::Index(5), ..Default::default() }, ins).unwrap();
+
+    let list = build(&d, &Space::Model, &Options::default());
+    assert!(list.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(255, 0, 0)), "ByLayer red background fill");
+    assert!(list.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(0, 0, 255)), "ByBlock blue background fill");
+    assert!(list.tris.iter().all(|v| v.x.is_finite() && v.y.is_finite()), "non-finite rotation must yield finite background tris");
+}
