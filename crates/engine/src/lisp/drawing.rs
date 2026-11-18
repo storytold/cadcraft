@@ -425,13 +425,14 @@ fn sub_entget(h: Handle, parent: &Entity, index: usize) -> Option<Value> {
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
-    let drawn = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some());
-    let from_block = if drawn { None } else { block_entity(ctx, h) };
-    let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
     if let Some((parent_h, index)) = split_sub_handle(h) {
+        let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
         let Some(parent) = d.entity(parent_h) else { return Ok(Flow::Value(Value::Nil)) };
         return Ok(Flow::Value(sub_entget(h, parent, index).unwrap_or_default()));
     }
+    let drawn = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some());
+    let from_block = if drawn { None } else { block_entity(ctx, h) };
+    let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
     // An entity of a block definition (#1700) has no layout.
     let (e, in_block) = match (d.entity(h), &from_block) {
         (Some(e), _) => (e, false),
