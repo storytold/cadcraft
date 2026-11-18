@@ -3,7 +3,7 @@
 //! of a revision, the overlay diff laid under the drawing (recoloured, toggleable, detachable),
 //! the native change report, and spatial notes.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use cadcraft_engine::Session;
@@ -709,4 +709,65 @@ fn a_version_restores_into_the_drawing_undoably() {
     assert!(s.execute("omni-restore", &json!({})).is_err());
     assert!(s.execute("omni-restore", &json!({ "snapshot": 99 })).is_err());
     assert!(s.execute("omni-restore", &json!({ "snapshot": "no/such.dxf" })).is_err());
+}
+
+/// Two versions stamped in the same second are two revisions, not one.
+///
+/// The overlay's name used to carry the drawing and the second only, so the second attach found the
+/// first overlay's block (`block(&name).is_some()`) and reused it: `OMNI-DIFF snapshot=2` laid the
+/// first revision under the drawing and reported it as the second. A save's version and a milestone
+/// taken in one second are exactly this case.
+#[test]
+fn two_versions_stamped_in_the_same_second_get_two_overlays() {
+    hooks();
+    let dir = folder("same-second");
+    let plan_path = dir.join("plan.dxf");
+    save(&plan(), &plan_path);
+    std::fs::create_dir_all(history(&dir)).unwrap();
+    // Same stamp, different milliseconds: view_a is 10 units long, view_b 20.
+    for (name, length) in [("20261118.101500_120_view_a_plan.dxf.gz", 10.0_f64), ("20261118.101500_900_view_b_plan.dxf.gz", 20.0_f64)] {
+        let mut d = Drawing::new_metric();
+        d.layers.push(Layer { name: "Walls".into(), color: Color::Index(1), ..Layer::default() });
+        let h = d.new_handle();
+        let mut e = cadcraft_engine::doc::Entity::new(h, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(length, 0.0, 0.0) }));
+        e.common.layer = "Walls".into();
+        d.model.push(e);
+        let bytes = cadcraft_io::write(&d, "plan.dxf").unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&bytes).unwrap();
+        std::fs::write(history(&dir).join(name), gz.finish().unwrap()).unwrap();
+    }
+
+    let mut s = Session::new();
+    open(&mut s, &plan_path);
+    // Newest first: snapshot 1 is view_b (20 units), snapshot 2 is view_a (10 units).
+    let b = s.execute("omni-diff", &json!({ "snapshot": 1 })).unwrap();
+    let a = s.execute("omni-diff", &json!({ "snapshot": 2 })).unwrap();
+    let (nb, na) = (b["overlay"].as_str().unwrap().to_string(), a["overlay"].as_str().unwrap().to_string());
+    assert_ne!(na, nb, "two revisions in one second are two overlays");
+    assert!(nb.starts_with("OMNI_plan_20261118_101500_900"), "{nb}: the milliseconds tell them apart");
+    assert!(na.starts_with("OMNI_plan_20261118_101500_120"), "{na}");
+
+    // Each overlay holds the revision it was attached from, not the one attached before it.
+    let d = s.doc().unwrap();
+    let ends = |name: &str| -> Vec<f64> {
+        d.block(name)
+            .map(|blk| {
+                blk.entities
+                    .iter()
+                    .filter_map(|e| match &e.kind {
+                        EntityKind::Line(l) => Some(l.b.x),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(ends(&nb), vec![20.0], "the newer version is the 20-unit line");
+    assert_eq!(ends(&na), vec![10.0], "the older version is the 10-unit line");
+
+    // Attaching the same revision again reuses its own overlay instead of piling up a second one.
+    let again = s.execute("omni-diff", &json!({ "snapshot": 1 })).unwrap();
+    assert_eq!(again["overlay"].as_str().unwrap(), nb);
+    assert_eq!(s.doc().unwrap().blocks.values().filter(|blk| blk.xref_path.is_some()).count(), 2, "two overlays, not three");
 }

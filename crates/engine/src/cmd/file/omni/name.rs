@@ -178,11 +178,17 @@ pub(super) fn chosen(list: &[Snap], v: &Value) -> Option<Snap> {
 
 /// The overlay reference name of a snapshot: the drawing's name and the moment, `_`-separated so
 /// it is a valid block name and unique per snapshot.
+///
+/// The milliseconds are part of it. A save's version and an OMNI-SNAP milestone taken in the same
+/// second used to get one name; the second attach then found the first overlay's block and reused
+/// it, so `OMNI-DIFF snapshot=2` laid the wrong revision under the drawing. A file whose name
+/// carries no stamp gets the file's own stem for the same reason.
 pub(super) fn overlay_name(snap: &Snap) -> String {
     let (stem, _) = split_ext(&snap.drawing);
+    let base = format!("{OVERLAY_PREFIX}{}", slug(stem, "-_"));
     match snap.epoch {
-        Some(e) => format!("{OVERLAY_PREFIX}{}_{}", slug(stem, "-_"), stamp(e).replace('.', "_")),
-        None => format!("{OVERLAY_PREFIX}{}", slug(stem, "-_")),
+        Some(e) => format!("{base}_{}_{:03}", stamp(e).replace('.', "_"), snap.millis),
+        None => format!("{base}_{}", slug(&split_ext(&snap.file).0, "-_")),
     }
 }
 #[cfg(test)]

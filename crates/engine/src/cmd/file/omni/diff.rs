@@ -39,24 +39,50 @@ fn overlay_handles(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space) -> Ve
 /// background under the new one. Returns the reference's name, how many layers it recoloured and
 /// how many objects.
 pub(super) fn attach_overlay(s: &mut Session, snap: &Snap, color: Color) -> Result<(String, usize, usize)> {
-    let name = overlay_name(snap);
-    let attached = s.doc()?.block(&name).is_some();
-    if attached {
+    let file = materialize(snap, "omni-diff")?;
+    let host = s.state()?.path.clone();
+    let path = match host.as_deref() {
+        Some(h) => overlay_path(Path::new(h), &file),
+        None => file.to_string_lossy().into_owned(),
+    };
+    let base = overlay_name(snap);
+    // Reuse a block under this name only when it is this snapshot's own overlay (its `xref_path`
+    // is the file this snapshot resolves to). A block of the same name left by another version, or
+    // attached by the user, must not be laid under the drawing as if it were this revision.
+    let name = match s.doc()?.block(&base) {
+        Some(b) if b.xref_path.as_deref() == Some(path.as_str()) => base,
+        Some(_) => free_overlay_name(s, &base)?,
+        None => base,
+    };
+    if s.doc()?.block(&name).is_some() {
         // Already attached: only make sure it is placed (its reference may have been erased).
         if !placed(s, &name) {
             insert_with(s, &name, Vec2::ZERO, Vec2::new(1.0, 1.0), 0.0, None, &serde_json::Map::new())?;
         }
     } else {
-        let host = s.state()?.path.clone();
-        let file = materialize(snap, "omni-diff")?;
-        let path = match host.as_deref() {
-            Some(h) => overlay_path(Path::new(h), &file),
-            None => file.to_string_lossy().into_owned(),
-        };
         s.execute("xattach", &json!({ "path": path, "name": name, "overlay": true, "at": [0.0, 0.0] }))?;
     }
     let (layers, objects) = recolour(s, &name, color)?;
     Ok((name, layers, objects))
+}
+
+/// The most look-alike names an overlay will try before giving up: a bound, so a drawing full of
+/// `OMNI_…` blocks cannot make this walk forever.
+const MAX_OVERLAY_NAMES: u32 = 99;
+
+/// The first free overlay name: `base`, else `base_2`, `base_3`… up to [`MAX_OVERLAY_NAMES`].
+fn free_overlay_name(s: &Session, base: &str) -> Result<String> {
+    let doc = s.doc()?;
+    if doc.block(base).is_none() {
+        return Ok(base.to_string());
+    }
+    for n in 2..=MAX_OVERLAY_NAMES {
+        let candidate = format!("{base}_{n}");
+        if doc.block(&candidate).is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(bad("omni-diff", format!("{base}: too many overlays share this name")))
 }
 
 /// The native comparison of the open drawing with `snap`: the same object matching COMPARE does
