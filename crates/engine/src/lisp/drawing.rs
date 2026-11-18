@@ -576,6 +576,27 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     }
 }
 
+/// `b` holds the same handles as `a`, in the same chunks and order. A chunk `b` still shares
+/// with `a` (which is held, so its chunks stay alive) is the same; only a chunk an edit copied is
+/// compared handle by handle.
+fn same_handles(a: &cadcraft_doc::EntityStore, b: &cadcraft_doc::EntityStore) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let (mut x, mut y) = (a.chunk_slices(), b.chunk_slices());
+    loop {
+        match (x.next(), y.next()) {
+            (None, None) => return true,
+            (Some((ka, sa)), Some((kb, sb))) => {
+                if ka != kb && (sa.len() != sb.len() || sa.iter().zip(sb).any(|(p, q)| p.handle != q.handle)) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
 /// Every entity's handle in creation order (model space and layouts), cached per drawing.
 ///
 /// The cache is keyed by content identity, as the spatial index is: it holds clones of the
@@ -585,10 +606,15 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
     let Ok(d) = ctx.s.doc() else { return Arc::default() };
     let spaces = || std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
-    if let Some((stores, v)) = &ctx.env.order
+    if let Some((stores, v)) = &mut ctx.env.order
         && stores.len() == 1 + d.layouts.len()
-        && stores.iter().zip(spaces()).all(|(a, b)| a.same_as(b))
+        && stores.iter().zip(spaces()).all(|(a, b)| same_handles(a, b))
     {
+        // An edit that left every handle in place (a property `entmod`) keeps the order: hold
+        // the spaces as they are now, so the next call finds their chunks shared again.
+        if !stores.iter().zip(spaces()).all(|(a, b)| a.same_as(b)) {
+            *stores = spaces().cloned().collect();
+        }
         return v.clone();
     }
     let mut v: Vec<Handle> = spaces().flat_map(|s| s.iter().map(|e| e.handle)).collect();

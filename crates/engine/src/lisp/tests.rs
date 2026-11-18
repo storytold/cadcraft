@@ -481,7 +481,48 @@ fn entmod_of_a_block_reference_keeps_its_attributes() {
     assert_eq!(insert(&s), ("UGO".to_string(), want.clone()));
     // A new rotation keeps them too.
     ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 50 (/ pi 2)) (assoc 50 d) d))");
+    let rotation = s
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Insert(i) => Some(i.rotation),
+            _ => None,
+        })
+        .unwrap();
+    assert!((rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "the entmod took: {rotation}");
     assert_eq!(insert(&s).1, want);
+}
+
+/// An edit that leaves every handle where it was (a layer change) keeps entlast's cached order;
+/// one that adds an entity rebuilds it.
+#[test]
+fn entlast_keeps_its_order_across_property_edits() {
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entlast)");
+    let uid = s.state().unwrap().uid;
+    let order = |s: &Session| std::sync::Arc::as_ptr(&s.lisp.envs[&uid].order.as_ref().unwrap().1);
+    let before = order(&s);
+    assert_eq!(
+        ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"MOVED\") (assoc 8 d) d)) (cdr (assoc 8 (entget (entlast))))"),
+        "\"MOVED\""
+    );
+    assert_eq!(order(&s), before, "a layer change keeps the order");
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 2.0 0.0 0.0))) (entlast)");
+    assert_ne!(order(&s), before, "a new entity rebuilds it");
+}
+
+/// Closing a drawing drops its LISP environment, and with it the entity stores its cached
+/// order holds.
+#[test]
+fn closing_a_drawing_drops_its_environment() {
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entlast)");
+    let uid = s.state().unwrap().uid;
+    assert!(s.lisp.envs.get(&uid).is_some_and(|e| e.order.is_some()));
+    s.execute("close", &serde_json::json!({})).unwrap();
+    assert!(!s.lisp.envs.contains_key(&uid));
 }
 
 /// HANDSEED is the next handle the drawing gives out, in hex, and moves as objects are made.

@@ -424,6 +424,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.cancel();
     s.docs.remove(i);
+    s.lisp_forget_closed();
     if i < s.active {
         // An earlier drawing went away: the active one shifted down by one.
         s.active -= 1;
@@ -439,6 +440,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
     s.cancel();
     s.docs.clear();
+    s.lisp_forget_closed();
     s.active = 0;
     s.bump_doc_epoch();
     ok()

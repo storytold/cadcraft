@@ -220,8 +220,19 @@ impl Session {
         self.lisp.envs.remove(&uid).unwrap_or_default()
     }
 
+    /// Put a drawing's environment back, unless the drawing was closed meanwhile (a routine
+    /// cancelled by CLOSE ends after its drawing went away).
     fn lisp_env_put(&mut self, uid: u64, env: Env) {
-        self.lisp.envs.insert(uid, env);
+        if uid == 0 || self.docs.iter().any(|d| d.uid == uid) {
+            self.lisp.envs.insert(uid, env);
+        }
+    }
+
+    /// Drop the environments of drawings no longer open: one holds clones of its drawing's
+    /// entity stores ([`Env::order`]), which would otherwise outlive the drawing.
+    pub(crate) fn lisp_forget_closed(&mut self) {
+        let docs = &self.docs;
+        self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
     }
 
     /// A routine is running (possibly waiting for input).
@@ -464,7 +475,7 @@ impl Session {
         let steps = std::mem::take(&mut self.lisp.steps);
         let mut env = self.lisp.envs.remove(&run.uid).unwrap_or_default();
         self.lisp_flush(&mut env, true);
-        self.lisp.envs.insert(run.uid, env);
+        self.lisp_env_put(run.uid, env);
         if let (Ok(v), true) = (&result, run.print) {
             let text = value::to_text(v, true);
             if !builtins::is_null_symbol(v) {
