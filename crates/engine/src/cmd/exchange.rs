@@ -937,12 +937,12 @@ mod tests {
         if io().and_then(|h| h.plot).is_none() {
             return;
         }
-        let out = temp("combined.pdf");
-        let r = s.execute("publish", &json!({ "path": out.to_string_lossy(), "layouts": ["Layout1", "Layout2"], "single_pdf": true })).unwrap();
+        let dir = crate::temp_dir::TempDir::new("publish_single_pdf");
+        let out = dir.path_str("combined.pdf");
+        let r = s.execute("publish", &json!({ "path": out, "layouts": ["Layout1", "Layout2"], "single_pdf": true })).unwrap();
         assert_eq!(r["pages"].as_u64(), Some(2));
         let bytes = std::fs::read(&out).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
-        let _ = std::fs::remove_file(&out);
     }
 
     #[test]

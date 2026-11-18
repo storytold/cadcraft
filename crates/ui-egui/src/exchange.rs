@@ -96,6 +96,13 @@ fn preview_texture(ctx: &egui::Context, png: &[u8]) -> Result<TextureHandle, Str
     Ok(ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.rgba()), egui::TextureOptions::LINEAR))
 }
 
+#[derive(Clone)]
+struct PublishState {
+    doc_uid: u64,
+    selected: std::collections::BTreeSet<String>,
+    single_pdf: bool,
+}
+
 /// The Batch Publish window: pick which sheets to publish and whether to combine them into a
 /// single multi-page PDF.
 pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
@@ -104,12 +111,6 @@ pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         name: String,
         paper: String,
         ctb: String,
-    }
-    #[derive(Clone)]
-    struct PublishState {
-        doc_uid: u64,
-        selected: std::collections::BTreeSet<String>,
-        single_pdf: bool,
     }
 
     let doc_uid = app.session.state().map(|s| s.uid).unwrap_or(0);
@@ -127,7 +128,7 @@ pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         sheets.push(PublishSheet { name: "Model".into(), paper: "Extents".into(), ctb: "None".into() });
     }
     if let Ok(info) = app.session.execute("layout.list", &json!({}))
-        && let Some(arr) = info["layouts"].as_array()
+        && let Some(arr) = info.as_array().or_else(|| info["layouts"].as_array())
     {
         let mut items: Vec<(i32, PublishSheet)> = arr
             .iter()
@@ -505,5 +506,19 @@ mod tests {
         app.finish_pick(&ctx);
         assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"), "LINE was not cancelled");
         assert!(status(&app).starts_with("APPLOAD: another command started"), "{:?}", app.status);
+    }
+
+    #[test]
+    fn publish_dialog_lists_paper_space_layouts() {
+        let (mut app, _) = app();
+        let ctx = egui::Context::default();
+        let mut open = true;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::exchange::publish_dialog(&mut app, ui.ctx(), &mut open);
+        });
+        out.textures_delta.clear();
+        let id = egui::Id::unique("cc_publish_state");
+        let selected = ctx.data(|d| d.get_temp::<crate::exchange::PublishState>(id)).expect("publish state stored").selected;
+        assert!(selected.contains("Layout1") && selected.contains("Layout2"), "expected Paper Space layouts in PublishState, got {selected:?}");
     }
 }
