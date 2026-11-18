@@ -1,5 +1,6 @@
 //! Drawing access from LISP: `command`, system variables, entity lists (`entget`, `entmake`,
-//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`), selection sets (`ssget` and friends),
+//! `entmod`, `entdel`, `entlast`, `entnext`, `handent`; non-graphic objects are in
+//! [`super::objects`]), selection sets (`ssget` and friends),
 //! symbol tables (`tblsearch`, `tblnext`) and unit conversions (`rtos`, `angtos`, `distof`,
 //! `angtof`).
 //!
@@ -21,7 +22,7 @@ use super::value::{PickSet, Value, to_text};
 use super::{BlockSlots, LispError};
 use crate::{Input, Session};
 
-fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
+pub(super) fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     if a.len() < min {
         return Err(args_err(true));
     }
@@ -31,14 +32,14 @@ fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
     Ok(())
 }
 
-fn ename(v: &Value) -> Result<Handle, LispError> {
+pub(super) fn ename(v: &Value) -> Result<Handle, LispError> {
     match v {
         Value::Ename(h) => Ok(*h),
         other => Err(LispError::bad_arg("lentityp", other)),
     }
 }
 
-fn string(v: &Value) -> Result<String, LispError> {
+pub(super) fn string(v: &Value) -> Result<String, LispError> {
     match v {
         Value::Str(s) => Ok(s.to_string()),
         other => Err(LispError::bad_arg("stringp", other)),
@@ -273,7 +274,7 @@ fn tag_value(t: &Tag) -> Value {
 }
 
 /// DXF groups as an association list: points combined into lists `(10 x y z)`.
-fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
+pub(super) fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
     let mut out = Vec::new();
     let mut i = 0;
     while let Some(t) = tags.get(i) {
@@ -365,7 +366,8 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let (e, in_block) = match (d.entity(h), &from_block) {
         (Some(e), _) => (e, false),
         (None, Some(e)) => (e, true),
-        (None, None) => return Ok(Flow::Value(Value::Nil)),
+        // Not an entity: a table record, layout or dictionary (#1659, #1661).
+        (None, None) => return Ok(Flow::Value(super::objects::entget(ctx, h))),
     };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
@@ -514,13 +516,20 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
-    let (kind_name, common, kind) = match entity_from_list(ctx, list) {
+    let (kind_name, common, mut kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
     // entmod changes an entity, never its type.
     if !kind_name.eq_ignore_ascii_case(old.kind.dxf_name()) {
         return Ok(Flow::Value(Value::Nil));
+    }
+    // A block reference's attributes are entities of their own in AutoCAD, which entmod of the
+    // INSERT leaves alone; its list doesn't hold them, so they are kept from the reference.
+    if let (cadcraft_doc::EntityKind::Insert(new), cadcraft_doc::EntityKind::Insert(was)) = (&mut kind, &old.kind)
+        && new.attribs.is_empty()
+    {
+        new.attribs = was.attribs.clone();
     }
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     d.ensure_layer(&common.layer);
@@ -567,23 +576,51 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     }
 }
 
+/// `b` holds the same handles as `a`, in the same chunks and order. A chunk `b` still shares
+/// with `a` (which is held, so its chunks stay alive) is the same; only a chunk an edit copied is
+/// compared handle by handle.
+fn same_handles(a: &cadcraft_doc::EntityStore, b: &cadcraft_doc::EntityStore) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let (mut x, mut y) = (a.chunk_slices(), b.chunk_slices());
+    loop {
+        match (x.next(), y.next()) {
+            (None, None) => return true,
+            (Some((ka, sa)), Some((kb, sb))) => {
+                if ka != kb && (sa.len() != sb.len() || sa.iter().zip(sb).any(|(p, q)| p.handle != q.handle)) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
 /// Every entity's handle in creation order (model space and layouts), cached per drawing.
+///
+/// The cache is keyed by content identity, as the spatial index is: it holds clones of the
+/// spaces it was taken from, so any edit (`entmake`, `entmod`, `entdel`, a command, undo) copies
+/// the chunk it touches and the cache no longer matches. The drawing's address is no key: an
+/// edit in place keeps it, and a new drawing can be given the address of a dropped one.
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
-    let Ok(st) = ctx.s.state() else { return Arc::default() };
-    let key = Arc::as_ptr(&st.doc) as usize;
-    if let Some((k, v)) = &ctx.env.order
-        && *k == key
+    let Ok(d) = ctx.s.doc() else { return Arc::default() };
+    let spaces = || std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
+    if let Some((stores, v)) = &mut ctx.env.order
+        && stores.len() == 1 + d.layouts.len()
+        && stores.iter().zip(spaces()).all(|(a, b)| same_handles(a, b))
     {
+        // An edit that left every handle in place (a property `entmod`) keeps the order: hold
+        // the spaces as they are now, so the next call finds their chunks shared again.
+        if !stores.iter().zip(spaces()).all(|(a, b)| a.same_as(b)) {
+            *stores = spaces().cloned().collect();
+        }
         return v.clone();
     }
-    let d = &st.doc;
-    let mut v: Vec<Handle> = d.model.handles();
-    for l in &d.layouts {
-        v.extend(l.entities.handles());
-    }
+    let mut v: Vec<Handle> = spaces().flat_map(|s| s.iter().map(|e| e.handle)).collect();
     v.sort_unstable();
     let v = Arc::new(v);
-    ctx.env.order = Some((key, v.clone()));
+    ctx.env.order = Some((spaces().cloned().collect(), v.clone()));
     v
 }
 
@@ -642,8 +679,9 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()) || block_entity(ctx, *h).is_some());
-    Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+    let Some(h) = Handle::parse_hex(&s) else { return Ok(Flow::Value(Value::Nil)) };
+    let found = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) || block_entity(ctx, h).is_some() || super::objects::exists(ctx, h);
+    Ok(Flow::Value(if found { Value::Ename(h) } else { Value::Nil }))
 }
 
 /// Entity `h` of a block definition (#1700), by the cached index.
