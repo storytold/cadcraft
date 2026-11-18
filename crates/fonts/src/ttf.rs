@@ -1145,12 +1145,12 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
 }
 
 /// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
-fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
+fn glyph_or_fallback(face: &Face, c: char, fallback: &dyn Fn(char) -> Option<Face>) -> Arc<GlyphOutline> {
     let g = glyph(face, c);
     if g.mapped || c.is_whitespace() {
         return g;
     }
-    fallback_glyph(c).unwrap_or(g)
+    fallback(c).map(|f| glyph(&f, c)).filter(|fg| fg.mapped).unwrap_or(g)
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
@@ -1213,10 +1213,23 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 
 /// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
 pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
+    shape_dir_with(face, s, height, width_factor, oblique, base_rtl, &fallback_for)
+}
+
+/// [`shape_dir`] using a caller-supplied fallback lookup (for isolated tests).
+pub(crate) fn shape_dir_with(
+    face: &Face,
+    s: &str,
+    height: f64,
+    width_factor: f64,
+    oblique: f64,
+    base_rtl: Option<bool>,
+    fallback: &dyn Fn(char) -> Option<Face>,
+) -> Option<Shaped> {
     face.font()?;
     // As in [`crate::shape_stroke_dir`]: a line asked to run right to left takes the bidi path.
     if (crate::complex::needed(s) || base_rtl == Some(true))
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique, base_rtl)
+        && let Some(sh) = crate::complex::shape_with(Some(face), s, height, width_factor, oblique, base_rtl, fallback)
     {
         return Some(sh);
     }
@@ -1234,9 +1247,9 @@ pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: 
         if crate::bidi::is_format_control(c) {
             continue;
         }
-        let g = glyph_or_fallback(face, c);
+        let g = glyph_or_fallback(face, c, fallback);
         if !g.mapped
-            && let Some(adv) = crate::draw_stroke_stand_in(&mut out, c, x, h, wf, shear)
+            && let Some(adv) = crate::draw_stroke_stand_in(&mut out, c, x, h, wf, shear, &mut points_left)
         {
             spans.push((x, x + adv, under, over));
             x += adv;
@@ -1259,9 +1272,14 @@ pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: 
 
 /// Width of one line set in a TrueType face.
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
+    width_with(face, s, height, width_factor, &fallback_for)
+}
+
+/// [`width`] using a caller-supplied fallback lookup (for isolated tests).
+pub(crate) fn width_with(face: &Face, s: &str, height: f64, width_factor: f64, fallback: &dyn Fn(char) -> Option<Face>) -> Option<f64> {
     face.font()?;
     if crate::complex::needed(s)
-        && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0, None)
+        && let Some(sh) = crate::complex::shape_with(Some(face), s, height, width_factor, 0.0, None, fallback)
     {
         return Some(sh.width);
     }
@@ -1271,7 +1289,7 @@ pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64
             .iter()
             .filter(|(c, _, _)| !crate::bidi::is_format_control(*c))
             .map(|(c, _, _)| {
-                let g = glyph_or_fallback(face, *c);
+                let g = glyph_or_fallback(face, *c, fallback);
                 let stand_in = if g.mapped { None } else { crate::stroke_stand_in_advance(*c, height, wf) };
                 stand_in.unwrap_or(g.advance * height / g.cap * wf)
             })
@@ -1480,6 +1498,171 @@ mod geometry_budget_tests {
         assert_eq!(shaped.glyphs, vec![contours]);
         assert!(shaped.text.is_empty());
     }
+
+    #[test]
+    fn diameter_stand_in_no_fallback_unconditional() {
+        let face = synthetic_face(&[('A', 500)]);
+        let no_fb = |_: char| None;
+        let expected_w = crate::char_advance('\u{2300}') * 10.0;
+        let stroke = crate::shape_stroke("\u{2300}", 10.0, 1.0, 0.0);
+
+        let ltr = shape_dir_with(&face, "%%c", 10.0, 1.0, 0.0, None, &no_fb).expect("LTR shapes");
+        assert_eq!(ltr.strokes, stroke.strokes);
+        assert!(ltr.glyphs.is_empty());
+        assert!((ltr.width - expected_w).abs() < 1e-9);
+
+        let w = width_with(&face, "%%c", 10.0, 1.0, &no_fb).expect("measures");
+        assert!((w - expected_w).abs() < 1e-9);
+
+        let rtl = shape_dir_with(&face, "%%c", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("RTL shapes");
+        assert!((rtl.width - expected_w).abs() < 1e-9);
+
+        let neg = shape_dir_with(&face, "%%c", 10.0, -1.0, 0.0, Some(true), &no_fb).expect("negative wf shapes");
+        assert!((neg.width + expected_w).abs() < 1e-9);
+    }
+
+    #[test]
+    fn diameter_mapped_fallback_precedence() {
+        let primary = synthetic_face(&[('A', 500)]);
+        let fallback_face = synthetic_face(&[('\u{2300}', 700)]);
+        let fb = |c: char| (c == '\u{2300}').then(|| fallback_face.clone());
+
+        let shaped = shape_dir_with(&primary, "%%c", 10.0, 1.0, 0.0, None, &fb).expect("shapes");
+        assert!(shaped.strokes.is_empty(), "mapped fallback avoids stroke stand-in");
+        assert_eq!(shaped.glyphs.len(), 1);
+        let expected_w = 700.0 * 10.0 / 576.0;
+        assert!((shaped.width - expected_w).abs() < 1e-9);
+        assert!((width_with(&primary, "%%c", 10.0, 1.0, &fb).expect("measures") - expected_w).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stroke_stand_in_respects_point_budget() {
+        let face = synthetic_face(&[('A', 500)]);
+        let count: u32 = 727_273;
+        let s = "\u{2300}".repeat(count as usize);
+        let shaped = shape_dir_with(&face, &s, 10.0, 1.0, 0.0, None, &|_| None).expect("shapes");
+        let total_points: usize = shaped.strokes.iter().map(Vec::len).sum();
+        assert!(total_points <= MAX_SHAPED_POINTS, "retained {total_points} points, budget {MAX_SHAPED_POINTS}");
+        let expected_w = f64::from(count) * crate::char_advance('\u{2300}') * 10.0;
+        assert!((shaped.width - expected_w).abs() < 1e-3);
+    }
+}
+
+/// Build a minimal TrueType face mapping each `(char, advance)` pair (plus `.notdef` at gid 0).
+#[cfg(test)]
+pub(crate) fn synthetic_face(entries: &[(char, u16)]) -> Face {
+    fn push_u16(v: &mut Vec<u8>, x: u16) {
+        v.extend_from_slice(&x.to_be_bytes());
+    }
+    fn push_i16(v: &mut Vec<u8>, x: i16) {
+        v.extend_from_slice(&x.to_be_bytes());
+    }
+    fn glyph_rect(points: &[(i16, i16)]) -> Vec<u8> {
+        let (x_min, x_max) = points.iter().fold((0, 0), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+        let (y_min, y_max) = points.iter().fold((0, 0), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+        let mut v = Vec::new();
+        push_i16(&mut v, 1);
+        for x in [x_min, y_min, x_max, y_max] {
+            push_i16(&mut v, x);
+        }
+        push_u16(&mut v, u16::try_from(points.len().saturating_sub(1)).unwrap_or(0));
+        push_u16(&mut v, 0);
+        v.extend(std::iter::repeat_n(0x01, points.len()));
+        let mut last = 0;
+        for (x, _) in points {
+            push_i16(&mut v, x - last);
+            last = *x;
+        }
+        last = 0;
+        for (_, y) in points {
+            push_i16(&mut v, y - last);
+            last = *y;
+        }
+        if !v.len().is_multiple_of(2) {
+            v.push(0);
+        }
+        v
+    }
+
+    let num_glyphs = u16::try_from(1 + entries.len()).unwrap_or(1);
+    let notdef = glyph_rect(&[(0, 0), (500, 0), (500, 800), (0, 800)]);
+    let tri = glyph_rect(&[(0, 0), (250, 800), (500, 0)]);
+    let mut glyf = Vec::new();
+    let mut loca = Vec::new();
+    push_u16(&mut loca, 0);
+    glyf.extend_from_slice(&notdef);
+    push_u16(&mut loca, u16::try_from(glyf.len() / 2).unwrap_or(0));
+    for _ in entries {
+        glyf.extend_from_slice(&tri);
+        push_u16(&mut loca, u16::try_from(glyf.len() / 2).unwrap_or(0));
+    }
+
+    let mut head = vec![0_u8; 54];
+    head[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+    head[12..16].copy_from_slice(&0x5F0F_3CF5_u32.to_be_bytes());
+    head[18..20].copy_from_slice(&1000_u16.to_be_bytes());
+    head[38..40].copy_from_slice(&(-200_i16).to_be_bytes());
+    head[40..42].copy_from_slice(&500_i16.to_be_bytes());
+    head[42..44].copy_from_slice(&800_i16.to_be_bytes());
+
+    let mut hhea = vec![0_u8; 36];
+    hhea[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+    hhea[4..6].copy_from_slice(&800_i16.to_be_bytes());
+    hhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
+    hhea[34..36].copy_from_slice(&num_glyphs.to_be_bytes());
+
+    let mut maxp = vec![0_u8; 32];
+    maxp[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+    maxp[4..6].copy_from_slice(&num_glyphs.to_be_bytes());
+
+    let mut hmtx = Vec::new();
+    push_u16(&mut hmtx, 500);
+    push_i16(&mut hmtx, 0);
+    for (_, adv) in entries {
+        push_u16(&mut hmtx, *adv);
+        push_i16(&mut hmtx, 0);
+    }
+
+    let mut sorted: Vec<(u32, u32)> = entries.iter().enumerate().map(|(i, (c, _))| (u32::from(*c), u32::try_from(i + 1).unwrap_or(1))).collect();
+    sorted.sort_by_key(|(cp, _)| *cp);
+    let mut cmap = Vec::new();
+    push_u16(&mut cmap, 0);
+    push_u16(&mut cmap, 1);
+    push_u16(&mut cmap, 3);
+    push_u16(&mut cmap, 10);
+    cmap.extend_from_slice(&12_u32.to_be_bytes());
+    let sub_len = u32::try_from(16 + sorted.len() * 12).unwrap_or(16);
+    push_u16(&mut cmap, 12);
+    push_u16(&mut cmap, 0);
+    cmap.extend_from_slice(&sub_len.to_be_bytes());
+    cmap.extend_from_slice(&0_u32.to_be_bytes());
+    cmap.extend_from_slice(&u32::try_from(sorted.len()).unwrap_or(0).to_be_bytes());
+    for (cp, gid) in sorted {
+        cmap.extend_from_slice(&cp.to_be_bytes());
+        cmap.extend_from_slice(&cp.to_be_bytes());
+        cmap.extend_from_slice(&gid.to_be_bytes());
+    }
+
+    let tables: [(&[u8; 4], Vec<u8>); 7] =
+        [(b"cmap", cmap), (b"glyf", glyf), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"loca", loca), (b"maxp", maxp)];
+    let mut bytes = vec![0_u8; 12 + tables.len() * 16];
+    bytes[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+    bytes[4..6].copy_from_slice(&u16::try_from(tables.len()).unwrap_or(0).to_be_bytes());
+    bytes[6..8].copy_from_slice(&64_u16.to_be_bytes());
+    bytes[8..10].copy_from_slice(&2_u16.to_be_bytes());
+    for (i, (tag, data)) in tables.iter().enumerate() {
+        while !bytes.len().is_multiple_of(4) {
+            bytes.push(0);
+        }
+        let record = 12 + i * 16;
+        let offset = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
+        bytes[record..record + 4].copy_from_slice(*tag);
+        bytes[record + 8..record + 12].copy_from_slice(&offset.to_be_bytes());
+        bytes[record + 12..record + 16].copy_from_slice(&len.to_be_bytes());
+        bytes.extend_from_slice(data);
+    }
+    Face::new(Arc::new(bytes), 0).expect("synthetic face parses")
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

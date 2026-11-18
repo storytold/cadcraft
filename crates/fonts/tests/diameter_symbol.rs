@@ -111,10 +111,15 @@ fn face_with_a_rectangular_notdef() -> ttf::Face {
     ttf::Face::new(Arc::new(bytes), 0).expect("the synthetic face parses")
 }
 
-/// Whether shaped text contains a missing-glyph rectangle: a closed four-corner box.
-fn has_missing_glyph_box(sh: &Shaped) -> bool {
-    let closed_box = |s: &Vec<cadcraft_geom::Vec2>| s.len() == 5 && s.first() == s.last();
-    sh.strokes.iter().any(closed_box) || sh.glyphs.iter().flatten().any(closed_box)
+/// Whether shaped text contains the fixture's `.notdef` rectangle (comparing against the
+/// face's own `.notdef` geometry so valid fallback glyphs with four-corner contours are not
+/// mistaken for `.notdef`).
+fn has_missing_glyph_box(face: &ttf::Face, sh: &Shaped) -> bool {
+    let notdef = ttf::shape(face, "\u{E000}", 10.0, 1.0, 0.0).expect("notdef shapes");
+    let Some(notdef_glyph) = notdef.glyphs.first() else {
+        return false;
+    };
+    sh.glyphs.iter().any(|g| g == notdef_glyph)
 }
 
 #[test]
@@ -123,7 +128,7 @@ fn the_diameter_sign_is_drawn_when_no_font_has_it() {
     // The face maps 'A' but not the diameter sign: its own shape for the sign is the box.
     assert!(ttf::shape(&face, "A", 10.0, 1.0, 0.0).is_some_and(|sh| !sh.glyphs.is_empty()), "the letter is drawn from the face");
     let shaped = ttf::shape(&face, "%%c", 10.0, 1.0, 0.0).expect("the line shapes");
-    assert!(!has_missing_glyph_box(&shaped), "the diameter sign is a glyph, not a missing-glyph box");
+    assert!(!has_missing_glyph_box(&face, &shaped), "the diameter sign is a glyph, not a missing-glyph box");
     if ttf::fallback_for('\u{2300}').is_none() {
         // No installed font has the sign either: the built-in stroke font draws it, at its
         // own advance.
@@ -131,6 +136,8 @@ fn the_diameter_sign_is_drawn_when_no_font_has_it() {
         assert_eq!(shaped.strokes, stroke.strokes, "the built-in stroke font's diameter sign");
         assert!(shaped.glyphs.is_empty(), "no outline glyph for a sign no font has");
         assert!((shaped.width - cadcraft_fonts::char_advance('\u{2300}') * 10.0).abs() < 1e-9, "the stroke font's advance");
+    } else {
+        assert!(!shaped.glyphs.is_empty(), "mapped fallback draws an outline glyph");
     }
 }
 
@@ -153,6 +160,8 @@ fn the_diameter_sign_is_drawn_in_right_to_left_text_when_no_font_has_it() {
         let stroke = shape_stroke("\u{2300}", 10.0, 1.0, 0.0);
         assert_eq!(shaped.strokes.len(), stroke.strokes.len(), "the built-in stroke font's diameter sign");
         assert_eq!(shaped.glyphs.len(), 1, "only the letter is an outline glyph");
+    } else {
+        assert_eq!(shaped.glyphs.len(), 2, "both characters draw outline glyphs");
     }
-    assert!(!has_missing_glyph_box(&shaped), "the diameter sign is a glyph, not a missing-glyph box");
+    assert!(!has_missing_glyph_box(&face, &shaped), "the diameter sign is a glyph, not a missing-glyph box");
 }

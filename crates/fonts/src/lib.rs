@@ -271,14 +271,24 @@ fn draw_stroke_glyph(out: &mut Shaped, spec: &str, x: f64, sc: f64, wf: f64, she
     }
 }
 
+/// Number of polyline vertices [`draw_stroke_glyph`] appends for `spec` (a one-point stroke
+/// expands to a short two-point dash).
+pub(crate) fn stroke_glyph_points(spec: &str) -> usize {
+    stroke::strokes(spec).iter().map(|st| if st.len() == 1 { 2 } else { st.len() }).sum()
+}
+
 /// Draw `c` in the built-in stroke font at pen position `x` (`h` = text height), as SHX text
 /// draws it: what TrueType text shows for a character neither its face nor any fallback font
-/// has, instead of the face's missing-glyph box (few fonts have `⌀`, the `%%c` sign). The
-/// character's advance, or `None` when the stroke font lacks it too.
-pub(crate) fn draw_stroke_stand_in(out: &mut Shaped, c: char, x: f64, h: f64, wf: f64, shear: f64) -> Option<f64> {
+/// has, instead of the face's missing-glyph box (few fonts have `⌀`, the `%%c` sign). Returns
+/// the character's advance, or `None` when the stroke font lacks it too; geometry is skipped
+/// once `points_left` would be exceeded while keeping the advance.
+pub(crate) fn draw_stroke_stand_in(out: &mut Shaped, c: char, x: f64, h: f64, wf: f64, shear: f64, points_left: &mut usize) -> Option<f64> {
     let advance = stroke_stand_in_advance(c, h, wf)?;
     let (_, spec) = stroke::glyph(c)?;
-    draw_stroke_glyph(out, spec, x, h / stroke::CAP, wf, shear);
+    if let Some(rest) = points_left.checked_sub(stroke_glyph_points(spec)) {
+        *points_left = rest;
+        draw_stroke_glyph(out, spec, x, h / stroke::CAP, wf, shear);
+    }
     Some(advance)
 }
 
