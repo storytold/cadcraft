@@ -459,7 +459,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             placed_layout = true;
         }
     }
-    if matches!(&e.kind, cadcraft_doc::EntityKind::Insert(ins) if !ins.attribs.is_empty()) {
+    if matches!(&e.kind, cadcraft_doc::EntityKind::Insert(ins) if !ins.attribs.is_empty()) && !tags.iter().any(|t| t.code == 66) {
         items.push(Value::cons(Value::Int(66), Value::Int(1)));
     }
     if let Some(apps) = a.get(1)
@@ -488,7 +488,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             } else if let Some((_, list)) = &mut cur_app {
                 let v = match code {
                     1070 | 1071 => Value::Int(val.parse::<i32>().unwrap_or(0)),
-                    1040..=1042 => Value::Real(val.parse::<f64>().unwrap_or(0.0)),
+                    1040..=1042 => Value::Real(val.parse::<f64>().ok().filter(|f| f.is_finite()).unwrap_or(0.0)),
                     _ => Value::str(val),
                 };
                 list.push(Value::cons(Value::Int(code), v));
@@ -635,12 +635,26 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     if let Some((parent_h, index)) = split_sub_handle(h) {
-        let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
+        if index == SUB_SEQEND {
+            return Ok(Flow::Value(Value::Nil));
+        }
+        let valid_target = ctx.s.doc().ok().and_then(|d| d.entity(parent_h)).is_some_and(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Insert(ins) => index < ins.attribs.len(),
+            cadcraft_doc::EntityKind::Polyline3d(poly) => index < poly.points.len(),
+            _ => false,
+        });
+        if !valid_target {
+            return Ok(Flow::Value(Value::Nil));
+        }
         let new_val = list.iter().find(|v| v.car().as_number() == Some(1.0)).and_then(|v| match v.cdr() {
             Value::Str(s) => Some(s.to_string()),
             _ => None,
         });
         let new_pt = list.iter().find(|v| v.car().as_number() == Some(10.0)).and_then(|v| v.cdr().as_point());
+        if new_pt.is_some_and(|p| !p.iter().all(|c| c.is_finite())) {
+            return Ok(Flow::Value(Value::Nil));
+        }
+        let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
         let ok = d
             .modify_entity(parent_h, |e| match &mut e.kind {
                 cadcraft_doc::EntityKind::Insert(ins) => {

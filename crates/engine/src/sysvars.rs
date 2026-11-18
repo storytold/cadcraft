@@ -166,24 +166,24 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DWGPREFIX" => {
-            let dir = s
-                .state()
-                .ok()
-                .and_then(|d| d.path.as_deref())
-                .and_then(|p| std::path::Path::new(p).parent())
-                .and_then(|p| p.to_str())
-                .filter(|d| !d.is_empty())
-                .map(str::to_string)
-                .or_else(|| s.lisp_file_dir.clone())
-                .map(|dir| {
-                    if dir.is_empty() || dir.ends_with(['/', '\\']) {
-                        dir
-                    } else {
-                        let sep = if dir.contains('\\') { '\\' } else { '/' };
-                        format!("{dir}{sep}")
-                    }
-                })
-                .unwrap_or_default();
+            let dir = match s.state() {
+                Ok(d) => d
+                    .path
+                    .as_deref()
+                    .map(dwg_prefix)
+                    .or_else(|| {
+                        s.lisp_file_dir.as_deref().map(|dir| {
+                            if dir.is_empty() || dir.ends_with(['/', '\\']) {
+                                dir.to_string()
+                            } else {
+                                let sep = if dir.contains('\\') { '\\' } else { '/' };
+                                format!("{dir}{sep}")
+                            }
+                        })
+                    })
+                    .unwrap_or_default(),
+                Err(_) => String::new(),
+            };
             json!(dir)
         }
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
@@ -232,7 +232,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
                             "ATTDIA" | "DIMTIX" | "DIMTMOVE" | "DIMTOFL" | "DIMFXLON" | "INSUNITSDEFSOURCE" | "INSUNITSDEFTARGET" | "3DOSMODE" => {
                                 json!(0)
                             }
-                            "CMDECHO" | "ATTIPE" | "ATTREQ" => json!(1),
+                            "ATTIPE" | "ATTREQ" => json!(1),
                             "OLEQUALITY" | "CVPORT" => json!(2),
                             "DIMATFIT" => json!(3),
                             "DIMLWE" => json!(-3),
@@ -252,7 +252,6 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
 }
 
 /// DWGPREFIX: the folder of the drawing file, made absolute, with a trailing separator.
-#[allow(dead_code)]
 fn dwg_prefix(path: &str) -> String {
     let full = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     match full.parent() {

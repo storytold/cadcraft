@@ -530,7 +530,7 @@ fn prop_row_raw(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui))
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
-        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), crate::i18n::t(label)));
+        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label));
         ui.painter().galley(pos2(lr.right() - 6.0, lr.center().y - galley.size().y / 2.0), galley, t.text_dim);
         ui.label_inputs_by(label_response.id, add);
     });
@@ -1236,10 +1236,6 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             _ => {}
         }
-        if !e.common.xdata.is_empty() {
-            let _ = d;
-            xdata_properties_subsection(app, ui, &e, &group);
-        }
     } else if !drawn
         && let Some(dims) = sel
             .iter()
@@ -1465,6 +1461,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             _ => {}
         }
+    }
+    if sel.len() == 1 && !e.common.xdata.is_empty() {
+        xdata_properties_subsection(app, ui, &e, &group);
     }
     if let Some(mut p) = set {
         // A rotation is typed as shown (from ANGBASE, in the ANGDIR sense); properties.set takes it
