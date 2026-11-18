@@ -34,7 +34,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("-xref", "External References", run_dash_xref)
             .alias(&["-xr"])
-            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
+            .params("{option: \"?\"|bind|detach|path|unload|reload|overlay|attach|type, names?: \"A,B*\" (default *), exact?: bool (names are literal xref names, no wildcards or commas), path? (path, attach, overlay), insert?: bool (bind: Insert type), overlay?: bool (type), at?, scale?, rotation? (attach)}")
             .interactive(|_| Ok(Box::new(XrefM::new("-XREF", XStage::Option)))),
         CommandSpec::new("xbind", "Bind...", run_xbind)
             .menu(&["Modify", "Object", "External Reference", "Bind..."])
@@ -50,7 +50,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 }
 
 /// Load the xrefs of drawing `i`, just opened (OPEN): the opened state counts as saved, and the
-/// view frames the drawing with them.
+/// view frames the drawing with them, unless the drawing opened on the view it was saved at.
 pub(crate) fn after_open(s: &mut Session, i: usize) {
     let px = s.viewport_px;
     let Some(st) = s.docs.get_mut(i) else { return };
@@ -61,7 +61,7 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     let out = load::load_all(Arc::make_mut(&mut st.doc), path.as_deref());
     st.saved = st.doc.clone();
     let ext = st.doc.extents(&cadcraft_doc::Space::Model);
-    if !ext.is_empty() {
+    if !ext.is_empty() && crate::view::saved_view(&st.doc).is_none() {
         // Fit in the frame of the saved twist, which open_drawing has restored.
         let twist = st.view().twist;
         let (center, w, h) = crate::View::twisted_box(ext, twist);
@@ -201,6 +201,46 @@ fn run_xattach(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The xrefs a JSON call names (`names`, default all); an error when none match.
 fn named(s: &Session, cmd: &str, p: &Value) -> Result<Vec<String>> {
+    if p.get("exact").and_then(Value::as_bool) == Some(true) {
+        let lits: Vec<&str> = match p.get("names") {
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
+            Some(Value::String(t)) => vec![t.as_str()],
+            _ => str_param(p, "name").into_iter().collect(),
+        };
+        let d = s.doc()?;
+        let mut names = Vec::new();
+        let mut selected = std::collections::HashSet::new();
+        // Symbol names are case-insensitive: two xrefs that differ only by case can't be loaded together.
+        let mut folded = std::collections::HashMap::new();
+        for literal in &lits {
+            if let Some(block) = xrefs(d).find(|block| block.name == *literal) {
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
+                }
+                if selected.insert(block.name.clone()) {
+                    names.push(block.name.clone());
+                }
+                continue;
+            }
+            let normalized = literal.to_ascii_lowercase();
+            let mut matches = xrefs(d).filter(|block| block.name.to_ascii_lowercase() == normalized);
+            if let Some(block) = matches.next() {
+                if matches.next().is_some() {
+                    return Err(bad(cmd, format!("xref name \"{literal}\" is ambiguous ignoring case")));
+                }
+                if let Some(first) = folded.insert(block.name.to_ascii_lowercase(), block.name.clone()).filter(|f| *f != block.name) {
+                    return Err(bad(cmd, format!("xref names \"{first}\" and \"{}\" differ only by case", block.name)));
+                }
+                if selected.insert(block.name.clone()) {
+                    names.push(block.name.clone());
+                }
+            }
+        }
+        if names.is_empty() {
+            return Err(bad(cmd, format!("no xref named \"{}\"", lits.join(","))));
+        }
+        return Ok(names);
+    }
     let pattern = match p.get("names") {
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","),
         Some(Value::String(t)) => t.clone(),
@@ -221,6 +261,19 @@ fn run_xref(s: &mut Session, _p: &Value) -> Result<Value> {
         s.echo("No xrefs are attached.");
     }
     Ok(r)
+}
+
+/// An error when two of `names` (or, with `all`, one of them and any other attached xref) differ only
+/// by case: symbol names are case-insensitive, so such xrefs cannot be handled together, and the
+/// command must refuse before it changes anything.
+fn refuse_case_clash(d: &Drawing, cmd: &str, names: &[String], all: bool) -> Result<()> {
+    let others: Vec<&str> = if all { xrefs(d).map(|b| b.name.as_str()).collect() } else { names.iter().map(String::as_str).collect() };
+    for n in names {
+        if let Some(o) = others.iter().find(|o| *o != n && o.eq_ignore_ascii_case(n)) {
+            return Err(bad(cmd, format!("xref names \"{n}\" and \"{o}\" differ only by case")));
+        }
+    }
+    Ok(())
 }
 
 fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
@@ -252,6 +305,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "detach" | "d" => {
             let names = named(s, "-xref", p)?;
+            refuse_case_clash(s.doc()?, "-xref", &names, true)?;
             let mut erased = 0;
             for n in &names {
                 erased += load::detach(s.doc_mut()?, n);
@@ -276,6 +330,7 @@ fn run_dash_xref(s: &mut Session, p: &Value) -> Result<Value> {
         "path" | "p" => {
             let path = str_param(p, "path").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("-xref", "`path` is required"))?.to_string();
             let names = named(s, "-xref", p)?;
+            refuse_case_clash(s.doc()?, "-xref", &names, false)?;
             let d = s.doc_mut()?;
             for n in &names {
                 if let Some(b) = d.blocks.get_mut(n) {

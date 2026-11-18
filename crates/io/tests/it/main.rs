@@ -37,6 +37,7 @@ mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
 mod low_handseed;
+mod minsert_marker;
 mod mleader_content;
 mod mleader_roundtrip;
 mod mline_roundtrip;
@@ -49,6 +50,8 @@ mod mtext_line_spacing;
 mod multiline_attributes;
 #[cfg(not(target_arch = "wasm32"))]
 mod ole2frame_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
