@@ -495,10 +495,10 @@ pub fn transcode_tcvn3_h(s: &str) -> Cow<'_, str> {
 
 /// Main entry point: transcode legacy Vietnamese text to Unicode NFC.
 ///
-/// Thin wrapper delegating to [`super::transcode`]. If the
-/// `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set, `font_hint` is ignored.
+/// Thin wrapper delegating to [`super::transcode`]. If legacy font hint detection has been
+/// disabled via [`super::set_legacy_font_hint_disabled`], `font_hint` is ignored.
 pub fn transcode_vietnamese<'a>(s: &'a str, font_hint: Option<&str>) -> Cow<'a, str> {
-    let effective_hint = if super::is_font_hint_disabled() { None } else { font_hint };
+    let effective_hint = if super::is_legacy_font_hint_disabled() { None } else { font_hint };
     super::transcode_with(&[&Vietnamese], s, effective_hint)
 }
 

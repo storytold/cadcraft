@@ -16,6 +16,7 @@ const NO_NATIVE_MENU: &str = "CADCRAFT_NO_NATIVE_MENU";
 const SYSTEM_CURSOR: &str = "CADCRAFT_SYSTEM_CURSOR";
 const FONTALT: &str = "CADCRAFT_FONTALT";
 const FONTFALLBACK: &str = "CADCRAFT_FONTFALLBACK";
+const DISABLE_LEGACY_FONT_HINT: &str = "CADCRAFT_DISABLE_LEGACY_FONT_HINT";
 
 /// Every variable [`Env`] reads, with its `--help` line.
 pub(crate) const VARS: &[(&str, &str)] = &[
@@ -27,6 +28,7 @@ pub(crate) const VARS: &[(&str, &str)] = &[
     (SYSTEM_CURSOR, "1 uses the system cursor instead of the drawn crosshair; 0 or unset is off"),
     (FONTALT, "the font that replaces a missing one"),
     (FONTFALLBACK, "the fonts tried, in order, for characters a font lacks"),
+    (DISABLE_LEGACY_FONT_HINT, "1 disables legacy 8-bit font-name hinting (TCVN3/VNI); 0 or unset is off"),
 ];
 
 /// The process environment, read once at startup. A blank variable counts as unset, except
@@ -54,6 +56,8 @@ pub(crate) struct Env {
     pub(crate) font_alt: Option<String>,
     /// FONTFALLBACK at startup.
     pub(crate) font_fallback: Option<String>,
+    /// Disable legacy 8-bit font-name hinting.
+    pub(crate) disable_legacy_font_hint: Switch,
 }
 
 impl Env {
@@ -78,6 +82,7 @@ impl Env {
             system_cursor: switch(SYSTEM_CURSOR),
             font_alt: text(FONTALT),
             font_fallback: text(FONTFALLBACK),
+            disable_legacy_font_hint: switch(DISABLE_LEGACY_FONT_HINT),
         }
     }
 }
@@ -134,6 +139,7 @@ mod tests {
             (SYSTEM_CURSOR, "maybe"),
             (FONTALT, "Noto Sans"),
             (FONTFALLBACK, "Vazirmatn, msjh.ttc"),
+            (DISABLE_LEGACY_FONT_HINT, "true"),
         ];
         let read = Env::from_vars(env(&vars));
         assert_eq!(
@@ -147,13 +153,14 @@ mod tests {
                 system_cursor: Switch::Default,
                 font_alt: Some("Noto Sans".into()),
                 font_fallback: Some("Vazirmatn, msjh.ttc".into()),
+                disable_legacy_font_hint: Switch::On,
             }
         );
         let blank = vars.map(|(k, _)| (k, if k == FONTALT { "  " } else { "" }));
         let read = Env::from_vars(env(&blank));
         assert_eq!(read.config_dir, None, "an empty variable means no directory, not the working directory");
         assert_eq!((read.locale, read.font_alt, read.font_fallback), (None, None, None));
-        assert_eq!([read.vsync, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 4]);
+        assert_eq!([read.vsync, read.wayland, read.no_native_menu, read.system_cursor, read.disable_legacy_font_hint], [Switch::Default; 5]);
     }
 
     #[test]

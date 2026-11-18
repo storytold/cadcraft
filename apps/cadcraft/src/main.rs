@@ -304,6 +304,9 @@ fn main() -> eframe::Result {
     if let Some(list) = &vars.font_fallback {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
+    if vars.disable_legacy_font_hint == cadcraft_ui_egui::switch::Switch::On {
+        cadcraft_engine::fonts::legacy_encoding::set_legacy_font_hint_disabled(true);
+    }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11

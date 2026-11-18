@@ -9,6 +9,7 @@
 //! TCVN3, TCVN3H, and VNI Windows) is the first registered profile.
 
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod vietnamese;
 
@@ -47,31 +48,29 @@ pub trait LegacyProfile: Sync {
 
 static PROFILES: &[&dyn LegacyProfile] = &[&vietnamese::Vietnamese];
 
-/// Environment variable name to disable legacy font hint detection.
-pub const DISABLE_LEGACY_FONT_HINT_ENV: &str = "CADCRAFT_DISABLE_LEGACY_FONT_HINT";
+static LEGACY_FONT_HINT_DISABLED: AtomicBool = AtomicBool::new(false);
 
-/// Check whether the legacy font hint mechanism is disabled via the
-/// `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable.
-pub fn is_font_hint_disabled() -> bool {
-    is_font_hint_disabled_with(|k| std::env::var(k).ok())
+/// Disable (or re-enable) legacy font hint detection process-wide.
+///
+/// Intended to be called once at startup by the application binary after reading
+/// `CADCRAFT_DISABLE_LEGACY_FONT_HINT`.
+pub fn set_legacy_font_hint_disabled(disabled: bool) {
+    LEGACY_FONT_HINT_DISABLED.store(disabled, Ordering::Relaxed);
 }
 
-pub(crate) fn is_font_hint_disabled_with(mut get_var: impl FnMut(&str) -> Option<String>) -> bool {
-    match get_var(DISABLE_LEGACY_FONT_HINT_ENV) {
-        Some(v) => match v.trim().to_ascii_lowercase().as_str() {
-            "0" | "false" | "off" | "no" => false,
-            _ => !v.trim().is_empty(),
-        },
-        None => false,
-    }
+/// Return whether legacy font hint detection has been disabled via
+/// [`set_legacy_font_hint_disabled`].
+pub fn is_legacy_font_hint_disabled() -> bool {
+    LEGACY_FONT_HINT_DISABLED.load(Ordering::Relaxed)
 }
 
 /// Return the first candidate in `candidates` (such as `&[&ts.font, &style_name]`) that matches
 /// a registered [`LegacyProfile::match_font`].
 ///
-/// Returns `None` if the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set.
+/// Returns `None` if legacy font hint detection has been disabled via
+/// [`set_legacy_font_hint_disabled`].
 pub fn font_hint<'a>(candidates: &[&'a str]) -> Option<&'a str> {
-    if is_font_hint_disabled() {
+    if is_legacy_font_hint_disabled() {
         return None;
     }
     font_hint_with(PROFILES, candidates)
@@ -94,9 +93,10 @@ pub fn font_hint_with<'a>(profiles: &[&dyn LegacyProfile], candidates: &[&'a str
 /// otherwise each profile's conservative [`LegacyProfile::detect`] heuristic is tried in order.
 /// Returns `Cow::Borrowed(s)` with zero allocation when no legacy encoding applies.
 ///
-/// If the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set, `hint` is ignored.
+/// If legacy font hint detection has been disabled via [`set_legacy_font_hint_disabled`],
+/// `hint` is ignored.
 pub fn transcode<'a>(s: &'a str, hint: Option<&str>) -> Cow<'a, str> {
-    let effective_hint = if is_font_hint_disabled() { None } else { hint };
+    let effective_hint = if is_legacy_font_hint_disabled() { None } else { hint };
     transcode_with(PROFILES, s, effective_hint)
 }
 
@@ -123,9 +123,10 @@ pub fn transcode_with<'a>(profiles: &[&dyn LegacyProfile], s: &'a str, hint: Opt
 /// If `font` belongs to a registered legacy 8-bit encoding profile, return its modern Unicode
 /// substitute typeface class (`Serif` or `Sans`).
 ///
-/// Returns `None` if the `CADCRAFT_DISABLE_LEGACY_FONT_HINT` environment variable is set.
+/// Returns `None` if legacy font hint detection has been disabled via
+/// [`set_legacy_font_hint_disabled`].
 pub fn substitute_face(font: &str) -> Option<FontClass> {
-    if is_font_hint_disabled() {
+    if is_legacy_font_hint_disabled() {
         return None;
     }
     substitute_face_with(PROFILES, font)
@@ -233,20 +234,8 @@ mod tests {
     }
 
     #[test]
-    fn font_hint_disabled_env_switch_parsing() {
-        assert!(is_font_hint_disabled_with(|_| Some("1".into())));
-        assert!(is_font_hint_disabled_with(|_| Some("true".into())));
-        assert!(is_font_hint_disabled_with(|_| Some("on".into())));
-        assert!(is_font_hint_disabled_with(|_| Some("yes".into())));
-        assert!(is_font_hint_disabled_with(|_| Some("YES".into())));
-        assert!(is_font_hint_disabled_with(|_| Some(" 1 \n".into())));
-
-        assert!(!is_font_hint_disabled_with(|_| Some("0".into())));
-        assert!(!is_font_hint_disabled_with(|_| Some("false".into())));
-        assert!(!is_font_hint_disabled_with(|_| Some("off".into())));
-        assert!(!is_font_hint_disabled_with(|_| Some("no".into())));
-        assert!(!is_font_hint_disabled_with(|_| Some("".into())));
-        assert!(!is_font_hint_disabled_with(|_| None));
+    fn legacy_font_hint_is_enabled_by_default() {
+        assert!(!is_legacy_font_hint_disabled());
     }
 
     #[test]
