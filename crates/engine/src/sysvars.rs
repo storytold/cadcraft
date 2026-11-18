@@ -187,6 +187,10 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!(dir)
         }
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
+        // The next handle the drawing gives out, in hex as `$HANDSEED` (the header keeps the
+        // value the file was read with, which new objects don't move): past the handles the
+        // file's own objects hold, as allocation skips them.
+        "HANDSEED" => json!(format!("{:X}", s.doc().ok()?.next_handle().0)),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
         "CMDACTIVE" => json!(i32::from(s.running.is_some())),
         "TILEMODE" => json!(i32::from(s.state().is_ok_and(|d| d.space.layout().is_none()))),
@@ -291,6 +295,7 @@ const READ_ONLY: &[&str] = &[
     "TILEMODE",
     "PLATFORM",
     "DBMOD",
+    "HANDSEED",
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",

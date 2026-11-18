@@ -199,6 +199,8 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
     cadcraft_engine::lisp::input::set_file_dialog(|title, default, ext, flags| {
         let mut d = rfd::FileDialog::new();
         if !title.is_empty() {
