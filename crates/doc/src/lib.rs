@@ -213,12 +213,17 @@ impl Drawing {
     /// writes itself ([`foreign::Foreign::handles`]): AutoLISP names those objects by them, and a
     /// file CADCraft wrote numbers them above its `$HANDSEED` (#495).
     pub fn new_handle(&mut self) -> Handle {
-        while self.foreign.handles.contains_key(&Handle(self.handseed)) && self.handseed < u64::MAX {
-            self.handseed = self.handseed.saturating_add(1);
-        }
-        let h = Handle(self.handseed);
-        self.handseed = self.handseed.saturating_add(1);
+        let h = self.next_handle();
+        self.handseed = h.0.saturating_add(1);
         h
+    }
+    /// The handle [`Drawing::new_handle`] gives out next (AutoCAD's `HANDSEED`), without taking it.
+    pub fn next_handle(&self) -> Handle {
+        let mut h = self.handseed;
+        while self.foreign.handles.contains_key(&Handle(h)) && h < u64::MAX {
+            h = h.saturating_add(1);
+        }
+        Handle(h)
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
     pub fn bump_handseed(&mut self, h: Handle) {
