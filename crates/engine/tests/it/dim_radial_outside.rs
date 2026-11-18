@@ -60,3 +60,37 @@ fn radial_text_goes_to_a_location_outside_the_circle() {
     // Radius 4 | 32 | 128, diameter 3 | 32 | 128, as AutoCAD writes them.
     assert_eq!(dxf_flags(&s), vec![164, 163, 164]);
 }
+
+#[test]
+fn radius_text_grip_moves_the_arrow_across_the_circle() {
+    let mut s = Session::new();
+    let circle = s.execute("circle", &json!({"center": [0, 0], "radius": 10})).unwrap();
+    s.execute("dimradius", &json!({"handle": circle["handle"], "at": [-18, 0]})).unwrap();
+    let h = s.doc().unwrap().model.last().unwrap().handle;
+    let (original, _) = last_dim(&s);
+    assert_eq!(original.p15.xy(), Vec2::new(-10.0, 0.0));
+    let text_grip = s.grips_of(h).unwrap().iter().position(|p| *p == original.text_mid.xy()).unwrap();
+    let at = Vec2::new(16.0, 12.0);
+    let tip = Vec2::new(8.0, 6.0);
+
+    s.start_grip_edit(&[(h, text_grip)]).unwrap();
+    let preview = s.preview(at);
+    let preview_dim = preview
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::Dimension(dm) => Some(dm),
+            _ => None,
+        })
+        .unwrap();
+    assert!(preview_dim.p15.xy().near(tip, 1e-9), "{:?}", preview_dim.p15);
+
+    s.input(cadcraft_engine::Input::Point(at)).unwrap();
+    let (placed, geometry) = last_dim(&s);
+    assert!(placed.p15.xy().near(tip, 1e-9));
+    assert_eq!(placed.defpt, original.defpt);
+    assert_eq!(placed.text_mid.xy(), at);
+    assert!((geometry.measurement - 10.0).abs() < 1e-9);
+    let doc = s.doc().unwrap();
+    let attachment = placed.assoc.iter().find(|a| a.point == "p15").unwrap();
+    assert!(cadcraft_engine::assoc::snap_point(doc, attachment).unwrap().near(tip, 1e-9));
+}

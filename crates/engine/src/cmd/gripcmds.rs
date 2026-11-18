@@ -1,6 +1,6 @@
 //! `grip.*` commands: the undoable, scriptable form of grip editing (see `crate::grips`).
 
-use cadcraft_doc::{Entity, EntityKind, Handle};
+use cadcraft_doc::{DimKind, Drawing, Entity, EntityKind, Handle};
 use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
@@ -65,13 +65,8 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
     }
     let d = s.doc_mut()?;
     for (o, k) in &mut edits {
-        // A dimension's text moved by its grip: with DIMTMOVE 0 the dimension line follows.
-        if let cadcraft_doc::EntityKind::Dimension(dm) = k
-            && let Some(cadcraft_doc::EntityKind::Dimension(old)) = d.entity(*o).map(|e| &e.kind)
-            && dm.text_mid != old.text_mid
-        {
-            let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-            st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
+        if let Some(original) = d.entity(*o) {
+            follow_dimension_text(d, &original.kind, k);
         }
         d.modify_entity(*o, |e| e.kind = k.clone())?;
     }
@@ -157,6 +152,15 @@ fn run_grip(_s: &mut Session, _p: &Value) -> Result<Value> {
 /// At most this many grips or objects take part in one multi-grip stretch.
 const MAX_GRIPS: usize = 1000;
 
+fn follow_dimension_text(d: &Drawing, original: &EntityKind, edited: &mut EntityKind) {
+    if let (EntityKind::Dimension(old), EntityKind::Dimension(dm)) = (original, edited)
+        && dm.text_mid != old.text_mid
+    {
+        let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+        st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
+    }
+}
+
 /// The objects as they'd be after moving the grips `hot` by `delta`, with the grips of `others`
 /// that sit on a hot grip's point (connected objects stay connected). Locked objects and edits
 /// that would be degenerate are left out; several hot grips of one object move together.
@@ -200,6 +204,9 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
             }
         }
         if changed {
+            if matches!(&k, EntityKind::Dimension(dm) if dm.kind == DimKind::Radius) {
+                follow_dimension_text(d, &e.kind, &mut k);
+            }
             out.push((h, k));
         }
     }
