@@ -7,16 +7,18 @@
 //! [`crate::cmd::file::entity_codec`]), so what `entget` shows is what a DXF file holds, except
 //! for angles, which are radians in a list and degrees in a file.
 
+use std::collections::HashMap;
+
 use std::sync::{Arc, Mutex};
 
 use cadcraft_doc::{Entity, Handle, Space};
 use cadcraft_geom::Vec2;
 use craft_dxf::Tag;
 
-use super::LispError;
 use super::builtins::args_err;
 use super::eval::{Ctx, Flow, Need};
 use super::value::{PickSet, Value, to_text};
+use super::{BlockSlots, LispError};
 use crate::{Input, Session};
 
 fn arity(a: &[Value], min: usize, max: usize) -> Result<(), LispError> {
@@ -423,12 +425,19 @@ fn sub_entget(h: Handle, parent: &Entity, index: usize) -> Option<Value> {
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
+    let drawn = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some());
+    let from_block = if drawn { None } else { block_entity(ctx, h) };
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
     if let Some((parent_h, index)) = split_sub_handle(h) {
         let Some(parent) = d.entity(parent_h) else { return Ok(Flow::Value(Value::Nil)) };
         return Ok(Flow::Value(sub_entget(h, parent, index).unwrap_or_default()));
     }
-    let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
+    // An entity of a block definition (#1700) has no layout.
+    let (e, in_block) = match (d.entity(h), &from_block) {
+        (Some(e), _) => (e, false),
+        (None, Some(e)) => (e, true),
+        (None, None) => return Ok(Flow::Value(Value::Nil)),
+    };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     tags.retain(|t| t.code < 1000);
     convert_angles(&kind, &mut tags, f64::to_radians);
@@ -437,7 +446,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         _ => "Model".into(),
     };
     let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
-    let mut placed_layout = false;
+    let mut placed_layout = in_block;
     for v in groups_to_list(&tags) {
         // The layout name follows the AcDbEntity marker, as AutoCAD lists it.
         let after_marker = !placed_layout && v.car().as_number() == Some(100.0) && matches!(v.cdr(), Value::Str(ref s) if &**s == "AcDbEntity");
@@ -611,6 +620,7 @@ fn end_block(ctx: &mut Ctx<'_>) -> Value {
     }
     let name = b.name.clone();
     d.blocks.insert(name.clone(), Arc::new(b));
+    ctx.env.block_next = None;
     ctx.s.touch();
     Value::str(&name)
 }
@@ -730,6 +740,30 @@ fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
     v
 }
 
+/// Every block-definition entity with its successor within its block, cached per drawing like
+/// [`handles_in_order`]: one pass over the blocks, then `entnext`, `entget` and `handent` on a
+/// block's entity are hash lookups instead of scans of the block (and of every block, to find
+/// which holds the entity).
+fn block_slots(ctx: &mut Ctx<'_>) -> Arc<BlockSlots> {
+    let Ok(st) = ctx.s.state() else { return Arc::default() };
+    let key = Arc::as_ptr(&st.doc) as usize;
+    if let Some((k, v)) = &ctx.env.block_next
+        && *k == key
+    {
+        return v.clone();
+    }
+    let mut m = HashMap::new();
+    for b in st.doc.blocks.values() {
+        let mut it = b.entities.iter().peekable();
+        while let Some(e) = it.next() {
+            m.insert(e.handle, (e.clone(), it.peek().map(|n| n.handle)));
+        }
+    }
+    let m = Arc::new(m);
+    ctx.env.block_next = Some((key, m.clone()));
+    m
+}
+
 pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 0)?;
     Ok(Flow::Value(handles_in_order(ctx).last().map(|h| Value::Ename(*h)).unwrap_or_default()))
@@ -748,6 +782,12 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             let count = ctx.s.doc().ok().and_then(|d| d.entity(parent_h)).map(|e| sub_entity_count(e)).unwrap_or(0);
             let next_idx = if index + 1 < count { index + 1 } else { SUB_SEQEND };
             return Ok(Flow::Value(Value::Ename(make_sub_handle(parent_h, next_idx))));
+        }
+        // From an entity of a block definition: the next one in that block, nil after the last (#1700).
+        if ctx.s.doc().is_ok_and(|d| d.entity(h).is_none())
+            && let Some((_, next)) = block_slots(ctx).get(&h)
+        {
+            return Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()));
         }
         let count = ctx.s.doc().ok().and_then(|d| d.entity(h)).map(|e| sub_entity_count(e)).unwrap_or(0);
         if count > 0 {
@@ -782,8 +822,13 @@ pub fn layoutlist(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()));
+    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()) || block_entity(ctx, *h).is_some());
     Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+}
+
+/// Entity `h` of a block definition (#1700), by the cached index.
+fn block_entity(ctx: &mut Ctx<'_>, h: Handle) -> Option<Arc<Entity>> {
+    block_slots(ctx).get(&h).map(|(e, _)| e.clone())
 }
 
 // ---------------- selection sets ----------------
@@ -1186,12 +1231,17 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .blocks
             .values()
             .map(|b| {
-                Value::list(vec![
+                let mut items = vec![
                     pair(0, Value::str("BLOCK")),
                     pair(2, Value::str(&b.name)),
                     pair(70, Value::Int(0)),
                     Value::list(vec![Value::Int(10), Value::Real(b.base.x), Value::Real(b.base.y), Value::Real(b.base.z)]),
-                ])
+                ];
+                // Its first entity (-2): entnext walks the rest of the definition (#1700).
+                if let Some(first) = b.entities.iter().next() {
+                    items.push(pair(-2, Value::Ename(first.handle)));
+                }
+                Value::list(items)
             })
             .collect(),
         "DIMSTYLE" => d
