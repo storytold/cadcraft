@@ -193,7 +193,9 @@ fn resolve(c: char, primary: Option<&Face>, prev: Option<&Face>) -> Src {
     }
     match (ttf::fallback_for(c), primary) {
         (Some(f), _) => Src::Face(f),
-        // The text's font draws its own missing-glyph shape.
+        // No font has it: the stroke font draws it when it can, as in `ttf::shape`, else the
+        // text's font draws its own missing-glyph shape.
+        (None, Some(_)) if stroke::glyph(c).is_some() => Src::Stroke,
         (None, Some(p)) => Src::Face(p.clone()),
         (None, None) => Src::Missing,
     }

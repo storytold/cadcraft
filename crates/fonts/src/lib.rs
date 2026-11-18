@@ -271,6 +271,22 @@ fn draw_stroke_glyph(out: &mut Shaped, spec: &str, x: f64, sc: f64, wf: f64, she
     }
 }
 
+/// Draw `c` in the built-in stroke font at pen position `x` (`h` = text height), as SHX text
+/// draws it: what TrueType text shows for a character neither its face nor any fallback font
+/// has, instead of the face's missing-glyph box (few fonts have `⌀`, the `%%c` sign). The
+/// character's advance, or `None` when the stroke font lacks it too.
+pub(crate) fn draw_stroke_stand_in(out: &mut Shaped, c: char, x: f64, h: f64, wf: f64, shear: f64) -> Option<f64> {
+    let advance = stroke_stand_in_advance(c, h, wf)?;
+    let (_, spec) = stroke::glyph(c)?;
+    draw_stroke_glyph(out, spec, x, h / stroke::CAP, wf, shear);
+    Some(advance)
+}
+
+/// The advance [`draw_stroke_stand_in`] gives `c`, or `None` when the stroke font lacks it.
+pub(crate) fn stroke_stand_in_advance(c: char, h: f64, wf: f64) -> Option<f64> {
+    (!c.is_whitespace() && stroke::glyph(c).is_some()).then(|| char_advance(c) * h * wf)
+}
+
 /// A character no font has: a small box, like a missing-glyph rectangle (`k` = text height /
 /// cap height × width factor).
 fn missing_glyph_box(out: &mut Shaped, x: f64, h: f64, k: f64) {
