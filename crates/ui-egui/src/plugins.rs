@@ -493,7 +493,7 @@ fn field(ui: &mut egui::Ui, p: &Param, v: &mut Value) {
         }
         ParamKind::Select | ParamKind::List => {
             let current = v.as_str().unwrap_or_default().to_string();
-            egui::ComboBox::from_id_salt(("cc_plugin_param", &p.name)).selected_text(current.clone()).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt(("cc_plugin_param", &p.name)).selected_text(current.clone()).show_ui(ui, |ui| {
                 for o in &p.options {
                     if ui.selectable_label(*o == current, o.as_str()).clicked() {
                         *v = json!(o);
