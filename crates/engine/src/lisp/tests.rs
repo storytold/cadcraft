@@ -1213,3 +1213,35 @@ fn entget_lists_type_and_layout_once_for_entities_kept_as_unsupported() {
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"OLE2FRAME\"");
     assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (entlast))))"), "\"Model\"");
 }
+
+#[test]
+fn entget_of_an_entity_kept_as_unsupported_leaves_out_reactors_and_xdata_only() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![
+                tag(102, "{ACAD_REACTORS"),
+                tag(330, "1F"),
+                tag(102, "}"),
+                tag(100, "AcDbEntity"),
+                tag(100, "AcDbOle2Frame"),
+                tag(70, "2"),
+                tag(1001, "APP"),
+                tag(1000, "data"),
+            ],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    let count = |code: i32| format!("(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) {code}) (setq n (1+ n)))) n)");
+    assert_eq!(ok(&mut s, &count(102)), "0");
+    assert_eq!(ok(&mut s, &count(330)), "0");
+    assert_eq!(ok(&mut s, &count(1001)), "0");
+    // The groups after the reactor block's closing `}` are listed and filter.
+    assert_eq!(ok(&mut s, &count(100)), "2");
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (entget (entlast))))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 2))))"), "1");
+    assert_eq!(ok(&mut s, "(ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 3)))"), "nil");
+}
