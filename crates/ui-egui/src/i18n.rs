@@ -448,7 +448,8 @@ pub fn plural_pt(n: u64) -> usize {
     usize::from(n > 1)
 }
 
-/// Korean and Hungarian keep one count form for every integer.
+/// Languages that keep one count form for every integer: Korean, Hungarian, Turkish,
+/// Georgian and Vietnamese.
 fn plural_ko(_n: u64) -> usize {
     0
 }
