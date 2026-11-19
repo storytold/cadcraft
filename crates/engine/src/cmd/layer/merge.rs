@@ -179,6 +179,7 @@ pub(super) fn run_laymrg(s: &mut Session, p: &Value) -> Result<Value> {
     for source in &sources {
         d.rename_proxy_layer(source, &target);
     }
+    d.layer_filters.forget_layers(&set);
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     let mut msg = format!("Merged {} into \"{target}\": {} moved.", quoted(&sources), plural(moved, "object"));
     if set.contains(&d.header.str("CLAYER", "0").to_ascii_lowercase()) {
@@ -211,6 +212,7 @@ pub(super) fn run_laydel(s: &mut Session, p: &Value) -> Result<Value> {
     for source in &sources {
         d.rename_proxy_layer(source, "0");
     }
+    d.layer_filters.forget_layers(&set);
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     s.set_selection(Vec::new());
     let msg = format!("Deleted {} and {}.", quoted(&sources), plural(erased, "object"));
