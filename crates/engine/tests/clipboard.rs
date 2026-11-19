@@ -325,3 +325,60 @@ fn clipboard_travels_as_text() {
     assert!(t.doc().unwrap().block("DOOR").is_some() && t.doc().unwrap().layer("HINGE").is_some());
     let _ = a;
 }
+
+#[test]
+fn copy_paste_preserves_image_raster_and_mleader_renamed_block() {
+    use cadcraft_engine::doc::{Image, MLeader, Raster};
+
+    let mut d_a = Drawing::new_metric();
+    let img_path = "assets/plan_scan.png";
+    let raster = Arc::new(Raster::new(2, 2, vec![255; 16]).unwrap());
+    d_a.rasters.insert(img_path, Arc::clone(&raster));
+    let img = Entity {
+        handle: d_a.new_handle(),
+        common: Common::default(),
+        kind: EntityKind::Image(Image { path: img_path.into(), size: Vec2::new(2.0, 2.0), ..Image::default() }),
+    };
+
+    // MLeader whose block content uses anonymous block `*U1` (also present in target Drawing B).
+    let u = line(&mut d_a, "0", (0.0, 0.0), (2.0, 0.0));
+    block(&mut d_a, "*U1", vec![u]);
+    let mut blk_ref = insert(&mut d_a, "*U1", (5.0, 5.0));
+    let EntityKind::Insert(blk_ins) = blk_ref.kind else { unreachable!() };
+    blk_ref.kind = EntityKind::MLeader(MLeader {
+        leaders: vec![vec![Vec3::ZERO]],
+        landing: Vec3::new(5.0, 5.0, 0.0),
+        dogleg: 1.0,
+        text: None,
+        style: "Standard".into(),
+        arrow_size: 2.5,
+        spline: false,
+        block: Some(blk_ins),
+    });
+
+    let copy_hs = [img.handle, blk_ref.handle];
+    d_a.model.push(img);
+    d_a.model.push(blk_ref);
+
+    let mut s = Session::empty();
+    let _a = s.open_drawing(d_a, "A", None);
+    let _b = s.open_drawing(drawing_b(), "B", None);
+    s.execute("document.switch", &json!({ "index": 0 })).unwrap();
+    s.execute("copyclip", &json!({ "handles": copy_hs.iter().map(|h| h.hex()).collect::<Vec<_>>() })).unwrap();
+
+    // Switch to Drawing B (already has a different `*U1` and no rasters) and paste.
+    s.execute("document.switch", &json!({ "index": 1 })).unwrap();
+    let pasted = s.execute("pasteclip", &json!({ "at": [10, 10] })).unwrap();
+    let pasted_hs: Vec<Handle> = pasted["handles"].as_array().unwrap().iter().map(|v| Handle::parse_hex(v.as_str().unwrap()).unwrap()).collect();
+    assert_eq!(pasted_hs.len(), 2);
+
+    let d_b = s.doc().unwrap();
+    // 1. Raster for Image carried across.
+    assert!(d_b.rasters.get(img_path).is_some(), "image raster pixels must copy across drawings");
+
+    // 2. MLeader's block name renamed away from colliding `*U1` to the freshly allocated `*U...`.
+    let EntityKind::MLeader(ml) = &d_b.entity(pasted_hs[1]).unwrap().kind else { panic!("expected MLeader") };
+    let bname = &ml.block.as_ref().unwrap().block;
+    assert_ne!(bname, "*U1", "colliding anonymous block on MLeader must be renamed");
+    assert!(d_b.block(bname).is_some(), "renamed MLeader block {bname} must exist in target drawing");
+}

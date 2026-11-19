@@ -79,10 +79,10 @@ pub(crate) fn paste(s: &mut Session, m: &Mat3) -> Result<Vec<Handle>> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let space = s.space();
     let d = s.doc_mut()?;
-    let renames = defs.map(|x| merge(d, &x)).unwrap_or_default();
+    let renames = defs.as_deref().map(|x| merge(d, x)).unwrap_or_default();
     let mut out = Vec::new();
     for e in &ents {
-        let mut e = adopt(d, e, &renames);
+        let mut e = adopt(d, defs.as_deref(), e, &renames);
         e.kind.transform(m);
         d.ensure_layer(&e.common.layer);
         out.push(e.handle);
@@ -104,7 +104,7 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let base = s.clipboard_base;
     let d = s.doc_mut()?;
-    let renames = defs.map(|x| merge(d, &x)).unwrap_or_default();
+    let renames = defs.as_deref().map(|x| merge(d, x)).unwrap_or_default();
     let seed = d.handseed;
     let name = (0..1_000_000u64)
         .map(|i| format!("A$C{:08X}", seed.wrapping_add(i) & 0xFFFF_FFFF))
@@ -113,7 +113,7 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let mut b = Block::new(&name);
     b.base = base.to3(0.0);
     for e in &ents {
-        let e = adopt(d, e, &renames);
+        let e = adopt(d, defs.as_deref(), e, &renames);
         d.ensure_layer(&e.common.layer);
         b.entities.push(e);
     }
@@ -131,6 +131,7 @@ pub fn system_text(s: &Session) -> Option<String> {
     }
     let hooks = super::file::io()?;
     let mut d = Drawing::new_imperial();
+    let defs = s.clipboard_source.as_ref().map(|c| c.defs.as_ref());
     let renames = match &s.clipboard_source {
         Some(c) => {
             d.header = c.defs.header.clone();
@@ -140,7 +141,7 @@ pub fn system_text(s: &Session) -> Option<String> {
     };
     d.header.set("INSBASE", HVal::Point(s.clipboard_base.to3(0.0)));
     for e in &s.clipboard {
-        let e = adopt(&mut d, e, &renames);
+        let e = adopt(&mut d, defs, e, &renames);
         d.ensure_layer(&e.common.layer);
         d.model.push(e);
     }
@@ -168,7 +169,8 @@ pub fn load_system_text(s: &mut Session, text: &str) -> bool {
     true
 }
 
-/// Upper-case names of the table records and blocks some objects use.
+/// Upper-case names of the table records and blocks some objects use, plus exact raster keys
+/// they depend on.
 #[derive(Default)]
 struct Used {
     layers: HashSet<String>,
@@ -178,6 +180,7 @@ struct Used {
     mleader_styles: HashSet<String>,
     table_styles: HashSet<String>,
     blocks: HashSet<String>,
+    rasters: HashSet<String>,
 }
 
 fn up(n: &str) -> String {
@@ -222,6 +225,9 @@ impl Used {
             EntityKind::Table(t) => {
                 self.table_styles.insert(up(&t.style));
             }
+            EntityKind::Image(img) if !img.path.is_empty() => {
+                self.rasters.insert(img.path.clone());
+            }
             _ => {}
         }
         blocks
@@ -229,7 +235,7 @@ impl Used {
 }
 
 /// The definitions `ents` need from `src`: the layers, linetypes, styles and blocks they (and the
-/// blocks they reference, nested ones too) use, and `src`'s header.
+/// blocks they reference, nested ones too) use, decoded rasters, and `src`'s header.
 fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     let mut used = Used::default();
     let mut frontier: Vec<String> = ents.iter().flat_map(|e| used.note(e)).collect();
@@ -272,6 +278,11 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     d.mleader_styles = pick(&src.mleader_styles, &used.mleader_styles, |t| &t.name);
     d.table_styles = pick(&src.table_styles, &used.table_styles, |t| &t.name);
     d.blocks = src.blocks.iter().filter(|(k, _)| used.blocks.contains(&up(k))).map(|(k, b)| (k.clone(), b.clone())).collect();
+    for path in &used.rasters {
+        if let Some(r) = src.rasters.get(path) {
+            d.rasters.insert(path, r.clone());
+        }
+    }
     d.layouts.clear();
     d
 }
@@ -293,7 +304,7 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(d, e, &renames);
+            let e = adopt(d, Some(defs), e, &renames);
             d.ensure_layer(&e.common.layer);
             nb.entities.push(e);
         }
@@ -302,9 +313,10 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     renames
 }
 
-/// A copy of a clipboard object for `d`: a fresh handle, block references renamed, and links to
-/// objects of the source drawing (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+/// A copy of a clipboard object for `d`: a fresh handle, block references renamed, rasters carried
+/// into the target drawing, and links to objects of the source drawing (associative dimension
+/// points) dropped.
+fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
     let mut e = e.clone();
     e.handle = d.new_handle();
     match &mut e.kind {
@@ -317,6 +329,20 @@ fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Ent
             dm.assoc.clear();
             if let Some(n) = dm.block.as_ref().and_then(|b| renames.get(b)) {
                 dm.block = Some(n.clone());
+            }
+        }
+        EntityKind::MLeader(ml) => {
+            if let Some(b) = &mut ml.block
+                && let Some(n) = renames.get(&b.block)
+            {
+                b.block = n.clone();
+            }
+        }
+        EntityKind::Image(img) => {
+            if d.rasters.get(&img.path).is_none()
+                && let Some(r) = defs.and_then(|s| s.rasters.get(&img.path)).cloned()
+            {
+                d.rasters.insert(&img.path, r);
             }
         }
         _ => {}
