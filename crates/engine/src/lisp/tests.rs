@@ -2,10 +2,12 @@
 
 use super::value::{Value, to_text};
 use crate::Session;
-use crate::cmd::file::{EntityCodec, set_entity_codec};
+use crate::cmd::file::{EntityCodec, set_entity_codec, set_object_records};
 
 pub(super) fn session() -> Session {
     set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    set_object_records(cadcraft_io::object_records);
     Session::new()
 }
 
@@ -402,6 +404,147 @@ fn entity_lists_round_trip() {
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget e)))"), "\"LINE\"");
     assert_eq!(ok(&mut s, "(entmake '((0 . \"NOSUCHTHING\")))"), "nil");
     assert_eq!(ok(&mut s, "(handent \"ZZZZZZ\")"), "nil");
+}
+
+/// entlast, entnext and (ssget "L") see what the routine itself just made, changed or deleted:
+/// the order they share isn't kept past an edit, even one that leaves the drawing where it was.
+#[test]
+fn entlast_follows_edits_within_one_routine() {
+    let mut s = session();
+    assert_eq!(
+        ok(
+            &mut s,
+            "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (setq a (entlast))
+             (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 2.0 0.0 0.0))) (setq b (entlast))
+             (list (eq a b) (cdr (assoc 11 (entget b))) (eq (entnext a) b) (eq (ssname (ssget \"L\") 0) b))"
+        ),
+        "(nil (2.0 0.0 0.0) T T)"
+    );
+    // Deleting the last makes the one before it last; entdel brings it back last again.
+    assert_eq!(ok(&mut s, "(entdel b) (setq c (entlast)) (entdel b) (list (eq c a) (eq (entlast) b))"), "(T T)");
+    // A command, an entmod and entlast, over and over in one routine: each entlast is the line
+    // just drawn.
+    assert_eq!(
+        ok(
+            &mut s,
+            "(setq seen nil i 0)
+             (repeat 40
+               (command \"_.LINE\" (list i 10) (list i 20) \"\")
+               (setq e (entlast) d (entget e))
+               (entmod (subst (cons 8 \"MOVED\") (assoc 8 d) d))
+               (if (and (not (member e seen)) (equal (cdr (assoc 10 (entget (entlast)))) (list (float i) 10.0 0.0) 1e-9))
+                 (setq seen (cons e seen)))
+               (setq i (1+ i)))
+             (list (length seen) (cdr (assoc 8 (entget (entlast)))))"
+        ),
+        "(40 \"MOVED\")"
+    );
+    // The same across routines, with an undo between them.
+    for i in 0..10 {
+        ok(&mut s, &format!("(entmake '((0 . \"CIRCLE\") (10 {i}.0 50.0 0.0) (40 . 1.0)))"));
+        assert_eq!(ok(&mut s, "(cadr (assoc 10 (entget (entlast))))"), format!("{i}.0"));
+        s.undo().unwrap();
+        ok(&mut s, &format!("(entmake '((0 . \"CIRCLE\") (10 {i}.0 60.0 0.0) (40 . 1.0)))"));
+        assert_eq!(ok(&mut s, "(caddr (assoc 10 (entget (entlast))))"), "60.0");
+    }
+}
+
+/// entmod of a block reference keeps its attributes and their values: they aren't in its list
+/// (in AutoCAD they are entities of their own, which entmod of the INSERT leaves alone).
+#[test]
+fn entmod_of_a_block_reference_keeps_its_attributes() {
+    let mut s = session();
+    ok(
+        &mut s,
+        "(entmake '((0 . \"BLOCK\") (2 . \"TAGGED\") (70 . 0) (10 0.0 0.0 0.0)))
+         (entmake '((0 . \"CIRCLE\") (10 0.0 0.0 0.0) (40 . 1.0)))
+         (entmake '((0 . \"ATTDEF\") (10 0.0 2.0 0.0) (40 . 1.0) (1 . \"\") (3 . \"Name\") (2 . \"PSTN\") (70 . 0)))
+         (entmake '((0 . \"ENDBLK\")))",
+    );
+    s.execute("insert", &serde_json::json!({"name": "TAGGED", "at": [10, 10], "attribs": {"PSTN": "ARK1"}})).unwrap();
+    let insert = |s: &Session| {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Insert(i) => {
+                    Some((e.common.layer.clone(), i.attribs.iter().map(|a| (a.tag.clone(), a.text.value.clone())).collect::<Vec<_>>()))
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let want = vec![("PSTN".to_string(), "ARK1".to_string())];
+    assert_eq!(insert(&s).1, want);
+    ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"UGO\") (assoc 8 d) d))");
+    assert_eq!(insert(&s), ("UGO".to_string(), want.clone()));
+    // A new rotation keeps them too.
+    ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 50 (/ pi 2)) (assoc 50 d) d))");
+    let rotation = s
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Insert(i) => Some(i.rotation),
+            _ => None,
+        })
+        .unwrap();
+    assert!((rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "the entmod took: {rotation}");
+    assert_eq!(insert(&s).1, want);
+}
+
+/// An edit that leaves every handle where it was (a layer change) keeps entlast's cached order;
+/// one that adds an entity rebuilds it.
+#[test]
+fn entlast_keeps_its_order_across_property_edits() {
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entlast)");
+    let uid = s.state().unwrap().uid;
+    // The cached order itself is held, so a rebuilt one can't take its address.
+    let order = |s: &Session| s.lisp.envs[&uid].order.as_ref().unwrap().1.clone();
+    let before = order(&s);
+    assert_eq!(
+        ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"MOVED\") (assoc 8 d) d)) (cdr (assoc 8 (entget (entlast))))"),
+        "\"MOVED\""
+    );
+    assert!(std::sync::Arc::ptr_eq(&order(&s), &before), "a layer change keeps the order");
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 2.0 0.0 0.0))) (entlast)");
+    assert!(!std::sync::Arc::ptr_eq(&order(&s), &before), "a new entity rebuilds it");
+}
+
+/// Closing a drawing drops its LISP environment, and with it the entity stores its cached
+/// order holds.
+#[test]
+fn closing_a_drawing_drops_its_environment() {
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entlast)");
+    let uid = s.state().unwrap().uid;
+    assert!(s.lisp.envs.get(&uid).is_some_and(|e| e.order.is_some()));
+    s.execute("close", &serde_json::json!({})).unwrap();
+    assert!(!s.lisp.envs.contains_key(&uid));
+}
+
+/// HANDSEED is the next handle the drawing gives out, in hex, and moves as objects are made.
+#[test]
+fn handseed_follows_new_objects() {
+    let mut s = session();
+    let seed = |s: &Session| format!("\"{:X}\"", s.doc().unwrap().next_handle().0);
+    let before = ok(&mut s, "(getvar \"HANDSEED\")");
+    assert_eq!(before, seed(&s));
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0)))");
+    let after = ok(&mut s, "(getvar \"HANDSEED\")");
+    assert_eq!(after, seed(&s));
+    assert_ne!(after, before);
+    assert!(eval(&mut s, "(setvar \"HANDSEED\" \"FFFFFF\")").is_err(), "read-only");
+    // A handle the file's own objects hold is skipped, as allocation skips it.
+    let d = s.doc_mut().unwrap();
+    let held = d.handseed;
+    std::sync::Arc::make_mut(&mut d.foreign).handles.insert(cadcraft_doc::Handle(held), ("NOD".into(), String::new()));
+    assert_eq!(ok(&mut s, "(getvar \"HANDSEED\")"), format!("\"{:X}\"", held + 1));
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0)))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 5 (entget (entlast))))"), format!("\"{:X}\"", held + 1));
 }
 
 #[test]
@@ -1046,6 +1189,253 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
     assert!(!s.lisp_running());
     assert!(s.log.iter().any(|l| l.contains("internal error")), "{:?}", s.log);
     assert_eq!(ok(&mut s, "(+ 1 2)"), "3");
+}
+
+/// The handle (group 5, a DIMSTYLE's 105) of the `kind` record named `name` (group 2, or 1 for a
+/// LAYOUT; any for "") in DXF text.
+fn dxf_handle(dxf: &str, kind: &str, name: &str) -> String {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).filter_map(|c| Some((*c.first()?, *c.get(1)?))).collect();
+    let mut i = 0;
+    while i < pairs.len() {
+        if pairs[i] == ("0", kind) {
+            let rec: Vec<(&str, &str)> = pairs[i + 1..].iter().take_while(|p| p.0 != "0").copied().collect();
+            let named = name.is_empty() || rec.iter().any(|p| (p.0 == "2" || (kind == "LAYOUT" && p.0 == "1")) && p.1 == name);
+            if named {
+                return rec.iter().find(|p| p.0 == "5" || p.0 == "105").unwrap().1.to_string();
+            }
+        }
+        i += 1;
+    }
+    panic!("no {kind} {name}")
+}
+
+#[test]
+fn namedobjdict_and_dictsearch_reach_the_layouts() {
+    let mut s = session();
+    assert!(ok(&mut s, "(namedobjdict)").starts_with("<Entity name: "));
+    assert_eq!(ok(&mut s, "(eq (namedobjdict) (namedobjdict))"), "T");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (namedobjdict))))"), "\"DICTIONARY\"");
+    // Keys in any case; the entry's own list, owned by the dictionary it is in.
+    ok(&mut s, "(setq layouts (dictsearch (namedobjdict) \"acad_layout\"))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 layouts))"), "\"DICTIONARY\"");
+    assert_eq!(ok(&mut s, "(eq (cdr (assoc 330 layouts)) (namedobjdict))"), "T");
+    ok(&mut s, "(setq l1 (dictsearch (cdr (assoc -1 layouts)) \"Layout1\"))");
+    assert_eq!(ok(&mut s, "(list (cdr (assoc 0 l1)) (cdr (assoc 1 (member '(100 . \"AcDbLayout\") l1))))"), "(\"LAYOUT\" \"Layout1\")");
+    // The plot settings are there to read; the layout's block record is an entity name.
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 l1))"), "\"none_device\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (cdr (assoc 330 (reverse l1))))))"), "\"BLOCK_RECORD\"");
+    // The name in group 5 leads back to the object.
+    assert_eq!(ok(&mut s, "(eq (handent (cdr (assoc 5 l1))) (cdr (assoc -1 l1)))"), "T");
+    assert_eq!(ok(&mut s, "(dictsearch (namedobjdict) \"NO_SUCH_KEY\")"), "nil");
+    // A layer is not a dictionary: nothing to search.
+    assert_eq!(ok(&mut s, "(dictsearch (tblobjname \"LAYER\" \"0\") \"ACAD_LAYOUT\")"), "nil");
+    assert!(eval(&mut s, "(dictsearch \"ACAD_LAYOUT\" \"x\")").unwrap_err().contains("lentityp"));
+    assert!(eval(&mut s, "(namedobjdict 1)").is_err());
+}
+
+#[test]
+fn dictnext_walks_a_dictionary() {
+    let mut s = session();
+    ok(&mut s, "(setq d (cdr (assoc -1 (dictsearch (namedobjdict) \"ACAD_LAYOUT\"))))");
+    let names = "(progn (setq out nil e (dictnext d T)) (while e (setq out (cons (cdr (assoc 1 (member '(100 . \"AcDbLayout\") e))) out) e (dictnext d))) (reverse out))";
+    assert_eq!(ok(&mut s, names), "(\"Model\" \"Layout1\" \"Layout2\")");
+    // Past the end it stays nil until rewound.
+    assert_eq!(ok(&mut s, "(dictnext d)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (dictnext d T)))"), "\"LAYOUT\"");
+    // dictsearch with setnext: dictnext goes on after the entry found.
+    ok(&mut s, "(dictsearch d \"Model\" T)");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (member '(100 . \"AcDbLayout\") (dictnext d))))"), "\"Layout1\"");
+}
+
+#[test]
+fn tblobjname_names_table_records() {
+    let mut s = session();
+    ok(&mut s, "(setq l (tblobjname \"layer\" \"0\"))");
+    assert_eq!(ok(&mut s, "(list (cdr (assoc 0 (entget l))) (cdr (assoc 2 (entget l))))"), "(\"LAYER\" \"0\")");
+    // Its owner is the LAYER table.
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget (cdr (assoc 330 (entget l))))))"), "\"LAYER\"");
+    // The BLOCK table gives the block's BLOCK entity.
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (tblobjname \"BLOCK\" \"*Model_Space\"))))"), "\"BLOCK\"");
+    assert_eq!(ok(&mut s, "(tblobjname \"LAYER\" \"NO_SUCH_LAYER\")"), "nil");
+    // Names outside ASCII: found in the case they have, ASCII letters in any case.
+    s.execute("layer.new", &serde_json::json!({"name": "ébauche"})).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget (tblobjname \"LAYER\" \"éBAUCHE\"))))"), "\"ébauche\"");
+    assert_eq!(ok(&mut s, "(tblobjname \"NO_SUCH_TABLE\" \"0\")"), "nil");
+    // A DIMSTYLE has its handle in group 105.
+    ok(&mut s, "(setq ds (tblobjname \"DIMSTYLE\" (cdr (assoc 2 (tblnext \"DIMSTYLE\" T)))))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget ds)))"), "\"DIMSTYLE\"");
+    assert_eq!(ok(&mut s, "(eq ds (handent (cdr (assoc 105 (entget ds)))))"), "T");
+    assert!(eval(&mut s, "(tblobjname \"LAYER\")").is_err());
+    // The name holds while the drawing changes.
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 10.0 0.0 0.0)))");
+    assert_eq!(ok(&mut s, "(eq l (tblobjname \"LAYER\" \"0\"))"), "T");
+    assert_eq!(ok(&mut s, "(eq l (handent (cdr (assoc 5 (entget l)))))"), "T");
+}
+
+/// #1661: the handles of a layer and a layout in a file lead to them once the file is open.
+#[test]
+fn handent_names_a_files_layer_and_layout() {
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 10.0 0.0 0.0)))");
+    let bytes = cadcraft_io::write(s.doc().unwrap(), "h.dxf").unwrap();
+    let dxf = String::from_utf8(bytes.clone()).unwrap();
+    let (layer, layout) = (dxf_handle(&dxf, "LAYER", "0"), dxf_handle(&dxf, "LAYOUT", "Layout1"));
+    let line = dxf_handle(&dxf, "LINE", "");
+    let dimstyle = dxf_handle(&dxf, "DIMSTYLE", "Standard");
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read(&bytes, "h.dxf").unwrap(), "h.dxf", None);
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 0 (entget (handent \"{line}\"))))")), "\"LINE\"");
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 2 (entget (handent \"{layer}\"))))")), "\"0\"");
+    assert_eq!(ok(&mut s, &format!("(eq (handent \"{layer}\") (tblobjname \"LAYER\" \"0\"))")), "T");
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 0 (entget (handent \"{layout}\"))))")), "\"LAYOUT\"");
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 5 (entget (handent \"{layout}\"))))")), format!("\"{layout}\""));
+    // A DIMSTYLE's handle is in group 105, in the file and in its list.
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 0 (entget (handent \"{dimstyle}\"))))")), "\"DIMSTYLE\"");
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 105 (entget (handent \"{dimstyle}\"))))")), format!("\"{dimstyle}\""));
+    assert_eq!(ok(&mut s, &format!("(eq (handent \"{dimstyle}\") (tblobjname \"DIMSTYLE\" \"Standard\"))")), "T");
+    assert_eq!(ok(&mut s, "(handent \"FFFFF\")"), "nil");
+    assert_eq!(ok(&mut s, "(handent \"not hex\")"), "nil");
+}
+
+/// A drawing with a dictionary two levels below the named object dictionary (kept from its file):
+/// NOD › MY_DICT › INNER › LEAF (an XRECORD).
+fn nested_dictionary_file() -> Vec<u8> {
+    let s = session();
+    let bytes = cadcraft_io::write(s.doc().unwrap(), "n.dxf").unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut pairs: Vec<(String, String)> = lines.chunks(2).map(|c| (c[0].trim().to_string(), c[1].to_string())).collect();
+    let objects = pairs.iter().position(|p| p.0 == "2" && p.1 == "OBJECTS").unwrap();
+    let nod = objects + pairs[objects..].iter().position(|p| p.0 == "0" && p.1 == "DICTIONARY").unwrap();
+    let nod_handle = pairs[nod + 1].1.clone();
+    let after = nod + pairs[nod..].iter().position(|p| p.0 == "281").unwrap() + 1;
+    pairs.splice(after..after, [("3".into(), "MY_DICT".into()), ("350".into(), "AAA1".into())]);
+    let end = objects + pairs[objects..].iter().position(|p| p.0 == "0" && p.1 == "ENDSEC").unwrap();
+    let p = |c: &str, v: &str| (c.to_string(), v.to_string());
+    let added = vec![
+        p("0", "DICTIONARY"),
+        p("5", "AAA1"),
+        p("330", &nod_handle),
+        p("100", "AcDbDictionary"),
+        p("281", "1"),
+        p("3", "INNER"),
+        p("350", "AAA2"),
+        p("0", "DICTIONARY"),
+        p("5", "AAA2"),
+        p("330", "AAA1"),
+        p("100", "AcDbDictionary"),
+        p("281", "1"),
+        p("3", "LEAF"),
+        p("350", "AAA3"),
+        p("0", "XRECORD"),
+        p("5", "AAA3"),
+        p("330", "AAA2"),
+        p("100", "AcDbXrecord"),
+        p("280", "1"),
+        p("1", "hello"),
+    ];
+    pairs.splice(end..end, added);
+    pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+}
+
+/// An object found below a dictionary entry has no role: once the drawing changes, its old name
+/// finds nothing rather than whatever now has its written handle.
+#[test]
+fn a_deeper_objects_name_lapses_when_the_drawing_changes() {
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read(&nested_dictionary_file(), "n.dxf").unwrap(), "n.dxf", None);
+    ok(&mut s, "(setq inner (cdr (assoc -1 (dictsearch (cdr (assoc -1 (dictsearch (namedobjdict) \"MY_DICT\"))) \"INNER\"))))");
+    ok(&mut s, "(setq leaf (cdr (assoc -1 (dictsearch inner \"LEAF\"))))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget leaf)))"), "\"hello\"");
+    // Unchanged drawing: the same name.
+    assert_eq!(ok(&mut s, "(eq leaf (cdr (assoc -1 (dictsearch inner \"LEAF\"))))"), "T");
+    s.execute("layer.new", &serde_json::json!({"name": "Walls"})).unwrap();
+    assert_eq!(ok(&mut s, "(entget leaf)"), "nil");
+    // Looked up again, it is there (under a new name); the entry with a role kept its name.
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (dictsearch inner \"LEAF\")))"), "\"hello\"");
+}
+
+// ---------------- entities of block definitions (#1700) ----------------
+
+/// A drawing with one linear dimension measuring 100 whose `*D1` block, as stored in the file,
+/// says 99.5 (a stale block: the defpoints moved, the block wasn't rebuilt).
+fn stale_dimension() -> Session {
+    let mut s = session();
+    s.execute("dimlinear", &serde_json::json!({"p1": [0, 0], "p2": [100, 0], "at": [50, -20], "rotation": 0})).unwrap();
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    // The *D1 block's MTEXT says 100 (100.0000 here); make the file say 99.5.
+    let lines: Vec<&str> = dxf.lines().collect();
+    let (mut kind, mut block, mut out, mut changed) = (String::new(), String::new(), Vec::new(), 0);
+    for (i, l) in lines.iter().enumerate() {
+        let code = if i % 2 == 0 { l.trim() } else { "" };
+        let value = lines.get(i + 1).map(|v| v.trim()).unwrap_or("");
+        if code == "0" {
+            kind = value.to_string();
+        }
+        if code == "2" && kind == "BLOCK" {
+            block = value.to_string();
+        }
+        if i % 2 == 1 && kind == "MTEXT" && block == "*D1" && lines.get(i - 1).map(|c| c.trim()) == Some("1") && l.trim().starts_with("100") {
+            out.push("99.5".to_string());
+            changed += 1;
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    assert_eq!(changed, 1, "the fixture found the *D1 text");
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read_dxf(out.join("\n").as_bytes()).unwrap(), "stale", None);
+    s
+}
+
+/// The issue's use: a routine reads the text a dimension's block stores and compares it with the
+/// measurement, so it finds the stale block.
+#[test]
+fn a_routine_reads_the_text_a_dimension_block_stores() {
+    let mut s = stale_dimension();
+    let code = r#"(progn
+      (defun dtext (dim / e txt)
+        (setq e (cdr (assoc -2 (tblsearch "BLOCK" (cdr (assoc 2 (entget dim)))))))
+        (while e
+          (if (= (cdr (assoc 0 (entget e))) "MTEXT") (setq txt (cdr (assoc 1 (entget e)))))
+          (setq e (entnext e)))
+        txt)
+      (setq dim (entlast))
+      (list (dtext dim) (cdr (assoc 42 (entget dim)))))"#;
+    assert_eq!(ok(&mut s, code), "(\"99.5\" 100.0)");
+}
+
+/// tblsearch names a block's first entity (-2); entnext walks the definition in order and ends
+/// with nil; entget lists each one (without a layout); handent finds them by handle.
+#[test]
+fn entnext_and_entget_walk_a_block_definition() {
+    let mut s = session();
+    let l = s.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap()["handles"][0].as_str().unwrap().to_string();
+    let c = s.execute("circle", &serde_json::json!({"center": [5, 5], "radius": 2})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.execute("block", &serde_json::json!({"name": "B", "base": [0, 0], "handles": [l, c], "keep": "delete"})).unwrap();
+    s.execute("line", &serde_json::json!({"points": [[50, 0], [60, 0]]})).unwrap();
+    let walk = r#"(progn (setq e (cdr (assoc -2 (tblsearch "BLOCK" "B"))) types nil)
+      (while e (setq types (cons (cdr (assoc 0 (entget e))) types) e (entnext e)))
+      (reverse types))"#;
+    assert_eq!(ok(&mut s, walk), "(\"LINE\" \"CIRCLE\")", "the block's own entities, not the drawing's");
+    let first = "(cdr (assoc -2 (tblsearch \"BLOCK\" \"B\")))";
+    assert_eq!(ok(&mut s, &format!("(assoc 410 (entget {first}))")), "nil", "no layout");
+    assert_eq!(ok(&mut s, &format!("(equal (handent (cdr (assoc 5 (entget {first})))) {first})")), "T");
+    // The drawing's own entities walk as before.
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext))))"), "\"LINE\"");
+    assert_eq!(ok(&mut s, "(entnext (entlast))"), "nil");
+    // Editing a block's entity through entmod or entdel isn't offered: nil, nothing changes.
+    assert_eq!(ok(&mut s, &format!("(entdel {first})")), "nil");
+    assert_eq!(ok(&mut s, &format!("(entmod (entget {first}))")), "nil");
+    assert_eq!(s.doc().unwrap().block("B").unwrap().entities.len(), 2);
+}
+
+#[test]
+fn an_empty_block_has_no_first_entity() {
+    let mut s = session();
+    s.doc_mut().unwrap().blocks.insert("EMPTY".into(), std::sync::Arc::new(cadcraft_doc::Block::new("EMPTY")));
+    assert_eq!(ok(&mut s, "(assoc -2 (tblsearch \"BLOCK\" \"EMPTY\"))"), "nil");
 }
 
 #[test]
