@@ -28,7 +28,6 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
-        "blocks" => blocks(app, ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
@@ -46,104 +45,112 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
-    egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::unique("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
-        let s = &mut app.session.settings;
-        ui.heading(crate::tl!("Snap and Grid"));
-        ui.checkbox(&mut s.snapmode, crate::tl!("Snap On (F9)"));
-        // SNAPSTYL: the isometric snap and grid (ISODRAFT).
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut s.isodraft, false, crate::tl!("Rectangular snap"));
-            ui.radio_value(&mut s.isodraft, true, crate::tl!("Isometric snap"));
-        });
-        ui.horizontal(|ui| {
-            let x_label = ui.label(crate::tl!("Snap X spacing"));
-            ui.add(egui::DragValue::new(&mut snapunit.x).speed(0.05).range(0.0001..=1e6).clamp_existing_to_range(false)).labelled_by(x_label.id);
-            let y_label = ui.label(crate::tl!("Y"));
-            ui.add(egui::DragValue::new(&mut snapunit.y).speed(0.05).range(0.0001..=1e6).clamp_existing_to_range(false)).labelled_by(y_label.id);
-        });
-        // SNAPTYPE and POLARDIST.
-        ui.horizontal(|ui| {
-            ui.label(crate::tl!("Snap type"));
-            ui.radio_value(&mut s.polarsnap, false, crate::tl!("Grid snap"));
-            ui.radio_value(&mut s.polarsnap, true, crate::tl!("PolarSnap"));
-        });
-        ui.add_enabled_ui(s.polarsnap, |ui| {
+    let window = egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::unique("Drafting Settings")).open(open).resizable(false);
+    // Taller than a short screen, so the options scroll to keep the window on screen and every one
+    // reachable (#2339). Asking for the screen's height every frame (egui caps it to the screen)
+    // gives the scroll area all of it, not the 420-point default or a height kept from a shorter
+    // screen; the window still takes the height of its contents when they fit.
+    let window = window.min_height(ctx.content_rect().height());
+    window.show(ctx, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let s = &mut app.session.settings;
+            ui.heading(crate::tl!("Snap and Grid"));
+            ui.checkbox(&mut s.snapmode, crate::tl!("Snap On (F9)"));
+            // SNAPSTYL: the isometric snap and grid (ISODRAFT).
             ui.horizontal(|ui| {
-                let label = ui.label(crate::tl!("Polar distance"));
-                ui.add(egui::DragValue::new(&mut s.polardist).speed(0.05).range(0.0..=1e6)).labelled_by(label.id);
+                ui.radio_value(&mut s.isodraft, false, crate::tl!("Rectangular snap"));
+                ui.radio_value(&mut s.isodraft, true, crate::tl!("Isometric snap"));
             });
-        });
-        ui.checkbox(&mut s.gridmode, crate::tl!("Grid On (F7)"));
-        ui.horizontal(|ui| {
-            let grid_label = ui.label(crate::tl!("Grid spacing"));
-            ui.add(egui::DragValue::new(&mut gridunit.x).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false)).labelled_by(grid_label.id);
-            let major_label = ui.label(crate::tl!("Major line every"));
-            ui.add(egui::DragValue::new(&mut s.gridmajor).range(1..=100)).labelled_by(major_label.id);
-        });
-        ui.separator();
-        ui.heading(crate::tl!("Polar Tracking"));
-        ui.checkbox(&mut s.polarmode, crate::tl!("Polar Tracking On (F10)"));
-        // POLARANG is held in radians and 15 or 30 come back as 14.999999999999998: round like
-        // the additional angles, and write back only a newly picked angle.
-        let current = (s.polarang.to_degrees() * 1e6).round() / 1e6;
-        let mut deg = current;
-        ui.horizontal(|ui| {
-            let label = ui.label(crate::tl!("Increment angle"));
-            let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
-                for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
-                    ui.selectable_value(&mut deg, a, format!("{a}"));
-                }
+            ui.horizontal(|ui| {
+                let x_label = ui.label(crate::tl!("Snap X spacing"));
+                ui.add(egui::DragValue::new(&mut snapunit.x).speed(0.05).range(0.0001..=1e6).clamp_existing_to_range(false)).labelled_by(x_label.id);
+                let y_label = ui.label(crate::tl!("Y"));
+                ui.add(egui::DragValue::new(&mut snapunit.y).speed(0.05).range(0.0001..=1e6).clamp_existing_to_range(false)).labelled_by(y_label.id);
             });
-            combo.response.labelled_by(label.id);
-        });
-        if deg != current {
-            s.polarang = deg.to_radians();
-        }
-        tracking_options(ui, s);
-        ui.separator();
-        ui.heading(crate::tl!("Object Snap"));
-        let mut on = s.osmode & cadcraft_engine::snap::mode::OFF == 0;
-        if ui.checkbox(&mut on, crate::tl!("Object Snap On (F3)")).changed() {
-            if on {
-                s.osmode &= !cadcraft_engine::snap::mode::OFF;
-            } else {
-                s.osmode |= cadcraft_engine::snap::mode::OFF;
+            // SNAPTYPE and POLARDIST.
+            ui.horizontal(|ui| {
+                ui.label(crate::tl!("Snap type"));
+                ui.radio_value(&mut s.polarsnap, false, crate::tl!("Grid snap"));
+                ui.radio_value(&mut s.polarsnap, true, crate::tl!("PolarSnap"));
+            });
+            ui.add_enabled_ui(s.polarsnap, |ui| {
+                ui.horizontal(|ui| {
+                    let label = ui.label(crate::tl!("Polar distance"));
+                    ui.add(egui::DragValue::new(&mut s.polardist).speed(0.05).range(0.0..=1e6)).labelled_by(label.id);
+                });
+            });
+            ui.checkbox(&mut s.gridmode, crate::tl!("Grid On (F7)"));
+            ui.horizontal(|ui| {
+                let grid_label = ui.label(crate::tl!("Grid spacing"));
+                ui.add(egui::DragValue::new(&mut gridunit.x).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false)).labelled_by(grid_label.id);
+                let major_label = ui.label(crate::tl!("Major line every"));
+                ui.add(egui::DragValue::new(&mut s.gridmajor).range(1..=100)).labelled_by(major_label.id);
+            });
+            ui.separator();
+            ui.heading(crate::tl!("Polar Tracking"));
+            ui.checkbox(&mut s.polarmode, crate::tl!("Polar Tracking On (F10)"));
+            // POLARANG is held in radians and 15 or 30 come back as 14.999999999999998: round like
+            // the additional angles, and write back only a newly picked angle.
+            let current = (s.polarang.to_degrees() * 1e6).round() / 1e6;
+            let mut deg = current;
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Increment angle"));
+                let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
+                    for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
+                        ui.selectable_value(&mut deg, a, format!("{a}"));
+                    }
+                });
+                combo.response.labelled_by(label.id);
+            });
+            if deg != current {
+                s.polarang = deg.to_radians();
             }
-        }
-        egui::Grid::new("osnap_grid").num_columns(2).show(ui, |ui| {
-            for (i, (bit, name)) in cadcraft_engine::snap::mode::ALL.iter().enumerate() {
-                let mut v = s.osmode & bit != 0;
-                if ui.checkbox(&mut v, crate::i18n::t(name)).changed() {
-                    if v {
-                        s.osmode |= bit;
-                    } else {
-                        s.osmode &= !bit;
+            tracking_options(ui, s);
+            ui.separator();
+            ui.heading(crate::tl!("Object Snap"));
+            let mut on = s.osmode & cadcraft_engine::snap::mode::OFF == 0;
+            if ui.checkbox(&mut on, crate::tl!("Object Snap On (F3)")).changed() {
+                if on {
+                    s.osmode &= !cadcraft_engine::snap::mode::OFF;
+                } else {
+                    s.osmode |= cadcraft_engine::snap::mode::OFF;
+                }
+            }
+            egui::Grid::new("osnap_grid").num_columns(2).show(ui, |ui| {
+                for (i, (bit, name)) in cadcraft_engine::snap::mode::ALL.iter().enumerate() {
+                    let mut v = s.osmode & bit != 0;
+                    if ui.checkbox(&mut v, crate::i18n::t(name)).changed() {
+                        if v {
+                            s.osmode |= bit;
+                        } else {
+                            s.osmode &= !bit;
+                        }
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
                     }
                 }
-                if i % 2 == 1 {
-                    ui.end_row();
-                }
-            }
-        });
-        ui.separator();
-        ui.checkbox(&mut s.dynmode, crate::tl!("Enable Dynamic Input (F12)"));
-        // Pointer input format for second and next points (DYNPIFORMAT, DYNPICOORDS).
-        ui.indent("dynpi", |ui| {
-            ui.add_enabled_ui(s.dynmode, |ui| {
-                ui.label(crate::tl!("Second and next points:"));
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut s.dynpi_cartesian, false, crate::tl!("Polar (distance < angle)"));
-                    ui.radio_value(&mut s.dynpi_cartesian, true, crate::tl!("Cartesian (x, y)"));
-                });
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut s.dynpi_absolute, false, crate::tl!("Relative"));
-                    ui.radio_value(&mut s.dynpi_absolute, true, crate::tl!("Absolute"));
-                });
-                // DYNPROMPT: the prompt and its options (Down Arrow) beside the cursor.
-                ui.checkbox(&mut s.dynprompt, crate::tl!("Show command prompting near the crosshairs"));
             });
-        });
-        ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
+            ui.separator();
+            ui.checkbox(&mut s.dynmode, crate::tl!("Enable Dynamic Input (F12)"));
+            // Pointer input format for second and next points (DYNPIFORMAT, DYNPICOORDS).
+            ui.indent("dynpi", |ui| {
+                ui.add_enabled_ui(s.dynmode, |ui| {
+                    ui.label(crate::tl!("Second and next points:"));
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut s.dynpi_cartesian, false, crate::tl!("Polar (distance < angle)"));
+                        ui.radio_value(&mut s.dynpi_cartesian, true, crate::tl!("Cartesian (x, y)"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut s.dynpi_absolute, false, crate::tl!("Relative"));
+                        ui.radio_value(&mut s.dynpi_absolute, true, crate::tl!("Absolute"));
+                    });
+                    // DYNPROMPT: the prompt and its options (Down Arrow) beside the cursor.
+                    ui.checkbox(&mut s.dynprompt, crate::tl!("Show command prompting near the crosshairs"));
+                });
+            });
+            ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
+        })
     });
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
@@ -399,38 +406,6 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// Blocks window listing named (non-anonymous) blocks; clicking one starts INSERT with that block name already supplied.
-fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    let mut pick = None;
-    egui::Window::new(crate::tl!("Blocks")).id(egui::Id::unique("Blocks")).open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
-        let Ok(d) = app.session.doc() else { return };
-        let names: Vec<&String> = d.blocks.keys().filter(|k| !k.starts_with('*')).collect();
-        if names.is_empty() {
-            ui.label(crate::tl!("No blocks defined in this drawing."));
-        }
-        for n in names {
-            if ui.button(n).on_hover_text(crate::tl!("Insert this block")).clicked() {
-                pick = Some(n.clone());
-            }
-        }
-    });
-    if let Some(n) = pick {
-        insert_block(app, &n);
-    }
-}
-
-/// Start INSERT with `name` already given at its block name prompt, so the next prompt asks for
-/// the insertion point.
-fn insert_block(app: &mut CadApp, name: &str) {
-    app.start("insert");
-    if app.session.running.as_ref().is_none_or(|r| r.id != "insert") {
-        return;
-    }
-    if let Err(e) = app.session.input(cadcraft_engine::Input::Text(name.to_string())) {
-        app.session.echo(e.to_string());
-    }
-}
-
 /// Interface Language combo; selecting a language runs `ui.language` with its code.
 fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("Interface Language")).id(egui::Id::unique("interface_language")).open(open).resizable(false).show(ctx, |ui| {
@@ -447,13 +422,6 @@ fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 
 #[cfg(test)]
 mod tests {
-    use cadcraft_engine::doc::EntityKind;
-    use cadcraft_engine::geom::Vec2;
-    use cadcraft_engine::{Input, Session};
-    use serde_json::json;
-
-    use crate::{CadApp, Services};
-
     #[test]
     fn fractional_length_precisions_list_binary_fractions() {
         let labels = ["1\"", "1/2\"", "1/4\"", "1/8\"", "1/16\"", "1/32\"", "1/64\"", "1/128\"", "1/256\""];
@@ -461,44 +429,5 @@ mod tests {
         assert_eq!(super::length_precisions(4), want);
         assert_eq!(super::length_precisions(5), want);
         assert_eq!(super::length_precisions(2).len(), 9);
-    }
-
-    #[test]
-    fn picking_a_block_starts_insert_with_its_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        let c = app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
-        let h = c["handle"].as_str().unwrap().to_string();
-        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
-        // A command already running is replaced, as when a command is typed.
-        app.start("line");
-
-        super::insert_block(&mut app, "Door 2");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".to_string()));
-
-        app.session.input(Input::Point(Vec2::new(5.0, 6.0))).unwrap();
-        // X scale, Y scale and rotation take their defaults.
-        for _ in 0..3 {
-            app.session.input(Input::Enter).unwrap();
-        }
-        assert!(app.session.running.is_none());
-        let d = app.session.doc().unwrap();
-        let mut ins = Vec::new();
-        for e in d.model.iter() {
-            if let EntityKind::Insert(i) = &e.kind {
-                ins.push(i.clone());
-            }
-        }
-        assert_eq!(ins.len(), 1);
-        assert_eq!(ins[0].block, "Door 2");
-        assert!((ins[0].insert.x - 5.0).abs() < 1e-9 && (ins[0].insert.y - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn picking_a_missing_block_keeps_asking_for_a_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        super::insert_block(&mut app, "Nope");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
     }
 }

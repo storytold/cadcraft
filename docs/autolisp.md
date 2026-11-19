@@ -78,7 +78,9 @@ reached", malformed source is a reader error, and every built-in checks its argu
   a command left open for the next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
   entnext entupd handent`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
-  sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
+  sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID);
+  `namedobjdict dictsearch dictnext tblobjname`, with `entget` and `handent` of the non-graphic
+  objects they reach (table records, dictionaries, layouts and their plot settings)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
   getkword entsel nentsel`
 - **Units:** `rtos angtos distof angtof`
@@ -89,8 +91,15 @@ reached", malformed source is a reader error, and every built-in checks its argu
 Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` returns is what a
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angles (groups 50–58)
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
-filters take radians too.
+filters take radians too. A block reference's list doesn't hold its attributes, and `entmod` of
+it keeps them and their values. `entlast` and `entnext` see every change a routine makes, its
+own `entmake`, `entmod` and `entdel` included. `(getvar "HANDSEED")` is the next handle the
+drawing gives out, in hex.
 
+Block definitions can be read: `(tblsearch "BLOCK" name)` gives the block's first entity in group
+-2, `entnext` goes from one entity of a definition to the next (nil after the last) and `entget`
+lists them (without a layout, group 410). So a routine can read what a block stores, such as the
+text of a dimension's `*D` block. `entmod` and `entdel` don't change a definition's entities.
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK
 list adds the block (redefining one of the same name) and returns its name. Flag 1 with a `*U`
@@ -98,6 +107,15 @@ name makes an anonymous block, named when it ends. A BLOCK while a definition is
 xref (flag 4), an invalid name, a block that inserts itself and a block being edited in place
 (REFEDIT) return nil. A definition stays open across routines until ENDBLK, but a routine that
 fails drops the one it began.
+
+Non-graphic objects (the named object dictionary and its dictionaries, layouts, table records)
+are listed as a DXF file of the drawing holds them, pointers as entity names and group 5 (105 for a DIMSTYLE) as the
+object's own name. An object read from a file keeps that file's handle as its name, so
+`(handent "112C")` with a layer's handle from the file finds it; one the file didn't have gets a
+name of its own (from `7F00000000000000` up). The names of table records, blocks, the named
+object dictionary and its dictionaries' entries stay the same while the drawing is open, also
+when it changes; an object deeper down (an entry of a dictionary inside those) keeps its name
+only until the drawing changes, after which the old name finds nothing. These lists are read-only for now: `entmod` and `entmake` don't take them.
 
 ## Testing against the corpus
 
