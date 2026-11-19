@@ -250,7 +250,6 @@ fn bounds(d: &Drawing, hs: &[Handle]) -> Bounds2 {
     hs.iter().filter_map(|h| d.entity(*h).map(|e| cadcraft_doc::entity_bounds(d, e, 0))).fold(Bounds2::EMPTY, |a, b| a.union(&b))
 }
 
-/// The centre of the first object (the point a non-rotated polar copy is moved by).
 /// The key point of `ents`, placed by `m`, nearest `at`: one of their grips (end points,
 /// midpoints, centres, vertices, insertion points). `None` when they have none. More than
 /// [`MAX_KEY_OBJECTS`] objects are refused: searching only some could miss the nearest one.
@@ -290,6 +289,7 @@ pub(crate) fn key_point_of(d: &Drawing, hs: &[Handle], at: Vec2) -> Result<Vec2>
         .ok_or_else(|| other("The objects have no key point; specify a point."))
 }
 
+/// The centre of the first object (the point a non-rotated polar copy is moved by).
 fn first_center(d: &Drawing, hs: &[Handle]) -> Option<Vec2> {
     hs.first().and_then(|h| d.entity(*h)).map(|e| cadcraft_doc::entity_bounds(d, e, 0).center()).filter(|c| c.is_finite())
 }
