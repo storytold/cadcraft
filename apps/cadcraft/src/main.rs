@@ -239,10 +239,10 @@ fn saved_window(app_ron: &str) -> bool {
 fn restores_window() -> bool {
     let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
-    if let Some(fixed) = without_tiny_window(&ron) {
-        if std::fs::write(&path, &fixed).is_ok() {
-            ron = fixed;
-        }
+    if let Some(fixed) = without_tiny_window(&ron)
+        && std::fs::write(&path, &fixed).is_ok()
+    {
+        ron = fixed;
     }
     saved_window(&ron)
 }
