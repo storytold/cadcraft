@@ -84,7 +84,7 @@ fn listing(app: &mut CadApp, ui: &mut egui::Ui, force: bool) -> Listing {
         Ok(st) => format!("{}:{}:{}", st.uid, st.revision, st.path.clone().unwrap_or_default()),
         Err(_) => "none".to_string(),
     };
-    let id = egui::Id::new("history-listing");
+    let id = egui::Id::unique("history-listing");
     let now = ui.input(|i| i.time);
     if let Some(cached) = ui.data(|d| d.get_temp::<Listing>(id))
         && !force
@@ -146,7 +146,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
     });
     ui.add_space(6.0);
     let list = listing(app, ui, force);
-    let sel_id = egui::Id::new("history-selected");
+    let sel_id = egui::Id::unique("history-selected");
     let mut selected: Option<String> = ui.data(|d| d.get_temp(sel_id));
     if !selected.as_ref().is_some_and(|s| list.rows.iter().any(|r| &r.file == s)) {
         selected = list.rows.first().map(|r| r.file.clone());
@@ -253,7 +253,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
     match act {
         Some(Act::Start(id)) => {
             app.start(id);
-            ui.data_mut(|d| d.remove::<Listing>(egui::Id::new("history-listing")));
+            ui.data_mut(|d| d.remove::<Listing>(egui::Id::unique("history-listing")));
         }
         Some(Act::Run(id, p)) => {
             // Opening a version is an open like any other: the revision becomes the active drawing
@@ -264,7 +264,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
                 Ok(_) => {}
                 Err(e) => app.set_status(e),
             }
-            ui.data_mut(|d| d.remove::<Listing>(egui::Id::new("history-listing")));
+            ui.data_mut(|d| d.remove::<Listing>(egui::Id::unique("history-listing")));
         }
         None => {}
     }
