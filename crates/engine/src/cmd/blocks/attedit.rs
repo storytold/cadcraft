@@ -154,6 +154,19 @@ fn set_value(text: &mut Text, value: String) {
     }
 }
 
+/// Move `text` so the point it is placed by lands on `to`: the alignment point of justified text,
+/// else the insertion point. Both points move by the same offset, so aligned and fit text keep the
+/// baseline between them.
+fn move_text(text: &mut Text, to: cadcraft_geom::Vec2) {
+    let anchor = match text.align_pt {
+        Some(ap) if !matches!((text.halign, text.valign), (HAlign::Left, VAlign::Baseline) | (HAlign::Aligned | HAlign::Fit, _)) => ap,
+        _ => text.insert,
+    };
+    let d = Vec3::new(to.x - anchor.x, to.y - anchor.y, 0.0);
+    text.insert = text.insert + d;
+    text.align_pt = text.align_pt.map(|ap| ap + d);
+}
+
 /// Change the properties set on attribute `k` of block reference `h`.
 fn set_props(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&mut AttribProps)) -> Result<()> {
     s.doc_mut()?.modify_entity(h, |e| {
@@ -542,12 +555,7 @@ impl Interactive for DashAtteditM {
                     _ => return Ok(Step::Continue),
                 };
                 if let Some(it) = self.items.get(self.cur).copied() {
-                    modify_attrib(s, it, |a| {
-                        a.text.insert = Vec3::new(p.x, p.y, a.text.insert.z);
-                        if a.text.align_pt.is_some() {
-                            a.text.align_pt = Some(Vec3::new(p.x, p.y, a.text.insert.z));
-                        }
-                    })?;
+                    modify_attrib(s, it, |a| move_text(&mut a.text, p))?;
                 }
                 self.stage = Stage::Option;
             }

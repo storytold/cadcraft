@@ -117,3 +117,34 @@ fn attribute_tags_match_in_any_case_and_unknown_tags_are_reported() {
     let r = s.execute("attedit", &json!({"handle": h.hex(), "values": {"T": "four"}})).unwrap();
     assert_eq!(r, json!({"changed": 1}));
 }
+
+/// -ATTEDIT Position moves an aligned or fit attribute without losing its baseline: both of its
+/// points move by the same offset (setting both to the picked point would leave no direction or
+/// length to fit the text between).
+#[test]
+fn dash_attedit_position_keeps_an_aligned_attributes_baseline() {
+    use cadcraft_doc::HAlign;
+    use cadcraft_geom::Vec3;
+    for halign in [HAlign::Aligned, HAlign::Fit] {
+        let mut s = with_block();
+        let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    for a in i.attribs.iter_mut().filter(|a| a.tag == "T") {
+                        a.text.halign = halign;
+                        a.text.insert = Vec3::new(100.0, 1.0, 0.0);
+                        a.text.align_pt = Some(Vec3::new(104.0, 1.0, 0.0));
+                    }
+                }
+            })
+            .unwrap();
+        type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "p", "10,20", "n"]);
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let EntityKind::Insert(ins) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+        let t = &ins.attribs.iter().find(|a| a.tag == "T").unwrap().text;
+        assert!(t.insert.xy().near(cadcraft_geom::Vec2::new(10.0, 20.0), 1e-9), "{halign:?}: {:?}", t.insert);
+        assert!(t.align_pt.is_some_and(|p| p.xy().near(cadcraft_geom::Vec2::new(14.0, 20.0), 1e-9)), "{halign:?}: {:?}", t.align_pt);
+    }
+}
