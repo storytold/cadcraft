@@ -14,6 +14,8 @@ pub const FILES: &[&str] = &[
     "aliasedit",
     "appload",
     "attach",
+    "blocklibimport",
+    "blocklibrary",
     "audit",
     "compare",
     "compareexport",
@@ -61,10 +63,19 @@ pub const FILES: &[&str] = &[
 ];
 
 /// Commands that can't be held to the roots, and why.
-pub const REFUSED: &[(&str, &str)] = &[("drawingrecovery", "it works on the autosave folder (SAVEFILEPATH), which is the server's own")];
+pub const REFUSED: &[(&str, &str)] = &[
+    ("drawingrecovery", "it works on the autosave folder (SAVEFILEPATH), which is the server's own"),
+    ("blocklibraries", "it keeps its list of libraries in the settings folder, which is the server's own"),
+];
 
 /// Commands that touch no file.
 pub const NO_FILES: &[&str] = &[
+    "blockspalette",
+    "dimoverride.clear",
+    "-dimstyle",
+    "dimstyle.overrides",
+    "dimstyle.saveas",
+    "properties.describe",
     "close",
     "closeall",
     "document.switch",
@@ -532,6 +543,7 @@ mod tests {
         confine(roots.as_ref(), || {
             assert!(refusal("made.up").unwrap().contains("not classified"));
             assert!(refusal("drawingrecovery").unwrap().contains("autosave"));
+            assert!(refusal("blocklibraries").unwrap().contains("settings folder"));
             assert_eq!(refusal("open"), None);
             assert_eq!(refusal("line"), None);
         });
