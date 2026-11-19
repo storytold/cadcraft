@@ -230,6 +230,27 @@ fn reserved_band_handles_are_reserved_without_the_cadcraft_seed_record() {
 }
 
 #[test]
+fn reservations_end_with_the_read_and_placed_objects_still_keep_their_handles() {
+    // The reservations only bridge the gap until a record is placed; a drawing does not carry
+    // them on (every undo step copies the drawing). The placed objects keep new ones off.
+    let mut d = read(&file_with_reserved_band_entities(true));
+    assert!(d.reserved_handles.is_empty(), "the reader's reservations outlived the read");
+    for i in 0..3 {
+        d.add(&Space::Model, Common::default(), line(f64::from(i), 50.0)).unwrap();
+    }
+    assert_eq!(d.model.len(), 6, "a new object replaced one of the file's");
+    assert_three_lines_survive_among(&d);
+}
+
+fn assert_three_lines_survive_among(d: &Drawing) {
+    let band = Handle(cadcraft_doc::HANDLE_LIMIT);
+    assert!(d.model.iter().any(|e| e.handle == band && matches!(&e.kind, EntityKind::Line(l) if l.a.x == 20.0)), "the band line lost its handle");
+    let handles = distinct(d);
+    let unique: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+    assert_eq!(unique.len(), handles.len(), "duplicate handles: {handles:?}");
+}
+
+#[test]
 fn generated_geometry_never_takes_a_handle_an_object_holds() {
     // The drawing's own handles sit in the reserved band and the seed is at the top of the
     // range, so the writer's structural numbering wraps into the band. Every other band handle

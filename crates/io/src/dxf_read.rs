@@ -173,6 +173,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     crate::dxf_raw::read(&secs, &mut d);
     crate::dxf_clip::read(&mut d);
     d.skipped_records = skipped;
+    // Every record is placed now, and an object holding a reserved handle keeps it from new
+    // objects by itself. Kept, the set would be copied with every undo step of the drawing.
+    d.reserved_handles.clear();
     Ok(d)
 }
 

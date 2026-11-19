@@ -134,7 +134,7 @@ pub struct Drawing {
     pub handseed: u64,
     /// Handles a file's records hold in the reserved band, recorded while reading before the
     /// record is placed: [`Drawing::new_handle`] skips them meanwhile. [`Drawing::bump_handseed`]
-    /// does not follow them (#913). Never written to a file.
+    /// does not follow them (#913). Emptied once the file is read; never written to a file.
     pub reserved_handles: BTreeSet<u64>,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
