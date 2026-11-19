@@ -785,6 +785,10 @@ impl CadApp {
             }
             return;
         }
+        if cadcraft_io::gis::is_gis_file(path) {
+            self.import_gis(path);
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.opening.start(path);
@@ -873,6 +877,22 @@ impl CadApp {
 
     /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed
     /// OPEN is reported: on the command line and in the status bar.
+    /// IMPORTGIS of a dropped or opened `.shp`/`.geojson` file.
+    fn import_gis(&mut self, path: &Path) {
+        let Some(text) = path.to_str() else {
+            self.open_failed(format!("importgis: {}: the path is not valid Unicode", path.display()));
+            return;
+        };
+        if self.session.state().is_err() || self.ui.start_tab {
+            let r = self.run("new", json!({}));
+            self.opened(r);
+        }
+        match self.run("importgis", json!({ "path": text })) {
+            Ok(_) => self.canvas.zoom_pending = true,
+            Err(e) => self.set_status(e),
+        }
+    }
+
     pub fn open_failed(&mut self, e: impl Into<String>) {
         let e = e.into();
         self.session.echo(e.clone());
