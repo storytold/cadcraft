@@ -733,6 +733,7 @@ dependencies = [
  "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-render",
+ "craft-csv",
  "craft-docpath",
  "craft-dxf",
  "craft-mime",
@@ -1184,6 +1185,14 @@ source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097
 name = "craft-codepage"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
+
+[[package]]
+name = "craft-csv"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=56c3c833bb869a140271e2aceec2112322cacc58#56c3c833bb869a140271e2aceec2112322cacc58"
+dependencies = [
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "craft-docpath"
