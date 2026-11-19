@@ -83,6 +83,31 @@ pub fn object_records() -> Option<ObjectRecords> {
     OBJECT_RECORDS.get().copied()
 }
 
+/// What a DXF of a version before 2007 leaves out of a drawing because it has no form for a
+/// proxy's separate string stream, counted by DXF type (installed by the app with the DXF writer,
+/// a lower layer, which finds it by writing; see `cadcraft_io::proxies_lost`). Without it the
+/// proxies themselves are counted ([`cadcraft_doc::foreign::proxies_dropped_before_2007`]).
+pub type ProxiesLost = fn(&Drawing, Version) -> std::collections::BTreeMap<String, usize>;
+
+static PROXIES_LOST: OnceLock<ProxiesLost> = OnceLock::new();
+
+pub fn set_proxies_lost(f: ProxiesLost) {
+    let _ = PROXIES_LOST.set(f);
+}
+
+/// What a DXF of `version` leaves out of `d` for its proxies' string streams (#3229): empty from
+/// 2007 on. `d` is written as committed (a reference edit's working copies are not in the file).
+fn proxies_lost(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if version >= Version::R2007 {
+        return Default::default();
+    }
+    let d = d.committed();
+    match PROXIES_LOST.get() {
+        Some(f) => f(&d, version),
+        None => cadcraft_doc::foreign::proxies_dropped_before_2007(&d),
+    }
+}
+
 /// COMPARE (drawing comparison).
 pub mod compare;
 
@@ -776,12 +801,20 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
 fn drawing_version(s: &Session, path: &str) -> Version {
-    let v = s
-        .state()
-        .ok()
-        .and_then(|st| st.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
-        .unwrap_or_default();
+    let v = s.state().ok().and_then(|st| acadver(st.drawing())).unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
+}
+
+/// The version `d` is saved in at `path` when none is asked for, as [`drawing_version`] says for
+/// the active drawing.
+pub(crate) fn own_version(d: &Drawing, path: &str) -> Version {
+    let v = acadver(d).unwrap_or_default();
+    if is_dxf(path) { v } else { v.max(Version::R2004) }
+}
+
+/// The version `d`'s `$ACADVER` names.
+fn acadver(d: &Drawing) -> Option<Version> {
+    d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver)
 }
 
 /// `document.switch index`: require the index, cancel the running command, activate that drawing and bump the epoch even if it was already active (screenshot identity).
@@ -810,7 +843,11 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
     } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
-        report_sat_text_dropped(s, &mut r);
+        let lost = host_sat_text_dropped(s);
+        report_sat_text_dropped(s, &mut r, &lost);
+    } else if version < Version::R2007 && is_dxf_file(format!("drawing.{fmt}")) {
+        let lost = host_proxies_lost(s, version);
+        report_proxies_dropped(s, &mut r, &lost);
     }
     Ok(r)
 }
@@ -891,8 +928,11 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
     let version = drawing_version(s, path);
     if is_dxf_file(path) && version >= Version::R2013 {
-        // The drawing a file holds: the host while the Block Editor is open.
-        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+        return host_sat_text_dropped(s);
+    }
+    if is_dxf_file(path) && version < Version::R2007 {
+        // Proxies whose strings such a file can't hold, and what goes with them (#3229).
+        return host_proxies_lost(s, version);
     }
     if !drops_unknown(path) {
         return Default::default();
@@ -900,16 +940,68 @@ pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<Strin
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
 }
 
-/// Report what the file `path`, just written at the drawing's own version, left out.
-pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
-    if is_dxf_file(path) {
-        if drawing_version(s, path) >= Version::R2013 {
-            report_sat_text_dropped(s, r);
-        }
-    } else {
-        let lost = loss_on_save(s, path);
-        report_not_saved(s, r, &lost);
+/// The SAT-text solids a DXF of 2013 or later leaves out of the drawing a save writes: the host
+/// while the Block Editor is open.
+fn host_sat_text_dropped(s: &Session) -> std::collections::BTreeMap<String, usize> {
+    s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default()
+}
+
+/// What a DXF of `version` before 2007 leaves out of the drawing a save writes (the host while
+/// the Block Editor is open) for its proxies' string streams (#3229).
+fn host_proxies_lost(s: &Session, version: Version) -> std::collections::BTreeMap<String, usize> {
+    s.state().map(|st| proxies_lost(st.drawing(), version)).unwrap_or_default()
+}
+
+/// What a file at `path` leaves out of `d`, written at `version`: empty when it keeps everything.
+pub(crate) fn lost_writing(d: &Drawing, path: &str, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if !is_dxf_file(path) {
+        return if drops_unknown(path) { not_saved_as(d, version) } else { Default::default() };
     }
+    if version >= Version::R2013 { cadcraft_doc::foreign::sat_text_dropped(d) } else { proxies_lost(d, version) }
+}
+
+/// Report what the file `path`, just written from the active document (what EXPORT writes: the
+/// block while the Block Editor is open) at its own version, left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+    let Ok(d) = s.doc() else { return };
+    let version = own_version(d, path);
+    let lost = lost_writing(d, path, version);
+    report_lost(s, r, path, version, &lost);
+}
+
+/// Say on the command line what the file `path`, written at `version`, couldn't keep (`lost`),
+/// in the words for that kind of file, and list it in the result's `notSaved`.
+pub(crate) fn report_lost(s: &mut Session, r: &mut Value, path: &str, version: Version, lost: &std::collections::BTreeMap<String, usize>) {
+    match lost_message(path, version, lost) {
+        Some(msg) => s.echo(msg),
+        None => return,
+    }
+    if let Some(o) = r.as_object_mut() {
+        o.insert("notSaved".into(), json!(lost));
+    }
+}
+
+/// The command-line warning for what a file at `path` written at `version` left out, or `None`
+/// when it kept everything.
+pub(crate) fn lost_message(path: &str, version: Version, lost: &std::collections::BTreeMap<String, usize>) -> Option<String> {
+    if !is_dxf_file(path) {
+        return not_saved_message(lost);
+    }
+    if lost.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
+    Some(if version >= Version::R2013 {
+        format!(
+            "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
+            list.join(", ")
+        )
+    } else {
+        format!(
+            "Not saved in the DXF file (proxies that keep their strings apart from their data, which DXF before 2007 can't hold, and the objects that go with them; save as 2007 or later to keep them): {}",
+            list.join(", ")
+        )
+    })
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
@@ -930,20 +1022,8 @@ fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
 
 /// Say on the command line which solid modeler entities a DXF of 2013 or later left out because
 /// they hold SAT-text ACIS data, which such files keep in a data store instead (#2334).
-fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
-    // The drawing a file holds: the host while the Block Editor is open.
-    let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
-    if lost.is_empty() {
-        return;
-    }
-    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    s.echo(format!(
-        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
-        list.join(", ")
-    ));
-    if let Some(o) = r.as_object_mut() {
-        o.insert("notSaved".into(), json!(lost));
-    }
+fn report_sat_text_dropped(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
+    report_lost(s, r, "drawing.dxf", Version::R2013, lost);
 }
 
 /// The folder a write to `path` has to create, asked before writing so it can be reported after.
@@ -977,6 +1057,12 @@ pub(super) fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::colle
     }
 }
 
+/// Say on the command line which proxies a DXF earlier than 2007 left out (`lost`) because their
+/// strings are kept apart from their data, which those versions have no form for (#3229).
+fn report_proxies_dropped(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
+    report_lost(s, r, "drawing.dxf", Version::R2000, lost);
+}
+
 /// Save, then report the entities the file couldn't keep (nothing is dropped silently).
 fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>, asked: Option<Version>) -> Result<Value> {
     // What the file will hold depends on the version it is saved as (the data store from 2013).
@@ -990,7 +1076,11 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
     } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
-        report_sat_text_dropped(s, &mut r);
+        let lost = host_sat_text_dropped(s);
+        report_sat_text_dropped(s, &mut r, &lost);
+    } else if version < Version::R2007 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        let lost = host_proxies_lost(s, version);
+        report_proxies_dropped(s, &mut r, &lost);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);

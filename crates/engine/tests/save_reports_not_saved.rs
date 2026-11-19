@@ -302,3 +302,74 @@ fn ole_objects_are_not_reported() {
         assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
     }
 }
+
+/// A proxy entity (as a 2010 file has it) whose string stream is `strings` long (group 162).
+fn proxy_entity(strings: &str) -> EntityKind {
+    let tags = [(8, "0"), (100, "AcDbProxyEntity"), (90, "498"), (91, "500"), (162, strings), (161, "16"), (310, "AABB")];
+    EntityKind::Unknown(Unknown {
+        dxf_type: "ACAD_PROXY_ENTITY".into(),
+        tags: tags.iter().map(|(code, value)| RawTag { code: *code, value: (*value).into() }).collect(),
+    })
+}
+
+/// A DXF before 2007 has no form for a proxy's separate string stream: the writer leaves such a
+/// proxy out, and the save says so instead of dropping it silently (#3229).
+#[test]
+fn a_dxf_before_2007_reports_the_proxies_it_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    // SAVEAS at a chosen version goes through this hook (each test may run in its own process).
+    set_write_as(|_, _, _: &SaveAs| Ok(b"x".to_vec()));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+    d.add(&Space::Model, Common::default(), proxy_entity("0")).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "proxy.dxf", None);
+    let path = std::env::temp_dir().join(format!("cadcraft-proxy-r2000-{}.dxf", std::process::id()));
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2000 })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACAD_PROXY_ENTITY": 1 }), "only the one with strings");
+    assert!(s.log.iter().any(|l| l.contains("DXF before 2007") && l.contains("1 ACAD_PROXY_ENTITY")), "{:?}", s.log);
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2007 })).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(r.get("notSaved").is_none(), "2007 keeps it");
+}
+
+/// The interactive QSAVE asks before a pre-2007 DXF replaces a file and leaves such proxies out,
+/// with the same list (#3229).
+#[test]
+fn a_pre_2007_dxf_proxy_loss_is_known_before_saving() {
+    use cadcraft_engine::cmd::file::loss_on_save;
+    let drawing = |acadver: &str| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_str("ACADVER", acadver);
+        d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+        d
+    };
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1015"), "proxy.dxf", None);
+    assert_eq!(loss_on_save(&s, "proxy.dxf"), [("ACAD_PROXY_ENTITY".to_string(), 1)].into_iter().collect());
+    s.open_drawing(drawing("AC1021"), "proxy.dxf", None);
+    assert!(loss_on_save(&s, "proxy.dxf").is_empty(), "2007 keeps it");
+}
+
+/// EXPORT writes a DXF at the drawing's own version: before 2007 it leaves the same proxies out
+/// and says so, like a save (#3229).
+#[test]
+fn exporting_a_dxf_before_2007_reports_the_proxies_it_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    let drawing = |acadver: &str| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_str("ACADVER", acadver);
+        d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+        d.add(&Space::Model, Common::default(), proxy_entity("0")).unwrap();
+        d
+    };
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1015"), "proxy.dxf", None);
+    let r = s.execute("export", &json!({ "format": "dxf" })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACAD_PROXY_ENTITY": 1 }), "only the one with strings");
+    assert!(s.log.iter().any(|l| l.contains("DXF before 2007") && l.contains("1 ACAD_PROXY_ENTITY")), "{:?}", s.log);
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1021"), "proxy.dxf", None);
+    let r = s.execute("export", &json!({ "format": "dxf" })).unwrap();
+    assert!(r.get("notSaved").is_none(), "2007 keeps it");
+}

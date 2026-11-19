@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
+use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number, proxy_has_string_stream};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
 use craft_dxf::{Section, Tag};
 
@@ -941,12 +941,15 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
+/// `strings`: whether the file has a form for a proxy's separate string stream (a DXF of 2007 or
+/// later, or the DWG bridge); without one such a proxy is left out (#3229). Returns the foreign
+/// objects written, by their handles in the drawing (the file gives them new ones).
+pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool, strings: bool) -> HashSet<Handle> {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {
-        return;
+        return HashSet::new();
     }
     let recs = written_records(tags);
     let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
@@ -969,6 +972,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
     }
     let renumber = |old| proxy_class_number(f, &numbers, old);
+    // A proxy is dropped when its class isn't written, or when its strings have no place here.
+    let no_room = |t: &[(i32, &str)]| !strings && proxy_has_string_stream(t.iter().copied());
     // Entities of types CADCraft doesn't model, placed among the written ones.
     let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
     for list in planned.values_mut() {
@@ -976,7 +981,12 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
                 return true;
             }
-            let Some(n) = renumber(class_number(t.iter().map(|x| (x.code, x.str())))) else { return false };
+            let groups: Vec<(i32, String)> = t.iter().map(|x| (x.code, x.str())).collect();
+            let groups: Vec<(i32, &str)> = groups.iter().map(|(c, v)| (*c, v.as_str())).collect();
+            if no_room(&groups) {
+                return false;
+            }
+            let Some(n) = renumber(class_number(groups.iter().copied())) else { return false };
             set_class_number(t, n);
             true
         });
@@ -1027,8 +1037,11 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         // Keep established live paths available to descendants during this pass as well.
         let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
-        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
-        {
+        let dropped = |o: &ForeignObject| {
+            let groups: Vec<(i32, &str)> = o.tags.iter().map(|r| (r.code, r.value.as_str())).collect();
+            no_room(&groups) || renumber(class_number(groups.iter().copied())).is_none()
+        };
+        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && dropped(o)) {
             alive_memo.insert(o.handle.hex(), false);
         }
         for o in &f.objects {
@@ -1119,6 +1132,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+    map.alive.keys().filter_map(|h| handle(h)).collect()
 }
 
 /// Complete source tables keep positional identities even when names repeat.

@@ -907,6 +907,11 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
 /// file ends up in: `version`, or the DWG version the bridge writes) has.
 /// `frozen_341`: see [`Ctx::frozen_341`].
 pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
+    tags_kept_for(d, version, target, frozen_341).0
+}
+
+/// [`tags_for`], with the foreign objects the file keeps, by their handles in the drawing.
+pub(super) fn tags_kept_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -1144,11 +1149,13 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     }
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334).
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
+    // The DWG bridge (`target` another version) keeps proxies in the DWG's own layout.
+    let strings = version != target || version >= Version::R2007;
+    let kept = crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, strings);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
-    w.t
+    (w.t, kept)
 }
 
 /// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups

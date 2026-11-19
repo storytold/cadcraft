@@ -3541,6 +3541,144 @@ fn proxy_file() -> Vec<u8> {
     pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
 }
 
+/// #3229: a file with a proxy object in the 2010 layout (as the DWG bridge brings it from a 2010
+/// DWG), with its class and a dictionary entry.
+/// A 2010 DXF with one proxy object (dictionary entry WIDGETS) whose string stream is `strings`
+/// long (group 162).
+fn proxy_2010_file(strings: &str) -> Vec<u8> {
+    let text = String::from_utf8(write(&Drawing::new_metric(), "p.dxf").unwrap()).unwrap();
+    let mut pairs = dxf_pairs(&text);
+    let p = |c: &str, v: &str| (c.to_string(), v.to_string());
+    let classes = pairs.iter().position(|q| q.0 == "2" && q.1 == "CLASSES").unwrap() + 1;
+    pairs.splice(
+        classes..classes,
+        [p("0", "CLASS"), p("1", "WIDGETX"), p("2", "AcDbWidgetX"), p("3", "ObjectDBX Classes"), p("90", "4095"), p("280", "1"), p("281", "0")],
+    );
+    let objects = pairs.iter().position(|q| q.0 == "2" && q.1 == "OBJECTS").unwrap();
+    let nod = objects + 1;
+    let after = nod + pairs[nod..].iter().position(|q| q.0 == "281").unwrap() + 1;
+    pairs.splice(after..after, [p("3", "WIDGETS"), p("350", "AAA1")]);
+    let nod_handle = pairs[nod + 1].1.clone();
+    let proxy = [
+        p("0", "ACAD_PROXY_OBJECT"),
+        p("5", "AAA1"),
+        p("330", &nod_handle),
+        p("100", "AcDbProxyObject"),
+        p("90", "499"),
+        p("91", "500"),
+        p("95", "393245"),
+        p("70", "0"),
+        p("162", strings),
+        p("161", "303"),
+        p("310", "00FF"),
+        p("94", "0"),
+    ];
+    let end = objects + pairs[objects..].iter().position(|q| q.0 == "0" && q.1 == "ENDSEC").unwrap();
+    pairs.splice(end..end, proxy);
+    pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+}
+
+#[test]
+fn proxies_take_the_layout_of_the_version_written() {
+    let d = read(&proxy_2010_file("0"), "p.dxf").unwrap();
+    let own = |version: Version| {
+        let text = String::from_utf8(write_with(&d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        let pairs = dxf_pairs(&text);
+        let recs = dxf_records(&pairs, "ACAD_PROXY_OBJECT");
+        let r = recs.first().expect("the proxy is kept");
+        r.iter().skip_while(|q| q.1 != "AcDbProxyObject").skip(1).map(|q| q.0.clone()).collect::<Vec<_>>().join(" ")
+    };
+    // R2000: no 161/162 (ODA and BricsCAD refused the file), the data size is 93.
+    assert_eq!(own(Version::R2000), "90 91 95 70 93 310 94");
+    assert_eq!(own(Version::R2007), "90 91 95 70 96 93 310 94");
+    assert_eq!(own(Version::R2010), "90 91 95 70 162 161 310 94");
+    assert_eq!(own(Version::R2018), "90 91 71 97 70 162 161 310 94");
+}
+
+#[test]
+fn a_proxy_with_a_string_stream_is_left_out_before_2007() {
+    // Before 2007 a proxy's strings are part of its data: a separate stream has no form there.
+    // The proxy and its dictionary entry are left out rather than written with half its data.
+    let d = read(&proxy_2010_file("10"), "p.dxf").unwrap();
+    assert_eq!(cadcraft_doc::foreign::proxies_dropped_before_2007(&d), [("ACAD_PROXY_OBJECT".to_string(), 1)].into_iter().collect());
+    let pairs = |version: Version| {
+        let text = String::from_utf8(write_with(&d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        dxf_pairs(&text)
+    };
+    let entry = |p: &[(String, String)]| p.iter().any(|q| q.0 == "3" && q.1 == "WIDGETS");
+    for version in [Version::R2000, Version::R2004] {
+        let p = pairs(version);
+        assert!(dxf_records(&p, "ACAD_PROXY_OBJECT").is_empty(), "{version:?}");
+        assert!(!entry(&p), "{version:?}: the dictionary entry goes with it");
+    }
+    // From 2007 it is kept, with its string stream and its dictionary entry.
+    let p = pairs(Version::R2007);
+    let recs = dxf_records(&p, "ACAD_PROXY_OBJECT");
+    assert_eq!(recs.first().and_then(|r| group(r, "96")), Some("10"));
+    assert!(entry(&p));
+}
+
+/// #3229 review: the loss a DXF before 2007 reports is what the writer leaves out for the string
+/// stream alone. A proxy no version writes (its class number names no class) is not counted, and
+/// the objects a dropped proxy owns (its extension dictionary and the XRECORD in it) are.
+#[test]
+fn proxies_lost_counts_what_the_string_stream_takes_with_it() {
+    let lost = |d: &Drawing, v| crate::proxies_lost(d, v);
+    // The records of the file written at `version` (the file gives kept objects new handles).
+    let written = |d: &Drawing, version: Version| {
+        let text = String::from_utf8(write_with(d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        dxf_pairs(&text)
+    };
+    // Its class isn't written: every version leaves it out, so 2007 would not keep it either.
+    let text = String::from_utf8(proxy_2010_file("10")).unwrap();
+    assert_eq!(text.matches("\n91\n500\n").count(), 1, "the proxy's class number");
+    let orphan = read(text.replacen("\n91\n500\n", "\n91\n777\n", 1).as_bytes(), "p.dxf").unwrap();
+    assert!(!cadcraft_doc::foreign::proxies_dropped_before_2007(&orphan).is_empty(), "the proxy itself is counted");
+    assert!(dxf_records(&written(&orphan, Version::R2007), "ACAD_PROXY_OBJECT").is_empty(), "no version writes it");
+    assert_eq!(lost(&orphan, Version::R2000), std::collections::BTreeMap::new());
+    // With an extension dictionary holding an XRECORD: all three go before 2007.
+    let mut p = dxf_pairs(&text);
+    let at = p.iter().position(|q| q.0 == "5" && q.1 == "AAA1").unwrap() + 1;
+    let g = |c: &str, v: &str| (c.to_string(), v.to_string());
+    p.splice(at..at, [g("102", "{ACAD_XDICTIONARY"), g("360", "BBB1"), g("102", "}")]);
+    // The proxy is the last object: its owned objects go after it.
+    let objects_end = at + p[at..].iter().position(|q| q.0 == "0" && q.1 == "ENDSEC").unwrap();
+    p.splice(
+        objects_end..objects_end,
+        [
+            g("0", "DICTIONARY"),
+            g("5", "BBB1"),
+            g("330", "AAA1"),
+            g("100", "AcDbDictionary"),
+            g("280", "1"),
+            g("281", "1"),
+            g("3", "WIDGETDATA"),
+            g("350", "CCC1"),
+            g("0", "XRECORD"),
+            g("5", "CCC1"),
+            g("330", "BBB1"),
+            g("100", "AcDbXrecord"),
+            g("280", "1"),
+            g("1", "kept with the widget"),
+        ],
+    );
+    let bytes: Vec<u8> = p.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes();
+    let d = read(&bytes, "p.dxf").unwrap();
+    let held = |version| {
+        let p = written(&d, version);
+        let xrecord = dxf_records(&p, "XRECORD").iter().any(|r| group(r, "1") == Some("kept with the widget"));
+        let dictionary = p.iter().any(|q| q.0 == "3" && q.1 == "WIDGETDATA");
+        (dxf_records(&p, "ACAD_PROXY_OBJECT").len(), dictionary, xrecord)
+    };
+    assert_eq!(held(Version::R2007), (1, true, true), "2007 keeps all three");
+    assert_eq!(held(Version::R2000), (0, false, false), "R2000 keeps none");
+    let want: std::collections::BTreeMap<String, usize> =
+        [("ACAD_PROXY_OBJECT", 1), ("DICTIONARY", 1), ("XRECORD", 1)].into_iter().map(|(k, n)| (k.to_string(), n)).collect();
+    assert_eq!(lost(&d, Version::R2000), want);
+    assert_eq!(lost(&d, Version::R2004), want);
+    assert_eq!(lost(&d, Version::R2007), std::collections::BTreeMap::new());
+}
+
 #[test]
 fn proxies_keep_their_class_when_classes_are_rewritten() {
     let d = read(&proxy_file(), "p.dxf").unwrap();
