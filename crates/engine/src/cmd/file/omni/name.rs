@@ -188,7 +188,7 @@ pub(super) fn overlay_name(snap: &Snap) -> String {
     let base = format!("{OVERLAY_PREFIX}{}", slug(stem, "-_"));
     match snap.epoch {
         Some(e) => format!("{base}_{}_{:03}", stamp(e).replace('.', "_"), snap.millis),
-        None => format!("{base}_{}", slug(&split_ext(&snap.file).0, "-_")),
+        None => format!("{base}_{}", slug(split_ext(&snap.file).0, "-_")),
     }
 }
 #[cfg(test)]

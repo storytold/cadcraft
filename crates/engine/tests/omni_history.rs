@@ -186,10 +186,11 @@ fn log_lists_newest_first_and_opens_a_revision() {
     assert_eq!(s.docs.len(), 5);
 }
 
-#[test]
-fn diff_lays_the_snapshot_under_the_drawing_recoloured_and_takes_it_away_again() {
+/// A drawing with a snapshot taken, an edit after it, and the user's own xref — the state both
+/// overlay tests start from.
+fn snapshot_and_an_edit(tag: &str) -> (Session, String) {
     hooks();
-    let dir = folder("diff");
+    let dir = folder(tag);
     let plan_path = dir.join("plan.dxf");
     save(&plan(), &plan_path);
     // A drawing of the user's own, which OMNI-CLEAR must leave alone.
@@ -202,36 +203,62 @@ fn diff_lays_the_snapshot_under_the_drawing_recoloured_and_takes_it_away_again()
     s.execute("omni-snap", &json!({ "description": "revision" })).unwrap();
     s.execute("xattach", &json!({ "path": "site.dxf" })).unwrap();
     s.execute("circle", &json!({ "center": [20, 20], "radius": 3 })).unwrap();
+    let overlay = s.execute("omni-diff", &json!({})).unwrap()["overlay"].as_str().unwrap().to_string();
+    (s, overlay)
+}
 
-    let r = s.execute("omni-diff", &json!({})).unwrap();
-    let overlay = r["overlay"].as_str().unwrap().to_string();
-    assert!(overlay.starts_with("OMNI_plan_"), "{overlay}");
+#[test]
+fn diff_lays_the_snapshot_under_the_drawing_recoloured() {
+    let (mut s, overlay) = snapshot_and_an_edit("diff");
+    {
+        let d = s.doc().unwrap();
+        let b = d.block(&overlay).unwrap();
+        assert!(overlay.starts_with("OMNI_plan_"), "{overlay}");
+        assert_eq!(b.xref_status, XrefStatus::Loaded);
+        assert!(b.xref_overlay, "an overlay, as the AutoLISP original attached it");
+        let path = b.xref_path.clone().unwrap();
+        assert!(path.starts_with("_OMNI_HISTORY/"), "{path}: relative with a forward slash, so the drawing resolves it on every platform");
+        assert!(path.ends_with("plan.dxf"), "{path}");
+        assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(1)), "the underlay is red");
+        assert!(b.entities.iter().all(|e| e.common.color == Color::Index(1)), "the underlay's objects are red, not only its layers");
+        assert!(d.block("site").is_some(), "the user's own xref is untouched");
+    }
+
+    // The report the palette reads: the mode, the object count, the layers, and a colour of the
+    // caller's choosing.
+    let r = s.execute("omni-diff", &json!({ "color": 5 })).unwrap();
     assert_eq!(r["mode"], "overlay");
     assert!(r["objects"].as_u64().unwrap() >= 1);
     assert_eq!(r["layers"].as_u64(), Some(2), "the snapshot's Walls layer and the Defpoints every drawing carries");
-    let d = s.doc().unwrap();
-    let b = d.block(&overlay).unwrap();
-    assert_eq!(b.xref_status, XrefStatus::Loaded);
-    assert!(b.xref_overlay, "an overlay, as the AutoLISP original attached it");
-    let path = b.xref_path.clone().unwrap();
-    assert!(path.starts_with("_OMNI_HISTORY/"), "{path}: relative with a forward slash, so the drawing resolves it on every platform");
-    assert!(path.ends_with("plan.dxf"), "{path}");
-    assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(1)), "the underlay is red");
-    assert!(b.entities.iter().all(|e| e.common.color == Color::Index(1)), "the underlay's objects are red, not only its layers");
-    assert!(d.block("site").is_some(), "the user's own xref is untouched");
+    {
+        let d = s.doc().unwrap();
+        assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(5)));
+        assert_eq!(
+            d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&overlay))).count(),
+            1,
+            "one reference, not a second one"
+        );
+    }
+}
 
-    // A colour of the caller's choosing.
-    s.execute("omni-diff", &json!({ "color": 5 })).unwrap();
-    let d = s.doc().unwrap();
-    assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(5)));
-    assert_eq!(
-        d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&overlay))).count(),
-        1,
-        "one reference, not a second one"
-    );
+#[test]
+fn the_overlay_toggles_and_clears_and_the_users_xref_survives() {
+    let (mut s, overlay) = snapshot_and_an_edit("diff-clear");
+    fn inserts(s: &Session) -> Vec<String> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Insert(i) => Some(i.block.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+    let before = inserts(&s);
 
-    // Toggle: the underlay's objects leave the drawing and come back on reload, with the red
-    // their layers were given, not the snapshot's own colours.
+    // Toggle: the underlay's objects leave the drawing and come back on reload, with the red their
+    // layers were given, not the snapshot's own colours.
     let r = s.execute("omni-toggle", &json!({})).unwrap();
     assert_eq!(r["shown"], json!(false));
     assert_eq!(r["objects"], 0);
@@ -240,20 +267,28 @@ fn diff_lays_the_snapshot_under_the_drawing_recoloured_and_takes_it_away_again()
     let r = s.execute("omni-toggle", &json!({ "show": true })).unwrap();
     assert_eq!(r["shown"], json!(true));
     assert!(r["objects"].as_u64().unwrap() >= 1);
-    let d = s.doc().unwrap();
     assert_eq!(s.doc().unwrap().block(&overlay).map(|b| b.xref_status), Some(XrefStatus::Loaded));
-    assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(5)), "the colour survives a reload");
-    assert!(d.block(&overlay).is_some_and(|b| b.entities.iter().all(|e| e.common.color == Color::Index(5))), "and so does the underlay's own red");
+    {
+        let d = s.doc().unwrap();
+        assert_eq!(d.layer(&format!("{overlay}|Walls")).map(|l| l.color), Some(Color::Index(1)), "the colour survives a reload");
+        assert!(
+            d.block(&overlay).is_some_and(|b| b.entities.iter().all(|e| e.common.color == Color::Index(1))),
+            "and so does the underlay's own red"
+        );
+    }
 
     // Clear: the overlay goes, the user's xref and the drawing's own objects stay.
     let r = s.execute("omni-clear", &json!({})).unwrap();
     assert_eq!(r["cleared"], json!([overlay.clone()]));
     assert_eq!(r["erased"], 1, "its reference is erased with it");
-    let d = s.doc().unwrap();
-    assert!(d.block(&overlay).is_none());
-    assert!(d.layers.iter().all(|l| !l.name.contains('|') || l.name.starts_with("site|")), "its layers go, the user's stay");
-    assert!(d.block("site").is_some());
-    assert_eq!(d.model.len(), 3, "the drawing's own line and circle, and the user's site reference");
+    {
+        let d = s.doc().unwrap();
+        assert!(d.block(&overlay).is_none());
+        assert!(d.layers.iter().all(|l| !l.name.contains('|') || l.name.starts_with("site|")), "its layers go, the user's stay");
+        assert!(d.block("site").is_some());
+    }
+    assert_eq!(before, inserts(&s), "the drawing's own objects and the user's reference, and nothing of the overlay");
+
     // Nothing left to clear, and nothing left to toggle.
     assert_eq!(s.execute("omni-clear", &json!({})).unwrap()["cleared"], json!([]));
     assert!(s.execute("omni-toggle", &json!({})).is_err());
