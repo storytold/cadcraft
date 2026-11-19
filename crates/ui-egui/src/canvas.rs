@@ -542,7 +542,7 @@ fn paint_pointer_overlay(
     draw_tiles(app, ui, tiles);
     // UCS icon, ViewCube and viewport label.
     if app.session.ucsicon_bits() & 1 != 0 {
-        let place = crate::viewcube::IconPlace::of(app, rect, |p| xf.to_screen(p));
+        let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
         draw_ucs_icon(painter, &place);
         // Clickable only at the Command prompt: while a command runs, a pick or a snap at the UCS
         // origin (where the icon may sit) reaches the drawing.

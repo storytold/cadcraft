@@ -179,11 +179,14 @@ impl IconPlace {
     }
 
     /// The icon for the current UCS: at its origin when UCSICON asks for that (ORigin) and the
-    /// whole icon fits there, else at the corner. `to_screen` maps a point of the space shown.
-    pub fn of(app: &CadApp, canvas: Rect, to_screen: impl Fn(cadcraft_geom::Vec2) -> Pos2) -> IconPlace {
+    /// whole icon fits there, else at the corner. `to_screen` maps a point of the space shown, and
+    /// `twist` is the view's twist (radians counterclockwise, `Xf::twist`).
+    pub fn of(app: &CadApp, canvas: Rect, twist: f64, to_screen: impl Fn(cadcraft_geom::Vec2) -> Pos2) -> IconPlace {
         let u = app.session.input_ucs();
+        // An axis as the screen shows it: a twisted view (DVIEW TWist) turns the arms too.
         let dir = |v: cadcraft_geom::Vec3, or: egui::Vec2| {
-            let d = vec2(v.x as f32, -(v.y as f32));
+            let t = if twist.is_finite() && twist != 0.0 { v.xy().rotate(twist) } else { v.xy() };
+            let d = vec2(t.x as f32, -(t.y as f32));
             let l = d.length();
             if l.is_finite() && l > 1e-6 { d / l } else { or }
         };
@@ -417,14 +420,17 @@ mod tests {
         let c = canvas(&app);
         // A plain mapping: the canvas centre is world (0, 0), one point per unit.
         let to_screen = |p: cadcraft_geom::Vec2| pos2(c.center().x + p.x as f32, c.center().y - p.y as f32);
-        let world = IconPlace::of(&app, c, to_screen);
+        let world = IconPlace::of(&app, c, 0.0, to_screen);
         assert!(world.world && (world.x - vec2(1.0, 0.0)).length() < 1e-6 && (world.y - vec2(0.0, -1.0)).length() < 1e-6);
         // At the World origin (on screen, with ORigin on by default).
         assert!((world.origin - c.center()).length() < 1e-3, "{:?} vs {:?}", world.origin, c.center());
+        // A view twisted 90° (DVIEW TWist) turns the arms with the drawing: world X points up.
+        let twisted = IconPlace::of(&app, c, std::f64::consts::FRAC_PI_2, to_screen);
+        assert!((twisted.x - vec2(0.0, -1.0)).length() < 1e-6 && (twisted.y - vec2(-1.0, 0.0)).length() < 1e-6, "{twisted:?}");
         // A UCS turned 90° at (20, 10): the X arm points up the screen, the Y arm left.
         app.run("ucs", json!({"option": "origin", "origin": [20, 10]})).unwrap();
         app.run("ucs", json!({"option": "z", "angle": 90})).unwrap();
-        let p = IconPlace::of(&app, c, to_screen);
+        let p = IconPlace::of(&app, c, 0.0, to_screen);
         assert!(!p.world);
         assert!((p.x - vec2(0.0, -1.0)).length() < 1e-6 && (p.y - vec2(-1.0, 0.0)).length() < 1e-6, "{p:?}");
         assert!((p.origin - pos2(c.center().x + 20.0, c.center().y - 10.0)).length() < 1e-3);
@@ -433,13 +439,13 @@ mod tests {
         // Noorigin, or an origin off screen: the corner, the turned icon in the World icon's place.
         let corner = IconPlace::corner_turned(c, p.x, p.y, false).origin;
         app.run("ucsicon", json!({"origin": false})).unwrap();
-        assert_eq!(IconPlace::of(&app, c, to_screen).origin, corner);
+        assert_eq!(IconPlace::of(&app, c, 0.0, to_screen).origin, corner);
         app.run("ucsicon", json!({"origin": true})).unwrap();
         app.run("ucs", json!({"option": "origin", "origin": [1e6, 0]})).unwrap();
-        assert_eq!(IconPlace::of(&app, c, to_screen).origin, corner);
+        assert_eq!(IconPlace::of(&app, c, 0.0, to_screen).origin, corner);
         app.run("ucs", json!({"option": "world"})).unwrap();
         app.run("ucs", json!({"option": "origin", "origin": [1e6, 0]})).unwrap();
-        assert_eq!(IconPlace::of(&app, c, to_screen).origin, IconPlace::corner(c).origin, "unturned: where it always was");
+        assert_eq!(IconPlace::of(&app, c, 0.0, to_screen).origin, IconPlace::corner(c).origin, "unturned: where it always was");
         // The menu switch turns UCSICON off through its command.
         app.run("ui.toggle.ucsicon", json!({"on": false})).unwrap();
         assert_eq!(app.session.ucsicon_bits() & 1, 0);
@@ -491,7 +497,7 @@ mod tests {
         let (mut app, ctx) = app_and_ctx();
         // Where the canvas drew it: at the World origin when that is on screen (UCSICON 3).
         let xf = app.canvas.xf.expect("laid out");
-        let place = IconPlace::of(&app, canvas(&app), |p| xf.to_screen(p));
+        let place = IconPlace::of(&app, canvas(&app), xf.twist, |p| xf.to_screen(p));
         click(&mut app, &ctx, place.origin + place.x * 40.0, egui::PointerButton::Primary);
         assert!(menu_shown(&ctx), "UCS icon menu");
         assert!(app.session.pending_window.is_none(), "the click stayed on the icon");
