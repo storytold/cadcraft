@@ -186,6 +186,9 @@ fn shape_chars(
 fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>, rtl: bool, fallback: &dyn Fn(char) -> Option<Face>) -> Vec<(Src, Range<usize>)> {
     let mut pieces: Vec<(Src, Range<usize>)> = Vec::new();
     let run_end = run.end;
+    // The end of the cluster that `i` is in. Characters inside one cluster share its end, so the
+    // marks of a long cluster are walked once, not once per mark.
+    let mut cluster_to = run.start;
     for i in run {
         let c = cs.get(i).copied().unwrap_or(' ');
         let prev = pieces.last().and_then(|(s, _)| s.face()).cloned();
@@ -193,8 +196,10 @@ fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>, rtl: bool, fa
             Some(f) if bidi::is_format_control(c) || bidi::is_mark(c) => Src::Face(f),
             None if bidi::is_format_control(c) => Src::Hidden,
             prev => {
-                let cluster_end = cluster_end(cs, i, run_end);
-                resolve(cs.get(i..cluster_end).unwrap_or(&[c]), primary, prev.as_ref(), rtl, fallback)
+                if i >= cluster_to {
+                    cluster_to = cluster_end(cs, i, run_end);
+                }
+                resolve(cs.get(i..cluster_to).unwrap_or(&[c]), primary, prev.as_ref(), rtl, fallback)
             }
         };
         match pieces.last_mut() {
@@ -638,6 +643,31 @@ mod tests {
         let long = "\u{05D0}b ".repeat(MAX_CHARS);
         assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
+    }
+
+    /// A line of nothing but marks is laid out in one pass. Each mark used to look ahead to the
+    /// end of its cluster, rescanning the rest of the line: a `MAX_CHARS` run of Thai tone marks
+    /// took 50 million mark checks (0.6 s) instead of one pass.
+    #[test]
+    fn a_long_run_of_marks_is_itemized_in_one_pass() {
+        let no_fb = |_: char| None;
+        // Best of three, so a scheduling stall on a busy machine does not decide the comparison.
+        let timed = |s: &str| {
+            let mut best = std::time::Duration::MAX;
+            let mut shaped = Shaped::default();
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                shaped = shape_with(None, s, 1.0, 1.0, 0.0, None, &no_fb).expect("the line is laid out");
+                best = best.min(started.elapsed());
+            }
+            (best, shaped)
+        };
+        // A line of ordinary stroke glyphs does linear work; the marks may cost a few of those.
+        let (letters, _) = timed(&"A".repeat(MAX_CHARS));
+        let marks = format!("\u{0E48}{}", "\u{0E48}".repeat(MAX_CHARS - 1));
+        let (marked, shaped) = timed(&marks);
+        assert!(shaped.width > 0.0, "the line is laid out");
+        assert!(marked < letters * 10, "marks took {marked:?}, letters {letters:?}");
     }
 
     #[test]
