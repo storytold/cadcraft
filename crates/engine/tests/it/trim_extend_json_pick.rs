@@ -166,3 +166,12 @@ fn a_pick_on_the_line_far_from_the_origin_is_not_called_off_the_line() -> TestRe
         "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection.",
     )
 }
+
+#[test]
+fn the_extend_contract_names_the_polyline_end_rule() -> TestResult {
+    // An open polyline extends the end on the pick's side of its middle parameter (#2693), not
+    // the nearer end.
+    let extend = find_command("extend").ok_or("extend not registered")?;
+    assert!(extend.params.contains("middle"), "{}", extend.params);
+    Ok(())
+}

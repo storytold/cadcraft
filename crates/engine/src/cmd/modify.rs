@@ -99,7 +99,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 "{handle, pick: [x,y]} | {fence: [[x,y],...]} | {crossing: [[x,y],[x,y]]}; ",
                 "edges?: [hex], edgeMode?: \"extend\"|\"none\". ",
                 "For handle+pick: handle is the object to extend; pick points toward the boundary to extend to ",
-                "(normally a point on that boundary), selecting the nearer end of the object; ",
+                "(normally a point on that boundary), selecting the nearer end of the object ",
+                "(of an open polyline, the end on the pick's side of its middle parameter); ",
                 "edges are the boundary edges, and the nearest forward intersection is used."
             ))
             .interactive(|_| Ok(Box::new(TrimM::new(true)))),
