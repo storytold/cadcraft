@@ -1,10 +1,10 @@
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
-use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, records};
+use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
 
 pub(super) fn parse_entities(
-    recs: &[(String, Vec<Tag>)],
+    recs: &[(String, &[Tag])],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
@@ -91,7 +91,7 @@ pub(super) fn read_blocks(
     table_cells_left: &mut usize,
     skipped: &mut std::collections::BTreeMap<String, usize>,
 ) -> Vec<BlockDef> {
-    let recs = records(tags);
+    let recs = record_slices(tags);
     for (k, tg) in &recs {
         let t = T(tg);
         if k == "BLOCK" && t.i(70).unwrap_or(0) & 4 != 0 {
@@ -133,8 +133,8 @@ pub(super) fn read_blocks(
 
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
-    for (k, tg) in records(tags) {
-        objs.add(&k, &tg);
+    for (k, tg) in record_slices(tags) {
+        objs.add(&k, tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
