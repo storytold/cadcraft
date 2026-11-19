@@ -142,3 +142,27 @@ fn command_contracts_and_missing_pick_errors_explain_the_roles() -> TestResult {
         "invalid parameters for `extend`: `pick` ([x, y]) is required: point toward the boundary to extend to, selecting the nearer end",
     )
 }
+
+#[test]
+fn a_pick_on_the_line_far_from_the_origin_is_not_called_off_the_line() -> TestResult {
+    // Survey coordinates: rounding there is far above 1e-9 (the pick below is 3.7e-9 off the line
+    // after rounding), so a pick on the line still reads as on it.
+    let (x0, y0, k) = (123_456_789.1, 9_876_543.3, 33.3333);
+    let mut s = Session::new();
+    let a = s.doc_mut()?.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Line(Line { a: Vec3::new(x0, y0, 0.0), b: Vec3::new(x0 + 50.0, y0 + 30.0, 0.0) }),
+    )?;
+    let b = s.doc_mut()?.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Line(Line { a: Vec3::new(x0 + k, y0 - 20.0, 0.0), b: Vec3::new(x0 + k, y0 + 50.0, 0.0) }),
+    )?;
+    failure(
+        &mut s,
+        "trim",
+        json!({"handle": a.hex(), "edges": [b.hex()], "pick": [x0 + k, y0 + k * 0.6]}),
+        "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection.",
+    )
+}

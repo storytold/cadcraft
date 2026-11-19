@@ -128,7 +128,7 @@ pub(crate) fn json_pick_error(s: &Session, h: Handle, pick: Vec2, edges: Edges, 
             "No usable cutting-edge intersection in the interior of the object to trim."
         } else if pick_param.is_nan() {
             return error;
-        } else if !ln.at(pick_param).near(pick, 1e-9) {
+        } else if !ln.at(pick_param).near(pick, 1e-9_f64.max(64.0 * f64::EPSILON * (1.0 + pick.len().max(ln.a.len()).max(ln.b.len())))) {
             "The `pick` point is off the line and projects onto a cutting intersection; pick away from that intersection."
         } else {
             "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection."
