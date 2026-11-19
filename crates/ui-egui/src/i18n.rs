@@ -284,9 +284,7 @@ pub static LANGUAGES: [Language; 21] = [
     // עברית (Hebrew) is right-to-left; an installed Hebrew font (`theme::hebrew_font`) or
     // embedded `Hebr` face covers its glyphs, and the shell keeps egui's left-to-right run order.
     // Three integer plural forms: one (1), two (2), other (0, 3+).
-    Language {
-        code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 3, catalog: OnceLock::new()
-    },
+    Language { code: "he", name: "עברית", source: include_str!("i18n/he.tsv"), plural: plural_he, plural_forms: 3, catalog: OnceLock::new() },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
