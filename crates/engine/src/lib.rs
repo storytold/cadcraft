@@ -18,6 +18,7 @@ pub mod blockedit;
 pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
+pub mod drawlock;
 mod finite;
 pub mod grip_dims;
 pub mod grips;
