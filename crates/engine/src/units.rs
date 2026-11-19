@@ -196,7 +196,8 @@ fn wrap_full_turn(v: f64, full: f64, prec: usize) -> f64 {
     if reached && format!("{v:.prec$}") == full_text { 0.0 } else { v }
 }
 
-/// Parse a distance typed by the user: decimal, `1'6"`, `1'-6 1/2"`, `6 1/2`, `3/4`, `1e3`.
+/// Parse a distance typed by the user: decimal, `1'6"`, `1'-6 1/2"`, `1'6-1/2"`, `6 1/2`,
+/// `6-1/2`, `3/4`, `1e3`.
 pub fn parse_distance(s: &str) -> Option<f64> {
     let t = s.trim();
     if t.is_empty() {
@@ -246,15 +247,25 @@ fn parse_mixed(s: &str) -> Option<f64> {
             p.parse().ok()
         }
     };
-    match parts.as_slice() {
-        [a] => frac(a),
-        [a, b] => {
-            let (n, d) = b.split_once('/')?;
-            if n.trim().starts_with(['-', '+']) || d.trim().starts_with(['-', '+']) {
-                return None;
-            }
-            Some(a.parse::<f64>().ok()? + frac(b)?)
+    // A whole number and a fraction of it: `6 1/2`, or `6-1/2` as typed at the command line,
+    // where a space would end the input (#2896). The fraction is unsigned: `6 -1/2` and
+    // `6--1/2` are refused, not read as 5 1/2.
+    let whole_and_fraction = |a: &str, b: &str| -> Option<f64> {
+        let (n, d) = b.split_once('/')?;
+        if n.trim().starts_with(['-', '+']) || d.trim().starts_with(['-', '+']) {
+            return None;
         }
+        Some(a.parse::<f64>().ok()? + frac(b)?)
+    };
+    match parts.as_slice() {
+        // A number or fraction as it stands (`6.5`, `1e-3`, `3/4`); else a hyphen after the first
+        // character joins a whole number to its fraction. One with no fraction after it (`6-1`)
+        // is no distance. A leading minus was taken off by the caller.
+        [a] => frac(a).or_else(|| {
+            let i = a.get(1..)?.find('-')? + 1;
+            whole_and_fraction(a.get(..i)?, a.get(i + 1..)?)
+        }),
+        [a, b] => whole_and_fraction(a, b),
         _ => None,
     }
 }
@@ -625,6 +636,25 @@ mod tests {
         assert_eq!(parse_distance("1/0"), None);
         assert_eq!(parse_distance("abc"), None);
         assert_eq!(parse_distance(""), None);
+    }
+
+    /// #2896: the fraction joined to the whole inches by a hyphen, as typed at the command line
+    /// (a space there ends the input), in feet and inches or inches alone.
+    #[test]
+    fn parse_distance_takes_a_hyphenated_fraction() {
+        assert_eq!(parse_distance("6-1/2"), Some(6.5));
+        assert_eq!(parse_distance("1'6-1/2\""), Some(18.5));
+        assert_eq!(parse_distance("1'-6-1/2\""), Some(18.5));
+        assert_eq!(parse_distance("1'0-1/16\""), Some(12.0625));
+        assert_eq!(parse_distance("6-1/2\""), Some(6.5));
+        assert_eq!(parse_distance("-6-1/2"), Some(-6.5));
+        assert_eq!(parse_distance("-1'6-1/2\""), Some(-18.5));
+        // Still refused: no fraction after the hyphen, a signed or doubled one, a zero denominator.
+        for t in ["6-1", "6--1/2", "6-+1/2", "6-1/-2", "6-1/0", "6-", "6-/2", "6-1/2/3", "-6-"] {
+            assert_eq!(parse_distance(t), None, "{t}");
+        }
+        // A plain number with an exponent is still one number, in inches after feet too.
+        assert!(parse_distance("1'1e-3").is_some_and(|v| (v - 12.001).abs() < 1e-12));
     }
 
     #[test]
