@@ -185,11 +185,7 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
                 cut.iter().flat_map(|c| intersect_ext(&seg, c, false)).map(param).filter(|t| *t > 1e-9 && *t < sweep - 1e-9).collect();
             ts.sort_by(f64::total_cmp);
             // A pick off the arc is at the end it is nearer, round the circle.
-            let tp = match param(pick) {
-                t if t <= sweep => t,
-                t if t - sweep < TAU - t => sweep,
-                _ => 0.0,
-            };
+            let tp = crate::cmd::curves::seg_param(&seg, pick) * sweep;
             let found = ts.len();
             ts.retain(|t| (t - tp).abs() * ga.radius > ON_CUT);
             let lo = ts.iter().copied().filter(|t| *t < tp).fold(0.0, f64::max);
