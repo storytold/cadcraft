@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use cadcraft_dxf::{Section, Tag};
+use craft_dxf::{Section, Tag};
 
 /// Named object dictionary entries CADCraft writes itself from its model (plus every key that
 /// starts with `CADCRAFT`): they are read into the model, not kept raw. A change that starts
@@ -71,7 +71,7 @@ fn raw(t: &Tag) -> RawTag {
 /// A kept group with the value type its code has (so binary output encodes it right); text that
 /// doesn't parse as that type stays text.
 fn tag(r: &RawTag) -> Tag {
-    use cadcraft_dxf::{Kind, Value, kind_of};
+    use craft_dxf::{Kind, Value, kind_of};
     let v = r.value.trim();
     let value = match kind_of(r.code) {
         Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Value::Real),
@@ -339,7 +339,8 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).and_then(|(_, _, t)| head(t).handle);
     let root_entries = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, _, t)| entries(t)).unwrap_or_default();
-    let root_key = |h: &str| root_entries.iter().find(|(_, eh)| eh == h).map(|(k, _)| k.clone());
+    let root_keys = root_key_index(&root_entries);
+    let root_key = |h: &str| root_keys.get(h).map(|k| (*k).to_string());
     // An extension dictionary of an entity or record (not of another object).
     let is_xdict = |k: usize| {
         let Some((_, _, t)) = objects.get(k) else { return false };
@@ -454,6 +455,10 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     if !f.is_empty() {
         f.version = file_version(secs);
+    }
+    // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
+    f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
+    if !f.is_empty() || !f.handles.is_empty() {
         d.foreign = Arc::new(f);
     }
 }
@@ -494,6 +499,16 @@ fn extension_dictionaries(
     dictionaries
 }
 
+/// The root dictionary's key for each entry handle (the first key when several name one handle),
+/// built once: a lookup per object scanning the entries made a large dictionary quadratic.
+fn root_key_index(root_entries: &[(String, String)]) -> HashMap<&str, &str> {
+    let mut index = HashMap::with_capacity(root_entries.len());
+    for (key, handle) in root_entries {
+        index.entry(handle.as_str()).or_insert(key.as_str());
+    }
+    index
+}
+
 /// Determine which objects belong to unmodelled dictionary entries or owners.
 fn retained_objects(
     objects: &[(String, usize, &[Tag])],
@@ -504,7 +519,8 @@ fn retained_objects(
     root_entries: &[(String, String)],
     xdict_of: &HashMap<String, String>,
 ) -> HashMap<usize, bool> {
-    let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
+    let root_keys = root_key_index(root_entries);
+    let root_key = |handle: &str| root_keys.get(handle).copied();
     let is_xdict = |index: usize| {
         let Some((_, _, tags)) = objects.get(index) else { return false };
         let header = head(tags);
@@ -757,6 +773,33 @@ fn written_records(tags: &[Tag]) -> Vec<Rec> {
         }
     }
     out
+}
+
+/// A non-graphic record as written: its type, its groups after the type (its handle in group 5)
+/// and its role when it has one.
+pub type ObjectRecord = (String, Vec<Tag>, Option<ForeignKey>);
+
+/// The drawing's non-graphic records as a DXF file of it holds them: the tables and their
+/// records, the BLOCK records and the objects, in file order, each with its role (a table record,
+/// a block, the named object dictionary or one of its entries) when it has one. Their handles are
+/// the written file's: the same for the same drawing. AutoLISP's dictionary and table functions
+/// (`namedobjdict`, `dictsearch`, `tblobjname`, `entget` of a non-graphic object) read it.
+pub fn object_records(d: &Drawing) -> Vec<ObjectRecord> {
+    let tags = crate::dxf_write::tags(d, craft_dxf::Version::R2018);
+    let recs = written_records(&tags);
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let by_sec = |name: &str| -> Recs {
+        recs.iter().filter(|r| r.sec == name && r.kind != "SECTION" && r.kind != "ENDSEC").map(|r| (r.kind.clone(), r.start, body(r))).collect()
+    };
+    let (tables, blocks, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("OBJECTS"));
+    let ids = identities(&tables, &blocks, &objects);
+    let tables = tables.iter().filter(|(k, _, _)| k != "ENDTAB");
+    let blocks = blocks.iter().filter(|(k, _, _)| k == "BLOCK");
+    tables
+        .chain(blocks)
+        .chain(objects.iter())
+        .map(|(kind, _, t)| (kind.clone(), t.to_vec(), head(t).handle.and_then(|h| ids.get(&h).cloned())))
+        .collect()
 }
 
 /// Remaps the kept data's handles onto a written file.
