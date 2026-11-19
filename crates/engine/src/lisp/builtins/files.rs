@@ -77,6 +77,12 @@ pub(super) fn findfile(a: &[Value]) -> R {
     Ok(if file_exists(&p) { Value::Str(p) } else { Value::Nil })
 }
 
+pub(super) fn vl_file_systime(a: &[Value]) -> R {
+    arity(a, 1, 1)?;
+    let p = string(&a[0])?;
+    Ok(file_systime(&p).map_or(Value::Nil, |parts| Value::list(parts.into_iter().map(Value::Int))))
+}
+
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
@@ -138,6 +144,56 @@ fn file_exists(_path: &str) -> bool {
     false
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn file_systime(path: &str) -> Option<[i32; 8]> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let (secs, nanos) = match modified.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => (i64::try_from(d.as_secs()).ok()?, d.subsec_nanos()),
+        Err(e) => {
+            let d = e.duration();
+            let s = i64::try_from(d.as_secs()).ok()?;
+            if d.subsec_nanos() == 0 { (-s, 0) } else { ((-s).checked_sub(1)?, 1_000_000_000 - d.subsec_nanos()) }
+        }
+    };
+    let utc = chrono::DateTime::from_timestamp(secs, nanos)?;
+    systime_parts(utc, local_offset(utc))
+}
+
+/// `(year month day-of-week day hour minute second millisecond)` for `utc` read in `offset`'s zone,
+/// day of week 0 = Sunday. Visual LISP reports the modification time in local time, as the
+/// operating system shows it; UTC is the fallback when the system zone is unknown.
+#[cfg(not(target_arch = "wasm32"))]
+fn systime_parts(utc: chrono::DateTime<chrono::Utc>, offset: Option<chrono::FixedOffset>) -> Option<[i32; 8]> {
+    use chrono::{Datelike, Timelike};
+    let dt = match offset {
+        Some(offset) => utc.with_timezone(&offset),
+        None => utc.fixed_offset(),
+    };
+    let dow = i32::try_from(dt.weekday().num_days_from_sunday()).ok()?;
+    let month = i32::try_from(dt.month()).ok()?;
+    let day = i32::try_from(dt.day()).ok()?;
+    let hour = i32::try_from(dt.hour()).ok()?;
+    let minute = i32::try_from(dt.minute()).ok()?;
+    let second = i32::try_from(dt.second()).ok()?;
+    let millis = i32::try_from((dt.nanosecond() / 1_000_000).min(999)).ok()?;
+    Some([dt.year(), month, dow, day, hour, minute, second, millis])
+}
+
+/// The local time zone's offset from UTC at `utc`, daylight saving included, or `None` when the
+/// system zone can't be read or has no offset for that instant. chrono's `Local` carries internal
+/// `expect`s (unreadable zone data, a year outside the zone's transitions) and a file's timestamp
+/// is arbitrary, so it is fenced here: a failure falls back to UTC and never crashes.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_offset(utc: chrono::DateTime<chrono::Utc>) -> Option<chrono::FixedOffset> {
+    use chrono::Offset as _;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| utc.with_timezone(&chrono::Local).offset().fix())).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn file_systime(_path: &str) -> Option<[i32; 8]> {
+    None
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -161,5 +217,21 @@ mod tests {
         write_text_file(f.to_str().unwrap(), "+", true);
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "new+");
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod systime_tests {
+    use super::*;
+
+    /// Visual LISP reports local time, so a UTC instant is shifted before its parts are read:
+    /// 2024-01-01 00:30 UTC is 2023-12-31 19:30, a Sunday, at UTC-05:00, and stays UTC when the
+    /// system zone is unknown.
+    #[test]
+    fn parts_are_read_in_the_local_zone_not_utc() {
+        let utc = chrono::DateTime::from_timestamp(1_704_069_000, 0).unwrap();
+        let west = chrono::FixedOffset::west_opt(5 * 3600).unwrap();
+        assert_eq!(systime_parts(utc, Some(west)), Some([2023, 12, 0, 31, 19, 30, 0, 0]));
+        assert_eq!(systime_parts(utc, None), Some([2024, 1, 1, 1, 0, 30, 0, 0]));
     }
 }
