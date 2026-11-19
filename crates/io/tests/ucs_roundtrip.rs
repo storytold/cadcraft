@@ -414,6 +414,29 @@ fn a_stale_ucs_name_copy_is_not_brought_back() {
     assert_eq!(cadcraft_io::read_dxf(same.as_bytes()).unwrap().header.str("UCSNAME", ""), "SITE");
 }
 
+/// A layout's UCS far from the World origin keeps its name (and group 345) on an exact save, and
+/// loses both when the layout moves by 0.5 at 1e12, in the writer and in the reader.
+#[test]
+fn a_far_layout_ucs_keeps_its_name_only_where_it_is() {
+    let far = Ucs { name: "FAR".into(), origin: Vec3::new(1e12, 0.0, 0.0), x_axis: Vec3::new(1.0, 0.0, 0.0), y_axis: Vec3::new(0.0, 1.0, 0.0) };
+    let mut d = Drawing::default();
+    d.ucss.push(far.clone());
+    d.layouts[0].ucs = Some(far.clone());
+    let name = d.layouts[0].name.clone();
+    let text = cadcraft_io::write_dxf(&d);
+    assert!(group(&layout_record(&text, &name), "345").is_some(), "exact save: pointed at FAR");
+    assert_eq!(cadcraft_io::read_dxf(text.as_bytes()).unwrap().layouts[0].ucs.as_ref().unwrap().name, "FAR");
+    // Writer: the layout moved 0.5 since it was named FAR.
+    d.layouts[0].ucs = Some(Ucs { origin: Vec3::new(1e12 + 0.5, 0.0, 0.0), ..far.clone() });
+    let moved = cadcraft_io::write_dxf(&d);
+    assert!(group(&layout_record(&moved, &name), "345").is_none(), "moved 0.5 at 1e12: not FAR");
+    assert!(cadcraft_io::read_dxf(moved.as_bytes()).unwrap().layouts[0].ucs.as_ref().unwrap().name.is_empty());
+    // Reader: a file whose layout origin (group 13) moved but whose 345 still names FAR.
+    let stale = replace_group(&text, ("1", &name), "13", "1000000000000.5");
+    let u = cadcraft_io::read_dxf(stale.as_bytes()).unwrap().layouts[0].ucs.clone().unwrap();
+    assert!(u.name.is_empty(), "{u:?}");
+}
+
 /// The `*ACTIVE` VPORT record's group 74 (UCSICON setting) in DXF text.
 fn active_ucsicon(text: &str) -> Option<String> {
     let active = records(text, "VPORT").into_iter().find(|r| group(r, "2").is_some_and(|n| n.eq_ignore_ascii_case("*ACTIVE")))?;

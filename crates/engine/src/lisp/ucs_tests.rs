@@ -177,6 +177,33 @@ fn getangle_and_getdist_measure_in_the_ucs() {
     assert_eq!(ok(&mut s, "(getvar \"WORLDUCS\")"), "0");
 }
 
+#[test]
+fn entsel_and_getcorner_answer_in_the_ucs() {
+    let mut s = session();
+    s.execute("line", &json!({"points": [[100, 60], [100, 80]]})).unwrap();
+    turned(&mut s);
+    // entsel: the object, and the pick point in the UCS.
+    s.cmdline("(setq e (entsel))").unwrap();
+    s.input(crate::Input::Point(Vec2::new(100.0, 70.0))).unwrap();
+    let v = to_text(&s.lisp_var("E"), true);
+    assert!(v.contains("<Entity name"), "{v}");
+    let p = ok(&mut s, "(cadr e)");
+    assert!(close(pt(&p), [20.0, 0.0, 0.0]), "{p}");
+    // entsel with the point typed in the UCS picks the object at its world place.
+    s.cmdline("(setq e2 (entsel))").unwrap();
+    s.cmdline("15,0").unwrap();
+    assert!(to_text(&s.lisp_var("E2"), true).contains("<Entity name"), "{}", to_text(&s.lisp_var("E2"), true));
+    // getcorner: the base point is a UCS point; the answer is in the UCS.
+    s.cmdline("(setq c (getcorner '(0 0) \"Corner: \"))").unwrap();
+    s.input(crate::Input::Point(Vec2::new(95.0, 60.0))).unwrap();
+    assert!(close(pt(&to_text(&s.lisp_var("C"), true)), [10.0, 5.0, 0.0]), "{}", to_text(&s.lisp_var("C"), true));
+    // A miss asks again rather than answering.
+    s.cmdline("(setq e3 (entsel))").unwrap();
+    s.input(crate::Input::Point(Vec2::new(500.0, 500.0))).unwrap();
+    assert!(s.lisp_running(), "Missed, try again");
+    s.cancel();
+}
+
 fn model_lines(s: &Session) -> Vec<(Vec2, Vec2)> {
     s.doc()
         .unwrap()

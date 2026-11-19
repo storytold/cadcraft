@@ -63,9 +63,23 @@ pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
     p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
 }
 
+/// The whole degrees (0–359) a tracking tooltip shows for the path `from` → `to`, measured from
+/// the current UCS's X axis at `ucs` radians.
+pub(super) fn tooltip_angle(from: Vec2, to: Vec2, ucs: f64) -> i64 {
+    ((from.angle_to(to) - ucs).to_degrees().round() as i64).rem_euclid(360)
+}
+
 /// Acquired tracking points (small `+`, `//` for a Parallel line), the dotted paths the cursor
 /// is on and the tooltip naming them ("Endpoint: 5.0000 < 90°").
-pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquired], track: Option<&snap::tracking::Track>, far: f64) {
+/// `ucs`: the current UCS's X axis (radians), which the tooltips measure angles from.
+pub(super) fn draw_tracking(
+    p: &egui::Painter,
+    xf: &Xf,
+    acquired: &[snap::tracking::Acquired],
+    track: Option<&snap::tracking::Track>,
+    far: f64,
+    ucs: f64,
+) {
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
     let st = Stroke::new(1.0, t.snap);
@@ -100,10 +114,7 @@ pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracki
             }
         };
         p.extend(Shape::dotted_line(&pts, t.snap, 6.0, 1.0));
-        let (distance, angle) = (
-            cadcraft_engine::units::format_distance(path.from.dist(tr.point), 2, 4),
-            (path.from.angle_to(tr.point).to_degrees().round() as i64).rem_euclid(360),
-        );
+        let (distance, angle) = (cadcraft_engine::units::format_distance(path.from.dist(tr.point), 2, 4), tooltip_angle(path.from, tr.point, ucs));
         tips.push(if path.name == "Polar" {
             crate::tf!("Polar: {distance} < {angle}°", distance = distance, angle = angle)
         } else {

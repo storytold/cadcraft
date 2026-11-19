@@ -534,7 +534,7 @@ fn paint_pointer_overlay(
     let view = frame.view;
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
+        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0, app.session.input_ucs().rotation());
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
