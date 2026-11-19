@@ -699,11 +699,11 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     // Paper units: what one paper-space unit is on this layout, whatever the paper's own family
     // (an ARCH D sheet can be drawn in millimetres, #3249).
     if let Some(v) = p.get("paperUnits") {
-        page.paper_mm = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+        page.paper_mm = Some(match v.as_str().map(str::to_ascii_lowercase).as_deref() {
             Some("mm" | "millimeters" | "millimetres") => true,
             Some("in" | "inch" | "inches") => false,
             _ => return Err(bad(cmd, "`paperUnits` must be \"mm\" or \"inches\"")),
-        };
+        });
     }
     if let Some(m) = p.get("margins") {
         let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();

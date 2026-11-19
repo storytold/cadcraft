@@ -19,7 +19,7 @@ fn drawing() -> Drawing {
         height_mm: 297.0,
         margins_mm: [0.0; 4],
         landscape: true,
-        paper_mm: true,
+        paper_mm: Some(true),
         ..PageSetup::default()
     };
     d.layouts.push(l);
@@ -57,7 +57,7 @@ fn plot_paper_units_round_trip_through_dxf() {
     // Written as group 72 = 1 (millimetres) and read back as such.
     let back = read(write_dxf(&drawing()).as_bytes(), "x.dxf").unwrap();
     let page = &back.layouts.iter().find(|l| l.name == "SHEET").unwrap().page;
-    assert!(page.paper_mm);
+    assert_eq!(page.paper_mm, Some(true));
     assert_eq!(cadcraft_render::sheet(&back, "SHEET").unwrap().unit_mm, 1.0);
     // A metric drawing's layouts stay in millimetres even from files that say 72 = 0 (what
     // earlier CADCraft versions wrote for every layout).

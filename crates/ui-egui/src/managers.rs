@@ -514,7 +514,8 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let Some((_, name, page)) = layouts.iter().find(|l| l.1 == sel) else { return };
             right.label(RichText::new(format!("Page setup of {name}")).strong());
             // Layout plotting always prints the whole sheet, so only that area is offered.
-            let rows = PageRows { areas: &["layout"], scale: true, center: true, units: true };
+            let paper_mm = cadcraft_render::paper::page_unit_mm(d, page) == 1.0;
+            let rows = PageRows { areas: &["layout"], scale: true, center: true, paper_mm: Some(paper_mm) };
             egui::Grid::new("pagesetup_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("pagesetup", name)), page, &rows, &choices, None) {
                     action = Some(("pagesetup", json!({ "layout": name, k: v })));
@@ -534,8 +535,9 @@ struct PageRows {
     areas: &'static [&'static str],
     scale: bool,
     center: bool,
-    /// Paper units (inches or millimetres): the layout's page setup only, not a plot.
-    units: bool,
+    /// Effective paper units (`Some(true)` = millimetres, `Some(false)` = inches) for the layout's
+    /// page setup, or `None` to hide the row (the Plot dialog).
+    paper_mm: Option<bool>,
 }
 
 /// The devices and plot style tables the page-setup rows offer.
@@ -656,13 +658,13 @@ fn page_rows(
         }
     });
     ui.end_row();
-    if rows.units {
+    if let Some(mm) = rows.paper_mm {
         ui.label(crate::tl!("Paper units"));
         ui.horizontal(|ui| {
-            if ui.radio(!page.paper_mm, crate::tl!("Inches")).clicked() && page.paper_mm {
+            if ui.radio(!mm, crate::tl!("Inches")).clicked() && mm {
                 change = Some(("paperUnits", json!("inches")));
             }
-            if ui.radio(page.paper_mm, crate::tl!("Millimeters")).clicked() && !page.paper_mm {
+            if ui.radio(mm, crate::tl!("Millimeters")).clicked() && !mm {
                 change = Some(("paperUnits", json!("mm")));
             }
         })
@@ -980,9 +982,9 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         ui.horizontal_top(|ui| {
             egui::Grid::new("plot_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                 let rows = if model {
-                    PageRows { areas: MODEL_AREAS, scale: true, center: false, units: false }
+                    PageRows { areas: MODEL_AREAS, scale: true, center: false, paper_mm: None }
                 } else {
-                    PageRows { areas: &["layout"], scale: false, center: false, units: false }
+                    PageRows { areas: &["layout"], scale: false, center: false, paper_mm: None }
                 };
                 let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {

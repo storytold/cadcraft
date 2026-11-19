@@ -1,7 +1,7 @@
 //! Paper sizes and the layout sheet (paper rectangle, printable area) for paper space.
 //!
-//! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and on layouts whose
-//! page setup is in millimetres, and inches otherwise. The sheet's lower-left corner is the paper-space origin.
+//! Paper-space units follow a layout's explicit page-setup choice (millimetres or inches), and
+//! otherwise `MEASUREMENT` (millimetres when 1, inches otherwise). The sheet's lower-left corner is the paper-space origin.
 
 use cadcraft_doc::{Drawing, PageSetup};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -81,11 +81,15 @@ pub fn paper_unit_mm(d: &Drawing) -> f64 {
     if d.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 25.4 }
 }
 
-/// Millimetres per paper-space unit on a layout with page setup `page`: millimetres when the
-/// page says so (plot paper units mm), else as the drawing's MEASUREMENT says. Drawings from
-/// AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
+/// Millimetres per paper-space unit on a layout with page setup `page`: `1.0` when the page
+/// chooses millimetres, `25.4` when it chooses inches, else as the drawing's `MEASUREMENT`
+/// says. Drawings from AutoCAD often have `MEASUREMENT` 0 with layouts in millimetres (#1058).
 pub fn page_unit_mm(d: &Drawing, page: &PageSetup) -> f64 {
-    if page.paper_mm { 1.0 } else { paper_unit_mm(d) }
+    match page.paper_mm {
+        Some(true) => 1.0,
+        Some(false) => 25.4,
+        None => paper_unit_mm(d),
+    }
 }
 
 /// Millimetres per paper-space unit on the layout holding the paper-space entity `h` (the
@@ -153,6 +157,23 @@ mod tests {
         let hostile = PageSetup { width_mm: f64::NAN, height_mm: -1.0, margins_mm: [1e9; 4], ..PageSetup::default() };
         let s = Sheet::from_page(&hostile, 0.0);
         assert!(s.size.x > 0.0 && s.printable == s.bounds());
+    }
+
+    #[test]
+    fn page_unit_mm_honours_explicit_choice_and_falls_back_to_measurement() {
+        let mut imperial = Drawing::new_imperial();
+        imperial.header.set_i64("MEASUREMENT", 0);
+        let mut metric = Drawing::new_metric();
+        metric.header.set_i64("MEASUREMENT", 1);
+        let unset = PageSetup::default();
+        let mm = PageSetup { paper_mm: Some(true), ..PageSetup::default() };
+        let inches = PageSetup { paper_mm: Some(false), ..PageSetup::default() };
+        assert_eq!(page_unit_mm(&imperial, &unset), 25.4);
+        assert_eq!(page_unit_mm(&imperial, &mm), 1.0);
+        assert_eq!(page_unit_mm(&imperial, &inches), 25.4);
+        assert_eq!(page_unit_mm(&metric, &unset), 1.0);
+        assert_eq!(page_unit_mm(&metric, &mm), 1.0);
+        assert_eq!(page_unit_mm(&metric, &inches), 25.4);
     }
 }
 
