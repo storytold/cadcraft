@@ -93,6 +93,50 @@ fn prim_to_segments(p: &Prim) -> Vec<Segment> {
     }
 }
 
+/// Explain the generic line failures for JSON handle+pick calls. Other curves retain their
+/// own diagnostics: their nearest-parameter rules do not prove that a pick is invalid.
+pub(crate) fn json_pick_error(s: &Session, h: Handle, pick: Vec2, edges: Edges, extending: bool, error: EngineError) -> EngineError {
+    let generic = if extending { "Object does not intersect an edge." } else { "Object does not intersect a cutting edge." };
+    if !matches!(&error, EngineError::Other(message) if message == generic) {
+        return error;
+    }
+    let Ok(d) = s.doc() else { return error };
+    let Some(e) = d.entity(h) else { return error };
+    let EntityKind::Line(l) = &e.kind else { return error };
+    let Ok(cut) = edge_segments(s, edges, h) else { return error };
+    let ln = Line::new(l.a.xy(), l.b.xy());
+    let message = if extending {
+        // The selected end already failed. Check the opposite end with the same ray and
+        // forward-intersection rules before attributing the failure to the pick's end choice.
+        let (fixed, end) = if pick.dist(ln.b) < pick.dist(ln.a) { (ln.b, ln.a) } else { (ln.a, ln.b) };
+        let dir = (end - fixed).normalized();
+        let ray = Segment::Line(Line::new(end, end + dir * 1e8));
+        let opposite_hit = cut.iter().flat_map(|c| intersect_ext(&ray, c, false)).any(|x| (x - end).dot(dir) > 1e-9);
+        if opposite_hit {
+            "The `pick` point selects an end with no boundary ahead; choose `pick` toward the boundary to extend to."
+        } else {
+            "No usable boundary intersection was found for either end of the object to extend."
+        }
+    } else {
+        let pick_param = ln.param_of(pick).clamp(0.0, 1.0);
+        let has_cut = cut.iter().flat_map(|c| intersect_ext(&Segment::Line(ln), c, false)).any(|x| {
+            let t = ln.param_of(x);
+            t > 1e-9 && t < 1.0 - 1e-9
+        });
+        if !has_cut {
+            "No usable cutting-edge intersection in the interior of the object to trim."
+        } else if pick_param.is_nan() {
+            return error;
+        } else if !ln.at(pick_param).near(pick, 1e-9) {
+            "The `pick` point is off the line and projects onto a cutting intersection; pick away from that intersection."
+        } else {
+            "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection."
+        }
+    };
+    EngineError::Other(message.into())
+}
+
+/// Trim `h` at the piece containing `pick`. Returns the handles that replace it.
 /// Trim `h` at the piece containing `pick`. Returns what it became: its pieces, `h` first
 /// ([`replace_with_pieces`]).
 pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Result<Vec<Handle>> {

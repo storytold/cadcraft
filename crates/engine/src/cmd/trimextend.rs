@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::curves::KW;
 use super::helpers::{line, lwpoly, rect_vertices};
-use super::modify::{CUT_ONCE, Edges, extend, trim};
+use super::modify::{CUT_ONCE, Edges, extend, json_pick_error, trim};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -205,8 +205,19 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
         return Ok(json!({ key: n }));
     }
     let h = super::targets(s, p)?.first().copied().ok_or_else(|| bad(cmd, "`handle` is required"))?;
-    let pick = point_param(p, "pick").ok_or_else(|| bad(cmd, "`pick` ([x, y]) is required"))?;
-    let r = apply(s, h, pick, extending, edges, quick)?;
+    let pick = point_param(p, "pick").ok_or_else(|| {
+        bad(
+            cmd,
+            if extending {
+                "`pick` ([x, y]) is required: point toward the boundary to extend to, selecting the nearer end"
+            } else {
+                "`pick` ([x, y]) is required: select the portion of the object to trim away"
+            },
+        )
+    })?;
+    // Diagnose only an existing single-pick JSON failure. Successful calls, Quick-mode
+    // erasure, fence/crossing and the interactive command keep their existing behavior.
+    let r = apply(s, h, pick, extending, edges, quick).map_err(|e| json_pick_error(s, h, pick, edges, extending, e))?;
     if extending { Ok(Value::Null) } else { Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() })) }
 }
 
