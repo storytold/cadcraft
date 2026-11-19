@@ -1226,6 +1226,9 @@ fn entget_of_an_entity_kept_as_unsupported_leaves_out_reactors_and_xdata_only() 
                 tag(102, "{ACAD_REACTORS"),
                 tag(330, "1F"),
                 tag(102, "}"),
+                tag(102, "{ACAD_XDICTIONARY"),
+                tag(360, "2A"),
+                tag(102, "}"),
                 tag(100, "AcDbEntity"),
                 tag(100, "AcDbOle2Frame"),
                 tag(70, "2"),
@@ -1238,10 +1241,47 @@ fn entget_of_an_entity_kept_as_unsupported_leaves_out_reactors_and_xdata_only() 
     let count = |code: i32| format!("(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) {code}) (setq n (1+ n)))) n)");
     assert_eq!(ok(&mut s, &count(102)), "0");
     assert_eq!(ok(&mut s, &count(330)), "0");
+    assert_eq!(ok(&mut s, &count(360)), "0");
     assert_eq!(ok(&mut s, &count(1001)), "0");
+    assert_eq!(ok(&mut s, &count(1000)), "0");
     // The groups after the reactor block's closing `}` are listed and filter.
     assert_eq!(ok(&mut s, &count(100)), "2");
     assert_eq!(ok(&mut s, "(cdr (assoc 70 (entget (entlast))))"), "2");
     assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 2))))"), "1");
     assert_eq!(ok(&mut s, "(ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 3)))"), "nil");
+}
+
+#[test]
+fn an_entity_kept_as_unsupported_in_paper_space_has_the_paper_space_flag() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = |tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let d = s.doc_mut().unwrap();
+        d.add(&Space::Model, Common::default(), kind(vec![tag(100, "AcDbEntity"), tag(70, "1")])).unwrap();
+        d.add(&Space::Paper("Layout1".into()), Common::default(), kind(vec![tag(100, "AcDbEntity"), tag(67, "1"), tag(70, "2")])).unwrap();
+        d.add(&Space::Paper("Layout1".into()), Common::default(), kind(vec![tag(70, "3")])).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 67 1))))"), "2");
+    let count = "(progn (setq n 0) (foreach g (entget (ssname (ssget \"X\" (list (cons 70 2))) 0)) (if (= (car g) 67) (setq n (1+ n)))) n)";
+    assert_eq!(ok(&mut s, count), "1", "the flag is listed once");
+    assert_eq!(ok(&mut s, "(assoc 67 (entget (ssname (ssget \"X\" (list (cons 70 1))) 0)))"), "nil");
+}
+
+#[test]
+fn entget_of_an_entity_kept_as_unsupported_counts_its_text_against_the_run() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let mut tags = vec![RawTag { code: 100, value: "AcDbOle2Frame".into() }];
+        tags.extend((0..8).map(|_| RawTag { code: 310, value: "A".repeat(254) }));
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap();
+    }
+    s.lisp.limits.string_bytes = 64 << 10;
+    let chunks = "(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) 310) (setq n (1+ n)))) n)";
+    assert_eq!(ok(&mut s, chunks), "8", "a small budget is enough for the list");
+    s.lisp.limits.string_bytes = 1024;
+    let e = eval(&mut s, "(entget (entlast))").unwrap_err();
+    assert!(e.contains("too much text"), "{e}");
 }
