@@ -9,3 +9,4 @@
 *.swp
 /apps/cadcraft-web/dist/
 /.claude/worktrees/
+/vendor/
