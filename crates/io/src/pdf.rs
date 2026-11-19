@@ -459,6 +459,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         let mut writer = Writer::new(settings, metadata);
         let mut fonts = fonts::Fonts::new(!text_as_geometry);
         let mut groups = Groups::default();
+        let mut images: std::collections::HashMap<(usize, u32, u32), KrillaImage> = std::collections::HashMap::new();
         // Link annotations of the whole file: each page keeps its own copy of the targets, so the
         // pages times the links must not multiply without a bound.
         let mut annotations_left = MAX_FILE_ANNOTATIONS;
@@ -472,7 +473,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
             let doc = writer.document_mut();
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
-            write_page(doc, &page, &groups, &mut fonts)?;
+            write_page(doc, &page, &groups, &mut fonts, &mut images)?;
         }
         if items.len() == 1 && !groups.ids.is_empty() {
             writer.document_mut().set_optional_content_page_mode(true);
@@ -755,7 +756,13 @@ fn circle_path(x: f32, y: f32, r: f32) -> Option<Path> {
 }
 
 /// Write one sheet as a page: its size, label, link annotations and marks.
-fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+fn write_page(
+    doc: &mut kr::Document,
+    p: &SheetPage,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+    images: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
+) -> std::result::Result<(), Failure> {
     let (w, h) = (p.media.x as f32, p.media.y as f32);
     let label = PageLabel::new(None, Some(p.label.chars().take(MAX_TEXT).collect()), None);
     let settings = PageSettings::from_wh(w, h).ok_or_else(|| IoError::Format("the sheet has no area".into()))?.with_page_label(label);
@@ -774,7 +781,7 @@ fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mu
     let mut drawn = Ok(());
     if let Some(clip) = rect_path(p.clip_pt.min, p.clip_pt.max) {
         surface.push_clip_path(&clip, &FillRule::NonZero);
-        drawn = marks(&mut surface, p, groups, fonts);
+        drawn = marks(&mut surface, p, groups, fonts, images);
         surface.pop();
     }
     surface.pop();
@@ -968,13 +975,18 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
-fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+fn marks(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+    images: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
+) -> std::result::Result<(), Failure> {
     let list = &p.list;
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
     let mut layer: Option<OcgId> = None;
-    let mut images: std::collections::HashMap<(usize, u32, u32), KrillaImage> = std::collections::HashMap::new();
     for (i, prim) in list.prims.iter().enumerate() {
         let want = list.prim_layers.get(i).and_then(|l| groups.ids.get(l)).copied();
         if want != layer {
@@ -1009,7 +1021,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
             Kind::Image { index } => {
                 flush(s, &mut batch);
                 if let Some(img) = list.images.get(index as usize) {
-                    draw_raster_image(s, p, img, t, &mut images);
+                    draw_raster_image(s, p, img, t, images);
                 }
             }
         }
