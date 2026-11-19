@@ -55,6 +55,7 @@ pub(super) fn parse_entities(
         }
         if let Some((c, mut k)) = kindent {
             let h = match handle {
+                // A file's handles keep their identity, however high they are (#913, #939).
                 Some(h) => {
                     d.bump_handseed(h);
                     h
