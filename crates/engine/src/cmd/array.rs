@@ -271,6 +271,15 @@ pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &
     best.map(|b| b.0)
 }
 
+/// `keyPoint` of a JSON form: absent or null is none; anything else must be a point, rather than
+/// be taken as none and the base point found another way.
+pub(crate) fn key_point_param(cmd: &str, p: &Value) -> Result<Option<Vec2>> {
+    match p.get("keyPoint") {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => point_param(p, "keyPoint").map(Some).ok_or_else(|| bad(cmd, "`keyPoint` must be a point [x, y]")),
+    }
+}
+
 /// The key point of objects `hs` in the drawing nearest `at`.
 pub(crate) fn key_point_of(d: &Drawing, hs: &[Handle], at: Vec2) -> Result<Vec2> {
     nearest_key_point(hs.iter().filter_map(|h| d.entity(*h)).map(|e| &**e), &Mat3::IDENTITY, at)
@@ -416,7 +425,7 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
         row_elevation: f64_or(p, "rowElevation", 0.0),
     });
     let rs = f64_or(p, "rowSpacing", 1.0);
-    let base = match (point_param(p, "keyPoint"), point_param(p, "base")) {
+    let base = match (key_point_param("arrayrect", p)?, point_param(p, "base")) {
         (Some(k), _) => key_point_of(s.doc()?, &hs, k)?,
         (None, Some(b)) => b,
         (None, None) => Some(bounds(s.doc()?, &hs).center()).filter(|c| c.is_finite()).unwrap_or_default(),
@@ -433,7 +442,7 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let rows = count_or("arraypolar", p, "rows", 1)?;
     let levels = count_or("arraypolar", p, "levels", 1)?;
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
-    let base = match point_param(p, "keyPoint") {
+    let base = match key_point_param("arraypolar", p)? {
         Some(k) => key_point_of(s.doc()?, &hs, k)?,
         None => point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c),
     };

@@ -153,3 +153,18 @@ fn hostile_key_points_never_panic() {
     assert!(s.cmdline("1e300,1e300").is_err() || s.running.is_some());
     s.cancel();
 }
+
+/// A `keyPoint` that is there but isn't a point is refused, not taken as no key point (which
+/// would make the array at another base point).
+#[test]
+fn a_key_point_that_is_not_a_point_is_refused() {
+    let mut s = Session::new();
+    let l = source_line(&mut s);
+    assert!(s.execute("arrayrect", &json!({"handles": [l], "cols": 2, "rows": 1, "keyPoint": ["bad", 1]})).is_err());
+    assert!(s.execute("arraypolar", &json!({"handles": [l], "center": [-10, 0], "count": 3, "keyPoint": "x"})).is_err());
+    assert!(s.doc().unwrap().model.iter().all(|e| s.doc().unwrap().array_params(e).is_none()), "no array made");
+    let h = handle(&s.execute("arrayrect", &json!({"handles": [l], "cols": 2, "rows": 1, "colSpacing": 5, "base": [0, 0]})).unwrap());
+    assert!(s.execute("arrayedit", &json!({"handle": h.hex(), "keyPoint": [1]})).is_err());
+    let c = s.execute("circle", &json!({"center": [50, 50], "radius": 1})).unwrap()["handle"].clone();
+    assert!(s.execute("arrayedit", &json!({"handle": h.hex(), "replace": {"handles": [c], "keyPoint": {}, "items": [[1, 0, 0]]}})).is_err());
+}

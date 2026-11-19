@@ -18,7 +18,9 @@ use super::super::helpers::v3;
 use super::super::machines::{SelOutcome, SelectPhase, number};
 use super::super::{CommandSpec, bad, bool_or, point_param, targets};
 
-use super::{KEY_POINT_PROMPT, KEYWORDS, angle, check_size, count, fmt, key_point_of, nearest_key_point, nesting, other, yes, yes_no};
+use super::{
+    KEY_POINT_PROMPT, KEYWORDS, angle, check_size, count, fmt, key_point_of, key_point_param, nearest_key_point, nesting, other, yes, yes_no,
+};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub(super) fn specs() -> Vec<CommandSpec> {
@@ -472,7 +474,7 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(r) = p.get("replace").filter(|v| !v.is_null()) {
         let hs = targets(s, r)?;
-        let base = match point_param(r, "keyPoint") {
+        let base = match key_point_param("arrayedit", r)? {
             Some(k) => key_point_of(s.doc()?, &hs, k)?,
             None => point_param(r, "base").unwrap_or_else(|| s.doc().map(|d| centroid(d, &hs)).unwrap_or_default()),
         };
@@ -493,7 +495,7 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(b) = point_param(p, "base") {
         rebase(s, h, b)?;
     }
-    if let Some(k) = point_param(p, "keyPoint") {
+    if let Some(k) = key_point_param("arrayedit", p)? {
         let at = source_key_point(s.doc()?, h, k, KEY_POINT_TOLERANCE)?;
         rebase(s, h, at)?;
     }
