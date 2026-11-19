@@ -175,17 +175,24 @@ pub struct Machine {
     stack: Vec<Frame>,
     state: State,
     need: Option<Need>,
+    /// Steps the last [`Machine::run`] took.
+    pub last_steps: u64,
 }
 
 impl Machine {
     /// A machine evaluating `forms` in turn.
     pub fn forms(forms: Vec<Value>) -> Machine {
-        Machine { stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }], state: State::Ret(Value::Nil), need: None }
+        Machine {
+            stack: vec![Frame::Forms { rest: forms.into_iter().rev().collect() }],
+            state: State::Ret(Value::Nil),
+            need: None,
+            last_steps: 0,
+        }
     }
 
     /// A machine calling `f` with `args`.
     pub fn calling(f: Value, args: Vec<Value>) -> Machine {
-        Machine { stack: Vec::new(), state: State::Call(f, args), need: None }
+        Machine { stack: Vec::new(), state: State::Call(f, args), need: None, last_steps: 0 }
     }
 
     /// Give the value a [`Need`] waited for, and carry on.
@@ -196,9 +203,16 @@ impl Machine {
     /// Run until done, waiting, or `budget` steps.
     pub fn run(&mut self, ctx: &mut Ctx<'_>, budget: u64) -> Outcome {
         let mut n = 0u64;
+        let outcome = self.run_counted(ctx, budget, &mut n);
+        // Running out of `budget` counts one step past it that never ran.
+        self.last_steps = n.min(budget);
+        outcome
+    }
+
+    fn run_counted(&mut self, ctx: &mut Ctx<'_>, budget: u64, n: &mut u64) -> Outcome {
         loop {
-            n += 1;
-            if n > budget {
+            *n += 1;
+            if *n > budget {
                 return Outcome::Wait(Need::Yield);
             }
             // Charge a callback's step as it runs, so callbacks it calls see what it already spent.
