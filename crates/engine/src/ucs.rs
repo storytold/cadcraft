@@ -277,6 +277,14 @@ impl Session {
     /// Go back to the UCS before the current one in this space; `false` when there is none.
     pub fn ucs_previous(&mut self) -> Result<bool> {
         let space = self.space();
+        // Nothing to go back to: the drawing stays unmodified.
+        let none = self.doc().map_or(true, |d| match &space {
+            Space::Model => d.ucs_previous.is_empty(),
+            Space::Paper(layout) => d.layout(layout).is_none_or(|l| l.ucs_previous.is_empty()),
+        });
+        if none {
+            return Ok(false);
+        }
         let d = self.doc_mut()?;
         // An entry with unusable axes (none is ever stored) is skipped, not restored.
         while let Some(u) = previous_mut(d, &space).and_then(|h| h.pop()) {

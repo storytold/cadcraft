@@ -612,14 +612,18 @@ impl Interactive for UcsM {
 }
 
 fn set_ucsicon(s: &mut Session, on: Option<bool>, origin: Option<bool>) -> Result<Value> {
-    let mut bits = s.ucsicon_bits();
+    let before = s.ucsicon_bits();
+    let mut bits = before;
     if let Some(on) = on {
         bits = if on { bits | 1 } else { bits & !1 };
     }
     if let Some(o) = origin {
         bits = if o { bits | 2 } else { bits & !2 };
     }
-    s.doc_mut()?.header.set_i64("UCSICON", bits);
+    // Asking (or setting what is already set) leaves the drawing unmodified.
+    if bits != before {
+        s.doc_mut()?.header.set_i64("UCSICON", bits);
+    }
     Ok(json!({ "on": bits & 1 != 0, "origin": bits & 2 != 0 }))
 }
 

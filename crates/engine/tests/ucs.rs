@@ -499,6 +499,28 @@ fn ucsicon_options() {
     assert!(cadcraft_engine::sysvars::set(&mut s, "UCSICON", &json!(9)).is_err());
 }
 
+/// Asking UCSICON (or setting what is already set) leaves the drawing unmodified.
+#[test]
+fn ucsicon_query_does_not_modify_the_drawing() {
+    let mut s = session();
+    assert!(!s.state().unwrap().is_dirty());
+    assert_eq!(s.execute("ucsicon", &json!({})).unwrap(), json!({"on": true, "origin": true}));
+    s.execute("ucsicon", &json!({"on": true})).unwrap();
+    assert!(!s.state().unwrap().is_dirty(), "nothing changed");
+    s.execute("ucsicon", &json!({"on": false})).unwrap();
+    assert!(s.state().unwrap().is_dirty(), "a real change is unsaved");
+}
+
+/// UCS Previous with no earlier UCS changes nothing, so the drawing stays unmodified.
+#[test]
+fn ucs_previous_without_history_does_not_modify_the_drawing() {
+    let mut s = session();
+    assert!(s.execute("ucs", &json!({"option": "previous"})).is_err());
+    typed(&mut s, &["ucs p"]);
+    assert!(logged(&s, "There is no previous UCS."));
+    assert!(!s.state().unwrap().is_dirty());
+}
+
 /// UCSICON is its own undo step: undoing it brings the icon back, and an undo never undoes the
 /// edit before it while leaving the icon setting behind (or the other way round).
 #[test]
