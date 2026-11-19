@@ -75,6 +75,7 @@ fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, Str
     #[cfg(not(target_arch = "wasm32"))]
     {
         let file = super::blocks::xref::find_file(path, host).ok_or("file not found")?;
+        crate::file_access::check_read(&file)?;
         let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
         if len > MAX_IMAGE_BYTES {
             return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
@@ -180,14 +181,18 @@ fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<R
     if loaders > 1 {
         // Each loader takes the next file nobody has started.
         let next = AtomicUsize::new(0);
+        // The automation roots are per thread, so they go along with each loader.
+        let roots = crate::file_access::current();
         let work = || {
-            let mut done = Vec::new();
-            loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = paths.get(index) else { break };
-                done.push((index, load(path)));
-            }
-            done
+            crate::file_access::confine(roots.as_ref(), || {
+                let mut done = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(index) else { break };
+                    done.push((index, load(path)));
+                }
+                done
+            })
         };
         let finished: Vec<_> = std::thread::scope(|scope| {
             let started: Vec<_> = (0..loaders).filter_map(|_| std::thread::Builder::new().spawn_scoped(scope, work).ok()).collect();
