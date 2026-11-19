@@ -106,10 +106,15 @@ fn extend_execute_distinguishes_the_wrong_end_from_no_boundary_hit() -> TestResu
 #[test]
 fn quick_erasure_and_unrelated_errors_keep_their_behavior() -> TestResult {
     let (mut s, a, b) = fixture(50.0, 25.0)?;
-    // The current Quick-mode cut-point behavior is preserved, not changed by diagnostics.
-    let result = s.execute("trim", &json!({"handle": a.hex(), "edges": [b.hex()], "pick": [25, 0], "mode": "quick"}))?;
-    assert_eq!(result["handles"], json!([]));
-    assert!(s.doc()?.entity(a).is_none());
+    // Quick mode leaves a line picked on its only cut in place (#2648), and the JSON form explains
+    // the refusal as Standard mode does.
+    failure(
+        &mut s,
+        "trim",
+        json!({"handle": a.hex(), "edges": [b.hex()], "pick": [25, 0], "mode": "quick"}),
+        "The `pick` point is at a cutting intersection; pick a portion of the object away from that intersection.",
+    )?;
+    assert!(s.doc()?.entity(a).is_some());
     assert!(s.doc()?.entity(b).is_some());
     failure(&mut s, "trim", json!({"handle": "DEAD", "pick": [5, 0]}), "no such object")
 }

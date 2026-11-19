@@ -93,11 +93,12 @@ fn prim_to_segments(p: &Prim) -> Vec<Segment> {
     }
 }
 
-/// Explain the generic line failures for JSON handle+pick calls. Other curves retain their
-/// own diagnostics: their nearest-parameter rules do not prove that a pick is invalid.
+/// Explain the generic line failures for JSON handle+pick calls, and a line TRIM picked on its
+/// only cuts ([`ON_THE_CUT`]). Other curves retain their own diagnostics: their nearest-parameter
+/// rules do not prove that a pick is invalid.
 pub(crate) fn json_pick_error(s: &Session, h: Handle, pick: Vec2, edges: Edges, extending: bool, error: EngineError) -> EngineError {
     let generic = if extending { "Object does not intersect an edge." } else { "Object does not intersect a cutting edge." };
-    if !matches!(&error, EngineError::Other(message) if message == generic) {
+    if !matches!(&error, EngineError::Other(message) if message == generic || (!extending && message == ON_THE_CUT)) {
         return error;
     }
     let Ok(d) = s.doc() else { return error };
