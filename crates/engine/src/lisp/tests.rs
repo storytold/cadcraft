@@ -1507,3 +1507,32 @@ fn relative_load_uses_the_support_folder_not_the_working_folder() {
     assert_eq!(ok(&mut s, &format!("(load \"{}\") which", other.join("tools.lsp").to_string_lossy())), "\"other\"");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// #1927 on Windows: a rooted name (`\folder\tools.lsp`, no drive) or a drive-relative one
+/// (`C:tools`) is not absolute, but joined to the support folder it replaces that folder; such a
+/// name is refused rather than read from outside the support folder.
+#[cfg(windows)]
+#[test]
+fn rooted_and_drive_relative_load_names_stay_in_the_support_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-rooted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let outside = other.join("only.lsp");
+    std::fs::write(&outside, "(setq only 1)").unwrap();
+    // The same file without its drive (`\Users\...\other\only.lsp`), escaped for a LISP string.
+    let full = outside.to_string_lossy().into_owned();
+    let rooted = full.get(full.find('\').unwrap()..).unwrap().replace('\', "\\\\");
+    let drive = full.get(..2).unwrap().to_string();
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    let r = eval(&mut s, &format!("(load \"{rooted}\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a rooted name is not read outside the support folder: {r:?}");
+    let r = eval(&mut s, &format!("(load \"{drive}only\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a drive-relative name is refused: {r:?}");
+    std::fs::write(support.join("only.lsp"), "(setq only 2)").unwrap();
+    assert_eq!(ok(&mut s, "(load \".\\only\") only"), "2", "a plain relative name is still read from the support folder");
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -1237,8 +1237,11 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
         Some(d) if !std::path::Path::new(name).is_absolute() => d,
         _ => return candidates.iter().find_map(super::builtins::read_text_file),
     };
-    // A relative name stays inside the support folder.
-    if std::path::Path::new(name).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    // A relative name stays inside the support folder: plain folder and file names only. `..` would
+    // climb out of it, and on Windows a rooted name (`\tools`) or a drive-relative one (`C:tools`,
+    // the working folder of drive C) is not absolute, yet joined to the folder it replaces it.
+    use std::path::Component;
+    if !std::path::Path::new(name).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
         return None;
     }
     candidates.iter().find_map(|c| super::builtins::read_text_file(dir.join(c)))
