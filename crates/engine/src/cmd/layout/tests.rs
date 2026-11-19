@@ -165,14 +165,36 @@ fn viewport_scale_lock_and_layers() {
     }
 }
 
+/// #2836: picking a paper sets the layout's paper units from it. In a new drawing (imperial,
+/// MEASUREMENT 0) ISO A0 was 46.81 x 33.11 units, the inch equivalent; now it is 1189 x 841.
+/// An inch paper gives the layout back the drawing's units.
+#[test]
+fn pagesetup_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    assert_eq!(cadcraft_render::paper::paper_unit_mm(s.doc().unwrap()), 25.4, "a new drawing is imperial");
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A0", "landscape": true})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D in the drawing's inches");
+    // A custom size replaces the named paper in the same call and keeps the layout's units.
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
+    assert_eq!(r["page"]["paperMm"], false);
+    assert_eq!(size(&s), (20.0, 10.0, 25.4), "the custom size in the layout's inches");
+}
+
 #[test]
 fn pagesetup_paper_table() {
     let mut s = Session::new();
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3", "landscape": true, "margins": [5, 5, 5, 5]})).unwrap();
     assert_eq!(r["page"]["widthMm"], 297.0);
     let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
-    // Imperial drawing: paper units are inches.
-    assert!((sheet.size.x - 420.0 / 25.4).abs() < 1e-9 && (sheet.size.y - 297.0 / 25.4).abs() < 1e-9);
+    // An imperial drawing, but a metric paper: the layout's paper units are millimetres (#2836).
+    assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9);
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "Z12"})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());
