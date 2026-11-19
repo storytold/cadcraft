@@ -14,6 +14,7 @@ use lyon_tessellation::{FillOptions, FillRule, FillTessellator, FillVertex};
 
 use crate::{IoError, Result};
 
+const MAX_XML_NODES: u32 = 500_000;
 const MAX_BYTES: usize = 32 << 20;
 const MAX_RECORDS: usize = 100_000;
 const MAX_SOLIDS: usize = 500_000;
@@ -54,7 +55,7 @@ pub(super) fn read_vector_svg(svg: &str, normalized: bool) -> Result<Drawing> {
     // Metafile SVGs carry all their data. Never resolve paths from the embedded document.
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
     let limits =
-        tree::Limits { bytes: MAX_BYTES, depth: 32, tree_depth: 32, refuse_entity_markup: true, xml_nodes: 500_000, ..tree::Limits::default() };
+        tree::Limits { bytes: MAX_BYTES, depth: 32, tree_depth: 32, refuse_entity_markup: true, xml_nodes: MAX_XML_NODES, ..tree::Limits::default() };
     let tree = tree::parse_text(svg, &limits, &options).map_err(bad)?;
     let mut drawing = Drawing::new_metric();
     let size = tree.size();
@@ -74,7 +75,8 @@ pub(super) fn read_vector_svg(svg: &str, normalized: bool) -> Result<Drawing> {
         )
         .map_err(bad)?;
     let start = drawing.model.len();
-    draw_group(tree.root(), &mut drawing, divisor, 0, None)?;
+    let page_clip = (!normalized).then(|| Bounds2::new(Vec2::new(0.0, -height), Vec2::new(width, 0.0)));
+    draw_group(tree.root(), &mut drawing, divisor, 0, page_clip)?;
     if drawing.model.len() == start {
         return Err(bad("the preview has no visible geometry"));
     }
@@ -208,9 +210,14 @@ fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
     normalize_svg_bounded(svg, images, MAX_BYTES)
 }
 
+pub(super) fn parse_svg_xml(svg: &str) -> Result<roxmltree::Document<'_>> {
+    let options = roxmltree::ParsingOptions { nodes_limit: MAX_XML_NODES, ..Default::default() };
+    roxmltree::Document::parse_with_options(svg, options).map_err(bad)
+}
+
 fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Result<String> {
     checked_svg_size(0, 0, svg.len(), limit)?;
-    let xml = roxmltree::Document::parse(svg).map_err(bad)?;
+    let xml = parse_svg_xml(svg)?;
     let root = xml.root_element();
     let view: Vec<f32> = root
         .attribute("viewBox")
@@ -232,10 +239,11 @@ fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Resu
         let href = node.attribute("href").ok_or_else(|| bad("missing embedded bitmap"))?;
         let data = href.strip_prefix("data:image/bmp;base64,").ok_or_else(|| bad("unsupported embedded image"))?;
         let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(bad)?;
-        let raster = crate::raster::decode(&bytes)?;
-        if u64::from(raster.width()) * u64::from(raster.height()) > 1_000_000 {
+        let (width, height) = crate::raster::probe(&bytes)?;
+        if u64::from(width) * u64::from(height) > 1_000_000 {
             return Err(bad("bitmap is too large for CAD conversion"));
         }
+        let raster = crate::raster::decode(&bytes)?;
         let [x, y, w, h] = placement.rect;
         let mut replacement = format!(
             "<g transform=\"translate({x} {y}) scale({} {})\">",
@@ -341,7 +349,7 @@ fn draw_group(group: &usvg::Group, drawing: &mut Drawing, size: [f32; 2], depth:
     if depth > 64 {
         return Err(bad("SVG nesting exceeds limits"));
     }
-    if group.mask().is_some() || !group.filters().is_empty() || group.opacity().get() != 1.0 {
+    if group.mask().is_some() || !group.filters().is_empty() || group.opacity().get() != 1.0 || group.blend_mode() != usvg::BlendMode::Normal {
         return Err(bad("unsupported SVG clipping or compositing"));
     }
     let clip = match (inherited, clip_bounds(group, size)?) {

@@ -60,6 +60,10 @@ fn page_import_without_document_and_response_contract() {
         assert_eq!(r["handles"], json!([r["handle"]]));
         assert_eq!((r["layers"].as_u64(), r["styles"].as_u64(), r["blocks"].as_u64()), (Some(0), Some(0), Some(1)));
         assert!(s.doc().unwrap().block(r["block"].as_str().unwrap()).is_some());
+        assert!(s.undo().unwrap().is_some());
+        assert!(s.doc().unwrap().model.is_empty());
+        assert!(s.doc().unwrap().blocks.is_empty());
+        assert!(s.redo().unwrap().is_some());
         let uid = s.state().unwrap().uid;
         s.execute("import", &json!({"name":name,"data":"AA=="})).unwrap();
         assert_eq!(s.state().unwrap().uid, uid, "an existing drawing is reused");
@@ -72,6 +76,18 @@ fn page_import_without_document_and_response_contract() {
         assert!(s.docs.is_empty(), "no destination on failed conversion or a drawing-only import");
     }
 }
+#[test]
+fn dwg_with_a_page_extension_imports_as_a_drawing() {
+    let mut s = session();
+    let params = json!({"name":"plan.pdf", "data":"QUMxMDMyAA=="});
+    let result = s.execute("import", &params).unwrap();
+    assert_eq!(result["blocks"], 0);
+    assert!(matches!(s.doc().unwrap().model.iter().next().unwrap().kind, EntityKind::Solid(_)));
+    s.docs.clear();
+    assert!(s.execute("import", &params).is_err());
+    assert!(s.docs.is_empty());
+}
+
 fn ole(s: &mut Session, width: f64, height: f64) -> Handle {
     let tags = [(10, 0.0), (20, 0.0), (11, width), (21, -height)].into_iter().map(|(code, v)| RawTag { code, value: v.to_string() }).collect();
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap()
@@ -87,9 +103,11 @@ fn degenerate_ole_is_preserved_and_conversion_reports_collision_name() {
     }
     let mut s = session();
     let h = ole(&mut s, 20.0, 10.0);
+    let overlay = ole(&mut s, 2.0, 1.0);
     let collision = format!("OLE_{}", h.hex());
     s.doc_mut().unwrap().blocks.insert(collision.clone(), Arc::new(Block::new(&collision)));
     let r = s.execute("oleconvert", &json!({"handle":h.hex()})).unwrap();
+    assert_eq!(s.doc().unwrap().model.handles().last(), Some(&overlay));
     assert_eq!(r["block"], format!("{collision}_1"));
 }
 #[test]

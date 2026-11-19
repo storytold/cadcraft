@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, or first page of DOCX/PDF), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, or first page of DOCX/PDF), at?: [x,y] (default: center DOCX/PDF in the current view, 0,0 for DXF/DWG), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -213,6 +213,9 @@ fn run_oleconvert(s: &mut Session, p: &Value) -> Result<Value> {
         common,
         Insert { block: block_name, insert: Vec3::new(top_left.x, top_left.y, 0.0), scale: Vec3::new(width, height, 1.0), ..Insert::default() },
     )?;
+    if let Some(store) = drawing.space_mut(&space) {
+        store.move_next_to(inserted, *handle, false);
+    }
     drawing.remove_entity(*handle);
     s.set_selection(vec![inserted]);
     Ok(json!({"handle":inserted.hex(),"block":block_name,"objects":src.model.len()}))
@@ -276,7 +279,8 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
     };
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
-    let page = match extension(&name).as_str() {
+    let format = if super::file::has_dwg_header(&bytes) { "dwg".to_owned() } else { extension(&name) };
+    let page = match format.as_str() {
         "docx" => Some(("WORD_ANTET", "Word page embedded as a CAD block.")),
         "pdf" => Some(("PDF_ANTET", "PDF page embedded as a CAD block.")),
         _ => None,

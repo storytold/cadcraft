@@ -3,12 +3,15 @@
 use super::{CadApp, Color32, Handle, Stroke, Vec2, Xf};
 use egui::{CursorIcon, Key, PointerButton, Pos2, Rect, vec2};
 
+use cadcraft_render::clip::PolyClip;
+
 pub(super) struct Drag {
     handle: Handle,
     corner: usize,
     frame: [Vec2; 5],
     document: u64,
     revision: u64,
+    offset: Vec2,
     to: Vec2,
 }
 
@@ -34,11 +37,16 @@ fn frames(app: &CadApp) -> Vec<(Handle, [Vec2; 5])> {
         .collect()
 }
 
-fn at(app: &CadApp, xf: &Xf, pointer: Pos2) -> Option<(Handle, usize, [Vec2; 5])> {
+fn at(app: &CadApp, xf: &Xf, pointer: Pos2, clip: Option<&PolyClip>) -> Option<(Handle, usize, [Vec2; 5])> {
+    if clip.is_some_and(|c| !c.contains(xf.to_world(pointer))) {
+        return None;
+    }
     let radius = app.session.settings.gripsize as f32 + 4.0;
     for (handle, frame) in frames(app) {
         for (corner, point) in frame.iter().take(4).enumerate() {
-            if Rect::from_center_size(xf.to_screen(*point), vec2(radius * 2.0, radius * 2.0)).contains(pointer) {
+            if clip.is_none_or(|c| c.contains(*point))
+                && Rect::from_center_size(xf.to_screen(*point), vec2(radius * 2.0, radius * 2.0)).contains(pointer)
+            {
                 return Some((handle, corner, frame));
             }
         }
@@ -54,7 +62,7 @@ fn commit(app: &mut CadApp, drag: &Drag, xf: &Xf) {
     }
 }
 
-pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_menu: bool) -> bool {
+pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_menu: bool, clip: Option<&PolyClip>) -> bool {
     let (pointer, press_position, pressed, released, down, escape) = ui.input(|i| {
         (
             i.pointer.interact_pos(),
@@ -74,7 +82,7 @@ pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_m
             return true;
         }
         if let Some(pointer) = pointer {
-            drag.to = xf.to_world(pointer);
+            drag.to = xf.to_world(pointer) - drag.offset;
         }
         let transform = cadcraft_engine::grips::page_resize_transform(&drag.frame, drag.corner, drag.to);
         ui.ctx().set_cursor_icon(if transform.is_some() { CursorIcon::ResizeNwSe } else { CursorIcon::NotAllowed });
@@ -85,15 +93,26 @@ pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_m
         }
         return true;
     }
-    let starts_inside = press_position.is_some_and(|p| xf.rect.contains(p));
-    if (!inside && !starts_inside) || on_menu || app.session.pending_window.is_some() {
+    let over_canvas = press_position.map_or(inside, |p| xf.rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id()));
+    if !over_canvas || on_menu || app.session.pending_window.is_some() {
         return false;
     }
-    if let Some((handle, corner, frame)) = press_position.or(pointer).and_then(|point| at(app, xf, point)) {
+    if let Some((handle, corner, frame)) = press_position.or(pointer).and_then(|point| at(app, xf, point, clip)) {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeNwSe);
-        if pressed && let Ok(state) = app.session.state() {
-            let drag =
-                Drag { handle, corner, frame, document: state.uid, revision: state.revision, to: pointer.map_or(frame[corner], |p| xf.to_world(p)) };
+        if pressed
+            && let Some(press) = press_position
+            && let Ok(state) = app.session.state()
+        {
+            let offset = xf.to_world(press) - frame[corner];
+            let drag = Drag {
+                handle,
+                corner,
+                frame,
+                document: state.uid,
+                revision: state.revision,
+                offset,
+                to: pointer.map_or(frame[corner], |p| xf.to_world(p) - offset),
+            };
             if released {
                 commit(app, &drag, xf);
             } else {
@@ -106,12 +125,23 @@ pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_m
     false
 }
 
-pub(super) fn draw(app: &CadApp, painter: &egui::Painter, xf: &Xf) {
+pub(super) fn draw(app: &CadApp, painter: &egui::Painter, xf: &Xf, clip: Option<&PolyClip>) {
     let color = Color32::from_rgb(60, 130, 255);
     let size = app.session.settings.gripsize as f32;
     for (_, frame) in frames(app) {
         for point in frame.iter().take(4) {
             let rectangle = Rect::from_center_size(xf.to_screen(*point), vec2(size * 2.0, size * 2.0));
+            if let Some(clip) = clip {
+                if clip.contains(*point) {
+                    for (r, fill) in [(rectangle, Color32::WHITE), (rectangle.shrink(1.0), color)] {
+                        let [a, b, c, d] = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()].map(|p| xf.to_world(p));
+                        for tri in clip.clip_triangles(&[a, b, c, a, c, d]).as_chunks::<3>().0 {
+                            painter.add(egui::Shape::convex_polygon(tri.map(|p| xf.to_screen(p)).to_vec(), fill, Stroke::NONE));
+                        }
+                    }
+                }
+                continue;
+            }
             painter.rect_filled(rectangle, 0.0, color);
             painter.rect_stroke(rectangle, 0.0, Stroke::new(1.0, Color32::WHITE), egui::StrokeKind::Middle);
         }
@@ -119,8 +149,10 @@ pub(super) fn draw(app: &CadApp, painter: &egui::Painter, xf: &Xf) {
     if let Some(drag) = &app.canvas.page_resize
         && let Some(transform) = cadcraft_engine::grips::page_resize_transform(&drag.frame, drag.corner, drag.to)
     {
-        let points = drag.frame.map(|p| xf.to_screen(transform.apply(p)));
-        painter.add(egui::Shape::line(points.to_vec(), Stroke::new(2.0, color)));
+        let frame = drag.frame.map(|p| transform.apply(p));
+        for piece in super::imported_page_lines(&frame, clip) {
+            painter.add(egui::Shape::line(piece.into_iter().map(|p| xf.to_screen(p)).collect(), Stroke::new(2.0, color)));
+        }
     }
 }
 
@@ -157,7 +189,7 @@ mod tests {
 
     fn step(ctx: &egui::Context, app: &mut CadApp, xf: &Xf, events: Vec<Event>) {
         let mut output = ctx.run_ui(RawInput { events, ..Default::default() }, |ui| {
-            input(app, ui, xf, true, false);
+            input(app, ui, xf, true, false, None);
         });
         output.textures_delta.clear();
     }
@@ -167,9 +199,20 @@ mod tests {
         let (mut app, handle) = app();
         let ctx = egui::Context::default();
         let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 10.0, twist: 0.0 };
-        let start = xf.to_screen(Vec2::ZERO);
-        let end = xf.to_screen(Vec2::new(-20.0, -10.0));
+        let start = xf.to_screen(Vec2::new(-0.5, -0.25));
+        let end = xf.to_screen(Vec2::new(-20.5, -10.25));
         let undo = app.session.state().unwrap().undo.len();
+        step(
+            &ctx,
+            &mut app,
+            &xf,
+            vec![
+                Event::PointerMoved(start),
+                Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
+                Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE },
+            ],
+        );
+        assert_eq!(app.session.state().unwrap().undo.len(), undo);
         step(
             &ctx,
             &mut app,
@@ -186,6 +229,17 @@ mod tests {
         let frame = doc.imported_page_frame(doc.entity(handle).unwrap()).unwrap();
         assert!((frame[0] - Vec2::new(-20.0, -10.0)).len() < 1e-9);
         assert_eq!(app.session.state().unwrap().undo.len(), undo + 1);
+    }
+
+    #[test]
+    fn grip_hit_testing_requires_a_visible_corner_and_pointer() {
+        let (app, _) = app();
+        let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 10.0, twist: 0.0 };
+        let clip = PolyClip::new(&[Vec2::new(-1.0, -1.0), Vec2::new(8.0, -1.0), Vec2::new(-1.0, 8.0)]).unwrap();
+        assert!(at(&app, &xf, xf.to_screen(Vec2::ZERO), Some(&clip)).is_some());
+        assert!(at(&app, &xf, xf.to_screen(Vec2::new(20.0, 0.0)), Some(&clip)).is_none());
+        let clip = PolyClip::new(&[Vec2::new(-0.1, -1.0), Vec2::new(8.0, -1.0), Vec2::new(-0.1, 8.0)]).unwrap();
+        assert!(at(&app, &xf, xf.to_screen(Vec2::new(-0.3, 0.0)), Some(&clip)).is_none());
     }
 
     #[test]

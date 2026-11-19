@@ -55,6 +55,9 @@ impl Session {
                 return Err(EngineError::Internal(id.into(), msg));
             }
         };
+        // A successful first page import created its destination during dispatch.
+        // The saved snapshot still holds that new drawing before the page was inserted.
+        let before = if opens_page && result.is_ok() { self.state().ok().map(|s| (s.saved.clone(), Vec::new(), s.uid)) } else { before };
         let violation = before.as_ref().and_then(|b| cmd::blocks::refedit::after_command(self, &b.0, spec.id));
         let result = match (violation, result) {
             (Some(m), Ok(_)) => Err(EngineError::Other(m)),

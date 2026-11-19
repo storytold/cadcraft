@@ -65,7 +65,13 @@ fn converter(variable: &str, program: &str) -> Command {
     Command::new(std::env::var_os(variable).unwrap_or_else(|| program.into()))
 }
 
-fn run(mut command: Command, name: &str) -> Result<()> {
+fn run(command: Command, name: &str) -> Result<()> {
+    run_with_timeout(command, name, Duration::from_secs(45))
+}
+
+fn run_with_timeout(mut command: Command, name: &str, timeout: Duration) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -77,8 +83,12 @@ fn run(mut command: Command, name: &str) -> Result<()> {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
             Ok(Some(status)) => return Err(error(format!("{name} failed ({status})"))),
-            Ok(None) if start.elapsed() < Duration::from_secs(45) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
             result => {
+                #[cfg(target_os = "linux")]
+                if let Some(group) = rustix::process::Pid::from_raw(child.id() as i32) {
+                    let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+                }
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(error(result.err().map_or_else(|| format!("{name} timed out"), |e| e.to_string())));
@@ -112,7 +122,7 @@ fn bitmap(node: Node<'_, '_>) -> Result<Raster> {
 /// MuPDF writes image soft masks as a second inline bitmap. Preserve opaque
 /// pixel runs, including white; reject partial coverage requiring compositing.
 fn inline_bitmaps(svg: &str) -> Result<String> {
-    let xml = roxmltree::Document::parse(svg).map_err(error)?;
+    let xml = ole::parse_svg_xml(svg)?;
     let root = xml.root_element();
     let mut edits = Vec::new();
     let mut replacement_bytes = 0usize;
@@ -120,13 +130,23 @@ fn inline_bitmaps(svg: &str) -> Result<String> {
         let pixels = bitmap(image)?;
         let mask_group = image.ancestors().find(|n| n.has_attribute("mask"));
         let mask = mask_group.map(|group| image_mask(root, group, image, &pixels)).transpose()?;
-        let mut replacement = bitmap_rectangles(&pixels, mask.as_ref())?;
-        if let Some(id) = image.attribute_node("id") {
-            // Retain the original escaped attribute so subsequent <use> nodes
-            // resolve to the converted geometry without reintroducing the image.
-            let attribute = svg.get(id.range()).ok_or_else(|| error("invalid image ID"))?;
-            replacement = format!("<g {attribute}>{replacement}</g>");
+        // A nested SVG maps pixel coordinates through the original image viewport,
+        // including x/y, scaling, transforms, and references to its ID.
+        let mut replacement = format!(r#"<svg viewBox="0 0 {} {}""#, pixels.width(), pixels.height());
+        for name in ["id", "x", "y", "width", "height", "transform", "preserveAspectRatio", "opacity", "style", "class"] {
+            if let Some(attr) = image.attribute_node(name) {
+                replacement.push(' ');
+                replacement.push_str(svg.get(attr.range()).ok_or_else(|| error("invalid image attribute"))?);
+            }
         }
+        for (name, value) in [("width", pixels.width()), ("height", pixels.height())] {
+            if !image.has_attribute(name) {
+                replacement.push_str(&format!(r#" {name}="{value}""#));
+            }
+        }
+        replacement.push('>');
+        replacement.push_str(&bitmap_rectangles(&pixels, mask.as_ref())?);
+        replacement.push_str("</svg>");
         replacement_bytes = replacement_bytes.saturating_add(replacement.len());
         if replacement_bytes > MAX_BYTES {
             return Err(error("bitmap geometry exceeds limits"));
@@ -159,7 +179,10 @@ fn image_mask(root: Node<'_, '_>, group: Node<'_, '_>, image: Node<'_, '_>, pixe
     let mut images = definition.descendants().filter(|n| n.has_tag_name("image"));
     let source = images.next().ok_or_else(|| error("missing mask bitmap"))?;
     let transform = |n: Node<'_, '_>| n.parent_element().and_then(|p| p.attribute("transform")).map(str::to_owned);
-    if images.next().is_some() || transform(source) != transform(image) {
+    if images.next().is_some()
+        || transform(source) != transform(image)
+        || ["x", "y", "width", "height", "transform", "preserveAspectRatio"].iter().any(|&attr| source.attribute(attr) != image.attribute(attr))
+    {
         return Err(error("unsupported mask placement"));
     }
     let mask = bitmap(source)?;
@@ -174,7 +197,7 @@ fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
     let mut svg = String::from("<g>");
     let composite = |x, y| {
         let [r, g, b, alpha] = pixels.pixel(x, y)?;
-        let alpha = u32::from(alpha) * u32::from(mask.and_then(|m| m.pixel(x, y)).map_or(255, |p| p[0])) / 255;
+        let alpha = u32::from(alpha) * u32::from(mask.and_then(|m| m.pixel(x, y)).map_or(255, |p| p[0]));
         Some(([r, g, b], alpha))
     };
     for row in 0..pixels.height() {
@@ -186,7 +209,7 @@ fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
                 end += 1;
             }
             let ([r, g, b], coverage) = color;
-            if coverage != 0 && coverage != 255 {
+            if coverage != 0 && coverage != 255 * 255 {
                 return Err(error("partially transparent bitmap coverage requires unsupported compositing"));
             }
             if coverage != 0 {
@@ -226,6 +249,9 @@ mod tests {
         assert!(bitmap_rectangles(&white, None).unwrap().contains("#ffffff"));
         let clear = Raster::new(1, 1, vec![255, 255, 255, 0]).unwrap();
         assert!(!bitmap_rectangles(&clear, None).unwrap().contains("<rect"));
+        let almost_clear = Raster::new(1, 1, vec![0, 0, 0, 1]).unwrap();
+        let mask = Raster::new(1, 1, vec![128, 128, 128, 255]).unwrap();
+        assert!(bitmap_rectangles(&almost_clear, Some(&mask)).is_err());
         let partial = Raster::new(1, 1, vec![0, 0, 0, 128]).unwrap();
         assert!(bitmap_rectangles(&partial, None).is_err(), "unsupported compositing must not silently paint the wrong colour");
     }
@@ -236,21 +262,41 @@ mod tests {
         let png = base64::engine::general_purpose::STANDARD.encode(raster::encode_png(&image).unwrap());
         let svg = format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="72" height="72">
-        <image id="logo" width="1" height="1" xlink:href="data:image/png;base64,{png}"/>
+        <image id="logo" x="4" y="6" width="1" height="1" xlink:href="data:image/png;base64,{png}"/>
         <use x="10" xlink:href="#logo"/></svg>"##
         );
         let svg = inline_bitmaps(&svg).unwrap();
         let drawing = ole::read_vector_svg(&svg, false).unwrap();
         let red: Vec<_> =
             drawing.model.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb(255, 0, 0))).collect();
+        for e in &red {
+            let cadcraft_doc::EntityKind::Solid(solid) = &e.kind else { panic!("expected solid") };
+            assert!(solid.corners.iter().all(|p| p.x >= 1.0 && p.y <= -1.5));
+        }
         assert_eq!(red.len(), 4, "two triangles at each of the two placements");
+    }
+
+    #[test]
+    fn unsupported_blending_is_reported() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><g style="mix-blend-mode:multiply"><rect width="5" height="5"/></g></svg>"#;
+        assert!(ole::read_vector_svg(svg, false).unwrap_err().to_string().contains("compositing"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn timed_out_converter_stops_its_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = Command::new("sh");
+        command.current_dir(dir.path()).args(["-c", "(sleep 1; touch completed) & wait"]);
+        assert!(run_with_timeout(command, "test converter", Duration::from_millis(150)).is_err());
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(!dir.path().join("completed").exists());
     }
 
     #[test]
     fn a_pdf_point_page_becomes_metric_cad_geometry() {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="144" viewBox="0 0 72 144">
-        <defs><clipPath id="paper"><path d="M0 0H72V144H0Z"/></clipPath></defs>
-        <g clip-path="url(#paper)"><path d="M0 0H73V145H0Z"/></g></svg>"#;
+        <path d="M0 0H73V145H0Z"/></svg>"#;
         let svg = inline_bitmaps(svg).unwrap();
         let drawing = ole::read_vector_svg(&svg, false).unwrap();
         let extents = drawing.extents(&cadcraft_doc::Space::Model);

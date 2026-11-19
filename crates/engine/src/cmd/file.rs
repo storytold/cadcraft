@@ -497,13 +497,16 @@ pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
+pub(super) fn has_dwg_header(bytes: &[u8]) -> bool {
+    bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(u8::is_ascii_digit)
+}
+
 /// Whether `bytes` read as a DWG or a DXF (ASCII or binary) by their start: what a save keeps as
 /// the backup. A file that doesn't (truncated, overwritten by another program) never replaces a
 /// good `.bak`.
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
     // DWG: a version tag like `AC1032` (R12 is `AC1009`).
-    let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
-    if dwg || craft_dxf::is_binary(bytes) {
+    if has_dwg_header(bytes) || craft_dxf::is_binary(bytes) {
         return true;
     }
     // ASCII DXF: optional comments (999), then group 0 SECTION.

@@ -2103,7 +2103,8 @@ fn reads_utf8_and_code_page_text() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_roundtrip_keeps_non_ascii_text() {
-    let back = read(&write(&intl_sample(), "x.dwg").unwrap(), "x.dwg").unwrap();
+    // Content determines the DWG reader even with a page-import extension.
+    let back = read(&write(&intl_sample(), "x.dwg").unwrap(), "mislabeled.pdf").unwrap();
     assert_intl(&back);
 }
 

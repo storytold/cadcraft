@@ -52,3 +52,6 @@ version = "0.22"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tempfile = "3"
 url = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", features = ["process"] }

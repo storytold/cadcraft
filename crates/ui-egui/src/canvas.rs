@@ -946,7 +946,18 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let resizing_page = page_resize::input(app, ui, &xf, inside, on_menu);
+    let resize_clip = active_vp.as_ref().and_then(|vp| {
+        if app.session.selection().is_empty() {
+            return None;
+        }
+        let half = Vec2::new(vp.width, vp.height) * 0.5;
+        let a = vp.center.xy() - half;
+        let b = vp.center.xy() + half;
+        let rect = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
+        let outline = active_clip.as_ref().map_or(rect.as_slice(), |c| c.polygon());
+        cadcraft_render::clip::PolyClip::new(&outline.iter().map(|p| vp.paper_to_model(*p)).collect::<Vec<_>>())
+    });
+    let resizing_page = page_resize::input(app, ui, &xf, inside, on_menu, resize_clip.as_ref());
     let pressed_primary = pressed_primary && !resizing_page;
     let pressed_primary =
         collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
@@ -1078,27 +1089,30 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 
     update_hover(app, ui, inside, hover_pos, raw_world, scale);
 
-    paint_canvas(CanvasPaint {
-        app,
-        ui,
-        painter: &painter,
-        tokens: t,
-        full,
-        tiles: &tiles,
-        rect,
-        xf,
-        xf_paper,
-        view,
-        active_vp,
-        active_clip,
-        inside,
-        on_menu,
-        hover_pos,
-        raw_world,
-    });
+    paint_canvas(
+        CanvasPaint {
+            app,
+            ui,
+            painter: &painter,
+            tokens: t,
+            full,
+            tiles: &tiles,
+            rect,
+            xf,
+            xf_paper,
+            view,
+            active_vp,
+            active_clip,
+            inside,
+            on_menu,
+            hover_pos,
+            raw_world,
+        },
+        resize_clip.as_ref(),
+    );
 }
 
-fn paint_canvas(frame: CanvasPaint<'_>) {
+fn paint_canvas(frame: CanvasPaint<'_>, resize_clip: Option<&cadcraft_render::clip::PolyClip>) {
     let CanvasPaint {
         app,
         ui,
@@ -1242,7 +1256,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
     }
-    page_resize::draw(app, painter, &xf);
+    page_resize::draw(app, painter, &xf, resize_clip);
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
     let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {

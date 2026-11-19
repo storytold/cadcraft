@@ -787,6 +787,7 @@ dependencies = [
  "lyon_tessellation",
  "miniz_oxide 0.9.1",
  "roxmltree 0.21.2",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "tempfile",
