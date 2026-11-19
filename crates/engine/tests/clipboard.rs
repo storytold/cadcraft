@@ -465,3 +465,48 @@ fn copy_paste_handles_case_insensitive_block_renames_and_colliding_raster_keys()
     assert_eq!(pasted_ml.block.as_ref().unwrap().block, pasted_ins.block);
     assert!(d_b.block(&pasted_ins.block).is_some());
 }
+
+#[test]
+fn copy_paste_keeps_skipped_first_case_block_name_over_later_anonymous_collision() {
+    let mut d_a = Drawing::new_metric();
+    let foo_line = line(&mut d_a, "0", (0.0, 0.0), (1.0, 0.0));
+    block(&mut d_a, "FOO", vec![foo_line]);
+
+    let anon_line = line(&mut d_a, "0", (0.0, 0.0), (0.0, 2.0));
+    let mut anon_b = Block::new("foo");
+    anon_b.anonymous = true;
+    anon_b.entities.push(anon_line);
+    d_a.blocks.insert("foo".into(), Arc::new(anon_b));
+
+    let ref_upper = insert(&mut d_a, "FOO", (0.0, 0.0));
+    let ref_mixed = insert(&mut d_a, "Foo", (1.0, 0.0));
+    let ref_lower = insert(&mut d_a, "foo", (2.0, 0.0));
+    let copy_hs = [ref_upper.handle, ref_mixed.handle, ref_lower.handle];
+    d_a.model.push(ref_upper);
+    d_a.model.push(ref_mixed);
+    d_a.model.push(ref_lower);
+
+    let mut d_b = drawing_b();
+    let b_line = line(&mut d_b, "0", (0.0, 0.0), (5.0, 0.0));
+    block(&mut d_b, "FOO", vec![b_line]);
+
+    let mut s = Session::empty();
+    let _a = s.open_drawing(d_a, "A", None);
+    let _b = s.open_drawing(d_b, "B", None);
+    s.execute("document.switch", &json!({ "index": 0 })).unwrap();
+    s.execute("copyclip", &json!({ "handles": copy_hs.iter().map(|h| h.hex()).collect::<Vec<_>>() })).unwrap();
+
+    s.execute("document.switch", &json!({ "index": 1 })).unwrap();
+    let pasted = s.execute("pasteclip", &json!({ "at": [10, 10] })).unwrap();
+    let pasted_hs: Vec<Handle> = pasted["handles"].as_array().unwrap().iter().map(|v| Handle::parse_hex(v.as_str().unwrap()).unwrap()).collect();
+    assert_eq!(pasted_hs.len(), 3);
+
+    let d_b = s.doc().unwrap();
+    let EntityKind::Insert(p_upper) = &d_b.entity(pasted_hs[0]).unwrap().kind else { panic!("expected Insert") };
+    let EntityKind::Insert(p_mixed) = &d_b.entity(pasted_hs[1]).unwrap().kind else { panic!("expected Insert") };
+    let EntityKind::Insert(p_lower) = &d_b.entity(pasted_hs[2]).unwrap().kind else { panic!("expected Insert") };
+    assert_eq!(p_upper.block, "FOO");
+    assert_eq!(p_mixed.block, "Foo");
+    assert_ne!(p_lower.block, "foo");
+    assert!(d_b.block(&p_lower.block).is_some());
+}

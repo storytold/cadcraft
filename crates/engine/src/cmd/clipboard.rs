@@ -293,7 +293,7 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
 #[derive(Default)]
 struct Renames {
     exact: BTreeMap<String, String>,
-    lower: HashMap<String, String>,
+    lower: HashMap<String, Option<String>>,
 }
 
 /// Add `defs`' table records and blocks that `d` doesn't have. Returns the blocks copied, from
@@ -308,8 +308,8 @@ fn merge(d: &mut Drawing, defs: &Drawing, raster_map: &mut HashMap<String, Strin
     add(&mut d.table_styles, &defs.table_styles, |t| &t.name);
     let exact = crate::cmd::merge::block_renames(d, defs, None);
     let mut lower = HashMap::new();
-    for (k, v) in &exact {
-        lower.entry(k.to_ascii_lowercase()).or_insert_with(|| v.clone());
+    for k in defs.blocks.keys() {
+        lower.entry(k.to_ascii_lowercase()).or_insert_with(|| exact.get(k).cloned());
     }
     let renames = Renames { exact, lower };
     for (from, to) in &renames.exact {
@@ -328,7 +328,7 @@ fn merge(d: &mut Drawing, defs: &Drawing, raster_map: &mut HashMap<String, Strin
 }
 
 fn rename_for<'a>(renames: &'a Renames, name: &str) -> Option<&'a str> {
-    renames.exact.get(name).or_else(|| renames.lower.get(&name.to_ascii_lowercase())).map(String::as_str)
+    renames.exact.get(name).map(String::as_str).or_else(|| renames.lower.get(&name.to_ascii_lowercase()).and_then(|v| v.as_deref()))
 }
 
 fn raster_candidate_key(path: &str, suffix: usize) -> String {
@@ -377,13 +377,13 @@ fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &Renames,
         EntityKind::Image(img) => {
             if let Some(src_raster) = defs.and_then(|s| s.rasters.get(&img.path)).cloned() {
                 if let Some(mapped) = raster_map.get(&img.path)
-                    && d.rasters.get(mapped).is_some_and(|existing| existing.as_ref() == src_raster.as_ref())
+                    && d.rasters.get(mapped).is_some_and(|existing| Arc::ptr_eq(existing, &src_raster) || existing.as_ref() == src_raster.as_ref())
                 {
                     img.path = mapped.clone();
                 } else {
                     match d.rasters.get(&img.path) {
                         None => d.rasters.insert(&img.path, src_raster),
-                        Some(existing) if existing.as_ref() == src_raster.as_ref() => {}
+                        Some(existing) if Arc::ptr_eq(existing, &src_raster) || existing.as_ref() == src_raster.as_ref() => {}
                         Some(_) => {
                             if let Some(new_key) = unique_raster_key(&d.rasters, &img.path, &src_raster) {
                                 if d.rasters.get(&new_key).is_none() {
