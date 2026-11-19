@@ -36,16 +36,38 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 // An active XCLIP boundary is part of the reference's outline even when
                 // XCLIPFRAME hides the frame: a fence or crossing polygon that meets the
                 // boundary itself, and not the box around it, selects the reference.
-                if let EntityKind::Insert(ins) = &e.kind
+                if d.header.i64("XCLIPFRAME", 2) == 0
+                    && let EntityKind::Insert(ins) = &e.kind
                     && let Some(blk) = d.block(&ins.block)
                     && let Some(clip) = ins.clip.as_ref().filter(|c| c.active())
                 {
-                    let m = ins.transform(blk.base.xy());
-                    let mut outline: Vec<Vec2> = clip.polygon().into_iter().map(|p| m.apply(p)).collect();
+                    let base = ins.transform(blk.base.xy());
+                    let mut outline: Vec<Vec2> = clip.polygon().into_iter().map(|p| base.apply(p)).collect();
                     if let Some(first) = outline.first().copied() {
                         outline.push(first);
                     }
-                    v.push(outline);
+                    if !outline.is_empty() {
+                        let cols = ins.cols.clamp(1, 10_000);
+                        let rows = ins.rows.clamp(1, 10_000);
+                        // Bound copies and vertices the same way block expansion is bounded so
+                        // a hostile MINSERT grid cannot exhaust memory.
+                        let cost = outline.len().max(blk.entities.len().saturating_add(1));
+                        let mut budget = cadcraft_render::MAX_BLOCK_EXPANSION;
+                        'copies: for r in 0..rows {
+                            for c in 0..cols {
+                                if budget == 0 {
+                                    break 'copies;
+                                }
+                                budget = budget.saturating_sub(cost);
+                                let dx = if c == 0 { 0.0 } else { ins.col_spacing * f64::from(c) };
+                                let dy = if r == 0 { 0.0 } else { ins.row_spacing * f64::from(r) };
+                                let off = if c == 0 && r == 0 { Vec2::ZERO } else { Vec2::new(dx, dy).rotate(ins.rotation) };
+                                if off.is_finite() {
+                                    v.push(outline.iter().map(|p| *p + off).collect());
+                                }
+                            }
+                        }
+                    }
                 }
             }
             v
@@ -918,6 +940,59 @@ mod xclip_selection_tests {
             assert_eq!(select_fence(&d, &Space::Model, &fence), vec![h], "fence frame={frame}");
             let poly = [Vec2::new(4.0, 34.0), Vec2::new(6.0, 36.0), Vec2::new(6.0, 34.0)];
             assert_eq!(select_polygon(&d, &Space::Model, &poly, true), vec![h], "crossing polygon frame={frame}");
+        }
+    }
+
+    #[test]
+    fn hidden_frame_arrayed_clip_copies_are_selectable() {
+        let clip = ClipBoundary::new(vec![Vec2::new(0.0, 30.0), Vec2::new(10.0, 30.0), Vec2::new(0.0, 40.0)]);
+        for frame in [0, 2] {
+            let (mut d, h) = insert_with_line("BC", (0.0, 30.0), (10.0, 30.0), "Hidden", clip.clone());
+            d.header.set_i64("XCLIPFRAME", frame);
+            d.layers.iter_mut().find(|l| l.name == "Hidden").unwrap().frozen = true;
+            d.model.modify(h, |e| {
+                if let EntityKind::Insert(ins) = &mut e.kind {
+                    ins.cols = 2;
+                    ins.rows = 2;
+                    ins.col_spacing = 20.0;
+                    ins.row_spacing = 20.0;
+                }
+            });
+            // Non-base copies' hypotenuses lie strictly inside the array's bounding box.
+            assert_eq!(select_fence(&d, &Space::Model, &[Vec2::new(24.0, 34.0), Vec2::new(26.0, 36.0)]), vec![h], "col 1 fence frame={frame}");
+            assert_eq!(
+                select_polygon(&d, &Space::Model, &[Vec2::new(24.0, 34.0), Vec2::new(26.0, 36.0), Vec2::new(26.0, 34.0)], true),
+                vec![h],
+                "col 1 crossing polygon frame={frame}"
+            );
+            assert_eq!(select_fence(&d, &Space::Model, &[Vec2::new(4.0, 54.0), Vec2::new(6.0, 56.0)]), vec![h], "row 1 fence frame={frame}");
+            assert_eq!(select_fence(&d, &Space::Model, &[Vec2::new(24.0, 54.0), Vec2::new(26.0, 56.0)]), vec![h], "corner copy fence frame={frame}");
+            // Empty gap between copies does not select.
+            assert!(select_fence(&d, &Space::Model, &[Vec2::new(14.0, 34.0), Vec2::new(16.0, 36.0)]).is_empty(), "gap frame={frame}");
+        }
+
+        // Rotated array: copy offset rotates with the reference, matching the renderer.
+        let rot_clip = ClipBoundary::new(vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0)]);
+        for frame in [0, 2] {
+            let (mut d, h) = insert_with_line("BCR", (0.0, 0.0), (10.0, 0.0), "Hidden", rot_clip.clone());
+            d.header.set_i64("XCLIPFRAME", frame);
+            d.layers.iter_mut().find(|l| l.name == "Hidden").unwrap().frozen = true;
+            d.model.modify(h, |e| {
+                if let EntityKind::Insert(ins) = &mut e.kind {
+                    ins.cols = 2;
+                    ins.col_spacing = 20.0;
+                    ins.rotation = std::f64::consts::FRAC_PI_2;
+                }
+            });
+            assert_eq!(
+                select_fence(&d, &Space::Model, &[Vec2::new(-6.0, 26.0), Vec2::new(-4.0, 24.0)]),
+                vec![h],
+                "rotated col 1 fence frame={frame}"
+            );
+            assert!(
+                select_fence(&d, &Space::Model, &[Vec2::new(14.0, 4.0), Vec2::new(16.0, 6.0)]).is_empty(),
+                "unrotated position misses frame={frame}"
+            );
         }
     }
 }
