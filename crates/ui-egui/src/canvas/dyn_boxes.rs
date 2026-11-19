@@ -25,7 +25,8 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
         && let Some(c) = app.canvas.cursor
     {
         let message = if show_prompt { crate::i18n::t(&prompt.message) } else { "" };
-        let r = dynamic_input_boxes(p, at, message, &f, &e, c, app.cmd.second_locked(), options, length_units(&app.session));
+        let r =
+            dynamic_input_boxes(p, at, message, &f, &e, c, (app.cmd.first_active(), app.cmd.second_locked()), options, length_units(&app.session));
         options_menu(app, p, r, hover);
         return;
     }
@@ -122,7 +123,8 @@ fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {
 /// The Dynamic Input value boxes: X and Y, or distance and angle. Typed values show in full
 /// text colour, a locked value (a separator typed after it) gets a lock, the active box gets the
 /// accent outline, and open boxes show the cursor's live value, dimmed. Values measured from the
-/// last point are marked with `@`.
+/// last point are marked with `@`. `(first_active, second_locked)`: Tab wrapped around to the first
+/// box, and Tab locked the second value.
 #[allow(clippy::too_many_arguments)]
 fn dynamic_input_boxes(
     p: &egui::Painter,
@@ -131,7 +133,7 @@ fn dynamic_input_boxes(
     f: &crate::dyninput::Frame,
     e: &crate::dyninput::Entry<'_>,
     cursor: Vec2,
-    second_locked: bool,
+    (first_active, second_locked): (bool, bool),
     options: bool,
     (lu, lp): (i64, i64),
 ) -> Rect {
@@ -155,14 +157,14 @@ fn dynamic_input_boxes(
             if e.first.is_empty() { dist(live_first) } else { e.first.to_owned() },
             !e.first.is_empty(),
             e.first_locked().is_some(),
-            !e.split,
+            !e.split || first_active,
         ),
         (
             label_second,
             if e.second.is_empty() { live_second } else { e.second.to_owned() },
             !e.second.is_empty(),
             second_locked,
-            e.split && !second_locked,
+            e.split && !first_active,
         ),
     ];
 
