@@ -39,6 +39,7 @@ fn a_missing_shx_font_is_reported_when_the_drawing_is_opened() {
     d.text_styles.push(style("Notes", r"C:\Fonts\Cadcraft-Note-Lost.SHX", "cadcraft-note-lostbig.shx"));
     d.text_styles.push(style("Titles", "cadcraft-note-lost", ""));
     d.text_styles.push(style("Plain", "CADCraft Stroke", ""));
+    d.text_styles.push(style("Twice", "cadcraft-note-gone.shx", "cadcraft-note-gone"));
     let path = dir.join("host.dxf").to_string_lossy().into_owned();
     std::fs::write(&path, cadcraft_io::write(&d, "host.dxf").unwrap()).unwrap();
 
@@ -54,6 +55,8 @@ fn a_missing_shx_font_is_reported_when_the_drawing_is_opened() {
     assert!(note.contains("SUPPORTPATH"), "how to fix it: {note}");
     assert!(!note.contains("beside") && !note.contains("Plain"), "a font that is found is not reported: {note}");
     assert!(log.contains(note), "the command line shows it too: {log:?}");
+    assert!(note.contains("cadcraft-note-gone.shx (style Twice)"), "a style naming one font twice is listed once: {note}");
+    assert!(note.contains("ACADPREFIX"), "how to keep the folders it has: {note}");
 
     // FONTALT names the replacement.
     cadcraft_fonts::ttf::set_font_alt("cadcraft-note-beside.shx");
@@ -66,11 +69,18 @@ fn a_missing_shx_font_is_reported_when_the_drawing_is_opened() {
     assert_eq!(cadcraft_engine::sysvars::get(&s, "ACADPREFIX"), Some(json!(fonts.to_string_lossy())), "ACADPREFIX reports the path");
     assert!(s.execute("setvar", &json!({ "name": "ACADPREFIX", "value": "x" })).is_err(), "ACADPREFIX is read-only");
     let (warnings, log) = open(&mut s, &path);
-    assert!(!warnings.iter().any(|w| w.contains("not found")), "{warnings:?}");
-    assert!(!log.iter().any(|l| l.contains("not found")), "{log:?}");
+    assert!(!warnings.iter().any(|w| w.contains("cadcraft-note-lost")), "{warnings:?}");
+    assert!(!log.iter().any(|l| l.contains("cadcraft-note-lost")), "{log:?}");
     let font = cadcraft_fonts::TextFont::resolve_style("cadcraft-note-lost.shx", "cadcraft-note-lostbig.shx", false);
     assert!(font.is_shx());
 
+    // A font copied beside the drawing is found when the drawing is opened again.
     cadcraft_fonts::shx::set_search_path("");
+    let (warnings, _) = open(&mut s, &path);
+    assert!(warnings.iter().any(|w| w.contains("cadcraft-note-gone")), "{warnings:?}");
+    std::fs::write(dir.join("cadcraft-note-gone.shx"), &bytes).unwrap();
+    let (warnings, _) = open(&mut s, &path);
+    assert!(!warnings.iter().any(|w| w.contains("cadcraft-note-gone")), "{warnings:?}");
+
     let _ = std::fs::remove_dir_all(&dir);
 }

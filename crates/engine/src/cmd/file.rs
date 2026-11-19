@@ -366,7 +366,9 @@ fn missing_fonts_note(d: &Drawing) -> Option<String> {
     for st in &d.text_styles {
         for font in cadcraft_fonts::TextFont::missing_shx(&st.font, &st.big_font) {
             match missing.iter_mut().find(|(_, f, _)| f.key == font.key && f.substitute == font.substitute) {
-                Some((_, _, styles)) => styles.push(&st.name),
+                // A style naming one font as both its fonts is listed once.
+                Some((_, _, styles)) if !styles.contains(&st.name.as_str()) => styles.push(&st.name),
+                Some(_) => {}
                 None => missing.push((font.name.rsplit(['/', '\\']).next().unwrap_or(&font.name).to_string(), font, vec![&st.name])),
             }
         }
@@ -393,7 +395,10 @@ fn missing_fonts_note(d: &Drawing) -> Option<String> {
     let more = missing.len().saturating_sub(NOTE_FONTS);
     let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
     let head = if one_sub { format!("Font not found, drawn with {} instead", missing[0].1.substitute) } else { "Font not found".to_string() };
-    Some(format!("{head}: {}{tail}. Add its folder with SETVAR SUPPORTPATH.", list.join("; ")))
+    Some(format!(
+        "{head}: {}{tail}. Add its folder to SETVAR SUPPORTPATH, a list separated by ; (ACADPREFIX shows the folders it has).",
+        list.join("; ")
+    ))
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {

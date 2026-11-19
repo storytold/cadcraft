@@ -381,22 +381,35 @@ impl TextFont {
     /// that isn't an SHX file (a TrueType family, the built-in font) is never listed, nor is
     /// anything when the main font is a TrueType font: the style draws with it alone.
     pub fn missing_shx(font: &str, big_font: &str) -> Vec<MissingShx> {
-        // A name with no extension may be an installed TrueType family: `resolve_style` tries that first.
-        if ttf::find(font).is_some() {
+        let (n, b) = (font.trim(), big_font.trim());
+        let lost = |name: &str| shx::key(name).filter(|_| shx::find(name).is_none());
+        let (main_lost, big_lost) = (lost(n), lost(b));
+        // A name with no extension may be an installed TrueType family: `resolve_style` tries that
+        // first. Looked up only when an SHX font is missing, so a style whose fonts are all found
+        // loads no TrueType font here.
+        if (main_lost.is_none() && big_lost.is_none()) || ttf::find(n).is_some() {
             return Vec::new();
         }
+        // What `resolve_style` draws instead. While either SHX font is there (or FONTALT gives one for
+        // its role), the style is drawn as SHX: each missing font by FONTALT's font for its role, else the
+        // built-in font. With none, FONTALT's main font draws the whole style if it is a TrueType font.
         let alt = ttf::font_alt();
         let (alt_main, alt_big) = alt.split_once(',').map_or((alt.as_str(), ""), |(a, b)| (a.trim(), b.trim()));
-        // What `resolve_style` draws instead: the FONTALT font for the font's role when found,
-        // else the built-in font (which also draws a missing big font's characters).
-        let main_sub = if !alt_main.is_empty() && (shx::find(alt_main).is_some() || ttf::find(alt_main).is_some()) { alt_main } else { BUILTIN_FONT };
-        let big_sub = if !alt_big.is_empty() && shx::find(alt_big).is_some() { alt_big } else { BUILTIN_FONT };
-        [(font.trim(), main_sub), (big_font.trim(), big_sub)]
+        let builtin = n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT);
+        let alt_main_shx = !builtin && shx::find(alt_main).is_some();
+        let alt_big_shx = !b.is_empty() && shx::find(alt_big).is_some();
+        let shx_style =
+            alt_main_shx || alt_big_shx || (!builtin && main_lost.is_none() && shx::find(n).is_some()) || (!b.is_empty() && big_lost.is_none());
+        let (main_sub, big_sub) = if shx_style {
+            (if alt_main_shx { alt_main } else { BUILTIN_FONT }, if alt_big_shx { alt_big } else { BUILTIN_FONT })
+        } else if !builtin && ttf::find(alt_main).is_some() {
+            (alt_main, alt_main)
+        } else {
+            (BUILTIN_FONT, BUILTIN_FONT)
+        };
+        [(n, main_lost, main_sub), (b, big_lost, big_sub)]
             .into_iter()
-            .filter_map(|(name, sub)| {
-                let key = shx::key(name)?;
-                shx::find(name).is_none().then(|| MissingShx { name: name.to_string(), key, substitute: sub.to_string() })
-            })
+            .filter_map(|(name, key, sub)| Some(MissingShx { name: name.to_string(), key: key?, substitute: sub.to_string() }))
             .collect()
     }
     pub fn is_outline(&self) -> bool {

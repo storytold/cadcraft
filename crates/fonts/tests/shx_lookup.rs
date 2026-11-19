@@ -58,6 +58,21 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
     shx::set_provider(None);
     assert!(shx::find("cadcraft-provided.shx").is_none());
 
+    missing_fonts_and_what_replaces_them();
+
+    // Registered bytes (files opened alongside a drawing on the web) and clearing them.
+    shx::register("cadcraft-registered.shx", &bytes).unwrap();
+    assert!(shx::find("cadcraft-registered.shx").is_some());
+    shx::clear_registered();
+    assert!(shx::find("cadcraft-registered.shx").is_none());
+
+    shx::set_search_path("");
+    assert_eq!(shx::search_path(), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Needs the fonts the test above writes beside the drawing.
+fn missing_fonts_and_what_replaces_them() {
     // The SHX fonts of a text style that are missing (a found one, a TrueType name and the built-in
     // font are not), and what replaces them.
     let missing = |font: &str, big: &str| -> Vec<(String, String, String)> {
@@ -87,18 +102,22 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
             entry("cadcraft-missing-big", "cadcraft-missing-big.shx", "cadcraft-beside-big.shx")
         ]
     );
+    // No SHX font for the style at all: a TrueType FONTALT font draws the whole style, big font too.
+    ttf::register("cadcraft-tt-alt.ttf", vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    ttf::set_font_alt("cadcraft-tt-alt.ttf");
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-missing-big", false).is_outline());
+    assert_eq!(
+        missing("cadcraft-missing.shx", "cadcraft-missing-big"),
+        vec![
+            entry("cadcraft-missing.shx", "cadcraft-missing.shx", "cadcraft-tt-alt.ttf"),
+            entry("cadcraft-missing-big", "cadcraft-missing-big.shx", "cadcraft-tt-alt.ttf")
+        ]
+    );
+    // A big font that is there makes it an SHX style: the TrueType font draws nothing.
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-beside-big", false).is_shx());
+    assert_eq!(missing("cadcraft-missing.shx", "cadcraft-beside-big"), vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", BUILTIN_FONT)]);
     ttf::set_font_alt("cadcraft-beside.shx");
     assert!(TextFont::resolve("cadcraft-missing.shx").is_shx());
     assert!(!TextFont::resolve("").is_shx(), "the built-in font is not replaced");
     ttf::set_font_alt("");
-
-    // Registered bytes (files opened alongside a drawing on the web) and clearing them.
-    shx::register("cadcraft-registered.shx", &bytes).unwrap();
-    assert!(shx::find("cadcraft-registered.shx").is_some());
-    shx::clear_registered();
-    assert!(shx::find("cadcraft-registered.shx").is_none());
-
-    shx::set_search_path("");
-    assert_eq!(shx::search_path(), "");
-    let _ = std::fs::remove_dir_all(&dir);
 }
