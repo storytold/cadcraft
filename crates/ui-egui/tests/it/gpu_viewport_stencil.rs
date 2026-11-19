@@ -42,24 +42,27 @@ fn callback(list: &DisplayList, layer: usize, key: u64, stencil: Stencil) -> Can
 
 /// Render the callbacks in order into a white target with a cleared stencil buffer; returns
 /// whether each pixel came out dark, row by row from the top.
-fn render(rs: &egui_wgpu::RenderState, callbacks: &[CanvasCallback]) -> Vec<bool> {
+fn render(rs: &egui_wgpu::RenderState, samples: u32, callbacks: &[CanvasCallback]) -> Vec<bool> {
     let (device, queue) = (&rs.device, &rs.queue);
     let extent = wgpu::Extent3d { width: SIZE, height: SIZE, depth_or_array_layers: 1 };
-    let texture = |format, usage| {
+    let texture = |format, usage, samples| {
         device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: extent,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: samples,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
             view_formats: &[],
         })
     };
-    let color = texture(rs.target_format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-    let stencil = texture(STENCIL, wgpu::TextureUsages::RENDER_ATTACHMENT);
-    let (color_view, stencil_view) = (color.create_view(&Default::default()), stencil.create_view(&Default::default()));
+    let color = texture(rs.target_format, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, 1);
+    let multisample = (samples > 1).then(|| texture(rs.target_format, wgpu::TextureUsages::RENDER_ATTACHMENT, samples));
+    let resolve_view = color.create_view(&Default::default());
+    let stencil = texture(STENCIL, wgpu::TextureUsages::RENDER_ATTACHMENT, samples);
+    let (color_view, stencil_view) =
+        (multisample.as_ref().unwrap_or(&color).create_view(&Default::default()), stencil.create_view(&Default::default()));
     let screen = ScreenDescriptor { size_in_pixels: [SIZE, SIZE], pixels_per_point: 1.0 };
     let mut encoder = device.create_command_encoder(&Default::default());
     let mut renderer = rs.renderer.write();
@@ -72,7 +75,7 @@ fn render(rs: &egui_wgpu::RenderState, callbacks: &[CanvasCallback]) -> Vec<bool
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
-                    resolve_target: None,
+                    resolve_target: multisample.as_ref().map(|_| &resolve_view),
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store },
                     depth_slice: None,
                 })],
@@ -118,9 +121,18 @@ fn dark(px: &[bool], x: u32, y: u32) -> bool {
 
 #[test]
 fn clipped_viewport_contents_draw_only_inside_their_outline() {
+    exercise_clipping(1);
+}
+
+#[test]
+fn native_four_sample_viewports_and_highlights_resolve_with_stencil() {
+    exercise_clipping(4);
+}
+
+fn exercise_clipping(samples: u32) {
     let rs = egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup(), Default::default());
     let faults = Arc::new(GpuFaults::default());
-    let target = gpu::install(&rs, &faults, Some(STENCIL), 1);
+    let target = gpu::install(&rs, &faults, Some(STENCIL), samples);
     assert_eq!(target.stencil, Some(STENCIL));
     // The contents: a black square over the whole target.
     let square = |key| {
@@ -131,13 +143,13 @@ fn clipped_viewport_contents_draw_only_inside_their_outline() {
     // A circle of radius 20 about the centre (screen and world agree at the centre; y is up).
     let circle: Vec<Vec2> =
         (0..=64).map(|i| f64::from(i) * std::f64::consts::TAU / 64.0).map(|a| Vec2::new(32.0 + 20.0 * a.cos(), 32.0 + 20.0 * a.sin())).collect();
-    let px = render(&rs, &[callback(&fan(&circle), LAYER_MASK, 1, Stencil::Mask), square(2)]);
+    let px = render(&rs, samples, &[callback(&fan(&circle), LAYER_MASK, 1, Stencil::Mask), square(2)]);
     assert!(dark(&px, 32, 32) && dark(&px, 45, 32) && dark(&px, 32, 18));
     assert!(!dark(&px, 4, 4) && !dark(&px, 60, 60) && !dark(&px, 58, 32) && !dark(&px, 32, 58));
 
     // A concave L: the fan covers the notch twice, which leaves it unmasked.
     let l = [(8.0, 8.0), (56.0, 8.0), (56.0, 24.0), (24.0, 24.0), (24.0, 56.0), (8.0, 56.0), (8.0, 8.0)].map(|(x, y)| Vec2::new(x, y));
-    let px = render(&rs, &[callback(&fan(&l), LAYER_MASK, 3, Stencil::Mask), square(4)]);
+    let px = render(&rs, samples, &[callback(&fan(&l), LAYER_MASK, 3, Stencil::Mask), square(4)]);
     // World (16, 40) is screen (16, 24); world (40, 16) is screen (40, 48); the notch, world
     // (40, 40), is screen (40, 24).
     assert!(dark(&px, 16, 24) && dark(&px, 40, 48), "inside both arms of the L");
@@ -164,14 +176,14 @@ fn clipped_viewport_contents_draw_only_inside_their_outline() {
     let slot: MeshSlot = Arc::default();
     *slot.lock().unwrap() = Some(gpu::build_highlight_mesh(&line, &[0], Vec2::ZERO, [0, 0, 0, 255], 3.0, false));
     let highlight = CanvasCallback { slot, layer: LAYER_HIGHLIGHT, ..callback(&line, LAYER_HIGHLIGHT, 6, Stencil::Inside) };
-    let px = render(&rs, &[callback(&fan(&circle), LAYER_MASK, 1, Stencil::Mask), highlight]);
+    let px = render(&rs, samples, &[callback(&fan(&circle), LAYER_MASK, 1, Stencil::Mask), highlight]);
     assert!(dark(&px, 32, 32) && dark(&px, 20, 32) && dark(&px, 44, 32), "inside the circle");
     assert!(!dark(&px, 4, 32) && !dark(&px, 60, 32), "outside it");
 
     // Without a mask, Off draws everywhere.
     let mut off = square(5);
     off.stencil = Stencil::Off;
-    let px = render(&rs, &[off]);
+    let px = render(&rs, samples, &[off]);
     assert!(px.iter().all(|d| *d));
     // wgpu reported nothing (validation errors land in the faults instead of panicking).
     assert_eq!(faults.take(), None);

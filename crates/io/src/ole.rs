@@ -205,6 +205,11 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
 }
 
 fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
+    normalize_svg_bounded(svg, images, MAX_BYTES)
+}
+
+fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Result<String> {
+    checked_svg_size(0, 0, svg.len(), limit)?;
     let xml = roxmltree::Document::parse(svg).map_err(bad)?;
     let root = xml.root_element();
     let view: Vec<f32> = root
@@ -221,6 +226,7 @@ fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
         return Err(bad("empty view box"));
     }
     let mut edits = Vec::new();
+    let mut replacement_bytes = 0usize;
     for node in root.descendants().filter(|n| n.has_tag_name("image")) {
         let placement = images.iter().find(|i| Some(i.id.as_str()) == node.attribute("id")).ok_or_else(|| bad("unsupported bitmap placement"))?;
         let href = node.attribute("href").ok_or_else(|| bad("missing embedded bitmap"))?;
@@ -249,25 +255,52 @@ fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
                 replacement
                     .push_str(&format!("<rect x=\"{start}\" y=\"{row}\" width=\"{}\" height=\"1\" fill=\"#{r:02x}{g:02x}{b:02x}\"/>", end - start));
                 runs += 1;
-                if runs > MAX_SOLIDS / 2 || replacement.len() > MAX_BYTES {
+                if runs > MAX_SOLIDS / 2 || replacement.len() > limit {
                     return Err(bad("bitmap conversion exceeds limits"));
                 }
                 start = end;
             }
         }
         replacement.push_str("</g>");
+        replacement_bytes = checked_svg_size(replacement_bytes, 0, replacement.len(), limit)?;
         edits.push((node.range(), replacement));
     }
-    let mut result = svg.to_string();
-    for (range, replacement) in edits.into_iter().rev() {
-        result.replace_range(range, &replacement);
-    }
+    let mut result = apply_svg_edits(svg, edits, limit)?;
     let end = result.find('>').ok_or_else(|| bad("invalid SVG root"))?;
-    result.insert_str(end, &format!(" width=\"{width}\" height=\"{height}\""));
-    if result.len() > MAX_BYTES {
+    let dimensions = format!(" width=\"{width}\" height=\"{height}\"");
+    checked_svg_size(result.len(), 0, dimensions.len(), limit)?;
+    result.insert_str(end, &dimensions);
+    if result.len() > limit {
         return Err(bad("SVG exceeds limits"));
     }
     Ok(result)
+}
+
+/// Account for edits before retaining or assembling their expanded SVG.
+fn checked_svg_size(current: usize, removed: usize, added: usize, limit: usize) -> Result<usize> {
+    current.checked_sub(removed).and_then(|n| n.checked_add(added)).filter(|n| *n <= limit).ok_or_else(|| bad("SVG replacements exceed limits"))
+}
+
+pub(super) fn apply_svg_edits(svg: &str, mut edits: Vec<(std::ops::Range<usize>, String)>, limit: usize) -> Result<String> {
+    edits.sort_unstable_by_key(|(range, _)| range.start);
+    let mut length = checked_svg_size(0, 0, svg.len(), limit)?;
+    let mut previous = 0;
+    for (range, replacement) in &edits {
+        if range.start < previous || svg.get(range.clone()).is_none() {
+            return Err(bad("overlapping or invalid SVG edits"));
+        }
+        length = checked_svg_size(length, range.len(), replacement.len(), limit)?;
+        previous = range.end;
+    }
+    let mut output = String::with_capacity(length);
+    let mut previous = 0;
+    for (range, replacement) in edits {
+        output.push_str(svg.get(previous..range.start).ok_or_else(|| bad("invalid SVG edit"))?);
+        output.push_str(&replacement);
+        previous = range.end;
+    }
+    output.push_str(svg.get(previous..).ok_or_else(|| bad("invalid SVG edit"))?);
+    Ok(output)
 }
 
 /// The page and its embedded images use axis-aligned rectangular PDF clips.
@@ -326,6 +359,9 @@ fn draw_group(group: &usvg::Group, drawing: &mut Drawing, size: [f32; 2], depth:
             usvg::Node::Text(t) => draw_group(t.flattened(), drawing, size, depth + 1, clip)?,
             usvg::Node::Path(p) if p.is_visible() => {
                 if let Some(fill) = p.fill() {
+                    if fill.opacity().get() != 1.0 {
+                        return Err(bad("nonopaque path fills are not supported"));
+                    }
                     let rule = match fill.rule() {
                         usvg::FillRule::EvenOdd => FillRule::EvenOdd,
                         usvg::FillRule::NonZero => FillRule::NonZero,
@@ -333,6 +369,9 @@ fn draw_group(group: &usvg::Group, drawing: &mut Drawing, size: [f32; 2], depth:
                     add_path(drawing, p.data(), p.abs_transform(), fill.paint(), rule, size, clip)?;
                 }
                 if let Some(stroke) = p.stroke() {
+                    if stroke.opacity().get() != 1.0 {
+                        return Err(bad("nonopaque path strokes are not supported"));
+                    }
                     let pen = stroke.to_tiny_skia();
                     // PDF can emit zero-length, butt-capped segments. The stroker
                     // returns no outline for these because they paint nothing.
@@ -451,6 +490,38 @@ mod tests {
         record[40..44].copy_from_slice(&total.to_le_bytes());
         record.extend_from_slice(data);
         record
+    }
+
+    #[test]
+    fn multiple_bitmap_expansions_share_one_svg_budget() {
+        let pixels = image::RgbImage::from_fn(64, 64, |x, y| image::Rgb([(x * 3) as u8, (y * 3) as u8, ((x + y) * 2) as u8]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(pixels).write_to(&mut bytes, image::ImageFormat::Bmp).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes.into_inner());
+        let image = |id: &str| format!(r#"<image id="{id}" href="data:image/bmp;base64,{encoded}"/>"#);
+        let svg = |content: String| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">{content}</svg>"#);
+        let a = BitmapRect { id: "a".into(), rect: [0, 0, 64, 64] };
+        let b = BitmapRect { id: "b".into(), rect: [0, 0, 64, 64] };
+        let single = normalize_svg_bounded(&svg(image("a")), std::slice::from_ref(&a), 600_000).unwrap();
+        let limit = single.len() + 1000;
+        assert!(normalize_svg_bounded(&svg(image("a") + &image("b")), &[a, b], limit).is_err());
+    }
+
+    #[test]
+    fn cumulative_bitmap_edits_are_bounded_before_assembly() {
+        let first = checked_svg_size(0, 0, 6, 10).unwrap();
+        assert!(checked_svg_size(first, 0, 6, 10).is_err());
+        assert!(checked_svg_size(usize::MAX, 0, 1, usize::MAX).is_err());
+        assert!(apply_svg_edits("ab", vec![(0..1, "xxxxxx".into()), (1..2, "yyyyyy".into())], 10).is_err());
+        assert_eq!(apply_svg_edits("ab", vec![(0..1, "xx".into())], 10).unwrap(), "xxb");
+    }
+
+    #[test]
+    fn nonopaque_fill_and_stroke_are_refused_instead_of_becoming_opaque() {
+        for paint in [r#"fill="black" fill-opacity="0.5""#, r#"fill="none" stroke="black" stroke-opacity="0.5""#] {
+            let svg = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M1 1H9V9H1Z" {paint}/></svg>"#);
+            assert!(read_vector_svg(&svg, false).is_err(), "{paint}");
+        }
     }
 
     #[test]

@@ -39,3 +39,12 @@ Explicit `at` and `scale` import parameters override placement and scale.
 `oleconvert` can also replace a selected OLE frame containing a supported cached
 Word metafile presentation. It reads the cached presentation without running an
 OLE server. The original Word document cannot be edited through the converted block.
+
+Page recognition uses a persisted block description marker, not a block-name
+prefix. Ordinary blocks with names such as `PDF_ANTET_1` keep ordinary block
+selection behavior. Unmarked legacy blocks remain ordinary blocks.
+
+Nonopaque path paints and partially transparent bitmap coverage currently return
+an unsupported-compositing error. Opaque white bitmap pixels are preserved, and
+zero-coverage pixels are skipped. This prevents silently changing artwork colours
+when importing overlapping content.

@@ -352,15 +352,10 @@ impl Drawing {
             return None;
         }
         let block = self.block(&insert.block)?;
+        // The description is persisted with the block in DXF/DWG. A user-chosen
+        // name alone is never evidence that arbitrary block contents form a page.
         if block.description != "Converted embedded document" {
-            let name = block.name.to_ascii_uppercase();
-            if !["WORD_ANTET", "PDF_ANTET"].iter().any(|prefix| {
-                name.strip_prefix(prefix).is_some_and(|suffix| {
-                    suffix.is_empty() || suffix.strip_prefix('_').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-                })
-            }) {
-                return None;
-            }
+            return None;
         }
         let background = block.entities.iter().next()?;
         if background.common.color != color::Color::True(color::Rgb(255, 255, 255)) {

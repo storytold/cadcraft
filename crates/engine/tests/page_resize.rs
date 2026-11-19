@@ -10,6 +10,7 @@ use std::sync::Arc;
 fn corner_resize_keeps_opposite_corner_and_undo_restores_page() {
     let mut session = Session::new();
     let mut block = Block::new("PDF_ANTET");
+    block.description = "Converted embedded document".into();
     let mut background = Entity::new(
         Handle(2),
         EntityKind::Solid(Solid { corners: [Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)] }),

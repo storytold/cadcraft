@@ -46,10 +46,22 @@ fn at(app: &CadApp, xf: &Xf, pointer: Pos2) -> Option<(Handle, usize, [Vec2; 5])
     None
 }
 
+fn commit(app: &mut CadApp, drag: &Drag, xf: &Xf) {
+    if cadcraft_engine::grips::page_resize_transform(&drag.frame, drag.corner, drag.to).is_some()
+        && (drag.to - drag.frame[drag.corner]).len() * xf.scale > 1.0
+    {
+        let _ = app.run("page.resize", serde_json::json!({"handle":drag.handle.hex(),"corner":drag.corner,"to":[drag.to.x,drag.to.y]}));
+    }
+}
+
 pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_menu: bool) -> bool {
-    let (pointer, pressed, released, down, escape) = ui.input(|i| {
+    let (pointer, press_position, pressed, released, down, escape) = ui.input(|i| {
         (
             i.pointer.interact_pos(),
+            i.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, .. } => Some(*pos),
+                _ => None,
+            }),
             i.pointer.button_pressed(PointerButton::Primary),
             i.pointer.button_released(PointerButton::Primary),
             i.pointer.primary_down(),
@@ -67,26 +79,26 @@ pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_m
         let transform = cadcraft_engine::grips::page_resize_transform(&drag.frame, drag.corner, drag.to);
         ui.ctx().set_cursor_icon(if transform.is_some() { CursorIcon::ResizeNwSe } else { CursorIcon::NotAllowed });
         if released {
-            if transform.is_some() && (drag.to - drag.frame[drag.corner]).len() * xf.scale > 1.0 {
-                let _ = app.run(
-                    "page.resize",
-                    serde_json::json!({
-                        "handle":drag.handle.hex(), "corner":drag.corner, "to":[drag.to.x,drag.to.y]
-                    }),
-                );
-            }
+            commit(app, &drag, xf);
         } else if down {
             app.canvas.page_resize = Some(drag);
         }
         return true;
     }
-    if !inside || on_menu || app.session.pending_window.is_some() {
+    let starts_inside = press_position.is_some_and(|p| xf.rect.contains(p));
+    if (!inside && !starts_inside) || on_menu || app.session.pending_window.is_some() {
         return false;
     }
-    if let Some((handle, corner, frame)) = pointer.and_then(|point| at(app, xf, point)) {
+    if let Some((handle, corner, frame)) = press_position.or(pointer).and_then(|point| at(app, xf, point)) {
         ui.ctx().set_cursor_icon(CursorIcon::ResizeNwSe);
         if pressed && let Ok(state) = app.session.state() {
-            app.canvas.page_resize = Some(Drag { handle, corner, frame, document: state.uid, revision: state.revision, to: frame[corner] });
+            let drag =
+                Drag { handle, corner, frame, document: state.uid, revision: state.revision, to: pointer.map_or(frame[corner], |p| xf.to_world(p)) };
+            if released {
+                commit(app, &drag, xf);
+            } else {
+                app.canvas.page_resize = Some(drag);
+            }
             app.canvas.drag_window = false;
             return true;
         }
@@ -126,6 +138,7 @@ mod tests {
     fn app() -> (CadApp, Handle) {
         let mut session = Session::new();
         let mut block = Block::new("PDF_ANTET");
+        block.description = "Converted embedded document".into();
         let mut entity = Entity::new(
             Handle(1),
             EntityKind::Solid(Solid { corners: [Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)] }),
@@ -147,6 +160,32 @@ mod tests {
             input(app, ui, xf, true, false);
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn press_move_and_release_in_one_frame_commits_from_press_position() {
+        let (mut app, handle) = app();
+        let ctx = egui::Context::default();
+        let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 10.0, twist: 0.0 };
+        let start = xf.to_screen(Vec2::ZERO);
+        let end = xf.to_screen(Vec2::new(-20.0, -10.0));
+        let undo = app.session.state().unwrap().undo.len();
+        step(
+            &ctx,
+            &mut app,
+            &xf,
+            vec![
+                Event::PointerMoved(start),
+                Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
+                Event::PointerMoved(end),
+                Event::PointerButton { pos: end, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE },
+            ],
+        );
+        assert!(app.canvas.page_resize.is_none());
+        let doc = app.session.doc().unwrap();
+        let frame = doc.imported_page_frame(doc.entity(handle).unwrap()).unwrap();
+        assert!((frame[0] - Vec2::new(-20.0, -10.0)).len() < 1e-9);
+        assert_eq!(app.session.state().unwrap().undo.len(), undo + 1);
     }
 
     #[test]

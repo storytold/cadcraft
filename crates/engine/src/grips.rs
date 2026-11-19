@@ -584,5 +584,12 @@ pub fn page_resize_transform(frame: &[Vec2; 5], corner: usize, to: Vec2) -> Opti
     if !factor.is_finite() || !(1e-6..=1e6).contains(&factor) {
         return None;
     }
-    Some(Mat3::scale_about(anchor, factor))
+    // A successful shrink must remain large enough for the same operation to
+    // accept it as a starting page on the next drag.
+    let transform = Mat3::scale_about(anchor, factor);
+    let resized = transform.apply(moving) - transform.apply(anchor);
+    if !resized.is_finite() || resized.x * resized.x + resized.y * resized.y < 1e-18 {
+        return None;
+    }
+    Some(transform)
 }

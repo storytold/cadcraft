@@ -109,18 +109,24 @@ fn bitmap(node: Node<'_, '_>) -> Result<Raster> {
     raster::decode(&bytes)
 }
 
-/// MuPDF writes image soft masks as a second inline bitmap. Composite the pixels
-/// against the white paper and convert their runs to rectangles in image coordinates.
+/// MuPDF writes image soft masks as a second inline bitmap. Preserve opaque
+/// pixel runs, including white; reject partial coverage requiring compositing.
 fn inline_bitmaps(svg: &str) -> Result<String> {
     let xml = roxmltree::Document::parse(svg).map_err(error)?;
     let root = xml.root_element();
     let mut edits = Vec::new();
     let mut replacement_bytes = 0usize;
-    for image in root.descendants().filter(|n| n.has_tag_name("image") && !n.ancestors().any(|p| p.has_tag_name("defs"))) {
+    for image in root.descendants().filter(|n| n.has_tag_name("image") && !n.ancestors().any(|p| p.has_tag_name("mask"))) {
         let pixels = bitmap(image)?;
         let mask_group = image.ancestors().find(|n| n.has_attribute("mask"));
         let mask = mask_group.map(|group| image_mask(root, group, image, &pixels)).transpose()?;
-        let replacement = bitmap_rectangles(&pixels, mask.as_ref())?;
+        let mut replacement = bitmap_rectangles(&pixels, mask.as_ref())?;
+        if let Some(id) = image.attribute_node("id") {
+            // Retain the original escaped attribute so subsequent <use> nodes
+            // resolve to the converted geometry without reintroducing the image.
+            let attribute = svg.get(id.range()).ok_or_else(|| error("invalid image ID"))?;
+            replacement = format!("<g {attribute}>{replacement}</g>");
+        }
         replacement_bytes = replacement_bytes.saturating_add(replacement.len());
         if replacement_bytes > MAX_BYTES {
             return Err(error("bitmap geometry exceeds limits"));
@@ -139,15 +145,7 @@ fn inline_bitmaps(svg: &str) -> Result<String> {
         }
         edits.push((dimension.range(), format!("{name}=\"{}mm\"", points * 25.4 / 72.0)));
     }
-    edits.sort_unstable_by_key(|(range, _)| range.start);
-    if edits.windows(2).any(|pair| matches!(pair, [(left, _), (right, _)] if left.end > right.start)) {
-        return Err(error("overlapping bitmap masks"));
-    }
-    let mut result = svg.to_string();
-    for (range, replacement) in edits.into_iter().rev() {
-        result.replace_range(range, &replacement);
-    }
-    Ok(result)
+    ole::apply_svg_edits(svg, edits, MAX_BYTES)
 }
 
 fn image_mask(root: Node<'_, '_>, group: Node<'_, '_>, image: Node<'_, '_>, pixels: &Raster) -> Result<Raster> {
@@ -177,7 +175,7 @@ fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
     let composite = |x, y| {
         let [r, g, b, alpha] = pixels.pixel(x, y)?;
         let alpha = u32::from(alpha) * u32::from(mask.and_then(|m| m.pixel(x, y)).map_or(255, |p| p[0])) / 255;
-        Some([r, g, b].map(|channel| (255 - (255 - u32::from(channel)) * alpha / 255) as u8))
+        Some(([r, g, b], alpha))
     };
     for row in 0..pixels.height() {
         let mut start = 0;
@@ -187,8 +185,11 @@ fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
             while end < pixels.width() && composite(end, row) == Some(color) {
                 end += 1;
             }
-            let [r, g, b] = color;
-            if color != [255; 3] {
+            let ([r, g, b], coverage) = color;
+            if coverage != 0 && coverage != 255 {
+                return Err(error("partially transparent bitmap coverage requires unsupported compositing"));
+            }
+            if coverage != 0 {
                 write!(svg, "<rect x=\"{start}\" y=\"{row}\" width=\"{}\" height=\"1\" fill=\"#{r:02x}{g:02x}{b:02x}\"/>", end - start)
                     .map_err(error)?;
             }
@@ -205,6 +206,45 @@ fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_opaque_white_logo_can_cover_coloured_vector_artwork() {
+        let white = Raster::new(1, 1, vec![255, 255, 255, 255]).unwrap();
+        let png = base64::engine::general_purpose::STANDARD.encode(raster::encode_png(&white).unwrap());
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72"><path fill="#0000ff" d="M0 0H72V72H0Z"/><image width="1" height="1" href="data:image/png;base64,{png}"/></svg>"##
+        );
+        let drawing = ole::read_vector_svg(&inline_bitmaps(&svg).unwrap(), false).unwrap();
+        let white =
+            drawing.model.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb(255, 255, 255))).count();
+        assert_eq!(white, 3, "paper plus two opaque white logo triangles");
+    }
+
+    #[test]
+    fn bitmap_runs_preserve_white_and_skip_only_zero_coverage() {
+        let white = Raster::new(1, 1, vec![255, 255, 255, 255]).unwrap();
+        assert!(bitmap_rectangles(&white, None).unwrap().contains("#ffffff"));
+        let clear = Raster::new(1, 1, vec![255, 255, 255, 0]).unwrap();
+        assert!(!bitmap_rectangles(&clear, None).unwrap().contains("<rect"));
+        let partial = Raster::new(1, 1, vec![0, 0, 0, 128]).unwrap();
+        assert!(bitmap_rectangles(&partial, None).is_err(), "unsupported compositing must not silently paint the wrong colour");
+    }
+
+    #[test]
+    fn reused_bitmap_ids_reach_both_page_positions() {
+        let image = Raster::new(1, 1, vec![255, 0, 0, 255]).unwrap();
+        let png = base64::engine::general_purpose::STANDARD.encode(raster::encode_png(&image).unwrap());
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="72" height="72">
+        <image id="logo" width="1" height="1" xlink:href="data:image/png;base64,{png}"/>
+        <use x="10" xlink:href="#logo"/></svg>"##
+        );
+        let svg = inline_bitmaps(&svg).unwrap();
+        let drawing = ole::read_vector_svg(&svg, false).unwrap();
+        let red: Vec<_> =
+            drawing.model.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb(255, 0, 0))).collect();
+        assert_eq!(red.len(), 4, "two triangles at each of the two placements");
+    }
 
     #[test]
     fn a_pdf_point_page_becomes_metric_cad_geometry() {

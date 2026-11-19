@@ -395,3 +395,39 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
 }
+
+#[test]
+fn prebuilt_mesh_is_reused_until_fade_state_changes() {
+    let mut canvas = CanvasState::default();
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0));
+    let xf = Xf { rect, center: Vec2::ZERO, scale: 1.0, twist: 0.0 };
+    let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
+    let list = list(&[1]);
+    let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(rect.height()) / xf.scale);
+    let base = draw::list_mesh_key(&canvas.key, canvas.list_gen, origin, Rgb(0, 0, 0), false);
+    canvas.list = Some(list);
+    canvas.mesh_key = Some(base);
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[]);
+    assert!(canvas.mesh_slot.lock().unwrap().is_none(), "the pre-uploaded mesh must not be replaced on the UI thread");
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[Handle(1)]);
+    assert_ne!(canvas.mesh_key, Some(base));
+    assert!(canvas.mesh_slot.lock().unwrap().take().is_some());
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[]);
+    assert_eq!(canvas.mesh_key, Some(base), "a faded mesh is not retained after MOVE");
+    assert!(canvas.mesh_slot.lock().unwrap().is_some());
+}
+
+#[test]
+fn page_frame_highlights_obey_a_concave_viewport_polygon() {
+    let polygon = [(0.0, 0.0), (20.0, 0.0), (20.0, 5.0), (5.0, 5.0), (5.0, 20.0), (0.0, 20.0)].map(|(x, y)| Vec2::new(x, y));
+    let clip = cadcraft_render::clip::PolyClip::new(&polygon).unwrap();
+    let frame = [Vec2::new(1.0, 1.0), Vec2::new(15.0, 1.0), Vec2::new(15.0, 15.0), Vec2::new(1.0, 15.0), Vec2::new(1.0, 1.0)];
+    let pieces = imported_page_lines(&frame, Some(&clip));
+    assert!(!pieces.is_empty());
+    for piece in pieces {
+        for edge in piece.windows(2) {
+            assert!(clip.contains((edge[0] + edge[1]) * 0.5), "no frame segment in the viewport notch");
+        }
+    }
+    assert_eq!(imported_page_lines(&frame, None), vec![frame.to_vec()]);
+}

@@ -26,7 +26,10 @@ impl Session {
 
     fn execute_guarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
-        (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        let opens_page = spec.id == "import" && self.state().is_err() && cmd::page_file_import(params);
+        if !opens_page {
+            (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        }
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }

@@ -393,13 +393,26 @@ struct CanvasPaint<'a> {
 
 /// Page imports carry many fill primitives. Show the paper frame for hover and
 /// selection so the highlight never walks or tessellates the contents.
-fn draw_imported_page_frame(painter: &egui::Painter, xf: &Xf, frame: [Vec2; 5], color: Color32, look: Look) {
-    let corners = frame.map(|p| xf.to_screen(p));
+fn imported_page_lines(frame: &[Vec2; 5], clip: Option<&cadcraft_render::clip::PolyClip>) -> Vec<Vec<Vec2>> {
+    clip.map_or_else(|| vec![frame.to_vec()], |clip| clip.clip_polyline(frame))
+}
+
+fn draw_imported_page_frame(
+    painter: &egui::Painter,
+    xf: &Xf,
+    frame: [Vec2; 5],
+    color: Color32,
+    look: Look,
+    clip: Option<&cadcraft_render::clip::PolyClip>,
+) {
     let stroke = Stroke::new(look.width, color);
-    if look.dashed {
-        painter.extend(dashed_polygon(painter.clip_rect(), &corners, stroke, 6.0, 4.0));
-    } else {
-        painter.add(egui::Shape::line(corners.to_vec(), stroke));
+    for line in imported_page_lines(&frame, clip) {
+        let corners: Vec<_> = line.into_iter().map(|p| xf.to_screen(p)).collect();
+        if look.dashed {
+            painter.extend(dashed_polygon(painter.clip_rect(), &corners, stroke, 6.0, 4.0));
+        } else {
+            painter.add(egui::Shape::line(corners, stroke));
+        }
     }
 }
 
@@ -475,8 +488,12 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
         )
     });
     let page_painter = painter.with_clip_rect(viewport_rect.map_or(rect, |r| r.intersect(rect)));
+    let page_clip = active_vp.as_ref().zip(active_clip.as_ref()).and_then(|(vp, clip)| {
+        let polygon: Vec<_> = clip.polygon().iter().map(|p| vp.paper_to_model(*p)).collect();
+        cadcraft_render::clip::PolyClip::new(&polygon)
+    });
     if let Some(frame) = hover.and_then(page_frame) {
-        draw_imported_page_frame(&page_painter, &xf, frame, t.hover, preview_look);
+        draw_imported_page_frame(&page_painter, &xf, frame, t.hover, preview_look, page_clip.as_ref());
         hover = None;
     }
     let remaining: Vec<Handle> = selection_look.map_or_else(Vec::new, |look| {
@@ -484,7 +501,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             .copied()
             .filter(|&h| {
                 if let Some(frame) = page_frame(h) {
-                    draw_imported_page_frame(&page_painter, &xf, frame, t.selection, look);
+                    draw_imported_page_frame(&page_painter, &xf, frame, t.selection, look, page_clip.as_ref());
                     false
                 } else {
                     true

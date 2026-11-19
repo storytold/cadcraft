@@ -185,6 +185,12 @@ fn run_oleconvert(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("oleconvert", "the object is not an OLE frame"));
     }
     let frame = cadcraft_doc::ole_frame(&unknown.tags).ok_or_else(|| bad("oleconvert", "invalid frame"))?;
+    let [top_left, _, bottom_right, _, _] = frame;
+    let width = bottom_right.x - top_left.x;
+    let height = top_left.y - bottom_right.y;
+    if !width.is_finite() || !height.is_finite() || width == 0.0 || height == 0.0 {
+        return Err(bad("oleconvert", "the OLE frame must have nonzero finite width and height"));
+    }
     let mut data = Vec::new();
     for tag in unknown.tags.iter().filter(|t| t.code == 310) {
         if tag.value.len() % 2 != 0 || data.len().saturating_add(tag.value.len() / 2) > 32 << 20 {
@@ -198,27 +204,21 @@ fn run_oleconvert(s: &mut Session, p: &Value) -> Result<Value> {
     let common = entity.common.clone();
     let hooks = io().ok_or_else(|| bad("oleconvert", "file formats are not available"))?;
     let src = (hooks.read)(&data, "embedded.olepreview").map_err(|e| bad("oleconvert", e))?;
-    let [top_left, _, bottom_right, _, _] = frame;
     let block_name = format!("OLE_{}", handle.hex());
     let drawing = s.doc_mut()?;
-    let inserted = embed_page(
+    let (inserted, block_name) = embed_page(
         drawing,
         &space,
         &src,
         common,
-        Insert {
-            block: block_name,
-            insert: Vec3::new(top_left.x, top_left.y, 0.0),
-            scale: Vec3::new(bottom_right.x - top_left.x, top_left.y - bottom_right.y, 1.0),
-            ..Insert::default()
-        },
+        Insert { block: block_name, insert: Vec3::new(top_left.x, top_left.y, 0.0), scale: Vec3::new(width, height, 1.0), ..Insert::default() },
     )?;
     drawing.remove_entity(*handle);
     s.set_selection(vec![inserted]);
-    Ok(json!({"handle":inserted.hex(),"objects":src.model.len()}))
+    Ok(json!({"handle":inserted.hex(),"block":block_name,"objects":src.model.len()}))
 }
 
-fn embed_page(drawing: &mut Drawing, space: &Space, src: &Drawing, common: Common, mut insert: Insert) -> Result<cadcraft_doc::Handle> {
+fn embed_page(drawing: &mut Drawing, space: &Space, src: &Drawing, common: Common, mut insert: Insert) -> Result<(cadcraft_doc::Handle, String)> {
     let mut block_name = insert.block.clone();
     let mut suffix = 1;
     while drawing.block(&block_name).is_some() {
@@ -246,8 +246,14 @@ fn embed_page(drawing: &mut Drawing, space: &Space, src: &Drawing, common: Commo
         array: None,
     };
     drawing.blocks.insert(block_name.clone(), Arc::new(block));
-    insert.block = block_name;
-    Ok(drawing.add(space, common, EntityKind::Insert(insert))?)
+    insert.block = block_name.clone();
+    Ok((drawing.add(space, common, EntityKind::Insert(insert))?, block_name))
+}
+
+/// Parameter-aware exception to IMPORT's drawing-required gate: page files can
+/// create their destination after conversion succeeds. Other drawing imports cannot.
+pub(crate) fn page_file_import(p: &Value) -> bool {
+    str_param(p, "path").or_else(|| str_param(p, "name")).is_some_and(|name| matches!(extension(name).as_str(), "pdf" | "docx"))
 }
 
 fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
@@ -302,7 +308,7 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
     } else {
         at
     };
-    let inserted = embed_page(
+    let (inserted, block_name) = embed_page(
         s.doc_mut()?,
         &space,
         src,
@@ -310,7 +316,8 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
         Insert { block: block.into(), insert: Vec3::new(at.x, at.y, 0.0), scale: Vec3::new(scale, scale, 1.0), ..Insert::default() },
     )?;
     s.set_selection(vec![inserted]);
-    Ok(json!({"handle": inserted.hex(), "imported": 1, "message": message}))
+    Ok(json!({"handle": inserted.hex(), "handles":[inserted.hex()], "imported": 1,
+        "layers":0,"styles":0,"blocks":1,"block":block_name,"message": message}))
 }
 
 /// Copy `src`'s model space into the current space (scaled about the origin, then moved to

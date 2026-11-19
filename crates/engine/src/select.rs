@@ -186,7 +186,7 @@ pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
 pub(crate) type Cands<'a> = Box<dyn Iterator<Item = (&'a Entity, Option<Bounds2>)> + 'a>;
 
 pub(crate) fn bounds_of(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
-    known.unwrap_or_else(|| d.imported_page_frame(e).map_or_else(|| entity_bounds(d, e, 0), Bounds2::from_points))
+    d.imported_page_frame(e).map_or_else(|| known.unwrap_or_else(|| entity_bounds(d, e, 0)), Bounds2::from_points)
 }
 
 pub(crate) fn is_infinite(e: &Entity) -> bool {
@@ -344,6 +344,11 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
             pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| seg_hits_box(*a, *b, bx)))
         }
     });
+    // Imported pages are filled paper polygons. Their rotated bounding box may
+    // include empty corners that must not trigger the generic INSERT fallback.
+    if let Some(frame) = d.imported_page_frame(e) {
+        return hit || bx.corners().iter().all(|p| point_in_polygon(&frame, *p));
+    }
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
     if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
         return true;
@@ -621,6 +626,7 @@ mod tests {
     fn page_import_picks_the_paper_without_expanding_its_contents() {
         let mut drawing = Drawing::new_metric();
         let mut block = cadcraft_doc::Block::new("PDF_ANTET_1");
+        block.description = "Converted embedded document".into();
         let background =
             cadcraft_doc::Solid { corners: [Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)] };
         let mut page = Entity::new(Handle(1), EntityKind::Solid(background));

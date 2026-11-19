@@ -295,17 +295,24 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
     h.finish()
 }
 
+/// Empty fades use exactly the key recorded by CanvasState::install, preserving
+/// meshes tessellated and uploaded by the background worker.
+pub(super) fn faded_mesh_key(base: u64, faded: &[cadcraft_doc::Handle]) -> u64 {
+    if faded.is_empty() {
+        return base;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    (base, faded).hash(&mut hash);
+    hash.finish()
+}
+
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
 pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool, faded: &[cadcraft_doc::Handle]) {
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
-    let key = {
-        use std::hash::{Hash, Hasher};
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        (list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay), faded).hash(&mut hash);
-        hash.finish()
-    };
+    let key = faded_mesh_key(list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay), faded);
     if c.mesh_key != Some(key) {
         let t0 = crate::now_ms();
         let mesh = crate::gpu::build_mesh_faded(list, origin, bg, lwdisplay, faded, 0.15);
