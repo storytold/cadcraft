@@ -1227,9 +1227,14 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
     use crate::ucs::UcsFrame;
     match v {
-        // 0 the WCS; 1 the current UCS; 2 the display system and 3 paper space's, which in a plan
-        // view without a twist line up with the WCS.
-        Value::Int(0 | 2 | 3) => Ok(UcsFrame::WORLD),
+        // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS.
+        Value::Int(0 | 3) => Ok(UcsFrame::WORLD),
+        // 2 the display system: in a plan view, the WCS turned back by the view's twist (X runs
+        // right across the screen).
+        Value::Int(2) => {
+            let twist = cadcraft_geom::norm_angle(ctx.s.state().map_or(0.0, |st| st.view().twist));
+            Ok(UcsFrame::WORLD.rotated_z(-twist))
+        }
         Value::Int(1) => Ok(ctx.s.input_ucs()),
         // An object: its OCS.
         Value::Ename(h) => {

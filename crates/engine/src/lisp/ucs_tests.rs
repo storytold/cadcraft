@@ -61,6 +61,11 @@ fn trans_between_world_ucs_and_display() {
     assert!(close(pt(&ok(&mut s, "(trans '(3 4 5) 2 0)")), [3.0, 4.0, 5.0]));
     // UCS → UCS and back is the identity.
     assert!(close(pt(&ok(&mut s, "(trans (trans '(7 -3 2) 1 0) 0 1)")), [7.0, -3.0, 2.0]));
+    // In a view twisted 90° counterclockwise, world +X points up the screen and world -Y runs
+    // right across it: display X.
+    s.execute("dview", &json!({"twist": 90.0})).unwrap();
+    assert!(close(pt(&ok(&mut s, "(trans '(0 -10 0) 0 2)")), [10.0, 0.0, 0.0]));
+    assert!(close(pt(&ok(&mut s, "(trans '(10 0 0) 2 0)")), [0.0, -10.0, 0.0]));
 }
 
 #[test]
