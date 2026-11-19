@@ -182,9 +182,30 @@ fn pagesetup_paper_sets_the_layout_paper_units() {
     s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
     assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D in the drawing's inches");
     // A custom size replaces the named paper in the same call and keeps the layout's units.
-    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
-    assert_eq!(r["page"]["paperMm"], false);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, None, "the layout still follows MEASUREMENT");
     assert_eq!(size(&s), (20.0, 10.0, 25.4), "the custom size in the layout's inches");
+}
+
+/// #2836 through a device: the built-in devices list every standard size, so a paper picked in
+/// Page Setup with CADCraft PDF as the device comes from the device's list. It sets the layout's
+/// paper units as a paper picked with no device does.
+#[test]
+fn pagesetup_device_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "CADCraft PDF", "landscape": true})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A0 (841.00 x 1189.00 MM)"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.device, "CADCraft PDF");
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 from the device's list in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D from the device's list in the drawing's inches");
+    // An explicit choice in the same call wins over the paper's own units (#3249).
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "paperUnits": "mm"})).unwrap();
+    assert_eq!(size(&s), (914.4, 609.6, 1.0));
 }
 
 #[test]
