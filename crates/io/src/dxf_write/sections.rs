@@ -473,14 +473,27 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(17, Vec3::new(0.0, 1.0, 0.0));
     w.i(76, 0);
     w.s(330, brh);
-    // The saved paper-space view (centre, height) as CADCraft xdata.
-    if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+    // CADCraft xdata: the saved paper-space view (centre, height), and a layout whose paper
+    // units are explicitly inches. Group 72 cannot carry that choice on its own: 0 means inches,
+    // but it is also what earlier CADCraft versions wrote for a layout that follows MEASUREMENT
+    // (#3249).
+    let view = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite());
+    let inch_choice = page.paper_mm == Some(false);
+    if view.is_some() || inch_choice {
         w.s(1001, dxf_ext::APP);
-        w.s(1000, "PSVIEW");
-        w.s(1002, "{");
-        w.p(1010, c.to3(0.0));
-        w.f(1040, height);
-        w.s(1002, "}");
+        if let Some((c, height)) = view {
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
+        if inch_choice {
+            w.s(1000, "PSUNITS");
+            w.s(1002, "{");
+            w.i(1070, 0);
+            w.s(1002, "}");
+        }
     }
 }
 

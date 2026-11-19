@@ -231,8 +231,9 @@ impl Objects {
     }
 }
 
-/// Page setup from a LAYOUT object's AcDbPlotSettings fields (sizes and margins in mm).
-pub(super) fn page_setup(t: &T) -> PageSetup {
+/// Page setup from a LAYOUT object's AcDbPlotSettings fields (sizes and margins in mm), and its
+/// CADCraft xdata in the record's `tags`.
+pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     let mut p = PageSetup::default();
     let mm = |code: i32, d: f64| {
         let v = t.fd(code, d);
@@ -244,9 +245,12 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
         p.height_mm = w.max(h);
     }
     p.margins_mm = [mm(40, p.margins_mm[0]), mm(41, p.margins_mm[1]), mm(42, p.margins_mm[2]), mm(43, p.margins_mm[3])];
-    // Plot paper units 1: millimetres. 0 (inches) is left to MEASUREMENT: earlier CADCraft
-    // versions wrote 0 for every layout.
-    p.paper_mm = (t.i(72) == Some(1)).then_some(true);
+    // CADCraft's explicit paper units come first (PSUNITS xdata, 0 = inches), because plot paper
+    // units 0 cannot tell an explicit inch layout from an unset one: earlier CADCraft versions
+    // wrote 0 for every layout, so 0 alone is left to MEASUREMENT. Plot paper units 1 is
+    // millimetres (#3249).
+    let units = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(tags, crate::dxf_ext::APP), "PSUNITS");
+    p.paper_mm = units.iter().find(|t| t.code == 1070).map(|t| t.i64() != 0).or_else(|| (t.i(72) == Some(1)).then_some(true));
     // Plot rotation 1 or 3 turns the media a quarter turn; media defined wider than tall is
     // already landscape.
     let rotated = matches!(t.i(73), Some(1 | 3));

@@ -70,3 +70,28 @@ fn plot_paper_units_round_trip_through_dxf() {
     let name = back.layouts.first().unwrap().name.clone();
     assert_eq!(cadcraft_render::sheet(&back, &name).unwrap().unit_mm, 1.0);
 }
+
+#[test]
+fn an_explicit_inch_layout_round_trips_on_a_metric_drawing() {
+    // #3249: group 72 = 0 is also what an unset layout writes, so the explicit inch choice
+    // travels in CADCraft xdata and must win over the group 72 fallback.
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("MEASUREMENT", 1);
+    let mut l = Layout::new("INCHES", 3);
+    l.page = PageSetup {
+        paper: "ARCH D".into(),
+        width_mm: 609.6,
+        height_mm: 914.4,
+        margins_mm: [0.0; 4],
+        landscape: true,
+        paper_mm: Some(false),
+        ..PageSetup::default()
+    };
+    d.layouts.push(l);
+    let back = read(write_dxf(&d).as_bytes(), "x.dxf").unwrap();
+    let page = &back.layouts.iter().find(|l| l.name == "INCHES").unwrap().page;
+    assert_eq!(page.paper_mm, Some(false));
+    let sheet = cadcraft_render::sheet(&back, "INCHES").unwrap();
+    assert_eq!(sheet.unit_mm, 25.4);
+    assert!((sheet.size.x - 36.0).abs() < 1e-9 && (sheet.size.y - 24.0).abs() < 1e-9, "{:?}", sheet.size);
+}
