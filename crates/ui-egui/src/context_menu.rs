@@ -11,8 +11,8 @@
 //!   Preferences ▸ Right-Click Customization sets how long, `rightClickDuration`). With that turned
 //!   off (`timeSensitiveRightClick`), Command mode says what a right-click does
 //!   (`rightClickCommand`: the menu, Enter, or the menu only when the prompt has options).
-//!   `rightClickDefault` and `rightClickEdit` can make a right-click with no command running
-//!   repeat the last command instead of opening the menu.
+//!   With it off, `rightClickDefault` and `rightClickEdit` can make a right-click with no command
+//!   running repeat the last command instead of opening the menu.
 //! - **Shift/Ctrl+right-click** ([`snap_entries`]): the object snap menu. Its items type the point
 //!   modifiers and snap overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
 //!
@@ -388,13 +388,16 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
-    // Right-Click Customization: with nothing selected (Default mode) or a selection (Edit mode),
-    // a right-click may repeat the last command instead of opening the menu. With no last command
-    // yet, it opens the menu.
+    // Right-Click Customization: with the time-sensitive right-click off and nothing selected
+    // (Default mode) or a selection (Edit mode), a right-click may repeat the last command instead
+    // of opening the menu. With no last command yet, it opens the menu. With the time-sensitive
+    // right-click on, a quick click is already Enter ([`in_command`]) and a longer one is this
+    // menu, as in AutoCAD.
     let o = &app.options;
     let mode =
         if o.right_click_default == o.right_click_edit || app.session.selection().is_empty() { o.right_click_default } else { o.right_click_edit };
     if !snap
+        && !o.time_sensitive_right_click
         && mode == crate::options::IdleClick::Repeat
         && let Some(last) = app.session.last_command.clone()
     {
