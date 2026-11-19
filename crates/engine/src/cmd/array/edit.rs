@@ -464,9 +464,7 @@ fn fill_from_between(b: f64, items: u32) -> Result<f64> {
 fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     let h = super::super::curves::handle_param(p, "handle").ok_or_else(|| bad("arrayedit", "`handle` (the array) is required"))?;
     refuse_while_editing(s)?;
-    let (ins, blk, _) = array_of(s.doc()?, h)?;
-    let w = ins.transform(blk.base.xy());
-    let to_local = w.inverse().ok_or_else(|| other("The array's scale is zero."))?;
+    array_of(s.doc()?, h)?;
     if bool_or(p, "reset", false) {
         let (_, _, mut a) = array_of(s.doc()?, h)?;
         a.replaced.clear();
@@ -499,7 +497,9 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
         let at = source_key_point(s.doc()?, h, k, KEY_POINT_TOLERANCE)?;
         rebase(s, h, at)?;
     }
-    let (_, _, mut a) = array_of(s.doc()?, h)?;
+    // A new base point moves the array's insertion point: read `center` in its placement after.
+    let (ins, blk, mut a) = array_of(s.doc()?, h)?;
+    let to_local = ins.transform(blk.base.xy()).inverse().ok_or_else(|| other("The array's scale is zero."))?;
     let before = a.clone();
     apply_params(&mut a, p, &to_local)?;
     if a != before {

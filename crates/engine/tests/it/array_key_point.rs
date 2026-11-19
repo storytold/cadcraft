@@ -182,3 +182,21 @@ fn a_key_point_of_too_many_objects_is_refused() {
     let e = s.execute("arraypolar", &json!({"handles": hs, "center": [0, -50], "count": 2, "keyPoint": [10_001.2, 0]})).unwrap_err();
     assert!(e.to_string().contains("10000"), "{e}");
 }
+
+/// ARRAYEDIT with a new base point (`base` or `keyPoint`) and a polar `center` in one call puts the
+/// centre where asked: the base point moves the array's insertion point, so the centre is read in
+/// the array's placement after that move.
+#[test]
+fn arrayedit_center_with_a_new_base_point_lands_where_asked() {
+    for (key, at) in [("base", json!([2, 1])), ("keyPoint", json!([1.95, 0.99]))] {
+        let mut s = Session::new();
+        let l = source_line(&mut s);
+        let h = handle(&s.execute("arraypolar", &json!({"handles": [l], "center": [-10, 0], "count": 4, "base": [0, 0]})).unwrap());
+        s.execute("arrayedit", &json!({"handle": h.hex(), key: at, "center": [5, 0]})).unwrap();
+        let (ins, p) = array(&s, h);
+        let ArrayKind::Polar(k) = p.kind else { panic!("not polar") };
+        assert!(ins.near(Vec2::new(2.0, 1.0), 1e-9), "{key}: {ins:?}");
+        // The centre is kept relative to the insertion point.
+        assert!((ins + k.center).near(Vec2::new(5.0, 0.0), 1e-9), "{key}: centre at {:?}", ins + k.center);
+    }
+}
