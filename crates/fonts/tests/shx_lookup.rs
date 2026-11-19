@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use cadcraft_fonts::shx::{self, FontProvider};
-use cadcraft_fonts::{TextFont, ttf};
+use cadcraft_fonts::{BUILTIN_FONT, TextFont, ttf};
 
 const FONT: &str = "*0,4,lookup test\n6,2,0,0\n*65,4,UCA\n1,064,0\n";
 
@@ -23,6 +23,7 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
     let dir = std::env::temp_dir().join(format!("cadcraft-shx-lookup-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("cadcraft-beside.shx"), &bytes).unwrap();
+    std::fs::write(dir.join("cadcraft-beside-big.shx"), &bytes).unwrap();
 
     // Beside the drawing: found once the drawing's folder is known; a later change of folders
     // starts a new generation (viewers regenerate).
@@ -57,12 +58,7 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
     shx::set_provider(None);
     assert!(shx::find("cadcraft-provided.shx").is_none());
 
-    // FONTALT replaces a missing SHX font (and may name a big font after a comma).
-    assert!(!TextFont::resolve("cadcraft-missing.shx").is_shx());
-    ttf::set_font_alt("cadcraft-beside.shx");
-    assert!(TextFont::resolve("cadcraft-missing.shx").is_shx());
-    assert!(!TextFont::resolve("").is_shx(), "the built-in font is not replaced");
-    ttf::set_font_alt("");
+    missing_fonts_and_what_replaces_them();
 
     // Registered bytes (files opened alongside a drawing on the web) and clearing them.
     shx::register("cadcraft-registered.shx", &bytes).unwrap();
@@ -73,4 +69,61 @@ fn fonts_are_found_where_the_drawing_and_the_app_keep_them() {
     shx::set_search_path("");
     assert_eq!(shx::search_path(), "");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Needs the fonts the test above writes beside the drawing.
+fn missing_fonts_and_what_replaces_them() {
+    // The SHX fonts of a text style that are missing (a found one, a TrueType name and the built-in
+    // font are not), and what replaces them.
+    let missing = |font: &str, big: &str| -> Vec<(String, String, String)> {
+        TextFont::missing_shx(font, big).into_iter().map(|m| (m.name, m.key, m.substitute)).collect()
+    };
+    let entry = |name: &str, key: &str, sub: &str| (name.to_string(), key.to_string(), sub.to_string());
+    assert_eq!(missing("cadcraft-missing.shx", "cadcraft-beside.shx"), vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", BUILTIN_FONT)]);
+    assert_eq!(missing("cadcraft-beside", "CADCRAFT-Missing-Big"), vec![entry("CADCRAFT-Missing-Big", "cadcraft-missing-big.shx", BUILTIN_FONT)]);
+    assert!(missing("arial.ttf", "").is_empty());
+    assert!(missing(BUILTIN_FONT, "").is_empty());
+    // A TrueType main font draws the style alone: its missing big font isn't used, so isn't listed.
+    ttf::register("cadcraft-tt-main.ttf", vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert!(ttf::find("cadcraft-tt-main").is_some());
+    assert!(missing("cadcraft-tt-main", "cadcraft-missing-big").is_empty());
+
+    // FONTALT replaces a missing SHX font (and may name a big font after a comma): each missing font
+    // names the replacement for its role.
+    assert!(!TextFont::resolve("cadcraft-missing.shx").is_shx());
+    ttf::set_font_alt("cadcraft-beside.shx");
+    assert_eq!(missing("cadcraft-missing.shx", "")[0].2, "cadcraft-beside.shx");
+    assert_eq!(missing("cadcraft-beside", "cadcraft-missing-big")[0].2, BUILTIN_FONT, "no big font in FONTALT");
+    ttf::set_font_alt("cadcraft-missing.shx,cadcraft-beside-big.shx");
+    assert_eq!(
+        missing("cadcraft-missing.shx", "cadcraft-missing-big"),
+        vec![
+            entry("cadcraft-missing.shx", "cadcraft-missing.shx", BUILTIN_FONT),
+            entry("cadcraft-missing-big", "cadcraft-missing-big.shx", "cadcraft-beside-big.shx")
+        ]
+    );
+    // No SHX font for the style at all: a TrueType FONTALT font draws the whole style, big font too.
+    ttf::register("cadcraft-tt-alt.ttf", vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    ttf::set_font_alt("cadcraft-tt-alt.ttf");
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-missing-big", false).is_outline());
+    assert_eq!(
+        missing("cadcraft-missing.shx", "cadcraft-missing-big"),
+        vec![
+            entry("cadcraft-missing.shx", "cadcraft-missing.shx", "cadcraft-tt-alt.ttf"),
+            entry("cadcraft-missing-big", "cadcraft-missing-big.shx", "cadcraft-tt-alt.ttf")
+        ]
+    );
+    // A big font that isn't an SHX file doesn't make it an SHX style either.
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-unused.ttf", false).is_outline());
+    assert_eq!(
+        missing("cadcraft-missing.shx", "cadcraft-unused.ttf"),
+        vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", "cadcraft-tt-alt.ttf")]
+    );
+    // A big font that is there makes it an SHX style: the TrueType font draws nothing.
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-beside-big", false).is_shx());
+    assert_eq!(missing("cadcraft-missing.shx", "cadcraft-beside-big"), vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", BUILTIN_FONT)]);
+    ttf::set_font_alt("cadcraft-beside.shx");
+    assert!(TextFont::resolve("cadcraft-missing.shx").is_shx());
+    assert!(!TextFont::resolve("").is_shx(), "the built-in font is not replaced");
+    ttf::set_font_alt("");
 }

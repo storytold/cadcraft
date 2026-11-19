@@ -123,6 +123,8 @@ pub fn add_drawing_dir(dir: &Path) {
     }
     let mut t = table();
     if t.drawing_dirs.first().is_some_and(|d| d == dir) {
+        // Looks again: files may have been added since the folder was last searched.
+        t.changed();
         return;
     }
     t.drawing_dirs.retain(|d| d != dir);

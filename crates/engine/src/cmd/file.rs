@@ -346,7 +346,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let mut drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
@@ -356,7 +356,65 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
         cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
     }
+    // Said once, here, so the OPEN reply and the command line both carry it. The web build gets its font
+    // files after the drawing, so it can't tell yet.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(note) = missing_fonts_note(&drawing) {
+        drawing.read_notes.push(note);
+    }
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
+}
+
+/// Most missing fonts and styles per font a [`missing_fonts_note`] names.
+#[cfg(not(target_arch = "wasm32"))]
+const NOTE_FONTS: usize = 8;
+#[cfg(not(target_arch = "wasm32"))]
+const NOTE_STYLES: usize = 3;
+
+/// The note for a drawing whose text styles name SHX fonts that can't be found: which fonts, the styles
+/// that use them, what is drawn instead and how to add the font's folder. `None` when none is missing.
+#[cfg(not(target_arch = "wasm32"))]
+fn missing_fonts_note(d: &Drawing) -> Option<String> {
+    // (file name as first written, its font, styles that name it), in order of first use. Spellings of
+    // one font (`ROMANS`, `C:\Fonts\romans.shx`) are one entry, unless the font is both a main font and a
+    // big font with different replacements: then each replacement has its entry.
+    let mut missing: Vec<(String, cadcraft_fonts::MissingShx, Vec<&str>)> = Vec::new();
+    for st in &d.text_styles {
+        for font in cadcraft_fonts::TextFont::missing_shx(&st.font, &st.big_font) {
+            match missing.iter_mut().find(|(_, f, _)| f.key == font.key && f.substitute == font.substitute) {
+                // A style naming one font as both its fonts is listed once.
+                Some((_, _, styles)) if !styles.contains(&st.name.as_str()) => styles.push(&st.name),
+                Some(_) => {}
+                None => missing.push((font.name.rsplit(['/', '\\']).next().unwrap_or(&font.name).to_string(), font, vec![&st.name])),
+            }
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    // One replacement for every font is said once; otherwise each font says its own.
+    let one_sub = missing.iter().all(|(_, f, _)| f.substitute == missing[0].1.substitute);
+    let list: Vec<String> = missing
+        .iter()
+        .take(NOTE_FONTS)
+        .map(|(file, font, styles)| {
+            let more = styles.len().saturating_sub(NOTE_STYLES);
+            let shown = styles.iter().take(NOTE_STYLES).copied().collect::<Vec<_>>().join(", ");
+            let styles = match (more, styles.len()) {
+                (0, 1) => format!("style {shown}"),
+                (0, _) => format!("styles {shown}"),
+                _ => format!("styles {shown} and {more} more"),
+            };
+            if one_sub { format!("{file} ({styles})") } else { format!("{file} ({styles}), drawn with {}", font.substitute) }
+        })
+        .collect();
+    let more = missing.len().saturating_sub(NOTE_FONTS);
+    let tail = if more > 0 { format!(" and {more} more") } else { String::new() };
+    let head = if one_sub { format!("Font not found, drawn with {} instead", missing[0].1.substitute) } else { "Font not found".to_string() };
+    Some(format!(
+        "{head}: {}{tail}. Add its folder to SETVAR SUPPORTPATH, a list separated by ; (ACADPREFIX shows the folders it has).",
+        list.join("; ")
+    ))
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
