@@ -41,6 +41,36 @@ impl Session {
         blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
+    /// Launch a non-nested interactive state machine through the standard command-start checks
+    /// (`enabled`, `refused_in_editor`, `commands_started`, `last_command`, `Guarded`, `feed`).
+    pub(crate) fn launch_interactive(
+        &mut self,
+        id: &str,
+        enabled: fn(&Session) -> std::result::Result<(), String>,
+        machine: Box<dyn crate::Interactive>,
+    ) -> Result<()> {
+        self.last_polar = None;
+        self.pick_hint = None;
+        self.commands_started = self.commands_started.wrapping_add(1);
+        if self.running.is_some() {
+            self.cancel();
+        }
+        enabled(self).map_err(|m| EngineError::Disabled(id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
+            return Err(EngineError::Disabled(id.into(), why));
+        }
+        self.last_command = Some(id.to_string());
+        self.echo(format!("Command: {}", id.to_ascii_uppercase()));
+        let guarded = guard::Guarded::wrap(machine);
+        let st = self.state()?;
+        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
+        self.running = Some(Running { id: id.to_string(), machine: guarded, before, selection_before });
+        self.pending_window = None;
+        self.point_mods.clear();
+        self.feed(None)?;
+        Ok(())
+    }
+
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;

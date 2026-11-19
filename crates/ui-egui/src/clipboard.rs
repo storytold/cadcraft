@@ -79,14 +79,3 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
     }
     out
 }
-
-/// The command-id view of [`shortcut_actions`].
-pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
-    shortcut_actions(app, ctx)
-        .into_iter()
-        .filter_map(|a| match a {
-            ShortcutAction::Command(id) => Some(id),
-            ShortcutAction::PasteTable(_) => None,
-        })
-        .collect()
-}

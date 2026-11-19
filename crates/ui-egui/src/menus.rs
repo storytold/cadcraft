@@ -955,11 +955,10 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
                 }
             }
             crate::clipboard::ShortcutAction::PasteTable(tsv) => {
+                pasted_table = true;
                 app.cmd.buffer.clear();
                 if let Err(e) = app.session.start_paste_table(&tsv, None) {
                     app.session.echo(e.to_string());
-                } else {
-                    pasted_table = true;
                 }
             }
         }

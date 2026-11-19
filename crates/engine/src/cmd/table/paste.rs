@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{MAX_COLS, MAX_ROWS, style_of};
 use crate::cmd::helpers::{line, v3};
 use crate::cmd::{bad, point_param, str_param};
-use crate::{Accept, Input, Interactive, Prompt, Result, Running, Session, Step};
+use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Maximum UTF-8 byte length accepted for a pasted TSV payload (16 MiB).
 pub const MAX_TSV_BYTES: usize = 16 << 20;
@@ -196,7 +196,7 @@ impl Interactive for PasteTableM {
 
 impl Session {
     /// Start interactive placement of a native `ACAD_TABLE` parsed from tab-delimited clipboard
-    /// text (`tsv`), asking for an insertion point.
+    /// text (`tsv`), asking for an insertion point through the standard interactive command path.
     pub fn start_paste_table(&mut self, tsv: &str, text_height: Option<f64>) -> Result<()> {
         if let Some(h) = text_height
             && !(h.is_finite() && h > 0.0 && h <= 1e9)
@@ -208,17 +208,8 @@ impl Session {
         let cols = data.first().map_or(0, Vec::len);
         let st = style_of(self);
         let table = build_table(&st, Vec2::ZERO, &data, text_height);
-        if self.running.is_some() {
-            self.cancel();
-        }
-        let st = self.state()?;
-        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
-        let machine = crate::guard::Guarded::wrap(Box::new(PasteTableM { table, rows, cols }));
-        self.running = Some(Running { id: "pastetable".into(), machine, before, selection_before });
-        self.pending_window = None;
-        self.point_mods.clear();
-        self.echo("Command: PASTETABLE");
-        Ok(())
+        let enabled = crate::find_command("pastetable").map_or((|_| Ok(())) as fn(&Session) -> std::result::Result<(), String>, |c| c.enabled);
+        self.launch_interactive("pastetable", enabled, Box::new(PasteTableM { table, rows, cols }))
     }
 }
 
@@ -297,5 +288,17 @@ mod tests {
         assert_eq!(t.cells.len(), 2);
         s.undo().unwrap();
         assert!(s.doc().unwrap().model.is_empty());
+    }
+
+    #[test]
+    fn start_paste_table_uses_standard_command_lifecycle() {
+        let mut empty = Session::empty();
+        assert!(matches!(empty.start_paste_table("A\tB\n1\t2\n", None), Err(crate::EngineError::Disabled(_, _))));
+
+        let mut s = Session::new();
+        let before_started = s.commands_started;
+        s.start_paste_table("A\tB\n1\t2\n", None).unwrap();
+        assert_eq!(s.commands_started, before_started + 1);
+        assert_eq!(s.last_command.as_deref(), Some("pastetable"));
     }
 }
