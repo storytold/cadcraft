@@ -14,7 +14,7 @@ use cadcraft_geom::{Mat3, Vec2};
 use super::gripcmds::stretch_grips;
 use super::helpers::line;
 use super::machines::number;
-use super::modify::transform_entities;
+use super::modify::{at_elevation, scale_entities, transform_entities};
 use crate::grips::{GripAction, GripMode, grip_action, grip_actions, mode_matrix};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Running, Session, Step};
 
@@ -220,14 +220,7 @@ impl GripEdit {
         }
     }
 
-    /// Edit with the dragged point `to` (STRETCH) or the transform `m` (the other modes).
-    fn edit(&mut self, s: &mut Session, to: Vec2, m: Option<Mat3>) -> Result<Step> {
-        let before = s.state()?.doc.clone();
-        let changed = match (self.mode, m) {
-            (GripMode::Stretch, _) => !stretch_grips(s, &self.hot, &self.targets, to - self.base, self.copy)?.is_empty(),
-            (_, Some(m)) => !transform_entities(s, &self.targets, &m, self.copy)?.is_empty(),
-            (_, None) => return Err(other("Invalid point.")),
-        };
+    fn finish_edit(&mut self, before: Arc<Drawing>, changed: bool) -> Result<Step> {
         if !changed {
             return Err(other("The objects can't be edited that way (locked, or the result would be degenerate)."));
         }
@@ -238,6 +231,27 @@ impl GripEdit {
         } else {
             Ok(Step::Done)
         }
+    }
+
+    /// Edit with the dragged point `to` (STRETCH) or the transform `m` (the other modes).
+    fn edit(&mut self, s: &mut Session, to: Vec2, m: Option<Mat3>) -> Result<Step> {
+        let before = s.state()?.doc.clone();
+        let changed = match (self.mode, m) {
+            (GripMode::Stretch, _) => !stretch_grips(s, &self.hot, &self.targets, to - self.base, self.copy)?.is_empty(),
+            (_, Some(m)) => !transform_entities(s, &self.targets, &m, self.copy)?.is_empty(),
+            (_, None) => return Err(other("Invalid point.")),
+        };
+        self.finish_edit(before, changed)
+    }
+
+    /// Scale `targets` uniformly about `base` in 3D, scaling text heights, elevations and thickness.
+    fn edit_scale(&mut self, s: &mut Session, f: f64) -> Result<Step> {
+        if !f.is_finite() || f <= 1e-12 {
+            return Err(other("Invalid point."));
+        }
+        let before = s.state()?.doc.clone();
+        let changed = !scale_entities(s, &self.targets, at_elevation(s, self.base), f, self.copy)?.is_empty();
+        self.finish_edit(before, changed)
     }
 
     fn mode_input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
@@ -286,12 +300,20 @@ impl GripEdit {
                 Ok(Step::Continue)
             }
             Input::Point(p) => {
-                let m = self.matrix(p);
-                self.edit(s, p, m)
+                if self.mode == GripMode::Scale {
+                    self.edit_scale(s, self.base.dist(p))
+                } else {
+                    let m = self.matrix(p);
+                    self.edit(s, p, m)
+                }
             }
             Input::Deferred(d) => {
-                let m = self.matrix(d.at);
-                self.edit(s, d.at, m)
+                if self.mode == GripMode::Scale {
+                    self.edit_scale(s, self.base.dist(d.at))
+                } else {
+                    let m = self.matrix(d.at);
+                    self.edit(s, d.at, m)
+                }
             }
             Input::Text(t) => match self.mode {
                 GripMode::Rotate => {
@@ -300,7 +322,7 @@ impl GripEdit {
                 }
                 GripMode::Scale => {
                     let f = positive(number(&t))?;
-                    self.edit(s, self.base, Some(Mat3::scale_about(self.base, f)))
+                    self.edit_scale(s, f)
                 }
                 _ => Err(other("Requires a point or an option keyword.")),
             },
@@ -327,14 +349,21 @@ impl GripEdit {
             (Ask::RefFirst, Input::Text(t)) => self.ask = Ask::RefNew(value(&t)?),
             (Ask::RefFirst, Input::Enter) => self.ask = Ask::RefNew(if rotate { 0.0 } else { 1.0 }),
             (Ask::RefSecond(a), Input::Point(p)) => self.ask = Ask::RefNew(between(a, p)?),
-            (Ask::RefNew(_), Input::Point(p)) => {
-                let m = self.matrix(p).ok_or_else(|| other("Requires a positive length."))?;
-                return self.edit(s, p, Some(m));
+            (Ask::RefNew(r), Input::Point(p)) => {
+                if rotate {
+                    let m = self.matrix(p).ok_or_else(|| other("Requires a positive length."))?;
+                    return self.edit(s, p, Some(m));
+                }
+                let f = positive(Some(self.base.dist(p) / r))?;
+                return self.edit_scale(s, f);
             }
             (Ask::RefNew(r), Input::Text(t)) => {
                 let v = value(&t)?;
-                let m = if rotate { Mat3::rotate_about(self.base, v - r) } else { Mat3::scale_about(self.base, positive(Some(v / r))?) };
-                return self.edit(s, self.base, Some(m));
+                if rotate {
+                    return self.edit(s, self.base, Some(Mat3::rotate_about(self.base, v - r)));
+                }
+                let f = positive(Some(v / r))?;
+                return self.edit_scale(s, f);
             }
             (_, Input::Enter) => self.ask = Ask::Mode,
             _ => {}

@@ -32,16 +32,26 @@ pub struct GripDyn {
     pub locked: Vec<(usize, String)>,
 }
 
+/// The active prompt eligible for grip or distance dimensional input (`dynmode` enabled, not in a
+/// selection window, accepting a point).
+fn dyn_prompt(app: &CadApp) -> Option<cadcraft_engine::Prompt> {
+    let st = &app.session.settings;
+    if !st.dynmode || app.session.pending_window.is_some() {
+        return None;
+    }
+    app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)
+}
+
 /// The base of the prompt on show when it asks for a distance from it (a circle's radius, a
 /// polyline arc's): its one field is that distance.
 fn distance_base(app: &CadApp) -> Option<Vec2> {
-    crate::cmdline::dyn_frame(app).and_then(|_| app.session.current_prompt()).filter(|p| p.distance).and_then(|p| p.base)
+    dyn_prompt(app).filter(|p| p.distance).and_then(|p| p.base)
 }
 
 /// The dimensions on show, after bringing the fields' state up to date with the prompt (empty when
 /// no grip is stretched, no distance is asked for, or the value boxes aren't live).
 pub fn dims(app: &mut CadApp) -> Vec<GripDim> {
-    let grip = crate::cmdline::dyn_frame(app).and_then(|_| app.session.current_prompt()).and_then(|p| p.grip);
+    let grip = dyn_prompt(app).and_then(|p| p.grip);
     let base = distance_base(app);
     let st = &mut app.canvas.grip_dyn;
     if st.grip != grip || st.base != base {
@@ -358,5 +368,34 @@ mod tests {
         let arch = |v: f64| cadcraft_engine::units::format_distance(v, 4, 4);
         assert!(arch(c.len()) != arch(c.x) && arch(c.len()) != arch(c.y), "{c:?}");
         assert!(text.contains(&arch(c.len())), "no {} in:\n{text}", arch(c.len()));
+    }
+
+    /// Prompts like SCALE factor (`Accept::POINT_OR_NUMBER` without `Prompt::distance`) must not
+    /// open the two-box pointer input (`dyn_frame`) so typing a factor + Tab/Enter stays a plain
+    /// numeric scale factor instead of becoming polar/Cartesian coordinates.
+    #[test]
+    fn scale_factor_prompt_does_not_open_pointer_boxes() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        app.session.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let at = app.canvas.rect.map_or(pos2(700.0, 450.0), |r| r.center() + vec2(120.0, -60.0));
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
+
+        for t in ["scale", "all", "", "0,0"] {
+            app.session.cmdline(t).unwrap();
+        }
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
+        assert_eq!(app.session.current_prompt().unwrap().message, "Specify scale factor");
+        assert!(crate::cmdline::dyn_frame(&app).is_none());
+
+        run_frame(&mut app, &ctx, vec![Event::Text("0.5".into())]);
+        run_frame(&mut app, &ctx, vec![Event::Text("\t".into())]);
+        assert_eq!(app.cmd.buffer, "0.5");
+        run_frame(&mut app, &ctx, key(egui::Key::Enter));
+        assert!(app.session.running.is_none());
+        let b = line_end(&app);
+        assert!(b.near(Vec2::new(5.0, 0.0), 1e-9), "{b:?}");
     }
 }

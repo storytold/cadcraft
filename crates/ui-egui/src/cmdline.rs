@@ -49,14 +49,15 @@ pub struct CmdLine {
 pub const MAX_LINES: usize = 12;
 const LINE_H: f32 = 16.0;
 
-/// The Dynamic Input frame for the prompt on screen, or `None` when the value boxes are not live
-/// (Dynamic Input off, no point prompt or a pending selection window).
+/// The Dynamic Input pointer-input frame for the prompt on screen, or `None` when the pointer
+/// value boxes are not live (Dynamic Input off, a selection window pending, not a point prompt, or
+/// a prompt that also takes a scalar number like SCALE's factor or ROTATE's angle).
 pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     let st = &app.session.settings;
     if !st.dynmode || app.session.pending_window.is_some() {
         return None;
     }
-    let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
+    let p = app.session.current_prompt().filter(|p| cadcraft_engine::pointmod::accepts(p) && !p.accept.number)?;
     Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
 }
 
