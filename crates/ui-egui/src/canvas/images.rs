@@ -158,6 +158,10 @@ fn axis_rect(outline: &[Vec2]) -> Option<Bounds2> {
 
 /// Draw the images of `list`.
 pub(super) fn draw(p: &egui::Painter, xf: &Xf, list: &DisplayList) {
+    draw_faded(p, xf, list, &[], 1.0);
+}
+
+pub(super) fn draw_faded(p: &egui::Painter, xf: &Xf, list: &DisplayList, faded: &[cadcraft_doc::Handle], opacity: f32) {
     // Pyramids whose pixels are gone (drawing closed, image undone) go, also when the list has
     // no images left to draw.
     if let Ok(mut pyramids) = textures(p.ctx()).0.lock() {
@@ -172,7 +176,8 @@ pub(super) fn draw(p: &egui::Painter, xf: &Xf, list: &DisplayList) {
             && let Some(img) = list.images.get(index as usize)
             && Bounds2::from_points(img.corners()).intersects(&vis)
         {
-            draw_one(p, xf, img, prim.alpha());
+            let base = img.opacity(prim.alpha());
+            draw_one(p, xf, img, if faded.contains(&prim.handle) { base * opacity } else { base });
         }
     }
 }
@@ -184,7 +189,7 @@ fn textures(ctx: &egui::Context) -> Textures {
 
 /// Draw one image as textured meshes, one per tile on screen: its rectangle, or the outline it is
 /// clipped to.
-fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, alpha: u8) {
+fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, opacity: f32) {
     let ctx = p.ctx();
     let raster = &img.raster;
     let cut = cut(img, xf, p.clip_rect());
@@ -193,7 +198,7 @@ fn draw_one(p: &egui::Painter, xf: &Xf, img: &DImage, alpha: u8) {
     }
     // Where in the raster the triangles are.
     let Some(tris) = triangles(img, cut.outline).iter().map(|q| img.pixel_of(*q)).collect::<Option<Vec<Vec2>>>() else { return };
-    let color = Color32::from_white_alpha((img.opacity(alpha) * 255.0) as u8);
+    let color = Color32::from_white_alpha((opacity * 255.0) as u8);
     let textures = textures(ctx);
     let Ok(mut pyramids) = textures.0.lock() else { return };
     let key = Arc::as_ptr(raster) as usize;
@@ -320,12 +325,16 @@ mod tests {
 
     /// A 100 x 100 point canvas showing the 10 x 10 square, and what `draw` painted on it.
     fn painted(list: &DisplayList) -> (egui::Context, Vec<ClippedShape>) {
+        painted_faded(list, &[])
+    }
+
+    fn painted_faded(list: &DisplayList, faded: &[cadcraft_doc::Handle]) -> (egui::Context, Vec<ClippedShape>) {
         let ctx = egui::Context::default();
         let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(100.0, 100.0));
         let xf = Xf { rect, center: v(5.0, 5.0), scale: 10.0, twist: 0.0 };
         let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background()).with_clip_rect(rect);
-            draw(&painter, &xf, list);
+            draw_faded(&painter, &xf, list, faded, 0.15);
         });
         // No renderer takes the uploads in a test.
         out.textures_delta.clear();
@@ -432,6 +441,21 @@ mod tests {
         let got: Vec<(egui::Pos2, egui::Pos2)> = mesh.vertices.iter().map(|v| (v.pos, v.uv)).collect();
         assert_eq!(got, [tl, tr, br, tl, br, bl].map(|p| (p, uv(p))));
         assert!(mesh.vertices.iter().all(|v| v.color == Color32::WHITE));
+    }
+
+    #[test]
+    fn move_fades_only_selected_raster_vertices_and_preserves_image_fade() {
+        let mut list = list(|img| img.fade = 50);
+        let selected = *list.prims.iter().find(|prim| matches!(prim.kind, Kind::Image { .. })).unwrap();
+        let mut other = selected;
+        other.handle = cadcraft_doc::Handle(selected.handle.0 + 1);
+        list.prims.push(other);
+        let (_, shapes) = painted_faded(&list, &[selected.handle]);
+        let tiles = meshes(&shapes);
+        assert_eq!(tiles.len(), 2);
+        for ((_, mesh), alpha) in tiles.iter().zip([19, 127]) {
+            assert!(mesh.vertices.iter().all(|vertex| vertex.color == Color32::from_white_alpha(alpha)));
+        }
     }
 
     #[test]

@@ -109,7 +109,7 @@ pub(super) fn draw_list_faded(
     opacity: f32,
 ) {
     let vis = xf.world_bounds();
-    super::images::draw(p, xf, list);
+    super::images::draw_faded(p, xf, list, faded, opacity);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
     for prim in &list.prims {
@@ -335,7 +335,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_origin = origin;
         c.mesh_ms = crate::now_ms() - t0;
     }
-    super::images::draw(p, xf, list);
+    super::images::draw_faded(p, xf, list, faded, 0.15);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
