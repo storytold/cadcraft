@@ -1,4 +1,4 @@
-use super::args::{arity, string};
+use super::args::{R, arity, int, string};
 use super::{Arc, Ctx, Flow, LispError, Sym, Value, charge_bytes, real_text, to_text};
 
 // ---------------- output ----------------
@@ -79,6 +79,37 @@ pub(super) fn alert(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
         ctx.s.echo(l.to_string());
     }
     Ok(Flow::Value(Value::Nil))
+}
+
+/// `(grtext [box text [highlight]])`: writes to a status line or screen-menu box. There is no such
+/// area to write to, so nothing shows; it returns the text as AutoLISP does, or nil with no
+/// arguments (restore the standard text).
+pub(super) fn grtext(a: &[Value]) -> R {
+    if a.is_empty() {
+        return Ok(Value::Nil);
+    }
+    arity(a, 2, 3)?;
+    int(&a[0])?;
+    let text = string(&a[1])?;
+    if let Some(h) = a.get(2) {
+        int(h)?;
+    }
+    Ok(Value::Str(text))
+}
+
+/// `(menucmd str)`: menu commands (pop up, swap or check items) have no menu to act on, so they
+/// return nil. `M=` returns its text, as DIESEL gives back text with no `$(...)` in it; DIESEL
+/// expressions are not evaluated yet and return nil.
+pub(super) fn menucmd(a: &[Value]) -> R {
+    arity(a, 1, 1)?;
+    let text = string(&a[0])?;
+    match text.get(..2) {
+        Some(p) if p.eq_ignore_ascii_case("M=") => {
+            let rest = text.get(2..).unwrap_or_default();
+            Ok(if rest.contains("$(") { Value::Nil } else { Value::str(rest) })
+        }
+        _ => Ok(Value::Nil),
+    }
 }
 
 /// A real as `princ` shows it (for messages).

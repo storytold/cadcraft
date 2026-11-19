@@ -67,7 +67,7 @@ use numbers::{
     abs, add, atan, cos, div, exp, expt, fix, float, gcd, ge, gt, le, log, logand, logior, lognot, lsh, lt, max, min, minusp, mul, num_eq, num_ne,
     numberp, one_minus, one_plus, rem, sin, sqrt, sub, zerop,
 };
-use output::{alert, prin1, princ, print, prompt, terpri};
+use output::{alert, grtext, menucmd, prin1, princ, print, prompt, terpri};
 pub use output::{is_null_symbol, null_symbol, real};
 use strings::{
     ascii, atof, atoi, chr, itoa, read_fn, strcase, strcat, strlen, substr, vl_filename_base, vl_filename_directory, vl_filename_extension,
@@ -200,6 +200,8 @@ static BUILTINS: &[Builtin] = &[
     pure!("GC", noop),
     pure!("REDRAW", noop),
     pure!("VER", ver),
+    pure!("GRTEXT", grtext),
+    pure!("MENUCMD", menucmd),
     ctx!("PRINC", princ),
     ctx!("PRIN1", prin1),
     ctx!("PRINT", print),
