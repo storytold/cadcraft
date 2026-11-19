@@ -1418,6 +1418,31 @@ fn typed_limits_asks_for_the_corners() {
 }
 
 #[test]
+fn typed_limits_enter_sets_the_last_point_and_ortho_does_not_flatten_the_corner() {
+    let mut s = Session::new();
+    s.execute("limits", &json!({"min": [0, 0], "max": [420, 297]})).unwrap();
+    // Enter accepts the lower left corner, and it becomes the last point, so a relative upper
+    // corner resolves from it rather than from whatever was last picked.
+    s.last_point = Vec2::new(200.0, 200.0);
+    s.cmdline("limits").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.prompt_text().contains("Specify upper right corner"), "{}", s.prompt_text());
+    assert_eq!(s.last_point, Vec2::new(0.0, 0.0));
+    s.cmdline("@10,10").unwrap();
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.point("LIMMAX").map(|p| (p.x, p.y)), Some((10.0, 10.0)));
+    // ORTHOMODE does not bend a distance typed at the opposite corner onto an axis: the upper
+    // corner stays off the lower corner's horizontal and vertical.
+    s.settings.orthomode = true;
+    s.cursor = Vec2::new(10.0, 10.0);
+    s.cmdline("limits 0,0").unwrap();
+    s.cmdline("10").unwrap();
+    assert!(s.current_prompt().is_none());
+    let max = s.doc().unwrap().header.point("LIMMAX").unwrap();
+    assert!(max.x > 1e-6 && max.y > 1e-6, "the corner was flattened: {max:?}");
+}
+
+#[test]
 fn format_thickness_asks_for_the_thickness() {
     let mut s = Session::new();
     s.start("thickness").unwrap();

@@ -447,14 +447,20 @@ impl Interactive for LimitsM {
         let default = format!("{:.4},{:.4}", cur.x, cur.y);
         match self.lower {
             None => Prompt::new("Specify lower left corner", Accept::POINT).default(default),
-            Some(lo) => Prompt::new("Specify upper right corner", Accept::POINT).default(default).base(lo),
+            Some(lo) => Prompt::new("Specify upper right corner", Accept::POINT).default(default).corner(lo),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let p = match i {
             Input::Cancel => return Ok(Step::Cancel),
             Input::Point(p) => p,
-            Input::Enter => self.current(s),
+            Input::Enter => {
+                let p = self.current(s);
+                // Enter accepts the corner, so relative input next resolves from it (as a typed
+                // point already does).
+                s.last_point = p;
+                p
+            }
             Input::Text(_) | Input::Keyword(_) => {
                 s.echo("Requires a point.");
                 return Ok(Step::Continue);
