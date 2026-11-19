@@ -1,4 +1,4 @@
-use super::blocks::{insert, sub_ctx};
+use super::blocks::{insert, proxy, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
@@ -227,12 +227,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, l);
             }
         }
-        // An OLE object's content is not drawn; its frame, from its two corner points, is.
-        EntityKind::Unknown(u) if u.is_ole_frame() => {
-            if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
-                b.polyline(ctx, rgb, lw, &q);
-            }
-        }
+        EntityKind::Unknown(u) if !u.graphics.is_empty() || u.is_ole_frame() => draw_unknown(b, ctx, e, u, rgb, lw),
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -285,6 +280,16 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
         insert(b, ctx, e, ins, rgb);
+    }
+}
+
+/// A record kept as read that draws something: a proxy its proxy graphics, and an OLE object its
+/// frame, from its two corner points (its content is not drawn).
+fn draw_unknown(b: &mut Builder, ctx: &Ctx, e: &Entity, u: &cadcraft_doc::Unknown, rgb: Ink, lw: f32) {
+    if !u.graphics.is_empty() {
+        proxy(b, ctx, e, u);
+    } else if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
+        b.polyline(ctx, rgb, lw, &q);
     }
 }
 

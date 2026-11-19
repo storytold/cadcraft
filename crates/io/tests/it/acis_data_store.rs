@@ -164,7 +164,7 @@ fn sat_text_is_told_by_its_subclass_and_a_geometry_record() {
     use cadcraft_doc::foreign::{Foreign, sat_text_acis};
     use cadcraft_doc::{Handle, RawTag, Unknown};
     let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
-    let solid = |tags: Vec<RawTag>| Unknown { dxf_type: "3DSOLID".into(), tags };
+    let solid = |tags: Vec<RawTag>| Unknown { dxf_type: "3DSOLID".into(), tags, graphics: Vec::new() };
     let none = std::collections::BTreeSet::new();
     let h = Handle(0x2B);
     // A stray 1 or 3 outside AcDbModelerGeometry is not SAT text.

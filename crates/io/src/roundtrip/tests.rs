@@ -39,7 +39,11 @@ fn drawing() -> Drawing {
     d.add(
         &Space::Model,
         Common::default(),
-        EntityKind::Unknown(Unknown { dxf_type: "ACME_WIDGET".into(), tags: vec![tag(100, "AcDbEntity"), tag(10, "1.0"), tag(20, "2.0")] }),
+        EntityKind::Unknown(Unknown {
+            dxf_type: "ACME_WIDGET".into(),
+            tags: vec![tag(100, "AcDbEntity"), tag(10, "1.0"), tag(20, "2.0")],
+            graphics: Vec::new(),
+        }),
     )
     .unwrap();
     d.add(&Space::Paper("Layout1".into()), Common::default(), line((1.0, 1.0), (2.0, 2.0))).unwrap();
@@ -516,7 +520,7 @@ fn corpus_round_trip_report() {
 #[test]
 fn types_the_dwg_writer_cannot_write_are_reported_lost() {
     use corpus::{CorpusReport, FileReport, Format, round_trip};
-    let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags });
+    let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_metric();
     let widget = vec![tag(100, "AcDbEntity"), tag(100, "AcmeWidget"), tag(10, "1.0"), tag(20, "2.0"), tag(30, "0.0")];
     d.add(&Space::Model, Common::default(), unknown("ACME_WIDGET", widget.clone())).unwrap();
