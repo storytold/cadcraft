@@ -1474,3 +1474,189 @@ menu	Modify	Modifikace
 
 # ArtCraft feature naming
 	Additional Tools	Další nástroje
+
+# Dimension styles and dimension properties
+	<style overrides>	<přepsání stylu>
+	A dimension style with this name already exists.	Kótovací styl s tímto názvem již existuje.
+	Above	Nad
+	Above text	Nad textem
+	All properties of {style}	Všechny vlastnosti stylu {style}
+	All styles	Všechny styly
+	Alt enabled	Zapnout alternativní jednotky
+	Alt format	Formát alternativních jednotek
+	Alt precision	Přesnost alternativních jednotek
+	Alt prefix	Předpona alternativních jednotek
+	Alt prefix and suffix	Předpona a přípona alternativních jednotek
+	Alt round	Zaokrouhlení alternativních jednotek
+	Alt scale factor	Měřítko alternativních jednotek
+	Alt suffix	Přípona alternativních jednotek
+	Alt zero suppression	Potlačení nul alternativních jednotek
+	Alternate Units	Alternativní jednotky
+	Angle format	Formát úhlů
+	Angle precision	Přesnost úhlů
+	Angular zero suppression	Potlačení nul úhlů
+	Annotative	Popisový
+	Arc length symbol	Symbol délky oblouku
+	Architectural	Architektonický
+	Architectural stacked	Architektonický se skládanými zlomky
+	Architectural tick	Architektonická čárka
+	Arrow 1	Šipka 1
+	Arrow 2	Šipka 2
+	Arrowheads	Šipky
+	Arrows	Šipky
+	At Ext Line 1	U vynášecí čáry 1
+	At Ext Line 2	U vynášecí čáry 2
+	At least	Nejméně
+	Baseline spacing	Rozestup kót od základny
+	Before text	Před textem
+	Below	Pod
+	Best fit	Nejlepší přizpůsobení
+	Bottom	Dole
+	Bottom center	Uprostřed dole
+	Box blank	Prázdný čtverec
+	Box filled	Vyplněný čtverec
+	Center mark size	Velikost středové značky
+	Closed blank	Uzavřená prázdná
+	Closed filled	Uzavřená vyplněná
+	Columns	Sloupce
+	Comma	Čárka
+	Compare	Porovnat
+	Compare Dimension Styles	Porovnat kótovací styly
+	Compare...	Porovnat...
+	Create New Dimension Style	Vytvořit nový kótovací styl
+	Current dimension style: {style}	Aktuální kótovací styl: {style}
+	Datum triangle	Referenční trojúhelník
+	Datum triangle filled	Vyplněný referenční trojúhelník
+	Decimal	Desetinný
+	Decimal degrees	Desetinné stupně
+	Decimal separator	Desetinný oddělovač
+	Degrees Minutes Seconds	Stupně minuty sekundy
+	Diagonal stacking	Skládaný se šikmou zlomkovou čarou
+	Dim line color	Barva kótovací čáry
+	Dim line ext	Přesah kótovací čáry
+	Dim line forced	Vynutit kótovací čáru uvnitř
+	Dim line linetype	Typ kótovací čáry
+	Dim line lineweight	Tloušťka kótovací čáry
+	Dim prefix	Předpona kóty
+	Dim roundoff	Zaokrouhlení kóty
+	Dim scale linear	Délkové měřítko kóty
+	Dim suffix	Přípona kóty
+	Dim units	Jednotky kóty
+	Dimension Style	Kótovací styl
+	Dimension Style Manager	Správce kótovacích stylů
+	Dimension Style Overrides	Přepsat kótovací styl
+	Dot	Tečka
+	Dot blank	Prázdná tečka
+	Dot small	Malá tečka
+	Engineering	Technický
+	Exactly	Přesně
+	Ext line 1 linetype	Typ vynášecí čáry 1
+	Ext line 2 linetype	Typ vynášecí čáry 2
+	Ext line color	Barva vynášecí čáry
+	Ext line ext	Přesah vynášecí čáry
+	Ext line fixed	Pevná délka vynášecí čáry
+	Ext line length	Délka vynášecí čáry
+	Ext line lineweight	Tloušťka vynášecí čáry
+	Ext line offset	Odsazení vynášecí čáry
+	Fit	Přizpůsobení
+	Fraction format	Formát zlomků
+	Fractional	Zlomkový
+	Fractional stacked	Zlomkový (skládaný)
+	Gradians	Grady
+	Hide dim line 1	Skrýt kótovací čáru 1
+	Hide dim line 2	Skrýt kótovací čáru 2
+	Hide ext line 1	Skrýt vynášecí čáru 1
+	Hide ext line 2	Skrýt vynášecí čáru 2
+	Horizontal stacking	Skládaný s vodorovnou zlomkovou čarou
+	Integral	Značka integrálu
+	JIS	JIS
+	Jog angle	Úhel zalomení
+	Justification	Zarovnání
+	Keep dim line with text	Přesunout kótovací čáru s textem
+	Leader arrow	Šipka odkazové čáry
+	Leading	Počáteční nuly
+	Limits	Mezní rozměry
+	Line space distance	Vzdálenost řádků
+	Line space factor	Násobek řádkování
+	Line space style	Typ řádkování
+	Lines	Čáry
+	Lines & Arrows	Čáry a šipky
+	Lower tolerance	Dolní tolerance
+	Measurement	Naměřená hodnota
+	Middle	Uprostřed
+	Middle center	Vodorovně i svisle na střed
+	Middle left	Vlevo uprostřed
+	Middle right	Vpravo uprostřed
+	Misc	Různé
+	Modify Dimension Style: {style}	Upravit kótovací styl: {style}
+	Modify...	Upravit...
+	Move text, add leader	Přesunout text a přidat odkazovou čáru
+	Move text, no leader	Přesunout text bez odkazové čáry
+	New Dimension Style: {style}	Nový kótovací styl: {style}
+	New style name	Název nového stylu
+	New...	Vytvořit...
+	Not stacked	Neskládaný
+	Obliquing	Úhel zešikmení
+	Open 30	Otevřená 30°
+	Open arrow	Otevřená šipka
+	Origin indicator	Značka počátku
+	Origin indicator 2	Značka počátku 2
+	Outside	Vně
+	Over Ext Line 1	Nad vynášecí čárou 1
+	Over Ext Line 2	Nad vynášecí čárou 2
+	Override Current Style: {style}	Přepsat aktuální styl: {style}
+	Override...	Přepsat...
+	Overrides the dimension style. Right-click to use the style's value.	Přepisuje kótovací styl. Kliknutím pravým tlačítkem použijete hodnotu stylu.
+	Period	Tečka
+	Prefix and suffix	Předpona a přípona
+	Preview of: {style}	Náhled stylu: {style}
+	Preview of: {style} (overrides)	Náhled stylu: {style} (přepsání)
+	Primary Units	Základní jednotky
+	Radians	Radiány
+	Remove Style Overrides	Odstranit přepsání stylu
+	Rename	Přejmenovat
+	Right angle	Pravý úhel
+	Save as New Style...	Uložit jako nový styl...
+	Save to current style	Uložit do aktuálního stylu
+	Scientific	Vědecký
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Určuje styl textu „{style}“, který má pevnou výšku. Chcete-li použít výšku textu kóty, nastavte výšku stylu na 0.
+	Small	Malá
+	Some of these dimensions take their text height from a fixed-height text style.	U některých těchto kót určuje výšku textu styl textu s pevnou výškou.
+	Space	Mezera
+	Start with	Vycházet ze stylu
+	Style	Styl
+	Styles	Styly
+	Styles in use	Používané styly
+	Suppress arrows	Potlačit šipky vně
+	Symbols and Arrows	Symboly a šipky
+	Text alignment X	Zarovnávací bod textu X
+	Text alignment Y	Zarovnávací bod textu Y
+	Text and arrows	Text a šipky
+	Text inside	Text uvnitř
+	Text inside align	Vodorovný text uvnitř
+	Text movement	Pohyb textu
+	Text offset	Odsazení textu
+	Text outside align	Vodorovný text vně
+	Text pos hor	Vodorovná poloha textu
+	Text pos vert	Svislá poloha textu
+	Text position X	Poloha textu X
+	Text position Y	Poloha textu Y
+	Text rotation	Natočení textu
+	Text vertical position	Svislý posun textu
+	Tick size	Velikost čárky
+	Tolerance height	Relativní výška tolerance
+	Tolerance pos vert	Svislá poloha tolerance
+	Tolerance precision	Přesnost tolerance
+	Tolerance zero suppression	Potlačení nul tolerance
+	Tolerances	Tolerance
+	Top	Nahoře
+	Top center	Uprostřed nahoře
+	Trailing	Koncové nuly
+	Upper tolerance	Horní tolerance
+	Use the style's value	Použít hodnotu stylu
+	Variable	Proměnná
+	Windows desktop	Prostředí Windows
+	With	Se stylem
+	Zero suppression	Potlačení nul
+	{count} differences	Počet rozdílů: {count}
+	{property}: that value can't be used here.	{property}: tuto hodnotu zde nelze použít.
