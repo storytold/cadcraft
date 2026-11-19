@@ -139,11 +139,13 @@
 	Clip Viewport	Delimitar ventana gráfica
 	Clipboard	Portapapeles
 	Close	Cerrar
+	Close {panel}	Cerrar {panel}
 	Close All	Cerrar todo
 	Close All Other Drawings	Cerrar todos los demás dibujos
 	Close Array Editing	Cerrar la edición de matriz
 	Close Comparison	Cerrar comparación
 	Export Comparison	Exportar comparación
+	Close panel	Cerrar panel
 	Closed	Cerrada
 	Coincident	Coincidente
 	Collapse Palettes	Contraer paletas
