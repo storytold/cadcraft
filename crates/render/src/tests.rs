@@ -1375,4 +1375,108 @@ fn mtext_background_mask_resolves_bylayer_byblock_and_nonfinite_rotation() {
     assert!(list.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(255, 0, 0)), "ByLayer red background fill");
     assert!(list.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(0, 0, 255)), "ByBlock blue background fill");
     assert!(list.tris.iter().all(|v| v.x.is_finite() && v.y.is_finite()), "non-finite rotation must yield finite background tris");
+
+    // Multiline ATTRIB without ATTDEF and with empty props inherits INSERT block_color for ByBlock background mask.
+    let mut d_attr = Drawing::new_metric();
+    d_attr.blocks.insert("EMPTY_BLK".into(), std::sync::Arc::new(cadcraft_doc::Block::new("EMPTY_BLK")));
+    let mut ins_attr = insert_of("EMPTY_BLK");
+    if let EntityKind::Insert(ref mut i) = ins_attr {
+        i.attribs.push(cadcraft_doc::Attrib {
+            tag: "TAG".into(),
+            text: cadcraft_doc::Text {
+                insert: Vec3::ZERO,
+                align_pt: None,
+                height: 2.0,
+                value: "ATTR".into(),
+                rotation: 0.0,
+                width_factor: 1.0,
+                oblique: 0.0,
+                style: "Standard".into(),
+                halign: Default::default(),
+                valign: Default::default(),
+            },
+            multiline: Some(cadcraft_doc::MultilineAttrib {
+                mtext: cadcraft_doc::MText {
+                    insert: Vec3::ZERO,
+                    height: 2.0,
+                    width: 0.0,
+                    attach: 1,
+                    rotation: 0.0,
+                    style: "Standard".into(),
+                    contents: "ATTR".into(),
+                    line_spacing: 1.0,
+                    line_spacing_exact: false,
+                    columns: None,
+                    background: Some(cadcraft_doc::MTextBackground { mask: 1, color: Some(Color::ByBlock), scale: 1.5 }),
+                },
+                read_as: "ATTR".into(),
+            }),
+            invisible: false,
+            constant: false,
+            prompt: String::new(),
+            props: cadcraft_doc::AttribProps::default(),
+            modes: cadcraft_doc::AttribModes::default(),
+        });
+    }
+    d_attr.add(&Space::Model, Common { color: Color::Index(3), ..Default::default() }, ins_attr).unwrap();
+    let attr_list = build(&d_attr, &Space::Model, &Options::default());
+    assert!(attr_list.prims.iter().any(|p| p.kind == Kind::Tris && p.color == Rgb(0, 255, 0)), "Attrib ByBlock green background fill");
+
+    // MLeader with opts.text == false must not emit MText background mask triangles.
+    let mut d_ml = Drawing::new_metric();
+    d_ml.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::MLeader(cadcraft_doc::MLeader {
+            leaders: Vec::new(),
+            landing: Vec3::ZERO,
+            dogleg: 1.0,
+            style: "Standard".into(),
+            arrow_size: 1.0,
+            spline: false,
+            text: Some(cadcraft_doc::MText {
+                insert: Vec3::new(2.0, 0.0, 0.0),
+                height: 2.0,
+                width: 0.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "ML".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+                background: Some(cadcraft_doc::MTextBackground { mask: 3, color: None, scale: 1.5 }),
+            }),
+            block: None,
+        }),
+    )
+    .unwrap();
+    let ml_no_text = build(&d_ml, &Space::Model, &Options { text: false, ..Default::default() });
+    assert!(!ml_no_text.prims.iter().any(|p| p.kind == Kind::Mask), "MLeader background mask must not draw when opts.text is false");
+
+    // Unbreakable word overflowing narrow reference width expands background quad beyond reference width.
+    let mut d_ovf = Drawing::new_metric();
+    d_ovf
+        .add(
+            &Space::Model,
+            Common::default(),
+            EntityKind::MText(cadcraft_doc::MText {
+                insert: Vec3::ZERO,
+                height: 2.0,
+                width: 1.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "WWWWWW".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+                background: Some(cadcraft_doc::MTextBackground { mask: 3, color: None, scale: 1.5 }),
+            }),
+        )
+        .unwrap();
+    let ovf_list = build(&d_ovf, &Space::Model, &Options::default());
+    let min_x = ovf_list.tris.iter().map(|v| v.x).fold(f64::INFINITY, f64::min);
+    let max_x = ovf_list.tris.iter().map(|v| v.x).fold(f64::NEG_INFINITY, f64::max);
+    assert!(max_x - min_x > 8.0, "overflowing word background quad width ({}) must cover actual glyph strokes", max_x - min_x);
 }

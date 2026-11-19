@@ -276,7 +276,9 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
         let land = m.landing.xy();
         let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
         b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-        mtext(b, ctx, &e.common.layer, t, rgb, lw);
+        if b.opts.text {
+            mtext(b, ctx, &e.common.layer, t, rgb, lw);
+        }
     }
     if let Some(ins) = &m.block {
         if m.dogleg > 0.0 && !m.leaders.is_empty() {

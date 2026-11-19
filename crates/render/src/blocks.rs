@@ -149,7 +149,7 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // layer 0 = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
             let (ink, lw, shown, t, attr_ctx, attr_layer) = match (def, a.props.is_empty()) {
-                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference, ctx.clone(), e.common.layer.clone()),
+                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference, sub_ctx(ctx, e, Mat3::IDENTITY), e.common.layer.clone()),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
                     let sub = sub_ctx(ctx, e, Mat3::IDENTITY);

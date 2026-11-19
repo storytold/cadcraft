@@ -96,8 +96,19 @@ pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, layer: &str, t: &cadcraft_doc::M
 
 fn mtext_bg_quad(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MTextLayout, scale: f64) -> Option<[cadcraft_geom::Vec2; 4]> {
     let rot = if t.rotation.is_finite() { t.rotation } else { 0.0 };
-    let bounds =
-        if rot == 0.0 { l.bounds } else { layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, background: None, ..t.clone() }).bounds };
+    let u_owned;
+    let u = if rot == 0.0 {
+        l
+    } else {
+        u_owned = layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, background: None, ..t.clone() });
+        &u_owned
+    };
+    let mut bounds = u.bounds;
+    for q in u.strokes.iter().flatten() {
+        if q.is_finite() {
+            bounds.add(*q);
+        }
+    }
     if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
         return None;
     }
