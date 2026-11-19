@@ -113,6 +113,12 @@ fn missing_fonts_and_what_replaces_them() {
             entry("cadcraft-missing-big", "cadcraft-missing-big.shx", "cadcraft-tt-alt.ttf")
         ]
     );
+    // A big font that isn't an SHX file doesn't make it an SHX style either.
+    assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-unused.ttf", false).is_outline());
+    assert_eq!(
+        missing("cadcraft-missing.shx", "cadcraft-unused.ttf"),
+        vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", "cadcraft-tt-alt.ttf")]
+    );
     // A big font that is there makes it an SHX style: the TrueType font draws nothing.
     assert!(TextFont::resolve_style("cadcraft-missing.shx", "cadcraft-beside-big", false).is_shx());
     assert_eq!(missing("cadcraft-missing.shx", "cadcraft-beside-big"), vec![entry("cadcraft-missing.shx", "cadcraft-missing.shx", BUILTIN_FONT)]);

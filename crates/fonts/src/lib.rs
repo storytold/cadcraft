@@ -399,7 +399,7 @@ impl TextFont {
         let alt_main_shx = !builtin && shx::find(alt_main).is_some();
         let alt_big_shx = !b.is_empty() && shx::find(alt_big).is_some();
         let shx_style =
-            alt_main_shx || alt_big_shx || (!builtin && main_lost.is_none() && shx::find(n).is_some()) || (!b.is_empty() && big_lost.is_none());
+            alt_main_shx || alt_big_shx || (!builtin && main_lost.is_none() && shx::find(n).is_some()) || (!b.is_empty() && shx::find(b).is_some());
         let (main_sub, big_sub) = if shx_style {
             (if alt_main_shx { alt_main } else { BUILTIN_FONT }, if alt_big_shx { alt_big } else { BUILTIN_FONT })
         } else if !builtin && ttf::find(alt_main).is_some() {
