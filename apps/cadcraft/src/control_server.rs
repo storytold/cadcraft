@@ -221,12 +221,17 @@ fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize, h
     }
 }
 
+/// Longest request `id` (it is copied into the reply).
+const MAX_ID_BYTES: usize = 4096;
+
 /// One request line, parsed.
-enum Line {
+enum Line<'a> {
     Request {
         id: Value,
         method: String,
-        params: Value,
+        /// Left as text until the token is checked: decoding it first would let an unauthenticated
+        /// peer turn a flat array into many owned JSON values.
+        params: Option<&'a serde_json::value::RawValue>,
         token: Option<String>,
     },
     Blank,
@@ -235,7 +240,7 @@ enum Line {
 }
 
 /// Parse a UTF-8 JSON request and its optional token, distinguishing blank lines from rejected input.
-fn parse_line(bytes: &[u8]) -> Line {
+fn parse_line(bytes: &[u8]) -> Line<'_> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Line::Reject("not a control request (invalid UTF-8); closing the connection".into());
     };
@@ -246,23 +251,28 @@ fn parse_line(bytes: &[u8]) -> Line {
     if is_http_request_line(text) {
         return Line::Reject("HTTP is not served here: this port takes JSON lines; closing the connection".into());
     }
-    let msg = match serde_json::from_str::<Value>(text) {
-        Ok(v) => v,
-        Err(e) => return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection")),
-    };
-    let Value::Object(mut obj) = msg else {
+    // Checked without building values; then only the object's own keys are read, each value kept as text.
+    if let Err(e) = serde_json::from_str::<&serde_json::value::RawValue>(text) {
+        return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection"));
+    }
+    let Ok(mut obj) = serde_json::from_str::<std::collections::BTreeMap<String, &serde_json::value::RawValue>>(text) else {
         return Line::Reject("not a control request (expected a JSON object); closing the connection".into());
     };
-    let Some(Value::String(method)) = obj.remove("method") else {
+    // `method` and `token` are decoded as strings only (anything else is no string); `id` is echoed back
+    // in replies, so it is decoded but bounded.
+    let string = |v: Option<&serde_json::value::RawValue>| v.and_then(|r| serde_json::from_str::<String>(r.get()).ok());
+    let Some(method) = string(obj.remove("method")) else {
         return Line::Reject("not a control request (missing string `method`); closing the connection".into());
     };
-    // Moved out of the parsed object, not cloned: `params` can be most of the line.
-    Line::Request {
-        id: obj.remove("id").unwrap_or(Value::Null),
-        method,
-        params: obj.remove("params").unwrap_or(json!({})),
-        token: obj.remove("token").and_then(|t| if let Value::String(t) = t { Some(t) } else { None }),
-    }
+    let id = match obj.remove("id") {
+        None => Value::Null,
+        Some(r) if r.get().len() <= MAX_ID_BYTES => match serde_json::from_str(r.get()) {
+            Ok(v) => v,
+            Err(e) => return Line::Reject(format!("bad `id` ({e}); closing the connection")),
+        },
+        Some(_) => return Line::Reject(format!("`id` is longer than {MAX_ID_BYTES} bytes; closing the connection")),
+    };
+    Line::Request { id, method, params: obj.remove("params"), token: string(obj.remove("token")) }
 }
 
 /// An HTTP/1 request line (`POST / HTTP/1.1`) or the HTTP/2 preface (`PRI * HTTP/2.0`).
@@ -305,6 +315,16 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
                         let _ = writeln!(out, "{r}");
                         break;
                     }
+                    // Absent `params` is `{}`; ones that cannot be decoded (an unpaired surrogate escape) are an
+                    // error, not a request run with defaults.
+                    let params = match params.map(|r| serde_json::from_str::<Value>(r.get())) {
+                        None => json!({}),
+                        Some(Ok(v)) => v,
+                        Some(Err(e)) => {
+                            let _ = writeln!(out, "{}", json!({"ok": false, "error": format!("bad params ({e}); closing the connection"), "id": id}));
+                            break;
+                        }
+                    };
                     let (req, pending) = ControlRequest::new(method, params);
                     let mut r = match tx.try_send(req) {
                         Ok(()) => {
@@ -370,6 +390,22 @@ mod tests {
         assert!(read_bounded_line(&mut input, &mut buf, 10, &mut held()).is_err());
         assert!(buf.len() <= 11, "at most limit + 1 bytes are buffered, got {}", buf.len());
         assert_eq!(input.len(), 100 - 11, "the rest of the line is left unread");
+    }
+
+    /// The parameters stay text until the token is checked, and a request decodes as before.
+    #[test]
+    fn params_are_decoded_only_as_text_by_the_parser() {
+        let line = br#"{"id":7,"method":"m","token":"t","params":[1,2,{"a":[3]}],"extra":null}"#;
+        let Line::Request { id, method, params, token } = parse_line(line) else { panic!("a request") };
+        assert_eq!((id, method.as_str(), token.as_deref()), (json!(7), "m", Some("t")));
+        assert_eq!(params.map(|p| p.get()), Some(r#"[1,2,{"a":[3]}]"#));
+        assert!(matches!(parse_line(b"[1,2,3]"), Line::Reject(e) if e.contains("expected a JSON object")));
+        assert!(matches!(parse_line(b"{\"method\":"), Line::Reject(e) if e.contains("bad JSON")));
+        assert!(matches!(parse_line(br#"{"id":[1],"method":5}"#), Line::Reject(e) if e.contains("missing string `method`")));
+        let long_id = format!(r#"{{"id":"{}","method":"m"}}"#, "x".repeat(MAX_ID_BYTES));
+        assert!(matches!(parse_line(long_id.as_bytes()), Line::Reject(e) if e.contains("`id` is longer")));
+        assert!(matches!(parse_line(br#"{"id":"\ud800","method":"m"}"#), Line::Reject(e) if e.contains("bad `id`")));
+        assert!(matches!(parse_line(br#"{"id":1}"#), Line::Reject(e) if e.contains("missing string `method`")));
     }
 
     fn held() -> Held {
