@@ -68,11 +68,22 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 /// [`dashed_rect`] for any closed outline (a selection window turned in a twisted view): each
 /// edge from one corner to the next, the last back to the first.
 pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_outline(clip, corners, stroke, dash, gap, true)
+}
+
+/// Dash only consecutive points. Clipped page-frame runs may be open; joining
+/// their endpoints would draw a chord across the page or outside the viewport.
+pub(super) fn dashed_polyline(clip: Rect, points: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_outline(clip, points, stroke, dash, gap, false)
+}
+
+fn dashed_outline(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32, closed: bool) -> Vec<Shape> {
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1));
+    let count = if closed { corners.len() } else { corners.len().saturating_sub(1) };
+    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1)).take(count);
     for (a, b) in edges {
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
