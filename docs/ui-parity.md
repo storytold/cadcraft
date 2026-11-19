@@ -44,8 +44,8 @@ percentages below are from 2026-10-11 and were not re-measured. Remaining: **≈
 
 | Input | AutoCAD | CADCraft | Evidence |
 |---|---|---|---|
-| `x,y[,z]`, `@dx,dy`, `@d<a`, `d<a`, `#x,y`, bare `@` | yes | yes; `#` equals absolute because there is no UCS; Z parsed then discarded | `prompt.rs:147-180` |
-| `*x,y` (WCS override) | yes | yes (`*x,y`, `*@dx,dy`, `@*dx,dy`); the same as the plain forms because there is no UCS | `prompt.rs` |
+| `x,y[,z]`, `@dx,dy`, `@d<a`, `d<a`, `#x,y`, bare `@` | yes | yes, in the current UCS (from its origin, along its axes, angles from its X axis); `#` is absolute in the UCS; Z parsed then discarded | `prompt.rs` (`parse_point_in`) |
+| `*x,y` (WCS override) | yes | yes (`*x,y`, `*@dx,dy`, `@*dx,dy`): world coordinates whatever the UCS | `prompt.rs` |
 | Direct distance entry | yes, honours ortho, polar and tracking paths | yes, ortho; polar only through the UI's snapped cursor | `lib.rs:782-793` |
 | Angle forms: `45d30'`, radians, grads, surveyor `N45dE` | yes | yes | `units.rs:141-197` |
 | Architectural/engineering distances `5'6-1/2"` | yes | yes | `units.rs:93-140` |

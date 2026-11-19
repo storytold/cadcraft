@@ -35,6 +35,40 @@ pub(crate) const PLOT_STYLE_NAMES_KEY: &str = "ACAD_PLOTSTYLENAME";
 pub(crate) const HANDSEED_KEY: &str = "CADCRAFT_HANDSEED";
 /// Named-object-dictionary key of the XRECORD holding the current multileader style.
 pub(crate) const MLEADER_STYLE_KEY: &str = "CADCRAFT_MLEADERSTYLE";
+/// Named-object-dictionary key of the XRECORD holding model space's current UCS name ($UCSNAME,
+/// which the DWG bridge drops).
+pub(crate) const UCS_NAME_KEY: &str = "CADCRAFT_UCSNAME";
+
+/// Whether the UCS at `origin` with axes `x`, `y` is exactly the named UCS `u` (to rounding):
+/// only then is the current UCS still that named one, read or written. The origin may differ by
+/// printing round-off only: we write the shortest exact form and other programs 15–16
+/// significant digits (half a unit in the 15th is 5e-16 of the value), so 1e-14 of the value,
+/// plus 1e-9 near the World origin, covers it while even 1e12 away a 0.5 move is a different UCS.
+pub(crate) fn is_named_frame(u: &cadcraft_doc::Ucs, origin: cadcraft_geom::Vec3, x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {
+    (origin - u.origin).len() <= 1e-9 + 1e-14 * origin.len() && (x - u.x_axis).len() <= 1e-9 && (y - u.y_axis).len() <= 1e-9
+}
+
+/// The UCS table record named `name` whose frame the UCS at `origin`, `x`, `y` still is: the only
+/// case in which a current UCS (model space's or a layout's, read or written) keeps that name.
+pub(crate) fn named_ucs<'a>(
+    ucss: &'a [cadcraft_doc::Ucs],
+    name: &str,
+    origin: cadcraft_geom::Vec3,
+    x: cadcraft_geom::Vec3,
+    y: cadcraft_geom::Vec3,
+) -> Option<&'a cadcraft_doc::Ucs> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    ucss.iter().find(|u| u.name.eq_ignore_ascii_case(name) && is_named_frame(u, origin, x, y))
+}
+
+/// Whether `x` and `y` can be a UCS's axes: finite, not zero and not along each other (relative
+/// to their lengths, so short but square axes are fine). Read and written by the same rule.
+pub(crate) fn usable_axes(x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {
+    x.is_finite() && y.is_finite() && x.len() > 1e-12 && y.len() > 1e-12 && x.cross(y).len() > 1e-9 * x.len() * y.len()
+}
 /// Most plot style tables and plot style names read from a file.
 pub(crate) const MAX_PLOT_STYLE_TABLES: usize = 1000;
 pub(crate) const MAX_PLOT_STYLE_NAMES: usize = 100_000;
