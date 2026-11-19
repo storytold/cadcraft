@@ -16,7 +16,7 @@ pub(super) fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), ucss: HashMap::new(), reactors: HashMap::new() };
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };

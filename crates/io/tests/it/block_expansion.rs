@@ -118,6 +118,9 @@ fn an_empty_followup_viewport_does_not_mark_an_exact_budget_truncated() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        ucs: None,
+        ucs_per_viewport: false,
+        extra: Vec::new(),
         twist: 0.0,
     };
     let paper = Space::Paper("Layout1".into());
