@@ -5,10 +5,14 @@
 //! (`getpoint`, `pause`) and carry on later, so the interface keeps drawing while a routine
 //! waits. Each drawing has its own symbols, as in AutoCAD. A run is one undo step.
 
+/// A block-definition entity and its successor in the block, by handle.
+pub type BlockSlots = HashMap<Handle, (Arc<cadcraft_doc::Entity>, Option<Handle>)>;
+
 pub mod builtins;
 mod drawing;
 pub mod eval;
 pub mod input;
+mod objects;
 pub mod read;
 mod startup;
 pub mod value;
@@ -54,13 +58,20 @@ pub struct Env {
     pub next_file: u32,
     /// Entities `entdel` deleted (it brings them back when called again), with their space.
     pub deleted: HashMap<Handle, (cadcraft_doc::Space, Arc<cadcraft_doc::Entity>)>,
-    /// Every entity's handle in creation order, for the drawing it was taken from (`entnext`).
-    pub order: Option<(usize, Arc<Vec<Handle>>)>,
+    /// Every entity's handle in creation order (`entlast`, `entnext`), with clones of the spaces
+    /// it was taken from (model space, then each layout): it is reused only while the drawing's
+    /// spaces still share every chunk with them ([`cadcraft_doc::EntityStore::same_as`]).
+    pub order: Option<(Vec<cadcraft_doc::EntityStore>, Arc<Vec<Handle>>)>,
+    /// Each block-definition entity with its successor in its block (None for the last), for the drawing
+    /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
+    pub block_next: Option<(usize, Arc<BlockSlots>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
     /// entities made meanwhile go into it, numbered when it ends.
     pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
+    /// Entity names of non-graphic objects (dictionaries, table records, layouts).
+    pub(crate) objects: objects::Names,
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
@@ -77,8 +88,10 @@ impl Default for Env {
             next_file: 1,
             deleted: HashMap::new(),
             order: None,
+            block_next: None,
             tblnext: HashMap::new(),
             pending_block: None,
+            objects: objects::Names::default(),
             printed_at: None,
         };
         builtins::install(&mut e);
@@ -207,8 +220,19 @@ impl Session {
         self.lisp.envs.remove(&uid).unwrap_or_default()
     }
 
+    /// Put a drawing's environment back, unless the drawing was closed meanwhile (a routine
+    /// cancelled by CLOSE ends after its drawing went away).
     fn lisp_env_put(&mut self, uid: u64, env: Env) {
-        self.lisp.envs.insert(uid, env);
+        if uid == 0 || self.docs.iter().any(|d| d.uid == uid) {
+            self.lisp.envs.insert(uid, env);
+        }
+    }
+
+    /// Drop the environments of drawings no longer open: one holds clones of its drawing's
+    /// entity stores ([`Env::order`]), which would otherwise outlive the drawing.
+    pub(crate) fn lisp_forget_closed(&mut self) {
+        let docs = &self.docs;
+        self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
     }
 
     /// A routine is running (possibly waiting for input).
@@ -451,7 +475,7 @@ impl Session {
         let steps = std::mem::take(&mut self.lisp.steps);
         let mut env = self.lisp.envs.remove(&run.uid).unwrap_or_default();
         self.lisp_flush(&mut env, true);
-        self.lisp.envs.insert(run.uid, env);
+        self.lisp_env_put(run.uid, env);
         if let (Ok(v), true) = (&result, run.print) {
             let text = value::to_text(v, true);
             if !builtins::is_null_symbol(v) {
