@@ -83,14 +83,22 @@ fn dash_attedit_one_at_a_time_edits_the_selected_attributes() {
     let mut s = with_block();
     let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
     type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", ""]);
-    assert!(s.prompt_text().contains("[Value/Layer/Color/Next] <N>"), "{}", s.prompt_text());
-    // Unsupported options say so and keep the prompt.
-    s.cmdline("p").unwrap();
-    assert!(s.log.iter().any(|l| l.contains("Position is not available yet")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("[Value/Position/Height/Angle/Style/Layer/Color/Next] <N>"), "{}", s.prompt_text());
+    // Edit Position, Height, Angle, and Style
+    type_lines(&mut s, &["p", "10,20", "h", "2.5", "a", "45", "s", "Standard"]);
+    // Edit Value: change and replace
     type_lines(&mut s, &["v", "c", "b", "B", "v", "r", "replaced value", "n"]);
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(value(&s, h, "T"), "replaced value");
     assert_eq!(value(&s, h, "U"), "u");
+
+    let EntityKind::Insert(ins) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+    let att = ins.attribs.iter().find(|a| a.tag == "T").unwrap();
+    assert!((att.text.insert.x - 10.0).abs() < 1e-6);
+    assert!((att.text.insert.y - 20.0).abs() < 1e-6);
+    assert!((att.text.height - 2.5).abs() < 1e-6);
+    assert!((att.text.rotation.to_degrees() - 45.0).abs() < 1e-4);
+    assert_eq!(att.text.style, "Standard");
 }
 
 #[test]
