@@ -188,7 +188,10 @@ pub(super) fn overlay_name(snap: &Snap) -> String {
     let base = format!("{OVERLAY_PREFIX}{}", slug(stem, "-_"));
     match snap.epoch {
         Some(e) => format!("{base}_{}_{:03}", stamp(e).replace('.', "_"), snap.millis),
-        None => format!("{base}_{}", slug(split_ext(&snap.file).0, "-_")),
+        None => {
+            let file = slug(split_ext(&snap.file).0, "-_");
+            if file.is_empty() || file == slug(stem, "-_") { base } else { format!("{base}_{file}") }
+        }
     }
 }
 #[cfg(test)]
@@ -227,7 +230,11 @@ mod tests {
     #[test]
     fn an_overlay_is_named_after_its_snapshot() {
         let s = parse("20261014.083512_482_kostyk_правка_план.dxf", PathBuf::from("x.dxf"), 0);
-        assert_eq!(overlay_name(&s), "OMNI_план_20261014_083512");
+        // The milliseconds are in the name: a save and a milestone taken in the same second are
+        // two revisions, and one name for both made OMNI-DIFF lay the wrong one under the drawing.
+        assert_eq!(overlay_name(&s), "OMNI_план_20261014_083512_482");
+        let later = parse("20261014.083512_910_kostyk_правка_план.dxf", PathBuf::from("y.dxf"), 0);
+        assert_ne!(overlay_name(&later), overlay_name(&s), "same second, different millisecond");
         let untimed = parse("notes.dxf", PathBuf::from("notes.dxf"), 0);
         assert_eq!(overlay_name(&untimed), "OMNI_notes");
     }
