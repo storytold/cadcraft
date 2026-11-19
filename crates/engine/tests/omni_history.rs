@@ -255,7 +255,6 @@ fn the_overlay_toggles_and_clears_and_the_users_xref_survives() {
             })
             .collect()
     }
-    let before = inserts(&s);
 
     // Toggle: the underlay's objects leave the drawing and come back on reload, with the red their
     // layers were given, not the snapshot's own colours.
@@ -287,7 +286,7 @@ fn the_overlay_toggles_and_clears_and_the_users_xref_survives() {
         assert!(d.layers.iter().all(|l| !l.name.contains('|') || l.name.starts_with("site|")), "its layers go, the user's stay");
         assert!(d.block("site").is_some());
     }
-    assert_eq!(before, inserts(&s), "the drawing's own objects and the user's reference, and nothing of the overlay");
+    assert_eq!(inserts(&s), vec!["site".to_string()], "the user's reference stays, the overlay's reference is gone");
 
     // Nothing left to clear, and nothing left to toggle.
     assert_eq!(s.execute("omni-clear", &json!({})).unwrap()["cleared"], json!([]));
