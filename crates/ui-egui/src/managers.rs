@@ -731,10 +731,13 @@ fn page_rows(
     if let Some(mm) = rows.paper_mm {
         ui.label(crate::tl!("Paper units"));
         ui.horizontal(|ui| {
-            if ui.radio(!mm, crate::tl!("Inches")).clicked() && mm {
+            // Every click records the choice, even on the selected radio: while the layout has
+            // no explicit units it inherits MEASUREMENT, and clicking the value it currently
+            // inherits must lock that choice against a later MEASUREMENT change (#3249).
+            if ui.radio(!mm, crate::tl!("Inches")).clicked() {
                 change = Some(("paperUnits", json!("inches")));
             }
-            if ui.radio(mm, crate::tl!("Millimeters")).clicked() && !mm {
+            if ui.radio(mm, crate::tl!("Millimeters")).clicked() {
                 change = Some(("paperUnits", json!("mm")));
             }
         })
