@@ -204,6 +204,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(groups::specs());
         v.extend(gripcmds::specs());
         v.extend(file::compare::specs());
+        v.extend(file::omni::specs());
         v.extend(layer::specs());
         v.extend(layout::specs());
         v.extend(exchange::specs());

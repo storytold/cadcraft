@@ -142,6 +142,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let modules = [
         "xrefs",
         "blocks_palette",
+        "history",
         "canvas",
         "chrome",
         "cmdline",

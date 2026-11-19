@@ -1062,3 +1062,31 @@
 
 # ArtCraft feature naming
 	Additional Tools	Дополнительные инструменты
+
+# Drawing history (the OMNI toolkit).
+	Version History	История версий
+	Take Snapshot...	Создать снимок...
+	Name the drawing as it is now, unsaved changes included, and keep it as a milestone	Назовите чертёж таким, как он есть сейчас, вместе с несохранёнными изменениями, и сохраните его как веху
+	Kind	Тип
+	Size	Размер
+	Milestone	Веха
+	Saved	Сохранено
+	Compare	Сравнить
+	Save the drawing first: every save with changes leaves a version behind.	Сначала сохраните чертёж: каждое сохранение с изменениями оставляет версию.
+	No versions yet: every save with changes leaves one behind.	Версий пока нет: каждое сохранение с изменениями оставляет одну.
+	{n} versions (newest first)	{n} версий (сначала новые)
+	The folder holds more versions than the palette lists.	В папке больше версий, чем показывает панель.
+	Stored gzipped on disk	Хранится на диске сжатым (gzip)
+	Open this version as a drawing of its own	Открыть эту версию как отдельный чертёж
+	Lay this version under the drawing in red and report what changed	Подложить эту версию под чертёж красным и показать, что изменилось
+	Saved by {user}	Сохранено: {user}
+	Restore Version	Восстановить версию
+	Put this version back into the drawing as an unsaved change; UNDO goes back	Вернуть эту версию в чертёж как несохранённое изменение; UNDO возвращает назад
+	Unsaved changes since the last save	Есть несохранённые изменения после последнего сохранения
+	Drawing History	История чертежа
+	Save Snapshot	Сохранить снимок
+	Snapshot History...	История снимков...
+	Compare with Snapshot	Сравнить со снимком
+	Show/Hide Snapshot	Показать/скрыть снимок
+	Clear Snapshot Overlay	Убрать наложение снимка
+	Add Note	Добавить примечание

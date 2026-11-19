@@ -25,6 +25,10 @@ mod solid;
 mod spline;
 mod text;
 
+// The drawing-history notes build a text entity of their own, and the module that owns the text
+// command keeps its helper private: this is the one re-export they need.
+pub(crate) use text::make_text;
+
 use circle::{CircleM, run_arc, run_circle};
 pub(crate) use ellipse::ellipse_machine;
 use ellipse::{EllipseM, run_ellipse};

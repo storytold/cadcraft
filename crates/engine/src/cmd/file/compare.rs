@@ -268,17 +268,17 @@ fn objects<'a>(d: &'a Drawing, space: &Space, truncated: &mut bool) -> Vec<Obj<'
 }
 
 /// What differs between two drawings' spaces.
-struct Diff {
-    added: Vec<Handle>,
-    removed: Vec<Handle>,
+pub(crate) struct Diff {
+    pub added: Vec<Handle>,
+    pub removed: Vec<Handle>,
     /// (here, there, geometry differs, properties differ).
-    changed: Vec<(Handle, Handle, bool, bool)>,
-    common: usize,
-    truncated: bool,
+    pub changed: Vec<(Handle, Handle, bool, bool)>,
+    pub common: usize,
+    pub truncated: bool,
 }
 
 /// Compare `cur`'s `space` with the same space of `other`.
-fn diff(cur: &Drawing, other: &Drawing, space: &Space) -> Diff {
+pub(crate) fn diff(cur: &Drawing, other: &Drawing, space: &Space) -> Diff {
     let mut truncated = false;
     let a = objects(cur, space, &mut truncated);
     let b = objects(other, space, &mut truncated);
@@ -365,15 +365,11 @@ fn listed(d: &Drawing, hs: &[Handle]) -> Vec<Value> {
     hs.iter().take(MAX_LISTED).filter_map(|h| d.entity(*h)).map(|e| json!({ "handle": e.handle.hex(), "type": e.kind.type_name() })).collect()
 }
 
-fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
-    let (other, name) = other_drawing(s, p)?;
-    let other_path = export::source_path(s, p, &other);
-    let st = s.state()?;
-    let (uid, space, cur) = (st.uid, st.space.clone(), st.doc.clone());
-    if Arc::ptr_eq(&cur, &other) {
-        return Err(bad("compare", "a drawing can't be compared with itself"));
-    }
-    let Diff { added, removed, changed, common, truncated } = diff(&cur, &other, &space);
+/// The areas holding the differences between `cur` and `other`, in reading order.
+///
+/// Kept apart from `run_compare` so the drawing-history overlay can lay a revision under the
+/// drawing and zoom to the same regions without walking the difference twice.
+pub(crate) fn diff_regions(cur: &Drawing, other: &Drawing, d: &Diff) -> Vec<Bounds2> {
     let mut boxes = Vec::new();
     // One block-bounds cache for each drawing, so a block many differing entities refer to is
     // measured once, not once per entity.
@@ -384,13 +380,26 @@ fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
             boxes.push(b);
         }
     }
-    added.iter().for_each(|h| bound(&mut boxes, &cur, *h, &mut cur_cache));
-    removed.iter().for_each(|h| bound(&mut boxes, &other, *h, &mut other_cache));
-    for (a, b, _, _) in &changed {
-        bound(&mut boxes, &cur, *a, &mut cur_cache);
-        bound(&mut boxes, &other, *b, &mut other_cache);
+    d.added.iter().for_each(|h| bound(&mut boxes, cur, *h, &mut cur_cache));
+    d.removed.iter().for_each(|h| bound(&mut boxes, other, *h, &mut other_cache));
+    for (a, b, _, _) in &d.changed {
+        bound(&mut boxes, cur, *a, &mut cur_cache);
+        bound(&mut boxes, other, *b, &mut other_cache);
     }
-    let regions = regions(&boxes);
+    regions(&boxes)
+}
+
+fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
+    let (other, name) = other_drawing(s, p)?;
+    let other_path = export::source_path(s, p, &other);
+    let st = s.state()?;
+    let (uid, space, cur) = (st.uid, st.space.clone(), st.doc.clone());
+    if Arc::ptr_eq(&cur, &other) {
+        return Err(bad("compare", "a drawing can't be compared with itself"));
+    }
+    let d = diff(&cur, &other, &space);
+    let regions = diff_regions(&cur, &other, &d);
+    let Diff { added, removed, changed, common, truncated } = d;
     let ch: Vec<Value> = changed
         .iter()
         .take(MAX_LISTED)

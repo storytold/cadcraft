@@ -128,3 +128,7 @@ sync_github_name = true
 
 [people.tyrel]
 real_name = "Tyrel Haveman"
+[people.kostyk348]
+real_name = "Konstantin Parashchuk"
+display_name = "Konstantin Parashchuk"
+sync_github_name = false

@@ -20,6 +20,8 @@ pub enum Panel {
     #[serde(rename = "externalReferences")]
     ExternalRefs,
     Blocks,
+    #[serde(rename = "drawingHistory")]
+    DrawingHistory,
 }
 
 impl Panel {
@@ -33,6 +35,7 @@ impl Panel {
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
             Self::Blocks => "blocks",
+            Self::DrawingHistory => "drawingHistory",
         }
     }
     fn label(self) -> &'static str {
@@ -44,6 +47,7 @@ impl Panel {
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
             Self::Blocks => "Blocks",
+            Self::DrawingHistory => "Drawing History",
         }
     }
     /// The icon a palette shows in a column collapsed to icons.
@@ -57,10 +61,11 @@ impl Panel {
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
             Self::Blocks => Some(Icon::Blocks),
+            Self::DrawingHistory => Some(Icon::Undo),
         }
     }
     /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Blocks];
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Blocks, Self::DrawingHistory];
 }
 
 /// The drawing view never moves, floats, closes or takes tabs; palettes dock beside it.
@@ -154,6 +159,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
         Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
         Panel::Blocks => &[(Panel::QuickCalc, true), (Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::DrawingHistory => &[(Panel::Blocks, true), (Panel::QuickCalc, true), (Panel::ExternalRefs, true), (Panel::Properties, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -425,6 +431,9 @@ impl DockContent<Panel> for Panels<'_> {
                     .auto_shrink([false, false])
                     .show(ui, |ui| crate::blocks_palette::section(app, ui));
             }
+            Panel::DrawingHistory => {
+                egui::ScrollArea::both().id_salt("dock-history").auto_shrink([false, false]).show(ui, |ui| crate::history::section(app, ui));
+            }
         }
     }
     fn logical_label(&self, panel: &Panel) -> String {
@@ -454,6 +463,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
         Panel::Blocks => (egui::vec2(240.0, 260.0), 720.0),
+        Panel::DrawingHistory => (egui::vec2(260.0, 200.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

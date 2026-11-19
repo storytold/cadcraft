@@ -99,6 +99,9 @@ pub fn image_decoder() -> Option<ImageHook> {
     IMAGE.get().copied()
 }
 
+/// Drawing history: the OMNI toolkit (snapshots, overlay diff, notes), native.
+pub mod omni;
+
 /// Hand finished file bytes to the user where there is no file system (the browser: a download).
 /// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
 pub type DeliverHook = fn(&str, &str, &[u8]) -> std::result::Result<(), String>;
@@ -453,9 +456,19 @@ pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
 
 /// Save to `path` with `opts`. A drawing file then keeps the version and binary choice: the
 /// version goes into the drawing's `$ACADVER`, so later saves (QSAVE) write it again.
+///
+/// A version opened from a history is read-only in this sense: saving it would overwrite the copy
+/// the timeline is made of (and, for a compressed one, the cache it was unpacked into), so the save
+/// is refused and `SAVEAS` is what gives the revision a file name of its own.
 fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usize> {
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
+    }
+    if is_drawing_file(path) && omni::is_version_path(path) {
+        return Err(bad(
+            cmd,
+            "This drawing is a version in a drawing history: saving it would overwrite the record. Use SAVEAS to give this revision a file name of its own.",
+        ));
     }
     let bytes = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
@@ -727,8 +740,13 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
 /// browser owns the file from there (we can't see whether the user keeps it), and the name stays so
 /// a later QSAVE downloads the drawing again under it. An image or PDF export (SVG, PNG, PDF) only
 /// stores the file: the drawing keeps its name, title and unsaved changes, so closing still asks.
+///
+/// A save of a drawing that had changes leaves a version behind (see [`omni`]), so the drawing's
+/// history is the timeline of its saves without anyone asking for one.
 fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&str, &[u8]) -> Result<()>) -> Result<usize> {
     s.state()?;
+    // Read before the save marks the drawing saved: whether this save carries a change.
+    let changed = s.state()?.is_dirty();
     store(path, bytes)?;
     if !is_drawing_file(path) {
         return Ok(bytes.len());
@@ -739,6 +757,10 @@ fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&st
     st.title = file_name(path);
     // A BEgin group still open when the drawing is saved ends there.
     st.end_undo_group();
+    if changed {
+        // Never fails the save: a history that cannot be written is reported, not fatal.
+        omni::after_save(s, path, bytes);
+    }
     Ok(bytes.len())
 }
 
@@ -1188,8 +1210,15 @@ mod pr193_tests {
         let title = st.title.clone();
         assert!(st.is_dirty() && st.path.is_none());
 
+        // In a folder of its own: a save leaves a version beside the drawing, and a test has no
+        // business writing into the source tree.
+        let dir = std::env::temp_dir().join("cadcraft-pr193-save");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("Owned.dxf");
+        let path = path.to_string_lossy().into_owned();
+
         // The file route is unavailable or fails (the web without a download): no success, still dirty.
-        let failed = commit_save(&mut s, "a/Owned.dxf", b"0\nEOF\n", |_, _| Err(bad("save", "no download")));
+        let failed = commit_save(&mut s, &path, b"0\nEOF\n", |_, _| Err(bad("save", "no download")));
         assert!(failed.is_err());
         let st = s.state().unwrap();
         assert!(st.is_dirty(), "a save that delivered nothing must keep the unsaved state");
@@ -1197,15 +1226,15 @@ mod pr193_tests {
 
         // The file route took the bytes (written, or a download started): saved under that name.
         let mut got = None;
-        let n = commit_save(&mut s, "a/Owned.dxf", b"0\nEOF\n", |p, b| {
+        let n = commit_save(&mut s, &path, b"0\nEOF\n", |p, b| {
             got = Some((p.to_string(), b.len()));
             Ok(())
         })
         .unwrap();
-        assert_eq!((n, got), (6, Some(("a/Owned.dxf".to_string(), 6))));
+        assert_eq!((n, got), (6, Some((path.clone(), 6))));
         let st = s.state().unwrap();
         assert!(!st.is_dirty());
-        assert_eq!((st.path.as_deref(), st.title.as_str()), (Some("a/Owned.dxf"), "Owned.dxf"));
-        assert_eq!(saved("a/Owned.dxf", n)["bytes"], 6);
+        assert_eq!((st.path.as_deref(), st.title.as_str()), (Some(path.as_str()), "Owned.dxf"));
+        assert_eq!(saved(&path, n)["bytes"], 6);
     }
 }

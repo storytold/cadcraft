@@ -24,6 +24,13 @@ thiserror = { workspace = true }
 log = { workspace = true }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
 rstar = { version = "0.13", default-features = false }
+# Deflate for drawing-history versions: DXF is verbose text, so a gzipped snapshot is roughly a
+# tenth of the size (MIT OR Apache-2.0, pure Rust backend, builds for wasm).
+flate2 = "1"
+# The calendar for drawing-history stamps (MIT OR Apache-2.0, pure Rust, no system time zone
+# database needed): the history names and lists moments in UTC and nothing here hand-rolls the
+# conversion (issue #1785). No `clock` feature: `now` reads the process clock, the crate formats.
+chrono = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

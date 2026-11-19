@@ -43,6 +43,7 @@ pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
+pub mod history;
 pub mod xrefs;
 
 pub mod blocks_palette;

@@ -1642,3 +1642,30 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+
+# Drawing history (the OMNI toolkit).
+	Version History	Історія версій
+	Take Snapshot...	Створити знімок...
+	Name the drawing as it is now, unsaved changes included, and keep it as a milestone	Назвіть креслення таким, як воно є зараз, разом із незбереженими змінами, і збережіть його як віху
+	Kind	Тип
+	Size	Розмір
+	Milestone	Віха
+	Saved	Збережено
+	Save the drawing first: every save with changes leaves a version behind.	Спочатку збережіть креслення: кожне збереження зі змінами залишає версію.
+	No versions yet: every save with changes leaves one behind.	Версій ще немає: кожне збереження зі змінами залишає одну.
+	{n} versions (newest first)	{n} версій (спочатку найновіші)
+	The folder holds more versions than the palette lists.	У теці більше версій, ніж показує панель.
+	Stored gzipped on disk	Зберігається на диску стиснутим (gzip)
+	Open this version as a drawing of its own	Відкрити цю версію як окреме креслення
+	Lay this version under the drawing in red and report what changed	Підкласти цю версію під креслення червоним і показати, що змінилося
+	Saved by {user}	Збережено: {user}
+	Restore Version	Відновити версію
+	Put this version back into the drawing as an unsaved change; UNDO goes back	Повернути цю версію в креслення як незбережену зміну; UNDO повертає назад
+	Unsaved changes since the last save	Є незбережені зміни після останнього збереження
+	Drawing History	Історія креслення
+	Save Snapshot	Зберегти знімок
+	Snapshot History...	Історія знімків...
+	Compare with Snapshot	Порівняти зі знімком
+	Show/Hide Snapshot	Показати/сховати знімок
+	Clear Snapshot Overlay	Прибрати накладення знімка
+	Add Note	Додати примітку
