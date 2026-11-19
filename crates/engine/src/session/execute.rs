@@ -9,15 +9,18 @@ impl Session {
     /// for everything around it: the passes after a command (constraints, associativity, groups)
     /// are as able to panic as the command, and a panic there restores the drawing the same way.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
-        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
+        // The Block Editor's state rolls back with the drawing: a panic in the passes around a
+        // command leaves the editor as it was, not the drawing swapped half-way into or out of it.
+        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.block_edit.clone(), s.uid));
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.execute_guarded(id, params))) {
             Ok(r) => r,
             Err(p) => {
-                if let Some((doc, sel, uid)) = before
+                if let Some((doc, sel, edit, uid)) = before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
                 {
                     st.doc = doc;
                     st.selection = sel;
+                    st.block_edit = edit;
                 }
                 Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
             }
@@ -30,7 +33,7 @@ impl Session {
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
-        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
+        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.block_edit.clone(), s.uid));
         let editing = self.state().is_ok_and(|s| s.block_edit.is_some());
         let run = spec.run;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self, params)));
@@ -42,12 +45,15 @@ impl Session {
                     .map(ToString::to_string)
                     .or_else(|| p.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "panic".into());
-                // Restore the drawing as it was.
-                if let Some((doc, sel, uid)) = &before
+                // Restore the drawing as it was — the Block Editor's state with it, so a command
+                // that panicked while opening or closing it doesn't leave the session in it (or
+                // stranded out of it with the drawing swapped).
+                if let Some((doc, sel, edit, uid)) = &before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == *uid)
                 {
                     st.doc = doc.clone();
                     st.selection = sel.clone();
+                    st.block_edit = edit.clone();
                 }
                 return Err(EngineError::Internal(id.into(), msg));
             }
@@ -59,16 +65,16 @@ impl Session {
         };
         // Opening or closing the Block Editor swaps the whole drawing: nothing in it changed.
         if self.state().is_ok_and(|s| s.block_edit.is_some()) == editing {
-            self.after_command(before.as_ref().map(|b| &b.0), before.as_ref().map(|b| b.2), spec.undoable && result.is_ok());
+            self.after_command(before.as_ref().map(|b| &b.0), before.as_ref().map(|b| b.3), spec.undoable && result.is_ok());
         }
         let result = match (result, &before) {
-            (Ok(v), Some((doc, sel, uid))) if spec.undoable => self.refuse_non_finite(Some(*uid), doc, sel, spec.id).map(|()| v),
+            (Ok(v), Some((doc, sel, _, uid))) if spec.undoable => self.refuse_non_finite(Some(*uid), doc, sel, spec.id).map(|()| v),
             (r, _) => r,
         };
         let grouped = self.lisp_groups_undo();
         let mut in_routine = None;
         if spec.undoable
-            && let Some((doc, sel, uid)) = before
+            && let Some((doc, sel, _, uid)) = before
             && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
             && !Arc::ptr_eq(&doc, &st.doc)
         {
