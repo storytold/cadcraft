@@ -1476,4 +1476,20 @@ mod tests {
         a.run("options", json!({ "reset": true })).unwrap();
         assert!(!a.ui.in_window_menu, "the in-window menu is not the default beside a native one");
     }
+
+    #[test]
+    fn options_reset_keeps_the_users_shortcuts_and_folders() {
+        // The reset brings hidden bars back (#1240); it must not also lose the user's own
+        // keyboard shortcuts or the folders the file pickers remember.
+        let mut a = app();
+        a.ui.shortcuts.insert("line".into(), "Ctrl+Shift+L".into());
+        a.ui.last_lisp_dir = Some("lisp-folder".into());
+        a.ui.last_pgp_dir = Some("pgp-folder".into());
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert_eq!(a.ui.shortcuts.get("line").map(String::as_str), Some("Ctrl+Shift+L"), "the reset lost a user shortcut");
+        assert_eq!(a.ui.last_lisp_dir.as_deref(), Some("lisp-folder"));
+        assert_eq!(a.ui.last_pgp_dir.as_deref(), Some("pgp-folder"));
+    }
 }
