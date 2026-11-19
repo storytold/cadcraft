@@ -1523,7 +1523,7 @@ fn rooted_and_drive_relative_load_names_stay_in_the_support_folder() {
     std::fs::write(&outside, "(setq only 1)").unwrap();
     // The same file without its drive (`\Users\...\other\only.lsp`), escaped for a LISP string.
     let full = outside.to_string_lossy().into_owned();
-    let rooted = full.get(full.find('\').unwrap()..).unwrap().replace('\', "\\\\");
+    let rooted = full.get(full.find('\\').unwrap()..).unwrap().replace('\\', "\\\\");
     let drive = full.get(..2).unwrap().to_string();
 
     let mut s = session();
@@ -1533,6 +1533,21 @@ fn rooted_and_drive_relative_load_names_stay_in_the_support_folder() {
     let r = eval(&mut s, &format!("(load \"{drive}only\") only"));
     assert!(!matches!(r.as_deref(), Ok("1")), "a drive-relative name is refused: {r:?}");
     std::fs::write(support.join("only.lsp"), "(setq only 2)").unwrap();
-    assert_eq!(ok(&mut s, "(load \".\\only\") only"), "2", "a plain relative name is still read from the support folder");
+    assert_eq!(ok(&mut s, "(load \".\\\\only\") only"), "2", "a plain relative name is still read from the support folder");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1930: `append` over many references to one long list is refused before it builds the
+/// result, not after it has filled memory.
+#[test]
+fn append_checks_the_cell_cap_before_building_its_result() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    s.lisp.limits.cells = 50_000;
+    let before = super::value::live_cells();
+    let e =
+        eval(&mut s, "(setq l nil) (repeat 10000 (setq l (cons 1 l))) (setq m nil) (repeat 1000 (setq m (cons l m))) (apply 'append m)").unwrap_err();
+    assert!(e.contains("too many list cells"), "{e}");
+    assert!(super::value::live_cells() < before + 50_000, "no oversized result was built");
+    assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
 }

@@ -76,6 +76,12 @@ pub fn check_cells() -> Result<(), LispError> {
     if live_cells() > CELL_LIMIT.with(Cell::get) { Err(LispError::quit("out of memory: too many list cells")) } else { Ok(()) }
 }
 
+/// `n` more cons cells would exceed the cap: checked before a built-in allocates a result many
+/// times the size of its arguments (`append` over the same long list, #1930).
+pub fn check_new_cells(n: usize) -> Result<(), LispError> {
+    if live_cells().saturating_add(n) > CELL_LIMIT.with(Cell::get) { Err(LispError::quit("out of memory: too many list cells")) } else { Ok(()) }
+}
+
 /// Start a slice of a run on this thread: it has made `used` bytes of its `budget`.
 pub fn set_string_budget(used: u64, budget: u64) {
     STRING_BYTES.with(|c| c.set((used, budget)));
