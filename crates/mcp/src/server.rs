@@ -20,6 +20,17 @@ y up. Fastest path: command_line with AutoCAD syntax, e.g. `line 0,0 10,0 10,5 c
 `rectang 0,0 4,3`, `offset 1` then pick, `zoom e`. Or execute with JSON (list_commands shows ids and params). \
 Verify with inspect_drawing / query_entities and look with render.";
 
+/// What an agent is told when it connects: the built-in text, the paragraphs add-ons registered
+/// (`cadcraft_engine::register_mcp_instructions`), then the backend.
+fn instructions(backend: &str) -> String {
+    let mut text = INSTRUCTIONS.to_string();
+    for extra in cadcraft_engine::mcp_instructions() {
+        text.push(' ');
+        text.push_str(extra.trim());
+    }
+    format!("{text} Backend: {backend}.")
+}
+
 pub struct Server {
     backend: Box<dyn Backend>,
     session: craft_mcp::Session,
@@ -82,7 +93,7 @@ impl Server {
             |request| {
                 let mut server = server.borrow_mut();
                 if request.method == "initialize" {
-                    let instructions = format!("{INSTRUCTIONS} Backend: {}.", server.backend.describe());
+                    let instructions = instructions(&server.backend.describe());
                     server.session.set_instructions(instructions);
                 }
                 if let Some(result) = server.session.request(request, msg.is_array()) {

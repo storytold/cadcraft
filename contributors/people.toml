@@ -123,6 +123,9 @@ sync_github_name = true
 [people.helenkwok]
 real_name = "Helen Kwok"
 
+[people.p-desaintchamas]
+sync_github_name = true
+
 [people.V1dalTheAbidal]
 sync_github_name = true
 
