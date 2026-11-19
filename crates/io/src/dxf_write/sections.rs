@@ -4,7 +4,7 @@ use super::common::annotative_xdata;
 use super::ctx::{AssocObj, Ctx};
 use super::entity::{entity, hatch_reactors};
 use super::header::{code_page, header_vars};
-use super::layout::{paper_views, record_head, sheet_first, table_head, vport_table};
+use super::layout::{paper_views, record_head, sheet_first, table_head, table_head_x, vport_table};
 use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
     Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
@@ -68,7 +68,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         }
     }
     w.s(0, "ENDTAB");
-    write_layer_table(w, d);
+    write_layer_table(w, d, &mut cx.layer_states);
     // STYLE. Linetype shapes from a shape file that isn't a text style get an unnamed shape
     // style record (70 bit 1) naming the file.
     let mut shape_files: Vec<String> = Vec::new();
@@ -185,8 +185,12 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     ltype_handles
 }
 
-fn write_layer_table(w: &mut W, d: &Drawing) {
-    let th = table_head(w, "LAYER", d.layers.len());
+/// The LAYER table; when the drawing has layer states AutoCAD can hold, the table's extension
+/// dictionary holds them (written with the objects, [`crate::dxf_layer_states`]).
+fn write_layer_table(w: &mut W, d: &Drawing, states: &mut crate::dxf_layer_states::Plan) {
+    let xdict = (!states.is_empty()).then(|| states.xdict.clone());
+    let th = table_head_x(w, "LAYER", d.layers.len(), xdict.as_deref());
+    states.table.clone_from(&th);
     for l in &d.layers {
         let lh = record_head(w, "LAYER", &th, "AcDbLayerTableRecord");
         w.layers.insert(l.name.to_ascii_uppercase(), lh);
@@ -749,6 +753,16 @@ fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     write_root_group_objects(w, &plan, &groups, &group_owner, &written, &mleader_dict);
     write_style_objects(w, &plan, &mleader_dict, &mleader_handles);
     write_named_objects(w, &plan);
+    let layer_states = {
+        let refs = crate::dxf_layer_states::Refs {
+            layers: &w.layers,
+            ltypes: &plan.cx.ltypes,
+            pstyles: &w.pstyles,
+            colour_dependent: plan.d.header.i64("PSTYLEMODE", 1) != 0,
+        };
+        crate::dxf_layer_states::objects(&plan.cx.layer_states, &plan.d.layer_states, &refs)
+    };
+    w.t.extend(layer_states);
     write_associative_objects(w, plan.cx);
     write_layout_objects(w, &plan);
     // Raster image definitions.
@@ -979,7 +993,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     if let Some(chunks) = dxf_ext::constraint_chunks(&d.constraints, &d.parametric) {
         xrecords.push((dxf_ext::CONSTRAINTS_KEY, w.h(), chunks));
     }
-    if let Some(chunks) = dxf_ext::layer_state_chunks(&d.layer_states) {
+    // Saved layer states: AutoCAD's dictionary holds those it can, CADCraft's record the others.
+    cx.layer_states = crate::dxf_layer_states::Plan::new(&d.layer_states, || w.h());
+    if let Some(chunks) = dxf_ext::layer_state_chunks(&crate::dxf_layer_states::own(&d.layer_states)) {
         xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
     }
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
@@ -991,14 +1007,19 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();
     let scales: Vec<(&cadcraft_doc::AnnoScale, String)> = d.scales.iter().filter(|s| s.is_valid()).map(|s| (s, w.h())).collect();
-    // Plot style names used by layers and objects (Normal always), each a placeholder object.
+    // Plot style names used by layers and objects (Normal always), each a placeholder object; in
+    // a drawing of named plot styles also those of the layers of saved layer states, which name
+    // theirs by placeholder.
     let pstyle_dict = w.h();
     let mut pstyle_names: Vec<String> = vec![cadcraft_doc::NORMAL_STYLE.to_string()];
-    let named = d.layers.iter().map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
+    let mut seen: std::collections::HashSet<String> = pstyle_names.iter().map(|n| n.to_ascii_uppercase()).collect();
+    let named_styles = d.header.i64("PSTYLEMODE", 1) == 0;
+    let in_states = d.layer_states.iter().filter(|_| named_styles).flat_map(|s| s.layers.iter());
+    let named = d.layers.iter().chain(in_states).map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
     for n in named {
         let n = n.trim();
         let logical = n.is_empty() || n.eq_ignore_ascii_case("bylayer") || n.eq_ignore_ascii_case("byblock");
-        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && !pstyle_names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && seen.insert(n.to_ascii_uppercase()) {
             pstyle_names.push(n.to_string());
         }
     }

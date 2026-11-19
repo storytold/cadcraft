@@ -185,7 +185,7 @@ pub(super) fn layer_states() -> Case {
         layer.on = false;
         layer.locked = true;
     }
-    drawing.layer_states.push(LayerState { name: "Saved".into(), layers });
+    drawing.layer_states.push(LayerState::new("Saved", layers, "0"));
     Case { name: "drawing/layer-state".into(), drawing }
 }
 
