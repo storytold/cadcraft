@@ -94,6 +94,17 @@ fn model_plot_takes_units_from_the_paper() {
 }
 
 #[test]
+fn model_plot_on_an_inch_sheet_is_in_inches_whatever_measurement_says() {
+    // MEASUREMENT 1 (an ISO-template drawing) must not turn an inch sheet's units into
+    // millimetres: a 10-unit line on ANSI A at 1:1 is 10 inches for every drawing unit.
+    for (insunits, measurement) in [(4, 1), (0, 1), (1, 1), (4, 0)] {
+        let pdf = plot_on(&drawing(insunits, measurement), "ANSI A");
+        assert_media(&pdf, ANSI_A_PT);
+        assert_pt(line_pt(&pdf), TEN_IN_PT);
+    }
+}
+
+#[test]
 fn layout_plot_keeps_its_page_setup_units() {
     // The @echelon regression: a metric drawing whose layout has a page setup in inches. The
     // layout's paper space is in inches (25.4 mm per unit), not in the drawing's millimetres,
@@ -106,7 +117,7 @@ fn layout_plot_keeps_its_page_setup_units() {
         height_mm: 297.0,
         margins_mm: [0.0; 4],
         landscape: false,
-        paper_mm: false,
+        paper_mm: Some(false),
         ..PageSetup::default()
     };
     d.layouts.push(l);

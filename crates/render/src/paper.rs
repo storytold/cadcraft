@@ -131,9 +131,11 @@ pub fn model_page(d: &Drawing) -> PageSetup {
 /// Set a model-space plot's paper units once its paper is known: the paper's own units decide
 /// (ISO and user millimetre sizes are millimetres, ANSI and ARCH sheets inches), as a model-space
 /// page setup's "plot paper units" would. Layouts keep their stored page setup and go through
-/// [`page_unit_mm`]; only model-space callers use this.
+/// [`page_unit_mm`]; only model-space callers use this. The units are set explicitly either
+/// way: an inch sheet left to follow `MEASUREMENT` would plot in millimetres in a drawing whose
+/// `MEASUREMENT` is 1.
 pub fn apply_model_paper_units(page: &mut PageSetup) {
-    page.paper_mm = model_unit_mm(page) == 1.0;
+    page.paper_mm = Some(model_unit_mm(page) == 1.0);
 }
 
 /// Millimetres per paper-space unit on a layout with page setup `page`: `1.0` when the page
@@ -258,7 +260,7 @@ mod tests {
         let page = model_page(&d);
         assert_eq!(page.paper, "ISO A4 (210.00 x 297.00 MM)");
         assert_eq!((page.width_mm, page.height_mm), (210.0, 297.0));
-        assert!(page.paper_mm, "A4 in a metric drawing is in millimetres");
+        assert_eq!(page.paper_mm, Some(true), "A4 in a metric drawing is in millimetres");
         // The length unit decides, not MEASUREMENT.
         d.header.set_i64("MEASUREMENT", 0);
         assert_eq!(model_page(&d).paper, "ISO A4 (210.00 x 297.00 MM)");
@@ -266,7 +268,7 @@ mod tests {
         let page = model_page(&Drawing::new_imperial());
         assert_eq!(page.paper, "ANSI A (8.50 x 11.00 Inches)");
         assert!((page.width_mm - 215.9).abs() < 1e-9 && (page.height_mm - 279.4).abs() < 1e-9);
-        assert!(!page.paper_mm, "ANSI A in an imperial drawing is in inches");
+        assert_eq!(page.paper_mm, Some(false), "ANSI A in an imperial drawing is in inches");
     }
 
     #[test]
@@ -274,14 +276,14 @@ mod tests {
         // The sheet decides, whatever the drawing's length unit is.
         let mut a4 = PageSetup { paper: "ISO A4 (210.00 x 297.00 MM)".into(), ..PageSetup::default() };
         apply_model_paper_units(&mut a4);
-        assert!(a4.paper_mm, "ISO A4 is a millimetre sheet");
+        assert_eq!(a4.paper_mm, Some(true), "ISO A4 is a millimetre sheet");
         let mut ansi = PageSetup { paper: "ANSI A (8.50 x 11.00 Inches)".into(), ..PageSetup::default() };
         apply_model_paper_units(&mut ansi);
-        assert!(!ansi.paper_mm, "ANSI A is an inch sheet");
+        assert_eq!(ansi.paper_mm, Some(false), "ANSI A is an inch sheet");
         // A user size in millimetres is one to one.
         let mut user = PageSetup { paper: "User (300.00 x 400.00 MM)".into(), ..PageSetup::default() };
         apply_model_paper_units(&mut user);
-        assert!(user.paper_mm);
+        assert_eq!(user.paper_mm, Some(true));
     }
 
     #[test]
