@@ -1384,6 +1384,8 @@
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Constant	Константа
+	Multiline: edit it with Edit Attributes	Багаторядковий: змінюйте в «Редагувати атрибути»
 	Add a drawing file as a block library	Додати файл креслення як бібліотеку блоків
 	Add a folder of drawings or a drawing file to use its blocks.	Додайте теку з кресленнями або файл креслення, щоб використовувати його блоки.
 	Block Libraries	Бібліотеки блоків
