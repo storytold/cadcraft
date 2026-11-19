@@ -1480,3 +1480,116 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+#[test]
+fn ssget_type_filter_finds_entities_kept_as_unsupported() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    ok(&mut s, "(command \"_.LINE\" '(0 0) '(1 1) \"\")");
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![tag(70, "2"), tag(10, "1.0"), tag(20, "5.0"), tag(30, "0.0"), tag(11, "4.0"), tag(21, "2.0"), tag(31, "0.0")],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\"))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"LINE\"))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))))"), "1");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"ole2*\"))))"), "1");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (ssname (ssget \"X\" (list (cons 0 \"OLE2FRAME\"))) 0))))"), "\"OLE2FRAME\"");
+    // Its groups have no AcDbEntity marker; the layout (410) is still listed.
+    assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (entlast))))"), "\"Model\"");
+}
+
+#[test]
+fn entget_lists_type_and_layout_once_for_entities_kept_as_unsupported() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![tag(0, "LINE"), tag(100, "AcDbEntity"), tag(410, "Layout1"), tag(100, "AcDbOle2Frame"), tag(70, "2")],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    let count = |code: i32| format!("(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) {code}) (setq n (1+ n)))) n)");
+    assert_eq!(ok(&mut s, &count(0)), "1");
+    assert_eq!(ok(&mut s, &count(410)), "1");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"OLE2FRAME\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 410 (entget (entlast))))"), "\"Model\"");
+}
+
+#[test]
+fn entget_of_an_entity_kept_as_unsupported_leaves_out_reactors_and_xdata_only() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = EntityKind::Unknown(Unknown {
+            dxf_type: "OLE2FRAME".into(),
+            tags: vec![
+                tag(102, "{ACAD_REACTORS"),
+                tag(330, "1F"),
+                tag(102, "}"),
+                tag(102, "{ACAD_XDICTIONARY"),
+                tag(360, "2A"),
+                tag(102, "}"),
+                tag(100, "AcDbEntity"),
+                tag(100, "AcDbOle2Frame"),
+                tag(70, "2"),
+                tag(1001, "APP"),
+                tag(1000, "data"),
+            ],
+        });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    let count = |code: i32| format!("(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) {code}) (setq n (1+ n)))) n)");
+    assert_eq!(ok(&mut s, &count(102)), "0");
+    assert_eq!(ok(&mut s, &count(330)), "0");
+    assert_eq!(ok(&mut s, &count(360)), "0");
+    assert_eq!(ok(&mut s, &count(1001)), "0");
+    assert_eq!(ok(&mut s, &count(1000)), "0");
+    // The groups after the reactor block's closing `}` are listed and filter.
+    assert_eq!(ok(&mut s, &count(100)), "2");
+    assert_eq!(ok(&mut s, "(cdr (assoc 70 (entget (entlast))))"), "2");
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 2))))"), "1");
+    assert_eq!(ok(&mut s, "(ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 70 3)))"), "nil");
+}
+
+#[test]
+fn an_entity_kept_as_unsupported_in_paper_space_has_the_paper_space_flag() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+        let kind = |tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let d = s.doc_mut().unwrap();
+        d.add(&Space::Model, Common::default(), kind(vec![tag(100, "AcDbEntity"), tag(70, "1")])).unwrap();
+        d.add(&Space::Paper("Layout1".into()), Common::default(), kind(vec![tag(100, "AcDbEntity"), tag(67, "1"), tag(70, "2")])).unwrap();
+        d.add(&Space::Paper("Layout1".into()), Common::default(), kind(vec![tag(70, "3")])).unwrap();
+    }
+    assert_eq!(ok(&mut s, "(sslength (ssget \"X\" (list (cons 0 \"OLE2FRAME\") (cons 67 1))))"), "2");
+    let count = "(progn (setq n 0) (foreach g (entget (ssname (ssget \"X\" (list (cons 70 2))) 0)) (if (= (car g) 67) (setq n (1+ n)))) n)";
+    assert_eq!(ok(&mut s, count), "1", "the flag is listed once");
+    assert_eq!(ok(&mut s, "(assoc 67 (entget (ssname (ssget \"X\" (list (cons 70 1))) 0)))"), "nil");
+}
+
+#[test]
+fn entget_of_an_entity_kept_as_unsupported_counts_its_text_against_the_run() {
+    use cadcraft_doc::{Common, EntityKind, RawTag, Space, Unknown};
+    let mut s = session();
+    {
+        let mut tags = vec![RawTag { code: 100, value: "AcDbOle2Frame".into() }];
+        tags.extend((0..8).map(|_| RawTag { code: 310, value: "A".repeat(254) }));
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap();
+    }
+    s.lisp.limits.string_bytes = 64 << 10;
+    let chunks = "(progn (setq n 0) (foreach g (entget (entlast)) (if (= (car g) 310) (setq n (1+ n)))) n)";
+    assert_eq!(ok(&mut s, chunks), "8", "a small budget is enough for the list");
+    s.lisp.limits.string_bytes = 1024;
+    let e = eval(&mut s, "(entget (entlast))").unwrap_err();
+    assert!(e.contains("too much text"), "{e}");
+}

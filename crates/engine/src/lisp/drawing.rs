@@ -356,6 +356,55 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
     d.space_of(h)
 }
 
+/// An entity's type and DXF groups, as `entget` lists them. An entity CADCraft keeps as raw
+/// groups (a type it doesn't model, such as an OLE2FRAME) isn't written by the codec, so its own
+/// groups give the list, as the DXF writer writes them: the groups it was read with, with the
+/// paper-space flag (67) and the layer (8) after the AcDbEntity marker, and xdata, handles and
+/// reactors left out.
+fn entity_groups(d: &cadcraft_doc::Drawing, e: &Entity) -> Result<(String, Vec<Tag>), LispError> {
+    let cadcraft_doc::EntityKind::Unknown(u) = &e.kind else { return Ok((codec()?.groups)(d, e)) };
+    use craft_dxf::{Kind, Value as Dxf, kind_of};
+    let mut tags = Vec::new();
+    let paper = matches!(d.space_of(e.handle), Some(Space::Paper(_)));
+    let mut layer_placed = false;
+    let mut in_group = false;
+    for r in u.tags.iter().take_while(|r| r.code < 1000) {
+        match r.code {
+            // entget adds the type (0) and layout (410) itself.
+            0 | 5 | 8 | 67 | 330 | 410 => continue,
+            102 => {
+                in_group = r.value.trim().starts_with('{');
+                continue;
+            }
+            _ if in_group => continue,
+            _ => {}
+        }
+        let v = r.value.trim();
+        let value = match kind_of(r.code) {
+            Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Dxf::Real),
+            Kind::Int16 | Kind::Int32 | Kind::Int64 => v.parse::<i64>().ok().map(Dxf::Int),
+            Kind::Bool => v.parse::<i64>().ok().map(|x| Dxf::Bool(x != 0)),
+            Kind::Hex | Kind::Str => None,
+        };
+        tags.push(Tag::new(r.code, value.unwrap_or_else(|| Dxf::Str(r.value.clone()))));
+        // The layer follows the AcDbEntity marker, as the codec lists it.
+        if r.code == 100 && r.value.trim() == "AcDbEntity" && !layer_placed {
+            if paper {
+                tags.push(Tag::i(67, 1));
+            }
+            tags.push(Tag::s(8, e.common.layer.clone()));
+            layer_placed = true;
+        }
+    }
+    if !layer_placed {
+        tags.insert(0, Tag::s(8, e.common.layer.clone()));
+        if paper {
+            tags.insert(0, Tag::i(67, 1));
+        }
+    }
+    Ok((u.dxf_type.clone(), tags))
+}
+
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
@@ -369,7 +418,11 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         // Not an entity: a table record, layout or dictionary (#1659, #1661).
         (None, None) => return Ok(Flow::Value(super::objects::entget(ctx, h))),
     };
-    let (kind, mut tags) = (codec()?.groups)(d, e);
+    let (kind, mut tags) = entity_groups(d, e)?;
+    // Raw groups can carry large payloads (310 binary chunks): their text counts against the run.
+    if matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_)) {
+        super::value::charge_bytes(tags.iter().map(|t| if let craft_dxf::Value::Str(s) = &t.value { s.len() } else { 0 }).sum())?;
+    }
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
         Some(Space::Paper(name)) => name,
@@ -385,6 +438,10 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             items.push(Value::cons(Value::Int(410), Value::str(&layout)));
             placed_layout = true;
         }
+    }
+    // Raw groups (an entity CADCraft keeps unsupported) may have no AcDbEntity marker.
+    if !placed_layout {
+        items.push(Value::cons(Value::Int(410), Value::str(&layout)));
     }
     Ok(Flow::Value(Value::list(items)))
 }
@@ -874,17 +931,15 @@ fn parse_filter_item(items: &[Value], i: &mut usize, depth: usize) -> Result<Fil
 }
 
 fn matches_filter(d: &cadcraft_doc::Drawing, e: &Entity, f: &Filter) -> bool {
-    let groups = || match crate::cmd::file::entity_codec() {
-        Some(c) => {
-            let (kind, mut tags) = (c.groups)(d, e);
+    let groups = match entity_groups(d, e) {
+        Ok((kind, mut tags)) => {
             convert_angles(&kind, &mut tags, f64::to_radians);
             let mut l = vec![Value::cons(Value::Int(0), Value::str(&kind))];
             l.extend(groups_to_list(&tags));
             l
         }
-        None => vec![Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())), Value::cons(Value::Int(8), Value::str(&e.common.layer))],
+        Err(_) => vec![Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())), Value::cons(Value::Int(8), Value::str(&e.common.layer))],
     };
-    let groups = groups();
     eval_filter(&groups, f)
 }
 
