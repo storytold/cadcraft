@@ -1062,11 +1062,10 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         alive_memo
     });
     // New handles for the written kept objects, above every written handle and the seed.
-    let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
+    let mut fresh = Fresh::new(tags);
     let mut alive: HashMap<String, String> = HashMap::new();
     for o in f.objects.iter().filter(|o| alive_memo.get(&o.handle.hex()) == Some(&true)) {
-        alive.insert(o.handle.hex(), format!("{next:X}"));
-        next = next.saturating_add(1);
+        alive.insert(o.handle.hex(), format!("{:X}", fresh.take()));
     }
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
@@ -1389,19 +1388,18 @@ fn add_appids(out: &mut Vec<Tag>) {
         return;
     }
     // New handles above the seed, which is then moved past them.
-    let mut next = seed(out).max(max_handle(out).saturating_add(1));
+    let mut fresh = Fresh::new(out);
     let mut add = Vec::new();
     for app in &missing {
         add.extend([
             Tag::s(0, "APPID"),
-            Tag::s(5, format!("{next:X}")),
+            Tag::s(5, format!("{:X}", fresh.take())),
             Tag::s(330, table_h.clone()),
             Tag::s(100, "AcDbSymbolTableRecord"),
             Tag::s(100, "AcDbRegAppTableRecord"),
             Tag::s(2, (*app).clone()),
             Tag::i(70, 0),
         ]);
-        next = next.saturating_add(1);
     }
     let end_at = end.start;
     if let Some(count) = out.get_mut(t.start + 1..t.end).and_then(|b| b.iter_mut().find(|x| x.code == 70)) {
@@ -1418,6 +1416,36 @@ fn seed_index(tags: &[Tag]) -> Option<usize> {
 /// The header's next free handle.
 fn seed(tags: &[Tag]) -> u64 {
     seed_index(tags).and_then(|i| tags.get(i)).and_then(|t| Handle::parse_hex(&t.str())).map_or(0, |h| h.0)
+}
+
+/// New handles for records added to written tags: above the seed and every handle written, and
+/// never one a record already holds. A file may hold the top handle (#913): then counting on from
+/// it would give every added record that same handle, so past the top of the range the numbering
+/// goes on in the reserved band above [`cadcraft_doc::HANDLE_LIMIT`], skipping the handles there.
+struct Fresh {
+    next: u64,
+    used: HashSet<u64>,
+}
+
+impl Fresh {
+    fn new(tags: &[Tag]) -> Self {
+        let used: HashSet<u64> =
+            tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).collect();
+        let above = used.iter().max().map_or(0, |h| h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT));
+        Fresh { next: seed(tags).max(above), used }
+    }
+    /// The next free handle. Each handle skipped is one a record holds, so the walk is bounded
+    /// by their count (and handle 0, which means "none").
+    fn take(&mut self) -> u64 {
+        for _ in 0..self.used.len().saturating_add(2) {
+            let h = self.next;
+            self.next = h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT);
+            if h != 0 && self.used.insert(h) {
+                return h;
+            }
+        }
+        self.next
+    }
 }
 
 /// The largest handle of a record (groups 5 and 105).

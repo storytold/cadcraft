@@ -274,3 +274,66 @@ fn generated_geometry_never_takes_a_handle_an_object_holds() {
     let unique: std::collections::HashSet<&String> = written.iter().collect();
     assert_eq!(unique.len(), written.len(), "the save repeats a handle");
 }
+
+/// A line at the top handle with another application's xdata, and that application's object kept
+/// from the file: a dictionary in the named object dictionary holding an XRECORD.
+fn top_line_with_kept_objects() -> String {
+    let groups: &[(i32, &str)] = &[
+        (0, "SECTION"),
+        (2, "ENTITIES"),
+        (0, "LINE"),
+        (5, TOP),
+        (8, "0"),
+        (10, "0"),
+        (20, "0"),
+        (11, "10"),
+        (21, "0"),
+        (1001, "OTHER_APP"),
+        (1000, "tagged"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "OBJECTS"),
+        (0, "DICTIONARY"),
+        (5, "C"),
+        (330, "0"),
+        (100, "AcDbDictionary"),
+        (3, "OTHER_APP"),
+        (350, "50"),
+        (0, "DICTIONARY"),
+        (5, "50"),
+        (330, "C"),
+        (100, "AcDbDictionary"),
+        (281, "1"),
+        (3, "DATA"),
+        (360, "51"),
+        (0, "XRECORD"),
+        (5, "51"),
+        (330, "50"),
+        (100, "AcDbXrecord"),
+        (280, "1"),
+        (1, "kept"),
+        (0, "ENDSEC"),
+        (0, "EOF"),
+    ];
+    groups.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect()
+}
+
+#[test]
+fn records_added_on_save_after_the_top_handle_take_free_handles() {
+    // The writer adds the kept objects (and any application id the xdata needs) after its own
+    // records, numbered above the largest handle written. That is the file's line at the top of
+    // the range: counting on from it would give every added record the line's handle.
+    let d = read(&top_line_with_kept_objects());
+    let bytes = cadcraft_io::write(&d, "kept-top.dxf").unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("\nkept"), "the kept XRECORD was not written");
+    let tags = craft_dxf::parse(&bytes).unwrap();
+    let after_header = tags.iter().position(|t| t.code == 2 && t.str() == "TABLES").unwrap();
+    let written: Vec<String> = tags[after_header..].iter().filter(|t| t.code == 5 || t.code == 105).map(|t| t.str().to_string()).collect();
+    let unique: std::collections::HashSet<&String> = written.iter().collect();
+    assert_eq!(unique.len(), written.len(), "the save repeats a handle: {written:?}");
+    assert_eq!(written.iter().filter(|h| h.as_str() == TOP).count(), 1, "the line's handle was not written exactly once");
+
+    let r = read(&String::from_utf8_lossy(&bytes));
+    assert!(r.entity(Handle::parse_hex(TOP).unwrap()).is_some(), "the file's line is gone");
+}
