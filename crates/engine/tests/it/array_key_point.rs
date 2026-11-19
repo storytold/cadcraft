@@ -168,3 +168,17 @@ fn a_key_point_that_is_not_a_point_is_refused() {
     let c = s.execute("circle", &json!({"center": [50, 50], "radius": 1})).unwrap()["handle"].clone();
     assert!(s.execute("arrayedit", &json!({"handle": h.hex(), "replace": {"handles": [c], "keyPoint": {}, "items": [[1, 0, 0]]}})).is_err());
 }
+
+/// More objects than the key point search takes are refused rather than searched in part, which
+/// could miss the nearest key point.
+#[test]
+fn a_key_point_of_too_many_objects_is_refused() {
+    let mut s = Session::new();
+    // 10,001 lines; the last one ends nearest the key point.
+    let pts: Vec<[f64; 2]> = (0..10_002).map(|i| [f64::from(i), 0.0]).collect();
+    let r = s.execute("line", &json!({ "points": pts })).unwrap();
+    let hs: Vec<String> = s.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+    assert_eq!(hs.len(), 10_001, "{r}");
+    let e = s.execute("arraypolar", &json!({"handles": hs, "center": [0, -50], "count": 2, "keyPoint": [10_001.2, 0]})).unwrap_err();
+    assert!(e.to_string().contains("10000"), "{e}");
+}

@@ -252,13 +252,17 @@ fn bounds(d: &Drawing, hs: &[Handle]) -> Bounds2 {
 
 /// The centre of the first object (the point a non-rotated polar copy is moved by).
 /// The key point of `ents`, placed by `m`, nearest `at`: one of their grips (end points,
-/// midpoints, centres, vertices, insertion points). `None` when they have none.
-pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &Mat3, at: Vec2) -> Option<Vec2> {
+/// midpoints, centres, vertices, insertion points). `None` when they have none. More than
+/// [`MAX_KEY_OBJECTS`] objects are refused: searching only some could miss the nearest one.
+pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &Mat3, at: Vec2) -> Result<Option<Vec2>> {
     if !at.is_finite() {
-        return None;
+        return Ok(None);
     }
     let mut best: Option<(Vec2, f64)> = None;
-    for e in ents.take(MAX_KEY_OBJECTS) {
+    for (n, e) in ents.enumerate() {
+        if n >= MAX_KEY_OBJECTS {
+            return Err(other(format!("Too many objects to search for a key point (at most {MAX_KEY_OBJECTS}); specify a point.")));
+        }
         let mut k = e.kind.clone();
         k.transform(m);
         for g in k.grips().into_iter().filter(|g| g.is_finite()) {
@@ -268,7 +272,7 @@ pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &
             }
         }
     }
-    best.map(|b| b.0)
+    Ok(best.map(|b| b.0))
 }
 
 /// `keyPoint` of a JSON form: absent or null is none; anything else must be a point, rather than
@@ -282,7 +286,7 @@ pub(crate) fn key_point_param(cmd: &str, p: &Value) -> Result<Option<Vec2>> {
 
 /// The key point of objects `hs` in the drawing nearest `at`.
 pub(crate) fn key_point_of(d: &Drawing, hs: &[Handle], at: Vec2) -> Result<Vec2> {
-    nearest_key_point(hs.iter().filter_map(|h| d.entity(*h)).map(|e| &**e), &Mat3::IDENTITY, at)
+    nearest_key_point(hs.iter().filter_map(|h| d.entity(*h)).map(|e| &**e), &Mat3::IDENTITY, at)?
         .ok_or_else(|| other("The objects have no key point; specify a point."))
 }
 

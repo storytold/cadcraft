@@ -224,7 +224,7 @@ fn source_key_point(d: &Drawing, h: Handle, at: Vec2, tol: f64) -> Result<Vec2> 
     let (ins, blk, p) = array_of(d, h)?;
     let src = d.block(&p.source).ok_or_else(|| other("The array's source block is missing."))?;
     let m = ins.transform(blk.base.xy()).then_before(item_place(&p, item)?).then_before(Mat3::translate(-src.base.xy()));
-    nearest_key_point(src.entities.iter().map(|e| e.as_ref()), &m, at).ok_or_else(|| other("The source objects have no key point; specify a point."))
+    nearest_key_point(src.entities.iter().map(|e| e.as_ref()), &m, at)?.ok_or_else(|| other("The source objects have no key point; specify a point."))
 }
 
 /// Move the base point of array `h` to world point `base` without moving the items.
