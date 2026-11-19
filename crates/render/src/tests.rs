@@ -1217,3 +1217,26 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     });
     assert_eq!(loops_of(&h).len(), 2);
 }
+
+#[test]
+fn ar_conc_shows_stones_and_dots_on_a_small_object() {
+    // #3140: AR-CONC at scale 1 drew a few strokes 2.4 long several units apart, so a 4x4 square
+    // came out nearly blank. It now draws small closed stones (triangles) and dots.
+    let h = pattern_hatch("AR-CONC", 1.0, (0.0, 0.0, 4.0, 4.0));
+    let runs = crate::hatch::pattern_lines(&Drawing::new_imperial(), &h, &loops_of(&h), 0.0, None);
+    let strokes: Vec<&Vec<Vec2>> = runs.iter().filter(|r| r.len() == 2).collect();
+    let dots = runs.iter().filter(|r| r.len() == 1).count();
+    assert!(strokes.len() >= 12 && dots >= 12, "{} strokes, {dots} dots", strokes.len());
+    assert!(strokes.iter().all(|r| (r[1] - r[0]).len() < 0.8), "{strokes:?}");
+    // Every stroke well inside the square meets two others end to end: each stone is closed.
+    let inner = Bounds2::new(Vec2::new(1.0, 1.0), Vec2::new(3.0, 3.0));
+    let ends: Vec<Vec2> = strokes.iter().flat_map(|r| [r[0], r[1]]).collect();
+    let mut checked = 0;
+    for r in strokes.iter().filter(|r| inner.contains(r[0]) && inner.contains(r[1])) {
+        for p in [r[0], r[1]] {
+            assert_eq!(ends.iter().filter(|q| (**q - p).len() < 1e-9).count(), 2, "{p:?}");
+        }
+        checked += 1;
+    }
+    assert!(checked >= 3, "{checked}");
+}
