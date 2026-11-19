@@ -240,6 +240,8 @@ fn loops_at_in(s: &Session, p: Vec2, only: Option<&[Handle]>, islands: bool) -> 
         return Ok(loops);
     }
     // Islands: closed objects entirely inside the outer loop that don't contain the pick point.
+    // A region's own loops are candidates too, so a boundary set holding a region keeps its holes
+    // (its outer loop is the traced boundary itself, and is dropped as the same loop).
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
             if !d.is_visible(e) || only.is_some_and(|hs| !hs.contains(&e.handle)) {
@@ -249,7 +251,11 @@ fn loops_at_in(s: &Session, p: Vec2, only: Option<&[Handle]>, islands: bool) -> 
             if !ob.contains_box(&eb) {
                 continue;
             }
-            if let Some(vs) = closed_loop(d, e) {
+            let candidates: Vec<Vec<PolyVertex>> = match &e.kind {
+                EntityKind::Region(r) => r.loops.iter().map(|l| l.vertices.clone()).collect(),
+                _ => closed_loop(d, e).into_iter().collect(),
+            };
+            for vs in candidates {
                 let pts = Polyline { vertices: vs.clone(), closed: true }.tessellate(tol.max(eb.width() * 1e-3));
                 let inside = pts.iter().all(|q| point_in_polygon(&outer, *q) || outer.iter().any(|o| o.near(*q, tol * 10.0)));
                 let same_as_outer = (cadcraft_geom::shoelace(&pts).abs() - cadcraft_geom::shoelace(&outer).abs()).abs() < tol.max(1e-6) * 1000.0;
@@ -502,7 +508,14 @@ fn boundary_at(s: &mut Session, q: Vec2) -> Result<Vec<Handle>> {
 fn boundary_at_with(s: &mut Session, q: Vec2, only: Option<&[Handle]>, islands: bool, region: bool) -> Result<Vec<Handle>> {
     let loops = loops_at_in(s, q, only, islands)?;
     if region {
-        let h = s.add_entity(EntityKind::Region(cadcraft_doc::Region { loops }))?;
+        // The island pass only knows the depth of the loop it traced: a loop inside an island
+        // (a square in a square in a square) is an outer loop again. Nest by depth, and make no
+        // region at all rather than one whose area is wrong.
+        let mut r = cadcraft_doc::Region { loops };
+        if !r.renest() {
+            return Err(EngineError::Other("The boundary has too many nested loops to make a region.".into()));
+        }
+        let h = s.add_entity(EntityKind::Region(r))?;
         return Ok(vec![h]);
     }
     let mut out = Vec::new();
@@ -1219,5 +1232,42 @@ mod tests {
         let d = s.doc().unwrap();
         assert_eq!(d.model.len(), 2);
         assert!(matches!(d.model.iter().last().map(|e| &e.kind), Some(EntityKind::Region(_))));
+    }
+
+    #[test]
+    fn boundary_region_nests_nested_loops() {
+        // Three nested squares: the innermost is an outer loop again (depth 2), so the region's
+        // area is 400 - 144 + 16 = 272, not 400 - 144 - 16 = 240.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [4, 4], "p2": [16, 16] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let d = s.doc().unwrap();
+        let r = d.model.iter().find_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).unwrap();
+        assert_eq!(r.loops.iter().map(|l| l.outer).collect::<Vec<_>>(), [true, false, true]);
+        assert!((r.area() - 272.0).abs() < 1e-9, "area {}", r.area());
+    }
+
+    #[test]
+    fn boundary_set_holding_only_a_region_keeps_its_holes() {
+        // A region with a hole: a boundary traced inside it must have the hole loop too.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let before = s.doc().unwrap().model.len();
+        let loops = {
+            let d = s.doc().unwrap();
+            let r = d.model.iter().find_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).unwrap();
+            r.loops.len()
+        };
+        assert_eq!(loops, 2, "the region is a square with a square hole");
+        // Boundary set -> New: only the region (the last object) is a candidate.
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_B\" \"_N\" (ssget \"_L\") \"\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), before + 2, "the region's hole is a boundary too");
     }
 }
