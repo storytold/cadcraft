@@ -1,4 +1,4 @@
-use super::args::{R, arity, string};
+use super::args::{arity, string};
 use super::output::emit;
 use super::{Ctx, Flow, LispError, Value, charge_bytes};
 
@@ -71,10 +71,18 @@ pub(super) fn write_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispE
     Ok(Flow::Value(Value::Str(s)))
 }
 
-pub(super) fn findfile(a: &[Value]) -> R {
-    arity(a, 1, 1)?;
+pub(super) fn findfile(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 1, 1)?;
     let p = string(&a[0])?;
-    Ok(if file_exists(&p) { Value::Str(p) } else { Value::Nil })
+    // As given (the current folder), then the drawing's folder and the support search path.
+    let Some(found) = crate::support_path::find(ctx.s, &p) else { return Ok(Flow::Value(Value::Nil)) };
+    // The name as given when that is where it is; else the full path of the file found (a support
+    // folder may itself be relative).
+    if found == std::path::Path::new(p.trim()) {
+        return Ok(Flow::Value(Value::Str(p)));
+    }
+    let full = if found.is_relative() { std::path::absolute(&found).unwrap_or(found) } else { found };
+    Ok(Flow::Value(Value::str(&full.to_string_lossy())))
 }
 
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
@@ -125,18 +133,6 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 
 #[cfg(target_arch = "wasm32")]
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
-
-/// A file or a folder: routines test whether a module is installed with `(findfile "module/.")`.
-#[cfg(not(target_arch = "wasm32"))]
-fn file_exists(path: &str) -> bool {
-    let p = std::path::Path::new(path);
-    p.is_file() || p.is_dir()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn file_exists(_path: &str) -> bool {
-    false
-}
 
 #[cfg(all(test, unix))]
 mod tests {

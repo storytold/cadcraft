@@ -37,7 +37,7 @@ impl FileRef {
 
     /// Read the file and (re)define its block. Returns the block's name.
     pub fn define(&self, s: &mut Session) -> Result<String> {
-        let src = read_drawing(&self.path)?;
+        let src = read_drawing_from(Some(s), &self.path)?;
         define_from(s, &src, &self.name, false)
     }
 }
@@ -75,27 +75,43 @@ pub(super) fn stem(path: &str) -> String {
 
 /// Read a drawing file through the io hooks; a path without extension tries .dwg, then .dxf.
 pub(super) fn read_drawing(path: &str) -> Result<Drawing> {
-    let hooks = io().ok_or_else(|| bad("insert", "file formats are not available in this build"))?;
-    let has_ext = stem(path) != path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let candidates = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
-    let mut last = None;
-    for p in candidates {
-        match read_file(&p) {
-            Ok(bytes) => return (hooks.read)(&bytes, &p).map_err(|e| bad("insert", format!("{p}: {e}"))),
-            Err(e) => last = Some(e),
-        }
-    }
-    Err(last.unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
+    read_drawing_from(None, path)
 }
 
-fn read_file(_path: &str) -> Result<Vec<u8>> {
+/// [`read_drawing`]; with a session, a relative path is looked for in the current folder, then the
+/// drawing's folder, then the support search path.
+fn read_drawing_from(s: Option<&Session>, path: &str) -> Result<Drawing> {
+    let hooks = io().ok_or_else(|| bad("insert", "file formats are not available in this build"))?;
+    let has_ext = stem(path) != path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let names = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
+    let (mut last, mut unreadable) = (None, None);
+    let paths = match s {
+        Some(s) => crate::support_path::candidates_of(s, &names),
+        None => names.iter().map(std::path::PathBuf::from).collect(),
+    };
+    for (i, p) in paths.into_iter().enumerate() {
+        let shown = p.to_string_lossy();
+        match read_file(&p) {
+            Ok(bytes) => return (hooks.read)(&bytes, &shown).map_err(|e| bad("insert", format!("{shown}: {e}"))),
+            // A file that is there but can't be read is reported before one that isn't there.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                unreadable.get_or_insert_with(|| bad("insert", format!("{shown}: {e}")));
+            }
+            // Otherwise the error shown is the one for the name as given, not for the last folder tried.
+            Err(e) if i < names.len() => last = Some(bad("insert", format!("{shown}: {e}"))),
+            Err(_) => {}
+        }
+    }
+    Err(unreadable.or(last).unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
+}
+
+fn read_file(_path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
-            .map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(_path, crate::cmd::file::MAX_DRAWING_BYTES)
     }
     #[cfg(target_arch = "wasm32")]
-    Err(bad("insert", "paths are not available on the web"))
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "paths are not available on the web"))
 }
 
 /// (Re)define block `name` from `src`'s model space with base point `$INSBASE`, adding the
