@@ -61,6 +61,7 @@ impl Session {
             Ok(r) => r,
             Err(_) => {
                 self.docs.truncate(n);
+                self.lisp_forget_closed();
                 self.active = self.active.min(self.docs.len().saturating_sub(1));
                 self.bump_doc_epoch();
                 Err(EngineError::Internal("open".into(), "panic".into()))
