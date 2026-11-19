@@ -29,7 +29,7 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
         }
         EntityKind::Circle(c) => {
             if p1.near(p2, 1e-12) {
-                return Err(EngineError::Other("Arc cannot be full 360 degrees.".into()));
+                return Err(EngineError::Other("Arc cannot be full 360 degrees".into()));
             }
             let a1 = c.center.xy().angle_to(p1);
             let a2 = c.center.xy().angle_to(p2);
@@ -213,6 +213,41 @@ pub(super) fn run_join(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handle": r.map(|h| h.hex()) }))
 }
 
+/// The object picked at `p` for BREAK and BREAKATPOINT ("*Invalid selection*" when there is none).
+/// One on a locked layer is refused there, and the command asks for an object again, as AutoCAD
+/// 2024 does; the pick doesn't fall through to an object under it.
+fn pick_to_break(s: &mut Session, p: Vec2) -> Result<Option<Handle>> {
+    let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
+    let space = s.space();
+    match s.pick_object(&space, p, ap)? {
+        Some(h) if crate::cmd::curves::is_locked(s, h) => {
+            s.echo("The object is on a locked layer.");
+            Ok(None)
+        }
+        Some(h) => {
+            s.set_selection(vec![h]);
+            Ok(Some(h))
+        }
+        None => {
+            s.echo("*Invalid selection*");
+            Ok(None)
+        }
+    }
+}
+
+/// Break `h` from `p1` to `p2` and end the command. As in AutoCAD 2024, a break that can't be made
+/// (a whole circle at one point: "Arc cannot be full 360 degrees") is reported and ends the
+/// command too, leaving the object as it was.
+fn break_and_end(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Result<Step> {
+    match break_entity(s, h, p1, p2) {
+        Ok(_) => {}
+        Err(EngineError::Other(m)) => s.echo(m),
+        Err(e) => return Err(e),
+    }
+    s.set_selection(Vec::new());
+    Ok(Step::Done)
+}
+
 #[derive(Default)]
 pub(super) struct BreakM {
     obj: Option<(Handle, Vec2)>,
@@ -234,14 +269,8 @@ impl Interactive for BreakM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (self.obj, i) {
             (None, Input::Point(p)) => {
-                let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-                let space = s.space();
-                match s.pick_object(&space, p, ap)? {
-                    Some(h) => {
-                        self.obj = Some((h, p));
-                        s.set_selection(vec![h]);
-                    }
-                    None => s.echo("*Invalid selection*"),
+                if let Some(h) = pick_to_break(s, p)? {
+                    self.obj = Some((h, p));
                 }
                 Ok(Step::Continue)
             }
@@ -254,12 +283,46 @@ impl Interactive for BreakM {
                 self.first_point = false;
                 Ok(Step::Continue)
             }
-            (Some((h, p1)), Input::Point(p2)) => {
-                break_entity(s, h, p1, p2)?;
+            (Some((h, p1)), Input::Point(p2)) => break_and_end(s, h, p1, p2),
+            (Some(_), Input::Enter) => {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (_, Input::Enter) => Ok(Step::Done),
+            (None, Input::Enter) => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// BREAKATPOINT at the command line, with AutoCAD 2024's prompts: "Select object:", then "Specify
+/// break point:"; the object is split there with no gap (the point projects onto it).
+#[derive(Default)]
+pub(super) struct BreakAtPointM {
+    obj: Option<Handle>,
+}
+
+impl Interactive for BreakAtPointM {
+    fn name(&self) -> &'static str {
+        "BREAKATPOINT"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.obj {
+            None => Prompt::new("Select object", Accept::POINT),
+            Some(_) => Prompt::new("Specify break point", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.obj, i) {
+            (None, Input::Point(p)) => {
+                self.obj = pick_to_break(s, p)?;
+                Ok(Step::Continue)
+            }
+            (Some(h), Input::Point(p)) => break_and_end(s, h, p, p),
+            (Some(_), Input::Enter) => {
+                s.set_selection(Vec::new());
+                Ok(Step::Done)
+            }
+            (None, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }

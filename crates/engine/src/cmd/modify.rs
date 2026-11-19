@@ -26,7 +26,7 @@ mod stretch;
 mod transform;
 mod trim;
 
-use break_join::{BreakM, run_break, run_breakat, run_join};
+use break_join::{BreakAtPointM, BreakM, run_break, run_breakat, run_join};
 use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
@@ -114,7 +114,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["br"])
             .params("{handle, p1, p2} → {handles: the object (kept, reshaped) then the new pieces; none when nothing is left}")
             .interactive(|_| Ok(Box::new(BreakM::default()))),
-        CommandSpec::new("breakatpoint", "Break At Point", run_breakat).menu(&["Modify", "Break At Point"]).params("{handle, at} → {handles: the object (kept, reshaped) then the new piece}"),
+        CommandSpec::new("breakatpoint", "Break At Point", run_breakat)
+            .menu(&["Modify", "Break At Point"])
+            .params("{handle, at} → {handles: the object (kept, reshaped) then the new piece}")
+            .interactive(|_| Ok(Box::new(BreakAtPointM::default()))),
         CommandSpec::new("join", "Join", run_join)
             .menu(&["Modify", "Join"])
             .alias(&["j"])
