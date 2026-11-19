@@ -37,6 +37,7 @@ mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;
 mod shortcuts_checked;
+mod slow_clicks;
 mod space_at_options;
 mod status_bar_toggles;
 mod style_dialogs;

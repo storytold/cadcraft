@@ -715,9 +715,10 @@ struct PressContext {
 /// (#1001, #815): each press among this frame's events places its point, picks its object or sets a
 /// selection window's corner at once. What the pointer does while the button is held only decides
 /// whether the press becomes a drag ([`press`]): a drag closes the window its press opened where
-/// the button comes up; after a click the window waits for the next press. Presses on grips (idle)
-/// and while ZOOM Realtime runs are left to the clicks in [`show`]. Returns whether a press handled
-/// here was released this frame (its click must not count again).
+/// the button comes up; after a click the window waits for the next press. A press on a grip
+/// (idle) clicks the grip when the button comes up near it, however long it was held (#2813).
+/// Presses while ZOOM Realtime runs are left to the clicks in [`show`]. Returns whether a press
+/// handled here was released this frame (its click must not count again).
 fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bool {
     let PressContext { rect, xf, inside, middle_down, mods } = *context;
     let (steps, now, primary_down) = ui.input(|i| (press::steps(&i.events), i.time, i.pointer.primary_down()));
@@ -746,6 +747,11 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 if press_takes(app, &xf, pos) {
                     let opened = press_at(app, &xf, ui.ctx(), pos, m);
                     app.canvas.press = Some(press::Press::new(pos, opened));
+                } else if !app.session.realtime_zoom_active() {
+                    // A grip with no command running: clicked when the button comes up. egui
+                    // calls a press held longer than 0.8 s a drag, and a slow drawing's frames
+                    // can make an ordinary click that long (#2813).
+                    app.canvas.press = Some(press::Press::on_grip(pos, m));
                 }
             }
             press::Step::Move(pos) => {
@@ -756,6 +762,16 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
             press::Step::Up(pos) => {
                 let Some(mut p) = app.canvas.press.take() else { continue };
                 click_used = true;
+                if p.is_on_grip() {
+                    if let Some((at, m)) = p.grip_click(pos) {
+                        if let Some(g) = crate::dyngrips::at(app, &xf, Some(at)) {
+                            crate::dyngrips::click(app, g);
+                        } else if let Some(g) = grip_at(app, &xf, Some(at)) {
+                            click_grip(app, g, m.shift);
+                        }
+                    }
+                    continue;
+                }
                 // PICKDRAG off: a window takes two clicks, a drag doesn't close it (#1032).
                 if app.session.settings.pickdrag && p.released_as_drag(pos, now) && p.opened_window && app.session.pending_window.is_some() {
                     let end = xf.to_world(pos);
