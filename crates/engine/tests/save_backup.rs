@@ -29,9 +29,15 @@ fn circles(path: &std::path::Path) -> usize {
     d.model.iter().filter(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Circle(_))).count()
 }
 
-/// Only the drawing and its backup are in the folder: atomic saves leave no staging files.
+/// The files in a folder, sorted: only the drawing and its backup, since atomic saves leave no
+/// staging files. `_OMNI_HISTORY` is left out — every save leaves a version in that folder (the
+/// drawing-history feature), and these tests are about backups, not about the timeline.
 fn files(dir: &std::path::Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name != "_OMNI_HISTORY")
+        .collect();
     v.sort();
     v
 }

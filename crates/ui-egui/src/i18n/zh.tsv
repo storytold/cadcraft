@@ -1512,3 +1512,12 @@ menu	View	视图
 
 # ArtCraft feature naming
 	Additional Tools	其他工具
+	Version History	版本历史记录
+	Save Snapshot	保存快照
+	Snapshot History...	快照历史...
+	Compare with Snapshot	与快照比较
+	Show/Hide Snapshot	显示/隐藏快照
+	Clear Snapshot Overlay	清除快照叠加
+	Add Note	添加注释
+	Restore Version	恢复版本
+	Drawing History	图形历史记录
