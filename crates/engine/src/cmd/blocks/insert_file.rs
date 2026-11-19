@@ -84,31 +84,34 @@ fn read_drawing_from(s: Option<&Session>, path: &str) -> Result<Drawing> {
     let hooks = io().ok_or_else(|| bad("insert", "file formats are not available in this build"))?;
     let has_ext = stem(path) != path.rsplit(['/', '\\']).next().unwrap_or(path);
     let names = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
-    let mut last = None;
+    let (mut last, mut unreadable) = (None, None);
     let paths = match s {
         Some(s) => crate::support_path::candidates_of(s, &names),
         None => names.iter().map(std::path::PathBuf::from).collect(),
     };
     for (i, p) in paths.into_iter().enumerate() {
-        let p = p.to_string_lossy().into_owned();
+        let shown = p.to_string_lossy();
         match read_file(&p) {
-            Ok(bytes) => return (hooks.read)(&bytes, &p).map_err(|e| bad("insert", format!("{p}: {e}"))),
-            // The error shown is the one for the name as given, not for the last folder tried.
-            Err(e) if i < names.len() => last = Some(e),
+            Ok(bytes) => return (hooks.read)(&bytes, &shown).map_err(|e| bad("insert", format!("{shown}: {e}"))),
+            // A file that is there but can't be read is reported before one that isn't there.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                unreadable.get_or_insert_with(|| bad("insert", format!("{shown}: {e}")));
+            }
+            // Otherwise the error shown is the one for the name as given, not for the last folder tried.
+            Err(e) if i < names.len() => last = Some(bad("insert", format!("{shown}: {e}"))),
             Err(_) => {}
         }
     }
-    Err(last.unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
+    Err(unreadable.or(last).unwrap_or_else(|| bad("insert", format!("{path}: file not found"))))
 }
 
-fn read_file(_path: &str) -> Result<Vec<u8>> {
+fn read_file(_path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
-            .map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(_path, crate::cmd::file::MAX_DRAWING_BYTES)
     }
     #[cfg(target_arch = "wasm32")]
-    Err(bad("insert", "paths are not available on the web"))
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "paths are not available on the web"))
 }
 
 /// (Re)define block `name` from `src`'s model space with base point `$INSBASE`, adding the

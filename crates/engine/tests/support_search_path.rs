@@ -144,3 +144,15 @@ fn insert_finds_a_relative_file_in_the_drawings_folder() {
     let e = s.execute("insert", &json!({ "file": "lib/none", "at": [0, 0] })).unwrap_err().to_string();
     assert!(e.contains("lib/none"), "{e}");
 }
+
+#[test]
+fn insert_reports_a_file_in_the_drawings_folder_it_cannot_read() {
+    let _t = turn();
+    let dir = TempDir::new("insert-unreadable");
+    let host = dir.file("host.dxf", "x");
+    // Not in the current folder; in the drawing's folder, but a folder, not a file.
+    std::fs::create_dir_all(dir.join("lib").join("blk.dxf")).unwrap();
+    let mut s = opened(&host);
+    let e = s.execute("insert", &json!({ "file": "lib/blk.dxf", "at": [0, 0] })).unwrap_err().to_string();
+    assert!(e.contains(&*dir.join("lib").to_string_lossy()), "the error for the file that is there: {e}");
+}
