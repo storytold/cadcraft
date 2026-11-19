@@ -1480,3 +1480,30 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+/// #1927: with a support folder, a relative `load` name is found there, never through the
+/// process working folder; an absolute path is still read as given.
+#[cfg(unix)]
+#[test]
+fn relative_load_uses_the_support_folder_not_the_working_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-loadpath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(support.join("tools.lsp"), "(setq which \"support\")").unwrap();
+    std::fs::write(other.join("tools.lsp"), "(setq which \"other\")").unwrap();
+    std::fs::write(other.join("only.lsp"), "(setq only 1)").unwrap();
+    // `other/…` as a path relative to the working folder.
+    let cwd = std::env::current_dir().unwrap();
+    let up = "../".repeat(cwd.components().count().saturating_sub(1));
+    let rel = |f: &str| format!("{up}{}", other.join(f).to_string_lossy().trim_start_matches('/'));
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    assert_eq!(ok(&mut s, "(load \"tools\") which"), "\"support\"");
+    let r = eval(&mut s, &format!("(load \"{}\") only", rel("only.lsp")));
+    assert!(!matches!(r.as_deref(), Ok("1")), "not read through the working folder: {r:?}");
+    assert_eq!(ok(&mut s, &format!("(load \"{}\") which", other.join("tools.lsp").to_string_lossy())), "\"other\"");
+    let _ = std::fs::remove_dir_all(&base);
+}
