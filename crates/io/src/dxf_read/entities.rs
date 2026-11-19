@@ -1,4 +1,4 @@
-use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
+use super::common::{T, common, ocs, off_axis, plan_frame, plan_of_tilted, run_points, tilted};
 use super::hatch::hatch;
 use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
@@ -141,7 +141,25 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
         "XLINE" => EntityKind::XLine(RayLine { base: t.p(10), dir: t.p(11) }),
-        "TEXT" => EntityKind::Text(text_from(&t)),
+        "TEXT" => {
+            let mut tx = text_from(&t);
+            // A text in a tilted plane: its insertion and alignment points are in that plane's OCS,
+            // so reading them as WCS ones puts the text millions of units away in a drawing near UTM
+            // coordinates. Text cannot hold a tilted plane, so place it where the drawing has it as
+            // seen from above and turn it by the plane's x axis, as a tilted LWPOLYLINE is read
+            // (#1886, #2584). A mirrored text (0,0,-1) is handled inside `text_from`.
+            if off_axis(c.extrusion) {
+                let (m, angle) = plan_frame(c.extrusion, tx.rotation);
+                tx.insert = m.apply(tx.insert);
+                if let Some(a) = tx.align_pt.as_mut() {
+                    *a = m.apply(*a);
+                }
+                tx.rotation = angle;
+                // Its points are plan coordinates now, so the plane it was drawn in is spent.
+                c.extrusion = Vec3::Z;
+            }
+            EntityKind::Text(tx)
+        }
         "MTEXT" => EntityKind::MText(mtext_from(tags, &c)),
         "ATTDEF" => EntityKind::AttDef(attdef(tags, &c)),
         "INSERT" => {

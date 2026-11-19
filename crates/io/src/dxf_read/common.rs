@@ -113,6 +113,28 @@ pub(super) fn ocs_n(n: Vec3, p: Vec3) -> Vec3 {
     if (n.z - 1.0).abs() < 1e-12 && n.x.abs() < 1e-12 && n.y.abs() < 1e-12 { p } else { cadcraft_geom::Mat4::ocs(n).apply(p) }
 }
 
+/// The frame a tilted plane's OCS points are drawn in when the object cannot hold the plane and is
+/// drawn flat, as seen from above: the matrix that takes a point in that plane to the WCS, and the
+/// turn a direction at `turn` in the plane (group 50's angle) takes in plan. A direction seen
+/// edge-on has no plan direction, so the file's turn is kept for it.
+pub(super) fn plan_frame(n: Vec3, turn: f64) -> (cadcraft_geom::Mat4, f64) {
+    let m = cadcraft_geom::Mat4::ocs(n);
+    let ax = Vec3::new(m.m[0][0], m.m[1][0], m.m[2][0]);
+    let ay = Vec3::new(m.m[0][1], m.m[1][1], m.m[2][1]);
+    let (sin, cos) = turn.sin_cos();
+    let along = Vec2::new(ax.x * cos + ay.x * sin, ax.y * cos + ay.y * sin);
+    let angle = if along.len() > 1e-12 { along.y.atan2(along.x) } else { turn };
+    (m, angle)
+}
+
+/// Whether an extrusion direction leaves the Z axis — either way up — by more than noise: that is,
+/// whether a 2D entity's OCS points lie in a plane that is not parallel to the XY plane. The 1e-3
+/// of the normal's length is the same tolerance the mirrored case uses, so an extrusion that only
+/// carries noise is not a tilt.
+pub(super) fn off_axis(n: Vec3) -> bool {
+    n.is_finite() && n.len() > 1e-12 && n.x.hypot(n.y) > 1e-3 * n.len()
+}
+
 /// Whether an object with OCS points `pts` (x, y and elevation) lies in a plane tilted off the
 /// XY plane: drawing its points as plan coordinates (x flipped for a mirrored plane, as the
 /// readers do) would put some of them off their place seen from above by more than a
