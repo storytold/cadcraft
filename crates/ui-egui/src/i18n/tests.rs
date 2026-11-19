@@ -270,6 +270,7 @@ fn assert_additional_locale_aliases() {
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("he", &["he", "he-IL", "he_IL.UTF-8", "HE-il", " he-IL ", "iw", "iw-IL"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("zh", &["zh", "zh-CN"]),
     ] {
@@ -552,7 +553,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "he", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -730,4 +731,23 @@ fn polish_plural_forms() {
     {
         assert_eq!(plural_pl(n), expected, "n={n}");
     }
+}
+
+#[test]
+fn hebrew_counts_locale_and_lookup() {
+    assert_eq!(Preference::parse("he"), Some(Preference::Hebrew));
+    assert_eq!(locale_language("he-IL"), Some("he"));
+    assert_eq!(locale_language("iw-IL"), Some("he"));
+    assert_eq!(Preference::Hebrew.native_name(), "עברית");
+    for (n, expected) in [(0, 2), (1, 0), (2, 1), (3, 2), (10, 2), (20, 2), (u64::MAX, 2)] {
+        assert_eq!(plural_he(n), expected, "n={n}");
+    }
+    with_language("he", || {
+        assert_eq!(menu("Dimension"), "מידות");
+        assert_eq!(t("Dimension"), "מידה");
+        assert_eq!(count(1, "{n} contributor", "{n} contributors"), "1 תורם");
+        assert_eq!(count(2, "{n} contributor", "{n} contributors"), "2 תורמים");
+        assert_eq!(count(5, "{n} contributor", "{n} contributors"), "5 תורמים");
+    });
+    assert_eq!(tr("he", "Properties"), "מאפיינים");
 }
