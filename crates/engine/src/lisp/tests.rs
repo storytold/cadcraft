@@ -1495,6 +1495,8 @@ fn vl_file_systime_returns_modified_time_or_nil() {
     let dur = modified.duration_since(std::time::UNIX_EPOCH).unwrap();
     let dt = chrono::DateTime::from_timestamp(i64::try_from(dur.as_secs()).unwrap(), dur.subsec_nanos()).unwrap();
     use chrono::{Datelike, Timelike};
+    // Visual LISP reports local time, not UTC.
+    let dt = dt.with_timezone(&chrono::Local);
     let expected = format!(
         "({} {} {} {} {} {} {} {})",
         dt.year(),

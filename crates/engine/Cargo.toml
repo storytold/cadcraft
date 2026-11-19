@@ -22,7 +22,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
-chrono = { workspace = true }
+# `clock` gives `chrono::Local`, for the local-time file timestamps LISP reports.
+chrono = { workspace = true, features = ["clock"] }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
 rstar = { version = "0.13", default-features = false }
 
