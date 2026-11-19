@@ -512,7 +512,6 @@ struct SheetPage {
     list: cadcraft_render::DisplayList,
     map: Map,
     clip_pt: Bounds2,
-    text_clip_pt: Bounds2,
     /// The drawing layers (indices in the layer table) drawn on, in order of first use: the
     /// candidates for PDF layers.
     layers: Vec<u32>,
@@ -597,13 +596,16 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let mut list = list;
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     let media = sheet.size * k;
-    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
-    let text_clip_pt = match window {
+    let printable = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
+    // Why: vector paths (`push_clip_path`), link annotations, and embedded text (`glyph`) must share
+    // one plot-area clip intersected with `window` so aspect-mismatched margins never leak strokes
+    // while dropping their labels.
+    let clip_pt = match window {
         Some(w) => {
             let win_pt = Bounds2::from_points(w.corners().map(|c| map.pt(c)));
-            Bounds2 { min: clip_pt.min.max(win_pt.min), max: clip_pt.max.min(win_pt.max) }
+            Bounds2 { min: printable.min.max(win_pt.min), max: printable.max.min(win_pt.max) }
         }
-        None => clip_pt,
+        None => printable,
     };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
@@ -616,7 +618,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         }
     }
     let links = links(&list, &map, &clip_pt, links_to);
-    Ok(SheetPage { media, list, map, clip_pt, text_clip_pt, layers, links, label: sheet_name(space) })
+    Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
 }
 
 /// Source and destination origins for the shared model-space PDF/PNG placement behavior.
@@ -890,7 +892,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 let text_font =
                     u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
                 match text_font {
-                    Some((text, font)) => glyph(s, font, text, &p.map, &p.text_clip_pt, m.rgb, m.t),
+                    Some((text, font)) => glyph(s, font, text, &p.map, &p.clip_pt, m.rgb, m.t),
                     None => fill_tris(s, p, raw, m.rgb, m.t),
                 }
             }
@@ -1008,6 +1010,8 @@ fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotTex
     let k = map.s * map.k;
     let g = &t.glyph;
     let pt = map.pt(g.origin);
+    // Why: cull against the shaped `PlotText::bounds` rather than `g.origin` so wide or rotated
+    // glyphs whose origin sits just outside `clip_pt` are kept whenever their ink enters the clip.
     if t.bounds.is_empty() {
         if !clip_pt.contains(pt) {
             return;

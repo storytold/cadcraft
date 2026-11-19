@@ -388,7 +388,7 @@ fn hostile_text_never_panics() {
 
 #[test]
 fn pdf_culls_text_outside_plot_window() {
-    // Text outside the plot window should be omitted from the PDF stream instead of bloating the page.
+    // Why: embedded glyphs completely outside `clip_pt` add redundant font/text operators and bloat PDFs.
     let mut d = drawing();
     text(&mut d, &Space::Model, "Real", (5.0, 5.0), "AB", (0.0, 1.0, 0.0));
     text(&mut d, &Space::Model, "Real", (200.0, 200.0), "AB", (0.0, 1.0, 0.0));
@@ -403,6 +403,7 @@ fn pdf_culls_text_outside_plot_window() {
 
 #[test]
 fn pdf_keeps_glyph_when_origin_outside_but_bounds_intersect_clip() {
+    // Why: culling on `g.origin` alone would drop wide or rotated glyphs whose ink reaches inside `clip_pt`.
     let mut d = drawing();
     // 'A' origin at x = -15 is outside [0, 30], but width_factor = 3.0 extends its outline into [0, 30].
     text(&mut d, &Space::Model, "Real", (-15.0, 5.0), "A", (0.0, 3.0, 0.0));
@@ -413,11 +414,14 @@ fn pdf_keeps_glyph_when_origin_outside_but_bounds_intersect_clip() {
 
 #[test]
 fn pdf_culls_text_in_paper_margin_outside_aspect_mismatched_window() {
+    // Why: when a plot window's aspect ratio differs from the paper's printable area, both the
+    // page clip rectangle (`W n`) and embedded text culling must use `printable ∩ window` so
+    // margin strokes and margin text are clipped identically.
     let mut d = drawing();
-    // Square 100x100 window centered on landscape paper leaves horizontal paper margins inside clip_pt.
-    // (120, 10) lies inside the landscape paper's printable clip_pt but outside the [0..100] window.
     text(&mut d, &Space::Model, "Real", (10.0, 10.0), "A", (0.0, 1.0, 0.0));
     text(&mut d, &Space::Model, "Real", (120.0, 10.0), "B", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [100.0, 100.0]] }));
     assert_eq!(pdf_read::count(p.content(), "Tj"), 1, "only in-window A must be emitted; paper-margin B must be culled: {}", p.content());
+    let clip = pdf_read::clip_rect(p.content()).expect("page clip rect");
+    assert!(((clip[2] - clip[0]) - (clip[3] - clip[1])).abs() < 1e-2, "vector clip path must also match the square 100x100 window: {clip:?}");
 }
