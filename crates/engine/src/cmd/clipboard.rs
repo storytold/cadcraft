@@ -307,7 +307,10 @@ fn merge(d: &mut Drawing, defs: &Drawing, raster_map: &mut HashMap<String, Strin
     add(&mut d.mleader_styles, &defs.mleader_styles, |t| &t.name);
     add(&mut d.table_styles, &defs.table_styles, |t| &t.name);
     let exact = crate::cmd::merge::block_renames(d, defs, None);
-    let lower = exact.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect();
+    let mut lower = HashMap::new();
+    for (k, v) in &exact {
+        lower.entry(k.to_ascii_lowercase()).or_insert_with(|| v.clone());
+    }
     let renames = Renames { exact, lower };
     for (from, to) in &renames.exact {
         let Some(b) = defs.blocks.get(from) else { continue };
