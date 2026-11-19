@@ -382,3 +382,86 @@ fn copy_paste_preserves_image_raster_and_mleader_renamed_block() {
     assert_ne!(bname, "*U1", "colliding anonymous block on MLeader must be renamed");
     assert!(d_b.block(bname).is_some(), "renamed MLeader block {bname} must exist in target drawing");
 }
+
+#[test]
+fn copy_paste_handles_case_insensitive_block_renames_and_colliding_raster_keys() {
+    use cadcraft_engine::doc::{Image, MLeader, Raster};
+
+    // Source drawing defines `*u1` (lowercase), while target `drawing_b()` already has `*U1`.
+    let mut d_a = Drawing::new_metric();
+    let u_line = line(&mut d_a, "0", (0.0, 0.0), (2.0, 0.0));
+    block(&mut d_a, "*u1", vec![u_line]);
+
+    // An Image with `logo.png` (red 1x1) and a block containing an Image with the same `logo.png`.
+    let src_raster = Arc::new(Raster::new(1, 1, vec![255, 0, 0, 255]).unwrap());
+    d_a.rasters.insert("logo.png", Arc::clone(&src_raster));
+    let img = Entity {
+        handle: d_a.new_handle(),
+        common: Common::default(),
+        kind: EntityKind::Image(Image { path: "logo.png".into(), size: Vec2::new(2.0, 2.0), ..Image::default() }),
+    };
+    let blk_img = Entity {
+        handle: d_a.new_handle(),
+        common: Common::default(),
+        kind: EntityKind::Image(Image { path: "logo.png".into(), size: Vec2::new(1.0, 1.0), ..Image::default() }),
+    };
+    block(&mut d_a, "IMG_BLK", vec![blk_img]);
+    let blk_ins = insert(&mut d_a, "IMG_BLK", (1.0, 1.0));
+
+    // Insert and MLeader referencing `*U1` with different casing than `*u1`.
+    let ins_upper = insert(&mut d_a, "*U1", (3.0, 3.0));
+    let mut ml_ref = insert(&mut d_a, "*U1", (5.0, 5.0));
+    let EntityKind::Insert(ml_ins) = ml_ref.kind else { unreachable!() };
+    ml_ref.kind = EntityKind::MLeader(MLeader {
+        leaders: vec![vec![Vec3::ZERO]],
+        landing: Vec3::new(5.0, 5.0, 0.0),
+        dogleg: 1.0,
+        text: None,
+        style: "Standard".into(),
+        arrow_size: 2.5,
+        spline: false,
+        block: Some(ml_ins),
+    });
+
+    let copy_hs = [img.handle, blk_ins.handle, ins_upper.handle, ml_ref.handle];
+    d_a.model.push(img);
+    d_a.model.push(blk_ins);
+    d_a.model.push(ins_upper);
+    d_a.model.push(ml_ref);
+
+    // Target drawing already has a different `logo.png` (blue 1x1) and `*U1`.
+    let mut d_b = drawing_b();
+    let dst_raster = Arc::new(Raster::new(1, 1, vec![0, 0, 255, 255]).unwrap());
+    d_b.rasters.insert("logo.png", Arc::clone(&dst_raster));
+
+    let mut s = Session::empty();
+    let _a = s.open_drawing(d_a, "A", None);
+    let _b = s.open_drawing(d_b, "B", None);
+    s.execute("document.switch", &json!({ "index": 0 })).unwrap();
+    s.execute("copyclip", &json!({ "handles": copy_hs.iter().map(|h| h.hex()).collect::<Vec<_>>() })).unwrap();
+
+    s.execute("document.switch", &json!({ "index": 1 })).unwrap();
+    let pasted = s.execute("pasteclip", &json!({ "at": [10, 10] })).unwrap();
+    let pasted_hs: Vec<Handle> = pasted["handles"].as_array().unwrap().iter().map(|v| Handle::parse_hex(v.as_str().unwrap()).unwrap()).collect();
+    assert_eq!(pasted_hs.len(), 4);
+
+    let d_b = s.doc().unwrap();
+    // 1. Target's original `logo.png` must remain untouched.
+    assert_eq!(d_b.rasters.get("logo.png").unwrap().rgba(), dst_raster.rgba());
+
+    // 2. Pasted Image (and Image inside copied block) use the disambiguated key with source pixels.
+    let EntityKind::Image(pasted_img) = &d_b.entity(pasted_hs[0]).unwrap().kind else { panic!("expected Image") };
+    assert_ne!(pasted_img.path, "logo.png");
+    assert_eq!(d_b.rasters.get(&pasted_img.path).unwrap().rgba(), src_raster.rgba());
+
+    let blk = d_b.block("IMG_BLK").unwrap();
+    let EntityKind::Image(blk_pasted_img) = &blk.entities.iter().next().unwrap().kind else { panic!("expected Image in block") };
+    assert_eq!(blk_pasted_img.path, pasted_img.path);
+
+    // 3. Both Insert and MLeader referencing `*U1` (case-insensitive vs `*u1`) point to the renamed block.
+    let EntityKind::Insert(pasted_ins) = &d_b.entity(pasted_hs[2]).unwrap().kind else { panic!("expected Insert") };
+    let EntityKind::MLeader(pasted_ml) = &d_b.entity(pasted_hs[3]).unwrap().kind else { panic!("expected MLeader") };
+    assert!(!pasted_ins.block.eq_ignore_ascii_case("*U1"));
+    assert_eq!(pasted_ml.block.as_ref().unwrap().block, pasted_ins.block);
+    assert!(d_b.block(&pasted_ins.block).is_some());
+}

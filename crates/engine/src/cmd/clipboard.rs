@@ -313,6 +313,28 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     renames
 }
 
+fn rename_for<'a>(renames: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
+    renames.get(name).or_else(|| renames.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)).map(String::as_str)
+}
+
+fn raster_candidate_key(path: &str, suffix: usize) -> String {
+    let file_start = path.rfind(['/', '\\']).map_or(0, |i| i + 1);
+    if let Some(dot_rel) = path[file_start..].rfind('.')
+        && dot_rel > 0
+    {
+        let split = file_start + dot_rel;
+        return format!("{}__{}{}", &path[..split], suffix, &path[split..]);
+    }
+    format!("{path}__{suffix}")
+}
+
+fn unique_raster_key(rasters: &cadcraft_doc::Rasters, path: &str, src: &cadcraft_doc::Raster) -> Option<String> {
+    (2..=1_000_000usize).map(|i| raster_candidate_key(path, i)).find(|k| match rasters.get(k) {
+        None => true,
+        Some(existing) => existing.as_ref() == src,
+    })
+}
+
 /// A copy of a clipboard object for `d`: a fresh handle, block references renamed, rasters carried
 /// into the target drawing, and links to objects of the source drawing (associative dimension
 /// points) dropped.
@@ -321,28 +343,37 @@ fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &BTreeMap
     e.handle = d.new_handle();
     match &mut e.kind {
         EntityKind::Insert(i) => {
-            if let Some(n) = renames.get(&i.block) {
-                i.block = n.clone();
+            if let Some(n) = rename_for(renames, &i.block) {
+                i.block = n.to_string();
             }
         }
         EntityKind::Dimension(dm) => {
             dm.assoc.clear();
-            if let Some(n) = dm.block.as_ref().and_then(|b| renames.get(b)) {
-                dm.block = Some(n.clone());
+            if let Some(n) = dm.block.as_deref().and_then(|b| rename_for(renames, b)) {
+                dm.block = Some(n.to_string());
             }
         }
         EntityKind::MLeader(ml) => {
             if let Some(b) = &mut ml.block
-                && let Some(n) = renames.get(&b.block)
+                && let Some(n) = rename_for(renames, &b.block)
             {
-                b.block = n.clone();
+                b.block = n.to_string();
             }
         }
         EntityKind::Image(img) => {
-            if d.rasters.get(&img.path).is_none()
-                && let Some(r) = defs.and_then(|s| s.rasters.get(&img.path)).cloned()
-            {
-                d.rasters.insert(&img.path, r);
+            if let Some(src_raster) = defs.and_then(|s| s.rasters.get(&img.path)).cloned() {
+                match d.rasters.get(&img.path) {
+                    None => d.rasters.insert(&img.path, src_raster),
+                    Some(existing) if existing.as_ref() == src_raster.as_ref() => {}
+                    Some(_) => {
+                        if let Some(new_key) = unique_raster_key(&d.rasters, &img.path, &src_raster) {
+                            if d.rasters.get(&new_key).is_none() {
+                                d.rasters.insert(&new_key, src_raster);
+                            }
+                            img.path = new_key;
+                        }
+                    }
+                }
             }
         }
         _ => {}
