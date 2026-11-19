@@ -671,6 +671,7 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",
+ "uds_windows",
  "windows",
  "winit",
  "winresource",
@@ -716,6 +717,7 @@ version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
+ "craft-dxf",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1177,6 +1179,11 @@ dependencies = [
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a#219c1d0b14177af6f291395d6587f61a5e09043a"
+
+[[package]]
+name = "craft-codepage"
+version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc#453b0da782ccef39be9a6dac8d27c80b553ef1cc"
 
 [[package]]
@@ -1204,9 +1211,9 @@ dependencies = [
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc#453b0da782ccef39be9a6dac8d27c80b553ef1cc"
+source = "git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a#219c1d0b14177af6f291395d6587f61a5e09043a"
 dependencies = [
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a)",
  "encoding_rs",
  "kurbo",
  "log",
@@ -1325,7 +1332,7 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc#453b0da782ccef39be9a6dac8d27c80b553ef1cc"
 dependencies = [
  "chrono",
- "craft-codepage",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc)",
  "encoding_rs",
 ]
 
