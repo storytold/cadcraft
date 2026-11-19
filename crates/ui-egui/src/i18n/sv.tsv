@@ -1560,7 +1560,6 @@ menu	Modify	Ändra
 	Workspace	Arbetslayout
 	Settings	Inställningar
 	Preferences	Inställningar
-	Refresh	Uppdatera
 	Current:	Aktuell:
 	Continuous	Kontinuerlig
 	Displayed layers	Visade lager
@@ -2048,3 +2047,175 @@ menu	Modify	Ändra
 	Specify total width	Ange total bredd
 	Specify column width	Ange kolumnbredd
 	Specify control point	Ange styrpunkt
+	<style overrides>	<lokala stiländringar>
+	A dimension style with this name already exists.	Det finns redan en måttstil med det här namnet.
+	Above	Ovanför
+	Above text	Ovanför text
+	All properties of {style}	Alla egenskaper för {style}
+	All styles	Alla stilar
+	Alt enabled	Alt. enheter aktiverade
+	Alt format	Alt. format
+	Alt precision	Alt. precision
+	Alt prefix	Alt. prefix
+	Alt prefix and suffix	Alt. prefix och suffix
+	Alt round	Alt. avrundning
+	Alt scale factor	Alt. skalfaktor
+	Alt suffix	Alt. suffix
+	Alt zero suppression	Alt. nollundertryckning
+	Alternate Units	Alternativa enheter
+	Angle format	Vinkelformat
+	Angle precision	Vinkelprecision
+	Angular zero suppression	Nollundertryckning för vinkelmått
+	Arc length symbol	Båglängdssymbol
+	Architectural stacked	Arkitektonisk, staplad
+	Architectural tick	Arkitektoniskt snedstreck
+	Arrow 1	Pil 1
+	Arrow 2	Pil 2
+	Arrowheads	Pilspetsar
+	Arrows	Pilar
+	At Ext Line 1	Vid måttgränslinje 1
+	At Ext Line 2	Vid måttgränslinje 2
+	At least	Minst
+	Baseline spacing	Baslinjeavstånd
+	Before text	Före text
+	Below	Nedanför
+	Best fit	Bästa anpassning
+	Bottom center	Nere i mitten
+	Box blank	Låda, tom
+	Box filled	Låda, fylld
+	Center mark size	Centrummarkeringens storlek
+	Closed blank	Sluten, tom
+	Closed filled	Sluten, fylld
+	Columns	Kolumner
+	Comma	Komma
+	Compare	Jämför
+	Compare Dimension Styles	Jämför måttstilar
+	Compare...	Jämför...
+	Create New Dimension Style	Skapa ny måttstil
+	Current dimension style: {style}	Aktuell måttstil: {style}
+	Datum triangle	Referenstriangel
+	Datum triangle filled	Referenstriangel, fylld
+	Decimal separator	Decimalavgränsare
+	Degrees Minutes Seconds	Grader minuter sekunder
+	Diagonal stacking	Diagonal stapling
+	Dim line color	Måttlinjens färg
+	Dim line ext	Måttlinjens förlängning
+	Dim line forced	Tvingad måttlinje
+	Dim line linetype	Måttlinjens linjetyp
+	Dim line lineweight	Måttlinjens linjetjocklek
+	Dim prefix	Måttprefix
+	Dim roundoff	Måttavrundning
+	Dim scale linear	Linjär måttskala
+	Dim suffix	Måttsuffix
+	Dim units	Måttenheter
+	Dimension Style	Måttstil
+	Dimension Style Manager	Hantera måttstilar
+	Dimension Style Overrides	Lokala ändringar av måttstil
+	Dot	Punkt
+	Dot blank	Punkt, tom
+	Dot small	Punkt, liten
+	Exactly	Exakt
+	Ext line 1 linetype	Linjetyp för måttgränslinje 1
+	Ext line 2 linetype	Linjetyp för måttgränslinje 2
+	Ext line color	Måttgränslinjens färg
+	Ext line ext	Måttgränslinjens förlängning
+	Ext line fixed	Fast längd på måttgränslinje
+	Ext line length	Måttgränslinjens längd
+	Ext line lineweight	Måttgränslinjens linjetjocklek
+	Ext line offset	Måttgränslinjens förskjutning
+	Fraction format	Bråkformat
+	Fractional stacked	Bråk, staplat
+	Gradians	Gon
+	Hide dim line 1	Dölj måttlinje 1
+	Hide dim line 2	Dölj måttlinje 2
+	Hide ext line 1	Dölj måttgränslinje 1
+	Hide ext line 2	Dölj måttgränslinje 2
+	Horizontal stacking	Vågrät stapling
+	Integral	Integral
+	JIS	JIS
+	Jog angle	Brytvinkel
+	Justification	Justering
+	Keep dim line with text	Håll ihop måttlinje och text
+	Leader arrow	Hänvisningspil
+	Leading	Inledande
+	Line space distance	Radavståndsvärde
+	Line space factor	Radavståndsfaktor
+	Line space style	Radavståndsstil
+	Lines	Linjer
+	Lines & Arrows	Linjer och pilar
+	Lower tolerance	Nedre tolerans
+	Measurement	Mätning
+	Middle	I mitten
+	Middle center	I mitten, centrerat
+	Middle left	I mitten till vänster
+	Middle right	I mitten till höger
+	Misc	Övrigt
+	Modify Dimension Style: {style}	Ändra måttstil: {style}
+	Modify...	Ändra...
+	Move text, add leader	Flytta text, lägg till hänvisningslinje
+	Move text, no leader	Flytta text, ingen hänvisningslinje
+	New Dimension Style: {style}	Ny måttstil: {style}
+	New style name	Namn på ny stil
+	New...	Ny...
+	Not stacked	Inte staplat
+	Obliquing	Snedställning
+	Open 30	Öppen 30
+	Open arrow	Öppen pil
+	Origin indicator	Origoindikator
+	Origin indicator 2	Origoindikator 2
+	Outside	Utanför
+	Over Ext Line 1	Över måttgränslinje 1
+	Over Ext Line 2	Över måttgränslinje 2
+	Override Current Style: {style}	Åsidosätt aktuell stil: {style}
+	Override...	Åsidosätt...
+	Overrides the dimension style. Right-click to use the style's value.	Åsidosätter måttstilen. Högerklicka för att använda stilens värde.
+	Period	Punkt
+	Prefix and suffix	Prefix och suffix
+	Preview of: {style}	Förhandsvisning av: {style}
+	Preview of: {style} (overrides)	Förhandsvisning av: {style} (lokala ändringar)
+	Primary Units	Primära enheter
+	Remove Style Overrides	Ta bort lokala ändringar av stilen
+	Right angle	Rät vinkel
+	Save as New Style...	Spara som ny stil...
+	Save to current style	Spara i aktuell stil
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Styrs av textstilen "{style}", som har fast höjd. Ge stilen höjden 0 för att använda måttalets höjd.
+	Small	Liten
+	Some of these dimensions take their text height from a fixed-height text style.	Några av dessa mått får sin texthöjd från en textstil med fast höjd.
+	Space	Space
+	Start with	Börja med
+	Style	Stil
+	Styles	Stilar
+	Styles in use	Stilar som används
+	Suppress arrows	Utelämna pilar
+	Symbols and Arrows	Symboler och pilar
+	Text alignment X	Textjustering X
+	Text alignment Y	Textjustering Y
+	Text and arrows	Text och pilar
+	Text inside	Text inuti
+	Text inside align	Justering av text inuti
+	Text movement	Textförflyttning
+	Text offset	Textförskjutning
+	Text outside align	Justering av text utanför
+	Text pos hor	Textpos. vågr.
+	Text pos vert	Textpos. lodr.
+	Text position X	Textposition X
+	Text position Y	Textposition Y
+	Text rotation	Textrotation
+	Text vertical position	Lodrät textposition
+	Tick size	Storlek på snedstreck
+	Tolerance height	Toleranshöjd
+	Tolerance pos vert	Tolerans pos. lodr.
+	Tolerance precision	Toleransprecision
+	Tolerance zero suppression	Nollundertryckning för tolerans
+	Tolerances	Toleranser
+	Top	Ovan
+	Top center	Uppe i mitten
+	Trailing	Avslutande
+	Upper tolerance	Övre tolerans
+	Use the style's value	Använd stilens värde
+	Variable	Variabel
+	Windows desktop	Windows-skrivbord
+	With	Med
+	Zero suppression	Nollundertryckning
+	{count} differences	{count} skillnader
+	{property}: that value can't be used here.	{property}: det värdet kan inte användas här.
