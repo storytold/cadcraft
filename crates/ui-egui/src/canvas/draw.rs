@@ -169,13 +169,16 @@ pub(super) fn draw_highlight_gpu(
     stencil: crate::gpu::Stencil,
 ) {
     let (hl_key, hl_slot, hl_origin, hl_infinite) = hl;
-    let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
-    let key = {
+    let hl_hash = |o: Vec2| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (list_gen, sel, origin.x.to_bits(), origin.y.to_bits(), color.to_array(), look.width.to_bits(), look.dashed).hash(&mut h);
+        (list_gen, sel, o.x.to_bits(), o.y.to_bits(), color.to_array(), look.width.to_bits(), look.dashed).hash(&mut h);
         h.finish()
     };
+    let view_height = f64::from(xf.rect.height()) / xf.scale.max(1e-300);
+    let reuse = *hl_key == Some(hl_hash(*hl_origin)) && crate::gpu::origin_usable(*hl_origin, &list.bounds, xf.center, view_height);
+    let origin = if reuse { *hl_origin } else { crate::gpu::choose_origin(&list.bounds, xf.center, view_height) };
+    let key = hl_hash(origin);
     if *hl_key != Some(key) {
         let prims = prims();
         let mesh = crate::gpu::build_highlight_mesh(list, &prims, origin, color.to_array(), look.width, look.dashed);
@@ -279,7 +282,10 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
 /// the infinite lines, which are clipped to the view on the CPU every frame.
 pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
     let Some(list) = &c.list else { return };
-    let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
+    let view_height = f64::from(xf.rect.height()) / xf.scale.max(1e-300);
+    let reuse = c.mesh_key == Some(list_mesh_key(&c.key, c.list_gen, c.mesh_origin, bg, lwdisplay))
+        && crate::gpu::origin_usable(c.mesh_origin, &list.bounds, xf.center, view_height);
+    let origin = if reuse { c.mesh_origin } else { crate::gpu::choose_origin(&list.bounds, xf.center, view_height) };
     let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
     if c.mesh_key != Some(key) {
         let t0 = crate::now_ms();
