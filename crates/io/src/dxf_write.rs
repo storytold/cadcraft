@@ -92,18 +92,17 @@ impl W {
     ///
     /// Skips every handle in use, so a file object carrying a handle above the seed (the
     /// reserved band) is not handed out again, and wraps into that band if the writer runs off
-    /// the top of the range.
+    /// the top of the range. Each handle skipped is one in use, so the walk is bounded by their
+    /// count.
     fn next_handle(&mut self) -> u64 {
-        loop {
+        for _ in 0..self.used.len().saturating_add(1) {
             let h = self.next;
-            self.next = self.next.saturating_add(1);
+            self.next = h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT);
             if self.used.insert(h) {
                 return h;
             }
-            if h == u64::MAX {
-                self.next = cadcraft_doc::HANDLE_LIMIT;
-            }
         }
+        self.next
     }
     /// A `102 {NAME` … `102 }` group of handles.
     fn group(&mut self, name: &str, code: i32, handles: &[&str]) {
