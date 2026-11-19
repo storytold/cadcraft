@@ -1217,3 +1217,49 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     });
     assert_eq!(loops_of(&h).len(), 2);
 }
+
+// ---------- point budget (#1922) ----------
+
+fn circle() -> EntityKind {
+    EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::ZERO, radius: 100.0 })
+}
+
+/// A block of one circle referenced as 1,000 copies in place: every copy is cheap to the
+/// block-expansion budget but costs hundreds of points.
+fn arrayed_circles() -> Drawing {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    blk.entities.push(block_entity(1, Common::default(), circle()));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.cols = 1000;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    d
+}
+
+fn points(l: &DisplayList) -> usize {
+    l.verts.len() + l.tris.len()
+}
+
+#[test]
+fn block_copies_stop_at_the_point_budget_and_say_so() {
+    let d = arrayed_circles();
+    let full = build(&d, &Space::Model, &Options::default());
+    assert!(!full.truncated && points(&full) > 100_000, "{}", points(&full));
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    assert!(l.truncated);
+    assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
+    assert!(l.prims.iter().all(|p| p.start as usize + p.len as usize <= l.verts.len()));
+}
+
+#[test]
+fn objects_built_on_all_cores_stop_at_the_point_budget_and_say_so() {
+    // Enough objects for the parallel build: the parts share one budget and report together.
+    let mut d = Drawing::new_imperial();
+    for _ in 0..600 {
+        d.add(&Space::Model, Common::default(), circle()).unwrap();
+    }
+    let l = crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, 10_000);
+    assert!(l.truncated);
+    assert!(points(&l) > 0 && points(&l) <= 10_000, "{}", points(&l));
+}
