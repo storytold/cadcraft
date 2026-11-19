@@ -1952,6 +1952,10 @@ menu	Dimension	Wymiarowanie
 	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Bieżący plik wygląda na niekompletny, więc {name} pozostanie bez zmian, a bieżący plik zostanie zastąpiony.
 	The current file is kept as {name} until the next save.	Bieżący plik zostanie zachowany jako {name} do następnego zapisu.
 	The drawing changed. Close the window and open it again.	Rysunek został zmieniony. Zamknij okno i otwórz je ponownie.
+	Minimize	Minimalizuj
+	Maximize	Maksymalizuj
+	Use system title bar	Użyj systemowego paska tytułu
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Pokaż prosty pasek tytułu z przyciskami okna nad własnym paskiem CADCraft. GNOME nie rysuje pasków tytułu dla aplikacji, więc ten nie korzysta z jego motywu.
 	This format can't keep these objects yet: {objects}.	Ten format nie potrafi jeszcze zachować tych obiektów: {objects}.
 	Turn on time-sensitive right-click	Włącz obsługę prawego przycisku zależną od czasu
 	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	Po wyłączeniu tej opcji prawy przycisk podczas polecenia działa zgodnie z ustawieniami trybu polecenia w oknie Dostosowanie prawego przycisku myszy.
