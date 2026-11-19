@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use cadcraft_engine::Session;
-use cadcraft_engine::cmd::file::{EntityCodec, set_entity_codec};
+use cadcraft_engine::cmd::file::{EntityCodec, set_entity_codec, set_object_records};
 use cadcraft_engine::doc::Entity;
 use serde_json::{Value, json};
 
@@ -220,6 +220,8 @@ fn run_case(dir: &Path) -> Result<(), String> {
 #[test]
 fn autolisp_corpus() {
     set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    set_object_records(cadcraft_io::object_records);
     let Some(dir) = cases_dir() else {
         eprintln!("CADCRAFT_LISP_CORPUS is not set: the AutoLISP corpus is skipped");
         return;

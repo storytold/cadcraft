@@ -172,8 +172,8 @@ fn build_palette() -> [Rgb; 256] {
         Rgb(0, 0, 255),
         Rgb(255, 0, 255),
         Rgb(255, 255, 255),
+        Rgb(65, 65, 65),
         Rgb(128, 128, 128),
-        Rgb(192, 192, 192),
     ];
     for (slot, colour) in palette.iter_mut().zip(base) {
         *slot = colour;
@@ -193,7 +193,7 @@ fn build_palette() -> [Rgb; 256] {
             *slot = Rgb(channel(red), channel(green), channel(blue));
         }
     }
-    let greys = [51u8, 91, 132, 173, 214, 255];
+    let greys = [51u8, 80, 105, 130, 190, 255];
     for (offset, shade) in greys.iter().enumerate() {
         if let Some(slot) = palette.get_mut(250 + offset) {
             *slot = Rgb(*shade, *shade, *shade);
@@ -300,6 +300,17 @@ mod tests {
         assert_eq!(aci_rgb(210), Rgb(255, 0, 255));
         assert_eq!(aci_rgb(250), Rgb(51, 51, 51));
         assert_eq!(aci_rgb(255), Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn palette_fixed_greys() {
+        assert_eq!(aci_rgb(8), Rgb(65, 65, 65));
+        assert_eq!(aci_rgb(9), Rgb(128, 128, 128));
+        for (i, g) in [(250u8, 51u8), (251, 80), (252, 105), (253, 130), (254, 190)] {
+            assert_eq!(aci_rgb(i), Rgb(g, g, g));
+        }
+        assert_eq!(nearest_aci(Rgb(65, 65, 65)), 8);
+        assert_eq!(nearest_aci(Rgb(128, 128, 128)), 9);
     }
 
     #[test]
