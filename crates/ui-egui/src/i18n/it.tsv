@@ -8,6 +8,7 @@
 menu	View	Visualizza
 menu	Modify	Edita
 # External References palette.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Una barra dei comandi a schede sotto la barra dei menu, con i gruppi Disegna, Modifica, Annotazione, Layer, Blocco e Proprietà della scheda Inizio.
 	Apply	Applica
 	Attach DWG...	Associa DWG...
 	Bind	Unisci
@@ -25,6 +26,7 @@ menu	Modify	Edita
 	References: {n}	Riferimenti: {n}
 	Reload	Ricarica
 	Reload All	Ricarica tutto
+	Ribbon	Barra multifunzione
 	Saved Path	Percorso salvato
 	Unload	Scarica
 	Unloaded	Scaricato

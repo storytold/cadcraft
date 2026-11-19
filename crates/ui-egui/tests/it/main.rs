@@ -32,6 +32,7 @@ mod pickdrag;
 mod properties_described;
 mod properties_units;
 mod rapid_clicks;
+mod ribbon_home;
 mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;

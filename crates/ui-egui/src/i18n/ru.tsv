@@ -27,6 +27,7 @@
 	<> Not Equal	<> Не равно
 	= Equals	= Равно
 	> Greater than	> Больше чем
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Панель команд с вкладками под строкой меню с панелями вкладки Главная: Рисование, Редактирование, Аннотации, Слои, Блок и Свойства.
 	About	О программе
 	About CADCraft	О CADCraft
 	Absolute	Абсолютные
@@ -539,6 +540,7 @@
 	New STB	Новая STB
 	New style	Новый стиль
 	Reset Panel Layout	Сбросить расположение панелей
+	Ribbon	Лента
 	Use for this layout	Использовать для этого листа
 	Display plot styles	Показывать стили печати
 	No plot style tables.	Нет таблиц стилей печати.

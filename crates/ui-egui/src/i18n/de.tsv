@@ -27,6 +27,7 @@
 	<> Not Equal	<> Ungleich
 	= Equals	= Gleich
 	> Greater than	> Größer als
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Eine Befehlsleiste mit Registerkarten unter der Menüleiste, mit den Gruppen Zeichnen, Ändern, Beschriftung, Layer, Block und Eigenschaften der Registerkarte Start.
 	About	Über
 	About CADCraft	Über CADCraft
 	Absolute	Absolut
@@ -545,6 +546,7 @@
 	New STB	Neue STB
 	New style	Neuer Stil
 	Reset Panel Layout	Panel-Anordnung zurücksetzen
+	Ribbon	Multifunktionsleiste
 	Use for this layout	Für dieses Layout verwenden
 	Display plot styles	Plotstile anzeigen
 	No plot style tables.	Keine Plotstiltabellen.

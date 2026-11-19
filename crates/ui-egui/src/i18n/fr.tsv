@@ -27,6 +27,7 @@
 	<> Not Equal	<> Différent de
 	= Equals	= Égal à
 	> Greater than	> Supérieur à
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Une barre de commandes à onglets sous la barre de menus, avec les groupes Dessin, Modification, Annotation, Calques, Bloc et Propriétés de l'onglet Début.
 	About	À propos
 	About CADCraft	À propos de CADCraft
 	Absolute	Absolu
@@ -539,6 +540,7 @@
 	New STB	Nouvelle STB
 	New style	Nouveau style
 	Reset Panel Layout	Réinitialiser la disposition des panneaux
+	Ribbon	Ruban
 	Use for this layout	Utiliser pour cet espace
 	Display plot styles	Afficher les styles de tracé
 	No plot style tables.	Aucune table de styles de tracé.

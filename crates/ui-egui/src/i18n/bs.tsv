@@ -5,6 +5,7 @@
 # and common.tsv). Not yet reviewed by a native speaker.
 # UTF-8: context<TAB>English source<TAB>Bosnian translation.
 # @plural = one|few|other forms for integer counts.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Traka naredbi s karticama ispod trake izbornika, s pločama kartice Početna: Crtanje, Izmjena, Anotacija, Slojevi, Blok i Svojstva.
 	Apply	Primijeni
 	Attach DWG...	Priloži DWG...
 	Bind	Veži
@@ -22,6 +23,7 @@
 	References: {n}	Reference: {n}
 	Reload	Ponovo učitaj
 	Reload All	Ponovo učitaj sve
+	Ribbon	Vrpca
 	Saved Path	Sačuvana putanja
 	Unload	Isprazni iz memorije
 	Unloaded	Ispražnjeno iz memorije

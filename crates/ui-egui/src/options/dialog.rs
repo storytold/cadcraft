@@ -212,6 +212,14 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         changes.insert("systemCursor".into(), json!(system_cursor));
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
+    let mut ribbon = app.ui.show_ribbon;
+    if ui.checkbox(&mut ribbon, crate::tl!("Ribbon")).changed() {
+        changes.insert("showRibbon".into(), json!(ribbon));
+    }
+    hint(
+        ui,
+        crate::tl!("A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels."),
+    );
 }
 
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.

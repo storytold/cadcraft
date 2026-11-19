@@ -5,6 +5,7 @@
 # Empty context = ordinary label; @plural = one|few|many forms with {n}.
 # Keep command IDs, keywords, technology/product names and user data unchanged.
 # External References palette (#525).
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Панель команд із вкладками під рядком меню з панелями вкладки Головна: Креслення, Редагування, Анотації, Шари, Блок і Властивості.
 	Apply	Застосувати
 	Attach DWG...	Приєднати DWG...
 	Bind	Вбудувати
@@ -22,6 +23,7 @@
 	References: {n}	Посилань: {n}
 	Reload	Оновити
 	Reload All	Оновити всі
+	Ribbon	Стрічка
 	Saved Path	Збережений шлях
 	Unload	Вивантажити
 	Unloaded	Вивантажено

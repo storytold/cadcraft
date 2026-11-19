@@ -47,6 +47,7 @@
 	> Greater than	> Büyüktür
 	A built-in table: editing it keeps an edited copy in the drawing.	Yerleşik bir tablo: düzenlendiğinde düzenlenmiş bir kopyası çizimde tutulur.
 	A drawing opened from a file keeps that file's format.	Bir dosyadan açılan çizim o dosyanın biçimini korur.
+	A tabbed command bar under the menu bar, with the Home tab's Draw, Modify, Annotation, Layers, Block and Properties panels.	Menü çubuğunun altında sekmeli bir komut çubuğu; Giriş sekmesinin Çiz, Değiştir, Açıklama, Katmanlar, Blok ve Özellikler panelleriyle.
 	A variable name starts with a letter and has only letters, digits and _	Değişken adı bir harfle başlar ve yalnızca harf, rakam ve _ içerir
 	About	Hakkında
 	About CADCraft	CADCraft Hakkında
@@ -880,6 +881,7 @@
 	Reverse zoom direction	Yakınlaştırma yönünü ters çevir
 	Revision Cloud	Revizyon Bulutu
 	Revolve	Döndürerek Oluştur
+	Ribbon	Şerit
 	Right	Sağ
 	Rotate	Döndür
 	Rotation	Döndürme
