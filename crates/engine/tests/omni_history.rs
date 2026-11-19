@@ -30,7 +30,7 @@ fn folder(tag: &str) -> PathBuf {
 }
 
 fn save(d: &Drawing, path: &Path) {
-    std::fs::write(path, cadcraft_io::write(d, &path.to_string_lossy()).unwrap()).unwrap();
+    std::fs::write(path, cadcraft_io::write(d, path).unwrap()).unwrap();
 }
 
 /// A drawing with a wall line on a red layer.
