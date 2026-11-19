@@ -593,3 +593,16 @@ fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     assert_eq!(frames(layout), [[Panel::Canvas]]);
     assert_eq!(h.state().session.doc().unwrap(), &document);
 }
+
+#[test]
+fn windows_layout_docks_properties_left_of_the_drawing_with_no_tool_sets_or_layers() {
+    use cadcraft_ui_egui::docking::{PALETTES_WIDTH, pc_workspace, validate};
+    let workspace = pc_workspace();
+    validate(&workspace).unwrap();
+    assert!(workspace.hidden.is_empty() && workspace.layout.floating.is_empty());
+    assert_eq!(frames(&workspace.layout), [[Panel::Canvas]]);
+    assert_eq!(dock_panels(&workspace.layout, Side::Start), [[[Panel::Properties]]]);
+    assert!(dock_panels(&workspace.layout, Side::End).is_empty());
+    assert_eq!(columns(&workspace.layout, Side::Start)[0].width, PALETTES_WIDTH);
+    assert!(!workspace.layout.contains(&Panel::ToolSets) && !workspace.layout.contains(&Panel::Layers));
+}
