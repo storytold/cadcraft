@@ -59,7 +59,7 @@ impl Styler {
         let normal = || by_name(cadcraft_doc::NORMAL_STYLE);
         let p = c.plot_style.trim();
         if p.is_empty() || p.eq_ignore_ascii_case("bylayer") {
-            ctx.d.layer(layer_name).and_then(|l| by_name(&l.plot_style)).or_else(normal)
+            ctx.layer(layer_name).and_then(|l| by_name(&l.plot_style)).or_else(normal)
         } else if p.eq_ignore_ascii_case("byblock") {
             ctx.block_pstyle.or_else(normal)
         } else {

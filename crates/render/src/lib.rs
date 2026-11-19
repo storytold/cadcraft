@@ -78,10 +78,32 @@ fn max_scale(m: &Mat3) -> f64 {
     if s.is_finite() { s } else { 0.0 }
 }
 
+/// A drawing's layers by lower-cased name (the first of a duplicated name wins, as the table's own
+/// search does), built once per display list: a lookup per object over the layer vector multiplies
+/// the object count by the layer count.
+struct LayerIndex(Option<std::collections::HashMap<String, usize>>);
+
+impl LayerIndex {
+    fn new(d: &Drawing) -> Self {
+        let mut m = std::collections::HashMap::with_capacity(d.layers.len());
+        for (i, l) in d.layers.iter().enumerate() {
+            m.entry(l.name.to_ascii_lowercase()).or_insert(i);
+        }
+        LayerIndex(Some(m))
+    }
+
+    /// No index: lookups scan the layer vector, as `Drawing::layer` does. For a few objects (a
+    /// rubber band redrawn at every pointer move), where building an index would cost more.
+    fn linear() -> Self {
+        LayerIndex(None)
+    }
+}
+
 /// Graphics state inherited through block references.
 #[derive(Clone)]
 struct Ctx<'a> {
     d: &'a Drawing,
+    layers: &'a LayerIndex,
     xf: Mat3,
     block_color: Color,
     block_layer: Option<String>,
@@ -103,12 +125,19 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    /// The layer called `name` (any case), as [`Drawing::layer`] finds it.
+    fn layer(&self, name: &str) -> Option<&cadcraft_doc::Layer> {
+        let Some(map) = &self.layers.0 else { return self.d.layer(name) };
+        let i = if name.bytes().any(|b| b.is_ascii_uppercase()) { map.get(&name.to_ascii_lowercase()) } else { map.get(name) };
+        i.and_then(|i| self.d.layers.get(*i))
+    }
+
     /// A layer's colour, honouring the viewport's override.
     fn layer_color(&self, name: &str) -> Option<Color> {
         if let Some((_, c)) = self.vp_colors.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
             return Some(*c);
         }
-        self.d.layer(name).map(|l| l.color)
+        self.layer(name).map(|l| l.color)
     }
 }
 
@@ -125,6 +154,8 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// The drawing's layers by name.
+    layers: &'a LayerIndex,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -340,6 +371,7 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            layers: self.layers,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent.
