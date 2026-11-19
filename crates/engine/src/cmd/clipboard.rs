@@ -10,7 +10,7 @@
 //! The clipboard can also travel as DXF text ([`system_text`], [`load_system_text`]), so a front
 //! end can put it on the system clipboard and paste it into another CADCraft window.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Block, Drawing, Entity, EntityKind, HVal, Handle};
@@ -79,10 +79,11 @@ pub(crate) fn paste(s: &mut Session, m: &Mat3) -> Result<Vec<Handle>> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let space = s.space();
     let d = s.doc_mut()?;
-    let renames = defs.as_deref().map(|x| merge(d, x)).unwrap_or_default();
+    let mut raster_map = HashMap::new();
+    let renames = defs.as_deref().map(|x| merge(d, x, &mut raster_map)).unwrap_or_default();
     let mut out = Vec::new();
     for e in &ents {
-        let mut e = adopt(d, defs.as_deref(), e, &renames);
+        let mut e = adopt(d, defs.as_deref(), e, &renames, &mut raster_map);
         e.kind.transform(m);
         d.ensure_layer(&e.common.layer);
         out.push(e.handle);
@@ -104,7 +105,8 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let base = s.clipboard_base;
     let d = s.doc_mut()?;
-    let renames = defs.as_deref().map(|x| merge(d, x)).unwrap_or_default();
+    let mut raster_map = HashMap::new();
+    let renames = defs.as_deref().map(|x| merge(d, x, &mut raster_map)).unwrap_or_default();
     let seed = d.handseed;
     let name = (0..1_000_000u64)
         .map(|i| format!("A$C{:08X}", seed.wrapping_add(i) & 0xFFFF_FFFF))
@@ -113,7 +115,7 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let mut b = Block::new(&name);
     b.base = base.to3(0.0);
     for e in &ents {
-        let e = adopt(d, defs.as_deref(), e, &renames);
+        let e = adopt(d, defs.as_deref(), e, &renames, &mut raster_map);
         d.ensure_layer(&e.common.layer);
         b.entities.push(e);
     }
@@ -132,16 +134,17 @@ pub fn system_text(s: &Session) -> Option<String> {
     let hooks = super::file::io()?;
     let mut d = Drawing::new_imperial();
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.as_ref());
+    let mut raster_map = HashMap::new();
     let renames = match &s.clipboard_source {
         Some(c) => {
             d.header = c.defs.header.clone();
-            merge(&mut d, &c.defs)
+            merge(&mut d, &c.defs, &mut raster_map)
         }
-        None => BTreeMap::new(),
+        None => Renames::default(),
     };
     d.header.set("INSBASE", HVal::Point(s.clipboard_base.to3(0.0)));
     for e in &s.clipboard {
-        let e = adopt(&mut d, defs, e, &renames);
+        let e = adopt(&mut d, defs, e, &renames, &mut raster_map);
         d.ensure_layer(&e.common.layer);
         d.model.push(e);
     }
@@ -287,9 +290,15 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     d
 }
 
+#[derive(Default)]
+struct Renames {
+    exact: BTreeMap<String, String>,
+    lower: HashMap<String, String>,
+}
+
 /// Add `defs`' table records and blocks that `d` doesn't have. Returns the blocks copied, from
-/// their name in `defs` to their name in `d`.
-fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
+/// their name in `defs` to their name in `d` (plus a case-insensitive lookup index).
+fn merge(d: &mut Drawing, defs: &Drawing, raster_map: &mut HashMap<String, String>) -> Renames {
     use crate::cmd::merge::merge_named as add;
     add(&mut d.layers, &defs.layers, |l| &l.name);
     add(&mut d.linetypes, &defs.linetypes, |l| &l.name);
@@ -297,14 +306,16 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     add(&mut d.dim_styles, &defs.dim_styles, |t| &t.name);
     add(&mut d.mleader_styles, &defs.mleader_styles, |t| &t.name);
     add(&mut d.table_styles, &defs.table_styles, |t| &t.name);
-    let renames = crate::cmd::merge::block_renames(d, defs, None);
-    for (from, to) in &renames {
+    let exact = crate::cmd::merge::block_renames(d, defs, None);
+    let lower = exact.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect();
+    let renames = Renames { exact, lower };
+    for (from, to) in &renames.exact {
         let Some(b) = defs.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(d, Some(defs), e, &renames);
+            let e = adopt(d, Some(defs), e, &renames, raster_map);
             d.ensure_layer(&e.common.layer);
             nb.entities.push(e);
         }
@@ -313,8 +324,8 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     renames
 }
 
-fn rename_for<'a>(renames: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
-    renames.get(name).or_else(|| renames.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)).map(String::as_str)
+fn rename_for<'a>(renames: &'a Renames, name: &str) -> Option<&'a str> {
+    renames.exact.get(name).or_else(|| renames.lower.get(&name.to_ascii_lowercase())).map(String::as_str)
 }
 
 fn raster_candidate_key(path: &str, suffix: usize) -> String {
@@ -338,7 +349,7 @@ fn unique_raster_key(rasters: &cadcraft_doc::Rasters, path: &str, src: &cadcraft
 /// A copy of a clipboard object for `d`: a fresh handle, block references renamed, rasters carried
 /// into the target drawing, and links to objects of the source drawing (associative dimension
 /// points) dropped.
-fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &Renames, raster_map: &mut HashMap<String, String>) -> Entity {
     let mut e = e.clone();
     e.handle = d.new_handle();
     match &mut e.kind {
@@ -362,15 +373,22 @@ fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &BTreeMap
         }
         EntityKind::Image(img) => {
             if let Some(src_raster) = defs.and_then(|s| s.rasters.get(&img.path)).cloned() {
-                match d.rasters.get(&img.path) {
-                    None => d.rasters.insert(&img.path, src_raster),
-                    Some(existing) if existing.as_ref() == src_raster.as_ref() => {}
-                    Some(_) => {
-                        if let Some(new_key) = unique_raster_key(&d.rasters, &img.path, &src_raster) {
-                            if d.rasters.get(&new_key).is_none() {
-                                d.rasters.insert(&new_key, src_raster);
+                if let Some(mapped) = raster_map.get(&img.path)
+                    && d.rasters.get(mapped).is_some_and(|existing| existing.as_ref() == src_raster.as_ref())
+                {
+                    img.path = mapped.clone();
+                } else {
+                    match d.rasters.get(&img.path) {
+                        None => d.rasters.insert(&img.path, src_raster),
+                        Some(existing) if existing.as_ref() == src_raster.as_ref() => {}
+                        Some(_) => {
+                            if let Some(new_key) = unique_raster_key(&d.rasters, &img.path, &src_raster) {
+                                if d.rasters.get(&new_key).is_none() {
+                                    d.rasters.insert(&new_key, src_raster);
+                                }
+                                raster_map.insert(img.path.clone(), new_key.clone());
+                                img.path = new_key;
                             }
-                            img.path = new_key;
                         }
                     }
                 }
