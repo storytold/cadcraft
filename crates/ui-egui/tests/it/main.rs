@@ -29,6 +29,7 @@ mod options_dialog;
 mod options_right_click;
 mod parameters_rename;
 mod pickdrag;
+mod preview_zoom;
 mod properties_described;
 mod properties_units;
 mod rapid_clicks;
@@ -45,3 +46,17 @@ mod toolsets_parametric;
 mod viewport_double_click_selection;
 mod workspace_focus;
 mod zoomed_far_in;
+
+/// Plot Preview plots through a process-wide hook that `preview_zoom` records. The tests that open
+/// the preview take this lock, so one never plots while the other counts.
+pub(crate) static PLOT_PREVIEW: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The process-wide io hooks, set once by whichever test runs first, so every test that sets them
+/// sets these: a DXF writer stub for the clipboard text, and a plot that `preview_zoom` records.
+pub(crate) fn shared_io() -> cadcraft_engine::cmd::file::IoHooks {
+    cadcraft_engine::cmd::file::IoHooks {
+        read: |_, _| Ok(cadcraft_engine::doc::Drawing::new_metric()),
+        write: |_, _| Ok(b"0\nSECTION\n0\nENDSEC\n0\nEOF\n".to_vec()),
+        plot: Some(preview_zoom::recording_plot),
+    }
+}

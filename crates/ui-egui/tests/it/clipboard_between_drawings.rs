@@ -24,11 +24,7 @@ fn harness(app: CadApp) -> Harness<'static, CadApp> {
 #[test]
 fn copy_in_one_drawing_and_paste_in_another() {
     // A DXF writer for the clipboard text (the app installs the real one).
-    cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
-        read: |_, _| Ok(cadcraft_engine::doc::Drawing::new_metric()),
-        write: |_, _| Ok(b"0\nSECTION\n0\nENDSEC\n0\nEOF\n".to_vec()),
-        plot: None,
-    });
+    cadcraft_engine::cmd::file::set_io(crate::shared_io());
     let mut app = CadApp::new(Session::new(), Services::default());
     app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
     app.run("circle", json!({ "center": [5, 5], "radius": 2 })).unwrap();
