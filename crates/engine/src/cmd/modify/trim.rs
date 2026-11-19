@@ -115,10 +115,12 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
                 .collect();
             ts.sort_by(f64::total_cmp);
             let tp = ln.param_of(pick).clamp(0.0, 1.0);
+            let found = ts.len();
+            ts.retain(|t| (t - tp).abs() * ln.len() > ON_CUT);
             let lo = ts.iter().copied().filter(|t| *t < tp).fold(0.0, f64::max);
             let hi = ts.iter().copied().filter(|t| *t > tp).fold(1.0, f64::min);
             if lo == 0.0 && hi == 1.0 {
-                return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
+                return Err(EngineError::Other(if ts.len() < found { ON_THE_CUT } else { "Object does not intersect a cutting edge." }.into()));
             }
             let mut v = Vec::new();
             if lo > 0.0 {
@@ -137,11 +139,18 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             let mut ts: Vec<f64> =
                 cut.iter().flat_map(|c| intersect_ext(&seg, c, false)).map(param).filter(|t| *t > 1e-9 && *t < sweep - 1e-9).collect();
             ts.sort_by(f64::total_cmp);
-            let tp = param(pick).min(sweep);
+            // A pick off the arc is at the end it is nearer, round the circle.
+            let tp = match param(pick) {
+                t if t <= sweep => t,
+                t if t - sweep < TAU - t => sweep,
+                _ => 0.0,
+            };
+            let found = ts.len();
+            ts.retain(|t| (t - tp).abs() * ga.radius > ON_CUT);
             let lo = ts.iter().copied().filter(|t| *t < tp).fold(0.0, f64::max);
             let hi = ts.iter().copied().filter(|t| *t > tp).fold(sweep, f64::min);
             if lo == 0.0 && hi == sweep {
-                return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
+                return Err(EngineError::Other(if ts.len() < found { ON_THE_CUT } else { "Object does not intersect a cutting edge." }.into()));
             }
             let mut v = Vec::new();
             if lo > 0.0 {
@@ -157,10 +166,16 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             let mut angs: Vec<f64> = cut.iter().flat_map(|x| intersect_ext(&full, x, false)).map(|p| c.center.xy().angle_to(p)).collect();
             angs.sort_by(f64::total_cmp);
             angs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-            if angs.len() < 2 {
-                return Err(EngineError::Other("Circle must intersect cutting edges at two or more points.".into()));
-            }
             let ap = c.center.xy().angle_to(pick);
+            let found = angs.len();
+            angs.retain(|a| {
+                let d = norm_angle(a - ap);
+                d.min(TAU - d) * c.radius > ON_CUT
+            });
+            if angs.len() < 2 {
+                let why = if found >= 2 { ON_THE_CUT } else { "Circle must intersect cutting edges at two or more points." };
+                return Err(EngineError::Other(why.into()));
+            }
             // The removed arc runs between the two intersections around the pick.
             let n = angs.len();
             let mut keep = None;
@@ -293,8 +308,9 @@ const MAX_SELF_CROSSINGS: usize = 1 << 16;
 
 /// How near a cut a pick is on it, along the object. AutoCAD 2024 trims nothing for a pick that
 /// near one of a polyline's own cuts, and passes over a cut by another edge, the trim running on
-/// across it. On open polylines from 1e-3 to 1e9 long it was within 5e-7, and 5.1e-7 away trimmed
-/// at the cut (around a closed rectangle it reached a little further, to 1e-6).
+/// across it, on lines, arcs and circles too. On open polylines from 1e-3 to 1e9 long it was within
+/// 5e-7, and 5.1e-7 away trimmed at the cut (around a closed rectangle it reached a little further,
+/// to 1e-6; on a line, further still, to 5e-4 on one 10 long).
 const ON_CUT: f64 = 5e-7;
 
 /// The refusal when every cut was passed over ([`ON_CUT`]): the object meets an edge, at the pick,
