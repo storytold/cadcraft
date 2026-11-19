@@ -351,7 +351,11 @@ impl Session {
             }
             Some(i) => {
                 if let Input::Point(p) = &i {
-                    self.last_point = *p;
+                    // A point the command refuses must not become the last point: `@` alone answers
+                    // with it, so a non-finite one would poison relative input for the session.
+                    if p.is_finite() {
+                        self.last_point = *p;
+                    }
                     if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
                         self.last_segment = Some((b, *p));
                     }

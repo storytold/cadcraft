@@ -1443,6 +1443,38 @@ fn typed_limits_enter_sets_the_last_point_and_ortho_does_not_flatten_the_corner(
 }
 
 #[test]
+fn a_non_finite_point_never_becomes_the_last_point() {
+    // Every point used to be stored as the last point before the running command judged it, so a
+    // point the command refused still answered a later `@` with itself, for the rest of the session.
+    let mut s = Session::new();
+    s.execute("limits", &json!({"min": [0, 0], "max": [420, 297]})).unwrap();
+    s.last_point = Vec2::new(1.0, 2.0);
+    s.cmdline("limits").unwrap();
+    s.input(Input::Point(Vec2::new(f64::INFINITY, 0.0))).unwrap();
+    assert!(s.prompt_text().contains("Specify lower left corner"), "the point was refused: {}", s.prompt_text());
+    assert_eq!(s.last_point, Vec2::new(1.0, 2.0), "a refused point must not become the last point");
+    // `@` alone answers with the last point the command took, which is still a point.
+    s.cmdline("@").unwrap();
+    assert!(s.prompt_text().contains("Specify upper right corner"), "{}", s.prompt_text());
+}
+
+#[test]
+fn a_limits_corner_stored_as_non_finite_reads_as_the_default() {
+    // A file may store $LIMMIN as a non-finite number: Enter must not keep it as the last point.
+    let mut s = Session::new();
+    s.doc_mut().unwrap().header.set("LIMMIN", cadcraft_doc::HVal::Point(cadcraft_geom::Vec3::new(f64::INFINITY, 0.0, 0.0)));
+    s.cmdline("limits").unwrap();
+    assert!(s.prompt_text().contains("Specify lower left corner <0.0000,0.0000>"), "{}", s.prompt_text());
+    s.cmdline("").unwrap();
+    assert_eq!(s.last_point, Vec2::ZERO);
+    assert!(s.prompt_text().contains("Specify upper right corner <12.0000,9.0000>"), "{}", s.prompt_text());
+    s.cmdline("").unwrap();
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.point("LIMMIN").map(|p| (p.x, p.y)), Some((0.0, 0.0)));
+    assert_eq!(h.point("LIMMAX").map(|p| (p.x, p.y)), Some((12.0, 9.0)));
+}
+
+#[test]
 fn format_thickness_asks_for_the_thickness() {
     let mut s = Session::new();
     s.start("thickness").unwrap();

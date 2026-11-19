@@ -430,11 +430,12 @@ struct LimitsM {
 }
 
 impl LimitsM {
-    /// The current LIMMIN (before the lower corner is given) or LIMMAX (after).
+    /// The current LIMMIN (before the lower corner is given) or LIMMAX (after). A corner a file
+    /// stored as a non-finite number reads as the default, so Enter never keeps it.
     fn current(&self, s: &Session) -> cadcraft_geom::Vec2 {
         let (name, fallback) = if self.lower.is_none() { ("LIMMIN", (0.0, 0.0)) } else { ("LIMMAX", (12.0, 9.0)) };
-        let p = s.doc().ok().and_then(|d| d.header.point(name));
-        p.map_or(cadcraft_geom::Vec2::new(fallback.0, fallback.1), |p| cadcraft_geom::Vec2::new(p.x, p.y))
+        let stored = s.doc().ok().and_then(|d| d.header.point(name)).map(|p| cadcraft_geom::Vec2::new(p.x, p.y));
+        stored.filter(|p| p.is_finite()).unwrap_or(cadcraft_geom::Vec2::new(fallback.0, fallback.1))
     }
 }
 
