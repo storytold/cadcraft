@@ -33,6 +33,20 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                // An active XCLIP boundary is part of the reference's outline even when
+                // XCLIPFRAME hides the frame: a fence or crossing polygon that meets the
+                // boundary itself, and not the box around it, selects the reference.
+                if let EntityKind::Insert(ins) = &e.kind
+                    && let Some(blk) = d.block(&ins.block)
+                    && let Some(clip) = ins.clip.as_ref().filter(|c| c.active())
+                {
+                    let m = ins.transform(blk.base.xy());
+                    let mut outline: Vec<Vec2> = clip.polygon().into_iter().map(|p| m.apply(p)).collect();
+                    if let Some(first) = outline.first().copied() {
+                        outline.push(first);
+                    }
+                    v.push(outline);
+                }
             }
             v
         }
@@ -888,5 +902,22 @@ mod xclip_selection_tests {
         assert_eq!(select_window(&d, &Space::Model, cross_top, true), vec![h]);
         assert!(select_window(&d, &Space::Model, win_line_only, false).is_empty());
         assert_eq!(select_window(&d, &Space::Model, win_all, false), vec![h]);
+    }
+
+    #[test]
+    fn hidden_frame_polygon_clip_outline_is_selectable() {
+        // A triangular clip. The fence and the crossing polygon meet only the hypotenuse, which
+        // the box around the boundary does not cover: the boundary's own outline is the only
+        // geometry that can hit, and it is not drawn when XCLIPFRAME is 0.
+        let clip = ClipBoundary::new(vec![Vec2::new(0.0, 30.0), Vec2::new(10.0, 30.0), Vec2::new(0.0, 40.0)]);
+        for frame in [0, 2] {
+            let (mut d, h) = insert_with_line("BC", (0.0, 30.0), (10.0, 30.0), "Hidden", clip.clone());
+            d.header.set_i64("XCLIPFRAME", frame);
+            d.layers.iter_mut().find(|l| l.name == "Hidden").unwrap().frozen = true;
+            let fence = [Vec2::new(4.0, 34.0), Vec2::new(6.0, 36.0)];
+            assert_eq!(select_fence(&d, &Space::Model, &fence), vec![h], "fence frame={frame}");
+            let poly = [Vec2::new(4.0, 34.0), Vec2::new(6.0, 36.0), Vec2::new(6.0, 34.0)];
+            assert_eq!(select_polygon(&d, &Space::Model, &poly, true), vec![h], "crossing polygon frame={frame}");
+        }
     }
 }
