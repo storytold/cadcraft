@@ -2787,6 +2787,41 @@ fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
     assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
 }
 
+#[test]
+fn tilted_text_is_placed_as_seen_from_above() {
+    // A TEXT in a tilted plane (extrusion 0.6,0,0.8) keeps its insertion point and its rotation in
+    // that plane's OCS: group 10 (2000,-800,600) is WCS (1000,2000,0), and the plane's x axis runs
+    // +Y in plan, so a text with group 50 = 0 is drawn turned 90°. Read as WCS the text landed
+    // millions of units away in a drawing near UTM coordinates — the same failure #2584 fixed for
+    // HATCH and LWPOLYLINE and named TEXT as the leftover of.
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n2000\n20\n-800\n30\n600\n40\n2.5\n\
+                1\nSURVEY\n210\n0.6\n220\n0\n230\n0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "t.dxf").unwrap();
+    let tx = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    for (got, want) in [(tx.insert.x, 1000.0), (tx.insert.y, 2000.0), (tx.insert.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "insert {:?}", tx.insert);
+    }
+    assert!((tx.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-12, "{}", tx.rotation);
+    // Its points are plan coordinates now, so the plane is spent rather than kept on the entity.
+    assert_eq!(d.model.iter().next().unwrap().common.extrusion, Vec3::Z);
+    // The text takes up its place in the drawing instead of an area millions of units across.
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, 1000.0), (b.min.y, 2000.0)] {
+        assert!((got - want).abs() < 10.0, "extents {b:?}");
+    }
+    // Saved flat in the WCS (no extrusion), it reads back in the same place.
+    let b2 = roundtrip(&d).extents(&Space::Model);
+    assert!((b2.min - b.min).len() < 1e-6 && (b2.max - b.max).len() < 1e-6, "{b2:?} vs {b:?}");
+
+    // A plain text and one whose extrusion only carries noise are untouched.
+    for ext in ["", "210\n0.0001\n220\n0\n230\n1\n"] {
+        let plain = format!("0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n5\n20\n7\n40\n2.5\n1\nOK\n{ext}0\nENDSEC\n0\nEOF\n");
+        let p = first(&read(plain.as_bytes(), "p.dxf").unwrap(), |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+        assert_eq!((p.insert.x, p.insert.y, p.insert.z), (5.0, 7.0, 0.0), "{ext:?}");
+        assert_eq!(p.rotation, 0.0, "{ext:?}");
+    }
+}
+
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
 fn hatch_edge_extents(edges: &str) -> Bounds2 {
     let n = edges.matches("72\n").count();
