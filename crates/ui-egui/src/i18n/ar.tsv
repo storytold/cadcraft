@@ -277,6 +277,7 @@
 	Drawing Utilities	أدوات مساعدة للرسم
 	Drawing as bytes	الرسم كبايتات
 	Drawings (DWG, DXF)	رسومات (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	صور نقطية (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	تُحفظ الرسومات التي لا ملف لها بعد بالإصدار الافتراضي. 0 دقيقة تُوقف الحفظ التلقائي.
 	Dynamic	ديناميكي
 	Dynamic Dimensions	تأشيرات ديناميكية

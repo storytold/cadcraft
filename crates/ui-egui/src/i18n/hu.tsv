@@ -315,6 +315,7 @@
 	Drawing Utilities	Rajzsegédprogramok
 	Drawing as bytes	Rajz bájtokként
 	Drawings (DWG, DXF)	Rajzok (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	Raszterképek (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Az új, még fájl nélküli rajzokat a program az alapértelmezett verzióban menti. 0 perc beállításával az automatikus mentés kikapcsol.
 	Dynamic	Dinamikus
 	Dynamic Block Data	Dinamikus blokk adatai

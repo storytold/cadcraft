@@ -316,6 +316,7 @@
 	Drawing Utilities	Çizim Yardımcı Programları
 	Drawing as bytes	Bayt olarak çizim
 	Drawings (DWG, DXF)	Çizimler (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	Raster Görüntüler (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Henüz dosyası olmayan çizimler varsayılan sürümde kaydedilir. 0 dakika otomatik kaydetmeyi kapatır.
 	Dynamic	Dinamik
 	Dynamic Block Data	Dinamik Blok Verileri

@@ -267,6 +267,7 @@
 	Drawing Template (DWT)	Ritningsmall (DWT)
 	Drawing Utilities	Ritningsverktyg
 	Drawings (DWG, DXF)	Ritningar (DWG, DXF)
+	Raster images (PNG, JPEG, BMP, TIFF)	Rasterbilder (PNG, JPEG, BMP, TIFF)
 	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Ritningar som ännu saknar fil sparas i standardversionen. 0 minuter stänger av automatiskt sparande.
 	Dynamic	Dynamisk
 	Dynamic Dimensions	Dynamiska mått
