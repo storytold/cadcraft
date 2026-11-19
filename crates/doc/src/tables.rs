@@ -805,9 +805,11 @@ pub struct PageSetup {
     /// Plot objects with their transparency ("Plot transparency"; PLOTTRANSPARENCYOVERRIDE can
     /// override it). The DXF plot layout flags have no bit for it, so it is not saved in DXF.
     pub plot_transparency: bool,
-    /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
-    /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
-    pub paper_mm: bool,
+    /// Explicit paper-space unit for the layout: `Some(true)` for millimetres (plot paper units 1
+    /// in DXF), `Some(false)` for inches, or `None` to follow the drawing's `MEASUREMENT` (#1058,
+    /// #3249).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paper_mm: Option<bool>,
     /// Paper size (DXF groups 44, 45) and plot rotation (group 73) as the file stored them.
     /// Saving writes them back while they still describe `width_mm`, `height_mm` and
     /// `landscape`, so each program's convention for media defined wider than tall survives a
@@ -839,7 +841,7 @@ impl Default for PageSetup {
             lineweights: true,
             show_plot_styles: false,
             plot_transparency: false,
-            paper_mm: false,
+            paper_mm: None,
             file_paper: None,
             image_origin: None,
         }

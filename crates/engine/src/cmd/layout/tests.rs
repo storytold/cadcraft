@@ -190,6 +190,40 @@ fn pagesetup_paper_table() {
     assert_eq!((p.width_mm, p.height_mm), (300.0, 500.0));
 }
 
+#[test]
+fn pagesetup_paper_units_make_an_inch_sheet_metric() {
+    // An ARCH D sheet in a drawing that measures in millimetres (#3249): the page setup's paper
+    // units decide the paper-space unit, so the sheet can be 914.4 x 609.6 mm.
+    let mut s = Session::new();
+    s.execute("units", &json!({"insunits": 4})).unwrap();
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 914.4).abs() < 1e-9 && (sheet.size.y - 609.6).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "Inches"})).unwrap();
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 36.0).abs() < 1e-9 && (sheet.size.y - 24.0).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "millimeters"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(true));
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "feet"})).is_err());
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": 4})).is_err());
+}
+
+#[test]
+fn pagesetup_paper_units_inches_overrides_metric_measurement() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "MEASUREMENT", "value": 1})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true})).unwrap();
+    // Without an explicit paperUnits choice, MEASUREMENT = 1 keeps the sheet in millimetres.
+    let metric = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((metric.size.x - 914.4).abs() < 1e-9 && (metric.size.y - 609.6).abs() < 1e-9, "{:?}", metric.size);
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "inches"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], false);
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(false));
+    let inch = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((inch.size.x - 36.0).abs() < 1e-9 && (inch.size.y - 24.0).abs() < 1e-9, "{:?}", inch.size);
+}
+
 fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {
     let _ = d;
     Ok(format!("%PDF-1.4 fake {space:?} {opts}").into_bytes())
