@@ -1,3 +1,5 @@
+use cadcraft_geom::{Polyline, point_in_polygon};
+
 use super::common::T;
 use super::{Color, EntityKind, Gradient, Handle, Hatch, HatchLoop, PolyVertex, Rgb, Spline, Tag, Vec2};
 
@@ -24,8 +26,10 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        // Bit 8: the box around a text the hatch leaves out (a text island).
+        loops.push((HatchLoop { vertices: verts, outer, sources }, flags & 8 != 0));
     }
+    let loops = without_free_text_boxes(loops);
     let solid = solid || pattern.eq_ignore_ascii_case("SOLID");
     let (scale, angle) = (t.fd(41, 1.0), t.fd(52, 0.0).to_radians());
     // Keep the file's definition lines even for a name the library knows: the library's versions
@@ -47,6 +51,75 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         background,
         pattern_lines,
     }))
+}
+
+/// Most comparisons of text boxes with loop vertices; past it the text boxes are left out.
+const MAX_TEXT_BOX_WORK: usize = 4_000_000;
+
+/// The loops without the text boxes that lie in no other loop. A text box only cuts the text
+/// out of the fill around it; one with no fill around it is never filled itself (a box around
+/// a label beside a solid-filled dot), while odd parity alone would fill it. A text box inside
+/// another loop stays and is a hole there. One without a centre (no vertices, coordinates that
+/// aren't numbers) can't be placed and is left out.
+///
+/// The work is bounded by [`MAX_TEXT_BOX_WORK`] (text boxes times outline points): estimated
+/// from the loops' own vertices before anything is flattened, then counted as outlines are.
+/// Past it the text boxes not yet placed are all kept, as before this check existed: a hole too
+/// many is better than a label covered. A fill loop is only flattened when its bounds hold a
+/// text box's centre still undecided, and its outline is dropped once those are checked.
+fn without_free_text_boxes(loops: Vec<(HatchLoop, bool)>) -> Vec<HatchLoop> {
+    let boxes = loops.iter().filter(|(_, text_box)| *text_box).count();
+    if boxes == 0 {
+        return loops.into_iter().map(|(l, _)| l).collect();
+    }
+    let outline = |l: &HatchLoop| Polyline { vertices: l.vertices.clone(), closed: true };
+    // Before any flattening: the loops' own vertices.
+    let raw: usize = loops.iter().filter(|(_, text_box)| !text_box).map(|(l, _)| l.vertices.len()).sum();
+    if boxes.saturating_mul(raw) > MAX_TEXT_BOX_WORK {
+        return loops.into_iter().map(|(l, _)| l).collect();
+    }
+    // Each text box's centre: `None` when it has none (no vertices, coordinates not numbers;
+    // an empty outline's bounds are inverted and would give the origin).
+    let centres: Vec<Option<Vec2>> = loops
+        .iter()
+        .map(|(l, text_box)| {
+            if !text_box || l.vertices.is_empty() {
+                return None;
+            }
+            let b = outline(l).bounds();
+            let c = b.center();
+            (b.min.x <= b.max.x && b.min.y <= b.max.y && c.x.is_finite() && c.y.is_finite()).then_some(c)
+        })
+        .collect();
+    let mut inside = vec![false; loops.len()];
+    let mut work = 0usize;
+    let mut exceeded = false;
+    for (l, _) in loops.iter().filter(|(_, text_box)| !text_box) {
+        let o = outline(l);
+        let b = o.bounds();
+        let pending: Vec<usize> = (0..loops.len()).filter(|&k| !inside[k] && centres[k].is_some_and(|c| b.contains(c))).collect();
+        if pending.is_empty() {
+            continue;
+        }
+        let tol = ((b.width() + b.height()) * 1e-3).max(1e-9);
+        let area = o.tessellate(if tol.is_finite() { tol } else { 1e-3 });
+        work = work.saturating_add(area.len().saturating_mul(pending.len()));
+        if work > MAX_TEXT_BOX_WORK {
+            exceeded = true;
+            break;
+        }
+        for k in pending {
+            if centres[k].is_some_and(|c| point_in_polygon(&area, c)) {
+                inside[k] = true;
+            }
+        }
+    }
+    loops
+        .into_iter()
+        .enumerate()
+        .filter(|(k, (_, text_box))| !text_box || inside[*k] || (exceeded && centres[*k].is_some()))
+        .map(|(_, (l, _))| l)
+        .collect()
 }
 
 fn seek_code(tags: &[Tag], index: &mut usize, code: i32) {
