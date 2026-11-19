@@ -1014,10 +1014,7 @@ fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotTex
         }
     } else {
         let glyph_pt = Bounds2::from_points(t.bounds.corners().map(|c| map.pt(c)));
-        // Quadratic flattening samples 6 segments per curve; tolerance keeps tangent edge glyphs.
-        let span = glyph_pt.width().max(glyph_pt.height()).max((g.x * k).len() + (g.y * k).len());
-        let tol = (span * 0.05).max(0.5);
-        if !clip_pt.intersects(&glyph_pt.expand(tol)) {
+        if !clip_pt.intersects(&glyph_pt) {
             return;
         }
     }
