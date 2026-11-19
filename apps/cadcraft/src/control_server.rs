@@ -255,16 +255,16 @@ fn parse_line(bytes: &[u8]) -> Line<'_> {
     if let Err(e) = serde_json::from_str::<&serde_json::value::RawValue>(text) {
         return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection"));
     }
-    let Ok(mut obj) = serde_json::from_str::<std::collections::BTreeMap<String, &serde_json::value::RawValue>>(text) else {
+    let Ok(obj) = serde_json::from_str::<Fields<'_>>(text) else {
         return Line::Reject("not a control request (expected a JSON object); closing the connection".into());
     };
     // `method` and `token` are decoded as strings only (anything else is no string); `id` is echoed back
     // in replies, so it is decoded but bounded.
     let string = |v: Option<&serde_json::value::RawValue>| v.and_then(|r| serde_json::from_str::<String>(r.get()).ok());
-    let Some(method) = string(obj.remove("method")) else {
+    let Some(method) = string(obj.method) else {
         return Line::Reject("not a control request (missing string `method`); closing the connection".into());
     };
-    let id = match obj.remove("id") {
+    let id = match obj.id {
         None => Value::Null,
         Some(r) if r.get().len() <= MAX_ID_BYTES => match serde_json::from_str(r.get()) {
             Ok(v) => v,
@@ -272,7 +272,58 @@ fn parse_line(bytes: &[u8]) -> Line<'_> {
         },
         Some(_) => return Line::Reject(format!("`id` is longer than {MAX_ID_BYTES} bytes; closing the connection")),
     };
-    Line::Request { id, method, params: obj.remove("params"), token: string(obj.remove("token")) }
+    Line::Request { id, method, params: obj.params, token: string(obj.token) }
+}
+
+/// The request object's own keys, each value kept as JSON text. Other keys are skipped without
+/// being stored: collecting them (in a map) would let an unauthenticated peer turn a line of many
+/// short distinct keys into many owned strings and map nodes. A repeated key takes the last value.
+#[derive(Default)]
+struct Fields<'a> {
+    id: Option<&'a serde_json::value::RawValue>,
+    method: Option<&'a serde_json::value::RawValue>,
+    params: Option<&'a serde_json::value::RawValue>,
+    token: Option<&'a serde_json::value::RawValue>,
+}
+
+impl<'de> serde::Deserialize<'de> for Fields<'de> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Key {
+            Id,
+            Method,
+            Params,
+            Token,
+            #[serde(other)]
+            Other,
+        }
+        struct Object;
+        impl<'de> serde::de::Visitor<'de> for Object {
+            type Value = Fields<'de>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut fields = Fields::default();
+                while let Some(key) = map.next_key::<Key>()? {
+                    let slot = match key {
+                        Key::Id => &mut fields.id,
+                        Key::Method => &mut fields.method,
+                        Key::Params => &mut fields.params,
+                        Key::Token => &mut fields.token,
+                        Key::Other => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                            continue;
+                        }
+                    };
+                    *slot = Some(map.next_value()?);
+                }
+                Ok(fields)
+            }
+        }
+        d.deserialize_map(Object)
+    }
 }
 
 /// An HTTP/1 request line (`POST / HTTP/1.1`) or the HTTP/2 preface (`PRI * HTTP/2.0`).
@@ -406,6 +457,20 @@ mod tests {
         assert!(matches!(parse_line(long_id.as_bytes()), Line::Reject(e) if e.contains("`id` is longer")));
         assert!(matches!(parse_line(br#"{"id":"\ud800","method":"m"}"#), Line::Reject(e) if e.contains("bad `id`")));
         assert!(matches!(parse_line(br#"{"id":1}"#), Line::Reject(e) if e.contains("missing string `method`")));
+    }
+
+    /// Keys other than the request's own are skipped, not kept, however many there are; a repeated
+    /// key still takes the last value, and an escaped key name is the same key.
+    #[test]
+    fn unknown_keys_are_skipped_and_the_last_repeated_key_wins() {
+        let mut line = String::from(r#"{"method":"first","#);
+        for i in 0..100_000 {
+            line.push_str(&format!(r#""k{i}":{i},"#));
+        }
+        line.push_str(r#""method":"m","params":{"a":1},"params":[2],"token":"t"}"#);
+        let Line::Request { id, method, params, token } = parse_line(line.as_bytes()) else { panic!("a request") };
+        assert_eq!((id, method.as_str(), token.as_deref()), (Value::Null, "m", Some("t")));
+        assert_eq!(params.map(|p| p.get()), Some("[2]"));
     }
 
     fn held() -> Held {
