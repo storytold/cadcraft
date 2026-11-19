@@ -445,23 +445,38 @@ const MAX_TEXT_STYLES: usize = 100_000;
 
 /// `entmake` of a STYLE list (2 name, 70 flags, 40 height, 41 width factor, 50 oblique angle in
 /// radians, as in every entity list, 71 generation flags, 3 font file, 4 big font): add a text style to the table. nil
-/// for a name that is empty, invalid or already in use, and for numbers that aren't usable.
+/// for a name that is empty, invalid or already in use, and for a number that isn't one or isn't usable.
 fn make_style(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
     let group = |code: i32| tags.iter().find(|t| t.code == code);
     let name = group(2).map(|t| t.str().trim().to_string()).unwrap_or_default();
     if !crate::cmd::blocks::valid_block_name(&name) || group(70).is_none() {
         return Value::Nil;
     }
-    let flags = group(70).map(Tag::i64).unwrap_or(0);
-    let gen_flags = group(71).map(Tag::i64).unwrap_or(0);
     let font = group(3).map(|t| t.str().trim().to_string()).filter(|f| !f.is_empty());
-    let num = |code: i32, default: f64| group(code).map_or(default, Tag::f64);
+    // A number must be a number: text in a numeric group is refused, not read as zero.
+    let real = |code: i32, default: f64| match group(code).map(|t| &t.value) {
+        None => Some(default),
+        Some(craft_dxf::Value::Real(r)) => Some(*r),
+        Some(craft_dxf::Value::Int(i)) => Some(*i as f64),
+        Some(_) => None,
+    };
+    let integer = |code: i32| match group(code).map(|t| &t.value) {
+        None => Some(0),
+        Some(craft_dxf::Value::Int(i)) => Some(*i),
+        Some(craft_dxf::Value::Real(r)) if r.is_finite() => Some(*r as i64),
+        Some(_) => None,
+    };
+    let (Some(flags), Some(gen_flags), Some(height), Some(width_factor), Some(oblique)) =
+        (integer(70), integer(71), real(40, 0.0), real(41, 1.0), real(50, 0.0))
+    else {
+        return Value::Nil;
+    };
     let style = cadcraft_doc::TextStyle {
         font: font.unwrap_or_else(|| cadcraft_doc::TextStyle::default().font),
         big_font: group(4).map(|t| t.str().trim().to_string()).unwrap_or_default(),
-        height: num(40, 0.0),
-        width_factor: num(41, 1.0),
-        oblique: num(50, 0.0),
+        height,
+        width_factor,
+        oblique,
         backwards: gen_flags & 2 != 0,
         upside_down: gen_flags & 4 != 0,
         vertical: flags & 4 != 0,

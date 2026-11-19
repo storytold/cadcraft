@@ -25,4 +25,15 @@ fn entmake_style_creates_the_text_style() {
     s.cmdline("(setq r2 (entmake '((0 . \"STYLE\") (2 . \"mystyle\") (70 . 0))))").unwrap();
     s.cmdline("(setq r3 (entmake '((0 . \"STYLE\") (2 . \"\") (70 . 0))))").unwrap();
     assert_eq!(s.doc().unwrap().text_styles.len(), before + 1);
+    // Text where a number belongs makes nothing, rather than reading as zero and passing.
+    s.cmdline("(setq r4 (entmake '((0 . \"STYLE\") (2 . \"BadHeight\") (70 . 0) (40 . \"bad\"))))").unwrap();
+    s.cmdline("(setq r5 (entmake '((0 . \"STYLE\") (2 . \"BadFlags\") (70 . \"bad\"))))").unwrap();
+    assert_eq!(s.doc().unwrap().text_styles.len(), before + 1);
+    assert!(s.doc().unwrap().text_style("BadHeight").is_none());
+    assert!(s.doc().unwrap().text_style("BadFlags").is_none());
+    // A numeric zero height is a height, and an omitted one keeps the default.
+    s.cmdline("(setq r6 (entmake '((0 . \"STYLE\") (2 . \"ZeroHeight\") (70 . 0) (40 . 0))))").unwrap();
+    s.cmdline("(setq r7 (entmake '((0 . \"STYLE\") (2 . \"NoHeight\") (70 . 0))))").unwrap();
+    assert_eq!(s.doc().unwrap().text_style("ZeroHeight").map(|st| st.height), Some(0.0));
+    assert_eq!(s.doc().unwrap().text_style("NoHeight").map(|st| st.height), Some(0.0));
 }
