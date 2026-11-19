@@ -88,7 +88,7 @@ impl Spline {
     /// `eval` on a spline `is_valid` has accepted, given its `domain()`, so sampling many points
     /// validates once (`is_valid` walks the knot vector).
     #[expect(clippy::many_single_char_names, reason = "De Boor evaluation keeps the standard p/w/b/k notation shared with basis_ref.")]
-    fn eval_valid(&self, t: f64, lo: f64, hi: f64) -> Vec2 {
+    pub(crate) fn eval_valid(&self, t: f64, lo: f64, hi: f64) -> Vec2 {
         let n = self.control.len().saturating_sub(1);
         let t = t.clamp(lo, hi);
         let span = find_span(n, self.degree, t, &self.knots);

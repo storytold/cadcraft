@@ -4,7 +4,7 @@ use super::{Arc, Ctx, Flow, LispError, Sym, Value, charge_bytes, real_text, to_t
 // ---------------- output ----------------
 
 /// Text printed to a file (an open file argument) or the command line.
-pub(super) fn emit(ctx: &mut Ctx<'_>, text: &str, file: Option<&Value>) -> Result<(), LispError> {
+pub fn emit(ctx: &mut Ctx<'_>, text: &str, file: Option<&Value>) -> Result<(), LispError> {
     charge_bytes(text.len())?;
     match file {
         None | Some(Value::Nil) => {
