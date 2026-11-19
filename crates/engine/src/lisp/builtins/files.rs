@@ -109,11 +109,26 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 }
 
 /// Files open in text mode, as AutoLISP's do: with `crlf` (on Windows) each `\n` is written as
-/// CR LF (#2986), and `read-line` reads either ending back. Otherwise `\n` is written as it is.
+/// CR LF (#2986), and `read-line` reads either ending back. A `\n` that already follows a CR is
+/// left as it is, so text that has CR LF in it doesn't get a second CR. Otherwise `\n` is written
+/// as it is.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_text_file_with(path: &str, text: &str, append: bool, crlf: bool) {
     use std::io::Write;
-    let text = if crlf { std::borrow::Cow::Owned(text.replace('\n', "\r\n")) } else { std::borrow::Cow::Borrowed(text) };
+    let text = if crlf {
+        let mut out = String::with_capacity(text.len() + text.len() / 8);
+        let mut prev = '\0';
+        for c in text.chars() {
+            if c == '\n' && prev != '\r' {
+                out.push('\r');
+            }
+            out.push(c);
+            prev = c;
+        }
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    };
     // Opened without blocking and without truncating, so a FIFO with no reader fails at once
     // instead of stalling the interpreter; only a regular file is then truncated and written.
     let mut o = std::fs::OpenOptions::new();
@@ -145,6 +160,9 @@ mod newline_tests {
         let appended = std::fs::read(&p);
         assert_eq!(crlf.unwrap(), b"a\r\nb\r\n");
         assert_eq!(appended.unwrap(), b"a\r\nb\r\nc\n");
+        // Text that already has CR LF keeps one CR.
+        super::write_text_file_with(&p, "a\r\nb\n\r", false, true);
+        assert_eq!(std::fs::read(&p).unwrap(), b"a\r\nb\r\n\r");
     }
 }
 
