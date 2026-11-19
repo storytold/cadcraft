@@ -26,6 +26,9 @@ pub mod capture;
 pub mod chrome;
 pub mod clipboard;
 pub mod closing;
+// Open, Save and Share against cloud storage (craft_ui::cloud): the CloudApp wiring, the Open
+// and Save As pages drawn as a modal, and the Start tab's cloud file list.
+pub mod cloud;
 pub mod cmdline;
 pub mod context_menu;
 pub mod control;
@@ -372,6 +375,23 @@ pub struct CadApp {
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
+    // ---- cloud storage (craft_ui::cloud; see `cloud`) ---------------------------------------
+    /// Open, Save and the account state. Nothing cloud-shaped is offered anywhere until a host
+    /// application connects a backend ([`craft_ui::cloud::CloudFiles::connect`]); this repository
+    /// wires none.
+    pub cloud: craft_ui::cloud::CloudFiles,
+    /// The share dialog (`craft_ui::share`), drawn every frame regardless of whether a backend
+    /// is connected: it draws nothing until [`craft_ui::share::ShareDialog::connect`] is called.
+    pub share: craft_ui::share::ShareDialog,
+    /// Who else is editing the open drawing, when a backend reports presence.
+    pub presence: craft_ui::presence::PresenceBar,
+    /// Which cloud page is open as a modal over the canvas, when one is ([`cloud::Page`]).
+    pub cloud_page: Option<cloud::Page>,
+    /// The drawing snapshot each in-flight cloud save encoded, by drawing uid ([`cloud::Sent`]).
+    pub(crate) cloud_sent: cloud::Sent,
+    /// The egui context, stored after the first frame so `cloud`'s `CloudApp::open_url` can open
+    /// one outside a UI closure.
+    pub(crate) egui_ctx: Option<egui::Context>,
 }
 
 impl CadApp {
@@ -430,6 +450,12 @@ impl CadApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
+            cloud: craft_ui::cloud::CloudFiles::new(),
+            share: craft_ui::share::ShareDialog::default(),
+            presence: craft_ui::presence::PresenceBar::default(),
+            cloud_page: None,
+            cloud_sent: cloud::Sent::new(),
+            egui_ctx: None,
         }
     }
 
@@ -1088,6 +1114,12 @@ impl CadApp {
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
         control::begin_frame(ui.ctx());
+        // Stored so `cloud::CloudApp::open_url` (called with `&self`, outside any UI closure)
+        // can still ask egui to open a tab.
+        self.egui_ctx = Some(ui.ctx().clone());
+        // Drains the cloud worker's answers before anything is drawn, so the frame after a
+        // completed read or write reflects it at once.
+        craft_ui::cloud::pump(self, ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
         if self.ui.in_window_menu {
@@ -1113,6 +1145,11 @@ impl CadApp {
         self.opening.show(ui.ctx());
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, ui.ctx());
+        // The Open / Save-to-cloud modal, over the canvas.
+        cloud::modal(self, ui.ctx());
+        // Drawn every frame, connected or not: it draws nothing with no backend ([`craft_ui::share`]).
+        self.share.show(ui.ctx());
+        craft_ui::cloud::conflict_modal(self, ui.ctx());
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());

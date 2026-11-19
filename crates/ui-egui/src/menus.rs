@@ -83,6 +83,10 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dock", "Arrange Panel", &[], None),
     ("ui.dock.reset", "Reset Panel Layout", &["Window", "Reset Panel Layout"], None),
     ("ui.open", "Open...", &[], Some("Cmd+O")),
+    // Cloud storage (craft_ui::cloud). Hidden and refuses with no backend connected: see
+    // `crate::cloud` and `ui_command_enabled`. No backend is wired in this repository today.
+    ("cloud.open", "Open from the Cloud...", &["File", "Open from the Cloud..."], None),
+    ("cloud.saveAs", "Save to the Cloud...", &["File", "Save to the Cloud..."], None),
     ("ui.newtemplate", "New from Template...", &["File", "New from Template..."], None),
     ("ui.saveas", "Save As...", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
@@ -140,6 +144,14 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
 
+/// Whether a UI-only command is enabled right now. Every one is, except the cloud commands
+/// (`cloud.*`), refused with no backend connected (`crate::cloud::UNAVAILABLE`); checked here
+/// rather than only at the point of invocation, so every surface that lists a command's enabled
+/// state (the menu tree, the control channel's `control.methods`) agrees with it.
+pub fn ui_command_enabled(app: &CadApp, id: &str) -> bool {
+    !id.starts_with("cloud.") || crate::cloud::available(app)
+}
+
 pub fn is_ui_command(id: &str) -> bool {
     UI_COMMANDS.iter().any(|c| c.0 == id)
 }
@@ -150,6 +162,9 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
 }
 
 fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = crate::cloud::route(app, id, params) {
+        return Some(result);
+    }
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
@@ -692,7 +707,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            add(menu, label, id, *sc, ui_command_enabled(app, id));
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {

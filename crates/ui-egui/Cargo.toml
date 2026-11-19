@@ -11,6 +11,8 @@ workspace = true
 
 [dependencies]
 craft-ui = { workspace = true }
+# Vendor-neutral cloud types (Entry, EntryKind, Capability) the CloudApp contract passes around.
+craft-cloud = { workspace = true }
 cadcraft-geom = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
@@ -37,6 +39,10 @@ craft-update = { workspace = true }
 [dev-dependencies]
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
 craft-ui = { workspace = true, features = ["native-windows"] }
+# The reference CloudBackend the cloud tests drive the CloudApp contract through. Only ever
+# used from tests: no concrete backend is wired in apps/cadcraft or apps/cadcraft-web.
+craft-cloud-local = { workspace = true }
+tempfile = "3"
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in
 # production too; the tests exercise the same installed chain as the app.
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }

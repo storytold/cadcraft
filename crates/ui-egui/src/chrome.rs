@@ -555,6 +555,12 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         y += 44.0;
     }
+    // Cloud file list in the left column, below the local commands. Draws nothing without a
+    // backend connected (`crate::cloud::open_section`); no backend is wired in this repository.
+    let left_cloud = Rect::from_min_max(pos2(left.left() + 12.0, y + 12.0), pos2(left.right() - 12.0, left.bottom() - 12.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(left_cloud), |ui| {
+        crate::cloud::open_section(app, ui);
+    });
     let main = Rect::from_min_max(pos2(left.right() + 36.0, r.top() + 40.0), r.max);
     p.text(main.min, egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
     let mut recent = None;
