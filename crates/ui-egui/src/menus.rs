@@ -943,7 +943,9 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     }
     let pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
     crate::clipboard::mirror(app, ctx);
-    if app.closing.is_some() {
+    // While a file closes, or Batch Plot (a modal window) is open, the drawing takes no keys:
+    // Ctrl+A there picks sheets, not objects.
+    if app.closing.is_some() || app.ui.dialog.as_deref() == Some("publish") {
         return;
     }
     // A palette toggle is global even while its expression field owns keyboard focus.
@@ -1073,6 +1075,8 @@ mod tests {
 
         // EXPORTPDF asks where to save straight away.
         app.start("exportpdf");
+        // The PDF is written away from the window: wait for it.
+        crate::busy::wait(&mut app);
         assert_eq!(*asked.borrow(), vec!["Drawing1.pdf".to_string()]);
         assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"));
         assert!(app.session.log.iter().any(|l| l.contains(&ps)));

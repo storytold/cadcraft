@@ -714,7 +714,7 @@ fn page_rows(
         {
             change = Some(("device", json!("None")));
         }
-        for dev in choices.devices.iter() {
+        for dev in choices.devices.iter().filter(|dv| !hidden_device(&dv.name)) {
             let on = dev.name.eq_ignore_ascii_case(&page.device);
             if ui.selectable_label(on, &dev.name).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
                 && !on
@@ -931,11 +931,16 @@ struct PlotState {
 }
 
 /// The page setup a plot of `target` starts from: the layout's, or model-space defaults (fitted
-/// extents on A4 in metric drawings, ANSI A otherwise).
+/// extents on A4 in metric drawings, ANSI A otherwise). Without a device CADCraft has (none, or
+/// another program's such as `DWG To PDF.pc3`) it plots with CADCraft PDF on the standard paper of
+/// the sheet's size.
 fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup {
     if let Some(l) = d.layouts.iter().find(|l| l.name == target) {
         let mut page = l.page.clone();
         page.plot_area = "layout".into();
+        if cadcraft_engine::cmd::plotters::find_device(&page.device).is_none() {
+            default_device(&mut page);
+        }
         return page;
     }
     let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
@@ -946,7 +951,45 @@ fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup
         page.width_mm = a4.width_mm;
         page.height_mm = a4.height_mm;
     }
+    default_device(&mut page);
     page
+}
+
+/// The device plots start with.
+const DEFAULT_DEVICE: &str = "CADCraft PDF";
+
+/// Plot `page` with [`DEFAULT_DEVICE`] on its paper of the page's size (either way round), else
+/// the smallest one it fits on. A sheet larger than every paper keeps no device (a PDF of its own
+/// size).
+fn default_device(page: &mut cadcraft_doc::PageSetup) {
+    let Some(dev) = cadcraft_engine::cmd::plotters::find_device(DEFAULT_DEVICE) else { return };
+    let (long, short) = (page.width_mm.max(page.height_mm), page.width_mm.min(page.height_mm));
+    let dims = |p: &cadcraft_doc::DevicePaper| (p.width.max(p.height), p.width.min(p.height));
+    let same = dev.papers.iter().find(|p| {
+        let (l, s) = dims(p);
+        (l - long).abs() <= 1.0 && (s - short).abs() <= 1.0
+    });
+    let fits = || {
+        dev.papers
+            .iter()
+            .filter(|p| dims(p).0 >= long - 1.0 && dims(p).1 >= short - 1.0)
+            .min_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
+    };
+    let Some(paper) = same.or_else(fits) else {
+        page.device = String::new();
+        return;
+    };
+    page.device = dev.name.clone();
+    page.paper = paper.name.clone();
+    page.width_mm = paper.width;
+    page.height_mm = paper.height;
+    page.margins_mm = paper.margins;
+}
+
+/// Devices the Plot dialog doesn't list: AutoCAD's PDF driver, which a drawing's page setup may
+/// name (CADCraft PDF plots PDFs here).
+fn hidden_device(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("dwg to pdf")
 }
 
 /// The `plot` parameters for the dialog's settings (without the output path). `preview_dpi`
@@ -1330,6 +1373,29 @@ mod plot_dialog_tests {
         assert!(page.plot_transparency);
         apply_page_change(&mut st.page, "plotTransparency", &json!(false));
         assert_eq!(plot_params(&st, None)["plotTransparency"], json!(false));
+    }
+
+    /// A layout whose page setup names a device CADCraft hasn't (AutoCAD's DWG To PDF) plots with
+    /// CADCraft PDF on the standard paper of the sheet's size; the dialog doesn't list DWG To PDF.
+    #[test]
+    fn plots_start_with_cadcraft_pdf_on_the_sheets_paper() {
+        let mut d = cadcraft_doc::Drawing::new_metric();
+        if let Some(l) = d.layouts.iter_mut().find(|l| l.name == "Layout1") {
+            l.page.device = "DWG To PDF.pc3".into();
+            l.page.paper = "ISO_full_bleed_A3_(420.00_x_297.00_MM)".into();
+            l.page.width_mm = 297.0;
+            l.page.height_mm = 420.0;
+        }
+        let page = plot_page(&d, "Layout1");
+        assert_eq!(page.device, DEFAULT_DEVICE);
+        assert_eq!(page.paper, cadcraft_render::paper_size("A3").map(|p| p.name).unwrap_or_default());
+        // An odd sheet takes the smallest paper it fits on.
+        let mut odd = cadcraft_doc::PageSetup { width_mm: 400.0, height_mm: 290.0, ..Default::default() };
+        default_device(&mut odd);
+        assert_eq!(odd.paper, cadcraft_render::paper_size("A3").map(|p| p.name).unwrap_or_default());
+        // Model space too.
+        assert_eq!(plot_page(&d, "Model").device, DEFAULT_DEVICE);
+        assert!(hidden_device("DWG To PDF.pc3") && !hidden_device(DEFAULT_DEVICE));
     }
 
     #[test]
