@@ -445,7 +445,7 @@ fn reset_ui(app: &mut CadApp) {
 }
 
 /// Fonts for font lists, refreshed when the font set changes: (text style font names — the
-/// user's folders' fonts first —, family names of the user's fonts).
+/// user's folders' fonts first —, family names of every font, the user's first).
 pub fn font_choices() -> (Vec<String>, Vec<String>) {
     thread_local! {
         static CACHE: std::cell::RefCell<Option<(u64, Vec<String>, Vec<String>)>> = const { std::cell::RefCell::new(None) };
@@ -461,10 +461,11 @@ pub fn font_choices() -> (Vec<String>, Vec<String>) {
         let fonts = cadcraft_fonts::ttf::installed();
         let mut names = vec![cadcraft_fonts::BUILTIN_FONT.to_string()];
         names.extend(fonts.iter().map(|f| f.name.clone()));
+        // Every font's family: the user's folders' first, then the installed ones.
         let mut families: Vec<String> = Vec::new();
-        for f in fonts.iter().filter(|f| f.user) {
+        for f in fonts.iter() {
             if let Some(fam) = &f.family
-                && !families.contains(fam)
+                && !families.iter().any(|x| x.eq_ignore_ascii_case(fam))
             {
                 families.push(fam.clone());
             }
