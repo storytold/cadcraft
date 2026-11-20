@@ -168,7 +168,7 @@ impl Session {
         }
         // The viewport shows model space only: its frozen layers hide nothing on the sheet.
         let frozen = if *space == Space::Model { self.viewport_frozen() } else { &[] };
-        Ok(select::pick_in(d, space, frozen, p, aperture))
+        Ok(select::pick_in_orbit(d, space, frozen, self.edit_orbit(), p, aperture))
     }
 }
 
