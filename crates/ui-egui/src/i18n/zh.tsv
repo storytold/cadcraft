@@ -31,6 +31,7 @@
 	About CADCraft	关于 CADCraft
 	Absolute	绝对
 	Add Leader	添加引线
+	Add to Group Filter	添加到编组筛选器
 	Align	对齐
 	Align Text	对齐文字
 	Aligned	对齐
@@ -43,6 +44,7 @@
 	Annotation scale	注释比例
 	Apparent Intersection	外观交点
 	Append to current selection set	添加到当前选择集
+	Apply Layer Filter	应用图层筛选器
 	Apply to:	应用于:
 	Apply true color	应用真彩色
 	Arc	圆弧
@@ -165,6 +167,7 @@
 	Delete Dimension Style	删除标注样式
 	Delete Duplicate Objects	删除重复对象
 	Delete Layer	删除图层
+	Delete Layer Filter	删除图层筛选器
 	Delete Layer State	删除图层状态
 	Delete Layout	删除布局
 	Delete Row	删除行
@@ -209,6 +212,7 @@
 	Dynamic Input (F12)	动态输入 (F12)
 	E	E
 	Edit	编辑
+	Edit Layer Filter	编辑图层筛选器
 	Edit Text...	编辑文字...
 	Elevation	标高
 	Ellipse	椭圆
@@ -372,6 +376,7 @@
 	Last commit	最后提交
 	Layer	图层
 	Layer Delete	删除图层
+	Layer Filter Properties	图层筛选器特性
 	Layer Match	匹配图层
 	Layer Merge	合并图层
 	Layer Off	关闭图层
@@ -404,7 +409,11 @@
 	Linetype	线型
 	Linetype Scale	线型比例
 	Linetype scale	线型比例
+	List Layer Filters	列出图层筛选器
 	Ltscale	Ltscale
+	New Group Filter	新建编组筛选器
+	New Layer Filter	新建图层筛选器
+	Remove from Group Filter	从编组筛选器中移除
 	Linetype...	线型...
 	Lineweight	线宽
 	Lineweight...	线宽...
