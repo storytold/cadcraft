@@ -48,6 +48,16 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Set the transparency `e` draws with: its own (with transparency display on), at least its
+/// locked layer's `fade` on screen, which shows even when transparency display is off. Returns
+/// its own, without the fade: what a block's ByBlock children inherit.
+fn shown_transparency(b: &mut Builder, ctx: &Ctx, e: &Entity, layer_transparency: u8, fade: u8) -> u8 {
+    let fade = if b.opts.on_screen { fade } else { 0 };
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
+    own
+}
+
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -71,10 +81,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if !visible {
         return;
     }
-    // A locked layer's fade shows on screen even when transparency display is off.
-    let fade = if b.opts.on_screen { fade } else { 0 };
-    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
-    b.transparency = own.max(fade);
+    let own = shown_transparency(b, ctx, e, layer_transparency, fade);
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
