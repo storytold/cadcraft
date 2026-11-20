@@ -1,5 +1,6 @@
 //! One CADCraft per Windows sign-in: a launch that only names files hands them to the CADCraft
-//! that is already running, where they open as tabs, and exits.
+//! that is already running, where they open as tabs, and exits. A launch with no files at all
+//! brings the running window forward instead of opening another.
 //!
 //! Outlook attachments, Explorer double-clicks and Open With all start `cadcraft.exe "<file>"`, so
 //! without single instance, every file got its own process and window. The first CADCraft listens on a Unix
@@ -37,6 +38,8 @@ pub enum Claim {
 #[derive(Default)]
 struct Inbox {
     paths: Vec<PathBuf>,
+    /// A launch handed over since the UI last looked (with files or none): bring the window forward.
+    raise: bool,
     wake: Option<Box<dyn Fn() + Send>>,
 }
 
@@ -53,11 +56,12 @@ impl Server {
         Self { inbox: Arc::default() }
     }
 
-    /// Queue files from another launch and wake the UI.
+    /// Queue files from another launch (none: it only asks for the window) and wake the UI.
     #[cfg_attr(not(windows), allow(dead_code))]
     fn deliver(&self, paths: Vec<String>) {
         let mut inbox = self.inbox.lock().unwrap_or_else(PoisonError::into_inner);
         inbox.paths.extend(paths.into_iter().map(PathBuf::from));
+        inbox.raise = true;
         if let Some(wake) = &inbox.wake {
             wake();
         }
@@ -72,6 +76,11 @@ impl Server {
     pub fn take_paths(&self) -> Vec<PathBuf> {
         std::mem::take(&mut self.inbox.lock().unwrap_or_else(PoisonError::into_inner).paths)
     }
+
+    /// Whether a launch handed over since the last call: the window comes forward.
+    pub fn take_raise(&self) -> bool {
+        std::mem::take(&mut self.inbox.lock().unwrap_or_else(PoisonError::into_inner).raise)
+    }
 }
 
 /// The request a launch sends: `{"open":[…]}` and a newline.
@@ -82,13 +91,13 @@ pub fn request(paths: &[String]) -> String {
     line
 }
 
-/// The paths a request names, or `None` when it isn't a request.
+/// The paths a request names (none: a launch without files, which only brings the window
+/// forward), or `None` when it isn't a request.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn parse_request(line: &str) -> Option<Vec<String>> {
     let value: serde_json::Value = serde_json::from_str(line.trim_end()).ok()?;
     let open = value.get("open")?.as_array()?;
-    let paths = open.iter().map(|p| p.as_str().filter(|s| !s.is_empty()).map(str::to_string)).collect::<Option<Vec<String>>>()?;
-    (!paths.is_empty()).then_some(paths)
+    open.iter().map(|p| p.as_str().filter(|s| !s.is_empty()).map(str::to_string)).collect::<Option<Vec<String>>>()
 }
 
 /// File arguments made absolute against this launch's working folder, as the request names them.
@@ -271,11 +280,13 @@ mod tests {
         let line = request(&paths);
         assert!(line.ends_with('\n') && !line.trim_end().contains('\n'), "{line:?}");
         assert_eq!(parse_request(&line), Some(paths));
+        // A launch without files: only the window comes forward.
+        assert_eq!(parse_request(&request(&[])), Some(Vec::new()));
     }
 
     #[test]
     fn anything_else_is_not_a_request() {
-        for line in ["", "ok\n", "{}", r#"{"open":[]}"#, r#"{"open":[""]}"#, r#"{"open":["a",1]}"#, r#"{"open":"a"}"#, "[\"a\"]"] {
+        for line in ["", "ok\n", "{}", r#"{"open":[""]}"#, r#"{"open":["a",1]}"#, r#"{"open":"a"}"#, "[\"a\"]"] {
             assert_eq!(parse_request(line), None, "{line:?}");
         }
     }
@@ -317,6 +328,11 @@ mod tests {
         assert_eq!(*woken.lock().unwrap(), 2);
         assert_eq!(server.take_paths(), [PathBuf::from("a.dwg"), PathBuf::from("b.dxf")]);
         assert!(server.take_paths().is_empty());
+        assert!(server.take_raise() && !server.take_raise(), "the window comes forward once");
+        // A launch with no files only raises the window.
+        server.deliver(Vec::new());
+        assert_eq!(*woken.lock().unwrap(), 3);
+        assert!(server.take_paths().is_empty() && server.take_raise());
     }
 
     /// Removes a test's folder when the test ends, best effort: the listener thread keeps its socket

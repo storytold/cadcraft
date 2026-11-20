@@ -90,10 +90,11 @@ impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
-        // Files another launch handed over open as tabs here, and the window comes forward.
+        // Files another launch handed over open as tabs here, and the window comes forward (a
+        // launch without files only brings it forward).
         if let Some(server) = &self.single_instance {
             let paths = server.take_paths();
-            if !paths.is_empty() {
+            if server.take_raise() || !paths.is_empty() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 for p in &paths {
@@ -374,9 +375,10 @@ fn main() -> eframe::Result {
             }
         }
     }
-    // A launch that only names files hands them to the CADCraft already running and exits.
+    // A launch that only names files hands them to the CADCraft already running and exits; one
+    // with nothing at all brings that window forward: one window, not another.
     let handed = single_instance::absolute(&files);
-    let may_hand_off = handed.is_some() && !launch.new_window && !files.is_empty() && control_port.is_none() && !sample;
+    let may_hand_off = handed.is_some() && !launch.new_window && control_port.is_none() && !sample;
     let instance = match single_instance::claim(handed.as_deref().unwrap_or_default(), may_hand_off) {
         single_instance::Claim::HandedOff => return Ok(()),
         single_instance::Claim::Primary(server) => Some(server),
