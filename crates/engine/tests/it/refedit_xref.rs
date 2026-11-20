@@ -29,11 +29,11 @@ fn folder(tag: &str) -> PathBuf {
 }
 
 fn save(d: &Drawing, path: &Path) {
-    std::fs::write(path, cadcraft_io::write(d, &path.to_string_lossy()).unwrap()).unwrap();
+    std::fs::write(path, cadcraft_io::write(d, path).unwrap()).unwrap();
 }
 
 fn read(path: &Path) -> Drawing {
-    cadcraft_io::read(&std::fs::read(path).unwrap(), &path.to_string_lossy()).unwrap()
+    cadcraft_io::read(&std::fs::read(path).unwrap(), path).unwrap()
 }
 
 fn line(d: &mut Drawing, layer: &str, a: (f64, f64), b: (f64, f64)) -> Handle {
@@ -55,6 +55,7 @@ fn insert(block: &str, at: Vec3) -> Insert {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }
 }
 
