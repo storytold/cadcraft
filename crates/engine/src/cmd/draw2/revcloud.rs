@@ -254,11 +254,7 @@ impl Interactive for RevcloudM {
         if let Some((h, pts)) = self.picked.take() {
             let reverse = matches!(&i, Input::Keyword(k) | Input::Text(k) if k.to_ascii_lowercase().starts_with('y'));
             let vs = cloud_vertices(&pts, self.arc_len, false, reverse).ok_or_else(|| other("The object has no area."))?;
-            let nh = s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;
-            let common = curves::entity(s, h)?.common;
-            let d = s.doc_mut()?;
-            d.modify_entity(nh, |e| e.common = common)?;
-            d.remove_entity(h);
+            add_cloud(s, vs, self.calligraphy, self.arc_len, Some(h))?;
             s.echo("Revision cloud finished.");
             return Ok(Step::Done);
         }

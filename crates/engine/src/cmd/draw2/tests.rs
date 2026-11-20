@@ -778,9 +778,14 @@ fn revcloud_saves_revcloudprops_xdata() {
     let c = h(&s.execute("circle", &json!({"center": [10, 10], "radius": 1})).unwrap());
     s.execute("revcloud", &json!({"handle": c, "arcLength": 2})).unwrap();
     assert_eq!(props(&s), want);
-    // Interactive.
-    s.cmdline("revcloud a 2").unwrap();
+    // Interactive (the arc length takes a minimum and a maximum, #1714).
+    s.cmdline("revcloud a 2 2").unwrap();
     s.cmdline("0,0 4,2").unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive Object, after the "Reverse direction" prompt.
+    s.execute("rectang", &json!({"p1": [20, 20], "p2": [24, 22]})).unwrap();
+    s.cmdline("revcloud o 20,21 n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(props(&s), want);
 }
 
