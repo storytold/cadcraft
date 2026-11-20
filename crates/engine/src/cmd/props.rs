@@ -27,6 +27,7 @@ pub fn specs() -> Vec<CommandSpec> {
              <geometry fields: radius, center, start, end, text, height, rotation…>, text: style?, justify?, oblique?, positionX/Y/Z?, alignmentX/Y?, \
              mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
              dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
+             multileader: arrow? (a built-in `_Open`… or a block; empty for the style's), leaderType?: straight | spline | none, \
              <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable]} \
              → {changed, locked, message?, ignored: keys no selected object took} (the keys are those of `properties.describe` rows): objects on locked layers \
              (and, during REFEDIT, outside the working set) are left out, and `message` says how many",
@@ -93,7 +94,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("mleaderstyle", "Multileader Style...", run_mleaderstyle)
             .menu(&["Format", "Multileader Style..."])
             .alias(&["mls"])
-            .params("{name, arrowSize?, textHeight?, landingGap?, dogleg?, textStyle?, annotative?, current?} → styles"),
+            .params("{name, arrowSize?, arrowBlock? (\"\" = closed filled, a built-in `_Open`… or a block), textHeight?, landingGap?, dogleg?, textStyle?, annotative?, current?} → styles"),
         CommandSpec::new("ddptype", "Point Style...", run_ptype)
             .menu(&["Format", "Point Style..."])
             .alias(&["ptype"])
@@ -929,6 +930,14 @@ fn run_tablestyle(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_mleaderstyle(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
+    // The arrowhead: closed filled (empty or `_ClosedFilled`), a built-in one or a block of the
+    // drawing.
+    let arrow = match str_param(p, "arrowBlock").map(str::trim) {
+        None => None,
+        Some(a) if a.is_empty() || a.eq_ignore_ascii_case("_ClosedFilled") || a.eq_ignore_ascii_case("ClosedFilled") => Some(String::new()),
+        Some(a) if a.starts_with('_') || d.blocks.keys().any(|k| k.eq_ignore_ascii_case(a)) => Some(a.to_string()),
+        Some(a) => return Err(bad("mleaderstyle", format!("arrowhead block `{a}` not found"))),
+    };
     if let Some(name) = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
         let idx = match d.mleader_styles.iter().position(|t| t.name.eq_ignore_ascii_case(name)) {
             Some(i) => i,
@@ -941,6 +950,9 @@ fn run_mleaderstyle(s: &mut Session, p: &Value) -> Result<Value> {
             let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|h| h.is_finite() && *h >= 0.0);
             if let Some(v) = num("arrowSize") {
                 st.arrow_size = v;
+            }
+            if let Some(a) = &arrow {
+                st.arrow_block.clone_from(a);
             }
             if let Some(v) = num("textHeight").filter(|v| *v > 0.0) {
                 st.text_height = v;
