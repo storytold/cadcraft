@@ -1056,8 +1056,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         Some(sh) => {
             // Paper space: grey surround, the sheet with a shadow, the printable area dashed.
             painter.rect_filled(rect, 0.0, surround);
-            let a = xf_paper.to_screen(Vec2::new(0.0, sh.size.y));
-            let b = xf_paper.to_screen(Vec2::new(sh.size.x, 0.0));
+            let bounds = sh.bounds();
+            let a = xf_paper.to_screen(Vec2::new(bounds.min.x, bounds.max.y));
+            let b = xf_paper.to_screen(Vec2::new(bounds.max.x, bounds.min.y));
             let paper = Rect::from_two_pos(a, b);
             painter.rect_filled(paper.translate(vec2(5.0, 5.0)), 0.0, Color32::from_black_alpha(110));
             painter.rect_filled(paper, 0.0, t.paper);

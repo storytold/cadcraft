@@ -1,11 +1,12 @@
 //! Paper sizes and the layout sheet (paper rectangle, printable area) for paper space.
 //!
 //! Paper-space units follow a layout's explicit page-setup choice (millimetres or inches), and
-//! otherwise `MEASUREMENT` (millimetres when 1, inches otherwise). The sheet's lower-left corner is the paper-space origin.
+//! otherwise `MEASUREMENT` (millimetres when 1, inches otherwise). Physical plot media starts
+//! at zero; the on-screen sheet is scaled and placed in the layout's drawing coordinates.
 //! Model-space plots have no stored page setup, so they take their units from the paper itself
 //! ([`model_page`], [`model_unit_mm`]).
 
-use cadcraft_doc::{Drawing, PageSetup};
+use cadcraft_doc::{Drawing, PageSetup, Space};
 use cadcraft_geom::{Bounds2, Vec2};
 
 /// Maximum model-space plot offset accepted by the PLOT command, in millimetres.
@@ -158,8 +159,10 @@ pub fn unit_mm_of(d: &Drawing, h: cadcraft_doc::Handle) -> f64 {
 /// The paper sheet of a layout, in paper-space units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sheet {
-    /// Sheet size (already rotated for landscape). The sheet spans `(0,0)..size`.
+    /// Sheet size (already rotated for landscape).
     pub size: Vec2,
+    /// Lower-left corner; zero for physical plot media.
+    pub origin: Vec2,
     /// Printable area (inside the margins).
     pub printable: Bounds2,
     /// Millimetres per paper-space unit.
@@ -168,7 +171,7 @@ pub struct Sheet {
 
 impl Sheet {
     pub fn bounds(&self) -> Bounds2 {
-        Bounds2::new(Vec2::ZERO, self.size)
+        Bounds2::new(self.origin, self.origin + self.size)
     }
     /// The sheet for a page setup in a drawing whose paper units are `unit_mm` millimetres.
     pub fn from_page(page: &PageSetup, unit_mm: f64) -> Sheet {
@@ -186,7 +189,7 @@ impl Sheet {
         } else {
             Bounds2::new(Vec2::ZERO, size)
         };
-        Sheet { size, printable, unit_mm: u }
+        Sheet { size, origin: Vec2::ZERO, printable, unit_mm: u }
     }
 }
 
@@ -194,6 +197,67 @@ impl Sheet {
 pub fn sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     let l = d.layouts.iter().find(|l| l.name == layout).or_else(|| d.layout(layout))?;
     Some(Sheet::from_page(&l.page, page_unit_mm(d, &l.page)))
+}
+
+/// The on-screen sheet, in layout drawing coordinates rather than physical plot units.
+pub fn layout_sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
+    let l = d.layout(layout)?;
+    let page = &l.page;
+    let physical = Sheet::from_page(page, page_unit_mm(d, page));
+    let saved = saved_plot(page);
+    if !saved.fit && !(page.scale.is_finite() && page.scale > 0.0) {
+        log::warn!("layout `{layout}` has an invalid plot scale; its paper sheet cannot be displayed");
+        return None;
+    }
+    // Imported layouts cache the sheet's drawing-space limits. Only use them while their
+    // size agrees with the current paper and scale, not old limits after a page-size change.
+    let limits = l.limits.filter(|(lo, hi)| {
+        let expected = physical.size / page.scale;
+        lo.is_finite()
+            && hi.is_finite()
+            && hi.x > lo.x
+            && hi.y > lo.y
+            && expected.is_finite()
+            && (*hi - *lo).near(expected, 1e-6 * expected.x.max(expected.y))
+    });
+    let (scale, origin) = if let Some((lo, _)) = limits {
+        (page.scale, lo)
+    } else {
+        let bounds = saved.window.unwrap_or_else(|| {
+            if saved.fit || page.plot_area.eq_ignore_ascii_case("extents") { d.extents(&Space::Paper(l.name.clone())) } else { Bounds2::EMPTY }
+        });
+        let scale = plot_scale(&bounds, &physical, saved.fit, saved.scale);
+        let origin = if !bounds.is_empty() && (saved.fit || saved.window.is_some() || page.center) {
+            if page.center { bounds.center() - physical.printable.center() / scale } else { bounds.min - physical.printable.min / scale }
+        } else if let Some(image) = page.image_origin {
+            -image - physical.printable.min / scale
+        } else {
+            Vec2::ZERO
+        };
+        (scale, origin)
+    };
+    let size = physical.size / scale;
+    let printable = Bounds2 { min: origin + physical.printable.min / scale, max: origin + physical.printable.max / scale };
+    // Hostile scales or coordinates must not put infinities into the canvas transform.
+    if !origin.is_finite() || !size.is_finite() || !(origin + size).is_finite() || !printable.min.is_finite() || !printable.max.is_finite() {
+        log::warn!("layout `{layout}` has unrepresentable paper bounds; its paper sheet cannot be displayed");
+        return None;
+    }
+    Some(Sheet { origin, size, printable, ..physical })
+}
+
+/// Paper units per drawing unit, shared by physical plots and the inverse on-screen sheet.
+pub fn plot_scale(b: &Bounds2, sheet: &Sheet, fit: bool, scale: Option<f64>) -> f64 {
+    if let Some(s) = scale.filter(|s| s.is_finite() && *s > 0.0)
+        && !fit
+    {
+        return s;
+    }
+    if !fit || b.is_empty() {
+        return 1.0;
+    }
+    let s = (sheet.printable.width() / b.width().max(1e-12)).min(sheet.printable.height() / b.height().max(1e-12));
+    if s.is_finite() && s > 0.0 { s } else { 1.0 }
 }
 
 #[cfg(test)]

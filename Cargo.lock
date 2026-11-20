@@ -817,6 +817,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-geom",
  "craft-image-codecs 0.1.0 (git+https://github.com/storytold/craft-libs?rev=ae5020c1ed922cf7976a3a5545f05b07f466be12)",
+ "log",
  "lyon_tessellation",
  "rayon",
  "serde_json",

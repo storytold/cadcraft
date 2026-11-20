@@ -47,6 +47,19 @@ fn new_layout_gets_viewport_zoomed_to_extents() {
 }
 
 #[test]
+fn zoom_limits_frames_the_scaled_and_positioned_layout_sheet() {
+    let mut s = Session::new();
+    let layout = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    layout.page.paper_mm = Some(true);
+    layout.page.width_mm = 210.0;
+    layout.page.height_mm = 297.0;
+    layout.page.scale = 0.5;
+    layout.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    s.execute("layout.set", &json!({"name":"Layout1"})).unwrap();
+    assert_eq!(s.zoom_limits().unwrap(), Bounds2::new(Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+}
+
+#[test]
 fn rename_keeps_the_active_layout_whatever_its_case() {
     let mut s = session_with_model();
     s.doc_mut().unwrap().active_layout = Some("layout1".into());
