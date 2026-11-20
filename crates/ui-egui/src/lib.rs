@@ -36,6 +36,7 @@ pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
+mod line_editor;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
@@ -800,6 +801,18 @@ impl CadApp {
         }
     }
 
+    /// OPEN typed at the command line with the file to open (`OPEN C:\plans\big.dwg`, or the JSON
+    /// form with only a path, `open {"path": "…"}`): read in the background as File ▸ Open reads it
+    /// ([`Self::open_path`]), so a large drawing doesn't freeze the window. False, and the line runs
+    /// as before, for anything else: other parameters (`data`), a LISP file, and on the web, which
+    /// has no threads. Only the keyboard's Enter calls this; programmatic calls (the control
+    /// channel, MCP, scripts, LISP) keep getting their answer at once.
+    pub(crate) fn open_typed(&mut self, line: &str) -> bool {
+        let Some(path) = typed_open_path(line).filter(|p| !is_lisp_file(p)) else { return false };
+        self.open_path(Path::new(&path));
+        true
+    }
+
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
@@ -1201,6 +1214,27 @@ pub fn now_ms() -> f64 {
 /// A LISP source file, by its name.
 fn is_lisp_file(name: impl AsRef<Path>) -> bool {
     name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+}
+
+/// The file an `OPEN <path>` or `open {"path": "…"}` line names ([`CadApp::open_typed`]). `None`
+/// for other lines, JSON with other keys, and on the web.
+fn typed_open_path(line: &str) -> Option<String> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let (name, rest) = line.trim().split_once(char::is_whitespace)?;
+    if !name.trim_start_matches(['_', '.']).eq_ignore_ascii_case("open") {
+        return None;
+    }
+    let rest = rest.trim();
+    let path = if rest.starts_with('{') {
+        let v: Value = serde_json::from_str(rest).ok()?;
+        let o = v.as_object().filter(|o| o.len() == 1)?;
+        o.get("path")?.as_str()?.to_string()
+    } else {
+        rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(rest).to_string()
+    };
+    (!path.trim().is_empty()).then_some(path)
 }
 
 #[cfg(test)]
