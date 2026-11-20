@@ -200,7 +200,8 @@ pub(crate) struct RunArgs {
     /// Start a new metric drawing
     #[arg(long)]
     pub(crate) metric: bool,
-    /// Command-line script text to run (`\n` separates lines)
+    /// Command-line script text to run (`\n` separates lines; an empty line is Enter, which a
+    /// command that keeps prompting, such as LINE, needs before the next command)
     #[arg(long, value_name = "TEXT", action = ArgAction::Append)]
     pub(crate) script: Vec<String>,
     /// A script file (.scr) to run
