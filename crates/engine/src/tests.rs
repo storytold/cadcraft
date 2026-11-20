@@ -1555,7 +1555,7 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
 #[test]
 fn additional_tools_keeps_compatible_command_ids() {
     assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
-    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt"] {
+    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt", "justifytext", "scaletext"] {
         let command = crate::cmd::find_command(id).expect("existing command id");
         assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
         assert!(!command.menu.contains(&"Express Tools"));

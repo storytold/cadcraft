@@ -81,6 +81,7 @@ mod insert_prompts;
 mod isometric;
 mod join_close;
 mod json_param_validation;
+mod justify_scale_text;
 mod layer_cmdline;
 mod layer_merge_delete;
 mod layer_state_cmdline;

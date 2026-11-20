@@ -1396,6 +1396,8 @@
 	Collect	合并
 	Collect Multileaders	合并多重引线
 	Convert Text to Mtext	将文字转换为多行文字
+	Justify Text	文字对正
+	Scale Text	文字缩放
 	Customize	自定义
 	Drag Dynamic Grip	拖动动态夹点
 	Dynamic Block Data	动态块数据

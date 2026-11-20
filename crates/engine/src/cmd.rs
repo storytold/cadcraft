@@ -48,6 +48,7 @@ mod selecttools;
 mod settings;
 mod spline_opts;
 mod table;
+mod text_justify;
 mod tolerance;
 mod trimextend;
 mod txt2mtxt;
@@ -220,6 +221,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(table::specs());
         v.extend(tolerance::specs());
         v.extend(txt2mtxt::specs());
+        v.extend(text_justify::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
         v
