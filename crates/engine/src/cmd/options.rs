@@ -127,6 +127,7 @@ pub fn reset(s: &mut Session) {
     st.polar_flags = d.polar_flags;
     st.polarang = d.polarang;
     st.polaraddang = d.polaraddang;
+    st.polar_increments = d.polar_increments;
     st.orthomode = d.orthomode;
     st.snapmode = d.snapmode;
     st.gridmode = d.gridmode;

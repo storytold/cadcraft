@@ -749,6 +749,7 @@ mod tests {
     #[test]
     fn multileader_leaders_join_the_text_on_their_side() {
         let mtext = crate::MText {
+            frame: false,
             formula: None,
             insert: Vec3::new(2.0, 1.0, 0.0),
             height: 1.0,

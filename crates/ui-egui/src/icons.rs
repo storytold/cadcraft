@@ -111,6 +111,8 @@ pub enum Icon {
     Osnap,
     OTrack,
     Lineweight,
+    /// The current colour: four swatches.
+    Color,
     Transparency,
     Isodraft,
     DynInput,
@@ -888,6 +890,13 @@ fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, _a: Color32, dim
                 let y = 6.0 + k as f32 * 6.0;
                 pen.p.line_segment([pen.at(3.0, y), pen.at(21.0, y)], Stroke::new(w * pen.sc(), b));
             }
+        }
+        Color => {
+            let swatches = [(3.0, 3.0, (220, 60, 50)), (13.0, 3.0, (235, 200, 40)), (3.0, 13.0, (60, 170, 80)), (13.0, 13.0, (60, 110, 220))];
+            for (x, y, (r, g, bl)) in swatches {
+                pen.fill_rect(x, y, 8.0, 8.0, egui::Color32::from_rgb(r, g, bl));
+            }
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
         }
         Transparency => {
             pen.fill_rect(3.0, 3.0, 12.0, 12.0, b.gamma_multiply(0.7));

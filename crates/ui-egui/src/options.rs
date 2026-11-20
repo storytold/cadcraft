@@ -521,6 +521,7 @@ impl CadApp {
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
             "roundedCorners": self.options.rounded_corners,
+            "polarIncrements": self.session.settings.polar_increments.iter().map(|a| a.to_degrees()).collect::<Vec<f64>>(),
         })
         .to_string()
     }
@@ -588,6 +589,11 @@ impl CadApp {
         }
         if let Some(b) = c.rounded_corners {
             self.options.rounded_corners = b;
+        }
+        // Drafting Settings' further increment angles (degrees, at most 8 of them).
+        if let Some(list) = v.get("polarIncrements").and_then(Value::as_array) {
+            self.session.settings.polar_increments =
+                list.iter().filter_map(Value::as_f64).filter(|a| a.is_finite() && *a > 0.0 && *a <= 360.0).take(8).map(f64::to_radians).collect();
         }
     }
 }

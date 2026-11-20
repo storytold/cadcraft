@@ -280,11 +280,11 @@ pub fn is_read_only(name: &str) -> bool {
     READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim())) || table::is_read_only(&name.trim().to_ascii_uppercase())
 }
 
-/// POLARADDANG as typed: up to ten angles in degrees separated by `;` (radians out); `None` when
-/// any is not a number or there are too many.
+/// POLARADDANG as typed: up to ten angles in degrees separated by `;` (as AutoCAD) or commas
+/// (Drafting Settings), radians out; `None` when any is not a number or there are too many.
 pub fn parse_angle_list(text: &str) -> Option<Vec<f64>> {
     let angles: Option<Vec<f64>> =
-        text.split(';').map(str::trim).filter(|t| !t.is_empty()).map(|t| t.parse::<f64>().ok().filter(|a| a.is_finite())).collect();
+        text.split([';', ',']).map(str::trim).filter(|t| !t.is_empty()).map(|t| t.parse::<f64>().ok().filter(|a| a.is_finite())).collect();
     Some(angles.filter(|a| a.len() <= 10)?.into_iter().map(f64::to_radians).collect())
 }
 

@@ -161,6 +161,7 @@ impl Bar {
                 DIMSTYLE_COMBO,
                 LINETYPE_COMBO,
                 LWEIGHT_COMBO,
+                COLOR_COMBO,
             ],
         };
         ids.iter().map(|s| s.to_string()).collect()
@@ -206,6 +207,8 @@ pub const TEXTSTYLE_COMBO: &str = "textstyle.combo";
 pub const DIMSTYLE_COMBO: &str = "dimstyle.combo";
 pub const LINETYPE_COMBO: &str = "linetype.combo";
 pub const LWEIGHT_COMBO: &str = "lweight.combo";
+/// The current colour drop-down.
+pub const COLOR_COMBO: &str = "color.combo";
 /// Width of a drop-down row's preview (a linetype's dashes, a lineweight's line).
 const PREVIEW_W: f32 = 64.0;
 /// Width of the current-layer drop-down in a row.
@@ -275,7 +278,7 @@ fn history_list(app: &CadApp, ui: &mut egui::Ui, undo: bool) -> Option<usize> {
 
 /// Whether `command` is one of the bars' drop-downs (not a command).
 pub fn is_combo(command: &str) -> bool {
-    [LAYER_COMBO, TEXTSTYLE_COMBO, DIMSTYLE_COMBO, LINETYPE_COMBO, LWEIGHT_COMBO].contains(&command)
+    [LAYER_COMBO, TEXTSTYLE_COMBO, DIMSTYLE_COMBO, LINETYPE_COMBO, LWEIGHT_COMBO, COLOR_COMBO].contains(&command)
 }
 
 /// A drop-down's width in a row.
@@ -300,6 +303,7 @@ const LAYER_TOOLS: &[(Icon, &str, &str)] = &[
     (Icon::DimLinear, DIMSTYLE_COMBO, "Current Dimension Style"),
     (Icon::Line, LINETYPE_COMBO, "Current Linetype"),
     (Icon::Lineweight, LWEIGHT_COMBO, "Current Lineweight"),
+    (Icon::Color, COLOR_COMBO, "Current Color"),
 ];
 
 /// The default bar: file, undo, output, exchange, navigation, palettes, inquiry and help groups.
@@ -536,6 +540,7 @@ pub const DESCRIPTIONS: &[(&str, &str)] = &[
     ("dimstyle.combo", "The current dimension style, used by new dimensions."),
     ("linetype.combo", "The linetype of new objects."),
     ("lweight.combo", "The lineweight of new objects."),
+    ("color.combo", "The color of new objects."),
     ("line", "Draws straight line segments, one after another."),
     ("pline", "Draws a polyline: connected straight and arc segments that form one object."),
     ("circle", "Draws a circle by its centre and radius, or by points."),
@@ -755,6 +760,15 @@ pub fn top_panels(app: &mut CadApp, ui: &mut egui::Ui) {
             items.insert(at, LWEIGHT_COMBO.to_string());
         }
     }
+    // And the colour drop-down after the lineweight one.
+    if !app.ui.color_combo_added {
+        app.ui.color_combo_added = true;
+        let items = &mut app.ui.layers_bar.items;
+        if !items.iter().any(|i| i == COLOR_COMBO) {
+            let at = items.iter().position(|i| i == LWEIGHT_COMBO).map_or(items.len(), |i| i + 1);
+            items.insert(at, COLOR_COMBO.to_string());
+        }
+    }
     let t = Tokens::get();
     for bar in [Bar::ToolSets, Bar::Layers] {
         let st = state(&app.ui, bar);
@@ -837,6 +851,7 @@ fn selected_value(app: &CadApp, combo: &str) -> Option<Option<String>> {
             LAYER_COMBO => Some(e.common.layer.clone()),
             LINETYPE_COMBO => Some(e.common.linetype.clone()),
             LWEIGHT_COMBO => Some(lweight_name(i64::from(e.common.lineweight.to_dxf()))),
+            COLOR_COMBO => Some(e.common.color.name()),
             TEXTSTYLE_COMBO => match &e.kind {
                 K::Text(t) => Some(t.style.clone()),
                 K::MText(t) => Some(t.style.clone()),
@@ -893,8 +908,33 @@ fn current_names(app: &CadApp, combo: &str) -> Option<(String, Vec<String>)> {
             names.extend(cadcraft_engine::doc::Lineweight::STANDARD.iter().map(|v| lweight_name(i64::from(*v))));
             (lweight_name(d.header.i64("CELWEIGHT", -1)), names)
         }
+        COLOR_COMBO => {
+            // ByLayer, ByBlock, the seven named colours, and the current one when it is another.
+            let mut names: Vec<String> = ["ByLayer", "ByBlock"].iter().map(|s| s.to_string()).collect();
+            names.extend((1..=7).map(|i| cadcraft_color::Color::Index(i).name()));
+            let cur = cadcraft_color::Color::parse(cadcraft_engine::cmd::current_color_value(d).trim_start_matches("RGB:"))
+                .unwrap_or(cadcraft_color::Color::ByLayer)
+                .name();
+            if !names.iter().any(|n| n.eq_ignore_ascii_case(&cur)) {
+                names.push(cur.clone());
+            }
+            (cur, names)
+        }
         _ => return None,
     })
+}
+
+/// An object colour as a swatch (ByBlock and an unknown colour: `other`).
+fn swatch(c: cadcraft_color::Color, other: egui::Color32) -> egui::Color32 {
+    use cadcraft_color::Color;
+    match c {
+        Color::Index(i) => {
+            let cadcraft_color::Rgb(r, g, b) = cadcraft_color::aci_rgb(i);
+            egui::Color32::from_rgb(r, g, b)
+        }
+        Color::True(cadcraft_color::Rgb(r, g, b)) => egui::Color32::from_rgb(r, g, b),
+        Color::ByLayer | Color::ByBlock => other,
+    }
 }
 
 /// A CELWEIGHT value as the lineweight drop-down names it (`0.25 mm`, ByLayer...).
@@ -914,6 +954,8 @@ enum Preview {
     Linetypes(std::collections::HashMap<String, Vec<f64>>, Vec<f64>),
     /// Lineweights (mm): ByLayer shows the current layer's, Default LWDEFAULT.
     Lineweights { layer: f64, default: f64 },
+    /// Colour swatches: ByLayer shows the current layer's colour.
+    Colors { layer: egui::Color32 },
 }
 
 /// The preview for the drop-down `combo`, if it has one.
@@ -938,6 +980,10 @@ fn combo_preview(app: &CadApp, combo: &str) -> Option<Preview> {
             });
             Some(Preview::Lineweights { layer, default })
         }
+        COLOR_COMBO => {
+            let c = layer.map_or(cadcraft_color::Color::Index(7), |l| l.color);
+            Some(Preview::Colors { layer: swatch(c, egui::Color32::GRAY) })
+        }
         _ => None,
     }
 }
@@ -946,6 +992,15 @@ fn combo_preview(app: &CadApp, combo: &str) -> Option<Preview> {
 fn paint_preview(p: &egui::Painter, r: Rect, preview: &Preview, name: &str, color: egui::Color32) {
     let y = r.center().y;
     match preview {
+        Preview::Colors { layer } => {
+            let c = match cadcraft_color::Color::parse(name) {
+                Some(cadcraft_color::Color::ByLayer) | None => *layer,
+                Some(c) => swatch(c, color),
+            };
+            let sq = Rect::from_center_size(pos2(r.left() + 9.0, y), vec2(12.0, 12.0));
+            p.rect_filled(sq, 1.0, c);
+            p.rect_stroke(sq, 1.0, Stroke::new(1.0, color.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+        }
         Preview::Lineweights { layer, default } => {
             let mm = match name {
                 "ByLayer" => *layer,
@@ -1407,6 +1462,7 @@ fn run_action(app: &mut CadApp, bar: Bar, items: &mut Vec<String>, action: Optio
                     TEXTSTYLE_COMBO => "textStyle",
                     DIMSTYLE_COMBO => "dimStyle",
                     LWEIGHT_COMBO => "lineweight",
+                    COLOR_COMBO => "color",
                     _ => "linetype",
                 };
                 let value = match (combo, name.trim_end_matches(" mm").trim().parse::<f64>()) {
@@ -1428,6 +1484,7 @@ fn run_action(app: &mut CadApp, bar: Bar, items: &mut Vec<String>, action: Optio
                     };
                     app.run("lweight", json!({ "lineweight": v }))
                 }
+                COLOR_COMBO => app.run("setvar", json!({ "name": "CECOLOR", "value": name })),
                 _ => app.run("linetype", json!({ "current": name })),
             };
         }
@@ -2084,6 +2141,30 @@ mod tests {
         app.session.set_selection(Vec::new());
         run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetLayer("Walls".into())));
         assert_eq!(app.session.doc().unwrap().header.str("CLAYER", "0"), "Walls");
+    }
+
+    /// The colour drop-down shows the current colour, or the selection's; a choice colours the
+    /// selected objects, else becomes the current colour (CECOLOR).
+    #[test]
+    fn the_color_drop_down_sets_the_colour() {
+        let mut app = CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        app.run("new", json!({})).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
+        let h = cadcraft_engine::doc::Handle::parse_hex(&line).unwrap();
+        let shown = |app: &CadApp| combo_names(app, COLOR_COMBO).map(|(c, _)| c).unwrap_or_default();
+        assert_eq!(shown(&app), "ByLayer");
+        assert!(combo_names(&app, COLOR_COMBO).is_some_and(|(_, names)| names.iter().any(|n| n == "Red")));
+        let mut items = Vec::new();
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetCurrent(COLOR_COMBO, "Blue".into())));
+        assert_eq!(shown(&app), "Blue");
+        app.session.set_selection(vec![h]);
+        assert_eq!(shown(&app), "ByLayer", "the selected line's colour");
+        run_action(&mut app, Bar::Standard, &mut items, Some(Action::SetCurrent(COLOR_COMBO, "Red".into())));
+        let d = app.session.doc().unwrap();
+        assert_eq!(d.entity(h).unwrap().common.color, cadcraft_color::Color::Index(1));
+        app.session.set_selection(Vec::new());
+        assert_eq!(shown(&app), "Blue", "the current colour stays");
+        assert!(Bar::Layers.default_items().iter().skip_while(|i| *i != LWEIGHT_COMBO).nth(1).is_some_and(|i| i == COLOR_COMBO));
     }
 
     #[test]

@@ -185,6 +185,24 @@ fn polar_angles_increment_additional_and_tracking() {
     assert!((a[0].to_degrees() - 10.0).abs() < 1e-9 && (a[1].to_degrees() - 100.0).abs() < 1e-9);
 }
 
+/// Several increment angles at once (Drafting Settings): every multiple of each is tracked.
+/// Additional angles may be typed with commas.
+#[test]
+fn several_increment_angles_track_together() {
+    let mut s = session(mode::END);
+    setvar(&mut s, "POLARANG", json!(90));
+    let base = Some(Vec2::ZERO);
+    let c45 = Vec2::from_angle(135f64.to_radians()) * 10.0 + v(0.02, 0.03);
+    assert!(at(&mut s, c45, base).track.is_none(), "90 alone does not track 135");
+    s.settings.polar_increments = vec![45f64.to_radians(), 30f64.to_radians()];
+    let t = at(&mut s, c45, base).track.expect("45's multiple");
+    assert!((t.point.angle().to_degrees() - 135.0).abs() < 1e-9);
+    let c60 = Vec2::from_angle(60f64.to_radians()) * 10.0 + v(0.02, -0.03);
+    let t = at(&mut s, c60, base).track.expect("30's multiple");
+    assert!((t.point.angle().to_degrees() - 60.0).abs() < 1e-9);
+    assert_eq!(cadcraft_engine::sysvars::parse_angle_list("17, 33.5;8").map(|v| v.len()), Some(3));
+}
+
 #[test]
 fn extension_runs_on_from_a_line_end_and_round_an_arc() {
     // Extension alone, tracking off: resting on the end acquires its extension.
