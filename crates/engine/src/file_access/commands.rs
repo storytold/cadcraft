@@ -66,10 +66,15 @@ pub const FILES: &[&str] = &[
 pub const REFUSED: &[(&str, &str)] = &[
     ("drawingrecovery", "it works on the autosave folder (SAVEFILEPATH), which is the server's own"),
     ("blocklibraries", "it keeps its list of libraries in the settings folder, which is the server's own"),
+    ("fonts.rescan", "it reads the font folders, which are the server's own"),
+    ("fonts.list", "it reads and names the font folders, which are the server's own"),
 ];
 
 /// Commands that touch no file.
 pub const NO_FILES: &[&str] = &[
+    "table.cells",
+    "table.fit",
+    "table.size",
     "ucs",
     "ucs.3point",
     "ucs.origin",
