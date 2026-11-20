@@ -144,7 +144,7 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), limits(&t)));
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot, &tg), limits(&t)));
         }
     }
 }

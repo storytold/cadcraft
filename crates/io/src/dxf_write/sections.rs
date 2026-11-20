@@ -474,14 +474,35 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(17, Vec3::new(0.0, 1.0, 0.0));
     w.i(76, 0);
     w.s(330, brh);
-    // The saved paper-space view (centre, height) as CADCraft xdata.
-    if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+    // CADCraft xdata: the saved paper-space view (centre, height), and the layout's paper units.
+    // Group 72 cannot carry the choice on its own: 0 means inches, but it is also what earlier
+    // CADCraft versions wrote for a layout that follows MEASUREMENT, and 1 is what a layout that
+    // inherits a metric MEASUREMENT writes too. PSUNITS keeps the three states apart: 0 inches,
+    // 1 millimetres, 2 follows MEASUREMENT (#3249).
+    let view = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite());
+    let unit_marker = match page.paper_mm {
+        Some(false) => Some(0),
+        Some(true) => Some(1),
+        // An inherited imperial layout writes group 72 = 0, which already reads back as
+        // inherited; only group 72 = 1 is ambiguous and needs the marker.
+        None if cadcraft_render::paper::page_unit_mm(d, page) == 1.0 => Some(2),
+        None => None,
+    };
+    if view.is_some() || unit_marker.is_some() {
         w.s(1001, dxf_ext::APP);
-        w.s(1000, "PSVIEW");
-        w.s(1002, "{");
-        w.p(1010, c.to3(0.0));
-        w.f(1040, height);
-        w.s(1002, "}");
+        if let Some((c, height)) = view {
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
+        if let Some(units) = unit_marker {
+            w.s(1000, "PSUNITS");
+            w.s(1002, "{");
+            w.i(1070, units);
+            w.s(1002, "}");
+        }
     }
 }
 
