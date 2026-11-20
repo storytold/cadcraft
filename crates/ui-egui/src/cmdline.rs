@@ -72,6 +72,7 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     }
     // RECTANG's other corner: its width and height, in boxes beside the sides.
     let dims = p.corner && p.base.is_some() && app.session.running.as_ref().is_some_and(|r| r.id == "rectang");
+    let ucs = app.session.input_ucs();
     Some(crate::dyninput::Frame {
         base: p.base,
         cartesian: st.dynpi_cartesian,
@@ -79,6 +80,7 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         dims,
         rotation: if dims { p.corner_rotation } else { 0.0 },
         center: dims && p.corner_center,
+        ucs,
     })
 }
 

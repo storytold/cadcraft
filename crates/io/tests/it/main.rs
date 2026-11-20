@@ -33,6 +33,7 @@ mod hatch_assoc_roundtrip;
 mod hatch_background;
 mod hatch_pattern_def;
 mod helix_roundtrip;
+mod layer_states_acad;
 mod layout_limits_roundtrip;
 mod layout_paper_units;
 mod layout_plot_window;
@@ -61,6 +62,7 @@ mod pdf_layers;
 #[path = "../support/pdf_read.rs"]
 mod pdf_read;
 mod plot_layout_scale;
+mod plot_model_metric_units;
 mod plot_model_png_scale;
 mod plot_styles;
 mod polyface_roundtrip;

@@ -57,6 +57,8 @@ pub struct Frame {
     /// [`Frame::dims`]: the base is the rectangle's centre, the other corner half its width and
     /// height away.
     pub center: bool,
+    /// The UCS the boxes read and show values in (the engine reads the sent text in it too).
+    pub ucs: cadcraft_engine::ucs::UcsFrame,
 }
 
 impl Frame {
@@ -64,10 +66,11 @@ impl Frame {
     pub fn default_format(&self) -> Format {
         if self.base.is_some() && !self.cartesian && !self.dims { Format::Polar } else { Format::Cartesian }
     }
-    /// Where the typed values are measured from.
+    /// Where the typed values are measured from, in UCS coordinates: the last point, or the UCS
+    /// origin.
     pub fn origin(&self) -> Vec2 {
         match self.base {
-            Some(b) if !self.absolute || self.dims => b,
+            Some(b) if !self.absolute || self.dims => self.ucs.to_ucs(b),
             _ => Vec2::ZERO,
         }
     }
@@ -86,10 +89,10 @@ impl Frame {
         (Vec2::new(w, h) * if self.center { 0.5 } else { 1.0 }).rotate(self.rotation)
     }
 
-    /// The live (X, Y) or (distance, angle in radians) of `cursor`; a rectangle's width and
-    /// height (lengths) in [`Frame::dims`].
+    /// The live (X, Y) or (distance, angle in radians) of `cursor` (a world point), in the UCS;
+    /// a rectangle's width and height (lengths) in [`Frame::dims`].
     pub fn live(&self, format: Format, cursor: Vec2) -> (f64, f64) {
-        let d = cursor - self.origin();
+        let d = self.ucs.to_ucs(cursor) - self.origin();
         match format {
             Format::Cartesian if self.dims => {
                 let l = self.sides(d);
@@ -180,6 +183,12 @@ pub fn split_at(text: &str, frame: &Frame) -> Option<usize> {
 /// Hold the cursor to the locked values: the first one once a separator follows it, and both
 /// when Tab has locked the second one too (`second_locked`), which pins the cursor to the point.
 pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {
+    // In UCS coordinates; `p` and the result are world points.
+    frame.ucs.to_wcs(constrain_in_ucs(entry, frame, frame.ucs.to_ucs(p), second_locked))
+}
+
+/// [`constrain`] with `p` and the result in UCS coordinates.
+fn constrain_in_ucs(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {
     let o = frame.origin();
     let Some(v) = entry.first_locked() else {
         // Only the second value locked (Tab past an empty first box): the angle holds and the
@@ -233,7 +242,8 @@ pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool)
 /// (nothing split yet: a plain number stays direct distance entry). Empty boxes take the cursor's
 /// value. Entries measured from the last point are sent with `@` when the prompt's base is the
 /// session's last point (`last`, what `@` resolves against); otherwise, and for absolute entries,
-/// the finished point is sent as `#x,y`, so what was previewed is exactly what is placed.
+/// the finished point is sent as `#x,y` (UCS coordinates), so what was previewed is exactly what
+/// is placed.
 pub fn complete(entry: &Entry<'_>, frame: &Frame, cursor: Vec2, last: Vec2) -> Option<String> {
     if !entry.split {
         // A rectangle's width typed alone is that width (the height follows the cursor), as the
@@ -249,7 +259,7 @@ pub fn complete(entry: &Entry<'_>, frame: &Frame, cursor: Vec2, last: Vec2) -> O
     // A rectangle's width and height go toward the cursor's side of the first corner, along its
     // turned sides, and half of each from its centre.
     if frame.dims && entry.format == Format::Cartesian {
-        let l = frame.sides(cursor - frame.origin());
+        let l = frame.sides(frame.ucs.to_ucs(cursor) - frame.origin());
         let off = frame.corner_offset(frame.toward(first, l.x), frame.toward(second, l.y));
         if !off.is_finite() {
             return None;
@@ -263,7 +273,8 @@ pub fn complete(entry: &Entry<'_>, frame: &Frame, cursor: Vec2, last: Vec2) -> O
     if frame.relative() && frame.base == Some(last) {
         return Some(match entry.format {
             Format::Cartesian => format!("@{first},{second}"),
-            // `<<`: degrees from +X counterclockwise, as previewed, whatever ANGBASE/ANGDIR say.
+            // `<<`: degrees from the UCS X axis counterclockwise, as previewed, whatever
+            // ANGBASE/ANGDIR say.
             Format::Polar => format!("@{first}<<{}", second.to_degrees()),
         });
     }
@@ -411,6 +422,44 @@ mod tests {
         assert_eq!(tab_separator("3", &Frame::default()), Some(','));
         // Not a number: Tab falls back to AutoComplete.
         assert_eq!(tab_separator("rec", &polar), None);
+    }
+
+    /// `sent` with the engine reading the text in the frame's UCS, as the command line does.
+    fn sent_in(text: &str, frame: &Frame, cursor: Vec2, last: Vec2) -> Option<Vec2> {
+        let e = parse(text, frame)?;
+        let t = complete(&e, frame, cursor, last)?;
+        let angles = cadcraft_engine::units::AngleSettings { ucs: frame.ucs.rotation(), ..Default::default() };
+        cadcraft_engine::prompt::parse_point_in(&t, last, &angles, &frame.ucs)
+    }
+
+    #[test]
+    fn the_boxes_read_and_show_values_in_the_ucs() {
+        // The UCS at (100, 50) turned 90°: UCS X is world +Y.
+        let ucs =
+            cadcraft_engine::ucs::UcsFrame::WORLD.with_origin(cadcraft_geom::Vec3::new(100.0, 50.0, 0.0)).rotated_z(std::f64::consts::FRAC_PI_2);
+        let first = Frame { ucs, ..Frame::default() };
+        assert!(close(sent_in("10,0", &first, Vec2::ZERO, Vec2::ZERO), Vec2::new(100.0, 60.0)), "absolute: from the UCS origin");
+        let base = Vec2::new(100.0, 60.0);
+        let f = Frame { base: Some(base), ucs, ..Frame::default() };
+        assert!(close(sent_in("5,0", &f, Vec2::ZERO, base), Vec2::new(100.0, 65.0)), "relative along the UCS axes");
+        assert!(close(sent_in("10<0", &f, Vec2::ZERO, base), Vec2::new(100.0, 70.0)), "angles from the UCS X axis");
+        assert!(close(sent_in("10<90", &f, Vec2::ZERO, base), Vec2::new(90.0, 60.0)));
+        // Not relative to the last point: sent as `#x,y` in the UCS, placed where it was previewed.
+        assert!(close(sent_in("5,0", &f, Vec2::ZERO, Vec2::new(-1.0, -1.0)), Vec2::new(100.0, 65.0)));
+        let abs = Frame { absolute: true, cartesian: true, ..f };
+        assert!(close(sent_in("10,5", &abs, Vec2::ZERO, base), Vec2::new(95.0, 60.0)));
+        // The live values are the cursor's, measured in the UCS.
+        let (x, y) = f.live(Format::Cartesian, Vec2::new(97.0, 70.0));
+        assert!((x - 10.0).abs() < 1e-9 && (y - 3.0).abs() < 1e-9, "{x} {y}");
+        let (d, a) = f.live(Format::Polar, Vec2::new(100.0, 70.0));
+        assert!((d - 10.0).abs() < 1e-9 && a.abs() < 1e-9, "{d} {a}");
+        // A locked value holds the cursor along the UCS axes, and Enter sends that point.
+        let e = parse("3,", &f).unwrap();
+        let held = constrain(&e, &f, Vec2::new(80.0, 99.0), false);
+        assert!(close(Some(held), Vec2::new(80.0, 63.0)), "{held:?}");
+        assert!(close(sent_in("3,", &f, Vec2::new(80.0, 99.0), base), Vec2::new(80.0, 63.0)));
+        let e = parse("4<", &f).unwrap();
+        assert!(close(Some(constrain(&e, &f, Vec2::new(100.0, 90.0), false)), Vec2::new(100.0, 64.0)));
     }
 
     #[test]

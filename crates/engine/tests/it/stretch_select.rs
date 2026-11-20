@@ -174,3 +174,20 @@ fn small_area_around_a_multiline_vertex_moves_it_at_a_large_scale() {
     s.execute("stretch", &json!({ "window": [[2995, 605], [3005, 615]], "delta": [0, -610] })).unwrap();
     assert_eq!(mline_points(&s), vec![(0.0, 0.0), (3000.0, 0.0), (3000.0, 2000.0)]);
 }
+
+/// At "Remove objects" an object given by name is the one removed, also when another lies on it.
+#[test]
+fn removing_a_named_object_leaves_the_one_lying_on_it() {
+    for named_first in [true, false] {
+        let mut s = Session::new();
+        let first = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+        let second = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+        let (gone, kept) = if named_first { (&first, &second) } else { (&second, &first) };
+        s.script("STRETCH\nC\n8,-2\n12,2\nR\n").unwrap();
+        s.input_object(Handle::parse_hex(gone).unwrap(), None).unwrap();
+        s.script("\n0,0\n5,0\n").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        assert!(near(ends(&s, gone).1, 10.0, 0.0), "the named line was removed from the set: {:?}", ends(&s, gone));
+        assert!(near(ends(&s, kept).1, 15.0, 0.0), "the other line still stretches: {:?}", ends(&s, kept));
+    }
+}

@@ -928,6 +928,7 @@
 	Time	时间
 	To get started, create or open a drawing.	若要开始，请创建或打开一个图形。
 	Tool Bar	工具栏
+	Menu Bar	菜单栏
 	Tool Sets	工具集
 	Tools	工具
 	Torus	圆环体
@@ -1529,6 +1530,13 @@ menu	View	视图
 	Minimize	最小化
 	Maximize	最大化
 	Rounded corners on windows and buttons	窗口和按钮使用圆角
+	3 Point	三点
+	New UCS	新建 UCS
+	Origin	原点
+	UCS	UCS
+	UCS Icon at Origin	原点处的 UCS 图标
+	World	世界
+	Z	Z
 	Common	共同特性
 	Set Row Height / Column Width	设置行高/列宽
 	Fit Rows / Columns to Contents	按内容调整行/列
@@ -1573,11 +1581,11 @@ menu	View	视图
 	Not a scale: {text} (type 1:x)	不是比例：{text}（请输入 1:x）
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Click the object again to extend it, or pick another	再次单击该对象以延伸，或选择另一个对象
 	Saving...	正在保存...
 	Plotting...	正在打印...
 	Wait until the file is written.	请等待文件写入完成。
 	The file could not be written.	无法写入文件。
-	Click the object again to extend it, or pick another	再次单击该对象以延伸，或选择另一个对象
 
 # ArtCraft feature naming
 	Additional Tools	其他工具

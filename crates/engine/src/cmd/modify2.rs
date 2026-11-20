@@ -82,7 +82,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(PathArrayM::default()))),
         CommandSpec::new("updatefield", "Update Fields", run_updatefield)
             .menu(&["Tools", "Update Fields"])
-            .params("{} (works out every text formula and known field again: dates, file name)"),
+            .params("{} (works out every text formula and known field again: dates, loaded drawing name)"),
         CommandSpec::new("textedit", "Edit Text...", run_textedit)
             .menu(&["Modify", "Object", "Edit Text..."])
             .alias(&["ed", "ddedit"])

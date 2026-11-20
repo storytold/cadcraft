@@ -63,9 +63,23 @@ pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
     p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
 }
 
+/// The whole degrees (0–359) a tracking tooltip shows for the path `from` → `to`, measured from
+/// the current UCS's X axis at `ucs` radians.
+pub(super) fn tooltip_angle(from: Vec2, to: Vec2, ucs: f64) -> i64 {
+    ((from.angle_to(to) - ucs).to_degrees().round() as i64).rem_euclid(360)
+}
+
 /// Acquired tracking points (small `+`, `//` for a Parallel line), the dotted paths the cursor
 /// is on and the tooltip naming them ("Endpoint: 5.0000 < 90°").
-pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquired], track: Option<&snap::tracking::Track>, far: f64) {
+/// `ucs`: the current UCS's X axis (radians), which the tooltips measure angles from.
+pub(super) fn draw_tracking(
+    p: &egui::Painter,
+    xf: &Xf,
+    acquired: &[snap::tracking::Acquired],
+    track: Option<&snap::tracking::Track>,
+    far: f64,
+    ucs: f64,
+) {
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
     let st = Stroke::new(1.0, t.snap);
@@ -100,10 +114,7 @@ pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracki
             }
         };
         p.extend(Shape::dotted_line(&pts, t.snap, 6.0, 1.0));
-        let (distance, angle) = (
-            cadcraft_engine::units::format_distance(path.from.dist(tr.point), 2, 4),
-            (path.from.angle_to(tr.point).to_degrees().round() as i64).rem_euclid(360),
-        );
+        let (distance, angle) = (cadcraft_engine::units::format_distance(path.from.dist(tr.point), 2, 4), tooltip_angle(path.from, tr.point, ucs));
         tips.push(if path.name == "Polar" {
             crate::tf!("Polar: {distance} < {angle}°", distance = distance, angle = angle)
         } else {
@@ -212,28 +223,37 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
 }
 
+/// Half the side of the pick box (`PICKBOX * 1.5` screen points), or `None` when `PICKBOX` is 0.
 fn pickbox_half(pickbox: f64) -> Option<f32> {
     let half = (pickbox * 1.5) as f32;
     (half.is_finite() && half >= 1.0).then_some(half)
 }
 
+/// Draws the canvas cursor at `at`: the full crosshair with pickbox when idle, crosshair lines
+/// only at point prompts, and the pickbox square alone at command object-selection prompts.
 pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool, ink: Color32) {
     let st = Stroke::new(1.0, ink);
     let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
-    let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
+    let picking_in_cmd = pickbox && app.session.current_prompt().is_some_and(|pr| pr.picks_objects());
+    let pb = if pickbox { pickbox_half(app.session.settings.pickbox).or(picking_in_cmd.then_some(1.5)) } else { None };
     let gap = pb.unwrap_or(0.0);
-    // Along the isometric plane's axes in isometric drafting.
-    if app.session.settings.isodraft {
-        for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
-            let dir = vec2(a.cos() as f32, -(a.sin() as f32));
-            p.line_segment([at - dir * len, at - dir * gap], st);
-            p.line_segment([at + dir * gap, at + dir * len], st);
+    // At a command prompt that selects objects, AutoCAD shows only the pickbox square (no
+    // crosshair lines); when idle or once a selection window corner is picked, the crosshair
+    // lines are drawn.
+    if !picking_in_cmd {
+        // Along the isometric plane's axes in isometric drafting.
+        if app.session.settings.isodraft {
+            for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
+                let dir = vec2(a.cos() as f32, -(a.sin() as f32));
+                p.line_segment([at - dir * len, at - dir * gap], st);
+                p.line_segment([at + dir * gap, at + dir * len], st);
+            }
+        } else {
+            p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
+            p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
+            p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
+            p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
         }
-    } else {
-        p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
-        p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
-        p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
-        p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
     }
     if let Some(pb) = pb {
         p.rect_stroke(Rect::from_center_size(at, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
