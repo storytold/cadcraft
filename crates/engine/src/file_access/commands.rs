@@ -387,6 +387,7 @@ pub const NO_FILES: &[&str] = &[
     "limits",
     "style",
     "style.list",
+    "fonts.missing",
     "style.rename",
     "style.delete",
     "style.current",
