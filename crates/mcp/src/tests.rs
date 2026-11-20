@@ -226,6 +226,22 @@ fn find_text_reads_texts_and_render_shows_one_area() {
     assert_eq!((w, h), (1600, 800));
 }
 
+/// Guards #3011: `find_text` filters by `query` as it does by `contains`, instead of ignoring it
+/// and returning every text.
+#[test]
+fn find_text_filters_by_query() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [1, 1], "height": 0.15, "text": "RECAMARA 1"}}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [50, 1], "height": 0.15, "text": "COCINA"}}));
+    assert_eq!(tool(&mut s, "find_text", json!({}))["count"], 2);
+    let r = tool(&mut s, "find_text", json!({"query": "cocina"}));
+    assert_eq!((r["count"].as_u64(), r["texts"][0]["text"].as_str()), (Some(1), Some("COCINA")), "{r}");
+    assert_eq!(tool(&mut s, "find_text", json!({"query": "nada"}))["count"], 0);
+    // `contains` still works and wins when both are given.
+    assert_eq!(tool(&mut s, "find_text", json!({"contains": "recamara", "query": "cocina"}))["texts"][0]["text"], "RECAMARA 1");
+}
+
 /// Guards a lazy Remote bridge: it serves tools without the app, reports how to start it
 /// (`--control`), and reaches the app once that app starts listening on the port.
 #[test]

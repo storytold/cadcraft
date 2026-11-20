@@ -726,6 +726,34 @@ fn new_handles_skip_the_files_object_handles() {
     assert_eq!(d.new_handle(), Handle(next + 3));
 }
 
+/// In the reserved band a new handle skips the file's kept object handles (#2514) and the handles
+/// objects hold in model space, a layout and a block definition, or that a file record reserved
+/// (#913); off the top of the range it goes on at the bottom of the band. HANDSEED reports the
+/// handle `new_handle` takes.
+#[test]
+fn new_handles_in_the_reserved_band_skip_every_held_handle_and_wrap() {
+    let mut d = Drawing::new_metric();
+    let top = u64::MAX;
+    d.model.push(Entity::new(Handle(top - 4), line((0.0, 0.0), (1.0, 0.0))));
+    let mut sheet = Layout::new("Sheet", 1);
+    sheet.entities.push(Entity::new(Handle(top - 3), line((0.0, 0.0), (1.0, 0.0))));
+    d.layouts.push(sheet);
+    let mut b = Block::new("B");
+    b.entities.push(Entity::new(Handle(top - 2), line((0.0, 0.0), (1.0, 0.0))));
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    std::sync::Arc::make_mut(&mut d.foreign).handles.insert(Handle(top - 1), ("LAYER".into(), "0".into()));
+    d.reserve_handle(Handle(top));
+    d.model.push(Entity::new(Handle(HANDLE_LIMIT), line((0.0, 0.0), (1.0, 0.0))));
+    d.handseed = top - 5;
+    assert_eq!(d.new_handle(), Handle(top - 5));
+    assert_eq!(d.next_handle(), Handle(HANDLE_LIMIT + 1), "a held handle was offered");
+    assert_eq!(d.new_handle(), Handle(HANDLE_LIMIT + 1));
+    assert_eq!(d.handseed, HANDLE_LIMIT + 2);
+    // Handle 0 means "no handle" in a file; a seed there moves on.
+    d.handseed = 0;
+    assert_eq!(d.new_handle(), Handle(1));
+}
+
 /// Several spellings of one DIM field apply once, the last in the map's order, and none is rejected.
 #[test]
 fn dim_style_spellings_of_one_field_apply_once() {

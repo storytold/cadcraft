@@ -20,7 +20,7 @@ pub(super) fn parse_entities(
         if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
             rx.paper_views_dropped.push((owner.clone(), paper, rx.block.clone()));
         }
-        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left);
+        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left, &mut rx.curves);
         if let Some((c, _)) = kindent.as_mut()
             && let Some(n) = entity_plot_style(tags, rx)
         {
@@ -55,6 +55,7 @@ pub(super) fn parse_entities(
         }
         if let Some((c, mut k)) = kindent {
             let h = match handle {
+                // A file's handles keep their identity, however high they are (#913, #939).
                 Some(h) => {
                     d.bump_handseed(h);
                     h
