@@ -322,7 +322,7 @@ mod tests {
         let st = read("S", &styled(&[long.as_str()]), &lookup, &mut budget);
         assert!(st.layers.is_empty());
         let mut budget = MAX_COPIED_BYTES;
-        let st = read("S", &styled(&[long.as_str()]), &lookup, &mut budget);
+        let _ = read("S", &styled(&[long.as_str()]), &lookup, &mut budget);
         assert_eq!(MAX_COPIED_BYTES - budget, short(long.as_str()));
         // A later entry of the same layer is charged what it adds; past the budget it is left out,
         // and one that adds nothing still applies.
