@@ -86,4 +86,16 @@ fn copy_in_one_drawing_and_paste_in_another() {
     assert_eq!(d.model.len(), 2);
     assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "DOT")));
     assert!(d.block("DOT").is_some());
+
+    // Fallback to in-memory Session.clipboard when OS clipboard holds plain text or an image.
+    for fallback_event in
+        [Event::Paste("just some plain text".into()), Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::WHITE)))]
+    {
+        h.event(fallback_event);
+        h.run_steps(3);
+        assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("pasteclip"));
+        h.state_mut().session.input(Input::Point(Vec2::new(300.0, 300.0))).unwrap();
+        h.run_steps(2);
+    }
+    assert_eq!(h.state().session.doc().unwrap().model.len(), 6);
 }
