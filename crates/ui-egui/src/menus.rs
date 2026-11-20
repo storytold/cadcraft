@@ -130,6 +130,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.updates.check", "Check for Updates…", &["Help", "Check for Updates…"], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
+    ("ui.dialog.formulas", "Text Formulas", &["Help", "Text Formulas"], None),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
@@ -383,7 +384,11 @@ fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
         return run_ui_command(app, "ui.saveas", &Value::Null);
     }
-    app.hold_lossy_save().then_some(Ok(Value::Null))
+    if !app.hold_lossy_save() {
+        // The file is written away from the window ([`crate::busy`]).
+        crate::busy::run(app, "qsave", json!({}), |_, _| {});
+    }
+    Some(Ok(Value::Null))
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -462,7 +467,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let name = app.ui.save_format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), |app, p| {
-                app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
+                // The file is written away from the window ([`crate::busy`]).
+                let params = saveas_params(&app.ui, &app.session, &p);
+                crate::busy::run(app, "saveas", params, |_, _| {});
+                Ok(Value::Null)
             })
             .unwrap_or(Ok(Value::Null))
         }
@@ -474,12 +482,14 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
             return app.pick_then(Pick::Save(format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))), |app, path| {
-                let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
-                app.session.echo(match &r {
-                    Ok(_) => format!("Plotted to {path}"),
-                    Err(e) => e.clone(),
+                // Plotted away from the window ([`crate::busy`]), which reports any error.
+                let msg = format!("Plotted to {path}");
+                crate::busy::run(app, "exportpdf", json!({ "path": path }), move |app, r| {
+                    if r.is_ok() {
+                        app.session.echo(msg);
+                    }
                 });
-                r
+                Ok(Value::Null)
             });
         }
         "ui.sample" => {
@@ -537,6 +547,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"
+        | "ui.dialog.formulas"
         | "ui.dialog.qselect"
         | "ui.dialog.parameters"
         | "ui.dialog.find" => {
@@ -750,7 +761,7 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
+            let mut b = egui::Button::new(crate::i18n::widget(ui, crate::i18n::t(label), egui::TextStyle::Button));
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
@@ -949,7 +960,9 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     }
     let pairs = crate::keys::effective_cached(ctx, &app.ui.shortcuts);
     crate::clipboard::mirror(app, ctx);
-    if app.closing.is_some() {
+    // While a file closes, or Batch Plot (a modal window) is open, the drawing takes no keys:
+    // Ctrl+A there picks sheets, not objects.
+    if app.closing.is_some() || app.ui.dialog.as_deref() == Some("publish") {
         return;
     }
     // A palette toggle is global even while its expression field owns keyboard focus.
@@ -1079,6 +1092,8 @@ mod tests {
 
         // EXPORTPDF asks where to save straight away.
         app.start("exportpdf");
+        // The PDF is written away from the window: wait for it.
+        crate::busy::wait(&mut app);
         assert_eq!(*asked.borrow(), vec!["Drawing1.pdf".to_string()]);
         assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"));
         assert!(app.session.log.iter().any(|l| l.contains(&ps)));

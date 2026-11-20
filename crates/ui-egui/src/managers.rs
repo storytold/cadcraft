@@ -575,9 +575,39 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let [left, right] = cols else { return };
             left.label(RichText::new("Layouts").strong());
             egui::ScrollArea::vertical().id_salt("pagesetup_list").max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
+                // The layouts drag to a new place in the tab order.
+                let mut rows: Vec<(String, egui::Rect)> = Vec::new();
+                let mut dragged: Option<(String, bool)> = None;
                 for (_, name, _) in &layouts {
-                    if ui.selectable_label(*name == sel, name).clicked() {
+                    let r = ui.add(egui::Button::selectable(*name == sel, name).sense(egui::Sense::click_and_drag()));
+                    if r.clicked() {
                         sel = name.clone();
+                    }
+                    if r.dragged() || r.drag_stopped() {
+                        dragged = Some((name.clone(), r.drag_stopped()));
+                    }
+                    rows.push((name.clone(), r.rect));
+                }
+                if let Some((name, dropped)) = dragged
+                    && let Some(py) = ui.ctx().pointer_latest_pos().map(|q| q.y)
+                {
+                    let target = rows.iter().find(|(_, r)| py < r.center().y).map(|(n, _)| n.clone());
+                    let mark_y = match &target {
+                        Some(b) => rows.iter().find(|(n, _)| n == b).map(|(_, r)| r.top()),
+                        None => rows.last().map(|(_, r)| r.bottom()),
+                    };
+                    if let (Some(y), Some((_, first))) = (mark_y, rows.first()) {
+                        ui.painter().line_segment([egui::pos2(first.left(), y), egui::pos2(first.right(), y)], egui::Stroke::new(2.0, t.accent));
+                    }
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if dropped && target.as_ref() != Some(&name) {
+                        action = Some((
+                            "layout.move",
+                            match target {
+                                Some(b) => json!({ "name": name, "before": b }),
+                                None => json!({ "name": name }),
+                            },
+                        ));
                     }
                 }
             });
@@ -688,7 +718,7 @@ fn page_rows(
         {
             change = Some(("device", json!("None")));
         }
-        for dev in choices.devices.iter() {
+        for dev in choices.devices.iter().filter(|dv| !hidden_device(&dv.name)) {
             let on = dev.name.eq_ignore_ascii_case(&page.device);
             if ui.selectable_label(on, &dev.name).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
                 && !on
@@ -922,11 +952,16 @@ struct PlotState {
 }
 
 /// The page setup a plot of `target` starts from: the layout's, or model-space defaults (fitted
-/// extents on A4 in metric drawings, ANSI A otherwise).
+/// extents on A4 in metric drawings, ANSI A otherwise). Without a device CADCraft has (none, or
+/// another program's such as `DWG To PDF.pc3`) it plots with CADCraft PDF on the standard paper of
+/// the sheet's size.
 fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup {
     if let Some(l) = d.layouts.iter().find(|l| l.name == target) {
         let mut page = l.page.clone();
         page.plot_area = "layout".into();
+        if cadcraft_engine::cmd::plotters::find_device(&page.device).is_none() {
+            default_device(&mut page);
+        }
         return page;
     }
     let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
@@ -937,7 +972,45 @@ fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup
         page.width_mm = a4.width_mm;
         page.height_mm = a4.height_mm;
     }
+    default_device(&mut page);
     page
+}
+
+/// The device plots start with.
+const DEFAULT_DEVICE: &str = "CADCraft PDF";
+
+/// Plot `page` with [`DEFAULT_DEVICE`] on its paper of the page's size (either way round), else
+/// the smallest one it fits on. A sheet larger than every paper keeps no device (a PDF of its own
+/// size).
+fn default_device(page: &mut cadcraft_doc::PageSetup) {
+    let Some(dev) = cadcraft_engine::cmd::plotters::find_device(DEFAULT_DEVICE) else { return };
+    let (long, short) = (page.width_mm.max(page.height_mm), page.width_mm.min(page.height_mm));
+    let dims = |p: &cadcraft_doc::DevicePaper| (p.width.max(p.height), p.width.min(p.height));
+    let same = dev.papers.iter().find(|p| {
+        let (l, s) = dims(p);
+        (l - long).abs() <= 1.0 && (s - short).abs() <= 1.0
+    });
+    let fits = || {
+        dev.papers
+            .iter()
+            .filter(|p| dims(p).0 >= long - 1.0 && dims(p).1 >= short - 1.0)
+            .min_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
+    };
+    let Some(paper) = same.or_else(fits) else {
+        page.device = String::new();
+        return;
+    };
+    page.device = dev.name.clone();
+    page.paper = paper.name.clone();
+    page.width_mm = paper.width;
+    page.height_mm = paper.height;
+    page.margins_mm = paper.margins;
+}
+
+/// Devices the Plot dialog doesn't list: AutoCAD's PDF driver, which a drawing's page setup may
+/// name (CADCraft PDF plots PDFs here).
+fn hidden_device(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("dwg to pdf")
 }
 
 /// The `plot` parameters for the dialog's settings (without the output path). `preview_dpi`
@@ -1160,7 +1233,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
     if app.ui.dialog.as_deref() == Some("plot") {
         app.ui.dialog = None;
     }
-    match app.run("plot", params) {
+    // Plotted away from the window ([`crate::busy`]).
+    let target = target.to_string();
+    crate::busy::run(app, "plot", params, move |app, r| match r {
         Ok(r) => {
             let msg = match r.get("path").and_then(Value::as_str) {
                 Some(path) => format!("Plotted {target} to {path}"),
@@ -1168,9 +1243,9 @@ fn run_plot(app: &mut CadApp, params: Value, target: &str) {
             };
             app.session.echo(msg);
         }
-        // `run` already echoed the error; keep the dialog open to fix the settings.
+        // The error was echoed; the dialog opens again to fix the settings.
         Err(_) => app.ui.dialog = Some("plot".into()),
-    }
+    });
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.
@@ -1319,6 +1394,29 @@ mod plot_dialog_tests {
         assert!(page.plot_transparency);
         apply_page_change(&mut st.page, "plotTransparency", &json!(false));
         assert_eq!(plot_params(&st, None)["plotTransparency"], json!(false));
+    }
+
+    /// A layout whose page setup names a device CADCraft hasn't (AutoCAD's DWG To PDF) plots with
+    /// CADCraft PDF on the standard paper of the sheet's size; the dialog doesn't list DWG To PDF.
+    #[test]
+    fn plots_start_with_cadcraft_pdf_on_the_sheets_paper() {
+        let mut d = cadcraft_doc::Drawing::new_metric();
+        if let Some(l) = d.layouts.iter_mut().find(|l| l.name == "Layout1") {
+            l.page.device = "DWG To PDF.pc3".into();
+            l.page.paper = "ISO_full_bleed_A3_(420.00_x_297.00_MM)".into();
+            l.page.width_mm = 297.0;
+            l.page.height_mm = 420.0;
+        }
+        let page = plot_page(&d, "Layout1");
+        assert_eq!(page.device, DEFAULT_DEVICE);
+        assert_eq!(page.paper, cadcraft_render::paper_size("A3").map(|p| p.name).unwrap_or_default());
+        // An odd sheet takes the smallest paper it fits on.
+        let mut odd = cadcraft_doc::PageSetup { width_mm: 400.0, height_mm: 290.0, ..Default::default() };
+        default_device(&mut odd);
+        assert_eq!(odd.paper, cadcraft_render::paper_size("A3").map(|p| p.name).unwrap_or_default());
+        // Model space too.
+        assert_eq!(plot_page(&d, "Model").device, DEFAULT_DEVICE);
+        assert!(hidden_device("DWG To PDF.pc3") && !hidden_device(DEFAULT_DEVICE));
     }
 
     #[test]

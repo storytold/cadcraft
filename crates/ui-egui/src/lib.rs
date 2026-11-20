@@ -20,7 +20,9 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
+pub mod batchplot;
 pub mod bedit;
+pub mod busy;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
@@ -348,6 +350,8 @@ pub struct CadApp {
     pub closing: Option<closing::Closing>,
     /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
     pub save_loss: Option<save_loss::Pending>,
+    /// A save or plot writing its file on another thread ([`busy`]).
+    pub busy: Option<busy::Busy>,
     /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
     pub save_loss_accepted: Option<save_loss::Accepted>,
     /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
@@ -419,6 +423,7 @@ impl CadApp {
             quit_confirmed: false,
             closing: None,
             save_loss: None,
+            busy: None,
             save_loss_accepted: None,
             autosave: None,
             recovery: autosave::Recovery::default(),
@@ -906,6 +911,9 @@ impl CadApp {
     /// pass index is zero. `current_pass_index() == 0` is therefore the frame guard: true on the
     /// first pass and every hidden tick, false on later passes.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // While a file is written the window takes no input; the writing goes on.
+        busy::swallow_input(self, ctx);
+        busy::poll(self, ctx);
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
@@ -926,7 +934,7 @@ impl CadApp {
         }
         // Closing the window with unsaved changes asks first. `run_logic` refreshes viewport
         // close/focus state, so this must also work while hidden.
-        if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
+        if ctx.input(|i| i.viewport().close_requested()) && (self.busy.is_some() || self.request_quit()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         // A long AutoLISP routine runs one bounded slice per frame, including hidden web/native
@@ -1019,6 +1027,7 @@ impl CadApp {
     /// Lay out the whole window. This is the only place with a real UI pass.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        busy::swallow_input(self, &ctx);
         let first_pass = ctx.current_pass_index() == 0;
         if first_pass {
             self.ui_frame_begin(ui);
@@ -1143,6 +1152,7 @@ impl CadApp {
             }
         });
         self.opening.show(ui.ctx());
+        busy::show(self, ui.ctx());
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, ui.ctx());
         dialogs::show(self, ui.ctx());

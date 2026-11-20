@@ -37,7 +37,7 @@ pub(super) struct MeshRequest {
     pub view_height: f64,
     pub model_bg: Rgb,
     pub paper_bg: Rgb,
-    pub lwdisplay: bool,
+    pub lwdisplay: crate::gpu::LwScale,
     /// Create the GPU buffers on the worker too, so the frame that swaps the list in only swaps
     /// buffers (`None`: the paint callback uploads them).
     pub device: Option<egui_wgpu::wgpu::Device>,
@@ -54,7 +54,7 @@ pub(super) struct BuiltMesh {
     pub data: crate::gpu::MeshData,
     pub origin: Vec2,
     pub bg: Rgb,
-    pub lwdisplay: bool,
+    pub lwdisplay: crate::gpu::LwScale,
     /// Indices of the infinite lines (drawn on the CPU in GPU mode).
     pub infinite: Vec<usize>,
     pub ms: f64,
@@ -187,7 +187,7 @@ mod tests {
                 view_height: 20.0,
                 model_bg: Rgb(0, 0, 0),
                 paper_bg: Rgb(255, 255, 255),
-                lwdisplay: false,
+                lwdisplay: crate::gpu::LwScale::Off,
                 device: None,
             }),
         };

@@ -94,6 +94,16 @@ pub fn label(scale: f64, metric: bool) -> String {
     if scale >= 1.0 { format!("{}:1", num(scale)) } else { format!("1:{}", num(1.0 / scale)) }
 }
 
+/// A scale typed in as paper:model units (`1:37.5`, `2:1`), or a plain number as 1:that.
+pub fn parse_ratio(text: &str) -> Option<f64> {
+    let num = |s: &str| s.trim().replace(',', ".").parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0);
+    let v = match text.split_once([':', '=']) {
+        Some((a, b)) => num(a)? / num(b)?,
+        None => 1.0 / num(text)?,
+    };
+    (v.is_finite() && v > 1e-9 && v < 1e9).then_some(v)
+}
+
 /// The viewport the control acts on: the active one (MSPACE), else the single selected one.
 pub fn target(app: &CadApp) -> Option<(Handle, Viewport)> {
     let st = app.session.state().ok()?;
@@ -146,8 +156,35 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     p.line_segment([pos2(ax, ay + 1.5), pos2(ax + 3.0, ay - 1.5)], egui::Stroke::new(1.2, t.text_dim));
     let sresp = sresp.on_hover_text(if vp.locked { crate::tl!("Viewport is locked") } else { crate::tl!("Viewport scale") });
     let mut pick = None;
+    let mut by_window = false;
+    let mut bad_custom = None;
     if !vp.locked {
-        egui::Popup::from_toggle_button_response(&sresp).width(150.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        let field = ui.scope_id().with("vp_custom");
+        egui::Popup::from_toggle_button_response(&sresp).width(170.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            // Custom: a scale typed as `1:x` (or `x:1`, or `x` for 1:x), applied with Enter.
+            ui.horizontal(|ui| {
+                ui.label(crate::tl!("Custom:"));
+                let mut text = ui.data_mut(|d| d.get_temp::<String>(field)).unwrap_or_else(|| "1:".to_string());
+                let resp = ui.add(egui::TextEdit::singleline(&mut text).desired_width(90.0).hint_text("1:x"));
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    match parse_ratio(&text) {
+                        Some(v) => {
+                            pick = Some(v);
+                            ui.data_mut(|d| d.remove::<String>(field));
+                            ui.close();
+                        }
+                        None => bad_custom = Some(text.clone()),
+                    }
+                } else {
+                    ui.data_mut(|d| d.insert_temp(field, text));
+                }
+            });
+            // By window: two corners in the viewport, fitted like View > Zoom > Window.
+            if ui.selectable_label(false, crate::tl!("By window")).on_hover_text(crate::tl!("Pick a window to fit in the viewport")).clicked() {
+                by_window = true;
+                ui.close();
+            }
+            ui.separator();
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 for (name, v) in scales(metric) {
                     if ui.selectable_label(same(v, scale), name).clicked() {
@@ -157,6 +194,18 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
                 }
             });
         });
+    }
+    if let Some(text) = bad_custom {
+        app.status = Some((crate::tf!("Not a scale: {text} (type 1:x)", text = text.trim()), crate::now_ms()));
+    }
+    if by_window {
+        // The window is picked in the viewport's model space: make it the active one first.
+        let active = app.session.state().ok().and_then(|st| st.active_viewport()).is_some_and(|(a, _)| a == h);
+        let r = if active { Ok(serde_json::Value::Null) } else { app.run("mspace", json!({ "handle": h.hex() })) };
+        match r {
+            Ok(_) => app.start("zoom.window"),
+            Err(e) => app.status = Some((e, crate::now_ms())),
+        }
     }
     if let Some(v) = pick {
         let r = app.run("viewport.set", json!({ "handle": h.hex(), "scale": v }));
@@ -171,6 +220,18 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_scales_read_as_ratios() {
+        assert_eq!(parse_ratio("1:50"), Some(0.02));
+        assert_eq!(parse_ratio(" 1 : 37.5 "), Some(1.0 / 37.5));
+        assert_eq!(parse_ratio("2:1"), Some(2.0));
+        assert_eq!(parse_ratio("25"), Some(0.04));
+        assert_eq!(parse_ratio("1:0,5"), Some(2.0));
+        for bad in ["", "1:", ":5", "1:0", "-1:5", "a:b", "1:inf", "NaN"] {
+            assert_eq!(parse_ratio(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn labels() {

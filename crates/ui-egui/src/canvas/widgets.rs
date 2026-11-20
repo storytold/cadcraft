@@ -28,7 +28,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         p.rect_filled(*r, 0.0, t.canvas);
         draw_grid(app, &p, &xf);
         if let Some(list) = &app.canvas.list {
-            draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
+            draw_list(&p, &xf, list, bg, super::lw_scale(app, &xf));
         }
         viewport_label(&p, *r);
     }
