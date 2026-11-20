@@ -669,6 +669,7 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "ron",
+ "serde",
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",

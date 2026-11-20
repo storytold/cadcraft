@@ -1,17 +1,21 @@
 use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
-use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2};
+use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Ucs, Vec2, Vec3};
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]
 pub(super) struct Objects {
     /// Dictionary entry handle (upper case) → entry name.
     names: HashMap<String, String>,
+    /// (dictionary handle, entry handle), both upper case, in the order the dictionaries list them.
+    entry_order: Vec<(String, String)>,
     /// SCALE objects (the annotation scale list), in file order.
     scales: Vec<cadcraft_doc::AnnoScale>,
     /// XRECORD handle (upper case) → its groups.
     xrecords: HashMap<String, Vec<Tag>>,
+    /// XRECORD handles in file order.
+    xrecord_order: Vec<String>,
     /// TABLESTYLE objects: (handle, groups).
     table_styles: Vec<(String, Vec<Tag>)>,
     /// DIMASSOC objects.
@@ -22,6 +26,8 @@ pub(super) struct Objects {
     groups: Vec<(String, Vec<Tag>)>,
     /// Saved paper-space views of layouts: (layout name, view).
     layout_views: Vec<(String, (Vec2, f64))>,
+    /// Layouts' current UCSs: (layout name, origin, X axis, Y axis, named UCS record handle).
+    layout_ucss: Vec<(String, Vec3, Vec3, Vec3, Option<String>)>,
     /// SORTENTSTABLE objects: (owning block record handle, entity handle → sort handle).
     pub(super) sortents: Vec<(String, HashMap<Handle, u64>)>,
     /// WIPEOUTVARIABLES: the drawing's WIPEOUTFRAME (0 = frames hidden, 1 = shown).
@@ -50,7 +56,11 @@ impl Objects {
                             if let Some(n) = name.take()
                                 && self.names.len() < MAX_OBJECTS
                             {
-                                self.names.insert(t.str().trim().to_ascii_uppercase(), n);
+                                let entry = t.str().trim().to_ascii_uppercase();
+                                if self.entry_order.len() < MAX_OBJECTS {
+                                    self.entry_order.push((h.clone(), entry.clone()));
+                                }
+                                self.names.insert(entry, n);
                             }
                         }
                         _ => {}
@@ -58,7 +68,9 @@ impl Objects {
                 }
             }
             "XRECORD" if self.xrecords.len() < MAX_OBJECTS => {
-                self.xrecords.insert(h, tags.to_vec());
+                if self.xrecords.insert(h.clone(), tags.to_vec()).is_none() {
+                    self.xrecord_order.push(h);
+                }
             }
             "TABLESTYLE" if self.table_styles.len() < MAX_OBJECTS => self.table_styles.push((h, tags.to_vec())),
             "DIMASSOC" if self.dimassocs.len() < MAX_OBJECTS => self.dimassocs.push(tags.to_vec()),
@@ -70,14 +82,80 @@ impl Objects {
                     self.sortents.push(t);
                 }
             }
-            "LAYOUT" if self.layout_views.len() < MAX_OBJECTS => {
+            "LAYOUT" if self.layout_views.len() < MAX_OBJECTS && self.layout_ucss.len() < MAX_OBJECTS => {
                 let start = tags.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
-                if let (Some(name), Some(view)) = (T(tags.get(start..).unwrap_or(&[])).s(1), layout_view(tags)) {
+                let own = T(tags.get(start..).unwrap_or(&[]));
+                if let (Some(name), Some(view)) = (own.s(1), layout_view(tags)) {
                     self.layout_views.push((name, view));
+                }
+                // Its current UCS (groups 13, 16, 17; 345 when it is a named UCS).
+                if let Some(name) = own.s(1)
+                    && [13, 16, 17].iter().all(|c| own.f(*c).is_some())
+                {
+                    self.layout_ucss.push((name, own.p(13), own.p(16), own.p(17), own.s(345)));
                 }
             }
             _ => {}
         }
+    }
+
+    /// The layer states of the LAYER table's `ACAD_LAYERSTATES` dictionary (its XRECORDs, in file
+    /// order), read with the drawing's layers and linetypes. Entries whose names differ only in case
+    /// are one state, as AutoCAD 2024 opens them (measured with `S` and `s` in both orders): named as
+    /// the first of them in the dictionary, holding the last one's record, where the first of their
+    /// records comes in the file.
+    fn acad_layer_states(&self, d: &Drawing, rx: &Rx) -> Vec<cadcraft_doc::LayerState> {
+        let dicts: std::collections::HashSet<&str> =
+            self.names.iter().filter(|(_, n)| n.eq_ignore_ascii_case(crate::dxf_layer_states::KEY)).map(|(h, _)| h.as_str()).collect();
+        if dicts.is_empty() {
+            return Vec::new();
+        }
+        let mut by_name: HashMap<String, &cadcraft_doc::Layer> = HashMap::with_capacity(d.layers.len());
+        for l in &d.layers {
+            by_name.entry(l.name.to_ascii_lowercase()).or_insert(l);
+        }
+        let layer_of =
+            |h: &str| rx.layers.get(&h.trim().to_ascii_uppercase()).and_then(|n| by_name.get(&n.to_ascii_lowercase())).map(|l| (*l).clone());
+        let ltype_of = |h: &str| rx.ltypes.get(&h.trim().to_ascii_uppercase()).cloned();
+        let pstyle_of = |h: &str| rx.pstyles.get(&h.trim().to_ascii_uppercase()).cloned();
+        let lookup = crate::dxf_layer_states::Lookup {
+            layer: &layer_of,
+            ltype: &ltype_of,
+            pstyle: &pstyle_of,
+            colour_dependent: d.header.i64("PSTYLEMODE", 1) != 0,
+        };
+        let ours = |tags: &[Tag]| owner(tags).is_some_and(|o| dicts.contains(o.as_str()));
+        // By lower-case name: the first entry's name and the last entry's record, in dictionary order.
+        let mut first: HashMap<String, &String> = HashMap::new();
+        let mut last: HashMap<String, &Vec<Tag>> = HashMap::new();
+        for (dict, h) in &self.entry_order {
+            if dicts.contains(dict.as_str())
+                && let (Some(name), Some(tags)) = (self.names.get(h), self.xrecords.get(h))
+                && ours(tags)
+            {
+                first.entry(name.to_ascii_lowercase()).or_insert(name);
+                last.insert(name.to_ascii_lowercase(), tags);
+            }
+        }
+        let mut out = Vec::new();
+        let mut taken = std::collections::HashSet::new();
+        let mut budget = crate::dxf_layer_states::MAX_COPIED_BYTES;
+        for h in &self.xrecord_order {
+            let (Some(tags), Some(name)) = (self.xrecords.get(h), self.names.get(h)) else { continue };
+            if out.len() >= crate::dxf_ext::MAX_LAYER_STATES {
+                break;
+            }
+            if !ours(tags) {
+                continue;
+            }
+            let key = name.to_ascii_lowercase();
+            if taken.insert(key.clone()) {
+                let name = first.get(&key).copied().unwrap_or(name);
+                let tags = last.get(&key).copied().unwrap_or(tags);
+                out.push(crate::dxf_layer_states::read(name, tags, &lookup, &mut budget));
+            }
+        }
+        out
     }
 
     /// The text of the CADCraft XRECORD stored under `key` in a dictionary (its 1/3 strings).
@@ -92,6 +170,49 @@ impl Objects {
             text.push_str(&t.str());
         }
         Some(text)
+    }
+
+    /// Model space's UCS name ($UCSNAME, or CADCraft's copy when the file lost it, as through
+    /// DWG): kept only while the current UCS is still exactly that named UCS, else unnamed.
+    fn apply_ucs_name(&self, d: &mut Drawing) {
+        let header_name = d.header.str("UCSNAME", "").trim().to_string();
+        let name = if header_name.is_empty() {
+            self.xrecord_text(crate::dxf_ext::UCS_NAME_KEY).map(|n| n.trim().to_string()).unwrap_or_default()
+        } else {
+            header_name.clone()
+        };
+        let frame = (d.header.point("UCSORG"), d.header.point("UCSXDIR"), d.header.point("UCSYDIR"));
+        let named = match frame {
+            (Some(o), Some(x), Some(y)) => crate::dxf_ext::named_ucs(&d.ucss, &name, o, x, y).map(|u| u.name.clone()),
+            _ => None,
+        };
+        match named {
+            Some(n) => d.header.set_str("UCSNAME", &n),
+            None if !header_name.is_empty() => d.header.set_str("UCSNAME", ""),
+            None => {}
+        }
+    }
+
+    /// Layouts' UCSs: the World UCS, unusable axes or no such layout leave it unset.
+    fn apply_layout_ucss(&self, d: &mut Drawing, rx: &Rx) {
+        for (name, origin, x, y, named) in &self.layout_ucss {
+            let usable = origin.is_finite() && crate::dxf_ext::usable_axes(*x, *y);
+            // The named UCS group 345 points at, only while the layout's frame is still that
+            // record's: a valid frame with a stale reference is kept, unnamed.
+            let ucs_name = named
+                .as_ref()
+                .and_then(|h| rx.ucss.get(&h.trim().to_ascii_uppercase()))
+                .and_then(|n| crate::dxf_ext::named_ucs(&d.ucss, n, *origin, *x, *y))
+                .map(|u| u.name.clone())
+                .unwrap_or_default();
+            let world = origin.len() <= 1e-12 && (*x - Vec3::new(1.0, 0.0, 0.0)).len() <= 1e-12 && (*y - Vec3::new(0.0, 1.0, 0.0)).len() <= 1e-12;
+            if !usable || (world && ucs_name.is_empty()) {
+                continue;
+            }
+            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+                l.ucs = Some(Ucs { name: ucs_name, origin: *origin, x_axis: *x, y_axis: *y });
+            }
+        }
     }
 
     fn apply_table_styles(&self, d: &mut Drawing) {
@@ -191,6 +312,7 @@ impl Objects {
         if let Some(style) = self.xrecord_text(crate::dxf_ext::MLEADER_STYLE_KEY).filter(|s| !s.trim().is_empty()) {
             d.header.set_str("CMLEADERSTYLE", &style);
         }
+        self.apply_ucs_name(d);
         self.apply_table_styles(d);
         self.apply_table_style_fixes(d, rx);
         // Parametric constraints and parameters.
@@ -208,10 +330,18 @@ impl Objects {
         if let Some(p) = self.xrecord_text(crate::dxf_ext::ANNOTATION_KEY).and_then(|t| crate::dxf_ext::parse_anno(&t)) {
             crate::dxf_ext::apply_anno(d, p);
         }
-        // Saved layer states.
-        if let Some(states) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
-            d.layer_states = states;
+        // Saved layer states: AutoCAD's, then those of CADCraft's own record (a file of an
+        // earlier version keeps them all there) that AutoCAD's doesn't hold.
+        let mut states = self.acad_layer_states(d, rx);
+        if let Some(own) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
+            let mut names: std::collections::HashSet<String> = states.iter().map(|s| s.name.clone()).collect();
+            for st in own {
+                if states.len() < crate::dxf_ext::MAX_LAYER_STATES && names.insert(st.name.clone()) {
+                    states.push(st);
+                }
+            }
         }
+        d.layer_states = states;
         // The drawing's plot style tables.
         if let Some(tables) = self.xrecord_text(crate::dxf_ext::PLOT_STYLES_KEY).and_then(|t| crate::dxf_ext::parse_plot_styles(&t)) {
             d.plot_style_tables = tables;
@@ -223,6 +353,7 @@ impl Objects {
                 l.view = Some(*view);
             }
         }
+        self.apply_layout_ucss(d, rx);
         self.apply_groups(d);
         // Standard associativity, for dimensions without CADCraft's exact links.
         for tags in &self.dimassocs {
@@ -231,8 +362,23 @@ impl Objects {
     }
 }
 
-/// Page setup from a LAYOUT object's AcDbPlotSettings fields (sizes and margins in mm).
-pub(super) fn page_setup(t: &T) -> PageSetup {
+/// An object's owner (its first group 330 outside a `102` group), upper case.
+fn owner(tags: &[Tag]) -> Option<String> {
+    let mut inside = false;
+    for t in tags {
+        match t.code {
+            102 => inside = t.str().trim().starts_with('{'),
+            330 if !inside => return Some(t.str().trim().to_ascii_uppercase()),
+            100 => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Page setup from a LAYOUT object's AcDbPlotSettings fields (sizes and margins in mm), and its
+/// CADCraft xdata in the record's `tags`.
+pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     let mut p = PageSetup::default();
     let mm = |code: i32, d: f64| {
         let v = t.fd(code, d);
@@ -244,9 +390,17 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
         p.height_mm = w.max(h);
     }
     p.margins_mm = [mm(40, p.margins_mm[0]), mm(41, p.margins_mm[1]), mm(42, p.margins_mm[2]), mm(43, p.margins_mm[3])];
-    // Plot paper units 1: millimetres. 0 (inches) is left to MEASUREMENT: earlier CADCraft
-    // versions wrote 0 for every layout.
-    p.paper_mm = t.i(72) == Some(1);
+    // CADCraft's paper units come first (PSUNITS xdata: 0 inches, 1 millimetres, 2 follows
+    // MEASUREMENT), because plot paper units 0 cannot tell an explicit inch layout from an unset
+    // one: earlier CADCraft versions wrote 0 for every layout, so 0 alone is left to MEASUREMENT.
+    // Plot paper units 1 is millimetres (#3249).
+    let units = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(tags, crate::dxf_ext::APP), "PSUNITS");
+    p.paper_mm = match units.iter().find(|t| t.code == 1070).map(|t| t.i64()) {
+        Some(0) => Some(false),
+        Some(1) => Some(true),
+        Some(2) => None,
+        _ => (t.i(72) == Some(1)).then_some(true),
+    };
     // Plot rotation 1 or 3 turns the media a quarter turn; media defined wider than tall is
     // already landscape.
     let rotated = matches!(t.i(73), Some(1 | 3));

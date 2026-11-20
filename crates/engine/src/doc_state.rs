@@ -50,6 +50,8 @@ pub struct DocState {
     pub lock_holder: Option<crate::drawing_lock::LockInfo>,
     /// Active AutoCAD-compatible drawing lock guard (`.dwl` / `.dwl2`).
     pub lock: Option<Arc<crate::drawing_lock::DrawingLockGuard>>,
+    /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
+    pub ucs_tilted_noted: bool,
     /// What the last erase removed, for OOPS.
     pub(crate) erased: crate::cmd::Erased,
     /// The fonts missing on Windows that a save last named: the next save names them again only
@@ -86,6 +88,7 @@ impl DocState {
             lock_info: None,
             lock_holder: None,
             lock: None,
+            ucs_tilted_noted: false,
             erased: Default::default(),
             fonts_noted: String::new(),
         }
