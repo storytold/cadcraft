@@ -511,6 +511,277 @@ fn a_stretch_moves_the_points_inside_its_frame_not_the_listed_ones() {
     assert_eq!(shapes(&d, r), want);
 }
 
+/// The outlines of the wipeouts of reference `r`'s block, in its order.
+fn wipeouts(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Wipeout(w) => Some(w.boundary.iter().map(|p| (p.x, p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A WIPEOUT `handle` of the door block whose outline is `points`: a 1 by 1 image at the origin,
+/// whose clip point (x - 0.5, 0.5 - y) the reader maps back to (x, y).
+fn wipeout(handle: &str, points: &[(f64, f64)]) -> String {
+    let mut s = format!(
+        "0 WIPEOUT\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbWipeout\n10 0\n20 0\n30 0\n11 1\n21 0\n31 0\n12 0\n22 1\n32 0\n13 1\n23 1\n71 2\n91 {}\n",
+        points.len()
+    );
+    for (x, y) in points {
+        s.push_str(&format!("14 {}\n24 {}\n", x - 0.5, 0.5 - y));
+    }
+    s
+}
+
+#[test]
+fn a_stretch_moves_the_points_of_a_wipeout_inside_its_frame() {
+    // The stretch (frame (34,-2)-(38,2)) also acts on wipeout 34, whose right side is inside the
+    // frame and whose outline repeats its first point to close, and on wipeout 35, all outside it.
+    // The list stored for 34 names its left side. AutoCAD 2024 moves the points of a wipeout that
+    // are inside the frame and leaves the others, whatever the list says: measured on its own
+    // stretched copies of a dynamic block from another program, where each of three copies moved
+    // the 324 points of the block's 521-point wipeout inside the frame by the distance's change and
+    // left the other 197. A wipeout all outside the frame moves whole, as a line or polyline does
+    // (not measured for a wipeout).
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0), (36.0, -1.0)];
+    let outside = [(0.0, 5.0), (4.0, 5.0), (4.0, 8.0)];
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+        .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 2\n331 30\n74 1\n94 1\n331 34\n74 2\n94 2\n94 3\n75 0")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}{}0 ENDBLK\n", wipeout("34", &crossing), wipeout("35", &outside)));
+    let (mut d, r) = door_reference(&src);
+    assert_eq!(wipeouts(&d, r), [crossing.to_vec(), outside.to_vec()]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let want = [vec![(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0), (30.0, -1.0)], vec![(-6.0, 5.0), (-2.0, 5.0), (-2.0, 8.0)]];
+    assert_eq!(wipeouts(&d, r), want);
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+#[test]
+fn wipeouts_and_arcs_move_whole_when_the_frame_cant_be_tested() {
+    // The frame as a polygon of `n` points, as in the test of the stored lists. Up to 1000 points
+    // the points of wipeout 34 and the end of arc 35 inside it move; past that both move whole, as
+    // before: the lists stored for them (their first point alone) aren't used, as a wipeout's or an
+    // arc's list isn't measured.
+    let frame = |n: usize| {
+        let mut f = format!("72 {n}\n1011 34\n1021 -2\n1011 38\n1021 -2\n1011 38\n1021 2\n");
+        f.push_str(&"1011 34\n1021 2\n".repeat(n - 3));
+        f
+    };
+    let crossing = [(36.0, -1.0), (36.0, 1.0), (20.0, 1.0), (20.0, -1.0)];
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let cases = [
+        (1000, [(30.0, -1.0), (30.0, 1.0), (20.0, 1.0), (20.0, -1.0)], ((30.0, 0.0), (20.0, 0.0), 5.125)),
+        (1001, [(30.0, -1.0), (30.0, 1.0), (14.0, 1.0), (14.0, -1.0)], ((30.0, 0.0), (14.0, 0.0), 10.0)),
+    ];
+    for (n, want, want_arc) in cases {
+        let src = fixture()
+            .replace("72 2\n1011 34\n1021 -2\n1011 38\n1021 2\n", &frame(n))
+            .replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40")
+            .replace("73 1\n331 30\n74 1\n94 1\n75 0", "73 3\n331 30\n74 1\n94 1\n331 34\n74 1\n94 0\n331 35\n74 1\n94 0\n75 0")
+            .replace(
+                "21 25\n31 0\n0 ENDBLK\n",
+                &format!("21 25\n31 0\n{}{}0 ENDBLK\n", wipeout("34", &crossing), arc("35", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0))),
+            );
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(wipeouts(&d, r), [want.to_vec()], "{n} frame points");
+        let got = arcs(&d, r);
+        assert!(got.len() == 1 && near(got[0], want_arc), "{n} frame points: {got:?}");
+    }
+}
+
+#[test]
+fn a_tilted_arc_moves_whole() {
+    // An arc in the plane whose normal is x: its centre, at (28, -6) seen from above, and its
+    // angles are in that plane, so its ends can't be tested against the frame. It moves whole, as
+    // before (not measured in AutoCAD).
+    let tilted = "0 ARC\n5 34\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbCircle\n10 -6\n20 0\n30 28\n40 10\n210 1\n220 0\n230 0\n100 AcDbArc\n50 36.86989764584402\n51 143.13010235415598\n";
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 34\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{tilted}0 ENDBLK\n"));
+    let (mut d, r) = door_reference(&src);
+    let centre = |d: &cadcraft_doc::Drawing| {
+        let b = d.block(&block_of(d, &r.hex())).unwrap();
+        b.entities.iter().find_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => Some((a.center, a.radius)),
+            _ => None,
+        })
+    };
+    let (before, radius) = centre(&d).expect("the tilted arc is read as an arc");
+    assert!((before.x - 28.0).abs() < 1e-9 && (before.y + 6.0).abs() < 1e-9, "{before:?}");
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let (after, r2) = centre(&d).unwrap();
+    assert_eq!((after.x - before.x, after.y - before.y, after.z - before.z, r2), (-6.0, 0.0, 0.0, radius));
+}
+
+/// An ARC `handle` of the door block: centre (`x`, `y`), radius `r`, from `start` to `end` degrees.
+fn arc(handle: &str, x: f64, y: f64, r: f64, start: f64, end: f64) -> String {
+    format!("0 ARC\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbCircle\n10 {x}\n20 {y}\n30 0\n40 {r}\n100 AcDbArc\n50 {start}\n51 {end}\n")
+}
+
+/// The arcs of reference `r`'s block, in its order: their start and end points and radius.
+fn arcs(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<((f64, f64), (f64, f64), f64)> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => {
+                let c = a.center.xy();
+                let (s, e) = (cadcraft_doc::geom::Vec2::polar(c, a.radius, a.start), cadcraft_doc::geom::Vec2::polar(c, a.radius, a.end));
+                Some(((s.x, s.y), (e.x, e.y), a.radius))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn near(a: ((f64, f64), (f64, f64), f64), b: ((f64, f64), (f64, f64), f64)) -> bool {
+    let d = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+    d(a.0, b.0) < 1e-9 && d(a.1, b.1) < 1e-9 && (a.2 - b.2).abs() < 1e-9
+}
+
+#[test]
+fn a_stretch_moves_an_arc_end_inside_its_frame_and_keeps_its_height() {
+    // Arc 34 runs from (36, 0), inside the frame (34,-2)-(38,2), over (28, 4) to (20, 0): 4 above
+    // its chord. Arc 35 has both ends inside the frame. AutoCAD 2024 moves an arc's ends that are
+    // inside the frame and keeps the arc's height over its chord: measured on its own stretched
+    // copies of library blocks, where 21 arcs had one end moved and 63 had their ends moved by two
+    // stretch actions by different amounts, all with their height unchanged to 1.1e-14 of it.
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let src = fixture().replace("71 1\n330 30\n1010 40", "71 3\n330 30\n330 34\n330 35\n1010 40").replace(
+        "21 25\n31 0\n0 ENDBLK\n",
+        &format!(
+            "21 25\n31 0\n{}{}0 ENDBLK\n",
+            arc("34", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0)),
+            arc("35", 36.0, 0.0, 1.0, 0.0, 180.0)
+        ),
+    );
+    let (mut d, r) = door_reference(&src);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    // The chord is now (30, 0)-(20, 0), 10 long, and the arc still rises 4 over it: radius
+    // (5² + 4²) / (2 × 4) = 5.125. Arc 35 moves whole.
+    let got = arcs(&d, r);
+    let want = [((30.0, 0.0), (20.0, 0.0), 5.125), ((31.0, 0.0), (29.0, 0.0), 1.0)];
+    assert_eq!(got.len(), 2);
+    for (g, w) in got.iter().zip(want) {
+        assert!(near(*g, w), "{g:?} != {w:?}");
+    }
+    assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
+}
+
+/// A HATCH `handle` of the door block, associative or not, with one straight loop through
+/// `points` made from boundary objects `sources`.
+fn hatch(handle: &str, associative: bool, points: &[(f64, f64)], sources: &[&str]) -> String {
+    let mut s = format!(
+        "0 HATCH\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbHatch\n10 0\n20 0\n30 0\n210 0\n220 0\n230 1\n2 ANSI31\n70 0\n71 {}\n91 1\n92 3\n72 0\n73 1\n93 {}\n",
+        u8::from(associative),
+        points.len()
+    );
+    for (x, y) in points {
+        s.push_str(&format!("10 {x}\n20 {y}\n"));
+    }
+    s.push_str(&format!("97 {}\n", sources.len()));
+    for h in sources {
+        s.push_str(&format!("330 {h}\n"));
+    }
+    s.push_str("75 0\n76 1\n52 0\n41 1\n77 0\n78 0\n98 0\n");
+    s
+}
+
+/// The first loop of each hatch of reference `r`'s block, in its order.
+fn hatch_loops(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<Vec<(f64, f64)>> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Hatch(h) => Some(h.loops.first()?.vertices.iter().map(|v| (v.p.x, v.p.y)).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_associative_hatch_follows_its_stretched_boundary() {
+    // Lines 36 to 39 outline (20,-1)-(36,1). The stretch acts on 36 (bottom), 37 (right) and 38
+    // (top), whose ends at x = 36 are inside the frame, and on hatch 3B. Hatches 3A and 3B are
+    // associative with that outline (3A's second vertex 2e-10 off the lines' ends, as a file's
+    // rounding leaves it); 3C is the same but not associative; 3D's third vertex is 5e-8 off the
+    // lines' ends at (36, 1), more than a rounding (a billionth of 36); 3E's second edge is curved
+    // (bulge 0.5), which its lines can't give back.
+    // AutoCAD 2024 fills an associative hatch again from its stretched boundary: in its own
+    // stretched copies of library blocks, such a hatch's vertices are where its lines' ends went,
+    // whether the stretch acts on the hatch or not. The others keep their loops.
+    let rect = [(20.0, -1.0), (36.0, -1.0), (36.0, 1.0), (20.0, 1.0)];
+    let mut lines = String::new();
+    for (h, a, b) in [("36", rect[0], rect[1]), ("37", rect[1], rect[2]), ("38", rect[2], rect[3]), ("39", rect[3], rect[0])] {
+        lines.push_str(&format!(
+            "0 LINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbLine\n10 {}\n20 {}\n30 0\n11 {}\n21 {}\n31 0\n",
+            a.0, a.1, b.0, b.1
+        ));
+    }
+    let sources = ["36", "37", "38", "39"];
+    let rounded = [(20.0, -1.0), (36.000_000_000_2, -1.0), (36.0, 1.0), (20.0, 1.0)];
+    let off = [(20.0, -1.0), (36.0, -1.0), (36.0 - 5e-8, 1.0), (20.0, 1.0)];
+    let curved = hatch("3E", true, &rect, &sources).replace("72 0\n", "72 1\n").replace("10 36\n20 -1\n", "10 36\n20 -1\n42 0.5\n");
+    let hatches = [
+        hatch("3A", true, &rounded, &sources),
+        hatch("3B", true, &rect, &sources),
+        hatch("3C", false, &rect, &sources),
+        hatch("3D", true, &off, &sources),
+        curved,
+    ];
+    let src = fixture()
+        .replace("71 1\n330 30\n1010 40", "71 5\n330 30\n330 36\n330 37\n330 38\n330 3B\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{lines}{}0 ENDBLK\n", hatches.concat()));
+    let (mut d, r) = door_reference(&src);
+    assert_eq!(hatch_loops(&d, r), [rounded.to_vec(), rect.to_vec(), rect.to_vec(), off.to_vec(), rect.to_vec()]);
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let stretched = vec![(20.0, -1.0), (30.0, -1.0), (30.0, 1.0), (20.0, 1.0)];
+    // 3B moved whole with the stretch, then took its boundary's points.
+    assert_eq!(hatch_loops(&d, r), [stretched.clone(), stretched, rect.to_vec(), off.to_vec(), rect.to_vec()]);
+}
+
+#[test]
+fn a_hatch_vertex_among_too_many_boundary_points_keeps_its_loop() {
+    // Lines 36 to 39 outline (20,-1)-(35,1), and the stretch acts on 36 (bottom), 37 (right) and 38
+    // (top), whose ends at x = 35 are inside the frame. The hatch's boundary also lists `n` lines
+    // from 40 on, starting `gap` and then 1e-10 more further right of (35, -1) each, and left where
+    // they are. With 14 of them, the vertex at (35, -1) has 16 boundary points within reach (theirs,
+    // and the bottom and right lines' ends) and follows its lines. With 15 it has 17: it can't tell
+    // which line it sits on, so the loop keeps what it has. A gap of 2e-8 puts their starts in the
+    // next cell of the grid, still within a rounding (a billionth of 41) of the vertex.
+    let rect = [(20.0, -1.0), (35.0, -1.0), (35.0, 1.0), (20.0, 1.0)];
+    let line = |h: &str, a: (f64, f64), b: (f64, f64)| {
+        format!("0 LINE\n5 {h}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbLine\n10 {}\n20 {}\n30 0\n11 {}\n21 {}\n31 0\n", a.0, a.1, b.0, b.1)
+    };
+    let followed = vec![(20.0, -1.0), (29.0, -1.0), (29.0, 1.0), (20.0, 1.0)];
+    for (n, gap, want) in [(14, 0.0, followed), (15, 0.0, rect.to_vec()), (15, 2e-8, rect.to_vec())] {
+        let mut lines = String::new();
+        let mut sources: Vec<String> = Vec::new();
+        for k in 1..=n {
+            let h = format!("{:X}", 0x3F + k);
+            let x = 35.0 + gap + f64::from(k) * 1e-10;
+            lines.push_str(&line(&h, (x, -1.0), (x, -41.0)));
+            sources.push(h);
+        }
+        for (h, a, b) in [("36", rect[0], rect[1]), ("37", rect[1], rect[2]), ("38", rect[2], rect[3]), ("39", rect[3], rect[0])] {
+            lines.push_str(&line(h, a, b));
+            sources.push(h.to_string());
+        }
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let src = fixture()
+            .replace("71 1\n330 30\n1010 40", "71 4\n330 30\n330 36\n330 37\n330 38\n1010 40")
+            .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{lines}{}0 ENDBLK\n", hatch("3A", true, &rect, &sources)));
+        let (mut d, r) = door_reference(&src);
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert_eq!(hatch_loops(&d, r), [want], "{n} lines {gap} beside the corner");
+    }
+}
+
 #[test]
 fn a_zero_distance_multiplier_moves_as_one_without_its_angle_offset() {
     // A stretch written with multiplier 0 and angle offset 1 (radian), and group 280 = 1. AutoCAD
