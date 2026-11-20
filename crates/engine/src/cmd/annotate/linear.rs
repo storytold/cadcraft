@@ -11,7 +11,7 @@ pub(super) fn run_linear(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let at = point_req("dimlinear", p, "at")?;
     let rot = p.get("rotation").and_then(Value::as_f64).map(f64::to_radians);
-    let k = dim(s, linear_kind(a, b, at, rot, false), at, a, b, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
+    let k = dim(s, linear_kind(a, b, at, rot, false, 0.0), at, a, b, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -133,11 +133,26 @@ pub(super) struct LinearM {
     selecting: bool,
     /// Asking for the dimension line angle (Rotated).
     rotating: bool,
+    /// A selected circle (centre, radius): measured across its diameter along the dimension line.
+    circle: Option<(Vec2, f64)>,
 }
 
 impl LinearM {
     pub(super) fn new(aligned: bool) -> Self {
-        LinearM { aligned, pts: Vec::new(), rotation: None, text: DimText::default(), selecting: false, rotating: false }
+        LinearM { aligned, pts: Vec::new(), rotation: None, text: DimText::default(), selecting: false, rotating: false, circle: None }
+    }
+
+    /// The extension line origins and the kind of the dimension placed at `at`. A selected circle
+    /// is measured between the ends of its diameter along the dimension line, whichever way the
+    /// line runs (with a turned UCS, Horizontal is not world horizontal).
+    fn placed(&self, s: &Session, at: Vec2) -> Option<(Vec2, Vec2, DimKind)> {
+        let (&a, &b) = (self.pts.first()?, self.pts.get(1)?);
+        let kind = linear_kind(a, b, at, self.rotation, self.aligned, s.input_ucs().rotation());
+        if let (Some((c, r)), DimKind::Linear { rotation }) = (self.circle, kind) {
+            let d = Vec2::from_angle(rotation) * r;
+            return Some((c - d, c + d, kind));
+        }
+        Some((a, b, kind))
     }
 }
 
@@ -195,7 +210,11 @@ impl Interactive for LinearM {
                     }
                     None => {
                         if let Some((c, r)) = circle_of(s, h) {
-                            self.pts = vec![c - Vec2::X * r, c + Vec2::X * r];
+                            // Across the diameter along the UCS X axis, until the dimension line
+                            // says which way to measure.
+                            let x = Vec2::from_angle(s.input_ucs().rotation());
+                            self.pts = vec![c - x * r, c + x * r];
+                            self.circle = Some((c, r));
                             self.selecting = false;
                         } else {
                             s.echo("Object cannot be dimensioned this way.");
@@ -215,8 +234,8 @@ impl Interactive for LinearM {
                 Ok(Step::Continue)
             }
             (_, Input::Point(at)) => {
-                let (Some(&a), Some(&b)) = (self.pts.first(), self.pts.get(1)) else { return Ok(Step::Continue) };
-                let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, ""));
+                let Some((a, b, kind)) = self.placed(s, at) else { return Ok(Step::Continue) };
+                let k = self.text.apply(dim(s, kind, at, a, b, Vec2::ZERO, ""));
                 add_dim(s, k)?;
                 if let Some(EntityKind::Dimension(d)) = s.last_dim.and_then(|h| s.doc().ok()?.entity(h).map(|e| e.kind.clone())) {
                     let st = s.doc()?.dim_style(&d.style).cloned().unwrap_or_default();
@@ -227,8 +246,8 @@ impl Interactive for LinearM {
             }
             (_, Input::Keyword(k)) => {
                 match k.as_str() {
-                    "Horizontal" => self.rotation = Some(0.0),
-                    "Vertical" => self.rotation = Some(std::f64::consts::FRAC_PI_2),
+                    "Horizontal" => self.rotation = Some(s.input_ucs().rotation()),
+                    "Vertical" => self.rotation = Some(s.input_ucs().rotation() + std::f64::consts::FRAC_PI_2),
                     "Rotated" => self.rotating = true,
                     other => {
                         self.text.keyword(other);
@@ -243,7 +262,7 @@ impl Interactive for LinearM {
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         match self.pts.as_slice() {
             [a] => vec![crate::cmd::helpers::line(*a, c)],
-            [a, b] => vec![self.text.apply(dim(s, linear_kind(*a, *b, c, self.rotation, self.aligned), c, *a, *b, Vec2::ZERO, ""))],
+            [_, _] => self.placed(s, c).map(|(a, b, kind)| self.text.apply(dim(s, kind, c, a, b, Vec2::ZERO, ""))).into_iter().collect(),
             _ => Vec::new(),
         }
     }
