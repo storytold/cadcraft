@@ -1502,3 +1502,38 @@ menu	View	ხედი
 
 # ArtCraft feature naming
 	Additional Tools	დამატებითი ხელსაწყოები
+
+# Keyboard Shortcuts, Right-Click Customization, alias import
+	Keyboard Shortcuts...	კლავიატურის მალსახმობები...
+	Keyboard Shortcuts	კლავიატურის მალსახმობები
+	Replaces the shortcut of {commands}	ჩაანაცვლებს ამ ბრძანებების მალსახმობს: {commands}
+	Needs Ctrl, Alt or a function key	საჭიროა Ctrl, Alt ან ფუნქციური კლავიში
+	Press the keys	დააჭირეთ კლავიშებს
+	Back to CADCraft's shortcut	CADCraft-ის მალსახმობზე დაბრუნება
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	თქვენ მიერ მინიჭებულ მალსახმობს უპირატესობა აქვს CADCraft-ის საკუთარზე. ცვლილებები მაშინვე მოქმედებს და შემდეგი ჯერისთვისაც ინახება.
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	გამორთვისას ბრძანების შესრულების დროს მარჯვენა დაწკაპება იმას აკეთებს, რაც „მარჯვენა დაწკაპების მორგებაში“ ბრძანების რეჟიმისთვის არის არჩეული.
+	Right-Click Customization...	მარჯვენა დაწკაპების მორგება...
+	Right-Click Customization	მარჯვენა დაწკაპების მორგება
+	Turn on time-sensitive right-click	დროზე დამოკიდებული მარჯვენა დაწკაპების ჩართვა
+	Longer click duration:	გრძელი დაწკაპების ხანგრძლივობა:
+	milliseconds	მილიწამი
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	ბრძანების შესრულების დროს მოკლე დაწკაპება Enter-ია, გრძელი დაწკაპება კი კონტექსტურ მენიუს ხსნის.
+	Default Mode	ნაგულისხმევი რეჟიმი
+	No objects selected and no command running:	არაფერია მონიშნული და არცერთი ბრძანება არ სრულდება:
+	Edit Mode	რედაქტირების რეჟიმი
+	Objects selected and no command running:	ობიექტები მონიშნულია და არცერთი ბრძანება არ სრულდება:
+	Repeat last command	ბოლო ბრძანების გამეორება
+	Shortcut Menu	კონტექსტური მენიუ
+	Command Mode	ბრძანების რეჟიმი
+	While a command runs:	ბრძანების შესრულების დროს:
+	ENTER	ENTER
+	Shortcut Menu: always enabled	კონტექსტური მენიუ: ყოველთვის ჩართული
+	Shortcut Menu: enabled when command options are present	კონტექსტური მენიუ: ჩართული, როცა ბრძანებას ვარიანტები აქვს
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	იმპორტი: აქ ფაილის არჩევის დიალოგი არ არის; გაუშვით ALIASEDIT და ფაილის შიგთავსი გადაეცით მის text პარამეტრს.
+	Aliases are saved in your CADCraft profile and survive restarts.	ფსევდონიმები თქვენს CADCraft-ის პროფილში ინახება და გადატვირთვის შემდეგაც რჩება.
+	Import…	იმპორტი…
+	Run ALIASEDIT with the file's contents using its text parameter.	გაუშვით ALIASEDIT და ფაილის შიგთავსი გადაეცით მის text პარამეტრს.
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	ფაილის იმპორტი ჩაანაცვლებს თქვენს ფსევდონიმებს ({n}) და ჯერ გამოუყენებელ ცვლილებებს.
+	Import and replace	იმპორტი და ჩანაცვლება
+	Keep my aliases	ჩემი ფსევდონიმების შენარჩუნება
+	{n} more warnings; see the command line.	კიდევ {n} გაფრთხილება; იხილეთ ბრძანების სტრიქონი.
