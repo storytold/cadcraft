@@ -1190,7 +1190,13 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         }
     }
     for (n, h, ents) in &dim_defs {
-        block(&mut w, (n, ""), h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        // A block with another name that a dimension was read with keeps its base point and
+        // flags as read (#3299); `*D` blocks are anonymous at the origin.
+        let (base, flags) = match d.block(n).filter(|_| !super::blocks::is_dim_block(n)) {
+            Some(b) => (b.base, i64::from(b.anonymous)),
+            None => (Vec3::ZERO, 1),
+        };
+        block(&mut w, (n, ""), h, base, flags, &mut ents.iter(), false);
     }
     for (n, h, ents) in &arrow_defs {
         block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut ents.iter(), false);

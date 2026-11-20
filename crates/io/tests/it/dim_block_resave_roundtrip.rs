@@ -284,3 +284,70 @@ fn an_unedited_dimension_keeps_the_block_it_was_read_with() {
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&edited).as_bytes()).unwrap();
     assert_eq!(circles(&again).0, 0);
 }
+
+/// Other programs name a dimension's picture block as they like (DXF group 2 may name any
+/// block; some exporters write `DIMBLOCK1-<view>`). An unedited dimension keeps that block as
+/// read, under its own name, as a `*D` one does; no `*D` copy is made next to it (#3299).
+#[test]
+fn an_unedited_dimension_keeps_a_block_with_any_name() {
+    use cadcraft_doc::{Circle, Text};
+    const NAME: &str = "DIMBLOCK1-PLAN";
+    let mut d = Drawing::new_metric();
+    // The picture as the other program drew it: its own text format and a circle CADCraft never
+    // generates for a linear dimension.
+    let mut b = Block::new(NAME);
+    for kind in [
+        EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }),
+        EntityKind::Circle(Circle { center: Vec3::new(5.0, 3.0, 0.0), radius: 0.25 }),
+        EntityKind::Text(Text {
+            insert: Vec3::new(5.0, 3.5, 0.0),
+            align_pt: None,
+            height: 2.5,
+            value: "10,00".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: Default::default(),
+            valign: Default::default(),
+        }),
+    ] {
+        let h = d.new_handle();
+        b.entities.push(Entity::new(h, kind));
+    }
+    b.base = Vec3::new(1.0, 2.0, 0.0);
+    d.blocks.insert(NAME.into(), Arc::new(b));
+    let mut dm = linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]);
+    dm.block = Some(NAME.into());
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+
+    // (block the dimension names, anonymous, base point, its circles, its texts)
+    let picture = |d: &Drawing| {
+        let Some(EntityKind::Dimension(dm)) = d.entity(h).map(|e| &e.kind) else { panic!("dimension lost") };
+        let name = dm.block.clone().unwrap_or_default();
+        let blk = d.block(&name).unwrap();
+        let circles = blk.entities.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
+        let texts: Vec<String> =
+            blk.entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
+        (name, blk.anonymous, blk.base, circles, texts)
+    };
+    let kept = (NAME.to_string(), false, Vec3::new(1.0, 2.0, 0.0), 1, vec!["10,00".to_string()]);
+    let dxf = cadcraft_io::write_dxf(&d);
+    assert_eq!(picture(&cadcraft_io::read_dxf(dxf.as_bytes()).unwrap()), kept, "DXF save");
+    assert!(dim_blocks(&dxf).is_empty(), "no *D copy is written: {:?}", dim_blocks(&dxf));
+    let dwg = cadcraft_io::read(&cadcraft_io::write(&d, "a.dwg").unwrap(), "a.dwg").unwrap();
+    assert_eq!(picture(&dwg), kept, "DWG save");
+
+    // Edited (edits drop the link): regenerated from the dimension, as before.
+    let mut edited = d.clone();
+    edited
+        .modify_entity(h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.block = None;
+            }
+        })
+        .unwrap();
+    let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&edited).as_bytes()).unwrap();
+    let (name, _, _, circles, texts) = picture(&again);
+    assert!(name.starts_with("*D") && circles == 0 && !texts.contains(&"10,00".to_string()), "edited: {name} {circles} {texts:?}");
+}
