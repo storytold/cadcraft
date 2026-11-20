@@ -763,3 +763,33 @@ fn deleting_a_named_world_ucs_in_a_layout_leaves_no_ucs() {
     s.execute("ucs", &json!({"option": "named", "action": "delete", "name": "HOME"})).unwrap();
     assert!(s.doc().unwrap().layouts.iter().all(|l| l.ucs.is_none()), "{:?}", s.doc().unwrap().layouts.iter().map(|l| &l.ucs).collect::<Vec<_>>());
 }
+
+/// Saving over a named UCS changes what the name means: a UCS elsewhere that still carries the
+/// name with the old frame (model space's current UCS, a UCS Previous entry) keeps its axes and
+/// loses the name, in the same undo step.
+#[test]
+fn replacing_a_named_ucs_unnames_the_old_frame_elsewhere() {
+    let mut s = session();
+    let named = |s: &mut Session, action: &str| {
+        s.execute("ucs", &json!({"option": "named", "action": action, "name": "SITE", "replace": true})).unwrap();
+    };
+    s.execute("ucs", &json!({"option": "origin", "origin": [100, 50]})).unwrap();
+    named(&mut s, "save");
+    // SITE at (100, 50) both current and in model space's UCS Previous history.
+    s.execute("ucs", &json!({"option": "z", "angle": 90})).unwrap();
+    named(&mut s, "restore");
+    assert_eq!(s.ucs_named().1, "SITE");
+    assert!(s.doc().unwrap().ucs_previous.iter().any(|u| u.name == "SITE"));
+    let layout = s.doc().unwrap().layouts[0].name.clone();
+    s.execute("layout.set", &json!({"name": layout})).unwrap();
+    s.execute("ucs", &json!({"option": "origin", "origin": [20, 10]})).unwrap();
+    named(&mut s, "save");
+    assert_eq!(s.ucs_named().1, "SITE", "the space it was saved in");
+    let d = s.doc().unwrap();
+    assert_eq!(d.header.str("UCSNAME", ""), "", "model space's UCS is no longer SITE");
+    assert!(near3(d.header.point("UCSORG").unwrap(), Vec3::new(100.0, 50.0, 0.0)), "and keeps its origin");
+    assert!(d.ucs_previous.iter().all(|u| u.name.is_empty()), "{:?}", d.ucs_previous);
+    // Undone with the save: model space is named SITE again.
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().header.str("UCSNAME", ""), "SITE");
+}

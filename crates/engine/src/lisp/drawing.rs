@@ -1227,7 +1227,8 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
     use crate::ucs::UcsFrame;
     match v {
-        // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS.
+        // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS (from
+        // or to the active layout viewport's display system, `viewport_to_paper` applies).
         Value::Int(0 | 3) => Ok(UcsFrame::WORLD),
         // 2 the display system: in a plan view, the WCS turned back by the view's twist (X runs
         // right across the screen).
@@ -1265,6 +1266,31 @@ fn ocs(n: cadcraft_geom::Vec3) -> Option<crate::ucs::UcsFrame> {
     crate::ucs::UcsFrame::new(Vec3::ZERO, ax, n.cross(ax))
 }
 
+/// `trans` between the display system (2) of the active layout viewport and paper space's
+/// display system (3): the viewport's scale, and where its view sits on the sheet. `None` for any
+/// other pair of systems, or with no active viewport (on the Model tab, or on the sheet itself,
+/// the two line up).
+fn viewport_to_paper(ctx: &Ctx<'_>, from: &Value, to: &Value, p: cadcraft_geom::Vec3, disp: bool) -> Option<cadcraft_geom::Vec3> {
+    let to_paper = match (from, to) {
+        (Value::Int(2), Value::Int(3)) => true,
+        (Value::Int(3), Value::Int(2)) => false,
+        _ => return None,
+    };
+    let (_, vp) = ctx.s.state().ok()?.active_viewport()?;
+    // Paper units per model unit; display coordinates are the world turned by the view twist, so
+    // the view centre in them is turned too.
+    let k = vp.scale();
+    let (view, sheet) = (vp.view_center.rotate(vp.view_twist()), vp.center.xy());
+    let q = if to_paper {
+        let xy = if disp { p.xy() * k } else { sheet + (p.xy() - view) * k };
+        xy.to3(p.z * k)
+    } else {
+        let xy = if disp { p.xy() / k } else { view + (p.xy() - sheet) / k };
+        xy.to3(p.z / k)
+    };
+    Some(q)
+}
+
 /// `(trans pt from to [disp])`: `pt` from coordinate system `from` to `to` (0 WCS, 1 UCS, 2 and 3
 /// display, an entity name for its OCS, or an extrusion direction); with `disp` non-nil `pt` is a
 /// displacement, which the systems' origins don't move.
@@ -1274,7 +1300,9 @@ pub fn trans(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let (from, to) = (trans_system(ctx, &a[1])?, trans_system(ctx, &a[2])?);
     let disp = a.get(3).is_some_and(|v| !v.is_nil());
     let p = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
-    let q = if disp {
+    let q = if let Some(q) = viewport_to_paper(ctx, &a[1], &a[2], p, disp) {
+        q
+    } else if disp {
         let w = from.x * p.x + from.y * p.y + from.z() * p.z;
         cadcraft_geom::Vec3::new(w.dot(to.x), w.dot(to.y), w.dot(to.z()))
     } else {

@@ -6,7 +6,7 @@
 //! UCS out of the XY plane, which CADCraft doesn't draw in yet; they say so. A UCS change is part
 //! of the command's undo step, as an edit is.
 
-use cadcraft_doc::{Drawing, EntityKind, Ucs};
+use cadcraft_doc::{Drawing, EntityKind, Space, Ucs};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
@@ -300,18 +300,56 @@ fn save(s: &mut Session, name: &str, replace: bool) -> std::result::Result<(), S
     let n = check_name(name)?;
     let frame = s.ucs();
     let d = s.doc_mut().map_err(|e| e.to_string())?;
-    match d.ucss.iter_mut().find(|u| u.name.eq_ignore_ascii_case(&n)) {
+    let replaced = match d.ucss.iter_mut().find(|u| u.name.eq_ignore_ascii_case(&n)) {
         Some(_) if !replace => return Err(format!("UCS \"{n}\" already exists.")),
-        Some(u) => *u = frame.record(&u.name.clone()),
+        Some(u) => {
+            *u = frame.record(&u.name.clone());
+            true
+        }
         None => {
             if d.ucss.len() >= MAX_NAMED {
                 return Err(format!("A drawing keeps at most {MAX_NAMED} named UCSs."));
             }
             d.ucss.push(frame.record(&n));
+            false
         }
-    }
+    };
     let kept = d.ucss.iter().find(|u| u.name.eq_ignore_ascii_case(&n)).map(|u| u.name.clone()).unwrap_or(n);
+    if replaced {
+        // A UCS that still carries the name but not the new frame (another space's current UCS, a
+        // UCS Previous entry) is no longer that named UCS: it keeps its axes and loses the name.
+        unname_where(d, |u| u.name.trim().eq_ignore_ascii_case(&kept) && UcsFrame::of(u).is_none_or(|f| !same_frame(&f, &frame)));
+    }
     s.set_ucs(frame, &kept).map_err(|e| e.to_string())
+}
+
+/// Whether two frames are the same UCS to rounding (the rule the DXF reader and writer use to
+/// keep a current UCS's name).
+fn same_frame(a: &UcsFrame, b: &UcsFrame) -> bool {
+    (a.origin - b.origin).len() <= 1e-9 + 1e-14 * a.origin.len() && (a.x - b.x).len() <= 1e-9 && (a.y - b.y).len() <= 1e-9
+}
+
+/// Wherever a UCS is `stale` (model space's current UCS, every layout's, the UCS Previous
+/// histories) it keeps its axes and loses its name.
+fn unname_where(d: &mut Drawing, stale: impl Fn(&Ucs) -> bool) {
+    let model = crate::ucs::current_frame(d, &Space::Model).record(&d.header.str("UCSNAME", ""));
+    if stale(&model) {
+        d.header.set_str("UCSNAME", "");
+    }
+    let unname = |u: &mut Ucs| {
+        if stale(&*u) {
+            u.name.clear();
+        }
+    };
+    d.ucs_previous.iter_mut().for_each(unname);
+    for l in &mut d.layouts {
+        l.ucs.iter_mut().for_each(unname);
+        // A layout whose UCS is the World UCS again holds none, as `set_current` leaves it.
+        if l.ucs.as_ref().is_some_and(|u| u.name.is_empty() && UcsFrame::of(u).is_some_and(|f| f.is_world())) {
+            l.ucs = None;
+        }
+        l.ucs_previous.iter_mut().for_each(unname);
+    }
 }
 
 /// Whether `name` matches one of the comma-separated wildcard patterns.
@@ -333,25 +371,7 @@ fn delete(s: &mut Session, patterns: &str) -> Result<usize> {
     s.doc_mut()?.ucss.retain(|u| !gone.iter().any(|g| g == &u.name));
     // Wherever a deleted name is current (model space's UCSNAME, every layout's UCS) the UCS keeps
     // its axes and loses the name; the UCS Previous histories keep their frames the same way.
-    let d = s.doc_mut()?;
-    let is_gone = |n: &str| gone.iter().any(|g| g.eq_ignore_ascii_case(n.trim()));
-    if is_gone(&d.header.str("UCSNAME", "")) {
-        d.header.set_str("UCSNAME", "");
-    }
-    let unname = |u: &mut Ucs| {
-        if is_gone(&u.name) {
-            u.name.clear();
-        }
-    };
-    d.ucs_previous.iter_mut().for_each(unname);
-    for l in &mut d.layouts {
-        l.ucs.iter_mut().for_each(unname);
-        // A layout whose UCS is the World UCS again holds none, as `set_current` leaves it.
-        if l.ucs.as_ref().is_some_and(|u| u.name.is_empty() && UcsFrame::of(u).is_some_and(|f| f.is_world())) {
-            l.ucs = None;
-        }
-        l.ucs_previous.iter_mut().for_each(unname);
-    }
+    unname_where(s.doc_mut()?, |u| gone.iter().any(|g| g.eq_ignore_ascii_case(u.name.trim())));
     Ok(gone.len())
 }
 

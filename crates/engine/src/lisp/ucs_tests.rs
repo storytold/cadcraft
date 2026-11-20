@@ -68,6 +68,53 @@ fn trans_between_world_ucs_and_display() {
     assert!(close(pt(&ok(&mut s, "(trans '(10 0 0) 2 0)")), [0.0, -10.0, 0.0]));
 }
 
+/// Inside a layout viewport, `trans` from its display system (2) to paper space's (3) and back
+/// applies the viewport's scale and where its view sits on the sheet, twisted or not.
+#[test]
+fn trans_between_a_viewports_display_and_paper_space() {
+    let mut s = session();
+    let layout = s.doc().unwrap().layouts[0].name.clone();
+    s.execute("layout.set", &json!({"name": layout})).unwrap();
+    let r = s.execute("mview", &json!({"p1": [20, 20], "p2": [220, 120]})).unwrap();
+    let h = cadcraft_doc::Handle::parse_hex(r["viewports"][0].as_str().unwrap()).unwrap();
+    // Scale 1:2 (the viewport is 100 high on the sheet), its view centred on model (30, 40).
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Viewport(v) = &mut e.kind {
+                v.view_height = 2.0 * v.height;
+                v.view_center = Vec2::new(30.0, 40.0);
+            }
+        })
+        .unwrap();
+    s.execute("mspace", &json!({"handle": h.hex()})).unwrap();
+    for twist in [0.0, 30.0] {
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let cadcraft_doc::EntityKind::Viewport(v) = &mut e.kind {
+                    v.twist = f64::to_radians(twist);
+                }
+            })
+            .unwrap();
+        let vp = match &s.doc().unwrap().entity(h).unwrap().kind {
+            cadcraft_doc::EntityKind::Viewport(v) => v.clone(),
+            k => panic!("{k:?}"),
+        };
+        let k = vp.scale();
+        assert!((k - 0.5).abs() < 1e-12, "{k}");
+        // A model point lands on the sheet where the viewport shows it.
+        let at = vp.model_to_paper(Vec2::new(10.0, 20.0));
+        let code = format!("(equal (trans (trans '(10 20 0) 0 2) 2 3) '({:.12} {:.12} 0.0) 0.000001)", at.x, at.y);
+        assert_eq!(ok(&mut s, &code), "T", "twist {twist}: {code}");
+        // And back.
+        assert_eq!(ok(&mut s, "(equal (trans (trans (trans (trans '(10 20 0) 0 2) 2 3) 3 2) 2 0) '(10.0 20.0 0.0) 0.000001)"), "T", "twist {twist}");
+        // A displacement is only scaled.
+        let code = format!("(equal (trans '(10 0 0) 2 3 T) '({:.12} 0.0 0.0) 0.000001)", 10.0 * k);
+        assert_eq!(ok(&mut s, &code), "T", "twist {twist}: {code}");
+    }
+}
+
 #[test]
 fn trans_to_and_from_an_objects_ocs() {
     let mut s = session();
