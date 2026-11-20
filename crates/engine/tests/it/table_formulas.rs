@@ -187,3 +187,22 @@ fn hostile_formulas_never_panic() {
     }
     assert_eq!(text(&s, &h2, n - 1, 0), n.to_string());
 }
+
+/// FredApps on #2320: the in-place editor sends a cell's text with its formatting codes; a
+/// formula typed with formatting (bold, another font) is still a formula, also when Tab moves on
+/// to the next cell.
+#[test]
+fn a_formatted_formula_stays_a_formula() {
+    let (mut s, h) = session();
+    set(&mut s, &h, 3, 0, "{\\fArial|b1;=Sum(A1:A3)}");
+    assert_eq!(table(&s, &h).cells[3][0].formula.as_deref(), Some("=Sum(A1:A3)"));
+    assert_eq!(text(&s, &h, 3, 0), "6");
+
+    // The editor: the text, then Tab (Next) to the next cell.
+    s.cmdline("tabledit").unwrap();
+    s.cmdline("4,-3.5").unwrap();
+    s.input(cadcraft_engine::Input::Text("{\\fArial|b1;=A1*10}".into())).unwrap();
+    s.input(cadcraft_engine::Input::Keyword("Next".into())).unwrap();
+    assert_eq!(table(&s, &h).cells[3][1].formula.as_deref(), Some("=A1*10"));
+    assert_eq!(text(&s, &h, 3, 1), "10");
+}
