@@ -136,6 +136,7 @@ impl Interactive for LeaderM {
                 };
                 let text = picked.and_then(|h| s.doc().ok()?.entity(h).cloned()).and_then(|e| match &e.kind {
                     EntityKind::Text(t) => Some(MText {
+                        formula: None,
                         insert: t.insert,
                         height: t.height,
                         width: 0.0,
@@ -298,6 +299,7 @@ fn add_leader(s: &mut Session, pts: &[Vec2], spline: bool, arrow: bool, ann: Ann
                 (false, false) => (6, 0.0),
             };
             Some(s.add_entity(EntityKind::MText(MText {
+                formula: None,
                 insert: v3(end + Vec2::new(dir * z.gap, lift)),
                 height: z.text,
                 width: 0.0,

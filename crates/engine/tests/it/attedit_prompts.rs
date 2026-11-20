@@ -227,6 +227,7 @@ fn dash_attedit_edits_a_multiline_attributes_text() {
         rotation: 0.0,
         style: "Standard".into(),
         contents: "abc".into(),
+        formula: None,
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
