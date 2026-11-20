@@ -23,6 +23,7 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod portable;
 #[cfg(target_os = "macos")]
 mod sheet;
 mod single_instance;
@@ -237,9 +238,12 @@ fn saved_window(app_ron: &str) -> bool {
 
 /// The window state from the last session is saved and will be restored (#2595). A saved size
 /// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
-/// unusable) is dropped first, so the window opens at its default size.
-fn restores_window() -> bool {
-    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+/// unusable) is dropped first, so the window opens at its default size. `portable_file`: the
+/// portable copy's settings file, read instead of the user profile's.
+fn restores_window(portable_file: Option<&std::path::Path>) -> bool {
+    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron"))) else {
+        return false;
+    };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
     // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
     if let Some(fixed) = without_tiny_window(&ron)
@@ -269,8 +273,9 @@ fn without_tiny_window(app_ron: &str) -> Option<String> {
 const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
-/// saved by the last session is restored instead of opening centred.
-fn window_options(restoring: bool) -> eframe::NativeOptions {
+/// saved by the last session is restored instead of opening centred. `stencil`: the stencil bits of
+/// its render pass ([`stencil_bits`]).
+fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
@@ -292,7 +297,7 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         // system-font discovery as a hidden fallback.
         system_font_fallback: false,
         // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
+        stencil_buffer: stencil,
         ..Default::default()
     }
 }
@@ -304,6 +309,14 @@ const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
+
+/// The stencil bits of the window's render pass: none when `CADCRAFT_STENCIL` is off. Some old
+/// drivers (Mesa on Intel HD 4000, old Intel drivers on Windows) accept a stencil pass without an
+/// error and then present a black window, so only an explicit opt-out drops it. Without a stencil
+/// buffer, clipped layout viewports draw unclipped.
+fn stencil_bits(stencil: Switch) -> u8 {
+    if stencil == Switch::Off { 0 } else { STENCIL_BITS }
+}
 
 #[cfg(target_os = "macos")]
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-macos-512.png");
@@ -374,11 +387,18 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
+    // The window's render pass and the canvas's pipelines must agree on it; a mismatch is a wgpu
+    // validation error.
+    let stencil = stencil_bits(vars.stencil);
+    if stencil == 0 {
+        log::warn!("CADCRAFT_STENCIL is off: the window has no stencil buffer; clipped layout viewports draw unclipped");
+    }
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options(restores_window())
+        persistence_path: vars.portable_storage_file.clone(),
+        ..window_options(restores_window(vars.portable_storage_file.as_deref()), stencil)
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -468,7 +488,7 @@ fn main() -> eframe::Result {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
             if let Some(rs) = &cc.wgpu_render_state {
-                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, STENCIL_BITS));
+                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, stencil));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
@@ -514,7 +534,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options, without_tiny_window};
+    use super::{STENCIL_BITS, filters_for_save, follow_desktop, saved_window, stencil_bits, window_options, without_tiny_window};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -535,7 +555,7 @@ mod tests {
     /// #1129: the first launch opens centred, not cascaded from the top-left corner.
     #[test]
     fn the_first_launch_opens_centred() {
-        let o = window_options(false);
+        let o = window_options(false, STENCIL_BITS);
         assert!(o.centered, "centred on launch");
         assert!(o.persist_window, "the window state is saved for the next launch");
     }
@@ -543,9 +563,37 @@ mod tests {
     /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
     #[test]
     fn a_saved_window_reopens_where_it_was() {
-        let o = window_options(true);
+        let o = window_options(true, STENCIL_BITS);
         assert!(!o.centered, "centring would move a restored window");
         assert!(o.persist_window);
+    }
+
+    /// `CADCRAFT_STENCIL=0` (also `no`, `false`, any case) opens the window without a stencil
+    /// buffer; unset, blank, `1` or anything else keeps it.
+    #[test]
+    fn the_stencil_buffer_is_dropped_only_when_asked() {
+        let bits = |value: Option<&str>| {
+            let vars = crate::env::Env::from_vars(|k| (k == "CADCRAFT_STENCIL").then_some(value).flatten().map(Into::into));
+            stencil_bits(vars.stencil)
+        };
+        for off in ["0", "no", "NO", "false", "False", " 0 "] {
+            assert_eq!(bits(Some(off)), 0, "{off:?}");
+        }
+        for on in [None, Some(""), Some("1"), Some("yes"), Some("8"), Some("maybe")] {
+            assert_eq!(bits(on), STENCIL_BITS, "{on:?}");
+        }
+    }
+
+    /// The window's render pass carries the chosen stencil bits, and the canvas gets the same.
+    #[test]
+    fn the_window_carries_the_chosen_stencil_bits() {
+        for bits in [0, STENCIL_BITS] {
+            assert_eq!(window_options(false, bits).stencil_buffer, bits);
+            assert_eq!(window_options(true, bits).stencil_buffer, bits);
+        }
+        let format = |bits| eframe::egui_wgpu::depth_format_from_bits(0, bits);
+        assert_eq!(format(0), None, "no stencil: the canvas builds no clip pipelines");
+        assert!(format(STENCIL_BITS).is_some_and(|f| f.has_stencil_aspect()));
     }
 
     /// Only a readable `app.ron` with a window entry counts as a saved window state.

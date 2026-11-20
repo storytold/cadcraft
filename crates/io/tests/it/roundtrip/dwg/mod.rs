@@ -57,6 +57,7 @@ fn check_version_with(case: &str, original: &Drawing, expected: &Drawing, versio
 }
 
 fn check_version_using(case: &str, original: &Drawing, expected: &Drawing, version: Version, verify: impl Fn(&Drawing, &Drawing, &str)) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let options = SaveOptions { version: Some(version), binary: false };
     let mut current = original.clone();
     for pass in 1..=2 {

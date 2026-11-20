@@ -243,6 +243,8 @@ fn the_active_vport_points_at_the_named_ucs() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn model_and_layout_ucs_survive_a_dwg_save() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = drawing();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
     let back = cadcraft_io::read(&dwg, "x.dwg").unwrap();
