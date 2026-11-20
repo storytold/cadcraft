@@ -57,6 +57,9 @@ pub struct XrefSource {
     pub xref: String,
     /// The source drawing file.
     pub file: String,
+    /// `file` with every symbolic link resolved when the edit began: the file that is written.
+    /// The save is refused when `file` leads somewhere else by then.
+    pub real: String,
     /// The block of the source drawing being edited; `None` for its model space.
     pub block: Option<String>,
     /// The file's size and modification time (nanoseconds since 1970) when the edit began.

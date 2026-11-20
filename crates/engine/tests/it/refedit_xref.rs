@@ -115,7 +115,9 @@ fn editing_an_xref_writes_its_drawing_back_with_a_backup() {
     let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
     assert_eq!(out["objects"], 3);
     assert!(out["file"].as_str().unwrap().ends_with("site.dxf"));
-    assert!(dir.join("site.bak").is_file(), "the previous file is kept");
+    let bak = dir.join("site.dxf.bak");
+    assert!(out["backup"].as_str().unwrap().ends_with("site.dxf.bak"), "{out}");
+    assert_eq!(read(&bak).model.len(), 2, "the previous file is kept");
     // The file holds the edit, in its own coordinates, with the line's own handle.
     let back = read(&file);
     assert_eq!(back.model.len(), 3);
@@ -240,4 +242,109 @@ fn nested_block_references_are_picked_through_their_parents() {
     assert!(s.execute("refedit", &json!({ "handle": o, "path": "x" })).is_err());
     assert!(s.execute("refedit", &json!({ "handle": o, "nested": "Nope" })).is_err());
     let _ = Vec2::ZERO;
+}
+
+/// A symbolic link at `link` to `target`; `None` where the system doesn't let a test make one
+/// (Windows without the privilege), and the test is skipped there. CI runs it on Linux.
+fn symlink(target: &Path, link: &Path) -> Option<()> {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_file(target, link);
+    #[cfg(not(any(unix, windows)))]
+    let made: std::io::Result<()> = Err(std::io::Error::other("no symbolic links"));
+    match made {
+        Ok(()) => Some(()),
+        Err(e) => {
+            eprintln!("skipped: symbolic links can't be made here ({e})");
+            None
+        }
+    }
+}
+
+fn is_plain_file(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
+}
+
+/// Review of #2355: a link planted at the temporary or backup path beside the xref must not take
+/// the write (CWE-59). Before, the new bytes went into `victim.txt` through `site.dxf.cadcraft-tmp`
+/// and `site.dxf` itself became that link.
+#[test]
+fn links_planted_beside_the_xref_are_not_written_through() {
+    let (mut s, dir, _, insert) = attached("planted");
+    let file = dir.join("site.dxf");
+    let (victim, other) = (dir.join("victim.txt"), dir.join("other.txt"));
+    std::fs::write(&victim, b"victim").unwrap();
+    std::fs::write(&other, b"other").unwrap();
+    if symlink(&victim, &dir.join("site.dxf.cadcraft-tmp")).is_none() {
+        return;
+    }
+    symlink(&other, &dir.join("site.dxf.bak")).unwrap();
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(std::fs::read(&victim).unwrap(), b"victim", "nothing is written through the planted link");
+    assert_eq!(std::fs::read(&other).unwrap(), b"other", "nor through a link at the backup");
+    assert!(is_plain_file(&file), "the xref's file is still a file, not a link");
+    assert_eq!(read(&file).model.len(), 3, "and holds the edit");
+    assert!(is_plain_file(&dir.join("site.dxf.bak")), "the link at the backup is replaced by the backup");
+    assert_eq!(read(&dir.join("site.dxf.bak")).model.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review of #2355: the xref's own path turned into a link to another file during the edit (here
+/// a byte-identical copy with the same time, so the change check can't tell) is not written.
+#[test]
+fn an_xref_path_turned_into_a_link_during_the_edit_is_not_written() {
+    let (mut s, dir, _, insert) = attached("swapped");
+    let file = dir.join("site.dxf");
+    let elsewhere = dir.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let target = elsewhere.join("victim.dxf");
+    if symlink(&file, &dir.join("probe")).is_none() {
+        return;
+    }
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    std::fs::copy(&file, &target).unwrap();
+    std::fs::OpenOptions::new().write(true).open(&target).unwrap().set_modified(modified).unwrap();
+    std::fs::rename(&file, dir.join("moved.dxf")).unwrap();
+    symlink(&target, &file).unwrap();
+    let before = std::fs::read(&target).unwrap();
+    let e = s.execute("refclose", &json!({ "option": "save" })).unwrap_err().to_string();
+    assert!(e.contains("leads to another file"), "{e}");
+    assert_eq!(std::fs::read(&target).unwrap(), before, "the link's target is untouched");
+    assert!(!elsewhere.join("victim.dxf.bak").exists() && !dir.join("site.dxf.bak").exists(), "no backup either");
+    assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review of #2355: `site.dxf` and `site.dwg` in one folder both used to back up to `site.bak`,
+/// so editing one and then the other lost the first one's old copy. They keep their own now, named
+/// as SAVE names them (`site.dxf.bak`, `site.bak`).
+#[test]
+fn xrefs_of_one_name_in_one_folder_keep_their_own_backups() {
+    hooks();
+    let dir = folder("two-backups");
+    let (d, _) = site();
+    let (dxf, dwg) = (dir.join("site.dxf"), dir.join("site.dwg"));
+    save(&d, &dxf);
+    save(&d, &dwg);
+    let (old_dxf, old_dwg) = (std::fs::read(&dxf).unwrap(), std::fs::read(&dwg).unwrap());
+    let host = dir.join("host.dxf");
+    save(&Drawing::new_metric(), &host);
+    let mut s = Session::new();
+    s.execute("open", &json!({ "path": host.to_string_lossy() })).unwrap();
+    for (path, name, x) in [("site.dxf", "a", 0), ("site.dwg", "b", 100)] {
+        let r = s.execute("xattach", &json!({ "path": path, "name": name, "at": [x, 0] })).unwrap();
+        s.execute("refedit", &json!({ "handle": r["handle"] })).unwrap();
+        s.execute("line", &json!({ "points": [[x, 20], [x + 10, 20]] })).unwrap();
+        s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    }
+    assert_eq!(std::fs::read(dir.join("site.dxf.bak")).unwrap(), old_dxf, "the DXF's previous file");
+    assert_eq!(std::fs::read(dir.join("site.bak")).unwrap(), old_dwg, "the DWG's previous file");
+    assert_eq!((read(&dxf).model.len(), read(&dwg).model.len()), (3, 3), "both hold their edit");
+    let _ = std::fs::remove_dir_all(&dir);
 }

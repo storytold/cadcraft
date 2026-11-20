@@ -13,9 +13,11 @@
 //! stand faded around it.
 //!
 //! An xref (or a block that came with one) is edited the same way, and REFCLOSE Save writes the
-//! change into its source drawing: the previous file is kept as `name.bak`, and the save is
-//! refused when the file is read-only, open in another program (or another drawing tab), or
-//! changed since it was loaded. The xref is then loaded again from the file it wrote.
+//! change into its source drawing the way SAVE writes a drawing: the previous file is kept as its
+//! `.bak`, the new one replaces it atomically, and a symbolic link planted beside it or put at its
+//! path during the edit never redirects the write. The save is refused when the file is
+//! read-only, open in another program (or another drawing tab), or changed since it was loaded.
+//! The xref is then loaded again from the file it wrote.
 //!
 //! The state is [`Drawing::refedit`]: it travels with undo, is never written to a file (files
 //! are written from [`Drawing::committed`]) and ends with the drawing it belongs to.
@@ -59,7 +61,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(RefsetM::default()))),
         CommandSpec::new("refclose", "Save Reference Edits", run_refclose)
             .menu(&["Tools", "Xref and Block In-place Editing", "Save Reference Edits"])
-            .params("{option?: \"save\"|\"discard\" | save?: bool (default true)} → {block, saved, objects, file? (an xref's source drawing written), backup?}")
+            .params("{option?: \"save\"|\"discard\" | save?: bool (default true)} → {block, saved, objects, file? (an xref's source drawing written), backup? (its previous file, as SAVE names it; null when none was kept)}")
             .enabled(editing)
             .interactive(|_| Ok(Box::new(RefcloseM))),
     ]
@@ -322,7 +324,15 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
             let file = xref_file(s, &x)?;
             let src = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
             let sources = source_handles(&blk, &src, inner.as_deref())?;
-            Some(XrefSource { xref: x, file: file.to_string_lossy().into_owned(), block: inner, stamp: load::stamp(&file), sources })
+            let real = std::fs::canonicalize(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+            Some(XrefSource {
+                xref: x,
+                file: file.to_string_lossy().into_owned(),
+                real: real.to_string_lossy().into_owned(),
+                block: inner,
+                stamp: load::stamp(&file),
+                sources,
+            })
         }
         None => None,
     };
@@ -521,6 +531,7 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
     let mut out = json!({ "block": r.block, "saved": save, "objects": objects });
     if let (Some(x), Some(backup)) = (&r.xref, written) {
         out["file"] = json!(x.file);
+        // `null` when the file didn't look like a whole drawing and the `.bak` there was kept.
         out["backup"] = json!(backup);
     }
     Ok(out)
@@ -574,10 +585,13 @@ fn commit_block(nd: &mut Drawing, r: &RefEdit) -> Result<usize> {
 
 // ---------------- writing an xref back ----------------
 
-/// Write the edited block of `nd` (committed) into xref source `x`. Returns the backup's path.
-fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<String> {
+/// Write the edited block of `nd` (committed) into xref source `x`. Returns the backup's path
+/// (`None` when none was kept).
+fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Option<String>> {
     let file = std::path::Path::new(&x.file);
+    let real = std::path::Path::new(&x.real);
     writable(file).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
+    still_leads_to(file, real).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
     if load::stamp(file) != x.stamp {
         return Err(bad(
             "refclose",
@@ -616,7 +630,19 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<String> {
         }
     }
     let bytes = (hooks.write)(&src, &x.file).map_err(|e| bad("refclose", format!("writing {}: {e}", file.display())))?;
-    replace_file(file, &bytes).map_err(|e| bad("refclose", e))
+    replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))
+}
+
+/// Refuse a save when `file` no longer leads to `real` (the file the edit began with), or `real`
+/// is no longer a plain file: a symbolic link put at either since would send the edit to another
+/// file.
+fn still_leads_to(file: &std::path::Path, real: &std::path::Path) -> std::result::Result<(), String> {
+    let now = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let plain = std::fs::symlink_metadata(real).is_ok_and(|m| m.is_file());
+    if now != real || !plain {
+        return Err(format!("{} leads to another file than when the edit began (a symbolic link was put there); it is not overwritten", file.display()));
+    }
+    Ok(())
 }
 
 /// Symbol names of a host object as the xref's drawing has them: `xref|name` loses its prefix;
@@ -699,28 +725,29 @@ fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Ve
     }
 }
 
-/// Replace `file` by `bytes`: the old file is kept as `name.bak`, the new one is written beside
-/// it and moved over it. Returns the backup's path.
-fn replace_file(file: &std::path::Path, bytes: &[u8]) -> std::result::Result<String, String> {
+/// Replace the xref's file (`file` as the xref names it, `real` the file it leads to) by `bytes`,
+/// the way SAVE replaces a drawing: the old file is kept as its `.bak`
+/// ([`crate::cmd::file::backup_path`]: `site.dwg` as `site.bak`, `site.dxf` as `site.dxf.bak`),
+/// and the new one goes into a fresh, exclusively created temporary file that is renamed over
+/// `real` ([`crate::atomic_write`]). A symbolic link planted at the temporary or backup path is
+/// never written through, and a link at `real` is replaced, not followed. Returns the backup's
+/// path (`None` when none was kept).
+fn replace_file(file: &std::path::Path, real: &std::path::Path, bytes: &[u8]) -> std::result::Result<Option<String>, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (file, bytes);
+        let _ = (file, real, bytes);
         Err("files are not available on the web".into())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let backup = file.with_extension("bak");
-        std::fs::copy(file, &backup)
-            .map_err(|e| format!("the backup {} can't be written: {e}; {} is unchanged", backup.display(), file.display()))?;
-        let mut tmp = file.as_os_str().to_owned();
-        tmp.push(".cadcraft-tmp");
-        let tmp = std::path::PathBuf::from(tmp);
-        std::fs::write(&tmp, bytes).map_err(|e| format!("{} can't be written: {e}", tmp.display()))?;
-        if let Err(e) = std::fs::rename(&tmp, file) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("{} can't be replaced: {e}; it is unchanged", file.display()));
-        }
-        Ok(backup.to_string_lossy().into_owned())
+        let kept = crate::cmd::file::backup(real)
+            .map_err(|e| format!("the backup copy of {} could not be written ({e}); it is unchanged", file.display()))?;
+        let permissions = std::fs::symlink_metadata(real).ok().filter(std::fs::Metadata::is_file).map(|m| m.permissions());
+        crate::atomic_write::write_atomic_with(real, permissions, |f| std::io::Write::write_all(f, bytes))
+            .map_err(|e| format!("{} can't be replaced: {e}; it is unchanged", file.display()))?;
+        // Named beside the file as the xref names it, unless that name is itself a link.
+        let shown = if std::fs::symlink_metadata(file).is_ok_and(|m| m.file_type().is_symlink()) { real } else { file };
+        Ok(kept.then(|| crate::cmd::file::backup_path(shown).to_string_lossy().into_owned()))
     }
 }
 
@@ -944,9 +971,10 @@ impl Interactive for RefcloseM {
         };
         let r = close(s, save)?;
         s.echo(match (save, r.get("file").and_then(Value::as_str)) {
-            (true, Some(f)) => {
-                format!("Reference changes saved to {f} (the previous file is kept as {}).", r["backup"].as_str().unwrap_or("a .bak file"))
-            }
+            (true, Some(f)) => match r["backup"].as_str() {
+                Some(b) => format!("Reference changes saved to {f} (the previous file is kept as {b})."),
+                None => format!("Reference changes saved to {f}."),
+            },
             (true, None) => "Reference changes saved.".to_string(),
             (false, _) => "Reference changes discarded.".to_string(),
         });
