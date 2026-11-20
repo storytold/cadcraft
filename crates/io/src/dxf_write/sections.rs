@@ -1247,6 +1247,15 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334).
     crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
+    // Kept constraint groups go in the order their reader expects: a DXF's own version. The
+    // bridge's R2000 text is read as the version its kept groups came from when that is newer
+    // (craft-dwg's `encode_kept_noted` declares it), so there they stay as read.
+    let read_as = if version == target {
+        version
+    } else {
+        d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|kept| *kept > version).unwrap_or(version)
+    };
+    crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
