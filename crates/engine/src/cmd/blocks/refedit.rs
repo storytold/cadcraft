@@ -286,9 +286,7 @@ fn source_handles(blk: &Block, src: &Drawing, inner: Option<&str>) -> Result<Vec
 fn file_form(file: &std::path::Path, src: &Drawing) -> Result<(Option<String>, bool)> {
     use std::io::Read;
     let mut head = Vec::new();
-    std::fs::File::open(file)
-        .and_then(|f| f.take(4096).read_to_end(&mut head))
-        .map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+    std::fs::File::open(file).and_then(|f| f.take(4096).read_to_end(&mut head)).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
     let dwg = head
         .get(..6)
         .filter(|t| t.starts_with(b"AC") && t.get(2..).is_some_and(|d| d.iter().all(u8::is_ascii_digit)))
@@ -689,7 +687,8 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
         w(&src, &x.file, &crate::cmd::file::SaveAs { version, binary: x.binary, portable_fonts: false })
     };
     let bytes = bytes.map_err(|e| bad("refclose", format!("writing {}: {e}", file.display())))?;
-    let as_version = version.unwrap_or_else(|| src.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver).unwrap_or_default());
+    let as_version =
+        version.unwrap_or_else(|| src.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver).unwrap_or_default());
     let lost = crate::cmd::file::loss_writing(&src, &x.file, as_version);
     let backup = replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))?;
     Ok(Written { backup, lost })
@@ -702,7 +701,10 @@ fn still_leads_to(file: &std::path::Path, real: &std::path::Path) -> std::result
     let now = std::fs::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let plain = std::fs::symlink_metadata(real).is_ok_and(|m| m.is_file());
     if now != real || !plain {
-        return Err(format!("{} leads to another file than when the edit began (a symbolic link was put there); it is not overwritten", file.display()));
+        return Err(format!(
+            "{} leads to another file than when the edit began (a symbolic link was put there); it is not overwritten",
+            file.display()
+        ));
     }
     Ok(())
 }
