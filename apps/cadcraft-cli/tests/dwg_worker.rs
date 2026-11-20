@@ -8,6 +8,7 @@ use cadcraft_io::dwg_worker;
 #[test]
 fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     let drawing = cadcraft_engine::sample::bracket();
+    dwg_worker::allow_in_process();
     let in_process = cadcraft_io::write(&drawing, "a.dwg").unwrap();
 
     dwg_worker::use_worker(env!("CARGO_BIN_EXE_cadcraft-cli").into(), vec![dwg_worker::WORKER_ARG.into()]);
@@ -34,7 +35,8 @@ fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     assert!(e.contains("worker stopped"), "{e}");
     assert!(cadcraft_io::read(&written, "a.dwg").is_ok(), "the next file gets a new worker");
 
-    // No worker to start: the work happens here, as without one.
+    // A worker that cannot start is an error, even where in-process conversion is allowed.
     dwg_worker::use_worker("no-such-program-here".into(), Vec::new());
-    assert!(cadcraft_io::read(&written, "a.dwg").is_ok());
+    let e = cadcraft_io::read(&written, "a.dwg").unwrap_err().to_string();
+    assert!(e.contains("could not start"), "{e}");
 }

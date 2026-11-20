@@ -79,11 +79,15 @@ pub(super) fn model_ucs(d: &Drawing) -> Ucs {
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after
 /// `$DIMSTYLE`: AutoCAD draws new and updated dimensions with the header's DIM* values, which
 /// otherwise stay its defaults (0.18 text, 4 decimals) whatever the current style says (#1051).
-/// `$DIMSCALE` is a header variable of its own.
+/// `$DIMSCALE` is a header variable of its own. Variables set with SETVAR that differ from the
+/// style are its overrides and are written instead, so they are kept with the drawing (#3100).
 fn dim_header_vars(w: &mut W, d: &Drawing) {
     let name = d.header.str("DIMSTYLE", "Standard");
     let Some(style) = d.dim_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&name)) else { return };
-    let v = serde_json::to_value(style).unwrap_or_default();
+    let mut v = serde_json::to_value(style).unwrap_or_default();
+    if let Some(fields) = v.as_object_mut() {
+        fields.extend(d.dim_overrides());
+    }
     let none = |_: &str| None;
     for (var, field) in cadcraft_doc::DIMVARS {
         if *var == "DIMSCALE" {

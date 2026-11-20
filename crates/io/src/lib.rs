@@ -78,7 +78,7 @@ fn dwg_error(message: String) -> IoError {
 
 /// How a program runs the DWG reader and writer in a child process (`craft_dwg::worker`).
 pub mod dwg_worker {
-    pub use craft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
+    pub use craft_dwg::{WORKER_ARG, allow_in_process, serve_if_asked, use_own_worker};
     #[cfg(all(not(target_arch = "wasm32"), not(all(target_os = "freebsd", target_arch = "aarch64"))))]
     pub use craft_dwg::{crash_worker_for_test, use_worker};
 }

@@ -271,3 +271,19 @@ fn entget_and_handent_reach_every_block_entity_also_after_a_redefinition() {
     }
     assert_eq!(ok(&mut s, walk), "((\"CIRCLE\" T))");
 }
+
+/// `trans` takes the entity name of a block definition's entity, as `entget` does: its OCS is
+/// the one its extrusion direction gives.
+#[test]
+fn trans_reaches_a_block_definition_entity() {
+    let mut s = session();
+    let circle = r#"(entmake '((0 . "CIRCLE") (8 . "0") (10 0.0 0.0 0.0) (40 . 1.0) (210 1.0 0.0 0.0)))"#;
+    for code in [BLOCK_EB, circle, ENDBLK] {
+        ok(&mut s, code);
+    }
+    ok(&mut s, r#"(setq e (cdr (assoc -2 (tblsearch "BLOCK" "EB"))))"#);
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget e)))"), "\"CIRCLE\"");
+    // Extrusion +X: the arbitrary axis algorithm gives OCS X = world Y.
+    assert_eq!(ok(&mut s, "(equal (trans '(1 0 0) e 0) '(0.0 1.0 0.0) 1e-9)"), "T");
+    assert_eq!(ok(&mut s, "(equal (trans '(0 1 0) 0 e) '(1.0 0.0 0.0) 1e-9)"), "T");
+}

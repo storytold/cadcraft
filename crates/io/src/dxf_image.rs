@@ -228,36 +228,24 @@ pub(crate) fn extract_ole_image(payload: &[u8]) -> Option<(Vec<u8>, Vec2)> {
 
 /// Fill in each image's definition (path, name, pixel size) from the IMAGEDEF it points to,
 /// and extract embedded images from OLE frames.
-pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
-    resolve_images(secs, d);
+/// `refs`: each IMAGE entity's handle in the drawing → its IMAGEDEF handle (upper case), noted
+/// as the entity was read, so an image whose repeated handle was reassigned keeps its own.
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing, refs: &HashMap<Handle, String>) {
+    resolve_images(secs, d, refs);
     resolve_ole(secs, d);
 }
 
-fn resolve_images(secs: &[SectionRef<'_>], d: &mut Drawing) {
+fn resolve_images(secs: &[SectionRef<'_>], d: &mut Drawing, refs: &HashMap<Handle, String>) {
     if !has_images(&d.model) && !d.layouts.iter().any(|l| has_images(&l.entities)) && !d.blocks.values().any(|b| has_images(&b.entities)) {
         return;
     }
-    // IMAGE handle → IMAGEDEF handle.
-    let mut refs: HashMap<Handle, Handle> = HashMap::new();
-    for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(s.tags, |kind, tags| {
-            if kind != "IMAGE" {
-                return;
-            }
-            let h = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str()));
-            let def = tags.iter().find(|t| t.code == 340).and_then(|t| Handle::parse_hex(&t.str()));
-            if let (Some(h), Some(def)) = (h, def) {
-                refs.insert(h, def);
-            }
-        });
-    }
     // IMAGEDEF objects, and the names dictionaries give them.
-    let mut defs: HashMap<Handle, Def> = HashMap::new();
-    let mut names: HashMap<Handle, String> = HashMap::new();
+    let mut defs: HashMap<String, Def> = HashMap::new();
+    let mut names: HashMap<String, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
         each_record(s.tags, |kind, tags| match kind {
             "IMAGEDEF" => {
-                let Some(h) = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str())) else { return };
+                let Some(h) = tags.iter().find(|t| t.code == 5).map(|t| key(&t.str())).filter(|k| !k.is_empty()) else { return };
                 let start = tags.iter().position(|t| t.code == 100 && t.str() == "AcDbRasterImageDef").unwrap_or(0);
                 let body = tags.get(start..).unwrap_or(&[]);
                 let f = |c: i32| body.iter().find(|t| t.code == c).map(Tag::f64);
@@ -275,10 +263,11 @@ fn resolve_images(secs: &[SectionRef<'_>], d: &mut Drawing) {
                     match t.code {
                         3 => name = Some(t.str()),
                         350 | 360 => {
-                            if let Some(n) = name.take()
-                                && let Some(h) = Handle::parse_hex(&t.str())
-                            {
-                                names.insert(h, n);
+                            if let Some(n) = name.take() {
+                                let h = key(&t.str());
+                                if !h.is_empty() {
+                                    names.insert(h, n);
+                                }
                             }
                         }
                         _ => {}
