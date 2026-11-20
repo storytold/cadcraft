@@ -105,6 +105,9 @@ pub(super) fn run_fillet(s: &mut Session, p: &Value) -> Result<Value> {
     let h1 = h_param(p, "h1").ok_or_else(|| bad("fillet", "`h1` is required"))?;
     let h2 = h_param(p, "h2").ok_or_else(|| bad("fillet", "`h2` is required"))?;
     let r = f64_or(p, "radius", s.doc()?.header.f64("FILLETRAD", 0.0));
+    if !(r.is_finite() && r >= 0.0) {
+        return Err(bad("fillet", "`radius` must be >= 0"));
+    }
     let p1 = point_param(p, "p1").unwrap_or_default();
     let p2 = point_param(p, "p2").unwrap_or_default();
     let a = fillet_corner(s, h1, p1, h2, p2, r, None, bool_or(p, "trim", true))?;
