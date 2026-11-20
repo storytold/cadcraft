@@ -1491,3 +1491,69 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+// ---------------- vl-registry-* ----------------
+
+/// The three functions exist on every platform.
+#[test]
+fn registry_functions_are_defined() {
+    let mut s = session();
+    for f in ["vl-registry-read", "vl-registry-write", "vl-registry-delete"] {
+        assert_eq!(ok(&mut s, &format!("(type {f})")), "SUBR", "{f}");
+    }
+    assert!(eval(&mut s, "(vl-registry-read 5)").is_err());
+    assert!(eval(&mut s, "(vl-registry-write \"HKCU\\\\x\" \"v\" 1.5)").is_err());
+}
+
+/// Off Windows a read finds nothing, and writes and deletes fail.
+#[cfg(not(windows))]
+#[test]
+fn registry_is_nil_off_windows() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, r#"(vl-registry-read "HKEY_CURRENT_USER\\Software\\CADCraft" "v")"#), "nil");
+    assert_eq!(ok(&mut s, r#"(vl-registry-write "HKEY_CURRENT_USER\\Software\\CADCraft" "v" "x")"#), "nil");
+    assert_eq!(ok(&mut s, r#"(vl-registry-delete "HKEY_CURRENT_USER\\Software\\CADCraft")"#), "nil");
+}
+
+/// Write, read back, delete, under a unique key that is removed at the end.
+#[cfg(windows)]
+#[test]
+fn registry_round_trip() {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let key = format!(r"HKEY_CURRENT_USER\\Software\\CADCraft-test-{}-{nanos}", std::process::id());
+    let mut s = session();
+    // Always remove the key, even when an assertion fails.
+    struct Cleanup(String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let path = self.0.trim_start_matches("HKEY_CURRENT_USER\\\\").replace("\\\\", "\\");
+            let _ = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).delete_subkey_all(path);
+        }
+    }
+    let _cleanup = Cleanup(key.clone());
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}" "name" "hello")"#)), r#""hello""#);
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}" "count" 42)"#)), "42");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}" "neg" -7)"#)), "-7");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "name")"#)), r#""hello""#);
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "count")"#)), "42");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "neg")"#)), "-7");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "missing")"#)), "nil");
+    // Default value of the key, and a short root name.
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}" "dv")"#)), r#""dv""#);
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}")"#)), r#""dv""#);
+    // A nil value name is the default value too.
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}" nil "dv2")"#)), r#""dv2""#);
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" nil)"#)), r#""dv2""#);
+    let short = key.replace("HKEY_CURRENT_USER", "hkcu");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{short}" "count")"#)), "42");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-delete "{key}" "count")"#)), "T");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-delete "{key}" "count")"#)), "nil");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "count")"#)), "nil");
+    // A key with a subkey is not deleted; the subkey and then the key are.
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-write "{key}\\sub" "v" 1)"#)), "1");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-delete "{key}")"#)), "nil");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-delete "{key}\\sub")"#)), "T");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-delete "{key}")"#)), "T");
+    assert_eq!(ok(&mut s, &format!(r#"(vl-registry-read "{key}" "name")"#)), "nil");
+    assert_eq!(ok(&mut s, r#"(vl-registry-read "NOT_A_ROOT\\x" "v")"#), "nil");
+}

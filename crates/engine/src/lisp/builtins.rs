@@ -46,6 +46,7 @@ mod geometry;
 mod lists;
 mod numbers;
 mod output;
+mod registry;
 mod strings;
 mod wcmatch;
 
@@ -69,6 +70,7 @@ use numbers::{
 };
 use output::{alert, prin1, princ, print, prompt, terpri};
 pub use output::{is_null_symbol, null_symbol, real};
+use registry::{vl_registry_delete, vl_registry_read, vl_registry_write};
 use strings::{
     ascii, atof, atoi, chr, itoa, read_fn, strcase, strcat, strlen, substr, vl_filename_base, vl_filename_directory, vl_filename_extension,
     vl_list_to_string, vl_prin1_to_string, vl_princ_to_string, vl_string_left_trim, vl_string_right_trim, vl_string_search, vl_string_subst,
@@ -194,6 +196,9 @@ static BUILTINS: &[Builtin] = &[
     pure!("ANGLE", angle),
     pure!("INTERS", inters),
     pure!("FINDFILE", findfile),
+    pure!("VL-REGISTRY-READ", vl_registry_read),
+    pure!("VL-REGISTRY-WRITE", vl_registry_write),
+    pure!("VL-REGISTRY-DELETE", vl_registry_delete),
     pure!("VL-CATCH-ALL-ERROR-P", vl_catch_all_error_p),
     pure!("VL-CATCH-ALL-ERROR-MESSAGE", vl_catch_all_error_message),
     pure!("VL-LOAD-COM", noop),
