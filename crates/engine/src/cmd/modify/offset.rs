@@ -165,7 +165,13 @@ pub(crate) fn offset_polyline(pl: &Polyline, d: f64) -> Option<Vec<PolyVertex>> 
             s.end()
         };
         let bulge = match s {
-            Segment::Line(_) => 0.0,
+            Segment::Line(_) => {
+                // A line that collapsed or flipped direction while joining means the offset is too large.
+                if (end - start).dot(s.end() - s.start()) <= 1e-12 {
+                    return None;
+                }
+                0.0
+            }
             Segment::Arc { arc, ccw } => {
                 // The joined endpoints may have moved along the circle: take the sweep between them.
                 let sweep = if start.near(end, 1e-9) {
