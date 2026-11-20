@@ -2,7 +2,7 @@
 //! options, DIVIDE/MEASURE, REVCLOUD, WIPEOUT, XLINE options, 3DPOLY, MLINE, HELIX, spline by
 //! control vertices, CENTERMARK and CENTERLINE. Each has a JSON form and a prompt sequence.
 
-use cadcraft_doc::{EntityKind, Handle, Helix, HelixConstrain, Point, Polyline3d, RayLine, Wipeout};
+use cadcraft_doc::{EntityKind, Handle, Helix, HelixConstrain, Point, Polyline3d, RawTag, RayLine, Wipeout};
 use cadcraft_geom::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Spline, TAU, Vec2, Vec3, norm_angle, shoelace};
 use serde_json::{Value, json};
 
