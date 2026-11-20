@@ -202,11 +202,23 @@ pub fn names(e: &Expr, out: &mut Vec<String>) {
 /// `text` with every whole-name use of `old` replaced by `new`; numbers (`1e3`), other names
 /// (`d10` for `d1`) and spacing are left as written.
 pub fn rename(text: &str, old: &str, new: &str) -> String {
+    tokens(text).map(|t| if t == old { new } else { t }).collect()
+}
+
+/// Does `text` use the name `name` (whole names only, as [`rename`] sees them)? Text that doesn't
+/// parse is scanned too.
+pub fn uses(text: &str, name: &str) -> bool {
+    tokens(text).any(|t| t == name)
+}
+
+/// `text` split into numbers (`1e3`), names and single other characters; joined, they give `text`
+/// back unchanged.
+fn tokens(text: &str) -> impl Iterator<Item = &str> {
     let b = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
     let mut i = 0;
-    while let Some(&c) = b.get(i) {
+    std::iter::from_fn(move || {
         let start = i;
+        let c = *b.get(i)?;
         if c.is_ascii_digit() || c == b'.' {
             while b.get(i).is_some_and(|c| c.is_ascii_digit() || *c == b'.') {
                 i += 1;
@@ -230,10 +242,8 @@ pub fn rename(text: &str, old: &str, new: &str) -> String {
         } else {
             i += text.get(i..).and_then(|r| r.chars().next()).map_or(1, char::len_utf8);
         }
-        let token = text.get(start..i).unwrap_or_default();
-        out.push_str(if token == old { new } else { token });
-    }
-    out
+        Some(text.get(start..i).unwrap_or_default())
+    })
 }
 
 /// Evaluate with a variable lookup.
@@ -429,6 +439,15 @@ mod tests {
         assert_eq!(rename("d1+d10*d1 / (d1_x+2e1)", "d1", "w"), "w+d10*w / (d1_x+2e1)");
         assert_eq!(rename("1e2+e", "e", "x"), "1e2+x");
         assert_eq!(rename("é+a", "a", "b"), "é+b");
+    }
+
+    #[test]
+    fn uses_finds_whole_names_even_in_text_that_does_not_parse() {
+        assert!(uses("d10*d1", "d1"));
+        assert!(!uses("d10 + d1_x + 2e1", "d1"));
+        assert!(!uses("1e2", "e"));
+        assert!(uses("w*(", "w"), "a broken expression still names w");
+        assert!(!uses("", "w"));
     }
 
     #[test]
