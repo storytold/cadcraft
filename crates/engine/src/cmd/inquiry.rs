@@ -196,7 +196,10 @@ fn angle_from_xy(d: Vec3) -> f64 {
 /// tilted): what DIST's report shows.
 fn dist_delta(s: &Session, a: Vec3, b: Vec3) -> Vec3 {
     let u = s.input_ucs();
-    u.to_ucs3(b) - u.to_ucs3(a)
+    // The difference turned onto the axes: converting each point first would subtract a far
+    // origin and round a short distance away.
+    let d = b - a;
+    Vec3::new(d.dot(u.x), d.dot(u.y), d.dot(u.z()))
 }
 
 /// DIST's report: the distance, the angles and the deltas `d`, measured in the current UCS.

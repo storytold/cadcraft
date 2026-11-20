@@ -246,8 +246,11 @@ impl Session {
             && self.parse_typed_point(t, self.last_point).is_none()
             && let Some(d) = crate::units::parse_distance(t)
         {
-            let dir = (crate::snap::ortho_at(l, self.cursor, self.drafting_settings().ucs_angle) - l).normalized();
-            let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+            let ucs = self.drafting_settings().ucs_angle;
+            let dir = (crate::snap::ortho_at(l, self.cursor, ucs) - l).normalized();
+            // With the cursor on the tracking point itself: along the UCS X axis, which the point
+            // tracking then keeps (world X would be cut short in a turned UCS).
+            let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::from_angle(ucs) } else { dir };
             return Some(self.modifier_point(l + dir * d));
         }
         if let Some(Frame::Angle { base, dir }) = self.point_mods.last().copied() {

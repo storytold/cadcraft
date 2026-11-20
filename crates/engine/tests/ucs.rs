@@ -685,6 +685,16 @@ fn dist_json_keeps_world_values_and_adds_ucs() {
     assert!(r.get("world").is_none(), "{r}");
 }
 
+/// DIST's deltas in a UCS whose origin is far away keep a short distance: the difference is
+/// turned onto the UCS axes, not the two points converted and subtracted.
+#[test]
+fn dist_deltas_survive_a_far_ucs_origin() {
+    let mut s = session();
+    s.execute("ucs", &json!({"option": "origin", "origin": [1e17, 0]})).unwrap();
+    let r = s.execute("dist", &json!({"p1": [0, 0, 0], "p2": [1, 0, 0]})).unwrap();
+    assert!((r["ucs"]["dx"].as_f64().unwrap() - 1.0).abs() < 1e-12, "{r}");
+}
+
 /// Deleting the current named UCS leaves no trace of its name: UCS Previous goes back to the axes
 /// before it, unnamed, and does not bring the deleted name back.
 #[test]
@@ -792,4 +802,74 @@ fn replacing_a_named_ucs_unnames_the_old_frame_elsewhere() {
     // Undone with the save: model space is named SITE again.
     s.undo().unwrap();
     assert_eq!(s.doc().unwrap().header.str("UCSNAME", ""), "SITE");
+}
+
+/// A Z that is given must be a number: it is not read as 0 the way a missing one is.
+#[test]
+fn a_non_numeric_z_is_refused() {
+    let mut s = session();
+    for origin in [json!([10, 20, "bad"]), json!({"x": 10, "y": 20, "z": "bad"})] {
+        assert!(s.execute("ucs", &json!({"option": "origin", "origin": origin})).is_err(), "{origin}");
+        assert!(s.ucs().is_world());
+    }
+    // Left out, or null, it is 0.
+    s.execute("ucs", &json!({"option": "origin", "origin": [10, 20, null]})).unwrap();
+    assert!(near3(s.ucs().origin, Vec3::new(10.0, 20.0, 0.0)));
+}
+
+/// UCS Origin as JSON moves a tilted UCS read from a file, keeping its axes, as the interactive
+/// option does; new axes out of the XY plane are still refused.
+#[test]
+fn ucs_origin_moves_a_tilted_ucs_and_keeps_its_axes() {
+    let mut s = session();
+    {
+        let h = &mut s.doc_mut().unwrap().header;
+        h.set("UCSORG", HVal::Point(Vec3::new(10.0, 0.0, 0.0)));
+        h.set("UCSXDIR", HVal::Point(Vec3::new(1.0, 0.0, 0.0)));
+        h.set("UCSYDIR", HVal::Point(Vec3::new(0.0, 0.0, 1.0)));
+    }
+    s.execute("ucs.origin", &json!({"origin": [1, 2, 3]})).unwrap();
+    let u = s.ucs();
+    assert!(near3(u.origin, Vec3::new(1.0, 2.0, 3.0)) && near3(u.y, Vec3::new(0.0, 0.0, 1.0)), "{u:?}");
+    assert!(s.execute("ucs", &json!({"option": "origin", "origin": [0, 0], "xPoint": [1, 0]})).is_err());
+    assert!(near3(s.ucs().origin, Vec3::new(1.0, 2.0, 3.0)));
+}
+
+/// A UCS save refused (the name exists and isn't to be replaced) leaves the drawing unmodified.
+#[test]
+fn a_refused_ucs_save_leaves_the_drawing_unmodified() {
+    let mut s = session();
+    let save = json!({"option": "named", "action": "save", "name": "SITE"});
+    s.execute("ucs", &save).unwrap();
+    {
+        let st = s.state_mut().unwrap();
+        st.saved = st.drawing().clone();
+    }
+    assert!(!s.state().unwrap().is_dirty());
+    assert!(s.execute("ucs", &save).unwrap_err().to_string().contains("already exists"));
+    assert!(!s.state().unwrap().is_dirty());
+}
+
+/// UCS `?` shows a far saved UCS's axes as directions (not rounded away against its origin), and
+/// lists a record with unusable axes by name.
+#[test]
+fn ucs_list_shows_far_axes_and_unusable_records() {
+    let mut s = session();
+    let list = |s: &mut Session, name: &str| {
+        let r = s.execute("ucs", &json!({"option": "named", "action": "list", "name": name})).unwrap();
+        r["list"].as_str().unwrap().to_string()
+    };
+    s.execute("ucs", &json!({"option": "origin", "origin": [1e17, 0]})).unwrap();
+    s.execute("ucs", &json!({"option": "named", "action": "save", "name": "FAR"})).unwrap();
+    s.execute("ucs", &json!({"option": "world"})).unwrap();
+    let text = list(&mut s, "FAR");
+    assert!(text.contains("X Axis = <1"), "{text}");
+    s.doc_mut().unwrap().ucss.push(cadcraft_engine::doc::Ucs {
+        name: "BROKEN".into(),
+        origin: Vec3::ZERO,
+        x_axis: Vec3::ZERO,
+        y_axis: Vec3::new(0.0, 1.0, 0.0),
+    });
+    let text = list(&mut s, "BROKEN");
+    assert!(text.contains("BROKEN") && !text.contains("(none)"), "{text}");
 }

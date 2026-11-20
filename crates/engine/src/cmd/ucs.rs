@@ -74,12 +74,17 @@ fn with_option(p: &Value, option: &str) -> Value {
     p
 }
 
-/// A JSON point with an optional Z: `[x, y]`, `[x, y, z]` or `{x, y, z?}`.
+/// A JSON point with an optional Z: `[x, y]`, `[x, y, z]` or `{x, y, z?}`. A Z that is given
+/// must be a number (only a missing or null one is 0).
 fn point3(v: &Value) -> Option<Vec3> {
+    let z = |z: Option<&Value>| match z {
+        None | Some(Value::Null) => Some(0.0),
+        Some(z) => z.as_f64(),
+    };
     let p = if let Some(a) = v.as_array() {
-        Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2).and_then(Value::as_f64).unwrap_or(0.0))
+        Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, z(a.get(2))?)
     } else {
-        Vec3::new(v.get("x")?.as_f64()?, v.get("y")?.as_f64()?, v.get("z").and_then(Value::as_f64).unwrap_or(0.0))
+        Vec3::new(v.get("x")?.as_f64()?, v.get("y")?.as_f64()?, z(v.get("z"))?)
     };
     p.is_finite().then_some(p)
 }
@@ -172,7 +177,9 @@ fn on_plane(s: &Session, p: Vec2) -> Vec3 {
 /// The UCS through `origin`, with points on its X axis and in its XY plane (world points).
 fn set_by_points(s: &mut Session, origin: Vec3, x: Option<Vec3>, xy: Option<Vec3>) -> Result<()> {
     let f = s.ucs().from_points(origin, x, xy).ok_or_else(|| EngineError::Other("Those points don't define a UCS: they lie on one line.".into()))?;
-    if !f.is_planar() {
+    // Only new axes are refused out of the XY plane: a new origin alone keeps the axes the UCS
+    // has, tilted or not, as the interactive Origin option does.
+    if x.is_some() && !f.is_planar() {
         return Err(EngineError::Other("That UCS is tilted out of the XY plane (or turned over), which is not available yet.".into()));
     }
     s.set_ucs(f, "")
@@ -299,21 +306,20 @@ fn exists(d: &Drawing, name: &str) -> bool {
 fn save(s: &mut Session, name: &str, replace: bool) -> std::result::Result<(), String> {
     let n = check_name(name)?;
     let frame = s.ucs();
+    // Refused before the drawing is touched, so a refused save leaves it unmodified.
+    let d = s.doc().map_err(|e| e.to_string())?;
+    let replaced = exists(d, &n);
+    if replaced && !replace {
+        return Err(format!("UCS \"{n}\" already exists."));
+    }
+    if !replaced && d.ucss.len() >= MAX_NAMED {
+        return Err(format!("A drawing keeps at most {MAX_NAMED} named UCSs."));
+    }
     let d = s.doc_mut().map_err(|e| e.to_string())?;
-    let replaced = match d.ucss.iter_mut().find(|u| u.name.eq_ignore_ascii_case(&n)) {
-        Some(_) if !replace => return Err(format!("UCS \"{n}\" already exists.")),
-        Some(u) => {
-            *u = frame.record(&u.name.clone());
-            true
-        }
-        None => {
-            if d.ucss.len() >= MAX_NAMED {
-                return Err(format!("A drawing keeps at most {MAX_NAMED} named UCSs."));
-            }
-            d.ucss.push(frame.record(&n));
-            false
-        }
-    };
+    match d.ucss.iter_mut().find(|u| u.name.eq_ignore_ascii_case(&n)) {
+        Some(u) => *u = frame.record(&u.name.clone()),
+        None => d.ucss.push(frame.record(&n)),
+    }
     let kept = d.ucss.iter().find(|u| u.name.eq_ignore_ascii_case(&n)).map(|u| u.name.clone()).unwrap_or(n);
     if replaced {
         // A UCS that still carries the name but not the new frame (another space's current UCS, a
@@ -394,19 +400,24 @@ fn list(s: &Session, patterns: &str) -> String {
     let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
     let f = |v: f64| crate::units::format_distance(v, lu, lp);
     let pt = |v: Vec3| format!("<{},{},{}>", f(v.x), f(v.y), f(v.z));
-    let axis = |o: Vec3, a: Vec3| cur.to_ucs3(o + a) - cur.to_ucs3(o);
+    // Axes are directions: turned onto the current axes, never added to a (possibly far) origin.
+    let axis = |a: Vec3| Vec3::new(a.dot(cur.x), a.dot(cur.y), a.dot(cur.z()));
     let mut out = format!("Current ucs name:  {}\nSaved coordinate systems:", shown_name(s));
     let mut any = false;
     for u in d.ucss.iter().filter(|u| matches(patterns, &u.name)) {
         any = true;
-        let Some(fr) = UcsFrame::of(u) else { continue };
+        let Some(fr) = UcsFrame::of(u) else {
+            // Still listed, so it can be found and deleted.
+            out.push_str(&format!("\n\n{}\n    Its axes are unusable.", u.name));
+            continue;
+        };
         out.push_str(&format!(
             "\n\n{}\n    Origin = {}, X Axis = {}\n    Y Axis = {}, Z Axis = {}",
             u.name,
             pt(cur.to_ucs3(fr.origin)),
-            pt(axis(fr.origin, fr.x)),
-            pt(axis(fr.origin, fr.y)),
-            pt(axis(fr.origin, fr.z()))
+            pt(axis(fr.x)),
+            pt(axis(fr.y)),
+            pt(axis(fr.z()))
         ));
     }
     if !any {

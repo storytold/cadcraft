@@ -44,8 +44,10 @@ pub(crate) const UCS_NAME_KEY: &str = "CADCRAFT_UCSNAME";
 /// printing round-off only: we write the shortest exact form and other programs 15–16
 /// significant digits (half a unit in the 15th is 5e-16 of the value), so 1e-14 of the value,
 /// plus 1e-9 near the World origin, covers it while even 1e12 away a 0.5 move is a different UCS.
+/// The axes match to 1e-9 of their length, so short axes turned to another direction don't.
 pub(crate) fn is_named_frame(u: &cadcraft_doc::Ucs, origin: cadcraft_geom::Vec3, x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {
-    (origin - u.origin).len() <= 1e-9 + 1e-14 * origin.len() && (x - u.x_axis).len() <= 1e-9 && (y - u.y_axis).len() <= 1e-9
+    let axis = |a: cadcraft_geom::Vec3, b: cadcraft_geom::Vec3| (a - b).len() <= 1e-9 * a.len().max(b.len());
+    (origin - u.origin).len() <= 1e-9 + 1e-14 * origin.len() && axis(x, u.x_axis) && axis(y, u.y_axis)
 }
 
 /// The UCS table record named `name` whose frame the UCS at `origin`, `x`, `y` still is: the only
@@ -968,5 +970,19 @@ mod tests {
         assert!(arrow_block_name("").is_none());
         assert!(arrow_block_name("nonsense").is_none());
         assert!(is_standard_arrow("_dot"));
+    }
+
+    /// A named UCS with very short axes is matched by its own axes only, not by the same short
+    /// axes turned another way; unit axes still match to rounding.
+    #[test]
+    fn named_frame_axes_match_relative_to_their_length() {
+        use cadcraft_geom::Vec3;
+        let ucs = |x: Vec3, y: Vec3| cadcraft_doc::Ucs { name: "A".into(), origin: Vec3::ZERO, x_axis: x, y_axis: y };
+        let tiny = ucs(Vec3::new(1e-10, 0.0, 0.0), Vec3::new(0.0, 1e-10, 0.0));
+        assert!(is_named_frame(&tiny, Vec3::ZERO, tiny.x_axis, tiny.y_axis));
+        assert!(!is_named_frame(&tiny, Vec3::ZERO, Vec3::new(0.0, 1e-10, 0.0), Vec3::new(-1e-10, 0.0, 0.0)));
+        let unit = ucs(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        assert!(is_named_frame(&unit, Vec3::ZERO, Vec3::new(1.0, 1e-12, 0.0), Vec3::new(-1e-12, 1.0, 0.0)));
+        assert!(!is_named_frame(&unit, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0), Vec3::new(-1.0, 0.0, 0.0)));
     }
 }

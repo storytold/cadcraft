@@ -222,6 +222,45 @@ fn dimlinear_horizontal_and_vertical_follow_the_ucs() {
     assert!(ang_eq(last_dim_rotation(&s), 90.0 * DEG));
 }
 
+/// DIMLINEAR on a selected circle measures its diameter along the dimension line, also when the
+/// UCS is turned and Horizontal runs along world Y.
+#[test]
+fn dimlinear_on_a_circle_measures_its_diameter_in_a_turned_ucs() {
+    use cadcraft_engine::Input;
+    let mut s = session();
+    turned(&mut s, 90.0);
+    // One circle each, far apart, so a pick never finds an earlier dimension.
+    for (i, (key, at)) in [("h", Vec2::new(-10.0, 0.0)), ("v", Vec2::new(0.0, 20.0)), ("", Vec2::new(-10.0, 0.0))].into_iter().enumerate() {
+        let c = Vec2::new(100.0 + 100.0 * i as f64, 100.0);
+        s.execute("circle", &json!({"center": [c.x, c.y], "radius": 5})).unwrap();
+        s.cmdline("dimlinear").unwrap();
+        s.cmdline("").unwrap();
+        s.input(Input::Point(c + Vec2::new(5.0, 0.0))).unwrap();
+        if !key.is_empty() {
+            s.cmdline(key).unwrap();
+        }
+        s.input(Input::Point(c + at)).unwrap();
+        let d = s.doc().unwrap();
+        let m = d.model.iter().filter_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm.measurement) } else { None }).last();
+        assert!(m.is_some_and(|m| (m - 10.0).abs() < 1e-9), "{key:?}: {m:?}");
+    }
+}
+
+/// A distance typed at TK's "Next point" with the cursor on the last tracking point runs along
+/// the UCS X axis, its full length.
+#[test]
+fn tracking_distance_with_the_cursor_on_the_point_runs_along_the_ucs_x_axis() {
+    let mut s = session();
+    turned(&mut s, 30.0);
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("0,0").unwrap();
+    s.cursor = Vec2::new(5.0, 5.0);
+    s.cmdline("10").unwrap();
+    let want = Vec2::new(5.0, 5.0) + Vec2::from_angle(30.0 * DEG) * 10.0;
+    assert!(s.last_point.dist(want) < 1e-9, "{:?} vs {want:?}", s.last_point);
+    s.cancel();
+}
+
 /// A point filter takes its coordinates in the UCS: `.X` of one point and `YZ` of another make
 /// the point with the first's UCS X and the second's UCS Y.
 #[test]
