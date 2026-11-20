@@ -183,17 +183,9 @@ fn removing_a_named_object_leaves_the_one_lying_on_it() {
         let first = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
         let second = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
         let (gone, kept) = if named_first { (&first, &second) } else { (&second, &first) };
-        s.script("STRETCH
-C
-8,-2
-12,2
-R
-").unwrap();
+        s.script("STRETCH\nC\n8,-2\n12,2\nR\n").unwrap();
         s.input_object(Handle::parse_hex(gone).unwrap(), None).unwrap();
-        s.script("
-0,0
-5,0
-").unwrap();
+        s.script("\n0,0\n5,0\n").unwrap();
         assert!(s.running.is_none(), "{}", s.prompt_text());
         assert!(near(ends(&s, gone).1, 10.0, 0.0), "the named line was removed from the set: {:?}", ends(&s, gone));
         assert!(near(ends(&s, kept).1, 15.0, 0.0), "the other line still stretches: {:?}", ends(&s, kept));
