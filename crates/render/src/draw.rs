@@ -46,10 +46,8 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
 /// While a reference is edited in place (REFEDIT), everything outside the working set is faded by
 /// XFADECTL percent on screen: how much `e` fades (0 when it doesn't).
 fn refedit_fade(b: &Builder, ctx: &Ctx, e: &Entity) -> u8 {
-    match &ctx.d.refedit {
-        Some(r) if !b.plotting && !r.is_working(if ctx.depth == 0 { e.handle } else { ctx.top }) => {
-            u8::try_from(ctx.d.header.i64("XFADECTL", 50).clamp(0, 90)).unwrap_or(50)
-        }
+    match b.fade {
+        Some(f) if !b.plotting && !f.working.contains(&if ctx.depth == 0 { e.handle } else { ctx.top }) => f.percent,
         _ => 0,
     }
 }
