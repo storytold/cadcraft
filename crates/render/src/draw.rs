@@ -21,6 +21,11 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
         return;
     }
+    // Once the build holds all the points it may, nothing more is drawn (or computed).
+    if b.points_spent() {
+        b.list.truncated = true;
+        return;
+    }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
     // draws (block contents set their own).
     let (saved, saved_transparency) = (b.named, b.transparency);
