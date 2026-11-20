@@ -30,6 +30,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::new(1.0, 1.0, 0.0),
             align_pt: None,
             height: 0.25,
@@ -47,6 +48,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 0.2,
             width: 3.0,
@@ -260,6 +262,7 @@ fn block_definition_properties_and_constant_attdefs_roundtrip() {
     let mut b = Block::new("Title");
     (b.description, b.units, b.explodable) = ("Drawing title block".into(), 4, false);
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.5,
@@ -1966,6 +1969,7 @@ const INTL: &str = "图号 Ä°ø Ø 😀";
 
 fn intl_text(value: &str) -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(1.0, 1.0, 0.0),
         align_pt: None,
         height: 2.5,
@@ -1990,6 +1994,7 @@ fn intl_sample() -> Drawing {
         &Space::Model,
         on.clone(),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 2.5,
             width: 30.0,
@@ -2232,6 +2237,7 @@ fn dwg_roundtrip_keeps_extension_data() {
 fn mleader_is_written_as_multileader() {
     let mut d = Drawing::new_metric();
     let text = cadcraft_doc::MText {
+        formula: None,
         insert: Vec3::new(12.0, 5.0, 0.0),
         height: 2.5,
         width: 0.0,
@@ -2244,6 +2250,8 @@ fn mleader_is_written_as_multileader() {
         columns: None,
     };
     let m = cadcraft_doc::MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
         landing: Vec3::new(10.0, 5.0, 0.0),
         dogleg: 2.0,
@@ -2266,6 +2274,7 @@ fn mleader_is_written_as_multileader() {
 fn attdef_prompt_survives_dxf_roundtrip() {
     let mut d = Drawing::new_metric();
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.0,
@@ -3853,6 +3862,24 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+}
+
+/// A dimension's `*D` block draws its lines in the style's lineweights (DIMLWD, DIMLWE), not in
+/// its layer's: a reopened drawing showed the dimension thicker than a new one of the style.
+#[test]
+fn a_dimension_block_keeps_the_style_lineweights() {
+    let mut d = Drawing::new_metric();
+    d.layers.push(Layer { name: "Heavy".into(), lineweight: Lineweight::Mm100(100), ..Layer::default() });
+    d.dim_styles.push(DimStyle { name: "Fine".into(), dim_lineweight: 5, ext_lineweight: 9, ..DimStyle::default() });
+    let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+    dm.style = "Fine".into();
+    d.add(&Space::Model, Common { layer: "Heavy".into(), ..Common::default() }, EntityKind::Dimension(dm)).unwrap();
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Dimension(x) = k { Some(x.clone()) } else { None });
+    let blk = got.block.as_deref().and_then(|n| back.block(n)).expect("the dimension's block");
+    let weights: Vec<Lineweight> = blk.entities.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).map(|e| e.common.lineweight).collect();
+    assert!(weights.contains(&Lineweight::Mm100(5)) && weights.contains(&Lineweight::Mm100(9)), "{weights:?}");
+    assert!(!weights.contains(&Lineweight::ByLayer), "{weights:?}");
 }
 
 /// A layer state of CADCraft's own record from before states had a mask, a current layer and a

@@ -71,7 +71,12 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
     // as AutoCAD writes them: readers that draw the block drew every part ByBlock, i.e. in the
     // dimension's own colour (#1052).
     let in_color = |color: Color| Common { layer: layer.into(), color, ..Common::default() };
-    let (dim_c, ext_c, text_c) = (in_color(style.dim_line_color), in_color(style.ext_line_color), in_color(style.text_color));
+    // The dimension and extension lines in their lineweights (DIMLWD, DIMLWE; ByBlock: the
+    // dimension's own), as AutoCAD writes them. Left ByLayer, a reopened drawing drew them in
+    // the layer's lineweight instead of the style's.
+    let weighted = |color: Color, lw: i16| Common { lineweight: cadcraft_doc::Lineweight::from_dxf(lw), ..in_color(color) };
+    let (dim_c, ext_c, text_c) =
+        (weighted(style.dim_line_color, style.dim_lineweight), weighted(style.ext_line_color, style.ext_lineweight), in_color(style.text_color));
     let line_entities = |i: usize, l: &[Vec2]| -> Vec<Entity> {
         let c = match g.line_roles.get(i) {
             Some(cadcraft_render::LineRole::Ext) => &ext_c,
@@ -116,6 +121,7 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
             handle: Handle(0),
             common: text_c,
             kind: EntityKind::MText(MText {
+                formula: None,
                 insert: g.text_pos.to3(0.0),
                 height: g.text_height,
                 width: 0.0,
@@ -170,6 +176,7 @@ pub(crate) fn table_block_entities(d: &Drawing, t: &Table, layer: &str) -> Vec<E
                 handle: Handle(0),
                 common: Common { color: cell.color, ..c.clone() },
                 kind: EntityKind::MText(MText {
+                    formula: None,
                     insert: cell.at.to3(0.0),
                     height: cell.height,
                     width: 0.0,
