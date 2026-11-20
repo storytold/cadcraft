@@ -28,6 +28,7 @@ mod native_menu_text_keys;
 mod native_windows;
 mod options_dialog;
 mod options_right_click;
+mod page_setup_paper_units;
 mod parameters_rename;
 mod pickdrag;
 mod press_first_clicks;

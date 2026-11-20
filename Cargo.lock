@@ -717,6 +717,7 @@ version = "0.21.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
+ "craft-dxf",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1183,7 +1184,7 @@ source = "git+https://github.com/storytold/craft-libs?rev=0325b2d73676d736e94097
 [[package]]
 name = "craft-codepage"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
+source = "git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a#219c1d0b14177af6f291395d6587f61a5e09043a"
 
 [[package]]
 name = "craft-docpath"
@@ -1202,9 +1203,9 @@ dependencies = [
 [[package]]
 name = "craft-dxf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9#9ed120e6b1bd5116a4649c578d1272d60cf932b9"
+source = "git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a#219c1d0b14177af6f291395d6587f61a5e09043a"
 dependencies = [
- "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=9ed120e6b1bd5116a4649c578d1272d60cf932b9)",
+ "craft-codepage 0.1.0 (git+https://github.com/storytold/craft-libs?rev=219c1d0b14177af6f291395d6587f61a5e09043a)",
  "encoding_rs",
  "kurbo",
  "log",
