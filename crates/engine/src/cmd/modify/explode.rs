@@ -183,6 +183,43 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
     v
 }
 
+/// A multileader as drawn: each leader line (a LINE, or a polyline through a spline leader's
+/// curve), its closed arrowhead as a SOLID, the landing line, then the MTEXT or block reference.
+fn explode_mleader(e: &Entity, m: &cadcraft_doc::MLeader) -> Vec<Entity> {
+    let piece = |kind| Entity { handle: Handle(0), common: e.common.clone(), kind };
+    let mut v = Vec::new();
+    for pts in m.leader_paths() {
+        match pts.as_slice() {
+            [a, b] => v.push(piece(line(*a, *b))),
+            [_, _, _, ..] => v.push(piece(lwpoly(pts.iter().map(|p| PolyVertex::new(*p)).collect(), false))),
+            _ => {}
+        }
+        if let (Some(a), Some(n)) = (pts.first(), pts.get(1))
+            && m.arrow_size > 0.0
+            && !a.near(*n, 1e-12)
+            && let [p0, p1, p2] = cadcraft_render::arrow(*a, (*a - *n).normalized(), m.arrow_size).as_slice()
+        {
+            v.push(piece(EntityKind::Solid(cadcraft_doc::Solid { corners: [v3(*p0), v3(*p1), v3(*p2), v3(*p2)] })));
+        }
+    }
+    let content_x = m.text.as_ref().map(|t| t.insert.x).or(m.block.as_ref().map(|b| b.insert.x));
+    if let Some(cx) = content_x
+        && m.dogleg > 0.0
+        && (m.text.is_some() || !m.leaders.is_empty())
+    {
+        let land = m.landing.xy();
+        let dir = if cx >= land.x { 1.0 } else { -1.0 };
+        v.push(piece(line(land, land + Vec2::new(m.dogleg * dir, 0.0))));
+    }
+    if let Some(t) = &m.text {
+        v.push(piece(EntityKind::MText(t.clone())));
+    }
+    if let Some(b) = &m.block {
+        v.push(piece(EntityKind::Insert(b.clone())));
+    }
+    v
+}
+
 pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<Entity>> {
     // An annotative object explodes into plain objects as it draws at the current annotation scale.
     if cadcraft_doc::is_annotative(e) {
@@ -221,6 +258,7 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
         // A region explodes into its boundary's lines and arcs.
         EntityKind::Region(r) => Some(segment_entities(e, r.segments())),
         EntityKind::Dimension(dm) => Some(explode_dimension(d, e, dm)),
+        EntityKind::MLeader(m) => Some(explode_mleader(e, m)),
         EntityKind::Tolerance(t) => Some(crate::cmd::tolerance::explode(d, e, t)),
         _ => None,
     }

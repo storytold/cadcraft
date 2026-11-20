@@ -27,7 +27,8 @@ pub fn specs() -> Vec<CommandSpec> {
              <geometry fields: radius, center, start, end, text, height, rotation…>, text: style?, justify?, oblique?, positionX/Y/Z?, alignmentX/Y?, \
              mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
              dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
-             <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable]} \
+             <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable], \
+             multileaders: text?, height?, dogleg?, arrowSize?} \
              → {changed, locked, message?, ignored: keys no selected object took} (the keys are those of `properties.describe` rows): objects on locked layers \
              (and, during REFEDIT, outside the working set) are left out, and `message` says how many",
         ),

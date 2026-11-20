@@ -324,6 +324,12 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
     let dim_vars = DimVars::new(d, p)?;
+    // A multileader's landing length; zero is no landing (#3134).
+    if let Some(v) = p.get("dogleg").filter(|v| !v.is_null())
+        && !v.as_f64().is_some_and(|x| x.is_finite() && x >= 0.0)
+    {
+        return Err(bad("properties.set", "`dogleg` must be zero or a positive number"));
+    }
     // A pattern must be one each hatch can take, as HATCHEDIT refuses others.
     if let Some(v) = str_param(p, "pattern").filter(|v| !v.trim().is_empty())
         && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(x)) if !crate::cmd::hatch::takes_pattern(x, v)))
@@ -382,8 +388,17 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(left_out.result(hs.len(), &ignored))
 }
 
-/// A multileader's text: its contents (#1081) and height.
+/// A multileader's landing (dogleg) length and arrowhead size (#3134), zero for none, and its
+/// text: its contents (#1081) and height.
 fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'c>) {
+    if let Some(x) = c.num("dogleg").filter(|x| *x >= 0.0) {
+        m.dogleg = x;
+        used.insert("dogleg");
+    }
+    if let Some(x) = c.num("arrowSize").filter(|x| *x >= 0.0) {
+        m.arrow_size = x;
+        used.insert("arrowSize");
+    }
     let Some(t) = &mut m.text else { return };
     if let Some(v) = str_param(c.p, "text") {
         t.contents = v.replace('\n', "\\P");
