@@ -22,6 +22,7 @@ pub(crate) mod groups;
 pub(crate) mod hatch;
 mod image;
 mod inquiry;
+pub mod interface;
 mod layer;
 mod layout;
 mod lisp;
@@ -51,6 +52,7 @@ mod tolerance;
 mod trimextend;
 mod txt2mtxt;
 pub use txt2mtxt::Txt2MtxtOptions;
+mod ucs;
 mod utility;
 mod view;
 
@@ -187,6 +189,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(qselect::specs());
         v.extend(selecttools::specs());
         v.extend(view::specs());
+        v.extend(ucs::specs());
         v.extend(draw::specs());
         v.extend(draw2::specs());
         v.extend(annotate::specs());
@@ -212,6 +215,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(inquiry::specs());
         v.extend(settings::specs());
         v.extend(options::specs());
+        v.extend(interface::specs());
         v.extend(utility::specs());
         v.extend(table::specs());
         v.extend(tolerance::specs());

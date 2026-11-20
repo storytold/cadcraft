@@ -27,6 +27,10 @@ pub struct Settings {
     pub measureinit: bool,
     /// -VIEW sEttings > Layer snapshot: named views save the layer settings with them.
     pub view_layer_snapshot: bool,
+    /// -LAYER stAte Save: the properties a new layer state restores (its mask), as the last Save
+    /// left them. AutoCAD 2024 keeps these toggles in the registry from one Save to the next
+    /// (measured); Edit doesn't change them.
+    pub layer_state_mask: u32,
     pub dynmode: bool,
     /// DYNDIGRIP: which dimensions grip dimensional input shows while a grip is stretched (bits:
     /// 1 resulting length, 2 length change, 4 absolute angle, 8 angle change, 16 radius); read
@@ -125,6 +129,10 @@ pub struct Settings {
     pub polarsnap: bool,
     /// POLARDIST: the PolarSnap step; 0 uses the snap X spacing.
     pub polardist: f64,
+    /// The current UCS's X axis, radians from world +X: ortho, polar and object snap tracking
+    /// work along the UCS axes. Filled in by [`Session::drafting_settings`]; not a setting.
+    #[serde(skip)]
+    pub ucs_angle: f64,
     /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
     pub auditctl: bool,
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
@@ -148,6 +156,7 @@ impl Default for Settings {
             zoomfactor: 60,
             measureinit: false,
             view_layer_snapshot: true,
+            layer_state_mask: cadcraft_doc::LayerState::ALL,
             dynmode: true,
             dyndigrip: 31,
             dyndivis: 1,
@@ -193,6 +202,7 @@ impl Default for Settings {
             polaraddang: Vec::new(),
             polarsnap: false,
             polardist: 0.0,
+            ucs_angle: 0.0,
             auditctl: false,
             attreq: true,
         }
