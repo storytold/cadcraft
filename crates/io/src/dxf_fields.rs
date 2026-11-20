@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle};
-use craft_dxf::{Section, Tag, records};
+use craft_dxf::{SectionRef, Tag, records};
 
 /// Deepest nesting of fields followed.
 const MAX_DEPTH: usize = 8;
@@ -97,10 +97,10 @@ pub(crate) fn object_handle(tags: &[Tag]) -> Option<String> {
 }
 
 /// Give the texts with AutoCAD fields their templates as formulas.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
     let mut objects: HashMap<String, Vec<Tag>> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        for (kind, tags) in records(&s.tags) {
+        for (kind, tags) in records(s.tags) {
             if (kind == "DICTIONARY" || kind == "FIELD")
                 && let Some(h) = handle_of(&tags)
             {
@@ -113,7 +113,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     }
     let mut formulas: HashMap<Handle, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        for (kind, tags) in records(&s.tags) {
+        for (kind, tags) in records(s.tags) {
             if !matches!(kind.as_str(), "TEXT" | "MTEXT") {
                 continue;
             }

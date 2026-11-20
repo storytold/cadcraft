@@ -584,7 +584,8 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             let Some((_, name, page)) = layouts.iter().find(|l| l.1 == sel) else { return };
             right.label(RichText::new(format!("Page setup of {name}")).strong());
             // Layout plotting always prints the whole sheet, so only that area is offered.
-            let rows = PageRows { areas: &["layout"], scale: true, center: true };
+            let paper_mm = cadcraft_render::paper::page_unit_mm(d, page) == 1.0;
+            let rows = PageRows { areas: &["layout"], scale: true, center: true, paper_mm: Some(paper_mm) };
             egui::Grid::new("pagesetup_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("pagesetup", name)), page, &rows, &choices, None) {
                     action = Some(("pagesetup", json!({ "layout": name, k: v })));
@@ -604,6 +605,9 @@ struct PageRows {
     areas: &'static [&'static str],
     scale: bool,
     center: bool,
+    /// Effective paper units (`Some(true)` = millimetres, `Some(false)` = inches) for the layout's
+    /// page setup, or `None` to hide the row (the Plot dialog).
+    paper_mm: Option<bool>,
 }
 
 /// The devices and plot style tables the page-setup rows offer.
@@ -666,7 +670,7 @@ fn parse_ratio(t: &str) -> Option<f64> {
 /// The page-setup rows (device, paper, orientation, plot area, fit, scale, center, lineweights,
 /// transparency, plot style table) shared by the Page Setup Manager and the Plot dialog, inside a
 /// two-column grid. Returns the setting the user changed as a `pagesetup` parameter (`device`,
-/// `paper`, `landscape`, `plotArea`, `scaleToFit`, `scale`, `center`, `lineweights`,
+/// `paper`, `landscape`, `paperUnits`, `plotArea`, `scaleToFit`, `scale`, `center`, `lineweights`,
 /// `plotTransparency` or `plotStyleTable`).
 fn page_rows(
     ui: &mut egui::Ui,
@@ -724,6 +728,23 @@ fn page_rows(
         }
     });
     ui.end_row();
+    if let Some(mm) = rows.paper_mm {
+        ui.label(crate::tl!("Paper units"));
+        ui.horizontal(|ui| {
+            // Every click records the choice, even on the selected radio: while the layout has
+            // no explicit units it inherits MEASUREMENT, and clicking the value it currently
+            // inherits must lock that choice against a later MEASUREMENT change (#3249).
+            if ui.radio(!mm, crate::tl!("Inches")).clicked() {
+                change = Some(("paperUnits", json!("inches")));
+            }
+            if ui.radio(mm, crate::tl!("Millimeters")).clicked() {
+                change = Some(("paperUnits", json!("mm")));
+            }
+        })
+        .response
+        .on_hover_text(crate::tl!("What one paper-space unit is on this layout"));
+        ui.end_row();
+    }
     ui.label("Plot area");
     ui.add_enabled_ui(rows.areas.len() > 1, |ui| {
         craft_ui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
@@ -909,7 +930,7 @@ fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup
         return page;
     }
     let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
-    if cadcraft_render::paper::paper_unit_mm(d) == 1.0
+    if cadcraft_render::paper::metric_length_unit(d)
         && let Some(a4) = cadcraft_render::paper_size("A4")
     {
         page.paper = a4.name.into();
@@ -1034,9 +1055,9 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         ui.horizontal_top(|ui| {
             egui::Grid::new("plot_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                 let rows = if model {
-                    PageRows { areas: MODEL_AREAS, scale: true, center: false }
+                    PageRows { areas: MODEL_AREAS, scale: true, center: false, paper_mm: None }
                 } else {
-                    PageRows { areas: &["layout"], scale: false, center: false }
+                    PageRows { areas: &["layout"], scale: false, center: false, paper_mm: None }
                 };
                 let placement = model.then_some((&mut st.center, &mut st.offset_mm, offset_supported));
                 if let Some((k, v)) = page_rows(ui, egui::Id::unique(("plot", st.target.as_str())), &st.page, &rows, &choices, placement) {

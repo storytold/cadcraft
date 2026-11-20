@@ -16,8 +16,8 @@ fn import(transform: &str) -> (f64, f64) {
             _ => None,
         })
         .unwrap();
-    let (dx, dy) = (e.major.x - e.center.x, e.major.y - e.center.y);
-    (dy.atan2(dx), e.ratio)
+    // `major` is the axis from the centre (#2821).
+    (e.major.y.atan2(e.major.x), e.ratio)
 }
 
 /// Major-axis angle and ratio of the image of the ellipse under the 2x2 map `[a c; b d]`, with
