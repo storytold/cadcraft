@@ -420,7 +420,7 @@ fn pdf_culls_text_in_paper_margin_outside_aspect_mismatched_window() {
     let mut d = drawing();
     text(&mut d, &Space::Model, "Real", (10.0, 10.0), "A", (0.0, 1.0, 0.0));
     text(&mut d, &Space::Model, "Real", (120.0, 10.0), "B", (0.0, 1.0, 0.0));
-    let p = pdf(&d, &Space::Model, json!({ "window": [[0.0, 0.0], [100.0, 100.0]] }));
+    let p = pdf(&d, &Space::Model, json!({ "width": 200.0, "height": 100.0, "landscape": false, "window": [[0.0, 0.0], [100.0, 100.0]] }));
     assert_eq!(pdf_read::count(p.content(), "Tj"), 1, "only in-window A must be emitted; paper-margin B must be culled: {}", p.content());
     let clip = pdf_read::clip_rect(p.content()).expect("page clip rect");
     assert!(((clip[2] - clip[0]) - (clip[3] - clip[1])).abs() < 1e-2, "vector clip path must also match the square 100x100 window: {clip:?}");
