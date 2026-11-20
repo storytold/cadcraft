@@ -51,6 +51,14 @@ pub(crate) fn line_box(t: &cadcraft_doc::Text) -> cadcraft_doc::MText {
     }
 }
 
+/// The extents of one line of text as drawn (`value` in `t`'s place, style and justification);
+/// `None` for empty or unusable extents.
+fn drawn(d: &cadcraft_doc::Drawing, t: &cadcraft_doc::Text, value: &str) -> Option<cadcraft_geom::Bounds2> {
+    let (_, b) = cadcraft_render::place_text_entity(d, t, value);
+    let ok = [b.min.x, b.min.y, b.max.x, b.max.y].iter().all(|v| v.is_finite()) && b.min.x <= b.max.x && b.min.y <= b.max.y;
+    ok.then_some(b)
+}
+
 /// What the in-place editor edits for object `h`: an MTEXT or multileader text as multiline
 /// text, a TEXT or attribute definition as one line, a dimension's text with `<>` for its value.
 pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
@@ -58,11 +66,12 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
     let d = s.doc().ok()?;
     let key = h.hex();
     match &d.entity(h)?.kind {
-        EntityKind::MText(t) => Some(TextEditor { mtext: t.clone(), kind: EditorKind::MText, key }),
+        EntityKind::MText(t) => Some(TextEditor { mtext: t.clone(), kind: EditorKind::MText, key, extents: None }),
         // A multileader's text opens in the same editor (#1081).
-        EntityKind::MLeader(m) => m.text.clone().map(|mtext| TextEditor { mtext, kind: EditorKind::MText, key }),
-        EntityKind::Text(t) => Some(TextEditor { mtext: line_box(t), kind: EditorKind::Line, key }),
-        EntityKind::AttDef(a) => Some(TextEditor { mtext: line_box(&a.text), kind: EditorKind::Line, key }),
+        EntityKind::MLeader(m) => m.text.clone().map(|mtext| TextEditor { mtext, kind: EditorKind::MText, key, extents: None }),
+        // The box covers the text as drawn: its value, or a definition's tag.
+        EntityKind::Text(t) => Some(TextEditor { mtext: line_box(t), kind: EditorKind::Line, key, extents: drawn(d, t, &t.value) }),
+        EntityKind::AttDef(a) => Some(TextEditor { mtext: line_box(&a.text), kind: EditorKind::Line, key, extents: drawn(d, &a.text, &a.tag) }),
         EntityKind::Dimension(dm) => {
             let g = cadcraft_render::dimension_in(d, dm);
             let measured = cadcraft_render::dimension_in(d, &cadcraft_doc::Dimension { text: String::new(), block: None, ..dm.clone() }).value;
@@ -78,7 +87,7 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
                 line_spacing_exact: false,
                 columns: None,
             };
-            Some(TextEditor { mtext, kind: EditorKind::Dimension { measured }, key })
+            Some(TextEditor { mtext, kind: EditorKind::Dimension { measured }, key, extents: None })
         }
         _ => None,
     }

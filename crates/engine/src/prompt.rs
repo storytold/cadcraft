@@ -341,7 +341,7 @@ pub trait Interactive: Send {
     /// The text the in-place editor edits: where, how, its current contents and what kind of
     /// object holds it. By default the new multiline text of [`Interactive::editing_mtext`].
     fn text_editor(&self) -> Option<TextEditor> {
-        self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new() })
+        self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new(), extents: None })
     }
     /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
     /// only its preview set); `None` shows the drawing.
@@ -371,6 +371,9 @@ pub struct TextEditor {
     pub kind: EditorKind,
     /// Which object is being edited: a new key means a new text to load.
     pub key: String,
+    /// The drawn text's extents in drawing units, when known (one line of text): the box covers
+    /// them, whatever the justification.
+    pub extents: Option<cadcraft_geom::Bounds2>,
 }
 
 /// The kind of text the in-place editor edits.

@@ -15,6 +15,8 @@ use crate::theme::Tokens;
 /// Smallest and largest size of the text in the box, in points: readable at any zoom.
 const MIN_PX: f32 = 13.0;
 const MAX_PX: f32 = 36.0;
+/// The box's margin around the text, in points.
+const MARGIN: f32 = 3.0;
 
 #[derive(Clone)]
 struct State {
@@ -66,49 +68,69 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let px = text_px.clamp(MIN_PX, MAX_PX);
     let font = FontId::proportional(px);
     let typed_w = ctx.layer_painter(LayerId::background()).layout_no_wrap(st.text.clone(), font.clone(), Color32::WHITE).size().x;
-    let width = (typed_w + 2.0 * px).clamp(120.0, (rect.width() * 0.9).max(120.0));
-    // The box sits over the text, by its justification (rotation is ignored while editing, as in
-    // the MTEXT editor): left, centre or right, and top, middle or baseline.
+    // The text as drawn on screen (one line of text): the box covers it, for every justification.
+    let drawn = ed.extents.zip(app.canvas.xf).map(|(b, x)| {
+        let corners = [(b.min.x, b.min.y), (b.max.x, b.min.y), (b.max.x, b.max.y), (b.min.x, b.max.y)];
+        egui::Rect::from_points(&corners.map(|(cx, cy)| x.to_screen(cadcraft_geom::Vec2::new(cx, cy))))
+    });
+    let drawn = drawn.filter(|r| r.is_finite() && r.is_positive());
+    let width = (typed_w.max(drawn.map_or(0.0, |r| r.width())) + 2.0 * px).clamp(120.0, (rect.width() * 0.9).max(120.0));
+    // Without drawn extents the box sits over the text by its justification: left, centre or
+    // right, and top, middle or baseline. Rotation is ignored while editing, as in the MTEXT editor.
     let code = mt.attach.clamp(1, 9) - 1;
     let (col, row) = (f32::from(code % 3), code / 3);
     let anchor = app.canvas.xf.map_or(rect.center(), |x| x.to_screen(mt.insert.xy()));
-    let middle = match row {
-        0 => anchor.y + text_px / 2.0,
-        1 => anchor.y,
-        _ => anchor.y - text_px / 2.0,
+    let middle = match (drawn, row) {
+        (Some(r), _) => r.center().y,
+        (None, 0) => anchor.y + text_px / 2.0,
+        (None, 1) => anchor.y,
+        (None, _) => anchor.y - text_px / 2.0,
     };
-    let box_h = px + 8.0;
+    // Tall enough to cover the drawn text too.
+    let pad_y = drawn.map_or(MARGIN, |r| ((r.height() - px) / 2.0 + MARGIN).clamp(MARGIN, 120.0));
+    let box_h = px + 2.0 * pad_y + 2.0;
     let max_x = (rect.right() - width - 8.0).max(rect.left());
     let max_y = (rect.bottom() - box_h - 24.0).max(rect.top());
-    let x = (anchor.x - col * width / 2.0).clamp(rect.left(), max_x);
+    let left = drawn.map_or(anchor.x - col * width / 2.0, |r| r.left() - MARGIN);
+    let x = left.clamp(rect.left(), max_x);
     let y = (middle - box_h / 2.0).clamp(rect.top(), max_y);
 
     let mut done = Done::No;
-    let area = egui::Area::new(egui::Id::unique("line_editor_area")).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ctx, |ui| {
-        egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.accent)).inner_margin(egui::Margin::same(3)).show(ui, |ui| {
-            let out = egui::TextEdit::singleline(&mut st.text)
-                .id(edit_id())
-                .font(font)
-                .text_color(t.text)
-                .frame(egui::Frame::NONE)
-                .desired_width(width)
-                .show(ui);
-            // It opens with the whole text selected, as AutoCAD's does: typing replaces it.
-            if !st.focused {
-                out.response.request_focus();
-                let mut s = out.state;
-                s.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(st.text.chars().count()))));
-                s.store(ui.ctx(), edit_id());
-                st.focused = true;
-            }
-            if out.response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                done = Done::Ok;
-            }
-            if let EditorKind::Dimension { measured } = &ed.kind {
-                ui.label(RichText::new(format!("<> = {measured}")).small().color(t.text_dim));
-            }
+    let area = egui::Area::new(egui::Id::unique("line_editor_area"))
+        .default_width(width + 2.0 * MARGIN)
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos2(x, y))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(t.panel)
+                .stroke(Stroke::new(1.0, t.accent))
+                .inner_margin(egui::Margin::symmetric(MARGIN as i8, pad_y.round() as i8))
+                .show(ui, |ui| {
+                    // As wide as worked out above (an area is otherwise narrower than a long text).
+                    ui.set_width(width);
+                    let out = egui::TextEdit::singleline(&mut st.text)
+                        .id(edit_id())
+                        .font(font)
+                        .text_color(t.text)
+                        .frame(egui::Frame::NONE)
+                        .desired_width(width)
+                        .show(ui);
+                    // It opens with the whole text selected, as AutoCAD's does: typing replaces it.
+                    if !st.focused {
+                        out.response.request_focus();
+                        let mut s = out.state;
+                        s.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(st.text.chars().count()))));
+                        s.store(ui.ctx(), edit_id());
+                        st.focused = true;
+                    }
+                    if out.response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        done = Done::Ok;
+                    }
+                    if let EditorKind::Dimension { measured } = &ed.kind {
+                        ui.label(RichText::new(format!("<> = {measured}")).small().color(t.text_dim));
+                    }
+                });
         });
-    });
     let outside = ctx.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p)));
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         done = Done::Cancel;

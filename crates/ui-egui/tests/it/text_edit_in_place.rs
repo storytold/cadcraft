@@ -175,3 +175,33 @@ fn textedit_through_engine_execute_opens_no_editor() {
     assert!(h.state().session.running.is_none());
     assert!(editor(&h).is_none());
 }
+
+/// The box covers the text as drawn, from its drawn left edge, for left-justified and
+/// middle-centre text alike (not starting at a centred text's insertion point).
+#[test]
+fn the_box_covers_the_drawn_text_whatever_its_justification() {
+    let (mut h, d) = harness();
+    let mc = handle(&h.state_mut().run("text", json!({ "at": [16, 16], "text": "Middle centre", "height": 2.5, "justify": "MC" })).unwrap());
+    h.run_steps(3);
+    for (e, at) in [(d.text, TEXT_AT), (mc, Vec2::new(16.0, 16.0))] {
+        double_click(&mut h, at);
+        assert!(editor(&h).is_some(), "{e:?}: no editor");
+        let drawn = {
+            let s = &h.state().session;
+            let doc = s.doc().unwrap();
+            let EntityKind::Text(t) = &doc.entity(e).unwrap().kind else { panic!("not text") };
+            let b = cadcraft_engine::render::place_text_entity(doc, t, &t.value).1;
+            let xf = h.state().canvas.xf.unwrap();
+            egui::Rect::from_points(&[
+                xf.to_screen(b.min),
+                xf.to_screen(b.max),
+                xf.to_screen(Vec2::new(b.min.x, b.max.y)),
+                xf.to_screen(Vec2::new(b.max.x, b.min.y)),
+            ])
+        };
+        let area = h.ctx.memory(|m| m.area_rect(egui::Id::unique("line_editor_area"))).expect("the box is shown");
+        assert!(area.expand(0.5).contains_rect(drawn), "{e:?}: box {area:?} does not cover the drawn text {drawn:?}");
+        assert!((area.left() - drawn.left()).abs() <= 4.0, "{e:?}: box starts at {} but the text at {}", area.left(), drawn.left());
+        press(&mut h, Key::Escape);
+    }
+}
