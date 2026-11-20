@@ -118,11 +118,11 @@ pub fn lattice_snap(p: Vec2, d: f64, origin: Vec2, angle: f64) -> Vec2 {
 /// isometric lattice, and the settings with grid snap off so the rectangular grid leaves it be.
 /// Otherwise both unchanged, also when PolarSnap (SNAPTYPE 1) is the snap type: snap mode then
 /// steps along the tracking paths instead.
-pub(crate) fn grid_snap(doc: &cadcraft_doc::Drawing, mut s: Settings, p: Vec2) -> (Vec2, Settings) {
+pub(crate) fn grid_snap(doc: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space, mut s: Settings, p: Vec2) -> (Vec2, Settings) {
     if !(s.snapmode && s.isodraft) || s.polarsnap {
         return (p, s);
     }
-    let (origin, angle) = super::grid_frame(doc);
+    let (origin, angle) = super::grid_frame_in(doc, space);
     s.snapmode = false;
     (lattice_snap(p, s.snapunit.y, origin, angle), s)
 }
@@ -144,10 +144,12 @@ fn nearest_axis(plane: IsoPlane, d: Vec2) -> Vec2 {
 /// Ortho without snapping: `p` constrained relative to `base` to the nearest axis of the current
 /// isometric plane (or to horizontal/vertical when isometric drafting is off).
 pub fn constrain(s: &Settings, base: Vec2, p: Vec2) -> Vec2 {
+    // Along the current UCS's axes (`s.ucs_angle`), the isometric ones turned with it.
     if !s.isodraft {
-        return super::ortho(base, p);
+        return super::ortho_at(base, p, s.ucs_angle);
     }
-    let dir = nearest_axis(s.isoplane, p - base);
+    let a = if s.ucs_angle.is_finite() { s.ucs_angle } else { 0.0 };
+    let dir = nearest_axis(s.isoplane, (p - base).rotate(-a)).rotate(a);
     let r = base + dir * (p - base).dot(dir);
     if r.is_finite() { r } else { p }
 }
@@ -214,16 +216,29 @@ pub struct GridLine {
 /// major line. Empty when a family would need more than [`MAX_GRID_LINES`] lines.
 pub fn grid_lines(view: Bounds2, d: f64, origin: Vec2, angle: f64, major_every: u32) -> Vec<GridLine> {
     let Some(d) = spacing(d) else { return Vec::new() };
+    // Neighbouring lines of a family are d·cos 30° apart.
+    families(view, &[30.0, 90.0, 150.0], d * COS30, origin, angle, major_every)
+}
+
+/// The rectangular grid lines (lines along X and along Y, `d` apart, through `origin`, turned by
+/// `angle`) that cross `view`; every `major_every`th line of a family is a major line. Empty when
+/// a family would need more than [`MAX_GRID_LINES`] lines.
+pub fn rect_grid_lines(view: Bounds2, d: f64, origin: Vec2, angle: f64, major_every: u32) -> Vec<GridLine> {
+    let Some(d) = spacing(d) else { return Vec::new() };
+    families(view, &[0.0, 90.0], d, origin, angle, major_every)
+}
+
+/// Lines along each of `degs` (turned by `angle`), `gap` apart, one through `origin`, clipped to
+/// `view`.
+fn families(view: Bounds2, degs: &[f64], gap: f64, origin: Vec2, angle: f64, major_every: u32) -> Vec<GridLine> {
     let angle = if angle.is_finite() { angle } else { 0.0 };
     if !(view.min.is_finite() && view.max.is_finite() && origin.is_finite()) {
         return Vec::new();
     }
     let corners = [view.min, Vec2::new(view.max.x, view.min.y), view.max, Vec2::new(view.min.x, view.max.y)];
-    // Neighbouring lines of a family are d·cos 30° apart.
-    let gap = d * COS30;
     let major_every = i64::from(major_every.max(1));
     let mut out = Vec::new();
-    for deg in [30.0f64, 90.0, 150.0] {
+    for &deg in degs {
         let dir = Vec2::from_angle(deg.to_radians() + angle);
         let n = dir.perp();
         let off = origin.dot(n);
@@ -288,5 +303,51 @@ mod tests {
         assert!(lines.iter().all(|l| l.a.is_finite() && l.b.is_finite()));
         assert!(grid_lines(v, 1e-9, Vec2::ZERO, 0.0, 5).is_empty());
         assert!(grid_lines(v, f64::NAN, Vec2::ZERO, 0.0, 5).is_empty());
+    }
+
+    /// The rectangular grid: lines along X and Y through the snap base, `d` apart, every
+    /// `major_every`th major, all turned by SNAPANG (in the World UCS too) and clipped to the view.
+    #[test]
+    fn rect_grid_lines_lie_in_the_snap_frame() {
+        let v = Bounds2 { min: Vec2::new(0.0, 0.0), max: Vec2::new(10.0, 10.0) };
+        let lines = rect_grid_lines(v, 1.0, Vec2::ZERO, 0.0, 5);
+        // 0..=10 along each axis.
+        assert_eq!(lines.len(), 22);
+        let inside = |p: Vec2| p.x >= -1e-9 && p.x <= 10.0 + 1e-9 && p.y >= -1e-9 && p.y <= 10.0 + 1e-9;
+        assert!(lines.iter().all(|l| inside(l.a) && inside(l.b)));
+        let vertical_major: Vec<f64> = lines.iter().filter(|l| (l.a.x - l.b.x).abs() < 1e-9 && l.major).map(|l| l.a.x).collect();
+        assert_eq!(vertical_major.len(), 3, "x = 0, 5 and 10");
+        assert!(vertical_major.iter().all(|x| (x / 5.0 - (x / 5.0).round()).abs() < 1e-9));
+        // Turned 30° about a base at (0.5, 0.25): every line runs at 30° or 120°, and one of each
+        // passes through the base.
+        let (base, a) = (Vec2::new(0.5, 0.25), 30f64.to_radians());
+        let turned = rect_grid_lines(v, 1.0, base, a, 5);
+        assert!(!turned.is_empty());
+        let (ux, uy) = (Vec2::from_angle(a), Vec2::from_angle(a).perp());
+        for l in &turned {
+            let d = (l.b - l.a).normalized();
+            assert!(d.cross(ux).abs() < 1e-9 || d.cross(uy).abs() < 1e-9, "{l:?}");
+            // Each line is a whole number of steps from the base across its direction.
+            let k = (l.a - base).cross(d);
+            assert!((k - k.round()).abs() < 1e-9, "{l:?}");
+        }
+        let through = |dir: Vec2| turned.iter().any(|l| (l.b - l.a).normalized().cross(dir).abs() < 1e-9 && (base - l.a).cross(dir).abs() < 1e-9);
+        assert!(through(ux) && through(uy));
+        // Too many lines, or no spacing: nothing drawn.
+        assert!(rect_grid_lines(v, 1e-6, Vec2::ZERO, 0.0, 5).is_empty());
+        assert!(rect_grid_lines(v, f64::NAN, Vec2::ZERO, 0.0, 5).is_empty());
+        assert!(rect_grid_lines(v, 1.0, Vec2::new(f64::INFINITY, 0.0), 0.0, 5).is_empty());
+    }
+
+    /// A view far larger than any grid (a zoom to hostile extents) draws no grid instead of
+    /// overflowing the line count.
+    #[test]
+    fn rect_grid_lines_survive_extreme_views() {
+        let huge = Bounds2::new(Vec2::new(-1e300, -1e300), Vec2::new(1e300, 1e300));
+        assert!(rect_grid_lines(huge, 1.0, Vec2::ZERO, 0.0, 5).is_empty());
+        let far = Bounds2::new(Vec2::new(1e300, 1e300), Vec2::new(1e300 + 1.0, 1e300 + 1.0));
+        assert!(rect_grid_lines(far, 1.0, Vec2::ZERO, 0.0, 5).len() <= 2 * (MAX_GRID_LINES + 1));
+        let normal = Bounds2::new(Vec2::new(-5.0, 0.0), Vec2::new(5.0, 10.0));
+        assert_eq!(rect_grid_lines(normal, 1.0, Vec2::ZERO, 0.0, 5).len(), 22);
     }
 }

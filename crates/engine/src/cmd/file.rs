@@ -240,6 +240,7 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("script", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_SCRIPT_BYTES).map_err(|e| bad("script", format!("{path}: {e}")))?;
             String::from_utf8_lossy(&bytes).into_owned()
@@ -320,6 +321,7 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
             let Some(text_path) = path.to_str() else {
                 return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
             };
+            crate::file_access::check_read(text_path).map_err(|e| bad("open", e))?;
             let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
             read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
@@ -344,6 +346,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     Ok(opened(s, i, true))
 }
 
+/// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
     let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
@@ -354,7 +357,17 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
-        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+        let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+        match crate::file_access::current() {
+            None => cadcraft_fonts::shx::add_drawing_dir(&dir),
+            // The folder holds no record of the roots, and a font's name there can be a link leading
+            // out of them: the search asks the roots about each file before it opens one.
+            Some(roots) => {
+                let owner = format!("{:?}|{:?}", roots.read_root(), roots.write_root());
+                let guard = std::sync::Arc::new(move |font: &std::path::Path| roots.check(font, crate::file_access::Access::Read).is_ok());
+                cadcraft_fonts::shx::add_drawing_dir_guarded(&dir, &owner, guard);
+            }
+        }
     }
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
@@ -397,6 +410,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("open", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
@@ -482,6 +496,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_write(path).map_err(|e| bad("save", e))?;
         // A file in a folder still to be made has nothing to back up.
         if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
@@ -691,7 +706,9 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     };
     let (head, tail, len) = ends(&mut src)?;
     let bak = backup_path(path);
-    if !backup_replaced(&head, &tail, len, bak.exists()) {
+    // Whether the .bak name is taken is asked without following a link there: a link leading out of
+    // the roots (or to another computer) isn't looked at.
+    if !backup_replaced(&head, &tail, len, std::fs::symlink_metadata(&bak).is_ok()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
         return Ok(());
     }
@@ -1054,6 +1071,20 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// Whether the `.bak` name is taken is asked without following a link there: a dangling link
+    /// counts as taken, so a file that doesn't look like a drawing leaves it alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_bak_name_counts_as_a_backup_without_being_followed() {
+        let dir = TempDir::new("cc-bak-link");
+        let path = dir.join("plain.dxf");
+        std::fs::write(&path, "just some text, not a drawing").unwrap();
+        let bak = super::backup_path(&path);
+        std::os::unix::fs::symlink(dir.join("nowhere"), &bak).unwrap();
+        super::backup(&path).unwrap();
+        assert!(std::fs::symlink_metadata(&bak).unwrap().file_type().is_symlink(), "the link is left as it was");
+    }
 
     /// A backup is never more open than the drawing or the old `.bak`, and loses the group bits when
     /// it would keep the old `.bak`'s group while the drawing is in another.
