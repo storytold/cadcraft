@@ -205,14 +205,31 @@ fn the_json_form_makes_the_same_grid() {
         json!({"name": "B", "at": [0, 0], "rows": 0}),
         json!({"name": "B", "at": [0, 0], "columns": 32768}),
         json!({"name": "B", "at": [0, 0], "rows": 2.5}),
+        // A whole number written as a float is refused, as by the array commands' JSON forms.
+        json!({"name": "B", "at": [0, 0], "rows": 2.0}),
+        json!({"name": "B", "at": [0, 0], "columns": 1e2}),
+        json!({"name": "B", "at": [0, 0], "rows": "2"}),
+        json!({"name": "B", "at": [0, 0], "rows": -2}),
         // A distance that is not a number is refused, not taken as 0.
         json!({"name": "B", "at": [0, 0], "rows": 2, "rowSpacing": "15"}),
         json!({"name": "B", "at": [0, 0], "columns": 2, "columnSpacing": true}),
     ] {
         assert!(s.execute("minsert", &bad).is_err(), "{bad}");
     }
-    // A whole number written as 2.0 is a count; `explode` is INSERT's and leaves the grid made.
-    let r = s.execute("minsert", &json!({"name": "B", "at": [0, 200], "rows": 2.0, "rowSpacing": 15, "explode": true})).unwrap();
+    // Nothing was made by the refused calls.
+    assert_eq!(inserts(&s).len(), 2);
+    // `explode` is INSERT's and leaves the grid made; 32767 is the largest count.
+    let r = s.execute("minsert", &json!({"name": "B", "at": [0, 200], "rows": 2, "rowSpacing": 15, "explode": true})).unwrap();
     assert!(r["handle"].is_string(), "{r}");
     assert_eq!(inserts(&s).last().map(grid), Some((1, 2, 0.0, 15.0)));
+    // A null count is 1 and a null distance 0, as missing ones are: each count on its own, then
+    // both distances with two rows and two columns (one row or column keeps no distance anyway).
+    s.execute("minsert", &json!({"name": "B", "at": [0, 250], "rows": null, "columns": 2, "columnSpacing": 20})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((2, 1, 20.0, 0.0)));
+    s.execute("minsert", &json!({"name": "B", "at": [0, 270], "rows": 2, "columns": null, "rowSpacing": 15})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((1, 2, 0.0, 15.0)));
+    s.execute("minsert", &json!({"name": "B", "at": [0, 290], "rows": 2, "columns": 2, "rowSpacing": null, "columnSpacing": null})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((2, 2, 0.0, 0.0)));
+    s.execute("minsert", &json!({"name": "B", "at": [0, 300], "columns": 32767, "columnSpacing": 1})).unwrap();
+    assert_eq!(inserts(&s).last().map(grid), Some((32767, 1, 1.0, 0.0)));
 }
