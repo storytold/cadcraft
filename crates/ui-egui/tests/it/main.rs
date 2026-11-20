@@ -48,6 +48,7 @@ mod system_cursor;
 mod text_double_click;
 mod toolsets_gear;
 mod toolsets_parametric;
+mod typed_open;
 mod viewport_double_click_selection;
 mod workspace_focus;
 mod zoomed_far_in;
