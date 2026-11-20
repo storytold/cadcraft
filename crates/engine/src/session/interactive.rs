@@ -460,12 +460,13 @@ impl Session {
         // A transparent command's changes belong to the command it ran inside, and a command a
         // LISP routine ran belongs to the routine's single undo step (the routine keeps it for U
         // inside it).
+        let record = self.record_undo;
         if self.suspended.is_some() || self.lisp_groups_undo() {
             if let Ok(st) = self.state_mut()
                 && !Arc::ptr_eq(&run.before, &st.doc)
             {
                 st.revision += 1;
-                if self.suspended.is_none() {
+                if self.suspended.is_none() && record {
                     self.lisp_record_step(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
                 }
             }
@@ -474,7 +475,11 @@ impl Session {
         if let Ok(st) = self.state_mut()
             && !Arc::ptr_eq(&run.before, &st.doc)
         {
-            st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+            // A session that keeps its history on the server records no step of its own, and the
+            // revision still grows so the window redraws.
+            if record {
+                st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
+            }
             st.revision += 1;
         }
     }

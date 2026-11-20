@@ -166,6 +166,10 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+    /// Whether an undoable command records an undo step. A long-lived server session turns this
+    /// off: history belongs to the collaboration service (ADR 0010), and per-operation snapshots
+    /// would only grow its memory.
+    pub(crate) record_undo: bool,
 }
 
 impl Default for Session {
@@ -224,6 +228,7 @@ impl Session {
             bars_shown: Default::default(),
             bars_request: Default::default(),
             pick_hint: None,
+            record_undo: true,
         }
     }
 
