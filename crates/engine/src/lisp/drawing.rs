@@ -1233,7 +1233,7 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 /// A coordinate system `trans` converts from or to: its origin and axes in world coordinates.
-fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
+fn trans_system(ctx: &mut Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
     use crate::ucs::UcsFrame;
     match v {
         // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS (from
@@ -1246,11 +1246,13 @@ fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispEr
             Ok(UcsFrame::WORLD.rotated_z(-twist))
         }
         Value::Int(1) => Ok(ctx.s.input_ucs()),
-        // An object: its OCS.
+        // An object: its OCS. An entity of a block definition is found as `entget` finds it.
         Value::Ename(h) => {
-            let d = ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?;
-            let e = d.entity(*h).ok_or_else(|| LispError::bad_arg("lentityp", v))?;
-            ocs(e.common.extrusion).ok_or_else(|| LispError::bad_arg("lentityp", v))
+            let extrusion = match ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?.entity(*h) {
+                Some(e) => e.common.extrusion,
+                None => block_entity(ctx, *h).ok_or_else(|| LispError::bad_arg("lentityp", v))?.common.extrusion,
+            };
+            ocs(extrusion).ok_or_else(|| LispError::bad_arg("lentityp", v))
         }
         // An extrusion direction: the OCS of objects with it.
         Value::Cons(_) => {
@@ -1306,7 +1308,8 @@ fn viewport_to_paper(ctx: &Ctx<'_>, from: &Value, to: &Value, p: cadcraft_geom::
 pub fn trans(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 3, 4)?;
     let p = a[0].as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", &a[0]))?;
-    let (from, to) = (trans_system(ctx, &a[1])?, trans_system(ctx, &a[2])?);
+    let from = trans_system(ctx, &a[1])?;
+    let to = trans_system(ctx, &a[2])?;
     let disp = a.get(3).is_some_and(|v| !v.is_nil());
     let p = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
     let q = if let Some(q) = viewport_to_paper(ctx, &a[1], &a[2], p, disp) {
