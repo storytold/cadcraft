@@ -200,7 +200,9 @@ settings are not automatically copied into the portable directory.
 
 Before switching an existing Windows installation to portable mode, close CADCraft,
 back up `%APPDATA%\CADCraft`, and copy the settings you want to retain into
-`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings.
+`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings. The
+preferences and window state are kept apart, in `%APPDATA%\ai.storyteller.cadcraft\data\app.ron`:
+copy that file to `CADCraftData\app.ron` to keep them.
 Updating a portable ZIP, including through the updater, can restore `portable.txt`;
 set `CADCRAFT_CONFIG_DIR` to your existing profile folder to keep using it across updates.
 

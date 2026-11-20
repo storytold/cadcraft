@@ -1,5 +1,6 @@
 //! Windows portable ZIP settings, selected by a marker beside the executable.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// A marker must be a file. Prove the data folder is writable before selecting it.
@@ -10,9 +11,13 @@ pub(crate) fn directory_in(exe_dir: &Path) -> std::io::Result<Option<PathBuf>> {
     let data = exe_dir.join("CADCraftData");
     std::fs::create_dir_all(&data)?;
     let probe = data.join(format!(".portable-write-test-{}", std::process::id()));
-    let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe)?;
+    // A byte, not just an empty file: a full drive can still make the file and refuse its data.
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe)?;
+    let written = file.write_all(&[0]).and_then(|()| file.sync_all());
     drop(file);
-    std::fs::remove_file(probe)?;
+    let removed = std::fs::remove_file(&probe);
+    written?;
+    removed?;
     Ok(Some(data))
 }
 
