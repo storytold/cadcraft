@@ -1,4 +1,4 @@
-use super::draw::entity;
+use super::draw::{claim_layer, common_layer, entity};
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{Builder, Clip, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, append_clipped_keep, clip};
@@ -40,7 +40,9 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     }
 }
 
-pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
+/// Draw block reference `e`. `shown`: the reference itself is visible; when not (its layer is off),
+/// only the block's objects and attributes on layers of their own are drawn, and no clip frame.
+pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink, shown: bool) {
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
     }
@@ -77,7 +79,9 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
                     append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
-                    xclip_frame(b, ctx, region, rgb);
+                    if shown {
+                        xclip_frame(b, ctx, region, rgb);
+                    }
                 }
                 if stop {
                     break 'copies;
@@ -137,6 +141,10 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
                 }
             }
         }
+        // In plots each attribute is on its own layer (that of the reference when it follows the
+        // reference): what the reference drew before them is the reference's.
+        let reference_layer = common_layer(ctx, &e.common);
+        claim_layer(b, ctx, reference_layer);
         for a in &ins.attribs {
             if attmode == 0 || (a.invisible && attmode != 2) {
                 continue;
@@ -148,13 +156,19 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
-            let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
-                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
+            let (ink, lw, shown, t, layer) = match (def, a.props.is_empty()) {
+                // Without a definition or properties of its own it follows the reference, hidden
+                // with it.
+                (None, true) => {
+                    let (_, lw, _, _, shown, _) = resolve(ctx, e, b.plotting);
+                    (rgb, lw, shown, reference, reference_layer)
+                }
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let sub = sub_ctx(ctx, e, Mat3::IDENTITY);
+                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub, &c, b.plotting);
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, reference) } else { 0 };
-                    (ink, lw, shown, t)
+                    (ink, lw, shown, t, common_layer(&sub, &c))
                 }
             };
             if shown {
@@ -165,6 +179,7 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }
+                claim_layer(b, ctx, layer);
             }
         }
         b.transparency = reference;
