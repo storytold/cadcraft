@@ -68,17 +68,38 @@ impl Src {
 /// strong character). `None` when the line is too long (the caller then lays it out one glyph
 /// per character) or shaping failed.
 pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
+    shape_with(primary, s, height, width_factor, oblique, base_rtl, &ttf::fallback_for)
+}
+
+/// [`shape`] with a caller-supplied fallback-font lookup (for isolated tests).
+pub(crate) fn shape_with(
+    primary: Option<&Face>,
+    s: &str,
+    height: f64,
+    width_factor: f64,
+    oblique: f64,
+    base_rtl: Option<bool>,
+    fallback: &dyn Fn(char) -> Option<Face>,
+) -> Option<Shaped> {
     let chars = crate::decode_controls(s);
     if chars.is_empty() || chars.len() > MAX_CHARS {
         return None;
     }
     // A last-resort guard around the bidi and shaping libraries: a panic in them must not take
     // the drawing down with it (the line then falls back to one glyph per character).
-    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique, base_rtl))).ok()
+    catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique, base_rtl, fallback))).ok()
 }
 
 /// Lay out decoded directional runs, keeping advances and decoration spans for empty glyphs.
-fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Shaped {
+fn shape_chars(
+    primary: Option<&Face>,
+    chars: &[(char, bool, bool)],
+    height: f64,
+    width_factor: f64,
+    oblique: f64,
+    base_rtl: Option<bool>,
+    fallback: &dyn Fn(char) -> Option<Face>,
+) -> Shaped {
     let normalized_height = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let scale_x = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
@@ -89,10 +110,10 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let mut points_left = ttf::MAX_SHAPED_POINTS;
     let mut spans: Vec<(f64, f64, bool, bool)> = Vec::new();
     let mut pen_x = 0.0;
-    // Whether the rightmost glyph so far is a stroke-font glyph.
+    // Whether the rightmost glyph so far is a native stroke-font glyph (excludes TrueType stand-ins).
     let mut stroke_last = false;
     for (run, rtl) in bidi::visual_runs(&characters, base_rtl) {
-        let mut pieces = itemize(&characters, run, primary);
+        let mut pieces = itemize(&characters, run, primary, rtl, fallback);
         if rtl {
             pieces.reverse();
         }
@@ -106,7 +127,10 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                         let character = if rtl { bidi::mirror(character) } else { character };
                         match (&src, stroke::glyph(character)) {
                             (Src::Stroke, Some((_, spec))) => {
-                                crate::draw_stroke_glyph(&mut shaped, spec, pen_x, stroke_scale, scale_x, shear);
+                                if let Some(rest) = points_left.checked_sub(crate::stroke_glyph_points(spec)) {
+                                    points_left = rest;
+                                    crate::draw_stroke_glyph(&mut shaped, spec, pen_x, stroke_scale, scale_x, shear);
+                                }
                             }
                             (Src::Missing, _) => crate::missing_glyph_box(&mut shaped, pen_x, normalized_height, stroke_scale * scale_x),
                             _ => {}
@@ -115,7 +139,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                         let (underline, overline) = flags(index);
                         spans.push((pen_x, pen_x + advance, underline, overline));
                         pen_x += advance;
-                        stroke_last = true;
+                        stroke_last = primary.is_none();
                     }
                 }
                 Src::Face(face) => {
@@ -159,15 +183,24 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
 /// Split a logical-order run into pieces by what draws each character. Joiners and combining
 /// marks stay in the piece before them (the shaper needs them in context); other characters
 /// prefer the previous fallback face when it has them, so one word stays in one font.
-fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>) -> Vec<(Src, Range<usize>)> {
+fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>, rtl: bool, fallback: &dyn Fn(char) -> Option<Face>) -> Vec<(Src, Range<usize>)> {
     let mut pieces: Vec<(Src, Range<usize>)> = Vec::new();
+    let run_end = run.end;
+    // The end of the cluster that `i` is in. Characters inside one cluster share its end, so the
+    // marks of a long cluster are walked once, not once per mark.
+    let mut cluster_to = run.start;
     for i in run {
         let c = cs.get(i).copied().unwrap_or(' ');
         let prev = pieces.last().and_then(|(s, _)| s.face()).cloned();
         let src = match prev {
             Some(f) if bidi::is_format_control(c) || bidi::is_mark(c) => Src::Face(f),
             None if bidi::is_format_control(c) => Src::Hidden,
-            prev => resolve(c, primary, prev.as_ref()),
+            prev => {
+                if i >= cluster_to {
+                    cluster_to = cluster_end(cs, i, run_end);
+                }
+                resolve(cs.get(i..cluster_to).unwrap_or(&[c]), primary, prev.as_ref(), rtl, fallback)
+            }
         };
         match pieces.last_mut() {
             Some((s, r)) if s.same(&src) => r.end = i + 1,
@@ -177,23 +210,83 @@ fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>) -> Vec<(Src, 
     pieces
 }
 
-/// What draws `c`: the text's face when it has the character, else the previous fallback face,
-/// else the first fallback font that has it (FONTFALLBACK, FONTALT, installed fonts).
-fn resolve(c: char, primary: Option<&Face>, prev: Option<&Face>) -> Src {
+/// End index of a base-plus-marks cluster starting at `i` within `run_end`.
+fn cluster_end(cs: &[char], i: usize, run_end: usize) -> usize {
+    let mut end = (i + 1).min(run_end);
+    while end < run_end && cs.get(end).is_some_and(|ch| bidi::is_mark(*ch) || bidi::is_format_control(*ch)) {
+        end += 1;
+    }
+    end
+}
+
+/// Whether `face` maps `c` directly or, in an RTL run, via its mirrored counterpart.
+fn face_has_char(face: &Face, c: char, rtl: bool) -> bool {
+    if face.has_glyph(c) {
+        return true;
+    }
+    if rtl {
+        let m = bidi::mirror(c);
+        return m != c && face.has_glyph(m);
+    }
+    false
+}
+
+/// Whether `face` shapes `cluster` without any `.notdef` glyph (for example, `e\u{0301}`
+/// composed into `é` when the face maps `é` but not `e` or `\u{0301}`).
+fn face_renders_cluster(face: &Face, cluster: &[char], rtl: bool) -> bool {
+    if cluster.is_empty() {
+        return false;
+    }
+    let source = harfrust::font::Blob::Shared(face.bytes.clone());
+    let Some(font) = harfrust::Font::new(source, face.index) else { return false };
+    let shaper = harfrust::ShaperFont::new(&font);
+    let mut buf = harfrust::Buffer::new();
+    for (idx, c) in cluster.iter().enumerate() {
+        buf.push(u32::from(*c), u32::try_from(idx).unwrap_or(u32::MAX));
+    }
+    buf.set_direction(if rtl { harfrust::Direction::RightToLeft } else { harfrust::Direction::LeftToRight });
+    buf.guess_segment_properties();
+    if harfrust::shape(&shaper, &mut buf, harfrust::ShapeOptions::new()).is_err() {
+        return false;
+    }
+    let infos = buf.glyph_infos();
+    !infos.is_empty() && infos.iter().all(|gi| gi.glyph_id != 0)
+}
+
+/// What draws `cluster[0]`: the text's face when it has the character (or its RTL mirror), else
+/// the previous fallback face, else the first fallback font that has it (FONTFALLBACK, FONTALT,
+/// installed fonts), else the stroke stand-in (unless a font renders the full base-and-mark
+/// cluster), else the text's font missing-glyph shape.
+fn resolve(cluster: &[char], primary: Option<&Face>, prev: Option<&Face>, rtl: bool, fallback: &dyn Fn(char) -> Option<Face>) -> Src {
+    let c = cluster.first().copied().unwrap_or(' ');
     if let Some(p) = primary
-        && (c.is_whitespace() || p.has_glyph(c))
+        && (c.is_whitespace() || face_has_char(p, c, rtl))
     {
         return Src::Face(p.clone());
     }
     if primary.is_none() && (c.is_whitespace() || stroke::glyph(c).is_some()) {
         return Src::Stroke;
     }
-    if let Some(f) = prev.filter(|f| f.has_glyph(c)) {
+    if let Some(f) = prev.filter(|f| face_has_char(f, c, rtl)) {
         return Src::Face(f.clone());
     }
-    match (ttf::fallback_for(c), primary) {
+    match (fallback(c), primary) {
         (Some(f), _) => Src::Face(f),
-        // The text's font draws its own missing-glyph shape.
+        // No font has it: keep font-renderable base+mark clusters together so the shaper can
+        // compose them; otherwise the stroke font draws it when it can, as in `ttf::shape`, else
+        // the text's font draws its own missing-glyph shape.
+        (None, Some(p)) if stroke::glyph(c).is_some() => {
+            let has_mark = cluster.get(1..).is_some_and(|s| s.iter().any(|ch| bidi::is_mark(*ch)));
+            if has_mark {
+                if face_renders_cluster(p, cluster, rtl) {
+                    return Src::Face(p.clone());
+                }
+                if let Some(f) = prev.filter(|f| face_renders_cluster(f, cluster, rtl)) {
+                    return Src::Face(f.clone());
+                }
+            }
+            Src::Stroke
+        }
         (None, Some(p)) => Src::Face(p.clone()),
         (None, None) => Src::Missing,
     }
@@ -562,5 +655,77 @@ mod tests {
         let long = "\u{05D0}b ".repeat(MAX_CHARS);
         assert!(shape(None, &long, 1.0, 1.0, 0.0, None).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
+    }
+
+    /// A line of nothing but marks is laid out in one pass. Each mark used to look ahead to the
+    /// end of its cluster, rescanning the rest of the line: a `MAX_CHARS` run of Thai tone marks
+    /// took 50 million mark checks (0.6 s) instead of one pass.
+    #[test]
+    fn a_long_run_of_marks_is_itemized_in_one_pass() {
+        let no_fb = |_: char| None;
+        // Best of three, so a scheduling stall on a busy machine does not decide the comparison.
+        let timed = |s: &str| {
+            let mut best = std::time::Duration::MAX;
+            let mut shaped = Shaped::default();
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                shaped = shape_with(None, s, 1.0, 1.0, 0.0, None, &no_fb).expect("the line is laid out");
+                best = best.min(started.elapsed());
+            }
+            (best, shaped)
+        };
+        // A line of ordinary stroke glyphs does linear work; the marks may cost a few of those.
+        let (letters, _) = timed(&"A".repeat(MAX_CHARS));
+        let marks = format!("\u{0E48}{}", "\u{0E48}".repeat(MAX_CHARS - 1));
+        let (marked, shaped) = timed(&marks);
+        assert!(shaped.width > 0.0, "the line is laid out");
+        assert!(marked < letters * 10, "marks took {marked:?}, letters {letters:?}");
+    }
+
+    #[test]
+    fn base_and_mark_cluster_stays_with_face_when_composed() {
+        let face = ttf::synthetic_face(&[('\u{00E9}', 600)]);
+        let no_fb = |_: char| None;
+
+        // `e` + combining acute composes to `é`, which `face` maps, so both stay in one face piece.
+        let composed = shape_with(Some(&face), "e\u{0301}", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        assert!(composed.strokes.is_empty(), "composed cluster stays in the face");
+        assert_eq!(composed.glyphs.len(), 1);
+        assert!((composed.width - 600.0 * 10.0 / 576.0).abs() < 1e-9);
+
+        // A stand-alone unmapped `e` still uses the stroke stand-in.
+        let bare = shape_with(Some(&face), "e", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        assert!(!bare.strokes.is_empty());
+        assert!(bare.glyphs.is_empty());
+    }
+
+    #[test]
+    fn rtl_mirrored_bracket_stays_with_face() {
+        let face = ttf::synthetic_face(&[(')', 400)]);
+        let no_fb = |_: char| None;
+
+        // In an RTL run, '(' mirrors to ')', which `face` maps.
+        let shaped = shape_with(Some(&face), "(", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        assert!(shaped.strokes.is_empty(), "mirrored bracket uses the face");
+        assert_eq!(shaped.glyphs.len(), 1);
+        assert!((shaped.width - 400.0 * 10.0 / 576.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rtl_stand_in_keeps_full_signed_advance() {
+        let face = ttf::synthetic_face(&[('A', 500)]);
+        let no_fb = |_: char| None;
+        let expected_w = crate::char_advance('\u{2300}') * 10.0;
+
+        let rtl = shape_with(Some(&face), "%%c", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        assert!((rtl.width - expected_w).abs() < 1e-9);
+
+        let neg = shape_with(Some(&face), "%%c", 10.0, -1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        assert!((neg.width + expected_w).abs() < 1e-9);
+
+        // Native stroke font (primary = None) still trims its trailing gap.
+        let native = shape_with(None, "%%c", 10.0, 1.0, 0.0, Some(true), &no_fb).expect("shapes");
+        let native_expected = expected_w - stroke::GAP * (10.0 / stroke::CAP);
+        assert!((native.width - native_expected).abs() < 1e-9);
     }
 }
