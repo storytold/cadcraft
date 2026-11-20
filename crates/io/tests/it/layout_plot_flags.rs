@@ -30,6 +30,7 @@ fn flags_after_save(d: &Drawing, name: &str) -> Option<i64> {
 
 #[test]
 fn plot_layout_flags_are_saved_as_read() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for name in ["sheet.dxf", "sheet.dwg"] {
         for flags in [0, 176, 560, 688] {
             assert_eq!(flags_after_save(&drawing(flags), name), Some(flags), "{name}: flags {flags}");
@@ -39,6 +40,7 @@ fn plot_layout_flags_are_saved_as_read() {
 
 #[test]
 fn an_unchanged_standard_scale_keeps_its_flag_and_choice() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // Flags 176 with standard scale 25 (1:50): the scale is 0.02, not 1:1, and still standard.
     let mut d = drawing(176);
     let page = &mut d.layouts.last_mut().unwrap().page;
