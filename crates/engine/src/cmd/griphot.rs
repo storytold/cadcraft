@@ -375,7 +375,9 @@ impl Interactive for GripEdit {
                     GripAction::MoveWithDimLine => ("Specify new location for dimension text", Accept::POINT),
                     // Dimension and multileader text alike.
                     GripAction::MoveTextOnly | GripAction::MoveWithLeader => ("Specify new location for text", Accept::POINT),
+                    GripAction::AddLeader => ("Specify leader arrowhead location", Accept::POINT),
                     GripAction::RemoveVertex
+                    | GripAction::RemoveLeader
                     | GripAction::RemoveFitPoint
                     | GripAction::ToLine
                     | GripAction::AboveDimLine

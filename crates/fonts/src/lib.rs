@@ -19,6 +19,7 @@ pub mod bidi;
 mod complex;
 mod linebreak;
 mod mtext;
+mod sfnt_name;
 pub mod shx;
 mod stroke;
 pub mod subset;

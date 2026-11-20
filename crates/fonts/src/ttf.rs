@@ -266,6 +266,9 @@ struct Db {
     /// Names read from user font files for lists and family searches, by stem. Reading them
     /// does not keep the file's bytes, so it does not use up `MAX_LOADED_BYTES`.
     face_names: HashMap<String, Arc<FaceNames>>,
+    /// Family names of installed fonts for lists, by stem, read from the files' `name` tables
+    /// alone ([`crate::sfnt_name`]).
+    listed: HashMap<String, Option<String>>,
 }
 
 /// The names inside one font file.
@@ -476,6 +479,7 @@ pub fn rescan() {
     g.loaded_bytes = 0;
     g.user.clear();
     g.face_names.clear();
+    g.listed.clear();
     drop(g);
     GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // SHX files in the same folders: the SHX font table looks there too.
@@ -545,6 +549,8 @@ pub struct FontFile {
 pub fn installed() -> Vec<FontFile> {
     /// Fonts whose family name is read for the list.
     const MAX_NAMED: usize = 200;
+    /// Other fonts whose family name is read for the list (from the name table only).
+    const MAX_LISTED: usize = 5000;
     let mut g = lock();
     let mut list: Vec<(String, String, bool)> = g
         .paths
@@ -559,11 +565,15 @@ pub fn installed() -> Vec<FontFile> {
         .collect();
     list.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
     let mut named = 0usize;
+    let mut listed = 0usize;
     list.into_iter()
         .map(|(stem, name, user)| {
             let family = if user && named < MAX_NAMED {
                 named += 1;
                 g.face_names(&stem).and_then(|n| n.family.clone())
+            } else if listed < MAX_LISTED {
+                listed += 1;
+                g.listed_family(&stem)
             } else {
                 None
             };
@@ -620,6 +630,22 @@ impl Db {
             Source::File(path) => read_file(path)?,
             Source::Static(bytes) => bytes.to_vec(),
         }))
+    }
+
+    /// The family name of an installed font for lists, read once from its name table alone.
+    fn listed_family(&mut self, stem: &str) -> Option<String> {
+        if let Some(f) = self.listed.get(stem) {
+            return f.clone();
+        }
+        let family = match self.paths.get(stem)? {
+            #[cfg(not(target_arch = "wasm32"))]
+            Source::File(path) => crate::sfnt_name::family_of_file(path),
+            #[cfg(target_arch = "wasm32")]
+            Source::File(_) => None,
+            Source::Static(bytes) => crate::sfnt_name::family_of_bytes(bytes),
+        };
+        self.listed.insert(stem.to_string(), family.clone());
+        family
     }
 
     /// The names inside the font file with this stem, read once (the bytes are dropped after).
