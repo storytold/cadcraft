@@ -66,17 +66,34 @@ pub struct DimGeometry {
 }
 
 impl DimGeometry {
-    /// `value` as the contents of a plain MTEXT (the dimension's `*D` block, its EXPLODE
-    /// pieces): the diameter sign as `%%c`, not the decoded ⌀ (U+2300), which no SHX font has,
-    /// so other programs plot nothing for it, while every font draws `%%c` (#1645). A `%`
-    /// that would run into a code is written `%%%`.
+    /// The contents of the MTEXT that stands for the dimension's text in its `*D` block and its
+    /// EXPLODE pieces: `mtext`, the formatted text the dimension itself is drawn from, so stacks,
+    /// heights and the other codes look the same there. Built from the plain `value`, a reopened
+    /// dimension (drawn from its block) showed `\S5^ ;` as `5/` at full height (#2854).
+    ///
+    /// A typed diameter sign is written `%%c`, not ⌀ (U+2300), which no SHX font has, so other
+    /// programs plot nothing for it, while every font draws `%%c` (#1645). A lone `%` right
+    /// before it is written `%%%`, so it doesn't run into that code. `%%` codes already in the
+    /// text (`%%c`, `%%d`, `%%%`) are copied whole, so they aren't escaped again; a `%%` right
+    /// before a typed sign is two literal signs and is written `%%%%%%`.
     pub fn mtext_contents(&self) -> String {
-        let mut out = String::with_capacity(self.value.len() + 2);
-        let mut chars = self.value.chars().peekable();
+        let mut out = String::with_capacity(self.mtext.len() + 2);
+        let mut chars = self.mtext.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
                 '⌀' => out.push_str("%%c"),
-                '%' if matches!(chars.peek(), Some('%' | '⌀')) => out.push_str("%%%"),
+                '%' if chars.peek() == Some(&'%') => {
+                    chars.next();
+                    if chars.peek() == Some(&'⌀') {
+                        // `%%` before a typed sign is no code: two literal signs, written
+                        // `%%%` each, so the sign's `%%c` doesn't run into them.
+                        out.push_str("%%%%%%");
+                    } else {
+                        out.push_str("%%");
+                        out.extend(chars.next());
+                    }
+                }
+                '%' if chars.peek() == Some(&'⌀') => out.push_str("%%%"),
                 c => out.push(c),
             }
         }
