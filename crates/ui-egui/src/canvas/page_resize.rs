@@ -118,7 +118,7 @@ pub(super) fn input(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool, on_m
             } else {
                 app.canvas.page_resize = Some(drag);
             }
-            app.canvas.drag_window = false;
+            app.canvas.press = None;
             return true;
         }
     }

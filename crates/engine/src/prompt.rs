@@ -31,7 +31,7 @@ impl Accept {
 /// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
 /// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
 /// AutoCAD's command line over measured runs, where no prompt was written both ways.
-const NO_OR: [&str; 28] = [
+const NO_OR: &[&str] = &[
     "Bring to front",
     "Calculate rectangle dimensions based on",
     "Choose mode for selected object conversion",
@@ -50,6 +50,7 @@ const NO_OR: [&str; 28] = [
     "Enter option",
     "Enter polyline linetype generation option",
     "Enter property to change",
+    "Enter states to change",
     "Enter the type of array",
     "Enter type of unused objects to purge",
     "Enter viewport arrangement",
@@ -108,13 +109,31 @@ pub struct Prompt {
     pub takes_block: bool,
 }
 
-/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
+/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`. The
+/// world-relative forms `@*distance<angle` and `*@distance<angle` measure the angle in the WCS.
 /// Returns `None` for any other form.
 pub fn parse_polar_text(text: &str, angles: &crate::units::AngleSettings) -> Option<(f64, f64)> {
-    let body = text.trim().strip_prefix('@')?; // relative form only
+    let t = text.trim();
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
+    let body = t.strip_prefix('@')?.trim(); // relative form only
+    let body = match body.strip_prefix('*') {
+        Some(r) => {
+            world = true;
+            r.trim_start()
+        }
+        None => body,
+    };
+    let angles = if world { angles.world() } else { *angles };
     let (d, a) = body.split_once('<')?;
-    let dist = d.trim().parse::<f64>().ok()?;
-    let angle = angles.amount(a.trim())?;
+    // Read as `parse_point_in` reads it, fractions (`1/2`) included.
+    let dist = crate::units::parse_distance(d)?;
+    // The direction `@d<a` draws along, as `parse_point_in` reads it (ANGBASE, ANGDIR and the
+    // UCS applied): a world angle.
+    let a = a.trim();
+    let angle = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
     (dist.is_finite() && angle.is_finite()).then_some((dist, angle))
 }
 
@@ -350,10 +369,9 @@ pub struct Drag {
 }
 
 /// Parse a typed point: `x,y[,z]`, `@dx,dy`, `@dist<angle`, `dist<angle`, `#x,y` (absolute),
-/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates: the same as the plain forms, as there is no
-/// UCS yet).
+/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates).
 /// Relative forms use `last`. Polar angles read the default angle settings (degrees from +X,
-/// counterclockwise); `parse_point_with` reads a drawing's.
+/// counterclockwise); `parse_point_with` reads a drawing's, `parse_point_in` a UCS too.
 pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
     parse_point_with(text, last, &crate::units::AngleSettings::default())
 }
@@ -361,14 +379,31 @@ pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
 /// `parse_point` with polar angles read per `angles` (AUNITS, ANGBASE, ANGDIR); `d<<a` and
 /// `d<<<a` measure from +X counterclockwise (in degrees and in AUNITS).
 pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSettings) -> Option<Vec2> {
+    parse_point_in(text, last, angles, &crate::ucs::UcsFrame::WORLD)
+}
+
+/// `parse_point_with` in a UCS: coordinates are UCS coordinates (`x,y` from its origin along its
+/// axes, `@dx,dy` along its axes), and polar angles are measured as `angles` says (which carries
+/// the UCS rotation, [`crate::units::AngleSettings::ucs`]). A `*` prefix reads the point in
+/// world coordinates instead. `last` and the result are world points.
+pub fn parse_point_in(text: &str, last: Vec2, angles: &crate::units::AngleSettings, ucs: &crate::ucs::UcsFrame) -> Option<Vec2> {
     let t = text.trim();
     if t.is_empty() {
         return None;
     }
-    let t = t.strip_prefix('*').map_or(t, str::trim_start);
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
     let (rel, body) = if let Some(b) = t.strip_prefix('@') {
         let b = b.trim();
-        (true, b.strip_prefix('*').map_or(b, str::trim_start))
+        match b.strip_prefix('*') {
+            Some(r) => {
+                world = true;
+                (true, r.trim_start())
+            }
+            None => (true, b),
+        }
     } else if let Some(b) = t.strip_prefix('#') {
         (false, b.trim())
     } else {
@@ -377,11 +412,15 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
     if rel && body.is_empty() {
         return Some(last);
     }
+    let (frame, angles) = if world { (crate::ucs::UcsFrame::WORLD, angles.world()) } else { (*ucs, *angles) };
+    // `p`: a world displacement (polar, whose angle already says the UCS's direction), or UCS
+    // coordinates (`x,y`).
     let p = if let Some((d, a)) = body.split_once('<') {
         let dist = crate::units::parse_distance(d)?;
         // `d<<a` / `d<<<a`: the override prefixes keep their `<<` / `<<<`.
         let ang = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
-        Vec2::from_angle(ang) * dist
+        let v = Vec2::from_angle(ang) * dist;
+        if rel { last + v } else { frame.origin.xy() + v }
     } else {
         let parts: Vec<&str> = body.split(',').collect();
         if parts.len() < 2 || parts.len() > 3 {
@@ -392,10 +431,10 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
         if let Some(z) = parts.get(2) {
             crate::units::parse_distance(z)?;
         }
-        Vec2::new(x, y)
+        let v = Vec2::new(x, y);
+        if rel { last + frame.vec_to_wcs(v) } else { frame.to_wcs(v) }
     };
-    let r = if rel { last + p } else { p };
-    r.is_finite().then_some(r)
+    p.is_finite().then_some(p)
 }
 
 #[cfg(test)]
@@ -490,5 +529,28 @@ mod tests {
         let v = Prompt::new("", Accept::TEXT).kw(&["Next", "Previous", "Break", "Insert", "Move", "Regen", "Straighten", "Tangent", "Width", "eXit"]);
         assert_eq!(v.match_keyword("e"), None);
         assert_eq!(v.match_keyword("ex").as_deref(), Some("eXit"));
+    }
+
+    /// The world-relative prefixes, in either order, measure the polar angle in the WCS as
+    /// `parse_point_in` does; plain relative polar input is measured in the UCS.
+    #[test]
+    fn polar_text_reads_world_relative_prefixes() {
+        let half_pi = std::f64::consts::FRAC_PI_2;
+        let angles = crate::units::AngleSettings { ucs: half_pi, ..Default::default() };
+        let (d, a) = parse_polar_text("@10<0", &angles).unwrap();
+        assert!((d - 10.0).abs() < 1e-12 && (a - half_pi).abs() < 1e-12, "{d} {a}");
+        for t in ["@*10<0", "*@10<0", " * @ 10<0", "@ *10<0"] {
+            let (d, a) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 10.0).abs() < 1e-12 && a.abs() < 1e-12, "{t}: {d} {a}");
+            let p = parse_point_in(t, Vec2::ZERO, &angles, &crate::ucs::UcsFrame::WORLD).unwrap();
+            assert!(p.near(Vec2::from_angle(a) * d, 1e-9), "{t}: {p:?}");
+        }
+        // A distance is read as the typed point reads it: a fraction counts.
+        for t in ["@1/2<0", "@*1/2<0", "*@1/2<0"] {
+            let (d, _) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 0.5).abs() < 1e-12, "{t}: {d}");
+        }
+        assert_eq!(parse_polar_text("*10<0", &angles), None);
+        assert_eq!(parse_polar_text("**@10<0", &angles), None);
     }
 }

@@ -11,6 +11,7 @@ use cadcraft_ui_egui::switch::Switch;
 const CONFIG_DIR: &str = "CADCRAFT_CONFIG_DIR";
 const LOCALE: &str = "CADCRAFT_LOCALE";
 const VSYNC: &str = "CADCRAFT_VSYNC";
+const STENCIL: &str = "CADCRAFT_STENCIL";
 const WAYLAND: &str = "CADCRAFT_WAYLAND";
 const NO_NATIVE_MENU: &str = "CADCRAFT_NO_NATIVE_MENU";
 const SYSTEM_CURSOR: &str = "CADCRAFT_SYSTEM_CURSOR";
@@ -22,6 +23,7 @@ pub(crate) const VARS: &[(&str, &str)] = &[
     (CONFIG_DIR, "the settings folder (logs, autosave, workspace, plotters); empty means no settings folder"),
     (LOCALE, "the interface language, instead of the system's"),
     (VSYNC, "1 presents with vsync, 0 without it (default: without on Linux and BSD)"),
+    (STENCIL, "0 opens the window without a stencil buffer, for drivers that show a black window; clipped layout viewports then draw unclipped"),
     (WAYLAND, "1 keeps the native Wayland backend instead of XWayland; 0 or unset is off"),
     (NO_NATIVE_MENU, "macOS: 1 keeps the menus inside the window; 0 or unset is off"),
     (SYSTEM_CURSOR, "1 uses the system cursor instead of the drawn crosshair; 0 or unset is off"),
@@ -42,6 +44,9 @@ pub(crate) struct Env {
     pub(crate) locale: Option<String>,
     /// Present with vsync (default: off on Linux and BSD, on elsewhere).
     pub(crate) vsync: Switch,
+    /// Off: the window has no stencil buffer (default: on). Some old drivers (Mesa on Intel HD
+    /// 4000, old Intel drivers on Windows) accept a stencil pass and then present a black window.
+    pub(crate) stencil: Switch,
     /// Keep the native Wayland backend instead of XWayland.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     pub(crate) wayland: Switch,
@@ -73,6 +78,7 @@ impl Env {
             },
             locale: text(LOCALE),
             vsync: switch(VSYNC),
+            stencil: switch(STENCIL),
             wayland: switch(WAYLAND),
             no_native_menu: switch(NO_NATIVE_MENU),
             system_cursor: switch(SYSTEM_CURSOR),
@@ -129,6 +135,7 @@ mod tests {
             ("APPDATA", "C:\\a"),
             (LOCALE, "cs-CZ"),
             (VSYNC, " On "),
+            (STENCIL, "No"),
             (WAYLAND, "0"),
             (NO_NATIVE_MENU, "yes"),
             (SYSTEM_CURSOR, "maybe"),
@@ -142,6 +149,7 @@ mod tests {
                 config_dir: Some(PathBuf::from("/private/cc")),
                 locale: Some("cs-CZ".into()),
                 vsync: Switch::On,
+                stencil: Switch::Off,
                 wayland: Switch::Off,
                 no_native_menu: Switch::On,
                 system_cursor: Switch::Default,
@@ -153,7 +161,7 @@ mod tests {
         let read = Env::from_vars(env(&blank));
         assert_eq!(read.config_dir, None, "an empty variable means no directory, not the working directory");
         assert_eq!((read.locale, read.font_alt, read.font_fallback), (None, None, None));
-        assert_eq!([read.vsync, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 4]);
+        assert_eq!([read.vsync, read.stencil, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 5]);
     }
 
     #[test]

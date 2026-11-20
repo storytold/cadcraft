@@ -668,6 +668,7 @@ dependencies = [
  "pollster 1.0.1",
  "rfd",
  "ron",
+ "serde",
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",

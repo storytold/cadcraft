@@ -9,6 +9,7 @@ mod dxf_raw;
 mod dxf_clip;
 mod dxf_ext;
 mod dxf_image;
+mod dxf_layer_states;
 mod dxf_mleader;
 mod dxf_read;
 mod dxf_table;
