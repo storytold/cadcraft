@@ -353,6 +353,31 @@ fn truetype_mtext_and_dimension_text() {
     assert!(l.prims.iter().filter(|p| p.kind == Kind::Tris).count() > 2, "arrows plus filled glyphs");
 }
 
+#[test]
+fn mtext_inline_bylayer_takes_the_layer_colour() {
+    // Blue MTEXT on a red layer: a `\C256;` (ByLayer) run is red, the rest blue (#3135).
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Red".into(), color: Color::Index(1), ..Default::default() });
+    let mt = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 1.0,
+        width: 0.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "{\\C256;A}B".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let common = Common { layer: "Red".into(), color: Color::Index(5), ..Common::default() };
+    d.add(&Space::Model, common, EntityKind::MText(mt)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    let colours: Vec<Rgb> = l.prims.iter().map(|p| p.color).collect();
+    assert!(colours.contains(&Rgb(255, 0, 0)), "ByLayer run in the layer's red: {colours:?}");
+    assert!(colours.contains(&Rgb(0, 0, 255)), "plain run in the object's blue: {colours:?}");
+}
+
 fn lin_dim() -> cadcraft_doc::Dimension {
     cadcraft_doc::Dimension {
         kind: cadcraft_doc::DimKind::Linear { rotation: 0.0 },

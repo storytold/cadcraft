@@ -1,5 +1,5 @@
 use super::draw::entity;
-use super::props::{resolve, resolve_common, transparency};
+use super::props::{layer_ink, resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{Builder, Clip, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, append_clipped_keep, clip};
 
@@ -148,20 +148,21 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
-            let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
-                (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
+            let (ink, layer, lw, shown, t) = match (def, a.props.is_empty()) {
+                (None, true) => (rgb, layer_ink(ctx, &e.common.layer), resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let sub = sub_ctx(ctx, e, Mat3::IDENTITY);
+                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub, &c, b.plotting);
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, reference) } else { 0 };
-                    (ink, lw, shown, t)
+                    (ink, layer_ink(&sub, &c.layer), lw, shown, t)
                 }
             };
             if shown {
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
-                    (Some(m), _) => mtext(b, ctx, m, ink, lw),
+                    (Some(m), _) => mtext(b, ctx, m, ink, layer, lw),
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }
