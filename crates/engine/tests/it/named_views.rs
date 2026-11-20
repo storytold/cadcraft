@@ -179,6 +179,19 @@ fn pan_realtime_drags_and_enter_ends() {
 }
 
 #[test]
+fn pan_realtime_moves_only_the_view() {
+    // A drag frame is not a change of the drawing: the revision stays, so the canvas does not
+    // rebuild the drawing's geometry on every frame (as with a middle-button drag).
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    typed(&mut s, &["pan"]);
+    let revision = s.state().unwrap().revision;
+    s.realtime_pan(80.0, -40.0).unwrap();
+    assert!(close(view(&s).center.x, -10.0), "{:?}", view(&s));
+    assert_eq!(s.state().unwrap().revision, revision);
+}
+
+#[test]
 fn pan_realtime_in_a_twisted_view_moves_the_drawing_with_the_cursor() {
     // A view twisted a quarter turn (DVIEW TWist) shows the drawing's -Y to the right: a drag
     // 80 px right moves the drawing with it, so the centre moves 10 units up the drawing's Y.

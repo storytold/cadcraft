@@ -621,8 +621,9 @@ impl Session {
         let v = st.view();
         let scale = px / v.height;
         // A twisted view (DVIEW TWist) turns the screen drag into the drawing's axes.
+        // Only the view moves, as with a middle-button drag: no new revision, so the canvas keeps
+        // its display list and does not rebuild the drawing's geometry on every frame.
         st.set_view_quiet(View { center: v.center - Vec2::new(dx / scale, -dy / scale).rotate(-v.twist), ..v });
-        self.touch();
         Ok(())
     }
     /// The zoom of a mouse wheel scroll by `delta` points (up zooms in): ZOOMFACTOR scales it
