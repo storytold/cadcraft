@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
+mod dwg_hatch;
 mod dxf_raw;
 
 /// XCLIP boundaries as SPATIAL_FILTER objects.
@@ -98,6 +99,8 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if craft_dwg::is_dwg(bytes) {
         let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
+        // The decoder writes an elliptic hatch edge's angles in radians; DXF keeps degrees.
+        let dxf = dwg_hatch::elliptic_edge_degrees(dxf);
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
