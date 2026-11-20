@@ -138,7 +138,7 @@ fn hostile_saved_profiles_are_ignored() {
         "[]".into(),
         r#"{"sysvars": "PICKBOX"}"#.into(),
         r#"{"sysvars": {"PICKBOX": "x", "LUNITS": 4, "FONTALT": "evil.ttf"}, "modelBackground": "red", "snapMarkerSize": -1}"#.into(),
-        format!(r#"{{"sysvars": {{"PICKBOX": 5}}, "pad": "{}"}}"#, "x".repeat(70_000)),
+        format!(r#"{{"sysvars": {{"PICKBOX": 5}}, "pad": "{}"}}"#, "x".repeat(options::MAX_PROFILE_BYTES)),
     ] {
         let mut b = app();
         b.load_profile(&bad);
@@ -251,4 +251,23 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
     ] {
         assert!(text.contains(label), "{label} missing from:\n{text}");
     }
+}
+
+#[test]
+fn reset_brings_back_hidden_menu_bar_toolbar_and_status_bar() {
+    // #1240: with the in-window menu bar, the toolbar and the status bar hidden, OPTIONS ▸ Reset
+    // to Defaults (typed, or from the right-click menu) is the way back.
+    let mut a = app();
+    let d = cadcraft_ui_egui::UiState::default();
+    a.ui.in_window_menu = !d.in_window_menu;
+    a.ui.show_toolbar = false;
+    a.ui.show_status_bar = false;
+    a.ui.show_command_line = false;
+    a.ui.show_palettes = false;
+    a.run("options", json!({"reset": true})).unwrap();
+    assert_eq!(a.ui.in_window_menu, d.in_window_menu);
+    assert_eq!(a.ui.show_toolbar, d.show_toolbar);
+    assert_eq!(a.ui.show_status_bar, d.show_status_bar);
+    assert_eq!(a.ui.show_command_line, d.show_command_line);
+    assert_eq!(a.ui.show_palettes, d.show_palettes);
 }
