@@ -525,3 +525,114 @@ EOF
     assert!(std::fs::read_to_string(dir.join("solid.dxf.bak")).unwrap().contains("3DSOLID"), "the backup still has it");
 }
 
+/// Review of #2355: a reference nested with different X and Y scales was offered as a level, and
+/// OK then refused it. It isn't offered (nor anything below it); a uniformly scaled one is.
+#[test]
+fn nested_references_refedit_cannot_open_are_not_offered() {
+    let mut s = Session::new();
+    let c = hx(s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap());
+    s.execute("block", &json!({ "name": "Leaf", "base": [0, 0], "handles": [c], "keep": "delete" })).unwrap();
+    let uniform = hx(s.execute("insert", &json!({ "name": "Leaf", "at": [10, 0], "scale": 2 })).unwrap());
+    let stretched = hx(s.execute("insert", &json!({ "name": "Leaf", "at": [20, 0], "scale": [2, 1] })).unwrap());
+    s.execute("block", &json!({ "name": "Holder", "base": [0, 0], "handles": [uniform, stretched], "keep": "delete" })).unwrap();
+    let o = hx(s.execute("insert", &json!({ "name": "Holder", "at": [0, 0] })).unwrap());
+    let levels = s.execute("refedit.levels", &json!({ "handle": o })).unwrap();
+    let names: Vec<&str> = levels["levels"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Holder", "Leaf"], "{levels}");
+    // The one offered opens.
+    let path = levels["levels"][1]["path"].clone();
+    s.execute("refedit", &json!({ "handle": o, "path": path })).unwrap();
+}
+
+/// Review of #2355: the faded copies carried XFADECTL in their own transparency, so lowering
+/// XFADECTL during the edit left them faded. They keep the object's own transparency now; the
+/// fade is drawn from the current XFADECTL.
+#[test]
+fn faded_copies_keep_their_own_transparency() {
+    let mut s = Session::new();
+    let a = hx(s.execute("line", &json!({ "points": [[0, 0], [5, 0]] })).unwrap());
+    let b = hx(s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap());
+    s.execute("block", &json!({ "name": "Pair", "base": [0, 0], "handles": [a, b], "keep": "delete" })).unwrap();
+    let i = hx(s.execute("insert", &json!({ "name": "Pair", "at": [0, 0] })).unwrap());
+    let d = s.doc().unwrap();
+    let blk = d.block("Pair").unwrap();
+    let line = blk.entities.iter().find(|e| matches!(e.kind, EntityKind::Line(_))).unwrap().handle;
+    let own = blk.entities.iter().find(|e| matches!(e.kind, EntityKind::Circle(_))).unwrap().common.transparency;
+    s.execute("refedit", &json!({ "handle": i, "objects": [line.hex()] })).unwrap();
+    let d = s.doc().unwrap();
+    let r = d.refedit.clone().unwrap();
+    let ghost = d.entity(r.ghosts[0].0).unwrap();
+    assert_eq!(ghost.common.transparency, own, "the circle's copy is faded by the renderer, not by its own transparency");
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+}
+
+/// Review of #2355: the xref's file opened in another tab after the edit began was overwritten
+/// by REFCLOSE Save; the save is refused while it is open there.
+#[test]
+fn an_xref_opened_in_another_tab_during_the_edit_is_not_written() {
+    let (mut s, dir, _, insert) = attached("tab-later");
+    let file = dir.join("site.dxf");
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    let host = s.active;
+    s.execute("open", &json!({ "path": file.to_string_lossy() })).unwrap();
+    s.execute("document.switch", &json!({ "index": host })).unwrap();
+    let before = std::fs::read(&file).unwrap();
+    let e = s.execute("refclose", &json!({ "option": "save" })).unwrap_err().to_string();
+    assert!(e.contains("another drawing tab"), "{e}");
+    assert_eq!(std::fs::read(&file).unwrap(), before, "the file is untouched");
+    assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
+}
+
+/// Review of #2355: the "loaded" stamp was one per file for the whole process, so a second drawing
+/// loading the xref later moved the first drawing's baseline. Here the file changes (same objects,
+/// moved) after the first drawing loaded it: that drawing still shows the old geometry, and REFEDIT
+/// there must refuse rather than pair the old geometry with the new file.
+#[test]
+fn each_drawing_keeps_its_own_xref_baseline() {
+    let (mut first, dir, _, insert) = attached("baseline");
+    let file = dir.join("site.dxf");
+    let mut moved = read(&file);
+    let h = moved.model.iter().find(|e| matches!(e.kind, EntityKind::Line(_))).unwrap().handle;
+    moved
+        .modify_entity(h, |e| {
+            if let EntityKind::Line(l) = &mut e.kind {
+                l.b.y += 1.0;
+            }
+        })
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    save(&moved, &file);
+    // Another drawing loads the changed file.
+    let other_host = dir.join("other.dxf");
+    save(&Drawing::new_metric(), &other_host);
+    let mut second = Session::new();
+    second.execute("open", &json!({ "path": other_host.to_string_lossy() })).unwrap();
+    let r = second.execute("xattach", &json!({ "path": "site.dxf", "at": [0, 0] })).unwrap();
+    second.execute("refedit", &json!({ "handle": r["handle"] })).unwrap();
+    second.execute("refclose", &json!({ "option": "discard" })).unwrap();
+    // The first drawing loaded the earlier file.
+    let e = first.execute("refedit", &json!({ "handle": insert })).unwrap_err().to_string();
+    assert!(e.contains("changed since") && e.contains("reload"), "{e}");
+}
+
+/// Review of #2355: multileader and table styles of the host that objects drawn during the edit
+/// use were not copied into the xref's file, so they lost their style there.
+#[test]
+fn host_multileader_and_table_styles_come_along() {
+    let (mut s, dir, _, insert) = attached("styles");
+    s.execute("mleaderstyle", &json!({ "name": "Callout", "textHeight": 7, "current": true })).unwrap();
+    s.execute("tablestyle", &json!({ "name": "Schedule", "textHeight": 4, "current": true })).unwrap();
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("mleader", &json!({ "points": [[100, 30], [110, 40]], "text": "A" })).unwrap();
+    s.execute("table", &json!({ "at": [120, 30], "rows": 1, "cols": 1 })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let back = read(&dir.join("site.dxf"));
+    let mleader = back.model.iter().find_map(|e| if let EntityKind::MLeader(m) = &e.kind { Some(m.style.clone()) } else { None }).unwrap();
+    let table = back.model.iter().find_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t.style.clone()) } else { None }).unwrap();
+    assert_eq!((mleader.as_str(), table.as_str()), ("Callout", "Schedule"));
+    let ml = back.mleader_styles.iter().find(|t| t.name == "Callout").expect("the multileader style is in the file");
+    assert!((ml.text_height - 7.0).abs() < 1e-9);
+    let ts = back.table_styles.iter().find(|t| t.name == "Schedule").expect("the table style is in the file");
+    assert!((ts.text_height - 4.0).abs() < 1e-9);
+}

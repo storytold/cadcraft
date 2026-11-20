@@ -28,7 +28,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::{Block, Drawing, Entity, EntityKind, EntityStore, Handle, RefEdit, Transparency, WorkItem, XrefSource, XrefStatus};
+use cadcraft_doc::{Block, Drawing, Entity, EntityKind, EntityStore, Handle, RefEdit, WorkItem, XrefSource, XrefStatus};
 use cadcraft_geom::Mat3;
 use serde_json::{Value, json};
 
@@ -77,20 +77,13 @@ fn active(s: &Session, cmd: &str) -> Result<RefEdit> {
     s.doc()?.refedit.clone().ok_or_else(|| bad(cmd, "no block reference is being edited (REFEDIT)"))
 }
 
-/// How much the block's other objects fade (XFADECTL, 0–90 percent).
-fn xfadectl(s: &Session) -> Result<u8> {
-    Ok(u8::try_from(s.doc()?.header.i64("XFADECTL", 50).clamp(0, 90)).unwrap_or(50))
-}
-
-/// A block object as the drawing shows it through the edited reference; `fade` (XFADECTL, a
-/// percentage) shows the block's other objects faded.
-fn to_host(to_world: &Mat3, e: &Entity, h: Handle, fade: Option<u8>) -> Entity {
+/// A block object as the drawing shows it through the edited reference. The copy keeps the
+/// object's own transparency: the renderer fades what is outside the working set by the current
+/// XFADECTL, so changing XFADECTL during the edit shows at once.
+fn to_host(to_world: &Mat3, e: &Entity, h: Handle) -> Entity {
     let mut c = e.clone();
     c.handle = h;
     c.kind.transform(to_world);
-    if let Some(f) = fade {
-        c.common.transparency = Transparency::Percent(f.min(90));
-    }
     c
 }
 
@@ -164,8 +157,11 @@ fn nested(d: &Drawing, name: &str, path: &mut Vec<Handle>, out: &mut Vec<(Vec<Ha
     let Some(b) = d.block(name) else { return };
     for e in b.entities.iter() {
         let EntityKind::Insert(i) = &e.kind else { continue };
-        // Generated geometry (dimensions, arrays) is not offered.
-        if i.block.starts_with('*') || d.block(&i.block).is_none_or(|c| c.array.is_some()) || out.len() >= MAX_LEVELS {
+        // Generated geometry (dimensions, arrays) is not offered, nor a reference `levels` would
+        // refuse (scaled differently in X and Y, flat): nothing below it can be edited either.
+        let Some(c) = d.block(&i.block) else { continue };
+        let editable = editable_transform(&i.transform(c.base.xy()), i.scale.x, i.scale.y);
+        if i.block.starts_with('*') || c.array.is_some() || out.len() >= MAX_LEVELS || !editable {
             continue;
         }
         path.push(e.handle);
@@ -207,9 +203,17 @@ fn xref_of(d: &Drawing, name: &str) -> Option<(String, Option<String>)> {
     Some((x.name.clone(), Some(rest.to_string())))
 }
 
+/// Whether a drawing tab other than the active one has `file` open.
+fn open_in_another_tab(s: &Session, file: &std::path::Path) -> bool {
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let me = canon(file);
+    s.docs.iter().enumerate().any(|(i, st)| i != s.active && st.path.as_deref().is_some_and(|p| canon(std::path::Path::new(p)) == me))
+}
+
 /// The source file of xref `name`, checked for an edit in place: found, not open in another
-/// drawing tab, writable, not changed since it was loaded.
-fn xref_file(s: &Session, name: &str) -> Result<std::path::PathBuf> {
+/// drawing tab, writable, not changed since this drawing loaded it. Also returns the
+/// [`load::Stamp`] it had then (this drawing's own baseline, [`Block::xref_stamp`]).
+fn xref_file(s: &Session, name: &str) -> Result<(std::path::PathBuf, load::Stamp)> {
     if cfg!(target_arch = "wasm32") {
         return Err(bad("refedit", "editing xrefs in place is not available on the web; open the xref's drawing instead"));
     }
@@ -221,20 +225,15 @@ fn xref_file(s: &Session, name: &str) -> Result<std::path::PathBuf> {
     let path = b.xref_path.clone().unwrap_or_default();
     let host = s.state().ok().and_then(|st| st.path.clone());
     let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|_| bad("refedit", format!("{path}: file not found")))?;
-    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let me = canon(&file);
-    for (i, st) in s.docs.iter().enumerate() {
-        if i != s.active && st.path.as_deref().is_some_and(|p| canon(std::path::Path::new(p)) == me) {
-            return Err(bad("refedit", format!("{} is open in another drawing tab: edit it there, or close it first", file.display())));
-        }
+    if open_in_another_tab(s, &file) {
+        return Err(bad("refedit", format!("{} is open in another drawing tab: edit it there, or close it first", file.display())));
     }
     writable(&file).map_err(|e| bad("refedit", e))?;
-    if let (Some(then), Some(now)) = (load::loaded_stamp(&file), load::stamp(&file))
-        && then != now
-    {
-        return Err(bad("refedit", format!("{} changed since xref \"{}\" was loaded; reload it first", file.display(), b.name)));
+    // Unknown (the system can't tell, or the file changed while it was read) counts as changed.
+    match (b.xref_stamp, load::stamp(&file)) {
+        (Some(then), Some(now)) if then == now => Ok((file, then)),
+        _ => Err(bad("refedit", format!("{} changed since xref \"{}\" was loaded; reload it first", file.display(), b.name))),
     }
-    Ok(file)
 }
 
 /// Whether `file` may be written: not read-only and not open in another program (AutoCAD's
@@ -354,8 +353,13 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
     // An xref's block: where it is written back.
     let xref = match xref_of(d, &blk.name) {
         Some((x, inner)) => {
-            let file = xref_file(s, &x)?;
-            let src = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+            let (file, baseline) = xref_file(s, &x)?;
+            let (src, read_as) = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+            // The handles, version and stamp all come from this one read, which must be of the
+            // file this drawing loaded.
+            if read_as != Some(baseline) {
+                return Err(bad("refedit", format!("{} changed since xref \"{x}\" was loaded; reload it first", file.display())));
+            }
             let sources = source_handles(&blk, &src, inner.as_deref())?;
             let real = std::fs::canonicalize(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
             let (version, binary) = file_form(&file, &src)?;
@@ -366,7 +370,7 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
                 version,
                 binary,
                 block: inner,
-                stamp: load::stamp(&file),
+                stamp: read_as,
                 sources,
             })
         }
@@ -405,12 +409,11 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
         path: path.clone(),
         xref,
     };
-    let fade = xfadectl(s)?;
     let doc = s.doc_mut()?;
     for e in blk.entities.iter() {
         let working = chosen.as_ref().is_none_or(|c| c.contains(&e.handle));
         let h = doc.new_handle();
-        put(doc, &r, to_host(&to_world, e, h, (!working).then_some(fade)))?;
+        put(doc, &r, to_host(&to_world, e, h))?;
         if working {
             r.items.push(WorkItem { copy: h, source: Some(e.handle) });
         } else {
@@ -421,7 +424,7 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
     for level in levels.iter().filter(|l| l.next.is_some()) {
         for e in level.block.entities.iter().filter(|e| Some(e.handle) != level.next && !matches!(e.kind, EntityKind::AttDef(_))) {
             let h = doc.new_handle();
-            put(doc, &r, to_host(&level.to_world, e, h, Some(fade)))?;
+            put(doc, &r, to_host(&level.to_world, e, h))?;
             r.ghosts.push((h, e.handle));
         }
     }
@@ -477,7 +480,6 @@ fn apply_refset(s: &mut Session, add: &[Handle], remove: &[Handle]) -> Result<Va
     }
     let blk = d.block(&r.block).cloned().ok_or_else(|| bad("refset", format!("block \"{}\" is gone; REFCLOSE Discard", r.block)))?;
     let (mut added, mut removed) = (0usize, 0usize);
-    let fade = xfadectl(s)?;
     let doc = s.doc_mut()?;
     for h in add {
         if *h == r.insert || r.is_working(*h) {
@@ -496,7 +498,7 @@ fn apply_refset(s: &mut Session, add: &[Handle], remove: &[Handle]) -> Result<Va
             };
             if let Some(cur) = cur {
                 let c = doc.new_handle();
-                put(doc, &r, to_host(&r.to_world, &cur, c, None))?;
+                put(doc, &r, to_host(&r.to_world, &cur, c))?;
                 r.items.push(WorkItem { copy: c, source: Some(src) });
                 added += 1;
             }
@@ -515,7 +517,7 @@ fn apply_refset(s: &mut Session, add: &[Handle], remove: &[Handle]) -> Result<Va
             let kept = to_block(&inv, &e, src);
             doc.remove_entity(*h);
             let g = doc.new_handle();
-            put(doc, &r, to_host(&r.to_world, &kept, g, Some(fade)))?;
+            put(doc, &r, to_host(&r.to_world, &kept, g))?;
             r.ghosts.push((g, src));
             r.released.push(kept);
         }
@@ -547,6 +549,13 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
     if save {
         objects = commit_block(&mut nd, &r)?;
         if let Some(x) = &r.xref {
+            // Opened in another tab since the edit began: that tab would hold a stale drawing.
+            if open_in_another_tab(s, std::path::Path::new(&x.file)) {
+                return Err(bad(
+                    "refclose",
+                    format!("{} is open in another drawing tab: close it there first; the edit stays open (REFCLOSE Discard ends it)", x.file),
+                ));
+            }
             // The file first: when it can't be written the edit stays open (Discard ends it).
             written = Some(write_back(&nd, &r, x)?);
         }
@@ -640,42 +649,23 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let real = std::path::Path::new(&x.real);
     writable(file).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
     still_leads_to(file, real).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
-    if load::stamp(file) != x.stamp {
+    unchanged(file, x, load::stamp(file))?;
+    let hooks = crate::cmd::file::io().ok_or_else(|| bad("refclose", "file formats are not available in this build"))?;
+    let (mut src, read_as) = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
+    // What is written over is what was just read, and that is the file the edit began with.
+    unchanged(file, x, read_as)?;
+    put_edit(nd, r, x, &mut src)?;
+    // The xref is loaded again from the file: one it could no longer load is not written.
+    let objects = load::object_count(&src);
+    if objects > load::MAX_XREF_OBJECTS {
         return Err(bad(
             "refclose",
-            format!("{} changed since the edit began; it is not overwritten (REFCLOSE Discard ends the edit)", file.display()),
+            format!(
+                "{} would hold {objects} objects, more than an xref loads ({}); it is not written (REFCLOSE Discard ends the edit)",
+                file.display(),
+                load::MAX_XREF_OBJECTS
+            ),
         ));
-    }
-    let hooks = crate::cmd::file::io().ok_or_else(|| bad("refclose", "file formats are not available in this build"))?;
-    let mut src = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
-    let blk = nd.block(&r.block).ok_or_else(|| bad("refclose", format!("block \"{}\" is gone", r.block)))?;
-    let prefix = format!("{}|", x.xref);
-    let map: HashMap<Handle, Handle> = x.sources.iter().copied().collect();
-    let mut store = EntityStore::new();
-    let mut wanted: Vec<(Sym, String)> = Vec::new();
-    for e in blk.entities.iter() {
-        let mut e = (**e).clone();
-        e.handle = match map.get(&e.handle) {
-            Some(h) => *h,
-            None => src.new_handle(),
-        };
-        rename_into_source(&mut e, &prefix, &mut wanted);
-        store.push(e);
-    }
-    bring_symbols(nd, &mut src, &prefix, wanted);
-    match &x.block {
-        None => src.model = store,
-        Some(name) => {
-            let key = src
-                .blocks
-                .keys()
-                .find(|k| k.eq_ignore_ascii_case(name))
-                .cloned()
-                .ok_or_else(|| bad("refclose", format!("block \"{name}\" is gone from {}", file.display())))?;
-            if let Some(b) = src.blocks.get_mut(&key) {
-                Arc::make_mut(b).entities = store;
-            }
-        }
     }
     // In the version and form the file was read in, not the writer's default (a DWG at 2004 or
     // later): a version change can lock out whoever made the file.
@@ -690,8 +680,60 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let as_version =
         version.unwrap_or_else(|| src.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver).unwrap_or_default());
     let lost = crate::cmd::file::loss_writing(&src, &x.file, as_version);
+    // Once more just before the file is replaced: another program may have saved it while the
+    // new file was made. (Without a lock every writer honours, this narrows the window; it
+    // can't close it.)
+    unchanged(file, x, load::stamp(file))?;
     let backup = replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))?;
     Ok(Written { backup, lost })
+}
+
+/// Refuse when `now` (the xref's file as it is, or as just read) is not the file the edit began
+/// with; an unknown stamp counts as changed.
+fn unchanged(file: &std::path::Path, x: &XrefSource, now: Option<load::Stamp>) -> Result<()> {
+    if x.stamp.is_none() || now != x.stamp {
+        return Err(bad(
+            "refclose",
+            format!("{} changed since the edit began; it is not overwritten (REFCLOSE Discard ends the edit)", file.display()),
+        ));
+    }
+    Ok(())
+}
+
+/// Put the edited block of `nd` (committed) into `src`, the xref's drawing as read: its objects
+/// with their source handles and names, and the host symbols they use.
+fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Result<()> {
+    let file = std::path::Path::new(&x.file);
+    let blk = nd.block(&r.block).ok_or_else(|| bad("refclose", format!("block \"{}\" is gone", r.block)))?;
+    let prefix = format!("{}|", x.xref);
+    let map: HashMap<Handle, Handle> = x.sources.iter().copied().collect();
+    let mut store = EntityStore::new();
+    let mut wanted: Vec<(Sym, String)> = Vec::new();
+    for e in blk.entities.iter() {
+        let mut e = (**e).clone();
+        e.handle = match map.get(&e.handle) {
+            Some(h) => *h,
+            None => src.new_handle(),
+        };
+        rename_into_source(&mut e, &prefix, &mut wanted);
+        store.push(e);
+    }
+    bring_symbols(nd, src, &prefix, wanted, MAX_SYMBOLS)?;
+    match &x.block {
+        None => src.model = store,
+        Some(name) => {
+            let key = src
+                .blocks
+                .keys()
+                .find(|k| k.eq_ignore_ascii_case(name))
+                .cloned()
+                .ok_or_else(|| bad("refclose", format!("block \"{name}\" is gone from {}", file.display())))?;
+            if let Some(b) = src.blocks.get_mut(&key) {
+                Arc::make_mut(b).entities = store;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a save when `file` no longer leads to `real` (the file the edit began with), or `real`
@@ -723,16 +765,32 @@ fn rename_into_source(e: &mut Entity, prefix: &str, wanted: &mut Vec<(Sym, Strin
     wanted.extend(found.into_inner());
 }
 
+/// Most distinct symbols [`bring_symbols`] looks at for one save (hostile drawings: blocks naming
+/// blocks naming blocks…).
+const MAX_SYMBOLS: usize = 100_000;
+
 /// Copy the host's symbols that objects written into `src` use and `src` lacks (layers,
-/// linetypes, text and dimension styles, and blocks with what they use in turn).
-fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Vec<(Sym, String)>) {
+/// linetypes, text, dimension, multileader and table styles, and blocks with what they use in
+/// turn). Only distinct names count against `cap`; past it the save is refused rather than
+/// written with symbols missing.
+fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Vec<(Sym, String)>, cap: usize) -> Result<()> {
     let mut seen: HashSet<(Sym, String)> = HashSet::new();
-    let mut guard = 0usize;
     while let Some((sym, name)) = wanted.pop() {
-        guard += 1;
-        if guard > 100_000 || name.is_empty() || !seen.insert((sym, name.to_ascii_uppercase())) {
+        if name.is_empty() || !seen.insert((sym, name.to_ascii_uppercase())) {
             continue;
         }
+        if seen.len() > cap {
+            return Err(bad("refclose", format!("the edit uses more than {cap} symbols; the xref is not written (REFCLOSE Discard ends the edit)")));
+        }
+        bring_symbol(host, src, prefix, sym, &name, &mut wanted);
+    }
+    Ok(())
+}
+
+/// Copy host symbol `name` of kind `sym` into `src` when `src` lacks it, queueing what it uses.
+fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name: &str, wanted: &mut Vec<(Sym, String)>) {
+    let name = name.to_string();
+    {
         match sym {
             Sym::Layer => {
                 if name != "0"
@@ -777,14 +835,27 @@ fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Ve
                     for e in b.entities.iter() {
                         let mut e = (**e).clone();
                         e.handle = src.new_handle();
-                        rename_into_source(&mut e, prefix, &mut wanted);
+                        rename_into_source(&mut e, prefix, wanted);
                         store.push(e);
                     }
                     nb.entities = store;
                     src.blocks.insert(nb.name.clone(), Arc::new(nb));
                 }
             }
-            Sym::MLeaderStyle | Sym::TableStyle => {}
+            Sym::MLeaderStyle => {
+                let have = src.mleader_styles.iter().any(|t| t.name.eq_ignore_ascii_case(&name));
+                if !have && let Some(t) = host.mleader_styles.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+                    wanted.push((Sym::Style, t.text_style.clone()));
+                    src.mleader_styles.push(t.clone());
+                }
+            }
+            Sym::TableStyle => {
+                let have = src.table_styles.iter().any(|t| t.name.eq_ignore_ascii_case(&name));
+                if !have && let Some(t) = host.table_styles.iter().find(|t| t.name.eq_ignore_ascii_case(&name)) {
+                    wanted.extend(t.cell_styles.iter().map(|c| (Sym::Style, c.text_style.clone())));
+                    src.table_styles.push(t.clone());
+                }
+            }
         }
     }
 }
@@ -1043,5 +1114,30 @@ impl Interactive for RefcloseM {
             (false, _) => "Reference changes discarded.".to_string(),
         });
         Ok(Step::Done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Review of #2355: the budget counted every queued reference, so a host-only layer queued
+    /// first was skipped once enough repeated ones followed it, and the file was written without
+    /// it. Only distinct names count now, and running out refuses the save.
+    #[test]
+    fn repeated_symbols_do_not_use_up_the_budget() {
+        let mut host = Drawing::new_metric();
+        host.layers.push(cadcraft_doc::Layer { name: "Added".into(), ..cadcraft_doc::Layer::default() });
+        let mut wanted = vec![(Sym::Layer, "Added".to_string())];
+        for _ in 0..1000 {
+            wanted.push((Sym::Layer, "0".into()));
+            wanted.push((Sym::Linetype, "ByLayer".into()));
+        }
+        // Distinct: ByLayer, 0, Added and its linetype.
+        let mut src = Drawing::new_metric();
+        bring_symbols(&host, &mut src, "x|", wanted.clone(), 4).unwrap();
+        assert!(src.layer("Added").is_some(), "the layer queued first is copied");
+        let mut src = Drawing::new_metric();
+        assert!(bring_symbols(&host, &mut src, "x|", wanted, 2).is_err(), "past the budget the save is refused");
     }
 }
