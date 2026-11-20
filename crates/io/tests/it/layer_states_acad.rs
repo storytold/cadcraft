@@ -367,6 +367,8 @@ fn a_layer_of_an_xref_gets_group_93() {
 
 #[test]
 fn named_plot_styles_are_written_by_placeholder() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     // In a drawing of named plot styles AutoCAD 2024 writes a layer's plot style as group 390, the
     // handle of the style's placeholder object (measured); CADCraft reads it back by that handle.
     let mut d = drawing();
