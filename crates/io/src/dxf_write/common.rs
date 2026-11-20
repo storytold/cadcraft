@@ -22,6 +22,8 @@ pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
         used: std::collections::HashSet::new(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
         reactors: HashMap::new(),
     };
     let mut sah = false;
