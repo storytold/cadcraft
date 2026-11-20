@@ -346,8 +346,14 @@ mod tests {
     /// under a redirected `%LOCALAPPDATA%`; the socket tests then skip instead of failing.
     #[cfg(windows)]
     fn can_bind(path: &std::path::Path) -> bool {
-        let bound =
-            uds_windows::UnixListener::bind(path).map(drop).map_err(|e| eprintln!("skipping: no AF_UNIX socket at {}: {e}", path.display())).is_ok();
+        let bound = uds_windows::UnixListener::bind(path)
+            .map(drop)
+            .map_err(|e| {
+                // Straight to stderr: the test harness hides `eprintln!` from a test that passes.
+                use std::io::Write;
+                let _ = writeln!(std::io::stderr(), "skipping: no AF_UNIX socket at {}: {e}", path.display());
+            })
+            .is_ok();
         let _ = std::fs::remove_file(path);
         bound
     }
