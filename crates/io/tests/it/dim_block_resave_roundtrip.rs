@@ -290,6 +290,7 @@ fn an_unedited_dimension_keeps_the_block_it_was_read_with() {
 /// read, under its own name, as a `*D` one does; no `*D` copy is made next to it (#3299).
 #[test]
 fn an_unedited_dimension_keeps_a_block_with_any_name() {
+    cadcraft_io::dwg_worker::allow_in_process();
     use cadcraft_doc::{Circle, Text};
     const NAME: &str = "DIMBLOCK1-PLAN";
     let mut d = Drawing::new_metric();
@@ -350,4 +351,37 @@ fn an_unedited_dimension_keeps_a_block_with_any_name() {
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&edited).as_bytes()).unwrap();
     let (name, _, _, circles, texts) = picture(&again);
     assert!(name.starts_with("*D") && circles == 0 && !texts.contains(&"10,00".to_string()), "edited: {name} {circles} {texts:?}");
+}
+
+/// A block with another name that a dimension names keeps its record's properties and its
+/// description through a save; when it is empty the picture is regenerated in world coordinates,
+/// so the block is written at the origin, not at the read base point, which would shift it.
+#[test]
+fn a_kept_dimension_block_with_another_name_keeps_its_properties_and_an_empty_one_is_at_the_origin() {
+    const NAME: &str = "DIMBLOCK2-PLAN";
+    let build = |with_picture: bool| {
+        let mut d = Drawing::new_metric();
+        let mut b = Block::new(NAME);
+        if with_picture {
+            let h = d.new_handle();
+            b.entities.push(Entity::new(h, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })));
+        }
+        b.base = Vec3::new(1.0, 2.0, 0.0);
+        b.description = "picture of a plan dimension".into();
+        b.units = 4;
+        b.explodable = false;
+        d.blocks.insert(NAME.into(), Arc::new(b));
+        let mut dm = linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]);
+        dm.block = Some(NAME.into());
+        d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+        d
+    };
+    let back = |d: &Drawing| {
+        let read = cadcraft_io::read_dxf(cadcraft_io::write_dxf(d).as_bytes()).unwrap();
+        let b = read.block(NAME).expect("the named block is written").as_ref().clone();
+        (b.base, b.description, b.units, b.explodable, b.entities.is_empty())
+    };
+    let props = |base: Vec3| (base, "picture of a plan dimension".to_string(), 4u8, false, false);
+    assert_eq!(back(&build(true)), props(Vec3::new(1.0, 2.0, 0.0)), "kept picture");
+    assert_eq!(back(&build(false)), props(Vec3::ZERO), "regenerated picture");
 }

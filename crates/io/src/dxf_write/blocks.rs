@@ -14,8 +14,14 @@ pub(super) struct DimBlockPlan {
     pub(super) skip: std::collections::HashSet<String>,
 }
 
-pub(super) fn is_dim_block(name: &str) -> bool {
+fn is_dim_block(name: &str) -> bool {
     name.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("*D"))
+}
+
+/// The read block, not named `*D`, that a dimension block definition named `name` is written
+/// from (#3299): its record and block properties are written as read.
+pub(super) fn kept_named_dim_block<'a>(d: &'a Drawing, name: &str) -> Option<&'a Block> {
+    d.block(name).filter(|_| !is_dim_block(name)).map(|b| b.as_ref())
 }
 
 pub(super) fn dim_block_plan(d: &Drawing) -> DimBlockPlan {

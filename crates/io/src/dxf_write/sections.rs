@@ -1129,7 +1129,12 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         br_rec(&mut w, h, n, None, Some(b));
     }
-    for (n, h, _) in dim_defs.iter().chain(arrow_defs.iter()).chain(table_defs.iter()) {
+    // A block with another name that a dimension was read with keeps its record's properties
+    // (insertion units, explodability) as read (#3299).
+    for (n, h, _) in &dim_defs {
+        br_rec(&mut w, h, n, None, super::blocks::kept_named_dim_block(d, n));
+    }
+    for (n, h, _) in arrow_defs.iter().chain(table_defs.iter()) {
         br_rec(&mut w, h, n, None, None);
     }
     w.s(0, "ENDTAB");
@@ -1190,13 +1195,15 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         }
     }
     for (n, h, ents) in &dim_defs {
-        // A block with another name that a dimension was read with keeps its base point and
-        // flags as read (#3299); `*D` blocks are anonymous at the origin.
-        let (base, flags) = match d.block(n).filter(|_| !super::blocks::is_dim_block(n)) {
-            Some(b) => (b.base, i64::from(b.anonymous)),
-            None => (Vec3::ZERO, 1),
+        // A block with another name that a dimension was read with keeps its description, flags
+        // and base point as read (#3299); `*D` blocks are anonymous at the origin. A picture
+        // regenerated into an empty read block is drawn in world coordinates, so it is at the
+        // origin too.
+        let (desc, base, flags) = match super::blocks::kept_named_dim_block(d, n) {
+            Some(b) => (b.description.as_str(), if b.entities.is_empty() { Vec3::ZERO } else { b.base }, i64::from(b.anonymous)),
+            None => ("", Vec3::ZERO, 1),
         };
-        block(&mut w, (n, ""), h, base, flags, &mut ents.iter(), false);
+        block(&mut w, (n, desc), h, base, flags, &mut ents.iter(), false);
     }
     for (n, h, ents) in &arrow_defs {
         block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut ents.iter(), false);
