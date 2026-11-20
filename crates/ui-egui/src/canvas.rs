@@ -293,8 +293,11 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
-    // PAN (realtime): the drawing follows a left-button drag.
-    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_pan_active() {
+    // PAN (realtime): the drawing follows a left-button drag. Only a drag that started on the
+    // current tile pans it: the canvas response covers every tile, and a drag from another one
+    // would move this one's view.
+    let pressed_here = ui.input(|i| i.pointer.press_origin()).is_some_and(|at| nav.rect.contains(at));
+    if pressed_here && nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_pan_active() {
         let d = nav.response.drag_delta();
         let _ = app.session.realtime_pan(f64::from(d.x), f64::from(d.y));
     }

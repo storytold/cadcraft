@@ -114,3 +114,28 @@ fn a_pan_drag_stopped_by_escape_leaves_the_next_drag_placing_a_point() {
     h.run_steps(2);
     assert_eq!(lines(&h), 1, "the drag after an Escape-stopped pan drag placed no point");
 }
+
+#[test]
+fn a_pan_drag_from_another_tile_leaves_the_current_tile_where_it_was() {
+    let mut h = harness();
+    h.state_mut().run("-vports", json!({ "option": "2", "arrangement": "vertical" })).unwrap();
+    h.run_steps(3);
+    h.state_mut().session.cmdline("PAN").unwrap();
+    h.run_steps(1);
+    assert!(h.state().session.realtime_pan_active());
+    let rect = h.state().canvas.rect.unwrap();
+    let before = h.state().session.state().unwrap().view();
+    // A point on the other tile: beside the current one, whichever side it is on.
+    let x = if rect.left() > 400.0 { rect.left() - rect.width() / 2.0 } else { rect.right() + rect.width() / 2.0 };
+    let a = Pos2::new(x, rect.center().y);
+    let b = a + vec2(120.0, -60.0);
+    button(&mut h, a, true);
+    for i in 1..=4 {
+        h.event(Event::PointerMoved(a + (b - a) * (i as f32 / 4.0)));
+        h.run_steps(1);
+    }
+    button(&mut h, b, false);
+    h.run_steps(2);
+    let after = h.state().session.state().unwrap().view();
+    assert_eq!((after.center, after.height), (before.center, before.height), "a drag from another tile panned the current one");
+}
