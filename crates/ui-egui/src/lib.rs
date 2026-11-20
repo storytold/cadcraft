@@ -32,7 +32,6 @@ pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
-pub mod dimstyles;
 pub mod docking;
 pub mod editor_glyphs;
 pub mod fault;
@@ -47,6 +46,8 @@ pub mod switch;
 pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
+
+pub mod blocks_palette;
 
 pub mod dyngrips;
 pub mod dyninput;

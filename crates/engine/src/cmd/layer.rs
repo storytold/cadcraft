@@ -106,6 +106,10 @@ pub fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<Strin
         if !set.contains(&e.common.layer.to_ascii_lowercase()) {
             set.insert(e.common.layer.to_ascii_lowercase());
         }
+        // An attribute can sit on a layer of its own.
+        for layer in super::blocks::object_attribs(e).iter().filter_map(|a| a.props.layer.as_ref()) {
+            set.insert(layer.to_ascii_lowercase());
+        }
     }
     set
 }
