@@ -44,6 +44,9 @@ const MAX_FEATURES: usize = 2_000_000;
 const MAX_TOTAL_VERTS: usize = 8_000_000;
 const MAX_XDATA_STRING: usize = 255;
 const MAX_XDATA_BYTES: usize = 16_000;
+const MAX_XDATA_TOTAL: usize = 256 << 20;
+const XDATA_TAG_COST: usize = 32;
+const INSUNITS_METRES: i64 = 6;
 const MAX_LABEL_CHARS: usize = 64;
 const MIN_LABEL_HEIGHT: f64 = 0.5;
 const MAX_LABEL_HEIGHT: f64 = 25.0;
@@ -122,6 +125,38 @@ pub fn import(name: &str, main: &[u8], dbf: Option<&[u8]>, prj: Option<&str>, pa
     r.map_err(|e| e.to_string())
 }
 
+/// Whether `name` with `bytes` is a GeoJSON file: a `.geojson` name, or a `.json` one whose start
+/// has a `"type"` member naming a GeoJSON object.
+pub fn is_geojson(name: impl AsRef<std::path::Path>, bytes: &[u8]) -> bool {
+    match crate::ext(name).as_str() {
+        "geojson" => true,
+        "json" => sniff_geojson(bytes),
+        _ => false,
+    }
+}
+
+/// Whether the start of `bytes` is a JSON object with a GeoJSON `"type"` member.
+pub fn sniff_geojson(bytes: &[u8]) -> bool {
+    const TYPES: &[&str] =
+        &["FeatureCollection", "Feature", "Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon", "GeometryCollection"];
+    let head = &bytes[..bytes.len().min(65_536)];
+    let text = String::from_utf8_lossy(head);
+    let t = text.trim_start_matches('\u{feff}').trim_start();
+    if !t.starts_with('{') {
+        return false;
+    }
+    let mut rest = t;
+    while let Some(i) = rest.find("\"type\"") {
+        rest = &rest[i + 6..];
+        let Some(v) = rest.trim_start().strip_prefix(':') else { continue };
+        let Some(v) = v.trim_start().strip_prefix('"') else { continue };
+        if TYPES.iter().any(|ty| v.strip_prefix(ty).is_some_and(|r| r.starts_with('"'))) {
+            return true;
+        }
+    }
+    false
+}
+
 /// A shapefile's geometry (`shp`), attributes (`dbf`, matched to the shapes by record order) and
 /// coordinate system (`prj`, WKT). `name` is the file's name, whose stem helps sort features.
 pub fn read_shapefile(shp: &[u8], dbf: Option<&[u8]>, prj: Option<&str>, name: &str, opts: &Options) -> Result<Drawing> {
@@ -137,8 +172,17 @@ pub fn read_shapefile(shp: &[u8], dbf: Option<&[u8]>, prj: Option<&str>, name: &
                     src.features.len()
                 ));
             }
-            for (f, row) in src.features.iter_mut().zip(table.rows) {
-                f.attrs = row;
+            let mut deleted = 0usize;
+            for ((f, row), gone) in src.features.iter_mut().zip(table.rows).zip(table.deleted) {
+                if gone {
+                    *f = Feature::default();
+                    deleted += 1;
+                } else {
+                    f.attrs = row;
+                }
+            }
+            if deleted > 0 {
+                src.notes.push(format!("GIS: {deleted} shapes whose attribute records are marked deleted were left out"));
             }
             src.notes.extend(table.notes);
         }
@@ -263,7 +307,11 @@ fn mid_latitude(src: &Source) -> f64 {
     if lo.is_finite() && hi.is_finite() { (lo + hi) / 2.0 } else { 0.0 }
 }
 
-fn build(mut src: Source, name: &str, opts: &Options) -> Result<Drawing> {
+fn build(src: Source, name: &str, opts: &Options) -> Result<Drawing> {
+    build_limited(src, name, opts, MAX_XDATA_TOTAL)
+}
+
+fn build_limited(mut src: Source, name: &str, opts: &Options, xdata_limit: usize) -> Result<Drawing> {
     let geographic = match opts.projection {
         Projection::WebMercator => true,
         Projection::None => false,
@@ -279,9 +327,12 @@ fn build(mut src: Source, name: &str, opts: &Options) -> Result<Drawing> {
         ));
     }
     let stem = std::path::Path::new(name).file_stem().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let metres = geographic || src.geographic == Some(false);
     let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", if metres { INSUNITS_METRES } else { 0 });
+    let mut left = xdata_limit;
     for f in &src.features {
-        add_feature(&mut d, f, &stem, opts)?;
+        add_feature(&mut d, f, &stem, opts, &mut left)?;
     }
     for l in &mut d.layers {
         if let Some((_, c)) = LAYER_COLORS.iter().find(|(n, _)| l.name.eq_ignore_ascii_case(n)) {
@@ -297,8 +348,22 @@ fn add(d: &mut Drawing, layer: &str, xdata: &[RawTag], kind: EntityKind) -> Resu
     d.add(&Space::Model, common, kind).map(|_| ()).map_err(|e| IoError::Format(format!("GIS: {e}")))
 }
 
-fn add_feature(d: &mut Drawing, f: &Feature, stem: &str, opts: &Options) -> Result<()> {
+fn xdata_cost(xdata: &[RawTag]) -> usize {
+    xdata.iter().map(|t| t.value.len() + XDATA_TAG_COST).sum()
+}
+
+fn entity_count(f: &Feature) -> usize {
+    f.points.len()
+        + f.lines.iter().filter(|l| l.len() >= 2).count()
+        + f.polygons.iter().flat_map(|p| std::iter::once(&p.outer).chain(&p.holes)).filter(|r| r.len() >= 3).count()
+}
+
+fn add_feature(d: &mut Drawing, f: &Feature, stem: &str, opts: &Options, left: &mut usize) -> Result<()> {
     let xdata = xdata(&f.attrs);
+    let cost = xdata_cost(&xdata).saturating_mul(entity_count(f));
+    *left = left
+        .checked_sub(cost)
+        .ok_or_else(|| IoError::Format(format!("GIS: the attributes copied onto the entities would take more than {} MB", MAX_XDATA_TOTAL >> 20)))?;
     let by_field = opts.layer_field.as_deref().and_then(|k| attr(&f.attrs, k)).and_then(layer_name);
     let layer = |kind| by_field.clone().unwrap_or_else(|| classify(kind, &f.attrs, stem).to_string());
     if !f.points.is_empty() {
@@ -393,7 +458,7 @@ fn xdata(attrs: &[(String, String)]) -> Vec<RawTag> {
     let mut out = Vec::new();
     let mut total = 0usize;
     for (k, v) in attrs.iter().filter(|(_, v)| !v.is_empty()) {
-        let pair: String = format!("{k}={v}").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+        let pair: String = format!("{}={v}", escape_key(k)).chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
         let pair = clip(&pair, MAX_XDATA_STRING);
         total += pair.len();
         if total > MAX_XDATA_BYTES {
@@ -410,13 +475,38 @@ fn xdata(attrs: &[(String, String)]) -> Vec<RawTag> {
 /// The attributes a GIS entity carries in its `GIS` xdata, in order.
 pub fn attributes(xdata: &[RawTag]) -> Vec<(String, String)> {
     let Some(at) = xdata.iter().position(|t| t.code == 1001 && t.value.trim().eq_ignore_ascii_case(APP)) else { return Vec::new() };
-    xdata
-        .iter()
-        .skip(at + 1)
-        .take_while(|t| t.code != 1001)
-        .filter(|t| t.code == 1000)
-        .filter_map(|t| t.value.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect()
+    xdata.iter().skip(at + 1).take_while(|t| t.code != 1001).filter(|t| t.code == 1000).filter_map(|t| split_pair(&t.value)).collect()
+}
+
+fn escape_key(k: &str) -> String {
+    let mut o = String::with_capacity(k.len());
+    for c in k.chars() {
+        if c == '\\' || c == '=' {
+            o.push('\\');
+        }
+        o.push(c);
+    }
+    o
+}
+
+fn split_pair(s: &str) -> Option<(String, String)> {
+    let mut key = String::new();
+    let mut it = s.char_indices();
+    while let Some((i, c)) = it.next() {
+        match c {
+            '=' => return Some((key, s.get(i + 1..)?.to_string())),
+            '\\' => match it.next() {
+                Some((_, n @ ('\\' | '='))) => key.push(n),
+                Some((_, n)) => {
+                    key.push('\\');
+                    key.push(n);
+                }
+                None => key.push('\\'),
+            },
+            _ => key.push(c),
+        }
+    }
+    None
 }
 
 fn label_text(attrs: &[(String, String)]) -> Option<String> {
@@ -470,7 +560,10 @@ fn label(polygons: &[Polygon], text: String) -> Option<Text> {
     });
     let chars = text.chars().count().max(1) as f64;
     let fit = (0.8 * (hi.x - lo.x) / (0.7 * chars)).min(0.4 * (hi.y - lo.y));
-    let height = if fit.is_finite() { fit.clamp(MIN_LABEL_HEIGHT, MAX_LABEL_HEIGHT) } else { MIN_LABEL_HEIGHT };
+    if !fit.is_finite() || fit < MIN_LABEL_HEIGHT {
+        return None;
+    }
+    let height = fit.min(MAX_LABEL_HEIGHT);
     let z = p.outer.first().map_or(0.0, |q| q.z);
     let at = Vec3::new(at.x, at.y, z);
     Some(Text {

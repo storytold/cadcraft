@@ -5,10 +5,12 @@ use crate::{IoError, Result};
 
 const MAX_FIELDS: usize = 2048;
 
-/// The records of a table as (field name, value) pairs, empty values left out.
+/// The records of a table as (field name, value) pairs, empty values left out, and whether each
+/// record is marked deleted.
 #[derive(Debug, Default)]
 pub(super) struct Table {
     pub rows: Vec<Vec<(String, String)>>,
+    pub deleted: Vec<bool>,
     pub notes: Vec<String>,
 }
 
@@ -96,6 +98,7 @@ pub(super) fn read(b: &[u8]) -> Result<Table> {
             }
         }
         table.rows.push(attrs);
+        table.deleted.push(row.first() == Some(&0x2A));
     }
     if short {
         table.notes.push("GIS: some .dbf fields run past the record length and were left out".into());

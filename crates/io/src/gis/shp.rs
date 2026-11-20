@@ -131,18 +131,91 @@ fn inside(p: Vec3, ring: &[Vec3]) -> bool {
     inside
 }
 
+fn bounds(ring: &[Vec3]) -> (f64, f64, f64, f64) {
+    ring.iter().fold((f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY), |(x0, y0, x1, y1), p| {
+        (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y))
+    })
+}
+
+const GRID_BIG: usize = 64;
+
+/// Outer rings bucketed by bounding box on a grid, so a hole looks only at rings near its point.
+struct RingIndex {
+    x0: f64,
+    y0: f64,
+    cw: f64,
+    ch: f64,
+    n: usize,
+    cells: Vec<Vec<usize>>,
+    big: Vec<usize>,
+    boxes: Vec<(f64, f64, f64, f64)>,
+}
+
+impl RingIndex {
+    fn new(outer: &[Polygon]) -> Self {
+        let boxes: Vec<_> = outer.iter().map(|p| bounds(&p.outer)).collect();
+        let (x0, y0, x1, y1) = boxes.iter().fold((f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY), |a, b| {
+            (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
+        });
+        let n = (outer.len() as f64).sqrt().ceil().clamp(1.0, 1024.0) as usize;
+        let cw = ((x1 - x0) / n as f64).max(f64::MIN_POSITIVE);
+        let ch = ((y1 - y0) / n as f64).max(f64::MIN_POSITIVE);
+        let mut ix = RingIndex { x0, y0, cw, ch, n, cells: vec![Vec::new(); n * n], big: Vec::new(), boxes };
+        for i in 0..outer.len() {
+            let (bx0, by0, bx1, by1) = ix.boxes[i];
+            let (c0, c1, r0, r1) = (ix.col(bx0), ix.col(bx1), ix.row(by0), ix.row(by1));
+            if (c1 - c0 + 1) * (r1 - r0 + 1) > GRID_BIG {
+                ix.big.push(i);
+                continue;
+            }
+            for r in r0..=r1 {
+                for c in c0..=c1 {
+                    ix.cells[r * n + c].push(i);
+                }
+            }
+        }
+        ix
+    }
+
+    fn col(&self, x: f64) -> usize {
+        (((x - self.x0) / self.cw).max(0.0) as usize).min(self.n - 1)
+    }
+
+    fn row(&self, y: f64) -> usize {
+        (((y - self.y0) / self.ch).max(0.0) as usize).min(self.n - 1)
+    }
+
+    fn candidates(&self, p: Vec3) -> impl Iterator<Item = usize> + '_ {
+        let cell = self.row(p.y) * self.n + self.col(p.x);
+        self.cells.get(cell).into_iter().flatten().chain(&self.big).copied().filter(move |&i| {
+            let (x0, y0, x1, y1) = self.boxes[i];
+            p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1
+        })
+    }
+}
+
 /// A shapefile polygon's rings as polygons: clockwise rings are outer rings, counter-clockwise
 /// ones holes of the outer ring around them. A hole no outer ring holds stands alone.
 fn polygons(rings: Vec<Vec<Vec3>>) -> Vec<Polygon> {
     let (outer, holes): (Vec<_>, Vec<_>) = rings.into_iter().partition(|r| area2(r) <= 0.0);
     let mut out: Vec<Polygon> = outer.into_iter().map(|outer| Polygon { outer, holes: Vec::new() }).collect();
+    if holes.is_empty() {
+        return out;
+    }
+    let index = RingIndex::new(&out);
+    let mut alone = Vec::new();
     for h in holes {
         let first = h.first().copied().unwrap_or(Vec3::ZERO);
-        match out.iter_mut().filter(|p| inside(first, &p.outer)).min_by(|a, b| area2(&a.outer).abs().total_cmp(&area2(&b.outer).abs())) {
-            Some(p) => p.holes.push(h),
-            None => out.push(Polygon { outer: h, holes: Vec::new() }),
+        let best = index
+            .candidates(first)
+            .filter(|&i| inside(first, &out[i].outer))
+            .min_by(|&a, &b| area2(&out[a].outer).abs().total_cmp(&area2(&out[b].outer).abs()));
+        match best {
+            Some(i) => out[i].holes.push(h),
+            None => alone.push(Polygon { outer: h, holes: Vec::new() }),
         }
     }
+    out.extend(alone);
     out
 }
 

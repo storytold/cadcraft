@@ -785,7 +785,7 @@ impl CadApp {
             }
             return;
         }
-        if cadcraft_io::gis::is_gis_file(path) {
+        if cadcraft_io::gis::is_gis_file(path) || is_geojson_json_file(path) {
             self.import_gis(path);
             return;
         }
@@ -871,6 +871,10 @@ impl CadApp {
             return self.load_lisp(name, &String::from_utf8_lossy(bytes));
         }
         let data = cadcraft_engine::cmd::file::base64_encode(bytes);
+        if cadcraft_io::gis::is_gis_file(name) || cadcraft_io::gis::is_geojson(name, bytes) {
+            self.import_gis_params(json!({ "data": data, "name": name }));
+            return;
+        }
         let r = self.run("open", json!({ "data": data, "name": name }));
         self.opened(r);
     }
@@ -883,11 +887,15 @@ impl CadApp {
             self.open_failed(format!("importgis: {}: the path is not valid Unicode", path.display()));
             return;
         };
+        self.import_gis_params(json!({ "path": text }));
+    }
+
+    fn import_gis_params(&mut self, params: Value) {
         if self.session.state().is_err() || self.ui.start_tab {
             let r = self.run("new", json!({}));
             self.opened(r);
         }
-        match self.run("importgis", json!({ "path": text })) {
+        match self.run("importgis", params) {
             Ok(_) => self.canvas.zoom_pending = true,
             Err(e) => self.set_status(e),
         }
@@ -1228,6 +1236,15 @@ fn request_paint_while_hidden(ctx: &egui::Context) {
 pub fn now_ms() -> f64 {
     static START: std::sync::OnceLock<web_time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(web_time::Instant::now).elapsed().as_secs_f64() * 1000.0
+}
+
+fn is_geojson_json_file(path: &Path) -> bool {
+    use std::io::Read;
+    if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+        return false;
+    }
+    let mut head = Vec::new();
+    std::fs::File::open(path).and_then(|f| f.take(65_536).read_to_end(&mut head)).is_ok() && cadcraft_io::gis::sniff_geojson(&head)
 }
 
 /// A LISP source file, by its name.

@@ -48,7 +48,7 @@ fn crs_geographic(obj: &Map<String, Value>) -> Option<bool> {
     if name.is_empty() {
         return None;
     }
-    Some(name.contains("CRS84") || name.ends_with(":4326") || name.ends_with("::4326"))
+    Some(name.contains("CRS84") || name.ends_with(":4326") || name.ends_with("::4326") || name.ends_with("/4326"))
 }
 
 fn attr_value(v: &Value) -> Option<String> {

@@ -106,3 +106,28 @@ fn geojson_data_imports_by_alias_and_undoes() {
     let bad = s.execute("importgis", &json!({ "data": base64_encode(b"{}"), "name": "x.geojson" }));
     assert!(bad.is_err());
 }
+
+#[test]
+fn projected_metres_are_converted_to_the_drawings_units() {
+    let gj = br#"{"type":"LineString","coordinates":[[0,0],[0.001,0]]}"#;
+    let import = |insunits: i64, extra: serde_json::Value| {
+        let mut s = session();
+        s.doc_mut().unwrap().header.set_i64("INSUNITS", insunits);
+        let mut p = json!({ "data": base64_encode(gj), "name": "l.geojson" });
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        s.execute("importgis", &p).unwrap();
+        let d = s.doc().unwrap();
+        let e = d.space(&Space::Model).unwrap().iter().next().unwrap();
+        match &e.kind {
+            EntityKind::LwPolyline(l) => l.vertices[1].p.x,
+            _ => panic!("not a polyline"),
+        }
+    };
+    let metres = 6_378_137.0 * 0.001f64.to_radians();
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6 * b.abs();
+    assert!(close(import(6, json!({})), metres));
+    assert!(close(import(4, json!({})), metres * 1000.0), "a millimetre drawing gets millimetres");
+    assert!(close(import(1, json!({})), metres / 0.0254));
+    assert!(close(import(4, json!({ "scale": 2 })), metres * 2000.0), "an explicit scale still applies");
+    assert!(close(import(0, json!({})), metres), "a unitless drawing is left as is");
+}

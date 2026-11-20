@@ -361,3 +361,98 @@ fn import_picks_the_reader() {
     assert!(import("x.json", b"nope", None, None, &json!({})).is_err());
     assert!(is_gis_file("A.SHP") && is_gis_file("b.geojson") && !is_gis_file("c.dxf"));
 }
+
+#[test]
+fn xdata_copies_across_multipart_entities_are_budgeted() {
+    let attrs = vec![("note".to_string(), "x".repeat(200))];
+    let feature = Feature { points: (0..50).map(|k| Vec3::new(f64::from(k), 0.0, 0.0)).collect(), attrs, ..Feature::default() };
+    let one = xdata_cost(&xdata(&feature.attrs));
+    let src = || Source { features: vec![feature.clone()], geographic: Some(false), notes: Vec::new() };
+    let e = build_limited(src(), "m.geojson", &Options::default(), one * 49).unwrap_err();
+    assert!(e.to_string().contains("attributes"), "{e}");
+    let d = build_limited(src(), "m.geojson", &Options::default(), one * 50).unwrap();
+    assert_eq!(on(&d, POINTS).len(), 50);
+}
+
+#[test]
+fn attribute_keys_with_equals_and_backslash_round_trip() {
+    let feature = Feature {
+        points: vec![Vec3::ZERO],
+        attrs: vec![("a=b".into(), "c".into()), ("p\\q".into(), "d=e".into()), ("plain".into(), "v".into())],
+        ..Feature::default()
+    };
+    let src = Source { features: vec![feature.clone()], geographic: Some(false), notes: Vec::new() };
+    let d = build(src, "k.geojson", &Options::default()).unwrap();
+    assert_eq!(attrs(on(&d, POINTS)[0]), feature.attrs);
+}
+
+#[test]
+fn a_label_that_cannot_fit_is_left_out() {
+    let gj = r#"{"type":"Feature","properties":{"name":"A fairly long parcel name"},"geometry":{"type":"Polygon","coordinates":[[[0,0],[5,0],[5,5],[0,5],[0,0]]]}}"#;
+    let opts = Options { projection: Projection::None, ..Options::default() };
+    let d = read_geojson(gj.as_bytes(), "p.geojson", &opts).unwrap();
+    assert!(on(&d, LABELS).is_empty());
+    let roomy = gj.replace('5', "50");
+    let d = read_geojson(roomy.as_bytes(), "p.geojson", &opts).unwrap();
+    assert_eq!(on(&d, LABELS).len(), 1);
+}
+
+#[test]
+fn the_ogc_uri_for_epsg_4326_is_geographic() {
+    let gj = r#"{"type":"Feature","crs":{"type":"name","properties":{"name":"http://www.opengis.net/def/crs/EPSG/0/4326"}},"properties":{},"geometry":{"type":"Point","coordinates":[8.5,47]}}"#;
+    let d = read_geojson(gj.as_bytes(), "p.geojson", &Options::default()).unwrap();
+    let (x, _) = pts(on(&d, POINTS)[0])[0];
+    assert!(near(x, 6_378_137.0 * 8.5f64.to_radians()), "{x}");
+}
+
+#[test]
+fn many_holes_are_assigned_by_index_to_the_smallest_exterior() {
+    let n = 20_000;
+    let sq = |x: f64, y: f64, s: f64, cw: bool| square(x, y, s, cw);
+    let mut rings = Vec::new();
+    for k in 0..n {
+        let x = f64::from(k) * 20.0;
+        rings.push(sq(x, 0.0, 10.0, true));
+        rings.push(sq(x + 2.0, 2.0, 3.0, false));
+    }
+    rings.push(sq(-100.0, -100.0, 100_000_000.0, true));
+    let rec = parts(5, &rings.iter().map(Vec::as_slice).collect::<Vec<_>>());
+    let t = std::time::Instant::now();
+    let d = read_shapefile(&shp(5, &[rec]), None, None, "h.shp", &Options::default()).unwrap();
+    assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+    let rings = on(&d, POLYGONS);
+    assert_eq!(rings.len(), 2 * n as usize + 1);
+}
+
+#[test]
+fn records_marked_deleted_are_skipped_without_shifting_attributes() {
+    let s = shp(1, &[point(E, N), point(E + 1.0, N), point(E + 2.0, N)]);
+    let mut t = dbf(&[("ID", b'N', 4)], &[&[b"   1"], &[b"   2"], &[b"   3"]]);
+    let header = 32 + 32 + 1;
+    t[header + 5] = 0x2A;
+    let d = read_shapefile(&s, Some(&t), None, "d.shp", &Options::default()).unwrap();
+    let p = on(&d, POINTS);
+    assert_eq!(p.len(), 2);
+    assert_eq!(attrs(p[0]), vec![("ID".into(), "1".into())]);
+    assert_eq!(attrs(p[1]), vec![("ID".into(), "3".into())]);
+    assert!(d.read_notes.iter().any(|n| n.contains("marked deleted")), "{:?}", d.read_notes);
+}
+
+#[test]
+fn json_files_are_geojson_only_when_their_content_says_so() {
+    assert!(is_geojson("a.json", br#" {"type": "FeatureCollection","features":[]}"#));
+    assert!(is_geojson("a.JSON", "\u{feff}{\"name\":1,\"type\":\"Point\",\"coordinates\":[1,2]}".as_bytes()));
+    assert!(!is_geojson("a.json", br#"{"type":"settings","a":1}"#));
+    assert!(!is_geojson("a.json", b"[1,2]"));
+    assert!(is_geojson("a.geojson", b"x") && !is_geojson("a.txt", br#"{"type":"Point"}"#));
+}
+
+#[test]
+fn metres_are_declared_only_for_projected_output() {
+    let s = shp(1, &[point(8.5, 47.0)]);
+    let prj = r#"GEOGCS["GCS_WGS_1984"]"#;
+    let d = read_shapefile(&s, None, Some(prj), "p.shp", &Options::default()).unwrap();
+    assert_eq!(d.header.i64("INSUNITS", -1), 6);
+    let kept = read_shapefile(&s, None, None, "p.shp", &Options { projection: Projection::None, ..Options::default() }).unwrap();
+    assert_eq!(kept.header.i64("INSUNITS", -1), 0);
+}
