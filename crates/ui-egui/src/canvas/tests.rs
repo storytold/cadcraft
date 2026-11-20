@@ -1,5 +1,22 @@
+use super::cursor::tooltip_angle;
 use super::*;
 use cadcraft_render::DPrim;
+
+/// Tracking tooltips give angles in the current UCS: a path along a UCS turned 30° reads 0°,
+/// one along World X reads 330°, and the World UCS reads world angles.
+#[test]
+fn tooltip_angles_are_measured_from_the_ucs_x_axis() {
+    let o = Vec2::new(2.0, 1.0);
+    let at = |deg: f64| o + Vec2::from_angle(deg.to_radians()) * 5.0;
+    assert_eq!(tooltip_angle(o, at(90.0), 0.0), 90);
+    assert_eq!(tooltip_angle(o, at(-45.0), 0.0), 315);
+    let ucs = 30f64.to_radians();
+    assert_eq!(tooltip_angle(o, at(30.0), ucs), 0);
+    assert_eq!(tooltip_angle(o, at(0.0), ucs), 330);
+    assert_eq!(tooltip_angle(o, at(120.0), ucs), 90);
+    // A non-finite angle shows a number, not a panic.
+    assert!((0..360).contains(&tooltip_angle(o, o, f64::NAN)));
+}
 
 fn list(handles: &[u64]) -> DisplayList {
     let prim =
@@ -231,6 +248,24 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
 }
 
+/// A hot grip whose object was hidden since (HIDEOBJECTS, a layer turned off) is no longer
+/// painted, so clicking another hot grip must not stretch the hidden object along with it.
+#[test]
+fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for y in [0, 30] {
+        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
+    }
+    let handles = app.session.doc().unwrap().model.handles();
+    let (shown, hidden) = (handles[0], handles[1]);
+    app.session.set_selection(vec![shown, hidden]);
+    app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
+    app.run("hideobjects", serde_json::json!({ "handles": [hidden.hex()] })).unwrap();
+    app.session.set_selection(vec![shown, hidden]);
+    click_grip(&mut app, (shown, 0), false);
+    assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
+}
+
 /// Verifies that command object-selection prompts draw only the pickbox square while idle and
 /// point prompts draw the crosshair lines.
 #[test]
@@ -289,24 +324,6 @@ fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
     // 7. STRETCH's "Remove objects" prompt also draws the pickbox-only cursor.
     app.session.cmdline("stretch r").unwrap();
     assert_eq!(paint(&app), (0, 1), "STRETCH Remove objects prompt");
-}
-
-/// A hot grip whose object was hidden since (HIDEOBJECTS, a layer turned off) is no longer
-/// painted, so clicking another hot grip must not stretch the hidden object along with it.
-#[test]
-fn clicking_a_hot_grip_leaves_hidden_objects_out_of_the_stretch() {
-    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
-    for y in [0, 30] {
-        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
-    }
-    let handles = app.session.doc().unwrap().model.handles();
-    let (shown, hidden) = (handles[0], handles[1]);
-    app.session.set_selection(vec![shown, hidden]);
-    app.canvas.hot_grips = vec![(shown, 0), (hidden, 0)];
-    app.run("hideobjects", serde_json::json!({ "handles": [hidden.hex()] })).unwrap();
-    app.session.set_selection(vec![shown, hidden]);
-    click_grip(&mut app, (shown, 0), false);
-    assert_eq!(app.canvas.hot_grips, vec![(shown, 0)], "the hidden object's grip must leave the hot set");
 }
 
 /// Makes the layer "Hidden" and, on Layout1, two viewports over the model: the first freezes

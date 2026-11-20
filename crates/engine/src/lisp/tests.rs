@@ -247,6 +247,112 @@ fn synchronous_callback_loop_is_an_error_not_a_hang() {
     assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
 }
 
+/// A step that walks a long list counts its work: one `length` of 32768 cells is past a 1000-step
+/// slice, so the slice yields after it.
+#[test]
+fn walking_a_long_list_counts_against_the_slice() {
+    use super::eval::{Ctx, Machine, Need, Outcome};
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    let mut env = super::Env::default();
+    let mut ctx = Ctx { s: &mut s, env: &mut env, depth: 0 };
+    // Built before the measured run, so only the `length` is counted.
+    let mut build = Machine::forms(super::read::read_all("(setq l '(1)) (repeat 15 (setq l (append l l)))").unwrap());
+    assert!(matches!(build.run(&mut ctx, u64::MAX), Outcome::Done(_)));
+    let mut m = Machine::forms(super::read::read_all("(length l)").unwrap());
+    // Counted as one step, the walk left the few steps of `(length l)` well inside the slice.
+    assert!(matches!(m.run(&mut ctx, 1_000), Outcome::Wait(Need::Yield)), "the walk was not charged");
+    assert!(m.used > 32_768, "{}", m.used);
+    match m.run(&mut ctx, u64::MAX) {
+        Outcome::Done(v) => assert_eq!(to_text(&v, true), "32768"),
+        _ => panic!("the length did not finish"),
+    }
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
+/// A routine is charged the work its slice did, not the slice's length: one `length` of 2^19
+/// cells is far past a 400000-step slice.
+#[test]
+fn a_routine_is_charged_the_work_of_its_slice() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    ok(&mut s, "(setq l '(1)) (repeat 19 (setq l (append l l))) nil");
+    let r = s.lisp_eval("(length l) (repeat 10 (setq x 1))", false, false, Vec::new()).unwrap();
+    assert!(r.is_none(), "the routine gave the interface a frame");
+    assert!(s.lisp_busy());
+    let steps = s.lisp.run.as_ref().map(|r| r.steps).unwrap_or(0);
+    assert!(steps >= 1 << 19, "{steps}");
+    for _ in 0..100 {
+        if !s.lisp_busy() {
+            break;
+        }
+        s.lisp_tick();
+    }
+    assert!(!s.lisp_running());
+    ok(&mut s, "(setq l nil)");
+}
+
+/// A run's last step walking a long list is charged to that run, not left for the next one: here
+/// it fails after the walk (a list of numbers isn't a list of strings), so no step follows it.
+#[test]
+fn the_last_steps_list_walk_is_charged_to_its_run() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list(vec![Value::Int(1); 100_000]));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(acad_strlsort l)").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    assert!(matches!(m.run(&mut ctx, u64::MAX), super::eval::Outcome::Error(_)));
+    assert!(m.used > 100_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
+/// Nested callbacks share one cap: an inner endless callback retried by an outer one stops.
+#[test]
+fn nested_callback_steps_count_against_the_outer_callback() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 10_000;
+    // Each level retried the endless level inside it with a fresh cap: 10000^3 steps, a hang.
+    let code = "(defun g (a b) (while t)) \
+                (defun f (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'g)))) \
+                (defun h (a b) (while t (vl-catch-all-apply 'vl-sort (list '(1 2) 'f)))) \
+                (vl-sort '(1 2) 'h)";
+    assert_eq!(eval(&mut s, code), Err("callback stopped after 10000 steps".into()));
+    // A callback's own steps count once, however many slices it runs in: three slices do three
+    // times the work of one.
+    let counts: Vec<u64> = [400_000, 1_200_000]
+        .into_iter()
+        .map(|cap| {
+            s.lisp.limits.callback_steps = cap;
+            ok(&mut s, "(setq n 0)");
+            assert!(eval(&mut s, "(vl-remove-if '(lambda (x) (while t (setq n (1+ n)))) '(1))").is_err());
+            ok(&mut s, "n").parse().unwrap()
+        })
+        .collect();
+    assert!(counts[1] * 10 >= counts[0] * 29, "{counts:?}");
+}
+
+/// The callback cap holds for each callback: a sort's comparisons together take more steps than
+/// it, and all their work still reaches the enclosing run.
+#[test]
+fn each_callback_has_its_own_cap_and_its_work_reaches_the_caller() {
+    let mut s = session();
+    s.lisp.limits.callback_steps = 1_000;
+    let mut env = super::Env::default();
+    env.globals.insert(super::value::Sym::new("L"), Value::list((0..300).rev().map(Value::Int)));
+    let mut m = super::eval::Machine::forms(super::read::read_all("(vl-sort l (function (lambda (a b) (< a b))))").unwrap());
+    let mut ctx = super::eval::Ctx { s: &mut s, env: &mut env, depth: 0 };
+    let v = match m.run(&mut ctx, u64::MAX) {
+        super::eval::Outcome::Done(v) => v,
+        super::eval::Outcome::Error(e) => panic!("the sort failed: {e:?}"),
+        super::eval::Outcome::Wait(_) => panic!("the sort waited"),
+    };
+    assert_eq!(to_text(&v, true), to_text(&Value::list((0..300).map(Value::Int)), true));
+    // Over a thousand comparisons of several steps each, together well past the cap.
+    assert!(m.used > 3_000, "{}", m.used);
+    assert_eq!(super::value::take_work(), 0, "nothing is left for the next run");
+}
+
 /// A zero-step callback limit prevents even the first callback side effect.
 #[test]
 fn a_zero_callback_budget_does_not_run_the_callback() {
@@ -1490,4 +1596,75 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(> (atof \"1e400\") 1e300)"), "T");
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
+}
+
+/// #1927: with a support folder, a relative `load` name is found there, never through the
+/// process working folder; an absolute path is still read as given.
+#[cfg(unix)]
+#[test]
+fn relative_load_uses_the_support_folder_not_the_working_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-loadpath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(support.join("tools.lsp"), "(setq which \"support\")").unwrap();
+    std::fs::write(other.join("tools.lsp"), "(setq which \"other\")").unwrap();
+    std::fs::write(other.join("only.lsp"), "(setq only 1)").unwrap();
+    // `other/…` as a path relative to the working folder.
+    let cwd = std::env::current_dir().unwrap();
+    let up = "../".repeat(cwd.components().count().saturating_sub(1));
+    let rel = |f: &str| format!("{up}{}", other.join(f).to_string_lossy().trim_start_matches('/'));
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    assert_eq!(ok(&mut s, "(load \"tools\") which"), "\"support\"");
+    let r = eval(&mut s, &format!("(load \"{}\") only", rel("only.lsp")));
+    assert!(!matches!(r.as_deref(), Ok("1")), "not read through the working folder: {r:?}");
+    assert_eq!(ok(&mut s, &format!("(load \"{}\") which", other.join("tools.lsp").to_string_lossy())), "\"other\"");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1927 on Windows: a rooted name (`\folder\tools.lsp`, no drive) or a drive-relative one
+/// (`C:tools`) is not absolute, but joined to the support folder it replaces that folder; such a
+/// name is refused rather than read from outside the support folder.
+#[cfg(windows)]
+#[test]
+fn rooted_and_drive_relative_load_names_stay_in_the_support_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-rooted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let outside = other.join("only.lsp");
+    std::fs::write(&outside, "(setq only 1)").unwrap();
+    // The same file without its drive (`\Users\...\other\only.lsp`), escaped for a LISP string.
+    let full = outside.to_string_lossy().into_owned();
+    let rooted = full.get(full.find('\\').unwrap()..).unwrap().replace('\\', "\\\\");
+    let drive = full.get(..2).unwrap().to_string();
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    let r = eval(&mut s, &format!("(load \"{rooted}\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a rooted name is not read outside the support folder: {r:?}");
+    let r = eval(&mut s, &format!("(load \"{drive}only\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a drive-relative name is refused: {r:?}");
+    std::fs::write(support.join("only.lsp"), "(setq only 2)").unwrap();
+    assert_eq!(ok(&mut s, "(load \".\\\\only\") only"), "2", "a plain relative name is still read from the support folder");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1930: `append` over many references to one long list is refused before it builds the
+/// result, not after it has filled memory.
+#[test]
+fn append_checks_the_cell_cap_before_building_its_result() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    s.lisp.limits.cells = 50_000;
+    let before = super::value::live_cells();
+    let e =
+        eval(&mut s, "(setq l nil) (repeat 10000 (setq l (cons 1 l))) (setq m nil) (repeat 1000 (setq m (cons l m))) (apply 'append m)").unwrap_err();
+    assert!(e.contains("too many list cells"), "{e}");
+    assert!(super::value::live_cells() < before + 50_000, "no oversized result was built");
+    assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
 }

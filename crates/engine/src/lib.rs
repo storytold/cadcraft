@@ -18,6 +18,7 @@ pub mod blockedit;
 pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
+pub mod file_access;
 mod finite;
 pub mod grip_dims;
 pub mod grips;
@@ -36,6 +37,7 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod ucs;
 pub mod undoctl;
 pub mod units;
 
@@ -175,6 +177,10 @@ pub struct Session {
     pub(crate) pending_point_z: Option<f64>,
     /// Directory of the most recently loaded LISP file, searched by `findfile`, `open` and `-INSERT`.
     pub lisp_file_dir: Option<String>,
+    /// The window's menu bar and tool bar as the UI shows them (it reports them every frame).
+    pub bars_shown: cmd::interface::InterfaceBars,
+    /// The bars MENUBAR or TOOLBAR asked to change, for the UI to apply.
+    pub bars_request: cmd::interface::BarsRequest,
     /// The object named with a point for the input a prompt picking one object is taking
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
@@ -238,6 +244,8 @@ impl Session {
             dotnet_pick: DotNetPickState::default(),
             pending_point_z: None,
             lisp_file_dir: None,
+            bars_shown: Default::default(),
+            bars_request: Default::default(),
             pick_hint: None,
         }
     }
@@ -286,6 +294,8 @@ impl Session {
             settings.snapunit = d.header.snap_unit();
             settings.gridunit = d.header.grid_unit();
         }
+        let a = self.input_ucs().rotation();
+        settings.ucs_angle = if a.is_finite() { a } else { 0.0 };
         settings
     }
     /// The space commands act on (model space while working inside a layout viewport).
