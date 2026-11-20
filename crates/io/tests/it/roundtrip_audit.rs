@@ -492,11 +492,16 @@ const OBJECTS: &str = "
 330 61
 100 AcDbXrecord
 280 1
-91 0
+91 2047
 301 Plan
-8 WALLS
-90 0
+290 0
+302 0
+330 11
+90 8
 62 1
+370 -3
+1 Normal
+440 0
 0 DICTIONARY
 5 63
 330 10
@@ -803,14 +808,19 @@ fn ucs_layer_states_and_block_descriptions_are_kept() {
     assert_eq!((u.origin.x, u.origin.y, u.origin.z), (1.0, 2.0, 3.0));
     assert_eq!((u.x_axis.y, u.y_axis.x), (1.0, -1.0));
     assert_eq!(d.block("DOOR").map(|b| b.description.as_str()), Some("A door leaf"));
+    let states: Vec<(&str, Vec<&str>)> =
+        d.layer_states.iter().map(|s| (s.name.as_str(), s.layers.iter().map(|l| l.name.as_str()).collect())).collect();
+    assert_eq!(states, [("Plan", vec!["WALLS"])]);
     for o in [&a, &b] {
-        // Layer states live in the LAYER table's extension dictionary.
+        // Layer states live in the LAYER table's extension dictionary, each layer named by its
+        // handle (as AutoCAD 2024 writes them; CADCraft reads and rewrites them).
         let table = o.of("TABLE").into_iter().find(|t| s(t, 2) == "LAYER").expect("LAYER table");
         let [xd] = group(table, "ACAD_XDICTIONARY").try_into().expect("LAYER table extension dictionary");
         let (_, dict) = o.handle(&xd).expect("dictionary");
         let (_, states) = o.entry(dict, "ACAD_LAYERSTATES").expect("ACAD_LAYERSTATES");
         let (_, plan) = o.entry(states, "Plan").expect("layer state Plan");
-        assert_eq!((s(plan, 301), s(plan, 8)), ("Plan".into(), "WALLS".into()));
+        let layers = plan.iter().skip_while(|t| t.code != 302).filter(|t| t.code == 330).map(Tag::str).collect::<Vec<_>>();
+        assert_eq!((s(plan, 301), layers), ("Plan".into(), vec![h(o.named("LAYER", "WALLS"))]));
     }
 }
 
