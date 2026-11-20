@@ -1073,8 +1073,10 @@ pub fn descent_ratio(face: &Face) -> Option<f64> {
     (r.is_finite() && r > 0.0 && r < 2.0).then_some(r)
 }
 
-/// Cap height of a font in font units at 1000 units per em: the OS/2 value, else the height
-/// of its "H", else an estimate from the ascent.
+/// Cap height of a font in font units at 1000 units per em: the height of its "H", else the
+/// OS/2 value, else an estimate from the ascent. AutoCAD sizes TrueType text by the drawn "H":
+/// Arial's OS/2 cap height is 1467 of 2048 units but its "H" 1466 high, and AutoCAD's MTEXT
+/// wraps Arial text as 1467/1466 wider than the OS/2 value gives (measured on 20 wrap limits).
 fn cap_height(f: &FontRef) -> f64 {
     let metrics = f.metrics(Size::new(UPEM), LocationRef::default());
     let measured = || {
@@ -1082,7 +1084,7 @@ fn cap_height(f: &FontRef) -> f64 {
         let b = f.glyph_metrics(Size::new(UPEM), LocationRef::default()).bounds(gid)?;
         Some(b.y_max).filter(|y| y.is_finite() && *y > 0.0)
     };
-    let cap = metrics.cap_height.filter(|c| c.is_finite() && *c > 0.0).or_else(measured).unwrap_or(metrics.ascent * 0.72);
+    let cap = measured().or_else(|| metrics.cap_height.filter(|c| c.is_finite() && *c > 0.0)).unwrap_or(metrics.ascent * 0.72);
     f64::from(cap).max(1.0)
 }
 
