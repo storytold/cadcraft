@@ -502,6 +502,20 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
 /// Largest interface font file read or embedded face copied (CJK collections are 15–60 MB).
 const MAX_UI_FONT_BYTES: u64 = 96 * 1024 * 1024;
 
+/// Whether `path` is a font file [`read_capped`] can take: it opens and holds 1 byte to
+/// [`MAX_UI_FONT_BYTES`]. The font finders keep the first candidate that passes, so an empty,
+/// oversized or unreadable one doesn't hide the readable ones after it.
+#[cfg(not(target_arch = "wasm32"))]
+fn openable(path: &std::path::Path) -> bool {
+    std::fs::File::open(path).and_then(|f| f.metadata()).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_UI_FONT_BYTES)
+}
+
+/// The first of `candidates` ([`installed`]) that is [`openable`].
+#[cfg(not(target_arch = "wasm32"))]
+fn first_font(candidates: &[&str]) -> Option<std::path::PathBuf> {
+    installed(candidates).find(|p| openable(p))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
     use std::io::Read as _;
@@ -563,7 +577,7 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
                     ]
                 };
-                installed(candidates).next()
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -606,7 +620,7 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/kacst/KacstOne.ttf",
                     ]
                 };
-                installed(candidates).next()
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -634,7 +648,7 @@ fn japanese_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
                     ]
                 };
-                installed(candidates).next()
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -832,6 +846,22 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    /// An empty font file found first doesn't hide a readable one after it: the CJK, Arabic and
+    /// Japanese fonts are kept only when [`super::read_capped`] can take them.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_unreadable_first_candidate_does_not_hide_the_next() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-theme-fonts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (empty, good) = (dir.join("CadcraftEmptyTestFont.ttf"), dir.join("CadcraftGoodTestFont.ttf"));
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&good, b"not empty").unwrap();
+        let (e, g) = (empty.to_string_lossy().into_owned(), good.to_string_lossy().into_owned());
+        let found = super::first_font(&[e.as_str(), g.as_str()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(found, Some(good));
+    }
+
     /// The system interface font loaded: the first installed one, and for Vietnamese the first
     /// installed one with its letters (a later one when the first lacks them).
     #[test]
