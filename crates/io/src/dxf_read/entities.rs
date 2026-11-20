@@ -278,7 +278,9 @@ pub(super) fn entity_with_table_budget(
                     v.p.x = -v.p.x;
                     v.bulge = -v.bulge;
                 }
+                let ocs_angle = h.angle;
                 h.angle = cadcraft_geom::norm_angle(std::f64::consts::PI - h.angle);
+                super::hatch::mirror_pattern_lines(&mut h.pattern_lines, h.origin, h.scale, ocs_angle, h.angle);
             }
             k
         }
