@@ -90,7 +90,7 @@ pub fn drawing_tab_entries(app: &CadApp, index: usize) -> Vec<Vec<Entry>> {
 }
 
 /// A layout tab's menu (`name` is the layout, "Model" the model tab): New Layout, From Template,
-/// Delete, Rename and Copy (layouts only), Page Setup Manager and Print. Delete, Rename and Copy
+/// Delete, Rename and Copy (layouts only), Page Setup Manager and Plot. Delete, Rename and Copy
 /// go through LAYOUT's prompts, so Rename and Copy ask for the new name on the command line.
 pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
     let model = name == "Model";
@@ -104,7 +104,7 @@ pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
         }
     }
     push(&mut groups, new);
-    let out: Vec<Entry> = [("pagesetup", "Page Setup Manager..."), ("plot", "Print...")]
+    let out: Vec<Entry> = [("pagesetup", "Page Setup Manager..."), ("plot", "Plot...")]
         .iter()
         .filter(|(id, _)| find_command(id).is_some())
         .map(|(id, label)| layout(id, label))
