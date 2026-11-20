@@ -22,6 +22,9 @@ const MARGIN: f32 = 3.0;
 struct State {
     /// The object being edited ([`TextEditor::key`]): another one starts afresh.
     key: String,
+    /// The drawing that holds the object ([`cadcraft_engine::DocState::uid`]): handles repeat
+    /// across drawings, so a draft never goes to another drawing's object.
+    drawing: Option<u64>,
     text: String,
     /// The box has taken the keyboard once (typing goes into it, not the command line).
     focused: bool,
@@ -56,10 +59,11 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     };
     let t = Tokens::get();
     let mt = &ed.mtext;
-    let kept = ctx.data_mut(|d| d.get_temp::<State>(state_id())).filter(|st| st.key == ed.key);
+    let drawing = app.session.state().ok().map(|st| st.uid);
+    let kept = ctx.data_mut(|d| d.get_temp::<State>(state_id())).filter(|st| st.key == ed.key && st.drawing == drawing);
     // A click outside counts from the frame after the box opened (not the double-click itself).
     let armed = kept.is_some();
-    let mut st = kept.unwrap_or_else(|| State { key: ed.key.clone(), text: mt.contents.clone(), focused: false });
+    let mut st = kept.unwrap_or_else(|| State { key: ed.key.clone(), drawing, text: mt.contents.clone(), focused: false });
 
     let (rect, scale) = app.canvas.xf.map_or((ctx.content_rect(), 20.0), |x| (x.rect, x.scale.max(1e-6)));
     let height = if mt.height > 0.0 && mt.height.is_finite() { mt.height } else { 0.2 };
@@ -162,5 +166,51 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ctx.data_mut(|d| d.remove::<State>(state_id()));
             app.session.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cadcraft_engine::geom::Vec2;
+    use cadcraft_engine::{Input, Session};
+    use serde_json::json;
+
+    use super::{State, state_id};
+    use crate::{CadApp, Services};
+
+    fn frame(app: &mut CadApp, ctx: &egui::Context) {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| super::show(app, ui.ctx()));
+        out.textures_delta.clear();
+    }
+
+    fn edit_text_at_origin(app: &mut CadApp) -> String {
+        app.start("textedit");
+        app.session.input(Input::Point(Vec2::new(0.5, 0.5))).unwrap();
+        app.session.text_editor().expect("a one-line editor").key
+    }
+
+    /// A draft typed for one drawing's object is never shown or kept for an object of another
+    /// drawing with the same handle (review of #842).
+    #[test]
+    fn a_draft_stays_with_its_drawing() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let ctx = egui::Context::default();
+        app.run("text", json!({ "at": [0, 0], "text": "FIRST", "height": 2.5 })).unwrap();
+        let first = edit_text_at_origin(&mut app);
+        frame(&mut app, &ctx);
+        // Something typed into the first drawing's box.
+        ctx.data_mut(|d| {
+            let mut st = d.get_temp::<State>(state_id()).unwrap();
+            st.text = "DRAFT".into();
+            d.insert_temp(state_id(), st);
+        });
+        // Another drawing, with an object of the same handle, edited before any frame without a box.
+        app.session.cancel();
+        app.session.execute("new", &json!({})).unwrap();
+        app.run("text", json!({ "at": [0, 0], "text": "SECOND", "height": 2.5 })).unwrap();
+        assert_eq!(edit_text_at_origin(&mut app), first, "the same handle in both drawings");
+        frame(&mut app, &ctx);
+        let st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap();
+        assert_eq!(st.text, "SECOND", "the box shows the second drawing's text, not the draft");
     }
 }
