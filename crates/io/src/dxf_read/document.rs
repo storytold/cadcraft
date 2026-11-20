@@ -1,10 +1,10 @@
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
-use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, records};
+use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
 
 pub(super) fn parse_entities(
-    recs: &[(String, Vec<Tag>)],
+    recs: &[(String, &[Tag])],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
@@ -17,7 +17,10 @@ pub(super) fn parse_entities(
         let owner = crate::dxf_ext::owner(tags);
         let paper = t.i(67) == Some(1);
         let handle = t.s(5).and_then(|h| Handle::parse_hex(&h));
-        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left);
+        if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
+            rx.paper_views_dropped.push((owner.clone(), paper, rx.block.clone()));
+        }
+        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left, &mut rx.curves);
         if let Some((c, _)) = kindent.as_mut()
             && let Some(n) = entity_plot_style(tags, rx)
         {
@@ -52,6 +55,7 @@ pub(super) fn parse_entities(
         }
         if let Some((c, mut k)) = kindent {
             let h = match handle {
+                // A file's handles keep their identity, however high they are (#913, #939).
                 Some(h) => {
                     d.bump_handseed(h);
                     h
@@ -88,7 +92,7 @@ pub(super) fn read_blocks(
     table_cells_left: &mut usize,
     skipped: &mut std::collections::BTreeMap<String, usize>,
 ) -> Vec<BlockDef> {
-    let recs = records(tags);
+    let recs = record_slices(tags);
     for (k, tg) in &recs {
         let t = T(tg);
         if k == "BLOCK" && t.i(70).unwrap_or(0) & 4 != 0 {
@@ -111,7 +115,9 @@ pub(super) fn read_blocks(
                 j += 1;
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
+            rx.block = Some(name.to_ascii_uppercase());
             let ents = parse_entities(body, d, rx, &mut n, table_cells_left);
+            rx.block = None;
             blocks.push((name, base, description, ents, xref));
             i = j + 1;
         } else {
@@ -128,8 +134,8 @@ pub(super) fn read_blocks(
 
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
-    for (k, tg) in records(tags) {
-        objs.add(&k, &tg);
+    for (k, tg) in record_slices(tags) {
+        objs.add(&k, tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
@@ -138,7 +144,7 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), limits(&t)));
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot, tg), limits(&t)));
         }
     }
 }
@@ -251,6 +257,14 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
     }
 }
 
+/// The layout an entity record belongs to: paper space when flagged (67=1) or owned by a
+/// `*PAPER_SPACE` block, else `None` for model space.
+fn paper_layout(owner: Option<String>, paper: bool, rx: &Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) -> Option<String> {
+    let owner_name = owner.and_then(|o| rx.brs.get(&o.trim().to_ascii_uppercase()).cloned()).map(|n| n.to_ascii_uppercase());
+    let to_paper = paper || owner_name.as_deref().is_some_and(|n| n.starts_with("*PAPER_SPACE"));
+    to_paper.then(|| owner_name.and_then(|n| paper_block_for.get(&n).cloned()).unwrap_or_else(|| first_layout.to_string()))
+}
+
 /// Place the ENTITIES section: model space, or paper space when flagged (67=1).
 pub(super) fn place_entities(
     d: &mut Drawing,
@@ -262,17 +276,30 @@ pub(super) fn place_entities(
     let mut layers = LayerSet::new(d);
     for (owner, paper, e) in entities {
         layers.ensure(d, &e.common.layer);
-        let owner_name = owner.and_then(|o| rx.brs.get(&o.trim().to_ascii_uppercase()).cloned()).map(|n| n.to_ascii_uppercase());
-        let to_paper = paper || owner_name.as_deref().is_some_and(|n| n.starts_with("*PAPER_SPACE"));
-        if to_paper {
-            let lname = owner_name.and_then(|n| paper_block_for.get(&n).cloned()).unwrap_or_else(|| first_layout.to_string());
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
-                l.entities.push(e);
+        match paper_layout(owner, paper, rx, paper_block_for, first_layout) {
+            Some(lname) => {
+                if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+                    l.entities.push(e);
+                }
             }
-        } else {
-            d.model.push(e);
+            None => d.model.push(e),
         }
     }
+}
+
+/// Layouts whose generated sheet viewport (PAPERVIEW) the reader dropped: their viewports keep
+/// their ids, so the next save generates the sheet again instead of promoting one of them.
+pub(super) fn dropped_paper_views(rx: &Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) -> std::collections::HashSet<String> {
+    rx.paper_views_dropped
+        .iter()
+        .filter_map(|(owner, paper, block)| match block {
+            // In a paper-space block the sheet is that block's layout, where `place_blocks` puts
+            // the block's other entities, whatever its owner group says.
+            Some(b) if b.starts_with("*PAPER_SPACE") => Some(paper_block_for.get(b).cloned().unwrap_or_else(|| first_layout.to_string())),
+            Some(_) => None,
+            None => paper_layout(owner.clone(), *paper, rx, paper_block_for, first_layout),
+        })
+        .collect()
 }
 
 pub(super) fn count_skipped(skipped: &mut std::collections::BTreeMap<String, usize>, section: &str, n: usize) {

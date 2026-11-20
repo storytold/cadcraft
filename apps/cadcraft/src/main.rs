@@ -1,6 +1,6 @@
 //! CADCraft desktop app.
 //!
-//! Usage: `cadcraft [--control <port>] [--sample] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
+//! Usage: `cadcraft [--control <port>] [--sample] [--new-window] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
 //!
 //! `--control <port>` (or `CADCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"cmdline.input","params":{"text":"circle 0,0 5"}}` → `{"id":1,"ok":true,…}`.
@@ -23,13 +23,16 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "macos")]
+mod sheet;
+mod single_instance;
 mod spacemouse;
 mod system_animations;
 mod workspace;
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::switch::Switch;
-use cadcraft_ui_egui::{CadApp, Services, i18n};
+use cadcraft_ui_egui::{CadApp, Pick, Services, i18n};
 
 struct App {
     cad: CadApp,
@@ -40,6 +43,8 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// The first CADCraft of this sign-in: files that later launches hand over (Windows).
+    single_instance: Option<single_instance::Server>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -85,6 +90,17 @@ impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
+        // Files another launch handed over open as tabs here, and the window comes forward.
+        if let Some(server) = &self.single_instance {
+            let paths = server.take_paths();
+            if !paths.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                for p in &paths {
+                    self.cad.open_path(p);
+                }
+            }
+        }
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
@@ -155,32 +171,47 @@ pub fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
 }
 
 fn services() -> Services {
     Services {
-        pick_open: Some(Box::new(|| {
-            rfd::FileDialog::new()
-                .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
-                .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
-                .add_filter(i18n::t("All files"), &["*"])
-                .pick_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
-        pick_save: Some(Box::new(|name: &str| {
-            filters_for_save(name)
-                .iter()
-                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
-                .save_file()
-                .map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_open: Some(Box::new(|| file_dialog(&Pick::Open).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| file_dialog(&Pick::Save(name.into())).save_file().map(|p| p.to_string_lossy().to_string()))),
+        // macOS shows the dialogs as sheets (`sheet::start_pick`), set once the window exists.
+        start_pick: None,
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
-        pick_lisp: Some(Box::new(|dir: &str| {
-            let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
-            let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
-            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
-        })),
+        pick_lisp: Some(Box::new(|dir: &str| file_dialog(&Pick::Lisp(dir.into())).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
+        pick_pgp: Some(Box::new(|dir: Option<&str>| {
+            file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
+    }
+}
+
+/// The file types `pick` offers: (label, extensions). Shared by the blocking dialogs and the
+/// macOS sheets.
+fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
+    match pick {
+        Pick::Open => vec![
+            (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
+            (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
+            (i18n::t("All files"), vec!["*"]),
+        ],
+        Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
+        Pick::Lisp(_) => vec![(i18n::t("AutoLISP (LSP)"), vec!["lsp"]), (i18n::t("All files"), vec!["*"])],
+        Pick::Pgp(_) => vec![(i18n::t("Alias files (PGP)"), vec!["pgp"])],
+    }
+}
+
+/// The blocking dialog for `pick` (Windows, Linux, FreeBSD).
+fn file_dialog(pick: &Pick) -> rfd::FileDialog {
+    let dialog = filters(pick).iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
+    match pick {
+        Pick::Save(name) => dialog.set_file_name(name),
+        Pick::Lisp(dir) | Pick::Pgp(dir) if !dir.is_empty() => dialog.set_directory(dir),
+        _ => dialog,
     }
 }
 
@@ -202,10 +233,38 @@ fn saved_window(app_ron: &str) -> bool {
     ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
 }
 
-/// The window state from the last session is saved and will be restored (#2595).
+/// The window state from the last session is saved and will be restored (#2595). A saved size
+/// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
+/// unusable) is dropped first, so the window opens at its default size.
 fn restores_window() -> bool {
-    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+    let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
+    // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
+    if let Some(fixed) = without_tiny_window(&ron)
+        && cadcraft_engine::atomic_write::write_atomic(&path, fixed.as_bytes()).is_ok()
+    {
+        ron = fixed;
+    }
+    saved_window(&ron)
 }
+
+/// `app_ron` without its window entry when that entry's inner size is below `MIN_INNER_SIZE`;
+/// `None` when there is nothing to drop (no entry, a usable size, or an unreadable file).
+fn without_tiny_window(app_ron: &str) -> Option<String> {
+    let mut kv = ron::from_str::<std::collections::BTreeMap<String, String>>(app_ron).ok()?;
+    let w = kv.get(WINDOW_KEY)?;
+    let size = &w[w.find("inner_size_points:")?..];
+    let num = |k: &str| size[size.find(k)? + k.len()..].split([',', ')']).next()?.trim().parse::<f32>().ok();
+    let (x, y) = (num("x:")?, num("y:")?);
+    if x >= MIN_INNER_SIZE[0] && y >= MIN_INNER_SIZE[1] {
+        return None;
+    }
+    kv.remove(WINDOW_KEY);
+    ron::ser::to_string_pretty(&kv, ron::ser::PrettyConfig::default()).ok()
+}
+
+/// The smallest main window, in points.
+const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred.
@@ -214,7 +273,7 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
             .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
+            .with_min_inner_size(MIN_INNER_SIZE)
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
@@ -293,6 +352,14 @@ fn main() -> eframe::Result {
             }
         }
     }
+    // A launch that only names files hands them to the CADCraft already running and exits.
+    let handed = single_instance::absolute(&files);
+    let may_hand_off = handed.is_some() && !launch.new_window && !files.is_empty() && control_port.is_none() && !sample;
+    let instance = match single_instance::claim(handed.as_deref().unwrap_or_default(), may_hand_off) {
+        single_instance::Claim::HandedOff => return Ok(()),
+        single_instance::Claim::Primary(server) => Some(server),
+        single_instance::Claim::Alone => None,
+    };
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
     if let Some(dir) = &vars.config_dir {
@@ -353,11 +420,20 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the
+            // app when the dialog is resized (#1527).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
             }
             app.set_system_cursor_default(vars.system_cursor == Switch::On);
+            // macOS: CADCRAFT_NO_NATIVE_MENU=1 keeps the menus inside the window.
+            #[cfg(target_os = "macos")]
+            app.set_native_menus(vars.no_native_menu != Switch::On);
             if let Some(error) = &workspace_error {
                 eprintln!("CADCraft workspace: {error}");
                 app.set_status(error);
@@ -407,6 +483,10 @@ fn main() -> eframe::Result {
                 let metric = app.session.settings.measureinit;
                 app.session.new_drawing(metric);
             }
+            if let Some(server) = &instance {
+                let ctx = cc.egui_ctx.clone();
+                server.set_wake(move || ctx.request_repaint());
+            }
             let ctx = cc.egui_ctx.clone();
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
             let ctx = cc.egui_ctx.clone();
@@ -418,6 +498,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                single_instance: instance,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
@@ -431,7 +512,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{filters_for_save, follow_desktop, saved_window, window_options, without_tiny_window};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -473,6 +554,17 @@ mod tests {
         assert!(!saved_window(""));
         assert!(!saved_window("{\"window\": "), "truncated");
         assert!(!saved_window("not ron at all"));
+    }
+
+    /// A saved 64×64 window (below the minimum) is dropped; a usable one is kept.
+    #[test]
+    fn a_tiny_saved_window_is_dropped() {
+        let tiny = r#"{"window": "(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.25,inner_size_points:(x:64.0,y:64.0)),fullscreen:false,maximized:true)", "cadcraft.prefs": "{}"}"#;
+        let fixed = without_tiny_window(tiny).expect("dropped");
+        assert!(!saved_window(&fixed) && fixed.contains("cadcraft.prefs"));
+        let ok = tiny.replace("x:64.0,y:64.0)),", "x:1600.0,y:1000.0)),");
+        assert_eq!(without_tiny_window(&ok), None);
+        assert_eq!(without_tiny_window("not ron"), None);
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;

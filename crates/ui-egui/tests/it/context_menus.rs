@@ -133,7 +133,8 @@ fn idle_menu_lists_recent_commands_and_selection_commands() {
 #[test]
 fn selection_menu_has_the_object_types_edit_commands() {
     let cases = [
-        ("text", json!({ "at": [0, 0], "text": "hi" }), "textedit"),
+        // A single text's Edit Text opens the Edit Text window: the id carries the handle.
+        ("text", json!({ "at": [0, 0], "text": "hi" }), "textedit:"),
         ("pline", json!({ "vertices": [[0, 0], [10, 0], [10, 5]] }), "pedit"),
         ("spline", json!({ "fit": [[0, 0], [5, 5], [10, 0]] }), "splinedit"),
     ];
@@ -142,14 +143,27 @@ fn selection_menu_has_the_object_types_edit_commands() {
         app.run(cmd, params).unwrap();
         select_all(&mut app);
         let g = vec![context_menu::object_entries(&app)];
-        assert!(ids(&g).iter().any(|i| i == edit), "{cmd}: {edit} missing from {:?}", labels(&g));
-        assert!(ids(&context_menu::entries(&app)).iter().any(|i| i == edit));
+        let hit = ids(&g).iter().find(|i| i.starts_with(edit)).cloned();
+        assert!(hit.is_some(), "{cmd}: {edit} missing from {:?}", labels(&g));
+        assert!(ids(&context_menu::entries(&app)).iter().any(|i| i.starts_with(edit)));
+        // Choosing the window's entry opens the dialog on the object; the double-click keeps its
+        // in-place editing (#842).
+        if let Some(id) = hit.filter(|i| i.starts_with("textedit:")) {
+            context_menu::choose(&mut app, &id);
+            assert_eq!(app.ui.dialog.as_deref(), Some(id.as_str()));
+        }
     }
+    // Several selected texts keep the TEXTEDIT command line: the window edits one object at a time.
+    let mut several = app();
+    several.run("text", json!({ "at": [0, 0], "text": "hi" })).unwrap();
+    several.run("text", json!({ "at": [0, 4], "text": "ho" })).unwrap();
+    select_all(&mut several);
+    assert!(ids(&[context_menu::object_entries(&several)]).iter().any(|i| i == "textedit"));
     // Polyline Edit, not the command's bare "Polyline" label.
-    let mut app = app();
-    app.run("pline", json!({ "vertices": [[0, 0], [10, 0]] })).unwrap();
-    select_all(&mut app);
-    assert_eq!(labels(&[context_menu::object_entries(&app)]), ["Polyline Edit"]);
+    let mut pline = app();
+    pline.run("pline", json!({ "vertices": [[0, 0], [10, 0]] })).unwrap();
+    select_all(&mut pline);
+    assert_eq!(labels(&[context_menu::object_entries(&pline)]), ["Polyline Edit"]);
 }
 
 #[test]
@@ -226,4 +240,42 @@ fn time_sensitive_right_click() {
     painted(&mut app, &ctx, Vec::new(), 3.1);
     assert!(app.session.running.is_none(), "a quick right-click is Enter: {}", app.session.prompt_text());
     assert_eq!(app.session.doc().unwrap().model.handles().len(), 1);
+
+    // Between commands a quick right-click is Enter too: it repeats LINE (it opened the shortcut
+    // menu instead).
+    painted(&mut app, &ctx, vec![quick(true)], 4.0);
+    painted(&mut app, &ctx, vec![quick(false)], 4.05);
+    let text = painted(&mut app, &ctx, Vec::new(), 4.1);
+    assert!(app.session.running.is_some(), "a quick right-click repeats LINE: {}", app.session.prompt_text());
+    assert!(!text.contains("Repeat LINE"), "no shortcut menu on a quick click:\n{text}");
+    app.session.input(cadcraft_engine::Input::Cancel).unwrap();
+    // Held, it opens the shortcut menu and repeats nothing.
+    painted(&mut app, &ctx, vec![quick(true)], 5.0);
+    painted(&mut app, &ctx, Vec::new(), 5.2);
+    painted(&mut app, &ctx, vec![quick(false)], 5.0 + context_menu::HOLD_SECS + 0.1);
+    let text = painted(&mut app, &ctx, Vec::new(), 5.5);
+    assert!(text.contains("Repeat LINE"), "Repeat LINE missing from the painted menu:\n{text}");
+    assert!(app.session.running.is_none(), "held, no repeat: {}", app.session.prompt_text());
+
+    // A quick click enters what was typed, as the Enter key does (#1387): a command name between
+    // commands (not a repeat of LINE)…
+    painted(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }],
+        5.6,
+    );
+    // The menu closes on the frame after Escape.
+    painted(&mut app, &ctx, Vec::new(), 5.7);
+    app.cmd.buffer = "circle".into();
+    painted(&mut app, &ctx, vec![quick(true)], 6.0);
+    painted(&mut app, &ctx, vec![quick(false)], 6.05);
+    painted(&mut app, &ctx, Vec::new(), 6.1);
+    assert!(app.session.prompt_text().contains("center point"), "the typed CIRCLE starts: {}", app.session.prompt_text());
+    // …and a point while a command runs.
+    app.cmd.buffer = "5,5".into();
+    painted(&mut app, &ctx, vec![quick(true)], 7.0);
+    painted(&mut app, &ctx, vec![quick(false)], 7.05);
+    painted(&mut app, &ctx, Vec::new(), 7.1);
+    assert!(app.session.prompt_text().contains("radius"), "the typed center is entered: {}", app.session.prompt_text());
 }

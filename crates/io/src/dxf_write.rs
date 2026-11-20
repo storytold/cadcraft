@@ -3,16 +3,16 @@
 //! the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller picks the text encoding) and
 //! MULTILEADER entities (older files get LEADER + MTEXT).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{
     AssocSnap, Attrib, Block, Common, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, EntityStore, Gradient, Group, HAlign,
     HVal, Handle, Hatch, Insert, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
-    TableStyle, Text, Transparency, VAlign, VportConfig, VportTile,
+    TableStyle, Text, Transparency, Ucs, VAlign, VportConfig, VportTile,
 };
-use cadcraft_dxf::{Tag, Version};
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
+use craft_dxf::{Tag, Version};
 
 use crate::dxf_ext::{self, DimVal, K};
 
@@ -39,13 +39,36 @@ use sections::tags_for;
 struct W {
     t: Vec<Tag>,
     next: u64,
+    /// Handles the drawing's objects already hold: structural records skip them, so writing a
+    /// file whose own handles sit near the top of the range never repeats a handle (#913).
+    used: HashSet<u64>,
     /// Upper-case plot style name → its `ACDBPLACEHOLDER` handle (group 390 of layers and objects).
     pstyles: HashMap<String, String>,
     /// Upper-case layer name → its LAYER table record handle (group 331/341 of viewports).
     layers: HashMap<String, String>,
+    /// Upper-case UCS name → its UCS table record handle (group 345 of layouts and viewports).
+    ucss: HashMap<String, String>,
+    /// Active VPORT group-345 tags (their index in `t`) waiting for the handle of the named UCS
+    /// (upper case) they refer to, filled in after the UCS table is written.
+    vport_ucs: Vec<(usize, String)>,
     /// Persistent reactors of source geometry: the associative hatches and DIMASSOC objects
     /// that follow it (groups `{ACAD_REACTORS 330 …}`).
     reactors: HashMap<Handle, Vec<String>>,
+}
+
+/// Where the writer's own records (tables, objects, dictionaries) start numbering: above every
+/// object handle and the drawing's seed, with headroom for handles the drawing allocates next.
+fn structural_start(d: &Drawing) -> u64 {
+    let highest = entity_handles(d).max().unwrap_or(0);
+    d.handseed.max(0x100).max(highest.saturating_add(1)).saturating_add(0x1000)
+}
+
+/// Every handle an object holds, plus the drawing's next one.
+fn entity_handles(d: &Drawing) -> impl Iterator<Item = u64> + '_ {
+    let model = d.model.iter().map(|e| e.handle.0);
+    let layouts = d.layouts.iter().flat_map(|l| l.entities.iter()).map(|e| e.handle.0);
+    let blocks = d.blocks.values().flat_map(|b| b.entities.iter()).map(|e| e.handle.0);
+    model.chain(layouts).chain(blocks).chain(std::iter::once(d.handseed))
 }
 
 impl W {
@@ -71,10 +94,20 @@ impl W {
         format!("{:X}", self.next_handle())
     }
     /// A new handle for a record the drawing doesn't hold (as [`W::h`]).
+    ///
+    /// Skips every handle in use, so a file object carrying a handle above the seed (the
+    /// reserved band) is not handed out again, and wraps into that band if the writer runs off
+    /// the top of the range. Each handle skipped is one in use, so the walk is bounded by their
+    /// count.
     fn next_handle(&mut self) -> u64 {
-        let h = self.next;
-        self.next = self.next.saturating_add(1);
-        h
+        for _ in 0..self.used.len().saturating_add(1) {
+            let h = self.next;
+            self.next = h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT);
+            if self.used.insert(h) {
+                return h;
+            }
+        }
+        self.next
     }
     /// A `102 {NAME` … `102 }` group of handles.
     fn group(&mut self, name: &str, code: i32, handles: &[&str]) {
@@ -111,7 +144,7 @@ impl W {
 /// Write a drawing as ASCII DXF.
 /// The drawing as R2000 ASCII DXF.
 pub fn write(d: &Drawing) -> String {
-    cadcraft_dxf::write_ascii(&tags(d, Version::R2000))
+    craft_dxf::write_ascii(&tags(d, Version::R2000))
 }
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`.
@@ -124,14 +157,20 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
     let mut tags = tags_for(d, Version::R2000, dwg, false);
     bridge_markers(&mut tags);
-    cadcraft_dxf::write_ascii(&tags)
+    craft_dxf::write_ascii(&tags)
 }
 
-/// Subclass markers the DWG bridge knows by another spelling (it matches them exactly):
-/// AutoCAD writes a dynamic block lookup parameter's as `AcDbBlockLookUpParameter`, the bridge
-/// reads `AcDbBlockLookupParameter`; otherwise the parameter loses its name and its lookup
-/// action in the DWG, and AutoCAD's lookups stop working.
+/// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.
+/// Ordinary DXF output retains source spellings.
 fn bridge_markers(tags: &mut [Tag]) {
+    for tag in tags.iter_mut().filter(|tag| tag.code == 0) {
+        for name in ["ACAD_PROXY_ENTITY", "ACAD_PROXY_OBJECT"] {
+            if tag.str().trim().eq_ignore_ascii_case(name) {
+                *tag = Tag::s(0, name);
+                break;
+            }
+        }
+    }
     for t in tags.iter_mut().filter(|t| t.code == 100) {
         if t.str().trim().eq_ignore_ascii_case("AcDbBlockLookupParameter") {
             *t = Tag::s(100, "AcDbBlockLookupParameter");
@@ -144,11 +183,17 @@ fn bridge_markers(tags: &mut [Tag]) {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
+    // A handle the writer makes here goes only on the entity's later records (VERTEX, ATTRIB,
+    // SEQEND), which are dropped below, so no walk over the drawing's handles is needed: AutoLISP
+    // calls this once per entity, and that walk would make a loop over a drawing quadratic.
     let mut w = W {
         t: Vec::new(),
         next: d.handseed.max(0x100).saturating_add(0x1000),
+        used: HashSet::new(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
         reactors: HashMap::new(),
     };
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };

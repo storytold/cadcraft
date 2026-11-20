@@ -476,6 +476,7 @@ impl DimStyle {
         match field {
             "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
             "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
+            "decimals" | "altDecimals" | "tolDecimals" => x.is_some_and(|x| !(0.0..=8.0).contains(&x)),
             "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
             "textMove" | "tolJust" | "arcSymbol" | "textFill" => x.is_some_and(|x| x > 2.0),
             "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
@@ -486,16 +487,24 @@ impl DimStyle {
 
     /// Set fields from a JSON object of field or DIM* variable names (numbers, booleans as
     /// 0/1, colours as ACI numbers or names). Returns the names that were not recognised or
-    /// had unusable values.
+    /// had unusable values. When several spellings name one field, the last one wins and the
+    /// superseded ones are not validated.
     pub fn apply_fields(&mut self, src: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
         use serde_json::Value;
         let mut rejected = Vec::new();
         let Ok(mut cur) = serde_json::to_value(&*self) else { return src.keys().cloned().collect() };
+        // Spellings of one field (`DIMPOST`, `dimpost`, `textPrefix`…): only the last is applied, so
+        // the style is checked once per field, not once per spelling (each check copies its strings).
+        let last_spelling: std::collections::HashMap<&str, &String> =
+            src.keys().filter_map(|k| DimStyle::field_name(k).filter(|f| *f != "name").map(|f| (f, k))).collect();
         for (k, v) in src {
             let Some(field) = DimStyle::field_name(k).filter(|f| *f != "name") else {
                 rejected.push(k.clone());
                 continue;
             };
+            if last_spelling.get(field) != Some(&k) {
+                continue;
+            }
             let Some(obj) = cur.as_object_mut() else { break };
             let Some(old) = obj.get(field).cloned() else {
                 rejected.push(k.clone());
@@ -796,9 +805,18 @@ pub struct PageSetup {
     /// Plot objects with their transparency ("Plot transparency"; PLOTTRANSPARENCYOVERRIDE can
     /// override it). The DXF plot layout flags have no bit for it, so it is not saved in DXF.
     pub plot_transparency: bool,
-    /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
-    /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
-    pub paper_mm: bool,
+    /// Explicit paper-space unit for the layout: `Some(true)` for millimetres (plot paper units 1
+    /// in DXF), `Some(false)` for inches, or `None` to follow the drawing's `MEASUREMENT` (#1058,
+    /// #3249).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paper_mm: Option<bool>,
+    /// Paper size (DXF groups 44, 45) and plot rotation (group 73) as the file stored them.
+    /// Saving writes them back while they still describe `width_mm`, `height_mm` and
+    /// `landscape`, so each program's convention for media defined wider than tall survives a
+    /// round trip: AutoCAD stores a portrait size and a quarter turn, ZWCAD the media's own size
+    /// and no turn (#1463). `None` for page setups made in CADCraft.
+    #[serde(skip)]
+    pub file_paper: Option<(f64, f64, i64)>,
     /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
     /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -823,7 +841,8 @@ impl Default for PageSetup {
             lineweights: true,
             show_plot_styles: false,
             plot_transparency: false,
-            paper_mm: false,
+            paper_mm: None,
+            file_paper: None,
             image_origin: None,
         }
     }
@@ -840,6 +859,14 @@ pub struct Layout {
     /// Saved paper-space view (centre, height).
     #[serde(default)]
     pub view: Option<(Vec2, f64)>,
+    /// The layout's current paper-space UCS (the LAYOUT object's groups 13, 16, 17 and 345);
+    /// `None`: the World UCS. Its name is empty when it isn't a named UCS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ucs: Option<Ucs>,
+    /// The layout's earlier UCSs for UCS Previous, oldest first: they go with the layout when it
+    /// is renamed and with it when it is deleted. Never written to a file.
+    #[serde(skip)]
+    pub ucs_previous: Vec<Ucs>,
     /// The layout's limits (LAYOUT groups 10/11, lower left and upper right) as the file had
     /// them; `None` for a layout CADCraft made, written as 0,0 to 12,9 (#2109).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -848,7 +875,16 @@ pub struct Layout {
 
 impl Layout {
     pub fn new(name: &str, tab_order: u32) -> Self {
-        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None, limits: None }
+        Layout {
+            name: name.into(),
+            tab_order,
+            page: PageSetup::default(),
+            entities: EntityStore::new(),
+            view: None,
+            ucs: None,
+            ucs_previous: Vec::new(),
+            limits: None,
+        }
     }
 }
 
@@ -914,11 +950,49 @@ pub struct Ucs {
     pub y_axis: Vec3,
 }
 
-/// A saved layer state (LAYERSTATE).
+/// A saved layer state (LAYERSTATE), as AutoCAD keeps one in the LAYER table's
+/// `ACAD_LAYERSTATES` dictionary.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LayerState {
     pub name: String,
     pub layers: Vec<Layer>,
+    /// The properties restoring sets ([`LayerState::ON`] …): AutoCAD's mask (group 91 of the
+    /// state's XRECORD). Bits CADCraft doesn't use are kept as read.
+    pub mask: u32,
+    /// The layer restoring makes current; empty, or a layer the drawing doesn't have, leaves the
+    /// current layer as it is (AutoCAD 2024, measured).
+    pub current: String,
+    /// Group 301 of the state's XRECORD: empty as AutoCAD 2024's -LAYER saves a state; a text a
+    /// file holds there is kept.
+    pub description: String,
+}
+
+impl Default for LayerState {
+    fn default() -> Self {
+        LayerState { name: String::new(), layers: Vec::new(), mask: LayerState::ALL, current: String::new(), description: String::new() }
+    }
+}
+
+impl LayerState {
+    pub const ON: u32 = 1;
+    pub const FROZEN: u32 = 2;
+    pub const LOCKED: u32 = 4;
+    pub const PLOT: u32 = 8;
+    pub const VP_FREEZE_NEW: u32 = 16;
+    pub const COLOR: u32 = 32;
+    pub const LINETYPE: u32 = 64;
+    pub const LINEWEIGHT: u32 = 128;
+    pub const PLOT_STYLE: u32 = 256;
+    pub const TRANSPARENCY: u32 = 1024;
+    /// Every property: the mask of AutoCAD 2024's -LAYER stAte Save with its defaults (2047; bit
+    /// 512, which no property toggles, is always set).
+    pub const ALL: u32 = 2047;
+
+    /// A state of every property of `layers`, with `current` the layer restoring makes current.
+    pub fn new(name: impl Into<String>, layers: Vec<Layer>, current: impl Into<String>) -> Self {
+        LayerState { name: name.into(), layers, current: current.into(), ..LayerState::default() }
+    }
 }
 
 /// A named group of entities (GROUP).

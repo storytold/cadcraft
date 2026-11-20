@@ -219,6 +219,7 @@ fn an_image_in_a_block_follows_the_block_reference() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(ins.clone())).unwrap();
     d.rasters.insert("map.png", pixels());

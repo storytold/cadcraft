@@ -26,7 +26,6 @@
 //!   above, below, modes, encoding, embedding, 0) and then each shape as (number, length,
 //!   record).
 
-mod compile;
 mod parse;
 mod program;
 mod table;
@@ -39,53 +38,14 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use cadcraft_geom::Vec2;
 
-pub use compile::compile;
+use craft_shx::Record;
+pub use craft_shx::{ShxError, ShxKind, compile};
 pub use table::{
-    FontProvider, add_drawing_dir, clear_registered, drawing_dirs, find, font_map, generation, register, search_path, set_font_map, set_provider,
-    set_search_path,
+    FontProvider, OpenGuard, add_drawing_dir, add_drawing_dir_guarded, clear_registered, drawing_dirs, find, font_map, generation, installed,
+    register, search_path, set_font_dirs, set_font_map, set_provider, set_search_path,
 };
 pub use text::ShxText;
 pub(crate) use text::{shape, width};
-
-/// Why a font file can't be read or a shape source can't be compiled.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShxError {
-    /// Not an SHX file (unknown signature).
-    NotShx,
-    /// The file ends inside its header or index.
-    Truncated,
-    /// The file is larger, or has more of something, than CADCraft reads.
-    TooLarge,
-    /// The file is well-formed but holds no shape.
-    Empty,
-    /// Shape source error: line and message.
-    Source(usize, String),
-}
-
-impl std::fmt::Display for ShxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShxError::NotShx => f.write_str("not an SHX shape or font file"),
-            ShxError::Truncated => f.write_str("the SHX file is truncated"),
-            ShxError::TooLarge => f.write_str("the SHX file is too large"),
-            ShxError::Empty => f.write_str("the SHX file has no shapes"),
-            ShxError::Source(line, msg) => write!(f, "line {line}: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for ShxError {}
-
-/// The kind of SHX file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShxKind {
-    /// A shape file or a text font with single-byte character codes (`shapes 1.0/1.1`).
-    Shapes,
-    /// A big font: double-byte character codes after an escape (lead) byte.
-    BigFont,
-    /// A Unicode font: shape numbers are Unicode code points.
-    Unifont,
-}
 
 /// A shape's program run into polylines, in font units (pen starts at the origin).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -96,18 +56,17 @@ pub struct ShxGlyph {
     pub advance: Vec2,
 }
 
-/// One shape record: where its name and program are in [`ShxFont::data`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Record {
-    name: (usize, usize),
-    program: (usize, usize),
+/// Glyphs cached per font, keyed by (shape, vertical), and their points in all.
+#[derive(Default)]
+struct GlyphCache {
+    glyphs: HashMap<(u16, bool), Option<Arc<ShxGlyph>>>,
+    points: usize,
 }
-
-/// Glyphs cached per font, keyed by (shape, vertical).
-type GlyphCache = HashMap<(u16, bool), Option<Arc<ShxGlyph>>>;
 
 /// Most glyphs cached per font (a big font has thousands; text uses a few hundred).
 const MAX_CACHED_GLYPHS: usize = 16_384;
+/// Most points cached per font (16 MB; a glyph may hold thousands of points).
+const MAX_CACHED_POINTS: usize = 1 << 20;
 
 /// A parsed SHX file.
 pub struct ShxFont {
@@ -128,6 +87,9 @@ pub struct ShxFont {
     data: Vec<u8>,
     records: HashMap<u16, Record>,
     cache: RwLock<GlyphCache>,
+    /// Whether a one-byte font holds Hebrew letters at their Windows-1255 / DOS 862 places,
+    /// worked out on first use ([`ShxFont::hebrew_places`]).
+    hebrew: std::sync::OnceLock<(bool, bool)>,
 }
 
 impl std::fmt::Debug for ShxFont {
@@ -194,6 +156,19 @@ impl ShxFont {
     pub fn has_shape(&self, number: u16) -> bool {
         number != 0 && self.records.contains_key(&number)
     }
+    /// Whether this one-byte font draws Hebrew letters at their Windows-1255 places (0xE0..0xFA)
+    /// and at their DOS 862 places (0x80..0x9A), as Israeli SHX fonts do. A Cyrillic font fills
+    /// the same places with its letters, so it must not also fill 0xC0..0xDF (Windows-1251) or
+    /// 0xA0..0xAF (DOS 866): Hebrew text never turns into Russian.
+    pub fn hebrew_places(&self) -> (bool, bool) {
+        *self.hebrew.get_or_init(|| {
+            if self.kind != ShxKind::Shapes {
+                return (false, false);
+            }
+            let count = |r: std::ops::RangeInclusive<u16>| r.filter(|c| self.has_shape(*c)).count();
+            (count(0xE0..=0xFA) >= 20 && count(0xC0..=0xDF) < 16, count(0x80..=0x9A) >= 20 && count(0xA0..=0xAF) < 8)
+        })
+    }
     /// The shape numbers in the file, sorted (not shape 0).
     pub fn shape_numbers(&self) -> Vec<u16> {
         let mut v: Vec<u16> = self.records.keys().copied().filter(|n| *n != 0).collect();
@@ -234,15 +209,22 @@ impl ShxFont {
         }
         let vertical = vertical && self.dual;
         let key = (number, vertical);
-        if let Some(g) = self.cache.read().unwrap_or_else(PoisonError::into_inner).get(&key) {
+        if let Some(g) = self.cache.read().unwrap_or_else(PoisonError::into_inner).glyphs.get(&key) {
             return g.clone();
         }
         let g = program::outline(self, number, vertical).ok().map(Arc::new);
+        let points = g.as_ref().map_or(0, |g| g.strokes.iter().map(Vec::len).sum::<usize>());
         let mut c = self.cache.write().unwrap_or_else(PoisonError::into_inner);
-        if c.len() >= MAX_CACHED_GLYPHS {
-            c.clear();
+        // Another thread may have outlined it in the meantime: its points are counted already.
+        if let Some(g) = c.glyphs.get(&key) {
+            return g.clone();
         }
-        c.insert(key, g.clone());
+        if c.glyphs.len() >= MAX_CACHED_GLYPHS || c.points.saturating_add(points) > MAX_CACHED_POINTS {
+            c.glyphs.clear();
+            c.points = 0;
+        }
+        c.points = c.points.saturating_add(points);
+        c.glyphs.insert(key, g.clone());
         g
     }
 }

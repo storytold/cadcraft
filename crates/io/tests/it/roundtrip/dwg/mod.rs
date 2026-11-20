@@ -62,7 +62,7 @@ fn check_version_using(case: &str, original: &Drawing, expected: &Drawing, versi
     for pass in 1..=2 {
         let context = format!("{case} · DWG {version} · pass={pass}");
         let bytes = write_with(&current, "memory.dwg", &options).unwrap_or_else(|e| panic!("{context}: write: {e}"));
-        assert_eq!(cadcraft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
+        assert_eq!(craft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
         let back = read(&bytes, "memory.dwg").unwrap_or_else(|e| panic!("{context}: read: {e}"));
         assert!(back.read_notes.is_empty(), "{context}: read notes: {:?}", back.read_notes);
         assert!(back.skipped_records.is_empty(), "{context}: skipped records: {:?}", back.skipped_records);
