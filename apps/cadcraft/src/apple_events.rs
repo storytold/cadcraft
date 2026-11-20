@@ -12,14 +12,25 @@
 use std::path::PathBuf;
 
 use cadcraft_ui_egui::CadApp;
+#[cfg(target_os = "macos")]
 use fmv_macos_events::{Event, Inbox, Registration};
 
+/// The shape of `fmv_macos_events::Event`, so [`dispatch`] and its tests also build and run where
+/// that crate is not compiled (PR CI runs on Linux). On macOS the crate's own type is used.
+#[cfg(not(target_os = "macos"))]
+enum Event {
+    Open(Vec<PathBuf>),
+    Quit,
+}
+
 /// Keeps the Apple-event handlers registered; hold it until the event loop returns.
+#[cfg(target_os = "macos")]
 pub struct AppleEvents {
     _registration: Registration,
     inbox: Inbox,
 }
 
+#[cfg(target_os = "macos")]
 impl AppleEvents {
     /// Register the handlers. Call on the main thread before the event loop starts, so the event
     /// that launched the app (a Finder double-click) is caught too.
@@ -69,6 +80,7 @@ fn dispatch(events: impl IntoIterator<Item = Event>, app: &mut CadApp) -> bool {
 }
 
 /// Drain the inbox each frame; a quit closes the window like Cmd+Q, prompting for unsaved drawings.
+#[cfg(target_os = "macos")]
 pub fn poll(inbox: &Inbox, app: &mut CadApp, ctx: &egui::Context) {
     if dispatch(inbox.drain(), app) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -77,11 +89,10 @@ pub fn poll(inbox: &Inbox, app: &mut CadApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, openable};
+    use super::{Event, dispatch, openable};
     use cadcraft_engine::Session;
     use cadcraft_ui_egui::closing::Choice;
     use cadcraft_ui_egui::{CadApp, Services};
-    use fmv_macos_events::Event;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};

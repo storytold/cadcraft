@@ -14,7 +14,7 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 mod apple_events;
 mod control_server;
 mod desktop_theme;
