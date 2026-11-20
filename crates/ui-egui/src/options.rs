@@ -434,13 +434,30 @@ fn apply_right_click(o: &mut UiOptions, c: &UiChanges) {
 
 /// The interface preferences back to their defaults (the interface language stays).
 fn reset_ui(app: &mut CadApp) {
-    let d = crate::UiState::default();
-    app.ui.theme = d.theme;
-    app.ui.animations = d.animations;
-    app.ui.save_format = d.save_format;
-    app.ui.save_version = d.save_version;
+    // Everything interface, back to its defaults: a hidden menu bar, tool bar, palettes or
+    // panels and a rearranged panel layout come back — once the menu bar is hidden there may be
+    // no other way to reach the toggles (#1240). The interface language stays; the open dialog,
+    // the start tab, the recent files and the remembered folders are state, not preferences, and
+    // stay too. The user's keyboard shortcuts are their own customisation, which Window > Reset
+    // Palettes keeps as well: a reset meant to bring a bar back must not lose them.
+    let (language, dialog, start_tab) = (app.ui.interface_language, app.ui.dialog.take(), app.ui.start_tab);
+    let recent_files = std::mem::take(&mut app.ui.recent_files);
+    let shortcuts = std::mem::take(&mut app.ui.shortcuts);
+    let (last_lisp_dir, last_pgp_dir) = (app.ui.last_lisp_dir.take(), app.ui.last_pgp_dir.take());
+    app.ui = crate::UiState {
+        interface_language: language,
+        dialog,
+        start_tab,
+        recent_files,
+        shortcuts,
+        last_lisp_dir,
+        last_pgp_dir,
+        ..Default::default()
+    };
+    // Where the host has no native menu bar the in-window one is the only menu: the reset must
+    // leave it in place (#1240).
+    app.ui.in_window_menu = !app.native_menus;
     app.ui.system_cursor = app.system_cursor_default;
-    app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
 }
 

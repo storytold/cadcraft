@@ -27,6 +27,7 @@ pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
+pub mod properties;
 mod recent;
 pub mod render_look;
 pub mod sample;
@@ -85,6 +86,11 @@ pub struct Session {
     pub doc_epoch: u64,
     pub settings: Settings,
     pub running: Option<Running>,
+    /// How many commands were started, nested transparent ones left out.
+    pub commands_started: u64,
+    /// The last command that ended by itself, not cancelled: its number in `commands_started`, and
+    /// whether it took new handles (it added to the drawing, and nothing took that back).
+    pub last_finished: Option<(u64, bool)>,
     /// A script is running ([`Session::script`]); a SCRIPT command inside it is refused.
     in_script: bool,
     /// The command suspended while a transparent command (`'ZOOM`, `'PAN`…) prompts inside it;
@@ -150,6 +156,10 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// The window's menu bar and tool bar as the UI shows them (it reports them every frame).
+    pub bars_shown: cmd::interface::InterfaceBars,
+    /// The bars MENUBAR or TOOLBAR asked to change, for the UI to apply.
+    pub bars_request: cmd::interface::BarsRequest,
     /// The object named with a point for the input a prompt picking one object is taking
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
@@ -176,6 +186,8 @@ impl Session {
             doc_epoch: 0,
             settings: Settings::default(),
             running: None,
+            commands_started: 0,
+            last_finished: None,
             in_script: false,
             suspended: None,
             log: Vec::new(),
@@ -207,6 +219,8 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            bars_shown: Default::default(),
+            bars_request: Default::default(),
             pick_hint: None,
         }
     }

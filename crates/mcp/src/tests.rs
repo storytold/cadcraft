@@ -226,6 +226,22 @@ fn find_text_reads_texts_and_render_shows_one_area() {
     assert_eq!((w, h), (1600, 800));
 }
 
+/// Guards #3011: `find_text` filters by `query` as it does by `contains`, instead of ignoring it
+/// and returning every text.
+#[test]
+fn find_text_filters_by_query() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [1, 1], "height": 0.15, "text": "RECAMARA 1"}}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [50, 1], "height": 0.15, "text": "COCINA"}}));
+    assert_eq!(tool(&mut s, "find_text", json!({}))["count"], 2);
+    let r = tool(&mut s, "find_text", json!({"query": "cocina"}));
+    assert_eq!((r["count"].as_u64(), r["texts"][0]["text"].as_str()), (Some(1), Some("COCINA")), "{r}");
+    assert_eq!(tool(&mut s, "find_text", json!({"query": "nada"}))["count"], 0);
+    // `contains` still works and wins when both are given.
+    assert_eq!(tool(&mut s, "find_text", json!({"contains": "recamara", "query": "cocina"}))["texts"][0]["text"], "RECAMARA 1");
+}
+
 /// Guards a lazy Remote bridge: it serves tools without the app, reports how to start it
 /// (`--control`), and reaches the app once that app starts listening on the port.
 #[test]
@@ -390,4 +406,25 @@ fn render_refuses_unknown_backgrounds_and_plot_styles() {
     let mut h = Headless::default();
     assert!(crate::Backend::call(&mut h, "ui.render", json!({"background": "purple"})).is_err());
     assert!(crate::Backend::call(&mut h, "ui.render", json!({"plot_style": 3})).is_err());
+}
+
+#[test]
+fn legacy_protocol_routing_and_version_negotiation() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    assert!(s.handle_line(r#"{"method":"notifications/initialized"}"#).is_none());
+    assert!(s.is_initialized());
+    for (params, expected) in
+        [(json!(null), "2025-06-18"), (json!({"protocolVersion":"2024-11-05"}), "2024-11-05"), (json!({"protocolVersion":"other"}), "2025-06-18")]
+    {
+        let response = call(&mut s, 1, "initialize", params);
+        assert_eq!(response["result"]["protocolVersion"], expected);
+        assert_eq!(response["result"]["serverInfo"]["title"], "CADCraft");
+        assert!(response["result"]["instructions"].as_str().unwrap().contains("Backend:"));
+    }
+    let response: Value =
+        serde_json::from_str(&s.handle_line(r#"[{"id":[1],"method":"ping","params":5},{"method":"ignored"},{"result":1},{}]"#).unwrap()).unwrap();
+    assert_eq!(
+        response,
+        json!([{"jsonrpc":"2.0","id":[1],"result":{}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"missing `method`"}}])
+    );
 }
