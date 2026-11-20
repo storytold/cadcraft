@@ -28,6 +28,7 @@ pub(super) fn drawing() -> Drawing {
 
 pub(super) fn text() -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(2.5, -3.75, 4.125),
         align_pt: None,
         height: 2.25,

@@ -35,6 +35,7 @@ mod press_first_clicks;
 mod properties_described;
 mod properties_units;
 mod rapid_clicks;
+mod rtl_names;
 mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;

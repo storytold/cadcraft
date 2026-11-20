@@ -511,6 +511,7 @@ fn attdef_kind(
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
+            formula: None,
             insert: v3(at),
             align_pt: if left { None } else { Some(v3(at)) },
             height,
