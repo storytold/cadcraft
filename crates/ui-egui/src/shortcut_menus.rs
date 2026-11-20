@@ -97,6 +97,7 @@ pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
     let layout = |op: &str, label: &str| action(label, format!("layout:{op}:{name}"), true);
     let mut groups = Vec::new();
     let mut new: Vec<Entry> = item(app, "layout.new", None).map(|_| layout("new", "New Layout")).into_iter().collect();
+    new.extend(item(app, "layout.newarea", None).map(|_| layout("newarea", "New Layout from Area...")));
     if find_command("layout").is_some() {
         new.push(layout("template", "From Template..."));
         if !model {
@@ -198,8 +199,21 @@ fn keyword_then(app: &mut CadApp, keyword: &str, text: Option<&str>) {
     }
 }
 
+/// A new layout from the menu's "New Layout from Area...": the next free name is taken, then the
+/// command asks for the part of the model it shows (two corners picked in the Model tab, or Enter
+/// for the whole drawing) and ends in the new layout. Esc leaves things as they were.
+fn new_layout_from_area(app: &mut CadApp) {
+    app.start("layout.newarea");
+    if app.session.running.as_ref().is_some_and(|r| r.id == "layout.newarea")
+        && let Err(e) = app.session.input(Input::Enter)
+    {
+        app.session.echo(e.to_string());
+    }
+}
+
 fn layout_action(app: &mut CadApp, op: &str, name: &str) {
     match op {
+        "newarea" => new_layout_from_area(app),
         "new" => {
             if let Ok(v) = app.run("layout.new", json!({}))
                 && let Some(n) = v.get("name").and_then(Value::as_str)
