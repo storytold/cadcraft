@@ -26,7 +26,7 @@ mod stretch;
 mod transform;
 mod trim;
 
-use break_join::{BreakM, run_break, run_breakat, run_join};
+use break_join::{BreakAtPointM, BreakM, run_break, run_breakat, run_join};
 use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
@@ -37,7 +37,7 @@ use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};
 pub(crate) use transform::{holds_ole_frame, ole_refusal, refuse_ole_frames, transform_entities};
 use transform::{run_copy, run_erase, run_mirror, run_move, run_rotate, run_scale};
-pub(crate) use trim::{Edges, extend, trim};
+pub(crate) use trim::{CUT_ONCE, Edges, extend, json_pick_error, trim};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -85,14 +85,24 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("trim", "Trim", trimextend::run_trim)
             .menu(&["Modify", "Trim"])
             .alias(&["tr"])
-            .params(
-                "{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\"} → {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing)",
-            )
+            .params(concat!(
+                "{handle, pick: [x,y]} | {fence: [[x,y],...]} | {crossing: [[x,y],[x,y]]}; edges?: [hex] (default: every object; a polyline that is one of them, or every object in Standard mode, also cuts itself at its vertices and crossings), edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\" ",
+                "→ {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing). ",
+                "For handle+pick: handle is the object to trim; pick selects the portion of that object to remove ",
+                "(normally a point on it, away from a cutting intersection); edges are the cutting edges. The JSON default is standard mode."
+            ))
             .interactive(|_| Ok(Box::new(TrimM::new(false)))),
         CommandSpec::new("extend", "Extend", trimextend::run_extend)
             .menu(&["Modify", "Extend"])
             .alias(&["ex"])
-            .params("{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex], edgeMode?: \"extend\"|\"none\"}")
+            .params(concat!(
+                "{handle, pick: [x,y]} | {fence: [[x,y],...]} | {crossing: [[x,y],[x,y]]}; ",
+                "edges?: [hex], edgeMode?: \"extend\"|\"none\". ",
+                "For handle+pick: handle is the object to extend; pick points toward the boundary to extend to ",
+                "(normally a point on that boundary), selecting the nearer end of the object ",
+                "(of an open polyline, the end on the pick's side of its middle parameter); ",
+                "edges are the boundary edges, and the nearest forward intersection is used."
+            ))
             .interactive(|_| Ok(Box::new(TrimM::new(true)))),
         CommandSpec::new("fillet", "Fillet", run_fillet)
             .menu(&["Modify", "Fillet"])
@@ -114,7 +124,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["br"])
             .params("{handle, p1, p2} → {handles: the object (kept, reshaped) then the new pieces; none when nothing is left}")
             .interactive(|_| Ok(Box::new(BreakM::default()))),
-        CommandSpec::new("breakatpoint", "Break At Point", run_breakat).menu(&["Modify", "Break At Point"]).params("{handle, at} → {handles: the object (kept, reshaped) then the new piece}"),
+        CommandSpec::new("breakatpoint", "Break At Point", run_breakat)
+            .menu(&["Modify", "Break At Point"])
+            .params("{handle, at} → {handles: the object (kept, reshaped) then the new piece}")
+            .interactive(|_| Ok(Box::new(BreakAtPointM::default()))),
         CommandSpec::new("join", "Join", run_join)
             .menu(&["Modify", "Join"])
             .alias(&["j"])

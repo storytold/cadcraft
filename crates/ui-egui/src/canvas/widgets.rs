@@ -48,16 +48,23 @@ pub(super) fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
     ));
 }
 
-pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
+/// The UCS icon: its X and Y arms along the current UCS's axes, with a square at the corner for
+/// the World UCS.
+pub(super) fn draw_ucs_icon(p: &egui::Painter, at: &crate::viewcube::IconPlace) {
     let t = Tokens::get();
-    let o = pos2(rect.left() + 36.0, rect.bottom() - 34.0);
+    let (o, x, y) = (at.origin, at.x, at.y);
+    let arm = crate::viewcube::ARM;
     let st = Stroke::new(1.0, t.canvas_ink);
-    p.line_segment([o, o + vec2(60.0, 0.0)], st);
-    p.line_segment([o, o + vec2(0.0, -60.0)], st);
-    p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
+    p.line_segment([o, o + x * arm], st);
+    p.line_segment([o, o + y * arm], st);
+    if at.world {
+        let h = 4.5;
+        let square = vec![o + (x + y) * h, o + (x - y) * h, o - (x + y) * h, o - (x - y) * h];
+        p.add(Shape::closed_line(square, st));
+    }
     let f = egui::FontId::proportional(13.0);
-    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
-    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
+    p.text(o + x * (arm + 10.0), egui::Align2::CENTER_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
+    p.text(o + y * (arm + 10.0), egui::Align2::CENTER_CENTER, crate::tl!("Y"), f, t.canvas_ink);
 }
 
 pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
@@ -68,19 +75,29 @@ pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
 
 pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     let l = crate::viewcube::Layout::new(rect);
-    let (c, ring) = (l.center, l.ring);
     let p = ui.painter_at(rect);
     crate::viewcube::show(app, ui, &l);
-    // WCS pill: the label and a down chevron, drawn as lines rather than a "⌄" glyph that a UI
-    // font may lack (it showed as a box, #1541).
-    let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
+    // UCS pill: the current UCS's name and a down chevron, drawn as lines rather than a "⌄"
+    // glyph that a UI font may lack (it showed as a box, #1541).
+    let pill = l.pill;
     p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
     let ink = Tokens::DARK.canvas_ink;
-    let label = p.layout_no_wrap(crate::tl!("WCS").to_string(), crate::theme::small(), ink);
+    let label = p.layout_no_wrap(ucs_pill_text(app), crate::theme::small(), ink);
     let (gap, chevron) = (4.0, 6.0);
     let left = pill.center().x - (label.size().x + gap + chevron) / 2.0;
     let mid = pill.center().y;
     p.galley(pos2(left, mid - label.size().y / 2.0), label.clone(), ink);
     let x = left + label.size().x + gap;
     p.line(vec![pos2(x, mid - 1.5), pos2(x + chevron / 2.0, mid + 1.5), pos2(x + chevron, mid - 1.5)], Stroke::new(1.2, ink));
+}
+
+/// The ViewCube pill's label: WCS, or the current UCS's name (cut short); the menu arrow is drawn
+/// beside it as lines (#1541).
+fn ucs_pill_text(app: &CadApp) -> String {
+    let (u, name) = app.session.ucs_named();
+    if u.is_world() && name.is_empty() {
+        return crate::tl!("WCS").to_string();
+    }
+    let n = if name.is_empty() { crate::tl!("Unnamed").to_string() } else { name };
+    if n.chars().count() > 8 { n.chars().take(7).chain(std::iter::once('…')).collect() } else { n }
 }
