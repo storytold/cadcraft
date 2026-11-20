@@ -145,7 +145,12 @@ fn spline_text_insert_and_dimension_grips() {
 
     let d = h(&s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [10, 0], "at": [5, 2]})).unwrap());
     let g = s.grips_of(d).unwrap();
-    assert_eq!(g.len(), 4);
+    // Both ends of the dimension line have a grip: the second end, then the first (grip 4).
+    assert_eq!(g.len(), 5);
+    assert!(near(g[2], 10.0, 2.0) && near(g[4], 0.0, 2.0), "{g:?}");
+    s.grip_edit(d, 4, v(1.0, 3.0), GripMode::Stretch).unwrap();
+    let g = s.grips_of(d).unwrap();
+    assert!(near(g[4], 0.0, 3.0) && near(g[2], 10.0, 3.0), "the line moves to the grip: {g:?}");
     s.grip_edit(d, 3, v(5.0, 6.0), GripMode::Stretch).unwrap();
     assert!(matches!(kind(&s, d), EntityKind::Dimension(x) if !x.user_text_pos));
     let shown = s.grips_of(d).unwrap()[3];
