@@ -25,7 +25,8 @@ use craft_pdf::write::{self, Metadata, WriteError, Writer};
 use kr::action::LinkAction;
 use kr::annotation::{Annotation, LinkAnnotation, Target};
 use kr::error::KrillaError;
-use kr::geom::{Path, PathBuilder, Point, Rect, Transform};
+use kr::geom::{Path, PathBuilder, Point, Rect, Size, Transform};
+use kr::image::Image as KrillaImage;
 use kr::num::NormalizedF32;
 use kr::optional_content::OcgId;
 use kr::page::{PageLabel, PageSettings};
@@ -453,6 +454,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
         let mut writer = Writer::new(settings, metadata);
         let mut fonts = fonts::Fonts::new(!text_as_geometry);
         let mut groups = Groups::default();
+        let mut images: std::collections::HashMap<(usize, u32, u32), KrillaImage> = std::collections::HashMap::new();
         // Link annotations of the whole file: each page keeps its own copy of the targets, so the
         // pages times the links must not multiply without a bound.
         let mut annotations_left = MAX_FILE_ANNOTATIONS;
@@ -466,7 +468,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
             let doc = writer.document_mut();
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
-            write_page(doc, &page, &groups, &mut fonts)?;
+            write_page(doc, &page, &groups, &mut fonts, &mut images)?;
         }
         if items.len() == 1 && !groups.ids.is_empty() {
             writer.document_mut().set_optional_content_page_mode(true);
@@ -750,7 +752,13 @@ fn circle_path(x: f32, y: f32, r: f32) -> Option<Path> {
 }
 
 /// Write one sheet as a page: its size, label, link annotations and marks.
-fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+fn write_page(
+    doc: &mut kr::Document,
+    p: &SheetPage,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+    images: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
+) -> std::result::Result<(), Failure> {
     let (w, h) = (p.media.x as f32, p.media.y as f32);
     let label = PageLabel::new(None, Some(p.label.chars().take(MAX_TEXT).collect()), None);
     let settings = PageSettings::from_wh(w, h).ok_or_else(|| IoError::Format("the sheet has no area".into()))?.with_page_label(label);
@@ -769,7 +777,7 @@ fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mu
     let mut drawn = Ok(());
     if let Some(clip) = rect_path(p.clip_pt.min, p.clip_pt.max) {
         surface.push_clip_path(&clip, &FillRule::NonZero);
-        drawn = marks(&mut surface, p, groups, fonts);
+        drawn = marks(&mut surface, p, groups, fonts, images);
         surface.pop();
     }
     surface.pop();
@@ -785,6 +793,123 @@ struct StrokeStyle {
     rgb: Rgb,
     width: f32,
     transparency: u8,
+}
+
+/// Encode a raster as PNG so the PDF preserves exact `(width, height)` in `IHDR` (avoiding
+/// `KrillaImage::from_rgba8`'s dimension-blind pixel hash) and omits `/SMask` for opaque images.
+fn encode_png(r: &cadcraft_doc::Raster) -> Option<Vec<u8>> {
+    use craft_image_codecs::{ChannelLayout, EncodeOptions, Image as CodecImage, PngRows};
+    let (w, h) = (r.width(), r.height());
+    let stride = usize::try_from(w).ok()?.checked_mul(4).filter(|n| *n > 0)?;
+    let expected = stride.checked_mul(usize::try_from(h).ok()?)?;
+    if h == 0 || r.rgba().len() != expected {
+        return None;
+    }
+    let opaque = r.opaque();
+    let layout = if opaque { ChannelLayout::Rgb } else { ChannelLayout::Rgba };
+    let mut rows = r.rgba().chunks_exact(stride);
+    let make_row = |rgba_row: &[u8]| -> Option<CodecImage> {
+        let bytes = if opaque {
+            let mut rgb = Vec::with_capacity(usize::try_from(w).ok()?.checked_mul(3)?);
+            for px in rgba_row.as_chunks::<4>().0 {
+                rgb.extend_from_slice(&px[..3]);
+            }
+            rgb
+        } else {
+            rgba_row.to_vec()
+        };
+        CodecImage::from_u8(w, 1, layout, bytes).ok()
+    };
+    let first = make_row(rows.next()?)?;
+    let mut out = Vec::new();
+    let mut encoder = PngRows::new(&mut out, &first, h, &EncodeOptions::default()).ok()?;
+    encoder.push(&first).ok()?;
+    for row in rows {
+        encoder.push(&make_row(row)?).ok()?;
+    }
+    encoder.finish().ok()?;
+    Some(out)
+}
+
+fn krilla_image(r: &std::sync::Arc<cadcraft_doc::Raster>, cache: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>) -> KrillaImage {
+    let key = (std::sync::Arc::as_ptr(r) as usize, r.width(), r.height());
+    if let Some(existing) = cache.get(&key) {
+        return existing.clone();
+    }
+    let img = if let Some(png) = encode_png(r)
+        && let Ok(kimg) = KrillaImage::from_png(png.into(), true)
+    {
+        kimg
+    } else {
+        KrillaImage::from_rgba8(r.rgba().to_vec(), r.width(), r.height())
+    };
+    cache.insert(key, img.clone());
+    img
+}
+
+/// Draw a raster image onto the Y-up PDF surface, respecting its world-to-page transform,
+/// clip outlines and fade/transparency.
+fn draw_raster_image(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    img: &cadcraft_render::DImage,
+    t: u8,
+    cache: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
+) {
+    let (w, h) = (img.raster.width(), img.raster.height());
+    if w == 0 || h == 0 {
+        return;
+    }
+    let Some(size) = Size::from_wh(w as f32, h as f32) else { return };
+    let scale = p.map.s * p.map.k;
+    let Some((ox, oy)) = coord(p.map.pt(img.origin)) else { return };
+    let Some((rx, ry)) = coord(img.right * scale) else { return };
+    let Some((dx, dy)) = coord(img.down * scale) else { return };
+    let det = rx * dy - ry * dx;
+    if !det.is_finite() || det == 0.0 {
+        return;
+    }
+    let mut clip_paths = Vec::with_capacity(img.clips.len());
+    for outline in &img.clips {
+        let mut pb = PathBuilder::new();
+        let mut count = 0usize;
+        for &q in outline {
+            let Some((x, y)) = coord(p.map.pt(q)) else { return };
+            if count == 0 {
+                pb.move_to(x, y);
+            } else {
+                pb.line_to(x, y);
+            }
+            count += 1;
+        }
+        if count < 3 {
+            return;
+        }
+        pb.close();
+        let Some(path) = pb.finish() else { return };
+        clip_paths.push(path);
+    }
+    let k_img = krilla_image(&img.raster, cache);
+    let clips_pushed = clip_paths.len();
+    for path in &clip_paths {
+        s.push_clip_path(path, &FillRule::EvenOdd);
+    }
+    s.push_transform(&Transform::from_row(rx, ry, dx, dy, ox, oy));
+    let op = opacity(t).get() * (1.0 - f32::from(img.fade.min(100)) / 100.0);
+    let pushed_opacity = if op < 1.0 {
+        s.push_opacity(NormalizedF32::new(op.max(0.0)).unwrap_or(NormalizedF32::ONE));
+        true
+    } else {
+        false
+    };
+    s.draw_image(k_img, size);
+    if pushed_opacity {
+        s.pop();
+    }
+    s.pop();
+    for _ in 0..clips_pushed {
+        s.pop();
+    }
 }
 
 /// Opacity of a transparency in percent.
@@ -846,7 +971,13 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
-fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+fn marks(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+    images: &mut std::collections::HashMap<(usize, u32, u32), KrillaImage>,
+) -> std::result::Result<(), Failure> {
     let list = &p.list;
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
@@ -883,8 +1014,12 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
-            // Raster images are not written to PDF yet: their frame is.
-            Kind::Image { .. } => {}
+            Kind::Image { index } => {
+                flush(s, &mut batch);
+                if let Some(img) = list.images.get(index as usize) {
+                    draw_raster_image(s, p, img, t, images);
+                }
+            }
         }
     }
     flush(s, &mut batch);
@@ -995,7 +1130,8 @@ fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, ma
 fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, rgb: Rgb, transparency: u8) {
     let k = map.s * map.k;
     let g = &t.glyph;
-    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(map.pt(g.origin))) else { return };
+    let pt = map.pt(g.origin);
+    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(pt)) else { return };
     let det = a * d - b * c;
     if !det.is_finite() || det == 0.0 {
         return;
