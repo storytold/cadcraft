@@ -709,6 +709,10 @@ struct PressContext {
     inside: bool,
     middle_down: bool,
     mods: egui::Modifiers,
+    /// Whether a press on a grip clicks it when the button comes up. Not on the second click of a
+    /// double-click with no command running: that one opened the Hatch Edit dialog or did nothing,
+    /// and must not also start a grip edit.
+    grip_clicks: bool,
 }
 
 /// Clicks count when the button goes down, where it went down, however fast the mouse moves
@@ -720,7 +724,7 @@ struct PressContext {
 /// Presses while ZOOM Realtime runs are left to the clicks in [`show`]. Returns whether a press
 /// handled here was released this frame (its click must not count again).
 fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bool {
-    let PressContext { rect, xf, inside, middle_down, mods } = *context;
+    let PressContext { rect, xf, inside, middle_down, mods, grip_clicks } = *context;
     let (steps, now, primary_down) = ui.input(|i| (press::steps(&i.events), i.time, i.pointer.primary_down()));
     let mut click_used = false;
     for step in steps {
@@ -763,7 +767,7 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 let Some(mut p) = app.canvas.press.take() else { continue };
                 click_used = true;
                 if p.is_on_grip() {
-                    if let Some((at, m)) = p.grip_click(pos) {
+                    if grip_clicks && let Some((at, m)) = p.grip_click(pos) {
                         if let Some(g) = crate::dyngrips::at(app, &xf, Some(at)) {
                             crate::dyngrips::click(app, g);
                         } else if let Some(g) = grip_at(app, &xf, Some(at)) {
@@ -889,7 +893,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.hover_cycle = None;
         app.canvas.cycle_key = Some(key);
     }
-    let click_used = handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods });
+    let idle_double = dbl_primary && app.session.running.is_none();
+    let grip_clicks = !hatch_dialog && !idle_double;
+    let click_used = handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods, grip_clicks });
 
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
 
