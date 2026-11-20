@@ -42,11 +42,21 @@ pub struct ForeignExtra {
     pub color_book: Option<(String, String)>,
     /// Other unmodelled property groups (material 347, shadow mode 284).
     pub props: Vec<RawTag>,
+    /// A TEXT or MTEXT with an AutoCAD field: the formula the field was read as and the text the
+    /// file showed. While the formula is unchanged the text is written back as read, so it
+    /// matches the value cached in the field and AutoCAD keeps the field (it works it out again
+    /// itself); CADCraft shows the field worked out for today meanwhile.
+    pub field_text: Option<(String, String)>,
 }
 
 impl ForeignExtra {
     pub fn is_empty(&self) -> bool {
-        self.xdict.is_none() && self.reactors.is_empty() && self.xdata.is_empty() && self.color_book.is_none() && self.props.is_empty()
+        self.xdict.is_none()
+            && self.reactors.is_empty()
+            && self.xdata.is_empty()
+            && self.color_book.is_none()
+            && self.props.is_empty()
+            && self.field_text.is_none()
     }
 }
 

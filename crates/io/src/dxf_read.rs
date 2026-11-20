@@ -176,6 +176,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    crate::dxf_fields::resolve(&secs, &mut d);
     crate::dxf_clip::read(&mut d);
     if rx.curves.cut > 0 {
         // Echoed on open, returned by OPEN and listed by the CLI, so a coarse boundary is never silent.

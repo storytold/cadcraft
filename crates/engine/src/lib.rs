@@ -20,6 +20,7 @@ pub mod cmd;
 pub mod doc_path;
 pub mod file_access;
 mod finite;
+pub mod formula;
 pub mod grip_dims;
 pub mod grips;
 mod guard;
@@ -37,6 +38,7 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod textformula;
 pub mod ucs;
 pub mod undoctl;
 pub mod units;
@@ -54,7 +56,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
 mod doc_state;
 mod error;
@@ -158,6 +160,9 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// Warnings a command shows in a window (a hatch boundary that isn't closed): the UI shows
+    /// the first one and takes it off when it is closed.
+    pub notices: Vec<Notice>,
     /// The window's menu bar and tool bar as the UI shows them (it reports them every frame).
     pub bars_shown: cmd::interface::InterfaceBars,
     /// The bars MENUBAR or TOOLBAR asked to change, for the UI to apply.
@@ -166,6 +171,13 @@ pub struct Session {
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
     pick_hint: Option<(Handle, Vec2)>,
+}
+
+/// A warning shown in a window ([`Session::notices`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub title: String,
+    pub message: String,
 }
 
 impl Default for Session {
@@ -221,6 +233,7 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            notices: Vec::new(),
             bars_shown: Default::default(),
             bars_request: Default::default(),
             pick_hint: None,
@@ -283,6 +296,15 @@ impl Session {
         }
     }
 
+    /// Show a warning in a window (and on the command line).
+    pub fn notice(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        let message = message.into();
+        self.echo(message.clone());
+        if self.notices.len() < 8 {
+            self.notices.push(Notice { title: title.into(), message });
+        }
+    }
+
     /// Message on the command line history.
     pub fn echo(&mut self, msg: impl Into<String>) {
         let m = msg.into();
@@ -310,6 +332,17 @@ impl Session {
 
     /// Add an entity to the current space with current properties.
     pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
+        // Text starting with `=` is a formula: it keeps the formula and shows the result.
+        let mut kind = kind;
+        // Multileader and dimension text too, as when it is edited (a dimension's `<>` is its
+        // measurement).
+        if matches!(kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::MLeader(_) | EntityKind::Dimension(_)) {
+            let mut env = textformula::env(self);
+            if let EntityKind::Dimension(dm) = &kind {
+                env.measured = textformula::measured(self.doc()?, dm);
+            }
+            textformula::apply(&mut kind, &env, true);
+        }
         let common = self.current_common();
         let space = self.space();
         let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());
@@ -338,6 +371,16 @@ impl Session {
         }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)
+    }
+
+    /// The area of the space being edited shown on screen (the canvas, or the active viewport's
+    /// model view), or `None` without a drawing.
+    pub fn view_box(&self) -> Option<cadcraft_geom::Bounds2> {
+        let v = self.state().ok()?.view();
+        let h = v.height;
+        let w = h * self.viewport_px.0.max(1.0) / self.viewport_px.1.max(1.0);
+        let b = cadcraft_geom::Bounds2::new(v.center - Vec2::new(w, h) * 0.5, v.center + Vec2::new(w, h) * 0.5);
+        (w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0).then_some(b)
     }
 
     /// World units per pixel at the current view.

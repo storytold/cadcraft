@@ -12,6 +12,7 @@ use serde_json::json;
 fn references_take_lock_position_from_the_definition() {
     let mut d = cadcraft_engine::doc::Drawing::new_imperial();
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.0,

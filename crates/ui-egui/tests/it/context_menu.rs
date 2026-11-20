@@ -222,14 +222,14 @@ fn quick_right_click_cancels_a_palette_placement_only() {
         painted(app, &ctx, Vec::new(), egui::Modifiers::NONE);
     };
 
-    app.cmdline("INSERT");
+    app.cmdline("-INSERT");
     app.cmdline("BOLT");
     assert!(app.session.prompt_text().contains("Specify insertion point"), "{}", app.session.prompt_text());
     right_click(&mut app);
     assert!(app.session.prompt_text().contains("Specify insertion point"), "a typed INSERT asks again: {}", app.session.prompt_text());
     app.session.cancel();
 
-    app.cmdline("INSERT");
+    app.cmdline("-INSERT");
     app.cmdline("BOLT");
     app.canvas.palette_insert = Some(app.session.commands_started);
     app.cmd.buffer = "12,".into();
