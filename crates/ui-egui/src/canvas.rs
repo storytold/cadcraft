@@ -293,6 +293,14 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
+    // PAN (realtime): the drawing follows a left-button drag. Only a drag that started on the
+    // current tile pans it: the canvas response covers every tile, and a drag from another one
+    // would move this one's view.
+    let pressed_here = ui.input(|i| i.pointer.press_origin()).is_some_and(|at| nav.rect.contains(at));
+    if pressed_here && nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_pan_active() {
+        let d = nav.response.drag_delta();
+        let _ = app.session.realtime_pan(f64::from(d.x), f64::from(d.y));
+    }
     if p.pressed_primary
         && let Some(at) = p.hover_pos
         && !nav.rect.contains(at)
@@ -756,7 +764,7 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 if press_takes(app, &xf, pos) {
                     let opened = press_at(app, &xf, ui.ctx(), pos, m);
                     app.canvas.press = Some(press::Press::new(pos, opened));
-                } else if !app.session.realtime_zoom_active() {
+                } else if !app.session.realtime_zoom_active() && !app.session.realtime_pan_active() {
                     // A grip with no command running: clicked when the button comes up. egui
                     // calls a press held longer than 0.8 s a drag, and a slow drawing's frames
                     // can make an ordinary click that long (#2813).
@@ -1052,10 +1060,10 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
 }
 
 /// Whether the press at `pos` is acted on when the button goes down ([`press_at`]): at any prompt
-/// and on the drawing with no command running. Grips (with no command running) and ZOOM Realtime
-/// keep their clicks.
+/// and on the drawing with no command running. Grips (with no command running), ZOOM Realtime and
+/// PAN keep their clicks.
 fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
-    if app.session.realtime_zoom_active() {
+    if app.session.realtime_zoom_active() || app.session.realtime_pan_active() {
         return false;
     }
     if app.session.prompting() {

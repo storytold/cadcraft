@@ -515,6 +515,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
                 rx.table_style_fix.push((h, t.s(342).map(|sh| sh.trim().to_ascii_uppercase()).unwrap_or_default()));
             }
         }
+        // Keyed by the handle the entity was given, so an IMAGE whose repeated handle was
+        // reassigned still finds its own IMAGEDEF.
+        ("IMAGE", EntityKind::Image(_)) => {
+            if let Some(def) = tags.iter().find(|t| t.code == 340) {
+                rx.image_defs.insert(h, def.str().trim().to_ascii_uppercase());
+            }
+        }
         ("INSERT", EntityKind::Insert(ins)) => {
             rx.inserted.insert(ins.block.to_ascii_uppercase());
         }

@@ -1,9 +1,9 @@
 use super::display::MAX_TRANSPARENCY;
 use super::{Color, Ctx, Drawing, Entity, Ink, Lineweight, ink};
 
-/// An object's colour, lineweight (mm), linetype, linetype scale, visibility and the transparency
-/// of the layer it is drawn on (for ByLayer, see [`transparency`]).
-type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8);
+/// An object's colour, lineweight (mm), linetype, linetype scale, visibility, the transparency
+/// of the layer it is drawn on (for ByLayer, see [`transparency`]) and its locked-layer fade.
+type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8, u8);
 
 pub(crate) fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
     resolve_common(ctx, &e.common, plotting)
@@ -35,7 +35,16 @@ pub(crate) fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool
     };
     let lt = d.linetype(&lt_name).filter(|l| !l.pattern.is_empty()).cloned();
     let scale = d.header.f64("LTSCALE", 1.0) * c.ltscale * ctx.lt_factor;
-    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency))
+    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency), lock_fade(d, layer, plotting))
+}
+
+/// The fade (percent, 0..=90) of an object on `layer`: LAYLOCKFADECTL when the layer is locked
+/// (0 or negative: no fade); plots never fade. Only [`Options::on_screen`] builds apply it.
+fn lock_fade(d: &Drawing, layer: Option<&cadcraft_doc::Layer>, plotting: bool) -> u8 {
+    if plotting || !layer.is_some_and(|l| l.locked) {
+        return 0;
+    }
+    d.header.i64("LAYLOCKFADECTL", 50).clamp(0, i64::from(MAX_TRANSPARENCY)) as u8
 }
 
 /// The transparency (percent, 0..=90) of an object whose own setting is `t`: the percentage, its
