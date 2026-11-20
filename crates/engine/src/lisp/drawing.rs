@@ -1247,12 +1247,18 @@ fn trans_system(ctx: &mut Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, Li
         }
         Value::Int(1) => Ok(ctx.s.input_ucs()),
         // An object: its OCS. An entity of a block definition is found as `entget` finds it.
+        // LINE and POINT keep their points in world coordinates whatever their extrusion (the
+        // DXF Reference), so their system is the WCS.
         Value::Ename(h) => {
-            let extrusion = match ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?.entity(*h) {
-                Some(e) => e.common.extrusion,
-                None => block_entity(ctx, *h).ok_or_else(|| LispError::bad_arg("lentityp", v))?.common.extrusion,
+            let frame = |e: &Entity| match e.kind {
+                cadcraft_doc::EntityKind::Line(_) | cadcraft_doc::EntityKind::Point(_) => Some(UcsFrame::WORLD),
+                _ => ocs(e.common.extrusion),
             };
-            ocs(extrusion).ok_or_else(|| LispError::bad_arg("lentityp", v))
+            let found = match ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?.entity(*h) {
+                Some(e) => frame(e),
+                None => frame(&*block_entity(ctx, *h).ok_or_else(|| LispError::bad_arg("lentityp", v))?),
+            };
+            found.ok_or_else(|| LispError::bad_arg("lentityp", v))
         }
         // An extrusion direction: the OCS of objects with it.
         Value::Cons(_) => {

@@ -329,3 +329,24 @@ fn ssget_window_matches_select_in_a_turned_ucs() {
         assert_eq!(s.selection().len().to_string(), ssget, "window {key}");
     }
 }
+
+/// LINE and POINT keep their points in world coordinates whatever their extrusion, so `trans`
+/// with their entity names is the WCS; other objects keep their extrusion's OCS.
+#[test]
+fn trans_with_a_line_or_point_is_the_world() {
+    let mut s = session();
+    for make in [
+        r#"(entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0) (210 0.0 1.0 0.0)))"#,
+        r#"(entmake '((0 . "POINT") (10 0.0 0.0 0.0) (210 0.0 1.0 0.0)))"#,
+    ] {
+        ok(&mut s, make);
+        assert!(close(pt(&ok(&mut s, "(trans '(1 2 3) (entlast) 0)")), [1.0, 2.0, 3.0]), "{make}");
+        assert!(close(pt(&ok(&mut s, "(trans '(1 2 3) 0 (entlast))")), [1.0, 2.0, 3.0]), "{make}");
+    }
+    // A circle with the same extrusion: OCS X = world -X, OCS Y = world Z.
+    ok(&mut s, r#"(entmake '((0 . "CIRCLE") (10 0.0 0.0 0.0) (40 . 1.0) (210 0.0 1.0 0.0)))"#);
+    let w = pt(&ok(&mut s, "(trans '(1 2 3) (entlast) 0)"));
+    assert!(close(w, [-1.0, 3.0, 2.0]), "{w:?}");
+    // An extrusion direction given as a list keeps its OCS.
+    assert!(close(pt(&ok(&mut s, "(trans '(1 2 3) '(0 1 0) 0)")), [-1.0, 3.0, 2.0]));
+}
