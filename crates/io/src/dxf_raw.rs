@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use craft_dxf::{SectionRef, Tag};
+use craft_dxf::{SectionRef, Tag, Version};
 
 /// Named object dictionary entries CADCraft writes itself from its model (plus every key that
 /// starts with `CADCRAFT`): they are read into the model, not kept raw. A change that starts
@@ -1035,6 +1035,44 @@ fn entity_extra<'a>(f: &'a Foreign, xd: &XdataOf, h: Handle) -> Option<Cow<'a, F
 /// Every Unknown entity's handle (upper case).
 fn unknown_handles(d: &Drawing) -> HashSet<String> {
     all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_))).map(|e| e.handle.hex()).collect()
+}
+
+/// Render settings (`RENDERSETTINGS`, `MENTALRAYRENDERSETTINGS`, `RAPIDRTRENDERSETTINGS`) store
+/// their `AcDbRenderSettings` class version (the first group 90 after that marker) in the form of
+/// the file's version: a 2013+ file stores it one higher, and a 2013 file stores a rapid RT one
+/// one lower, as acadrust reads and writes them (`write_render_settings_dxf` in acadrust 0.6.6's
+/// `io/dxf/writer/section_writer.rs`, and its DWG class-object reader and writer; the test
+/// `render_settings_class_version_matches_what_acadrust_writes` fails if the two drift apart). A
+/// kept object carries the form of the file it was read from ([`Foreign::version`], not the
+/// drawing's `$ACADVER`, which SAVEAS changes); written into a file read as another version, it
+/// takes that version's form. The DWG bridge's R2000 text is read as the version the kept objects
+/// came from (craft-dwg's `encode_kept_noted`), so there they stay as read (#907, #2471).
+///
+/// Only that first group 90 is converted, on purpose: the group 90 that starts a kind's own
+/// subclass (`AcDbMentalRayRenderSettings`, `AcDbRapidRTRenderSettings`) is that kind's version,
+/// stored the same in every file version, and is left as read.
+pub(crate) fn render_settings_versions(tags: &mut [Tag], source: Option<Version>, declared: Version) {
+    let Some(source) = source.filter(|s| *s != declared) else { return };
+    let shift = |rapid: bool, v: Version| if rapid { -i64::from(v == Version::R2013) } else { i64::from(v >= Version::R2013) };
+    let (mut kind, mut in_base) = (String::new(), false);
+    for t in tags.iter_mut() {
+        match t.code {
+            0 => {
+                kind = up(&t.str());
+                in_base = false;
+            }
+            100 if matches!(kind.as_str(), "RENDERSETTINGS" | "MENTALRAYRENDERSETTINGS" | "RAPIDRTRENDERSETTINGS") => {
+                in_base = t.str().trim().eq_ignore_ascii_case("AcDbRenderSettings");
+            }
+            90 if in_base => {
+                let rapid = kind == "RAPIDRTRENDERSETTINGS";
+                let logical = t.i64().saturating_sub(shift(rapid, source));
+                *t = Tag::i(90, logical.saturating_add(shift(rapid, declared)));
+                in_base = false;
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).

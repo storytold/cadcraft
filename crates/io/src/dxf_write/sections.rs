@@ -1257,6 +1257,8 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|kept| *kept > version).unwrap_or(version)
     };
     crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
+    // Kept render settings take the class-version form of the version the text is read as (#907).
+    crate::dxf_raw::render_settings_versions(&mut w.t, d.foreign.version.as_deref().and_then(Version::for_acadver), read_as);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
