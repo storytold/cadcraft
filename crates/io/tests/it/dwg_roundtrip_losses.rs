@@ -71,7 +71,7 @@ fn dwg_keeps_true_colours_and_transparency() {
     );
 
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
-    assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some("AC1032"));
+    assert_eq!(craft_dwg::version(&dwg).as_deref(), Some("AC1032"));
     let header = records(&cadcraft_io::write_dxf(&d), "SECTION");
     assert_eq!(header.first().and_then(|h| group(h, "1")), Some("AC1015"), "the DXF stays R2000");
 
@@ -169,7 +169,7 @@ fn the_added_paper_viewport_follows_the_plot_scale() {
     let sheet_width = |scale: f64, fit: bool| {
         let mut d = Drawing::new_metric();
         let page = &mut d.layouts[0].page;
-        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, true);
+        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, Some(true));
         (page.scale, page.scale_to_fit) = (scale, fit);
         let first = Space::Paper(d.layouts[0].name.clone());
         d.add(&first, Common::default(), viewport(2)).unwrap();

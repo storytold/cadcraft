@@ -12,79 +12,30 @@ pub fn plain_mtext(s: &str) -> String {
     let s = unescape_codes(s);
     let s = s.as_ref();
     let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    '~' => {
-                        out.push(' ');
-                        i += 2;
-                    }
-                    '\\' | '{' | '}' => {
-                        out.push(code);
-                        i += 2;
-                    }
-                    'S' => {
-                        // \Snum^den; \Snum/den; \Snum#den;
-                        let mut j = i + 2;
-                        let mut stack = String::new();
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            stack.push(match ch {
-                                '^' | '#' => '/',
-                                c => c,
-                            });
-                            j += 1;
-                        }
-                        // "6\S1/2;" reads as "6 1/2".
-                        if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
-                            out.push(' ');
-                        }
-                        out.push_str(stack.trim_end_matches('/'));
-                        i = j + 1;
-                    }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
-                    // `\U+XXXX`: a character by its Unicode code, as the layout reads it.
-                    'U' if crate::unicode_escape(&chars, i).is_some() => {
-                        if let Some(u) = crate::unicode_escape(&chars, i) {
-                            out.push(u);
-                        }
-                        i += 7;
-                    }
-                    // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
-                    _ if takes_arg(code) => {
-                        let mut j = i + 2;
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                    }
-                    // An unknown code has no argument: drop the backslash and the code only.
-                    _ => i += 2,
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens};
+    for token in Tokens::new(s, StackMode::Plain) {
+        match token {
+            Token::Control('P' | 'N') => out.push('\n'),
+            Token::Control('~') => out.push(' '),
+            Token::Control(c @ ('\\' | '{' | '}')) => out.push(c),
+            Token::Stack(raw) => {
+                let stack: String = raw.chars().map(|c| if matches!(c, '^' | '#') { '/' } else { c }).collect();
+                if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
+                    out.push(' ');
+                }
+                out.push_str(stack.trim_end_matches('/'));
+            }
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text. A trailing lone backslash is dropped.
+            Token::Unknown(c) => {
+                out.push('\\');
+                if c != '\r' {
+                    out.push(c);
                 }
             }
-            '{' | '}' => i += 1,
-            '\r' => i += 1,
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            Token::Char('\r') => {}
+            Token::Char(c) => out.push(c),
+            _ => {}
         }
     }
     out
@@ -225,100 +176,13 @@ const MAX_ATOMS: usize = 200_000;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
 
-/// Codes that take an argument terminated by `;` (besides `\S`, which has its own scan). Any
-/// other code stands alone, so a missing `;` must not swallow the text after it.
-pub(crate) fn takes_arg(code: char) -> bool {
-    matches!(code, 'f' | 'F' | 'H' | 'W' | 'Q' | 'T' | 'A' | 'C' | 'c' | 'p')
-}
+// Shared DXF escape handling and parameterized-command classification.
+pub(crate) use craft_dxf::mtext::unescape_codes;
 
 /// The line-spacing factor to lay out with: AutoCAD's 0.25..=4 range, 1 for a missing or
 /// non-finite value.
 pub(crate) fn sane_line_spacing(v: f64) -> f64 {
     if v.is_finite() && v > 0.0 { v.clamp(0.25, 4.0) } else { 1.0 }
-}
-
-/// Four hex digits at `chars[at..at + 4]`.
-fn hex4(chars: &[char], at: usize) -> Option<u32> {
-    let digits = chars.get(at..at.checked_add(4)?)?;
-    digits.iter().try_fold(0u32, |acc, c| Some(acc * 16 + c.to_digit(16)?))
-}
-
-/// Push a decoded character so that the tokenizers read it as text, never as markup.
-fn push_literal(out: &mut String, c: char) {
-    if matches!(c, '\\' | '{' | '}') {
-        out.push('\\');
-    }
-    out.push(c);
-}
-
-/// Decode `\U+hhhh` (one UTF-16 unit; a surrogate pair gives one character, a lone surrogate
-/// U+FFFD) and `\M+nhhhh` (double-byte East Asian characters) to the characters they stand
-/// for. Malformed escapes are left for the tokenizers, which drop the backslash and the code.
-/// An escaped backslash (`\\U+0041`) is not an escape.
-pub(crate) fn unescape_codes(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.contains("\\U+") && !s.contains("\\M+") {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        if c != '\\' {
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        let (n, plus) = (chars.get(i + 1).copied(), chars.get(i + 2).copied());
-        if n == Some('U') && plus == Some('+') {
-            if let Some(unit) = hex4(&chars, i + 3) {
-                i += 7;
-                let low = |at: usize| {
-                    (chars.get(at) == Some(&'\\') && chars.get(at + 1) == Some(&'U') && chars.get(at + 2) == Some(&'+'))
-                        .then(|| hex4(&chars, at + 3))
-                        .flatten()
-                        .filter(|u| (0xDC00..0xE000).contains(u))
-                };
-                let ch = if (0xD800..0xDC00).contains(&unit) {
-                    match low(i) {
-                        Some(lo) => {
-                            i += 7;
-                            char::from_u32(0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00))
-                        }
-                        None => None,
-                    }
-                } else {
-                    char::from_u32(unit)
-                };
-                push_literal(&mut out, ch.unwrap_or('\u{fffd}'));
-                continue;
-            }
-        } else if n == Some('M') && plus == Some('+') && chars.get(i + 3).is_some_and(char::is_ascii_digit) && hex4(&chars, i + 4).is_some() {
-            push_literal(&mut out, craft_dxf::mif_escape_at(&chars, i).unwrap_or('\u{fffd}'));
-            i += 8;
-            continue;
-        }
-        // Any other backslash pair stays as it is (and an escaped backslash stays one).
-        out.push('\\');
-        i += 1;
-        if let Some(&next) = chars.get(i) {
-            out.push(next);
-            i += 1;
-        }
-    }
-    std::borrow::Cow::Owned(out)
-}
-
-fn arg(chars: &[char], from: usize) -> (String, usize) {
-    let mut j = from;
-    let mut a = String::new();
-    while let Some(&ch) = chars.get(j) {
-        if ch == ';' {
-            return (a, j + 1);
-        }
-        a.push(ch);
-        j += 1;
-    }
-    (a, j)
 }
 
 fn num(a: &str) -> Option<f64> {
@@ -358,7 +222,7 @@ fn font_switch(a: &str) -> Option<TextFont> {
 
 /// Parse MTEXT contents into words, spaces and paragraph breaks with their formats.
 fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
-    let chars: Vec<char> = contents.chars().collect();
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens, split_stack};
     let h_min = base.height * 1e-3;
     let h_max = if (base.height * 1e3).is_finite() { base.height * 1e3 } else { f64::MAX };
     let mut fmts = vec![base];
@@ -380,6 +244,19 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             atoms.push(Atom::Word(std::mem::take(word)));
         }
     };
+    // A character read as text: a line feed breaks the paragraph and a space ends the word.
+    let text_char = |atoms: &mut Vec<Atom>, word: &mut Vec<(Seg, usize)>, c: char, f: usize| match c {
+        '\r' => {}
+        '\n' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Para(f));
+        }
+        ' ' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Space(f));
+        }
+        c => push_char(word, c, f),
+    };
     // Derive a new format from the current one.
     let derive = |fmts: &mut Vec<Fmt>, cur: &mut usize, f: &dyn Fn(&mut Fmt)| {
         let mut n = fmts.get(*cur).cloned().unwrap_or(Fmt {
@@ -398,158 +275,91 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             *cur = fmts.len() - 1;
         }
     };
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
+    for token in Tokens::new(contents, StackMode::Structured) {
         if atoms.len() > MAX_ATOMS {
             break;
         }
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                i += 2;
-                match code {
-                    'P' | 'N' => {
-                        end_word(&mut atoms, &mut word);
-                        atoms.push(Atom::Para(cur));
-                    }
-                    '~' => push_char(&mut word, '\u{a0}', cur),
-                    '\\' | '{' | '}' => push_char(&mut word, code, cur),
-                    'L' => derive(&mut fmts, &mut cur, &|f| f.under = true),
-                    'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
-                    'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
-                    'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' => {}
-                    // `\U+XXXX`: a character by its Unicode code.
-                    'U' if i >= 2 && crate::unicode_escape(&chars, i - 2).is_some() => {
-                        if let Some(u) = crate::unicode_escape(&chars, i - 2) {
-                            push_char(&mut word, u, cur);
-                        }
-                        i += 5;
-                    }
-                    'S' => {
-                        let mut j = i;
-                        let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            if ch == '\\' {
-                                if let Some(&n) = chars.get(j + 1) {
-                                    if sep.is_none() { top.push(n) } else { bottom.push(n) }
-                                }
-                                j += 2;
-                                continue;
-                            }
-                            if sep.is_none() && matches!(ch, '/' | '#' | '^') {
-                                sep = Some(ch);
-                            } else if sep.is_none() {
-                                top.push(ch);
-                            } else {
-                                bottom.push(ch);
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                        word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
-                    }
-                    'f' | 'F' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(font) = font_switch(&a) {
-                            derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
-                        }
-                    }
-                    'H' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
-                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
-                            // Relative heights compound; keep the result within 1e-3..1e3 times the
-                            // MTEXT's own height, never infinite.
-                            derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(h_max).max(h_min) } else { v });
-                        }
-                    }
-                    'W' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
-                        if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
-                            // Relative factors compound; keep the result within the absolute range.
-                            derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
-                        }
-                    }
-                    'Q' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(v) = num(&a).filter(|v| v.abs() < 85.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
-                        }
-                    }
-                    'C' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u16>() {
-                            let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
-                            derive(&mut fmts, &mut cur, &|f| f.color = col);
-                        }
-                    }
-                    'c' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u32>() {
-                            derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
-                        }
-                    }
-                    'A' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
-                            derive(&mut fmts, &mut cur, &|f| f.valign = v);
-                        }
-                    }
-                    _ if takes_arg(code) => {
-                        // \T and \p: argument up to ';'.
-                        let (_, n) = arg(&chars, i);
-                        i = n;
-                    }
-                    // An unknown code has no argument: only the backslash and the code are dropped.
-                    _ => {}
+        match token {
+            Token::Control('P' | 'N') => {
+                end_word(&mut atoms, &mut word);
+                atoms.push(Atom::Para(cur));
+            }
+            Token::Control('~') => push_char(&mut word, '\u{a0}', cur),
+            Token::Control(c @ ('\\' | '{' | '}')) => push_char(&mut word, c, cur),
+            Token::Control('L') => derive(&mut fmts, &mut cur, &|f| f.under = true),
+            Token::Control('l') => derive(&mut fmts, &mut cur, &|f| f.under = false),
+            Token::Control('O') => derive(&mut fmts, &mut cur, &|f| f.over = true),
+            Token::Control('o') => derive(&mut fmts, &mut cur, &|f| f.over = false),
+            Token::Stack(raw) => {
+                let (top, bottom, sep) = split_stack(raw);
+                word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
+            }
+            Token::Argument('f' | 'F', a) => {
+                if let Some(font) = font_switch(a) {
+                    derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
                 }
             }
-            '{' => {
+            Token::Argument('H', a) => {
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
+                    // Relative heights compound; keep the result within 1e-3..1e3 times the
+                    // MTEXT's own height, never infinite.
+                    derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(h_max).max(h_min) } else { v });
+                }
+            }
+            Token::Argument('W', a) => {
+                // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
+                    // Relative factors compound; keep the result within the absolute range.
+                    derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
+                }
+            }
+            Token::Argument('Q', a) => {
+                if let Some(v) = num(a).filter(|v| v.abs() < 85.0) {
+                    derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
+                }
+            }
+            Token::Argument('C', a) => {
+                if let Ok(v) = a.trim().parse::<u16>() {
+                    let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
+                    derive(&mut fmts, &mut cur, &|f| f.color = col);
+                }
+            }
+            Token::Argument('c', a) => {
+                if let Ok(v) = a.trim().parse::<u32>() {
+                    derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
+                }
+            }
+            Token::Argument('A', a) => {
+                if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
+                    derive(&mut fmts, &mut cur, &|f| f.valign = v);
+                }
+            }
+            Token::OpenGroup => {
                 if stack.len() < 256 {
                     stack.push(cur);
                 }
-                i += 1;
             }
-            '}' => {
+            Token::CloseGroup => {
                 if let Some(f) = stack.pop() {
                     cur = f;
                 }
-                i += 1;
             }
-            '\r' => i += 1,
-            '\n' => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Para(cur));
-                i += 1;
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text (#2952).
+            Token::Unknown(c) => {
+                push_char(&mut word, '\\', cur);
+                text_char(&mut atoms, &mut word, c, cur);
             }
-            ' ' => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Space(cur));
-                i += 1;
-            }
-            _ => {
-                push_char(&mut word, c, cur);
-                i += 1;
-            }
+            Token::Char(c) => text_char(&mut atoms, &mut word, c, cur),
+            _ => {}
         }
     }
     end_word(&mut atoms, &mut word);
@@ -634,56 +444,56 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
 }
 
 /// Shape a segment with its left end at `x` on the baseline.
-fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
-    let h = f.height;
+fn seg_shape(seg: &Seg, format: &Fmt, origin_x: f64) -> Shaped {
+    let height = format.height;
     let mut out = Shaped::default();
-    let put = |s: &str, size: f64, at: Vec2| {
-        if s.is_empty() {
+    let put = |text: &str, size: f64, at: Vec2| {
+        if text.is_empty() {
             return Shaped::default();
         }
-        let mut sh = shape_line(&f.font, s, size, f.wf, f.oblique);
-        sh.map(|p| p + at);
+        let mut sh = shape_line(&format.font, text, size, format.wf, format.oblique);
+        sh.map(|point| point + at);
         sh
     };
-    let w = seg_width(seg, f);
+    let width = seg_width(seg, format);
     match seg {
-        Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
+        Seg::Text(text) => out.extend(put(text, height, Vec2::new(origin_x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
-            let hs = h * STACK_SCALE;
-            let wt = text_width(&f.font, top, hs, f.wf);
-            let wb = text_width(&f.font, bottom, hs, f.wf);
+            let hs = height * STACK_SCALE;
+            let wt = text_width(&format.font, top, hs, format.wf);
+            let wb = text_width(&format.font, bottom, hs, format.wf);
             match sep {
                 '#' => {
-                    out.extend(put(top, hs, Vec2::new(x, h * 0.4)));
-                    let sx = x + wt + h * 0.1;
-                    out.extend(put(bottom, hs, Vec2::new(sx + h * 0.4, -h * 0.05)));
-                    out.strokes.push(vec![Vec2::new(sx, -h * 0.1), Vec2::new(sx + h * 0.3, h * 1.1)]);
+                    out.extend(put(top, hs, Vec2::new(origin_x, height * 0.4)));
+                    let sx = origin_x + wt + height * 0.1;
+                    out.extend(put(bottom, hs, Vec2::new(sx + height * 0.4, -height * 0.05)));
+                    out.strokes.push(vec![Vec2::new(sx, -height * 0.1), Vec2::new(sx + height * 0.3, height * 1.1)]);
                 }
                 '^' => {
                     // Tolerances: centred on the line, or the lower value on the baseline (\A0) or
                     // the upper value level with the text (\A2).
-                    let (yt, yb) = match f.valign {
-                        0 => (hs + h * 0.1, 0.0),
-                        2 => (0.0, -hs - h * 0.1),
-                        _ => (h * 0.55, h * 0.45 - hs),
+                    let (yt, yb) = match format.valign {
+                        0 => (hs + height * 0.1, 0.0),
+                        2 => (0.0, -hs - height * 0.1),
+                        _ => (height * 0.55, height * 0.45 - hs),
                     };
-                    out.extend(put(top, hs, Vec2::new(x, yt)));
-                    out.extend(put(bottom, hs, Vec2::new(x, yb)));
+                    out.extend(put(top, hs, Vec2::new(origin_x, yt)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x, yb)));
                 }
                 _ => {
-                    let bar = h * 0.45;
-                    out.extend(put(top, hs, Vec2::new(x + (w - wt) / 2.0, bar + h * 0.12)));
-                    out.extend(put(bottom, hs, Vec2::new(x + (w - wb) / 2.0, bar - h * 0.12 - hs)));
-                    out.strokes.push(vec![Vec2::new(x, bar), Vec2::new(x + w, bar)]);
+                    let bar = height * 0.45;
+                    out.extend(put(top, hs, Vec2::new(origin_x + (width - wt) / 2.0, bar + height * 0.12)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x + (width - wb) / 2.0, bar - height * 0.12 - hs)));
+                    out.strokes.push(vec![Vec2::new(origin_x, bar), Vec2::new(origin_x + width, bar)]);
                 }
             }
         }
     }
-    if f.under {
-        out.strokes.push(vec![Vec2::new(x, -h * 0.2), Vec2::new(x + w, -h * 0.2)]);
+    if format.under {
+        out.strokes.push(vec![Vec2::new(origin_x, -height * 0.2), Vec2::new(origin_x + width, -height * 0.2)]);
     }
-    if f.over {
-        out.strokes.push(vec![Vec2::new(x, h * 1.2), Vec2::new(x + w, h * 1.2)]);
+    if format.over {
+        out.strokes.push(vec![Vec2::new(origin_x, height * 1.2), Vec2::new(origin_x + width, height * 1.2)]);
     }
     out
 }
@@ -791,8 +601,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
                 };
                 for segments in pieces {
                     let word_width = word_width(segments);
-                    let space_width =
-                        pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                    let space_width = pending_space.map_or(0.0, |format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf));
                     if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
                         finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                     } else if !line.items.is_empty() || pending_space.is_some() {
@@ -958,7 +767,7 @@ mod tests {
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
         assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
-        assert_eq!(plain_mtext("\\U+12"), "+12", "a short escape loses only the backslash and the code");
+        assert_eq!(plain_mtext("\\U+12"), "\\U+12", "a short escape is shown as typed");
     }
 
     #[test]
@@ -980,18 +789,24 @@ mod tests {
         assert_eq!(plain_mtext("\\\\U+0041"), "\\U+0041");
         // `\M+n` double-byte characters, decoded like the DXF reader does.
         assert_eq!(plain_mtext("\\M+5BCFE x;y"), "\u{4ef6} x;y");
-        // Malformed escapes lose only the backslash and the code.
-        assert_eq!(plain_mtext("a\\U+12 b"), "a+12 b");
-        assert_eq!(lay("a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(lay("\\pxql;a\\U+12 b", 0.0).lines, vec!["a+12 b"]);
-        assert_eq!(plain_mtext("a\\M+ b"), "a+ b");
+        // Malformed escapes are shown as typed, backslash included, as AutoCAD 2024 shows them.
+        for s in ["a\\U+12 b", "\\U+12x", "a\\U+12;b", "a\\U+123 b", "a\\U+ b", "a\\U+00G1b", "a\\M+ b"] {
+            assert_eq!(plain_mtext(s), s);
+            assert_eq!(lay(s, 0.0).lines, vec![s]);
+            assert_eq!(lay(&format!("\\pxql;{s}"), 0.0).lines, vec![s]);
+        }
+        // A valid escape takes exactly four digits.
+        assert_eq!(plain_mtext("a\\U+12345b"), "a\u{1234}5b");
     }
 
     #[test]
     fn unknown_code_without_semicolon_keeps_the_text() {
-        assert_eq!(plain_mtext("A\\Zbc d"), "Abc d");
-        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["Abc d"]);
-        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["Abc d"]);
+        // An unknown code is shown as typed, as AutoCAD 2024 shows it.
+        assert_eq!(plain_mtext("A\\Zbc d"), "A\\Zbc d");
+        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        // The text after it is read as usual: here a paragraph break.
+        assert_eq!(plain_mtext("A\\Z\\Pb"), "A\\Z\nb");
         // A trailing lone backslash is dropped.
         assert_eq!(plain_mtext("A\\"), "A");
         // Codes with an argument still take it up to the `;`, or to the end.
@@ -1120,7 +935,7 @@ mod tests {
         let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
         assert_eq!(cols, vec![None, Some(MTextColor::Aci(1)), None]);
         let l = lay("\\c16711680;R", 0.0);
-        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0xFF0000))));
+        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0x00FF_0000))));
     }
 
     #[test]
@@ -1142,8 +957,8 @@ mod tests {
         let bar = l.strokes.iter().find(|s| s.len() == 2 && (s[0].y - s[1].y).abs() < 1e-12 && (s[0].y + 0.55).abs() < 1e-9);
         assert!(bar.is_some());
         let ys: Vec<f64> = l.strokes.iter().flatten().map(|p| p.y).collect();
-        let max = ys.iter().cloned().fold(f64::MIN, f64::max);
-        let min = ys.iter().cloned().fold(f64::MAX, f64::min);
+        let max = ys.iter().copied().fold(f64::MIN, f64::max);
+        let min = ys.iter().copied().fold(f64::MAX, f64::min);
         assert!(max > 0.0 && min < -1.0, "{min}..{max}");
         // Narrower than the two digits side by side at full size.
         assert!(l.bounds.width() < crate::line_width("12", 1.0, 1.0));

@@ -156,6 +156,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::bedit::route(app, id, params) {
         return Some(r);
     }
@@ -523,7 +526,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"
@@ -795,11 +797,18 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
     }
 }
 
-/// Activate a menu command. QuickCalc toggles transparently; other items clear pending
-/// command-line text and start their command interactively.
+/// Activate a menu command. QuickCalc toggles transparently, and Reference Manager closes its
+/// palette when it is open (typed XREF only opens it); other items clear pending command-line
+/// text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
     if id == "ui.toggle.quickcalc" {
         run_transparent(app, id);
+        return;
+    }
+    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+        if let Err(e) = crate::xrefs::close_palette(app) {
+            app.set_status(e);
+        }
         return;
     }
     app.cmd.buffer.clear();
