@@ -1,2 +1,11 @@
 [alias]
 xtask = "run --package xtask --"
+
+# Embed the CJK font set at build time. Without it build.rs warns
+# "no craft-fonts embedded: Chinese and Japanese text will render as empty
+# boxes" and carries on, so a plain `cargo build --release` silently ships a
+# CJK-blind binary. relative = true resolves against this repo's root, so no
+# absolute path is committed; no force, so a CRAFT_FONTS_DIR already in the
+# environment still wins. Matches deckcraft's own upstream config.
+[env]
+CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true }
