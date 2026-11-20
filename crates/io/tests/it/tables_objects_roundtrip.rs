@@ -128,10 +128,10 @@ fn a_layout_in_millimetres_in_an_inch_drawing_is_drawn_in_millimetres() {
     l.page.width_mm = 297.0;
     l.page.height_mm = 420.0;
     l.page.margins_mm = [0.0; 4];
-    l.page.paper_mm = true;
+    l.page.paper_mm = Some(true);
     let r = round_trip(&d);
     let page = &r.layouts.first().expect("Layout1").page;
-    assert!(page.paper_mm);
+    assert_eq!(page.paper_mm, Some(true));
     let sheet = cadcraft_render::paper::Sheet::from_page(page, cadcraft_render::paper::page_unit_mm(&r, page));
     assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9, "{:?}", sheet.size);
 }
@@ -299,7 +299,7 @@ fn a_millimetre_layout_of_an_inch_drawing_plots_on_a_page_its_own_size() {
         l.page.height_mm = 420.0;
         l.page.landscape = true;
         l.page.margins_mm = [0.0; 4];
-        l.page.paper_mm = true;
+        l.page.paper_mm = Some(true);
         l.name.clone()
     };
     d.add(&Space::Paper(name.clone()), Common::default(), EntityKind::Line(Line { a: Vec3::new(10.0, 10.0, 0.0), b: Vec3::new(400.0, 280.0, 0.0) }))
