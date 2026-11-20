@@ -174,6 +174,8 @@ fn reads_the_layer_states_autocad_writes() {
 
 #[test]
 fn autocads_layer_states_are_written_back_in_its_form() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read(autocad_file().as_bytes(), "acad.dxf").unwrap();
     let text = write_dxf(&d);
     let p = pairs(&text);
@@ -310,6 +312,8 @@ fn entries_whose_names_differ_only_in_case_open_as_one_state() {
 
 #[test]
 fn view_snapshots_and_names_twice_in_another_case_stay_in_cadcrafts_record() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = drawing();
     for name in ["Plan", "*VIEW Front", "PLAN", "Wände", "WÄNDE", "", " "] {
         d.layer_states.push(LayerState::new(name, d.layers.clone(), "A"));
@@ -363,6 +367,8 @@ fn a_layer_of_an_xref_gets_group_93() {
 
 #[test]
 fn named_plot_styles_are_written_by_placeholder() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     // In a drawing of named plot styles AutoCAD 2024 writes a layer's plot style as group 390, the
     // handle of the style's placeholder object (measured); CADCraft reads it back by that handle.
     let mut d = drawing();

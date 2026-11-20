@@ -195,6 +195,7 @@ fn image_without_definition_is_still_written() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn image_survives_dwg_save_and_reopen() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(foreign_dxf().as_bytes()).unwrap();
     let [img] = images(&d).try_into().unwrap();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();

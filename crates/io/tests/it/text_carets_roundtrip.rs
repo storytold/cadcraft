@@ -75,6 +75,7 @@ fn all_strings(d: &Drawing) -> Vec<String> {
 
 #[test]
 fn carets_are_written_escaped_and_read_back() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dxf = write_dxf(&drawing());
     // `^J` stays two characters: a single-line string has no line feeds.
     for escaped in ["10^ 2 m, A^ JB", "1^ 3", "Area in m^ 2", "<> x10^ 3"] {

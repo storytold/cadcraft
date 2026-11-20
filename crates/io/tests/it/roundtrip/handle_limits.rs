@@ -35,5 +35,6 @@ fn dxf_exhausted_handles_are_preserved_or_refused() {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn dwg_exhausted_handles_are_preserved_or_refused() {
+    cadcraft_io::dwg_worker::allow_in_process();
     preserves_or_refuses("memory.dwg", false);
 }
