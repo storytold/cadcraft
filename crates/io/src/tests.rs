@@ -338,6 +338,35 @@ fn entity_transparency_roundtrips_as_group_440() {
     assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
 }
 
+/// #2856: some writers put an entity's layer, colour, lineweight and linetype right after the
+/// entity's own subclass marker, leaving the AcDbEntity subclass empty. They are the entity's,
+/// not layer 0 and ByLayer. The entity's own groups that reuse an AcDbEntity code (an MTEXT's
+/// column width is 48, also the linetype scale) are not taken for them, and an ARC in the
+/// usual order reads as before.
+#[test]
+fn entity_groups_after_the_entitys_own_subclass_marker_are_read() {
+    let misplaced = "8\nDzialki\n62\n3\n370\n50\n6\nDASHED\n";
+    let entity = |kind: &str, marker: &str, own: &str| format!("0\n{kind}\n100\nAcDbEntity\n100\n{marker}\n{misplaced}{own}");
+    let records = [
+        entity("LINE", "AcDbLine", "10\n0\n20\n0\n30\n0\n11\n1\n21\n1\n31\n0\n"),
+        entity("CIRCLE", "AcDbCircle", "10\n0\n20\n0\n30\n0\n40\n1\n"),
+        entity("TEXT", "AcDbText", "10\n0\n20\n0\n30\n0\n40\n1\n1\nA\n100\nAcDbText\n"),
+        entity("INSERT", "AcDbBlockReference", "2\nB\n10\n0\n20\n0\n30\n0\n"),
+        entity("POINT", "AcDbPoint", "10\n0\n20\n0\n30\n0\n"),
+        entity("MTEXT", "AcDbMText", "10\n0\n20\n0\n30\n0\n40\n1\n1\nA\n75\n1\n76\n1\n48\n5\n49\n1\n"),
+        format!("0\nARC\n100\nAcDbEntity\n{misplaced}100\nAcDbCircle\n10\n0\n20\n0\n30\n0\n40\n1\n100\nAcDbArc\n50\n0\n51\n90\n"),
+    ];
+    let blocks = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nB\n70\n0\n10\n0\n20\n0\n30\n0\n3\nB\n0\nENDBLK\n8\n0\n0\nENDSEC\n";
+    let text = format!("{blocks}0\nSECTION\n2\nENTITIES\n{}0\nENDSEC\n0\nEOF\n", records.concat());
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    assert_eq!(d.model.iter().count(), records.len());
+    for e in d.model.iter() {
+        let c = &e.common;
+        let read = (c.layer.as_str(), c.color, c.lineweight, c.linetype.as_str(), c.ltscale);
+        assert_eq!(read, ("Dzialki", Color::from_aci(3), Lineweight::from_dxf(50), "DASHED", 1.0), "{}", e.kind.type_name());
+    }
+}
+
 /// Several SORTENTSTABLEs for one space sort it once, in the last table's order.
 #[test]
 fn repeated_sortents_tables_use_the_last() {
