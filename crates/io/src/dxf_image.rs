@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle, Image};
 use cadcraft_geom::{Vec2, Vec3};
-use craft_dxf::{Section, Tag};
+use craft_dxf::{SectionRef, Tag};
 
 /// Most clip boundary vertices kept per image (hostile files).
 const MAX_CLIP: usize = 100_000;
@@ -228,19 +228,19 @@ pub(crate) fn extract_ole_image(payload: &[u8]) -> Option<(Vec<u8>, Vec2)> {
 
 /// Fill in each image's definition (path, name, pixel size) from the IMAGEDEF it points to,
 /// and extract embedded images from OLE frames.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
     resolve_images(secs, d);
     resolve_ole(secs, d);
 }
 
-fn resolve_images(secs: &[Section], d: &mut Drawing) {
+fn resolve_images(secs: &[SectionRef<'_>], d: &mut Drawing) {
     if !has_images(&d.model) && !d.layouts.iter().any(|l| has_images(&l.entities)) && !d.blocks.values().any(|b| has_images(&b.entities)) {
         return;
     }
     // IMAGE handle → IMAGEDEF handle.
     let mut refs: HashMap<Handle, Handle> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if kind != "IMAGE" {
                 return;
             }
@@ -255,7 +255,7 @@ fn resolve_images(secs: &[Section], d: &mut Drawing) {
     let mut defs: HashMap<Handle, Def> = HashMap::new();
     let mut names: HashMap<Handle, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        each_record(&s.tags, |kind, tags| match kind {
+        each_record(s.tags, |kind, tags| match kind {
             "IMAGEDEF" => {
                 let Some(h) = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str())) else { return };
                 let start = tags.iter().position(|t| t.code == 100 && t.str() == "AcDbRasterImageDef").unwrap_or(0);
@@ -312,9 +312,9 @@ fn resolve_images(secs: &[Section], d: &mut Drawing) {
     }
 }
 
-fn resolve_ole(secs: &[Section], d: &mut Drawing) {
+fn resolve_ole(secs: &[SectionRef<'_>], d: &mut Drawing) {
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if kind != "OLE2FRAME" && kind != "OLEFRAME" {
                 return;
             }

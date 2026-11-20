@@ -275,7 +275,8 @@ impl StretchM {
                     None => {
                         let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                         let space = s.space();
-                        match crate::select::pick_in_orbit(s.doc()?, &space, s.viewport_frozen(), orbit, p, aperture) {
+                        // A removal names its object (`picks_one`): the named one is found, not another lying there.
+                        match s.pick_object(&space, p, aperture)? {
                             Some(h) => self.add(s, vec![h], true),
                             None => self.corner = Some(p),
                         }
@@ -356,6 +357,7 @@ impl Interactive for StretchM {
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
     }
+    /// Returns the active interactive prompt for the current `STRETCH` phase.
     fn prompt(&self, _s: &Session) -> Prompt {
         if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
             return m.prompt();

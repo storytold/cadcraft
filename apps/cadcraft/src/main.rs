@@ -28,8 +28,6 @@ mod sheet;
 mod single_instance;
 mod spacemouse;
 mod system_animations;
-#[cfg(target_os = "windows")]
-mod windows_theme;
 mod workspace;
 
 use cadcraft_engine::Session;
@@ -56,10 +54,6 @@ struct App {
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
     current_title: String,
-    #[cfg(target_os = "windows")]
-    hwnd: Option<isize>,
-    #[cfg(target_os = "windows")]
-    windows_theme_applied: Option<egui::Theme>,
 }
 
 impl App {
@@ -110,20 +104,11 @@ impl eframe::App for App {
         }
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
-        #[cfg(target_os = "windows")]
-        if let Some(hwnd) = self.hwnd {
-            let current = self.cad.shown_theme();
-            if self.windows_theme_applied != Some(current) {
-                windows_theme::apply(hwnd, current != egui::Theme::Light);
-                self.windows_theme_applied = Some(current);
-            }
-        }
         let title = match self.cad.session.state() {
             Ok(st) if !self.cad.ui.start_tab => {
-                let ro = if st.read_only { " [Read-Only]" } else { "" };
                 let lower = st.title.to_ascii_lowercase();
                 let ext = if lower.ends_with(".dwg") || lower.ends_with(".dxf") { "" } else { ".dwg" };
-                format!("CADCraft - {}{ext}{ro}", st.title)
+                format!("CADCraft - {}{ext}", st.title)
             }
             _ => "CADCraft".to_string(),
         };
@@ -299,10 +284,38 @@ fn saved_window(app_ron: &str) -> bool {
     ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
 }
 
-/// The window state from the last session is saved and will be restored (#2595).
+/// The window state from the last session is saved and will be restored (#2595). A saved size
+/// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
+/// unusable) is dropped first, so the window opens at its default size.
 fn restores_window() -> bool {
-    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+    let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
+    // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
+    if let Some(fixed) = without_tiny_window(&ron)
+        && cadcraft_engine::atomic_write::write_atomic(&path, fixed.as_bytes()).is_ok()
+    {
+        ron = fixed;
+    }
+    saved_window(&ron)
 }
+
+/// `app_ron` without its window entry when that entry's inner size is below `MIN_INNER_SIZE`;
+/// `None` when there is nothing to drop (no entry, a usable size, or an unreadable file).
+fn without_tiny_window(app_ron: &str) -> Option<String> {
+    let mut kv = ron::from_str::<std::collections::BTreeMap<String, String>>(app_ron).ok()?;
+    let w = kv.get(WINDOW_KEY)?;
+    let size = &w[w.find("inner_size_points:")?..];
+    let num = |k: &str| size[size.find(k)? + k.len()..].split([',', ')']).next()?.trim().parse::<f32>().ok();
+    let (x, y) = (num("x:")?, num("y:")?);
+    if x >= MIN_INNER_SIZE[0] && y >= MIN_INNER_SIZE[1] {
+        return None;
+    }
+    kv.remove(WINDOW_KEY);
+    ron::ser::to_string_pretty(&kv, ron::ser::PrettyConfig::default()).ok()
+}
+
+/// The smallest main window, in points.
+const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred.
@@ -311,7 +324,7 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("CADCraft")
         .with_inner_size([1600.0, 1000.0])
-        .with_min_inner_size([900.0, 560.0])
+        .with_min_inner_size(MIN_INNER_SIZE)
         .with_drag_and_drop(true)
         .with_app_id(APP_ID);
     #[cfg(target_os = "macos")]
@@ -472,6 +485,9 @@ fn main() -> eframe::Result {
                 app.ui = ui;
             }
             app.set_system_cursor_default(vars.system_cursor == Switch::On);
+            // macOS: CADCRAFT_NO_NATIVE_MENU=1 keeps the menus inside the window.
+            #[cfg(target_os = "macos")]
+            app.set_native_menus(vars.no_native_menu != Switch::On);
             if let Some(error) = &workspace_error {
                 eprintln!("CADCraft workspace: {error}");
                 app.set_status(error);
@@ -532,20 +548,6 @@ fn main() -> eframe::Result {
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
             let ctx = cc.egui_ctx.clone();
             let system_animations = system_animations::SystemAnimations::start(move || ctx.request_repaint());
-            #[cfg(target_os = "windows")]
-            let shown_theme = app.shown_theme();
-            #[cfg(target_os = "windows")]
-            let hwnd = {
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                let hwnd = cc.window_handle().ok().and_then(|h| match h.as_raw() {
-                    RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
-                    _ => None,
-                });
-                if let Some(h) = hwnd {
-                    windows_theme::apply(h, shown_theme != egui::Theme::Light);
-                }
-                hwnd
-            };
             Ok(Box::new(App {
                 desktop_theme,
                 system_animations,
@@ -561,10 +563,6 @@ fn main() -> eframe::Result {
                 #[cfg(target_os = "macos")]
                 movable: None,
                 current_title: "CADCraft".to_string(),
-                #[cfg(target_os = "windows")]
-                hwnd,
-                #[cfg(target_os = "windows")]
-                windows_theme_applied: Some(shown_theme),
             }))
         }),
     )
@@ -572,7 +570,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{filters_for_save, follow_desktop, saved_window, window_options, without_tiny_window};
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -614,6 +612,17 @@ mod tests {
         assert!(!saved_window(""));
         assert!(!saved_window("{\"window\": "), "truncated");
         assert!(!saved_window("not ron at all"));
+    }
+
+    /// A saved 64×64 window (below the minimum) is dropped; a usable one is kept.
+    #[test]
+    fn a_tiny_saved_window_is_dropped() {
+        let tiny = r#"{"window": "(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.25,inner_size_points:(x:64.0,y:64.0)),fullscreen:false,maximized:true)", "cadcraft.prefs": "{}"}"#;
+        let fixed = without_tiny_window(tiny).expect("dropped");
+        assert!(!saved_window(&fixed) && fixed.contains("cadcraft.prefs"));
+        let ok = tiny.replace("x:64.0,y:64.0)),", "x:1600.0,y:1000.0)),");
+        assert_eq!(without_tiny_window(&ok), None);
+        assert_eq!(without_tiny_window("not ron"), None);
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;
