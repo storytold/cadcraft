@@ -805,9 +805,11 @@ pub struct PageSetup {
     /// Plot objects with their transparency ("Plot transparency"; PLOTTRANSPARENCYOVERRIDE can
     /// override it). The DXF plot layout flags have no bit for it, so it is not saved in DXF.
     pub plot_transparency: bool,
-    /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
-    /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
-    pub paper_mm: bool,
+    /// Explicit paper-space unit for the layout: `Some(true)` for millimetres (plot paper units 1
+    /// in DXF), `Some(false)` for inches, or `None` to follow the drawing's `MEASUREMENT` (#1058,
+    /// #3249).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paper_mm: Option<bool>,
     /// Paper size (DXF groups 44, 45) and plot rotation (group 73) as the file stored them.
     /// Saving writes them back while they still describe `width_mm`, `height_mm` and
     /// `landscape`, so each program's convention for media defined wider than tall survives a
@@ -839,7 +841,7 @@ impl Default for PageSetup {
             lineweights: true,
             show_plot_styles: false,
             plot_transparency: false,
-            paper_mm: false,
+            paper_mm: None,
             file_paper: None,
             image_origin: None,
         }
@@ -948,11 +950,49 @@ pub struct Ucs {
     pub y_axis: Vec3,
 }
 
-/// A saved layer state (LAYERSTATE).
+/// A saved layer state (LAYERSTATE), as AutoCAD keeps one in the LAYER table's
+/// `ACAD_LAYERSTATES` dictionary.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LayerState {
     pub name: String,
     pub layers: Vec<Layer>,
+    /// The properties restoring sets ([`LayerState::ON`] …): AutoCAD's mask (group 91 of the
+    /// state's XRECORD). Bits CADCraft doesn't use are kept as read.
+    pub mask: u32,
+    /// The layer restoring makes current; empty, or a layer the drawing doesn't have, leaves the
+    /// current layer as it is (AutoCAD 2024, measured).
+    pub current: String,
+    /// Group 301 of the state's XRECORD: empty as AutoCAD 2024's -LAYER saves a state; a text a
+    /// file holds there is kept.
+    pub description: String,
+}
+
+impl Default for LayerState {
+    fn default() -> Self {
+        LayerState { name: String::new(), layers: Vec::new(), mask: LayerState::ALL, current: String::new(), description: String::new() }
+    }
+}
+
+impl LayerState {
+    pub const ON: u32 = 1;
+    pub const FROZEN: u32 = 2;
+    pub const LOCKED: u32 = 4;
+    pub const PLOT: u32 = 8;
+    pub const VP_FREEZE_NEW: u32 = 16;
+    pub const COLOR: u32 = 32;
+    pub const LINETYPE: u32 = 64;
+    pub const LINEWEIGHT: u32 = 128;
+    pub const PLOT_STYLE: u32 = 256;
+    pub const TRANSPARENCY: u32 = 1024;
+    /// Every property: the mask of AutoCAD 2024's -LAYER stAte Save with its defaults (2047; bit
+    /// 512, which no property toggles, is always set).
+    pub const ALL: u32 = 2047;
+
+    /// A state of every property of `layers`, with `current` the layer restoring makes current.
+    pub fn new(name: impl Into<String>, layers: Vec<Layer>, current: impl Into<String>) -> Self {
+        LayerState { name: name.into(), layers, current: current.into(), ..LayerState::default() }
+    }
 }
 
 /// A named group of entities (GROUP).

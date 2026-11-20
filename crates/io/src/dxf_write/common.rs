@@ -19,6 +19,7 @@ pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
     let mut ov = W {
         t: Vec::new(),
         next: 0,
+        used: std::collections::HashSet::new(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         ucss: HashMap::new(),

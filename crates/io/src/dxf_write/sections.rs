@@ -4,12 +4,13 @@ use super::common::annotative_xdata;
 use super::ctx::{AssocObj, Ctx};
 use super::entity::{entity, hatch_reactors};
 use super::header::{code_page, header_vars, model_ucs};
-use super::layout::{paper_views, record_head, sheet_first, table_head, vport_table};
+use super::layout::{paper_views, record_head, sheet_first, table_head, table_head_x, vport_table};
 use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
-    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
-    TableStyle, Tag, Ucs, Vec2, Vec3, Version, W, dxf_ext,
+    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, HashSet, Layout, MLeaderStyle, PageSetup,
+    Space, TableStyle, Tag, Ucs, Vec2, Vec3, Version, W, dxf_ext,
 };
+use super::{entity_handles, structural_start};
 
 struct TableWritePlan<'a> {
     d: &'a Drawing,
@@ -68,7 +69,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         }
     }
     w.s(0, "ENDTAB");
-    write_layer_table(w, d);
+    write_layer_table(w, d, &mut cx.layer_states);
     // STYLE. Linetype shapes from a shape file that isn't a text style get an unnamed shape
     // style record (70 bit 1) naming the file.
     let mut shape_files: Vec<String> = Vec::new();
@@ -193,8 +194,12 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     ltype_handles
 }
 
-fn write_layer_table(w: &mut W, d: &Drawing) {
-    let th = table_head(w, "LAYER", d.layers.len());
+/// The LAYER table; when the drawing has layer states AutoCAD can hold, the table's extension
+/// dictionary holds them (written with the objects, [`crate::dxf_layer_states`]).
+fn write_layer_table(w: &mut W, d: &Drawing, states: &mut crate::dxf_layer_states::Plan) {
+    let xdict = (!states.is_empty()).then(|| states.xdict.clone());
+    let th = table_head_x(w, "LAYER", d.layers.len(), xdict.as_deref());
+    states.table.clone_from(&th);
     for l in &d.layers {
         let lh = record_head(w, "LAYER", &th, "AcDbLayerTableRecord");
         w.layers.insert(l.name.to_ascii_uppercase(), lh);
@@ -256,6 +261,7 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         let mut newer = W {
             t: Vec::new(),
             next: 0,
+            used: HashSet::new(),
             pstyles: HashMap::new(),
             layers: HashMap::new(),
             ucss: HashMap::new(),
@@ -500,14 +506,35 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     if let Some(h) = named.and_then(|u| w.ucss.get(&u.name.to_ascii_uppercase())).cloned() {
         w.s(345, h);
     }
-    // The saved paper-space view (centre, height) as CADCraft xdata.
-    if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+    // CADCraft xdata: the saved paper-space view (centre, height), and the layout's paper units.
+    // Group 72 cannot carry the choice on its own: 0 means inches, but it is also what earlier
+    // CADCraft versions wrote for a layout that follows MEASUREMENT, and 1 is what a layout that
+    // inherits a metric MEASUREMENT writes too. PSUNITS keeps the three states apart: 0 inches,
+    // 1 millimetres, 2 follows MEASUREMENT (#3249).
+    let view = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite());
+    let unit_marker = match page.paper_mm {
+        Some(false) => Some(0),
+        Some(true) => Some(1),
+        // An inherited imperial layout writes group 72 = 0, which already reads back as
+        // inherited; only group 72 = 1 is ambiguous and needs the marker.
+        None if cadcraft_render::paper::page_unit_mm(d, page) == 1.0 => Some(2),
+        None => None,
+    };
+    if view.is_some() || unit_marker.is_some() {
         w.s(1001, dxf_ext::APP);
-        w.s(1000, "PSVIEW");
-        w.s(1002, "{");
-        w.p(1010, c.to3(0.0));
-        w.f(1040, height);
-        w.s(1002, "}");
+        if let Some((c, height)) = view {
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
+        if let Some(units) = unit_marker {
+            w.s(1000, "PSUNITS");
+            w.s(1002, "{");
+            w.i(1070, units);
+            w.s(1002, "}");
+        }
     }
 }
 
@@ -787,6 +814,16 @@ fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     write_root_group_objects(w, &plan, &groups, &group_owner, &written, &mleader_dict);
     write_style_objects(w, &plan, &mleader_dict, &mleader_handles);
     write_named_objects(w, &plan);
+    let layer_states = {
+        let refs = crate::dxf_layer_states::Refs {
+            layers: &w.layers,
+            ltypes: &plan.cx.ltypes,
+            pstyles: &w.pstyles,
+            colour_dependent: plan.d.header.i64("PSTYLEMODE", 1) != 0,
+        };
+        crate::dxf_layer_states::objects(&plan.cx.layer_states, &plan.d.layer_states, &refs)
+    };
+    w.t.extend(layer_states);
     write_associative_objects(w, plan.cx);
     write_layout_objects(w, &plan);
     // Raster image definitions.
@@ -954,7 +991,8 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
+        next: structural_start(d),
+        used: entity_handles(d).collect(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         ucss: HashMap::new(),
@@ -1023,7 +1061,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     if let Some(chunks) = dxf_ext::constraint_chunks(&d.constraints, &d.parametric) {
         xrecords.push((dxf_ext::CONSTRAINTS_KEY, w.h(), chunks));
     }
-    if let Some(chunks) = dxf_ext::layer_state_chunks(&d.layer_states) {
+    // Saved layer states: AutoCAD's dictionary holds those it can, CADCraft's record the others.
+    cx.layer_states = crate::dxf_layer_states::Plan::new(&d.layer_states, || w.h());
+    if let Some(chunks) = dxf_ext::layer_state_chunks(&crate::dxf_layer_states::own(&d.layer_states)) {
         xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
     }
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
@@ -1035,14 +1075,19 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();
     let scales: Vec<(&cadcraft_doc::AnnoScale, String)> = d.scales.iter().filter(|s| s.is_valid()).map(|s| (s, w.h())).collect();
-    // Plot style names used by layers and objects (Normal always), each a placeholder object.
+    // Plot style names used by layers and objects (Normal always), each a placeholder object; in
+    // a drawing of named plot styles also those of the layers of saved layer states, which name
+    // theirs by placeholder.
     let pstyle_dict = w.h();
     let mut pstyle_names: Vec<String> = vec![cadcraft_doc::NORMAL_STYLE.to_string()];
-    let named = d.layers.iter().map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
+    let mut seen: std::collections::HashSet<String> = pstyle_names.iter().map(|n| n.to_ascii_uppercase()).collect();
+    let named_styles = d.header.i64("PSTYLEMODE", 1) == 0;
+    let in_states = d.layer_states.iter().filter(|_| named_styles).flat_map(|s| s.layers.iter());
+    let named = d.layers.iter().chain(in_states).map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
     for n in named {
         let n = n.trim();
         let logical = n.is_empty() || n.eq_ignore_ascii_case("bylayer") || n.eq_ignore_ascii_case("byblock");
-        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && !pstyle_names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && seen.insert(n.to_ascii_uppercase()) {
             pstyle_names.push(n.to_string());
         }
     }
@@ -1137,11 +1182,11 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         block(&mut w, (n, &b.description), h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
-    // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
+    // Generated geometry entities (dimension, arrowhead and table blocks) need handles; take
+    // them from the writer's allocator, which skips the drawing's own handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
         for e in ents.iter_mut().filter(|e| e.handle.0 == 0) {
-            e.handle = Handle(w.next);
-            w.next = w.next.saturating_add(1);
+            e.handle = Handle(w.next_handle());
         }
     }
     for (n, h, ents) in &dim_defs {

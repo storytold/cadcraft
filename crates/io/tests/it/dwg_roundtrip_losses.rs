@@ -169,7 +169,7 @@ fn the_added_paper_viewport_follows_the_plot_scale() {
     let sheet_width = |scale: f64, fit: bool| {
         let mut d = Drawing::new_metric();
         let page = &mut d.layouts[0].page;
-        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, true);
+        (page.width_mm, page.height_mm, page.landscape, page.paper_mm) = (297.0, 420.0, true, Some(true));
         (page.scale, page.scale_to_fit) = (scale, fit);
         let first = Space::Paper(d.layouts[0].name.clone());
         d.add(&first, Common::default(), viewport(2)).unwrap();
