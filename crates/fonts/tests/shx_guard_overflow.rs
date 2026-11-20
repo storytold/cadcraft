@@ -43,12 +43,14 @@ fn guards_past_the_limit_apply_to_every_folder() {
     let dir = owner.0.clone();
     std::fs::write(dir.join("cadcraft-overflow-bad.shx"), &bytes).unwrap();
     std::fs::write(dir.join("cadcraft-overflow-ok.shx"), &bytes).unwrap();
+    // The guard reads the name without its case: the search also asks for the upper-case spelling,
+    // which a file system that ignores case opens as the same file.
     for n in 0..1100 {
         let folder = dir.join(format!("drawings-{n}"));
         shx::add_drawing_dir_guarded(
             &folder,
             "session",
-            Arc::new(|file: &Path| !file.file_name().is_some_and(|n| n.to_string_lossy().contains("bad"))),
+            Arc::new(|file: &Path| !file.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("bad"))),
         );
     }
     // A later folder with the same owner and a guard that allows everything doesn't lift the others.
