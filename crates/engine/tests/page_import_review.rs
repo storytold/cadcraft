@@ -190,6 +190,7 @@ fn successful_shrink_never_disables_subsequent_enlargement() {
 }
 #[test]
 fn page_marker_survives_drawing_roundtrip() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut s = session();
     insert(&mut s, true, 0.0);
     for extension in ["dxf", "dwg"] {
