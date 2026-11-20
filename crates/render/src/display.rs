@@ -106,7 +106,8 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
-    /// The expansion budget was spent: block contents past it are not in the list. The screen,
+    /// The block-expansion budget or the point budget ([`crate::MAX_DISPLAY_POINTS`]) was spent:
+    /// block contents or objects past it are not in the list. The screen,
     /// plots and exports draw what is here; the CLI and the control channel report this, so an
     /// output that leaves contents out is never silent (#1070).
     pub truncated: bool,
@@ -207,4 +208,5 @@ pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     dst.pens.extend(src.pens);
     dst.bounds = dst.bounds.union(&src.bounds);
     dst.expanded = dst.expanded.saturating_add(src.expanded);
+    dst.truncated |= src.truncated;
 }
