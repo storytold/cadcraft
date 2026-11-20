@@ -671,6 +671,9 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }));
     };
     let mut page = s.doc()?.layout(&name).map(|l| l.page.clone()).unwrap_or_default();
+    // The standard size the layout had before this call, so that resubmitting it (the Plot
+    // dialog's Apply to Layout always sends `paper`) keeps the layout's paper units.
+    let old_paper = cadcraft_render::paper_size(&page.paper).map(|ps| ps.name);
     // A plotter's own papers (with their printable areas) come first.
     let device_paper = super::plotters::page_device(cmd, p, &mut page)?;
     if let Some(paper) = p.get("paper").filter(|_| !device_paper) {
@@ -690,12 +693,14 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     // paper that is not a standard size keeps the layout's units. Only a saved page setup changes
     // units; a one-off plot's `paper` keeps the layout's, so its objects stay the size they were
     // drawn. A custom `width` and `height` in the same call replace this paper below, and a
-    // custom size keeps the layout's units, with `paper` or without it. An explicit `paperUnits`
-    // in the same call wins (below).
+    // custom size keeps the layout's units, with `paper` or without it. The same paper the layout
+    // already has keeps its units too, so an explicit choice survives it. An explicit
+    // `paperUnits` in the same call wins (below).
     if p.get("paper").is_some()
         && p.get("width").is_none()
         && p.get("height").is_none()
         && let Some(ps) = cadcraft_render::paper_size(&page.paper)
+        && old_paper != Some(ps.name)
     {
         page.paper_mm = (!ps.imperial).then_some(true);
     }

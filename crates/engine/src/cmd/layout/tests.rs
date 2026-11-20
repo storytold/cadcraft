@@ -267,6 +267,23 @@ fn pagesetup_paper_units_inches_overrides_metric_measurement() {
     assert!((inch.size.x - 36.0).abs() < 1e-9 && (inch.size.y - 24.0).abs() < 1e-9, "{:?}", inch.size);
 }
 
+/// The Plot dialog's Apply to Layout sends the layout's paper every time. Resubmitting the paper
+/// the layout already has keeps an explicit paper-units choice; a different paper still sets
+/// the units from that paper (#2836, #3249).
+#[test]
+fn pagesetup_same_paper_keeps_explicit_paper_units() {
+    let mut s = Session::new();
+    let units = |s: &Session| s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm;
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "lineweights": true})).unwrap();
+    assert_eq!(units(&s), Some(true), "millimetres on an inch paper survive resubmitting it");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "paperUnits": "inches"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A4 (210.00 x 297.00 MM)"})).unwrap();
+    assert_eq!(units(&s), Some(false), "inches on a metric paper survive resubmitting it by its full name");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3"})).unwrap();
+    assert_eq!(units(&s), Some(true), "a different paper still sets the units");
+}
+
 fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {
     let _ = d;
     Ok(format!("%PDF-1.4 fake {space:?} {opts}").into_bytes())
