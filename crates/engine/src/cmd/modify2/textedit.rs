@@ -65,7 +65,16 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
     use crate::{EditorKind, TextEditor};
     let d = s.doc().ok()?;
     let key = h.hex();
-    match &d.entity(h)?.kind {
+    let e: &cadcraft_doc::Entity = d.entity(h)?;
+    // Annotative text and dimensions are drawn scaled to the current annotation scale: the box
+    // follows what is drawn. Multiline text keeps its stored height (it is written back from it).
+    let scaled = match d.anno_draw(e) {
+        cadcraft_doc::AnnoDraw::Scaled(f) if matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Dimension(_)) => {
+            Some(cadcraft_doc::anno_scaled(e, f))
+        }
+        _ => None,
+    };
+    match &scaled.as_ref().unwrap_or(e).kind {
         EntityKind::MText(t) => Some(TextEditor { mtext: t.clone(), kind: EditorKind::MText, key, extents: None }),
         // A multileader's text opens in the same editor (#1081).
         EntityKind::MLeader(m) => m.text.clone().map(|mtext| TextEditor { mtext, kind: EditorKind::MText, key, extents: None }),
