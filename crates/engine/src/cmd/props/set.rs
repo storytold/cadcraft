@@ -387,7 +387,7 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 _ => {}
             }
             let new_text = match &e.kind {
-                EntityKind::Text(_) | EntityKind::MText(_) => str_param(p, "text").is_some(),
+                EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::MLeader(_) => str_param(p, "text").is_some(),
                 EntityKind::Dimension(_) => str_param(p, "textOverride").is_some(),
                 _ => false,
             };
@@ -403,8 +403,21 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(left_out.result(hs.len(), &ignored))
 }
 
-/// A multileader's text: its contents (#1081) and height.
+/// A multileader's text: its contents (#1081) and height; its arrowhead and leader type.
 fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'c>) {
+    if let Some(v) = str_param(c.p, "arrow") {
+        m.arrow = v.trim().to_string();
+        used.insert("arrow");
+    }
+    match str_param(c.p, "leaderType").map(str::to_ascii_lowercase).as_deref() {
+        Some("spline") => (m.spline, m.no_leader) = (true, false),
+        Some("straight") => (m.spline, m.no_leader) = (false, false),
+        Some("none") => m.no_leader = true,
+        _ => {}
+    }
+    if str_param(c.p, "leaderType").is_some() {
+        used.insert("leaderType");
+    }
     let Some(t) = &mut m.text else { return };
     if let Some(v) = str_param(c.p, "text") {
         t.contents = v.replace('\n', "\\P");
