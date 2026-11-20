@@ -116,6 +116,29 @@ fn boundaries_keep_the_hatch_elevation() {
     assert_eq!(poly(&s, &handles(&v)[0]).elevation, 300.0);
 }
 
+/// A mirrored hatch (normal 0,0,-1, as exploding a mirrored block makes) at elevation 300 lies at
+/// world Z -300; its boundary, facing up, goes there too, not to +300.
+#[test]
+fn a_mirrored_hatchs_boundary_keeps_its_world_height() {
+    let mut s = Session::new();
+    let r = rect(&mut s, [0.0, 0.0], [4.0, 2.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [r] })).unwrap());
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(Handle::parse_hex(&h).unwrap(), |e| {
+            e.common.extrusion = cadcraft_engine::geom::Vec3::new(0.0, 0.0, -1.0);
+            if let EntityKind::Hatch(x) = &mut e.kind {
+                x.elevation = 300.0;
+            }
+        })
+        .unwrap();
+    let v = s.execute("hatchgenerateboundary", &json!({ "handles": [h] })).unwrap();
+    let new = Handle::parse_hex(&handles(&v)[0]).unwrap();
+    let e = s.doc().unwrap().entity(new).unwrap().clone();
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("not a polyline") };
+    assert_eq!(e.common.extrusion.z.signum() * p.elevation, -300.0);
+}
+
 #[test]
 fn refuses_a_hatch_in_another_space_and_adds_nothing() {
     let mut s = Session::new();

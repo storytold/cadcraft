@@ -33,7 +33,7 @@ fn hatches(s: &Session, p: &Value) -> Result<Vec<Handle>> {
 const MAX_GENERATED: usize = 10_000;
 
 /// HATCHGENERATEBOUNDARY: a closed polyline around every boundary loop (outer and islands) of
-/// the selected hatches, at each hatch's elevation. The hatches are not changed: an associative
+/// the selected hatches, at each hatch's height. The hatches are not changed: an associative
 /// hatch stays linked to its own boundary objects and is not linked to the new polylines.
 pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Value> {
     let selected = targets(s, p)?;
@@ -46,7 +46,8 @@ pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Va
     {
         let d = s.doc()?;
         for h in selected {
-            let Some(EntityKind::Hatch(x)) = d.entity(h).map(|e| &e.kind) else { continue };
+            let Some(e) = d.entity(h) else { continue };
+            let EntityKind::Hatch(x) = &e.kind else { continue };
             if !seen.insert(h) {
                 continue;
             }
@@ -59,7 +60,10 @@ pub(super) fn run_hatchgenerateboundary(s: &mut Session, p: &Value) -> Result<Va
             if x.loops.len() > MAX_GENERATED.saturating_sub(loops.len()) {
                 return Err(bad("hatchgenerateboundary", format!("more than {MAX_GENERATED} boundary polylines in one call; select fewer hatches")));
             }
-            loops.extend(x.loops.iter().map(|l| (l.vertices.clone(), x.elevation)));
+            // The elevation runs along the hatch's normal: one facing down Z (mirrored) lies at its
+            // negative, where the polyline, facing up, goes.
+            let z = if e.common.extrusion.z < 0.0 { -x.elevation } else { x.elevation };
+            loops.extend(x.loops.iter().map(|l| (l.vertices.clone(), z)));
         }
     }
     if !found {
