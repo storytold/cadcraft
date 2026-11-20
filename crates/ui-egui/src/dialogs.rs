@@ -11,6 +11,7 @@ use crate::theme::Tokens;
 /// Render active overlays and the currently open modal or floating dialog window.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
+    crate::line_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     crate::lisp_ide::plugin_menu_overlay(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
