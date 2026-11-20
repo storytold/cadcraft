@@ -350,8 +350,7 @@ pub(crate) fn read(secs: &[SectionRef<'_>], d: &mut Drawing) {
         !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
     };
     let memo = retained_objects(&objects, &ents, &ids, &by_handle, root.as_deref(), &root_entries, &xdict_of);
-    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
-    let mut f = Foreign { appids: appids.take(MAX_OBJECTS).collect(), ..Foreign::default() };
+    let mut f = Foreign::default();
     let mut kept: HashSet<String> = HashSet::new();
     for (i, (kind, _, t)) in objects.iter().enumerate() {
         if memo.get(&i) != Some(&true) || f.objects.len() >= MAX_OBJECTS {
@@ -458,6 +457,10 @@ pub(crate) fn read(secs: &[SectionRef<'_>], d: &mut Drawing) {
     if !f.is_empty() {
         f.version = file_version(secs);
     }
+    // Added after the version: registered applications alone are no kept objects whose groups
+    // the DWG writer must read as the file's version, and nearly every file has some (ACAD).
+    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
+    f.appids = appids.take(MAX_OBJECTS).collect();
     // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
     f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
     if !f.is_empty() || !f.handles.is_empty() {

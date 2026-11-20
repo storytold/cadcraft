@@ -79,6 +79,7 @@ fn appids(text: &str) -> usize {
 
 #[test]
 fn registered_applications_no_xdata_names_are_kept() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = read_dxf(source(false).as_bytes()).expect("read");
     for generation in 1..=2 {
         let text = write_dxf(&d);
@@ -95,6 +96,7 @@ fn registered_applications_no_xdata_names_are_kept() {
 /// An application both registered and named by xdata, in another case, gets one record.
 #[test]
 fn a_registered_application_xdata_names_gets_one_record() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = read_dxf(source(true).as_bytes()).expect("read");
     for generation in 1..=2 {
         let text = write_dxf(&d);
@@ -107,4 +109,13 @@ fn a_registered_application_xdata_names_gets_one_record() {
         d = read(&dwg, "kept.dwg").expect("DWG read");
         assert_eq!(appids(&write_dxf(&d)), 1, "DWG {generation}");
     }
+}
+
+/// Registered applications alone are not kept objects: a file with nothing else to keep notes no
+/// version, so the DWG writer reads its R2000 text as before rather than as the file's version.
+#[test]
+fn registered_applications_alone_note_no_version() {
+    let d = read_dxf(source(false).as_bytes()).expect("read");
+    assert!(d.foreign.appids.iter().any(|n| n == "Other_App"), "{:?}", d.foreign.appids);
+    assert_eq!(d.foreign.version, None);
 }
