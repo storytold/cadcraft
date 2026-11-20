@@ -275,7 +275,7 @@ fn a_pick_in_empty_space_draws_a_fence_line_and_trims_what_it_crosses() {
     let mut s = ladder();
     // Quick mode. From empty space at 5,-3 to 5,3: both horizontal lines are cut between the edges.
     s.script("TRIM 5,-3\n").unwrap();
-    assert_eq!(s.current_prompt().map(|p| p.message), Some("Specify end point of the fence line".into()));
+    assert_eq!(s.current_prompt().map(|p| p.message), Some("Specify next fence point".into()));
     s.script("5,3\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(
