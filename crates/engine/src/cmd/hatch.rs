@@ -2,8 +2,9 @@
 //! HATCHGENERATEBOUNDARY: polylines around existing hatches.
 
 mod patfile;
+pub(super) use edit::{set_pattern, takes_pattern};
+pub(super) use patfile::run_patterns;
 pub use patfile::{PatternChoice, pattern_choices};
-pub(super) use patfile::{lines_for, run_patterns};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, Entity, EntityKind, Gradient, Handle, Hatch, HatchLoop, Space, entity_bounds};
@@ -29,7 +30,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
         CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true)))),
         CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM { region: false }))),
-        CommandSpec::new("region", "Region", run_region).menu(&["Draw", "Region"]).alias(&["reg"]).params("{handles?}"),
+        CommandSpec::new("region", "Region", run_region)
+            .menu(&["Draw", "Region"])
+            .alias(&["reg"])
+            .params("{handles?}")
+            // Typed with nothing selected it asks for objects, as in AutoCAD, rather than converting none.
+            .interactive(|_| Ok(Box::new(SelectRun::new("region", "REGION")))),
         CommandSpec::new("hatchedit", "Hatch Edit", edit::run_hatchedit).menu(&["Modify", "Object", "Hatch..."]).alias(&["he", "-hatchedit"]).params("{handles?, pattern?, scale?, angle?, gradient?: {name?, color1?, color2?, angle? (degrees), centered?} (makes or changes a gradient fill; `pattern` turns it back), associative?: bool (false unlinks; true links each loop to a closed object of the same shape, or to `boundary` objects), boundary?: [hex], addPoints?: [[x,y]], addBoundary?: [hex], removeLoops?: [zero-based index] (geometry edits require one hatch), style?, origin? | originMode?, separate?: true, recreate?: \"polyline\"|\"region\", associate?: bool (link to the recreated boundary)}").interactive(|s| Ok(Box::new(edit::HatchEditM::new(s)))),
         CommandSpec::new("hatchgenerateboundary", "Generate Boundary", edit::run_hatchgenerateboundary)
             .params("{handles?} (a closed polyline around each boundary loop of the hatches, which stay as they are) → handles")
@@ -538,6 +544,19 @@ fn run_region(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "message": format!("{n} Region(s) created.") }))
 }
 
+/// Whether the upper-case `name` is a pattern: a standard one or a loaded one.
+fn pattern_exists(name: &str) -> bool {
+    cadcraft_doc::library::pattern(name).is_some() || patfile::user_pattern(name).is_some()
+}
+
+/// The existing pattern `name` means, typed at the pattern prompt: read upper-cased, else a loaded
+/// pattern's own name when only its Greek spelling differs in case or accent (σολιδ for ΣΟΛΙΔ).
+pub(crate) fn pattern_named(name: &str) -> Option<String> {
+    let name = name.trim();
+    let up = name.to_ascii_uppercase();
+    if pattern_exists(&up) { Some(up) } else { patfile::user_pattern_name(name) }
+}
+
 /// The origin sub-prompt's keywords (a point sets a new origin).
 const ORIGIN_KW: [&str; 6] = ["Bottom left", "bottom Right", "Top left", "top riGht", "Center", "Use current"];
 
@@ -602,7 +621,7 @@ impl HatchM {
                     Some(n) => n,
                     None => t.trim().to_ascii_uppercase(),
                 };
-                if cadcraft_doc::library::pattern(&up).is_some() || patfile::user_pattern(&up).is_some() {
+                if pattern_exists(&up) {
                     self.settings.pattern = up.clone();
                     s.doc_mut()?.header.set_str("HPNAME", &up);
                 } else {

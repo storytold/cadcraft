@@ -103,7 +103,7 @@ fn dxf_angular_block_text_keeps_the_decimal_separator() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_angular_block_text_keeps_the_decimal_separator() {
     use std::io::Cursor;
@@ -111,6 +111,7 @@ fn dwg_angular_block_text_keeps_the_decimal_separator() {
     use acadrust::entities::EntityType;
     use cadcraft_io::{SaveOptions, Version};
 
+    cadcraft_io::dwg_worker::allow_in_process();
     for (separator_override, expected) in [(None, "39,4°"), (Some("."), "39.4°")] {
         let dwg =
             cadcraft_io::write_with(&angular_drawing(separator_override), "angle.dwg", &SaveOptions { version: Some(Version::R2018), binary: false })

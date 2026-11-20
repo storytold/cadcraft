@@ -224,6 +224,7 @@ fn hostile_handle_seed_does_not_panic() {
 
 #[test]
 fn dwg_reopen_and_save_keeps_one_block_per_dimension() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
     let mut bytes = cadcraft_io::write(&d, "a.dwg").unwrap();
@@ -241,6 +242,7 @@ fn dwg_reopen_and_save_keeps_one_block_per_dimension() {
 #[test]
 fn an_unedited_dimension_keeps_the_block_it_was_read_with() {
     use cadcraft_doc::{Circle, Point};
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     // The block another program drew: geometry CADCraft never generates (a circle) and the
     // definition point on Defpoints.

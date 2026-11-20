@@ -1,4 +1,5 @@
 use super::ctx::Ctx;
+use super::header::model_ucs;
 use super::{Bounds2, Drawing, Entity, EntityKind, Handle, HashMap, Layout, Vec2, Vec3, VportConfig, VportTile, W, dxf_ext};
 
 /// Layouts with viewports but without the paper-space viewport (id 1, the sheet itself), keyed
@@ -72,6 +73,11 @@ pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &C
 /// The VPORT table: the `*Active` model space tiles (one viewport on the extents when there is no
 /// tiled configuration) and the saved configurations, each tile a record, the current one first.
 pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
+    // The view the drawing is saved at, so that reading a drawing and writing it back keeps it;
+    // a drawing that stores none is written on its extents. The fallback fits the width as well,
+    // through the aspect the record is written with: a drawing 100 wide and 10 tall otherwise got
+    // a view 11 tall, which shows a sliver of it, and a horizontal line got 1e-6 (#1602).
+    const ASPECT: f64 = 1.6;
     // An untiled view's twist: the lone `*Active` tile the editor keeps for it.
     let twist = d
         .vports
@@ -79,21 +85,37 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         .find(|c| c.is_active() && c.tiles.len() == 1)
         .and_then(|c| c.tiles.first())
         .map_or(0.0, |t| cadcraft_geom::norm_angle(t.twist));
-    // The extents fitted as the turned view sees them.
-    let (center, height) = if ext.is_empty() {
-        (Vec2::new(6.0, 4.5), 9.0)
-    } else if twist == 0.0 {
-        (ext.center(), (ext.height() * 1.1).max(1e-6))
-    } else {
-        let r = Bounds2::from_points(ext.corners().map(|p| p.rotate(twist)));
-        let height = r.height() * 1.1;
-        (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
+    let (center, height) = match d.header.saved_view() {
+        Some(v) => v,
+        None if ext.is_empty() => (Vec2::new(6.0, 4.5), 9.0),
+        None if twist == 0.0 => (ext.center(), (ext.height().max(ext.width() / ASPECT) * 1.1).max(1e-6)),
+        // The extents fitted as the turned view sees them.
+        None => {
+            let r = Bounds2::from_points(ext.corners().map(|p| p.rotate(twist)));
+            let height = r.height().max(r.width() / ASPECT) * 1.1;
+            (r.center().rotate(-twist), if height.is_finite() { height.max(1e-6) } else { 9.0 })
+        }
     };
-    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: 1.6, twist };
+    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT, twist };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
-    let mut records: Vec<(&str, &VportTile)> = match tiled {
-        Some(c) => c.tiles.iter().map(|t| (VportConfig::ACTIVE, t)).collect(),
-        None => vec![(VportConfig::ACTIVE, &single)],
+    // The first `*ACTIVE` record is the one a reader takes the view from, so it carries the saved
+    // view while keeping its own place on the screen and the tiles after it unchanged. Writing
+    // the stored tiles as they stand put the new view in HEADER and the old one here, and the
+    // read takes this one, so updating the view of a tiled drawing did not survive a round trip
+    // (noted in review).
+    //
+    // Only where there is a saved view to carry. `center` and `height` are the extents fallback
+    // when the header holds none, and a tiled drawing can hold none -- `-VPORTS` splits the
+    // current view into tiles without setting one -- so overriding regardless replaced a tile's
+    // own good view with that fallback, and the drawing opened on the extents instead of where
+    // its tile was (noted in review).
+    let saved = d.header.saved_view().is_some();
+    let first = tiled.and_then(|c| c.tiles.first()).map(|t| if saved { VportTile { center, height, ..*t } } else { *t });
+    let mut records: Vec<(&str, &VportTile)> = match (tiled, first.as_ref()) {
+        (Some(c), Some(first)) => {
+            std::iter::once((VportConfig::ACTIVE, first)).chain(c.tiles.iter().skip(1).map(|t| (VportConfig::ACTIVE, t))).collect()
+        }
+        _ => vec![(VportConfig::ACTIVE, &single)],
     };
     records.extend(d.vports.iter().filter(|c| !c.is_active() && !c.name.is_empty()).flat_map(|c| c.tiles.iter().map(|t| (c.name.as_str(), t))));
     let th = table_head(w, "VPORT", records.len());
@@ -117,15 +139,44 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
         w.f(51, twist.to_degrees());
+        // UCSICON: bit 1 shows the icon, bit 2 puts it at the UCS origin. A setting of the shown
+        // configuration (there is no header variable for it).
+        if name == VportConfig::ACTIVE {
+            w.i(74, d.header.i64("UCSICON", 3).clamp(0, 3));
+        }
+        // The shown configuration's tiles keep model space's current UCS (UCSVP 1).
+        if name == VportConfig::ACTIVE {
+            let ucs = model_ucs(d);
+            w.i(65, 1);
+            w.p(110, ucs.origin);
+            w.p(111, ucs.x_axis);
+            w.p(112, ucs.y_axis);
+            w.i(79, 0);
+            // The named UCS it is (none: unnamed). The UCS table comes after VPORT, so the
+            // handle is filled in once that table has given it one ([`W::vport_ucs`]).
+            if !ucs.name.is_empty() {
+                w.s(345, "0");
+                w.vport_ucs.push((w.t.len() - 1, ucs.name.to_ascii_uppercase()));
+            }
+            w.f(146, 0.0);
+        }
     }
     w.s(0, "ENDTAB");
 }
 
 pub(super) fn table_head(w: &mut W, name: &str, count: usize) -> String {
+    table_head_x(w, name, count, None)
+}
+
+/// A table's head, with its extension dictionary `xdict` when it has one.
+pub(super) fn table_head_x(w: &mut W, name: &str, count: usize, xdict: Option<&str>) -> String {
     let h = w.h();
     w.s(0, "TABLE");
     w.s(2, name);
     w.s(5, h.clone());
+    if let Some(x) = xdict {
+        w.group("ACAD_XDICTIONARY", 360, &[x]);
+    }
     w.s(330, "0");
     w.s(100, "AcDbSymbolTable");
     w.i(70, count as i64);
