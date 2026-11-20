@@ -312,6 +312,7 @@ pub const NO_FILES: &[&str] = &[
     "arraypath",
     "textedit",
     "textedit.object",
+    "tabledit.cell",
     "updatefield",
     "group",
     "ungroup",
