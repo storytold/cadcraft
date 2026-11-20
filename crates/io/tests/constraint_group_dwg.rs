@@ -5,6 +5,9 @@
 //! node's status and connections from the wrong groups, and AutoCAD refused the DWG of a drawing
 //! with parametric blocks ("Error Decrypting Data").
 
+// The DWG bridge and acadrust are unavailable on wasm and FreeBSD ARM64 (#2526).
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+
 use std::io::Cursor;
 
 use acadrust::objects::{AssociativeData, ObjectType};
@@ -50,6 +53,7 @@ fn expected() -> Vec<(i32, u8, Vec<i32>)> {
 }
 
 fn save(src: &str, name: &str, version: Version) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read(src.as_bytes(), "a.dxf").expect("read");
     write_with(&d, name, &SaveOptions { version: Some(version), binary: false }).expect("write")
 }
