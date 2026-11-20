@@ -37,6 +37,7 @@ mod dash_block;
 mod dash_units;
 mod data_extraction;
 mod dim_baseline_spacing;
+mod dim_block_text_layer_pick;
 mod dim_chain;
 mod dim_commands;
 mod dim_explode_text;
