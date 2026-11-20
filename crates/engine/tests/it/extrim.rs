@@ -166,7 +166,8 @@ fn an_object_crossing_twice_loses_the_stretch_between() {
     let u = h(&s.execute("pline", &json!({ "points": [[0, -2], [0, 2], [4, 2], [4, -2]] })).unwrap());
     let v = extrim(&mut s, &edge, [2.0, 1.0]);
     assert_eq!(v["trimmed"], 1);
-    assert!(!exists(&s, &u));
+    // As TRIM leaves them: the first leg keeps the polyline's handle, the second is new.
+    assert!(exists(&s, &u));
     let pieces = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::LwPolyline(_))).count();
     assert_eq!(pieces, 2, "the two legs below the edge stay");
 }
@@ -355,7 +356,11 @@ fn a_circle_crossed_once_is_reported_not_trimmed() {
     assert_eq!(v["skipped"]["uncut"], 1, "{v}");
     assert!(v["message"].as_str().unwrap().contains("could not be cut"), "{v}");
     assert!(exists(&s, &c), "the circle stays whole");
-    assert!(!exists(&s, &crossing));
+    // The vertical line keeps its handle and only its lower half.
+    let mut want = vec![seg([0.0, 0.0], [10.0, 0.0]), seg([5.0, -5.0], [5.0, 0.0])];
+    want.sort();
+    assert_eq!(lines(&s), want);
+    assert!(exists(&s, &crossing));
 }
 
 #[test]

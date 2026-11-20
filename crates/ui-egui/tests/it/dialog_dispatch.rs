@@ -67,6 +67,23 @@ fn json_file_commands_never_open_pickers() {
     assert_eq!(picks.get(), 5);
 }
 
+/// A command typed with the Greek keyboard layout active is the Latin name's keys for the
+/// interface's own commands too: ΛΑΥΕΡ opens the Layers dialog and `;ΣΑΩΕ` (the Q key types a
+/// semicolon) asks where to save a drawing that has no file, as LAYER and QSAVE do.
+#[test]
+fn greek_layout_names_open_the_dialogs_and_pickers() {
+    let (mut app, picks) = app();
+    app.cmdline("ΛΑΥΕΡ");
+    assert_eq!(app.ui.dialog.as_deref(), Some("layers"));
+    app.ui.dialog = None;
+    app.cmdline("λάυερ");
+    assert_eq!(app.ui.dialog.as_deref(), Some("layers"), "lower case and an accent");
+    app.ui.dialog = None;
+    assert_eq!(picks.get(), 0);
+    app.cmdline(";ΣΑΩΕ");
+    assert_eq!(picks.get(), 1, "the Save picker opens");
+}
+
 #[test]
 fn typed_json_form_runs_the_command() {
     let (mut app, _) = app();

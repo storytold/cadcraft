@@ -31,7 +31,7 @@ impl Accept {
 /// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
 /// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
 /// AutoCAD's command line over measured runs, where no prompt was written both ways.
-const NO_OR: [&str; 28] = [
+const NO_OR: &[&str] = &[
     "Bring to front",
     "Calculate rectangle dimensions based on",
     "Choose mode for selected object conversion",
@@ -50,6 +50,7 @@ const NO_OR: [&str; 28] = [
     "Enter option",
     "Enter polyline linetype generation option",
     "Enter property to change",
+    "Enter states to change",
     "Enter the type of array",
     "Enter type of unused objects to purge",
     "Enter viewport arrangement",
@@ -102,15 +103,37 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The prompt takes a block's name as well as its keywords: a Greek word that is an existing
+    /// block's name is that block, not a keyword read from its Latin keys.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub takes_block: bool,
 }
 
-/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
+/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`. The
+/// world-relative forms `@*distance<angle` and `*@distance<angle` measure the angle in the WCS.
 /// Returns `None` for any other form.
 pub fn parse_polar_text(text: &str, angles: &crate::units::AngleSettings) -> Option<(f64, f64)> {
-    let body = text.trim().strip_prefix('@')?; // relative form only
+    let t = text.trim();
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
+    let body = t.strip_prefix('@')?.trim(); // relative form only
+    let body = match body.strip_prefix('*') {
+        Some(r) => {
+            world = true;
+            r.trim_start()
+        }
+        None => body,
+    };
+    let angles = if world { angles.world() } else { *angles };
     let (d, a) = body.split_once('<')?;
-    let dist = d.trim().parse::<f64>().ok()?;
-    let angle = angles.amount(a.trim())?;
+    // Read as `parse_point_in` reads it, fractions (`1/2`) included.
+    let dist = crate::units::parse_distance(d)?;
+    // The direction `@d<a` draws along, as `parse_point_in` reads it (ANGBASE, ANGDIR and the
+    // UCS applied): a world angle.
+    let a = a.trim();
+    let angle = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
     (dist.is_finite() && angle.is_finite()).then_some((dist, angle))
 }
 
@@ -134,6 +157,11 @@ impl Prompt {
     /// The visual chooser the UI can show (the `picker` field).
     pub fn picker(mut self, p: Picker) -> Self {
         self.picker = Some(p);
+        self
+    }
+    /// Takes a block's name besides its keywords (the `takes_block` field).
+    pub fn takes_block(mut self) -> Self {
+        self.takes_block = true;
         self
     }
     pub fn kw(mut self, k: &[&str]) -> Self {
@@ -215,6 +243,24 @@ impl Prompt {
             return None;
         }
         let tl = t.to_ascii_lowercase();
+        // A keyword typed with the Greek keyboard layout active (ΘΝΔΟ for Undo) is its Latin keys, unless
+        // the prompt offers that spelling itself (a Greek keyword in a LISP program's list): its word
+        // or a prefix of it as typed (ΘΝ for ΘΝΔΟ, not UN for Undo) is read before the Latin keys.
+        if let Some(latin) = crate::keyboard::latin_keys(t) {
+            // Greek letters have case, accents and a final sigma, which the ASCII-only folding above does not see.
+            let typed = crate::keyboard::greek_fold(t).unwrap_or_else(|| latin.clone());
+            let greek = || self.keywords.iter().filter_map(|k| crate::keyboard::greek_fold(k).map(|fold| (k, fold)));
+            return greek()
+                .find(|(_, k)| *k == typed)
+                .or_else(|| greek().find(|(_, k)| k.starts_with(&typed)))
+                .map(|(k, _)| k.clone())
+                .or_else(|| self.match_latin_keyword(&latin));
+        }
+        self.match_latin_keyword(&tl)
+    }
+
+    /// [`Prompt::match_keyword`] for text already read as Latin letters, in lower case.
+    fn match_latin_keyword(&self, tl: &str) -> Option<String> {
         let keys = self.keywords.iter().map(|k| {
             let shortcut: String = k.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect::<String>().to_ascii_lowercase();
             let shortcut =
@@ -227,8 +273,8 @@ impl Prompt {
         // CHPROP: "Ambiguous response, please clarify..."), `LTS` is ltScale.
         let past_capitals = |k: &str| k.char_indices().rfind(|(_, c)| c.is_ascii_uppercase() || c.is_ascii_digit()).map_or(1, |(i, _)| i + 1);
         keys.clone()
-            .find(|(_, kl, sc)| tl == *kl || tl == *sc)
-            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(&tl)))
+            .find(|(_, kl, sc)| tl == kl.as_str() || tl == sc.as_str())
+            .or_else(|| keys.clone().find(|(k, kl, _)| tl.len() >= past_capitals(k) && kl.starts_with(tl)))
             .map(|(k, _, _)| k.clone())
     }
 }
@@ -286,10 +332,16 @@ pub trait Interactive: Send {
     fn drag(&self, _s: &Session, _cursor: Vec2) -> Option<Drag> {
         None
     }
-    /// The multiline text being typed (MTEXT, once its box is known) with empty contents: where
-    /// the UI places its in-place editor and with which height, width and justification.
+    /// The multiline text being typed (MTEXT, once its box is known, with empty contents) or edited
+    /// (TEXTEDIT on an MTEXT or a multileader's text, with its contents): where the UI places its
+    /// in-place editor and with which height, width, justification and starting text.
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
+    }
+    /// The text the in-place editor edits: where, how, its current contents and what kind of
+    /// object holds it. By default the new multiline text of [`Interactive::editing_mtext`].
+    fn text_editor(&self) -> Option<TextEditor> {
+        self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new(), extents: None })
     }
     /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
     /// only its preview set); `None` shows the drawing.
@@ -309,6 +361,34 @@ pub struct DisplayOnly {
     pub extra: Vec<cadcraft_doc::Entity>,
 }
 
+/// What the in-place text editor edits ([`Interactive::text_editor`]). The editor answers the
+/// command's text prompt with the new contents (`Input::Text`), or Enter to keep the old text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextEditor {
+    /// Where the box sits (insertion point, attachment, rotation), its width (0: grows with the
+    /// text), text height and style; `contents` is the text to start from.
+    pub mtext: cadcraft_doc::MText,
+    pub kind: EditorKind,
+    /// Which object is being edited: a new key means a new text to load.
+    pub key: String,
+    /// The drawn text's extents in drawing units, when known (one line of text): the box covers
+    /// them, whatever the justification.
+    pub extents: Option<cadcraft_geom::Bounds2>,
+}
+
+/// The kind of text the in-place editor edits.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorKind {
+    /// Multiline text being created (MTEXT).
+    NewMText,
+    /// Existing multiline text: an MTEXT, a multileader's text.
+    MText,
+    /// One line of plain text (TEXT, attribute definition): no formatting, Enter finishes.
+    Line,
+    /// A dimension's text: `<>` stands for the measured value, shown as `measured`.
+    Dimension { measured: String },
+}
+
 /// See [`Interactive::drag`].
 #[derive(Clone, Debug)]
 pub struct Drag {
@@ -322,10 +402,9 @@ pub struct Drag {
 }
 
 /// Parse a typed point: `x,y[,z]`, `@dx,dy`, `@dist<angle`, `dist<angle`, `#x,y` (absolute),
-/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates: the same as the plain forms, as there is no
-/// UCS yet).
+/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates).
 /// Relative forms use `last`. Polar angles read the default angle settings (degrees from +X,
-/// counterclockwise); `parse_point_with` reads a drawing's.
+/// counterclockwise); `parse_point_with` reads a drawing's, `parse_point_in` a UCS too.
 pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
     parse_point_with(text, last, &crate::units::AngleSettings::default())
 }
@@ -333,14 +412,31 @@ pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
 /// `parse_point` with polar angles read per `angles` (AUNITS, ANGBASE, ANGDIR); `d<<a` and
 /// `d<<<a` measure from +X counterclockwise (in degrees and in AUNITS).
 pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSettings) -> Option<Vec2> {
+    parse_point_in(text, last, angles, &crate::ucs::UcsFrame::WORLD)
+}
+
+/// `parse_point_with` in a UCS: coordinates are UCS coordinates (`x,y` from its origin along its
+/// axes, `@dx,dy` along its axes), and polar angles are measured as `angles` says (which carries
+/// the UCS rotation, [`crate::units::AngleSettings::ucs`]). A `*` prefix reads the point in
+/// world coordinates instead. `last` and the result are world points.
+pub fn parse_point_in(text: &str, last: Vec2, angles: &crate::units::AngleSettings, ucs: &crate::ucs::UcsFrame) -> Option<Vec2> {
     let t = text.trim();
     if t.is_empty() {
         return None;
     }
-    let t = t.strip_prefix('*').map_or(t, str::trim_start);
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
     let (rel, body) = if let Some(b) = t.strip_prefix('@') {
         let b = b.trim();
-        (true, b.strip_prefix('*').map_or(b, str::trim_start))
+        match b.strip_prefix('*') {
+            Some(r) => {
+                world = true;
+                (true, r.trim_start())
+            }
+            None => (true, b),
+        }
     } else if let Some(b) = t.strip_prefix('#') {
         (false, b.trim())
     } else {
@@ -349,11 +445,15 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
     if rel && body.is_empty() {
         return Some(last);
     }
+    let (frame, angles) = if world { (crate::ucs::UcsFrame::WORLD, angles.world()) } else { (*ucs, *angles) };
+    // `p`: a world displacement (polar, whose angle already says the UCS's direction), or UCS
+    // coordinates (`x,y`).
     let p = if let Some((d, a)) = body.split_once('<') {
         let dist = crate::units::parse_distance(d)?;
         // `d<<a` / `d<<<a`: the override prefixes keep their `<<` / `<<<`.
         let ang = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
-        Vec2::from_angle(ang) * dist
+        let v = Vec2::from_angle(ang) * dist;
+        if rel { last + v } else { frame.origin.xy() + v }
     } else {
         let parts: Vec<&str> = body.split(',').collect();
         if parts.len() < 2 || parts.len() > 3 {
@@ -364,10 +464,10 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
         if let Some(z) = parts.get(2) {
             crate::units::parse_distance(z)?;
         }
-        Vec2::new(x, y)
+        let v = Vec2::new(x, y);
+        if rel { last + frame.vec_to_wcs(v) } else { frame.to_wcs(v) }
     };
-    let r = if rel { last + p } else { p };
-    r.is_finite().then_some(r)
+    p.is_finite().then_some(p)
 }
 
 #[cfg(test)]
@@ -391,6 +491,29 @@ mod tests {
         assert_eq!(parse_point("1", last), None);
         assert_eq!(parse_point("a,b", last), None);
         assert_eq!(parse_point("1,2,3,4", last), None);
+    }
+
+    /// A keyword the prompt offers in Greek is matched as spelled (any case, accent or final sigma,
+    /// or a prefix) before the Latin reading of the same keys; without one, the keys answer the
+    /// Latin keyword.
+    #[test]
+    fn a_greek_keyword_is_matched_as_spelled_before_its_latin_reading() {
+        // ΘΝΔΟ is the keys U-N-D-O, so it answers Undo, unless the prompt offers the Greek word itself
+        // (a LISP program's keyword list).
+        let both = Prompt::new("", Accept::TEXT).kw(&["Undo", "ΘΝΔΟ"]);
+        assert_eq!(both.match_keyword("ΘΝΔΟ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θνδο").as_deref(), Some("ΘΝΔΟ"), "Greek case is folded like Latin case");
+        assert_eq!(both.match_keyword("Undo").as_deref(), Some("Undo"));
+        // A prefix of the Greek word as typed (ΘΝ) is that keyword, not the Latin prefix UN of Undo.
+        assert_eq!(both.match_keyword("ΘΝ").as_deref(), Some("ΘΝΔΟ"));
+        assert_eq!(both.match_keyword("θν").as_deref(), Some("ΘΝΔΟ"), "in either case");
+        assert_eq!(both.match_keyword("θνδό").as_deref(), Some("ΘΝΔΟ"), "with an accent");
+        let sigma = Prompt::new("", Accept::TEXT).kw(&["Last", "ΛΑΣΤ"]);
+        assert_eq!(sigma.match_keyword("λας").as_deref(), Some("ΛΑΣΤ"), "a final sigma folds too");
+        let latin = Prompt::new("", Accept::TEXT).kw(&["Undo"]);
+        assert_eq!(latin.match_keyword("ΘΝ").as_deref(), Some("Undo"));
+        assert_eq!(latin.match_keyword("ΘΝΔΟ").as_deref(), Some("Undo"));
+        assert_eq!(latin.match_keyword("Θ").as_deref(), Some("Undo"), "a Greek-layout shortcut still works");
     }
 
     #[test]
@@ -439,5 +562,28 @@ mod tests {
         let v = Prompt::new("", Accept::TEXT).kw(&["Next", "Previous", "Break", "Insert", "Move", "Regen", "Straighten", "Tangent", "Width", "eXit"]);
         assert_eq!(v.match_keyword("e"), None);
         assert_eq!(v.match_keyword("ex").as_deref(), Some("eXit"));
+    }
+
+    /// The world-relative prefixes, in either order, measure the polar angle in the WCS as
+    /// `parse_point_in` does; plain relative polar input is measured in the UCS.
+    #[test]
+    fn polar_text_reads_world_relative_prefixes() {
+        let half_pi = std::f64::consts::FRAC_PI_2;
+        let angles = crate::units::AngleSettings { ucs: half_pi, ..Default::default() };
+        let (d, a) = parse_polar_text("@10<0", &angles).unwrap();
+        assert!((d - 10.0).abs() < 1e-12 && (a - half_pi).abs() < 1e-12, "{d} {a}");
+        for t in ["@*10<0", "*@10<0", " * @ 10<0", "@ *10<0"] {
+            let (d, a) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 10.0).abs() < 1e-12 && a.abs() < 1e-12, "{t}: {d} {a}");
+            let p = parse_point_in(t, Vec2::ZERO, &angles, &crate::ucs::UcsFrame::WORLD).unwrap();
+            assert!(p.near(Vec2::from_angle(a) * d, 1e-9), "{t}: {p:?}");
+        }
+        // A distance is read as the typed point reads it: a fraction counts.
+        for t in ["@1/2<0", "@*1/2<0", "*@1/2<0"] {
+            let (d, _) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 0.5).abs() < 1e-12, "{t}: {d}");
+        }
+        assert_eq!(parse_polar_text("*10<0", &angles), None);
+        assert_eq!(parse_polar_text("**@10<0", &angles), None);
     }
 }
