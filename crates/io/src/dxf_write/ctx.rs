@@ -53,6 +53,8 @@ pub(super) struct Ctx {
     /// The version the file ends up in (the DWG version for a DWG save): it decides which
     /// entity types exist (MULTILEADER from 2007).
     pub(super) target: Version,
+    /// MTEXTs whose fields are written as field objects (#551): their contents go out as shown.
+    pub(super) fields: std::collections::HashSet<Handle>,
     /// A VIEWPORT's frozen layers in group 341, as an R2000 DXF has them; otherwise 331 (DXF 2004
     /// and later, and the DWG bridge, which reads only 331).
     pub(super) frozen_341: bool,
