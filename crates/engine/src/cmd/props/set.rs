@@ -305,6 +305,9 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .transpose()?;
     let lineweight =
         p.get("lineweight").map(|v| crate::cmd::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
+    // A new text is worked out like a typed one: a formula becomes the text's formula, other
+    // text drops the one it had.
+    let formula_env = crate::textformula::env(s);
     // Every check reads the drawing first: a refused call leaves no empty undo step.
     let d = s.doc()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
@@ -335,6 +338,16 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(left_out.result(0, &[]));
     }
     let prep = Prepared::new(d, p, &hs);
+    // A dimension's measurement, which `<>` in a new formula stands for.
+    let dim_envs: HashMap<Handle, crate::textformula::Env> = hs
+        .iter()
+        .filter_map(|h| match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Dimension(dm)) => {
+                Some((*h, crate::textformula::Env { measured: crate::textformula::measured(d, dm), ..formula_env.clone() }))
+            }
+            _ => None,
+        })
+        .collect();
     let anno_scale = d.current_anno_scale();
     let c = Call { p, color, transparency, thickness, lineweight, linetype, dim_style, text_style, dim_vars, prep, anno_scale };
     // A failed call changes nothing (a command's error doesn't undo what it did), so the drawing
@@ -373,6 +386,14 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 EntityKind::Hatch(ha) => hatch(ha, &c, &mut used),
                 _ => {}
             }
+            let new_text = match &e.kind {
+                EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::MLeader(_) => str_param(p, "text").is_some(),
+                EntityKind::Dimension(_) => str_param(p, "textOverride").is_some(),
+                _ => false,
+            };
+            if new_text {
+                crate::textformula::apply(&mut e.kind, dim_envs.get(&h).unwrap_or(&formula_env), true);
+            }
         })?;
     }
     let ignored: Vec<&str> = p
@@ -382,8 +403,21 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(left_out.result(hs.len(), &ignored))
 }
 
-/// A multileader's text: its contents (#1081) and height.
+/// A multileader's text: its contents (#1081) and height; its arrowhead and leader type.
 fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'c>) {
+    if let Some(v) = str_param(c.p, "arrow") {
+        m.arrow = v.trim().to_string();
+        used.insert("arrow");
+    }
+    match str_param(c.p, "leaderType").map(str::to_ascii_lowercase).as_deref() {
+        Some("spline") => (m.spline, m.no_leader) = (true, false),
+        Some("straight") => (m.spline, m.no_leader) = (false, false),
+        Some("none") => m.no_leader = true,
+        _ => {}
+    }
+    if str_param(c.p, "leaderType").is_some() {
+        used.insert("leaderType");
+    }
     let Some(t) = &mut m.text else { return };
     if let Some(v) = str_param(c.p, "text") {
         t.contents = v.replace('\n', "\\P");

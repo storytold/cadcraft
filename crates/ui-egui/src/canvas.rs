@@ -27,10 +27,10 @@ use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, o
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
 use draw::{dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
-use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
+use dyn_boxes::{dynamic_input, echo_box};
 use grid::draw_grid;
-use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
+use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect, grip_snap, hover_grip_menu};
 use list::{OnlyList, PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
@@ -165,6 +165,10 @@ pub struct CanvasState {
     grip_editing: bool,
     /// The grip whose menu (Stretch, Add Vertex, Lengthen…) a right-click opened.
     grip_menu: Option<(Handle, usize)>,
+    /// The grip with options under the resting cursor, and since when; its menu opens on hover.
+    grip_hover: Option<((Handle, usize), f64)>,
+    /// The grip whose menu opened on hover, and where the menu is.
+    grip_popup: Option<((Handle, usize), Pos2)>,
     /// Dynamic block grips of the selection (cached), the one being dragged, and the list grip
     /// whose choices are open (and whether it opened this frame).
     pub(crate) dyn_grips: crate::dyngrips::Cache,
@@ -183,6 +187,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// The cursor's path (world points) while that drag goes on: drawn round the objects, it
+    /// selects them as a lasso ([`is_lasso`]).
+    lasso: Vec<Vec2>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -558,8 +565,25 @@ fn paint_pointer_overlay(
     // Crosshair cursor.
     if inside && !on_menu {
         // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
-        ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
-        if let Some(hp) = hover_pos {
+        // Panning with the middle button: the Move (four arrows) cursor instead of the crosshair.
+        let panning = app.canvas.pan_last.is_some() && ui.input(|i| i.pointer.middle_down());
+        if panning {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+        } else {
+            ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
+        }
+        if !app.session.settings.dynmode
+            && !app.cmd.buffer.is_empty()
+            && let Some(hp) = hover_pos
+        {
+            // Dynamic Input off: what is typed still shows by the cursor.
+            echo_box(painter, hp, None, &app.cmd.buffer, false);
+        }
+        if let Some(hp) = hover_pos
+            && !panning
+        {
+            // GRIPSNAP: with no command running the crosshair sits on the grip under it.
+            let hp = grip_snap(app, &xf, hover_pos).map_or(hp, |(_, at)| at);
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
             let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
@@ -579,6 +603,18 @@ fn paint_pointer_overlay(
         if !fields || app.session.current_prompt().is_some_and(|p| p.distance) {
             dynamic_input(app, painter, hp, fields);
         }
+    }
+    // A prompt for a name, a value or a choice started from a menu, a tab or a ribbon button
+    // shows beside the pointer there too, so what is typed is seen where the user is looking.
+    if !inside
+        && app.session.settings.dynmode
+        && app.ui.dialog.is_none()
+        && app.session.current_prompt().is_some_and(|p| !p.accept.point)
+        && let Some(hp) = ui.ctx().pointer_latest_pos()
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("cc_dyn_outside"));
+        let p = egui::Painter::new(ui.ctx().clone(), layer, ui.ctx().content_rect());
+        dyn_boxes::prompt_beside_pointer(app, &p, hp);
     }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
@@ -608,6 +644,12 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         let pp = xf_paper.to_world(hp);
         let in_rect = |v: &cadcraft_doc::Viewport| (pp.x - v.center.x).abs() <= v.width / 2.0 && (pp.y - v.center.y).abs() <= v.height / 2.0;
         let in_active = active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)));
+        // On the sheet itself (no viewport active), a block, text or dimension drawn on the sheet
+        // is edited as in model space; elsewhere the click goes into a viewport.
+        let on_sheet = app.session.state().is_ok_and(|st| st.mspace.is_none());
+        if on_sheet && app.session.running.is_none() && edit_text_at(app, pp) {
+            return None;
+        }
         if !in_active {
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
@@ -621,7 +663,8 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
             return None;
         }
     }
-    // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
+    // Double-click text, a dimension, a multileader or a table cell to edit it in place, as in
+    // AutoCAD: TEXTEDIT (TABLEDIT) with that object already picked.
     if inside
         && double
         && app.session.running.is_none()
@@ -662,7 +705,7 @@ fn update_canvas_cursor(
         // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
+            && (e.first_locked().is_some() || app.cmd.second_locked())
         {
             eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
             app.canvas.snap = None;
@@ -675,11 +718,15 @@ fn update_canvas_cursor(
             app.canvas.snap = None;
             app.canvas.track = None;
         }
+        if let Some((p, _)) = grip_snap(app, xf, hover) {
+            eff = p;
+        }
         app.canvas.cursor = Some(eff);
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none() && !app.cmd.second_locked())
+        {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.
@@ -961,19 +1008,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
     {
         app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
+        app.canvas.lasso.clear();
     }
-    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
-        app.canvas.drag_window = false;
-        if app.session.pending_window.is_some()
-            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
-        {
-            let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
-            if let Err(e) = done {
-                app.session.echo(e.to_string());
-            }
-        }
-    }
+    drag_lasso(app, ui, &resp, &xf, mods.shift);
     // Right-click acts as Enter while a command runs (the classic CAD default; held, it opens the
     // command menu); otherwise it opens the shortcut menu (Repeat, Clipboard, …).
     // Shift/Ctrl+right-click opens the object snap menu.
@@ -997,6 +1034,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         grip_menu(app, &resp);
     } else if idle || app.canvas.snap_menu {
         crate::context_menu::show(app, &resp);
+    }
+    // Resting the cursor on a grip with options opens its menu too, as in AutoCAD.
+    if idle && !app.canvas.snap_menu && app.canvas.grip_menu.is_none() {
+        hover_grip_menu(app, ui, &xf, hover_pos, inside);
+    } else {
+        app.canvas.grip_hover = None;
+        app.canvas.grip_popup = None;
     }
 
     update_hover(app, ui, inside, hover_pos, raw_world, scale);
@@ -1136,7 +1180,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             if let Some(e) = st.doc.entity(*h)
                 && st.shows(e)
             {
-                let grips = e.kind.grips();
+                let grips = cadcraft_engine::grips::grip_points(&st.doc, &e.kind);
                 let count = grips.len();
                 for (gi, g) in grips.into_iter().enumerate() {
                     let sp = xf.to_screen(g);
@@ -1185,8 +1229,27 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             draw_list(painter, &xf, &list, bg, false);
         }
     }
-    // Pending selection window.
-    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
+    // Pending selection window: a lasso while a drag goes round, else the box.
+    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world)
+        && app.canvas.drag_window
+        && is_lasso(pw.corner, &app.canvas.lasso)
+    {
+        let outline: Vec<Vec2> = std::iter::once(pw.corner).chain(app.canvas.lasso.iter().copied()).chain(std::iter::once(c)).collect();
+        let crossing = lasso_area(pw.corner, &outline) > 0.0;
+        let pts: Vec<Pos2> = outline.iter().map(|q| xf.to_screen(*q)).collect();
+        if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
+            // Filled as a mesh of the outline's fan (a lasso is seldom convex).
+            painter.add(lasso_fill(&pts, fill));
+        }
+        let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
+        if crossing {
+            painter.extend(dashed_polygon(painter.clip_rect(), &pts, st, 5.0, 3.0));
+        } else {
+            let mut closed = pts.clone();
+            closed.extend(pts.first().copied());
+            painter.add(Shape::line(closed, st));
+        }
+    } else if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
         // The world box it selects (turned in a twisted view).
         let corners = [pw.corner, Vec2::new(c.x, pw.corner.y), c, Vec2::new(pw.corner.x, c.y)].map(|q| xf.to_screen(q));
         let crossing = app.session.window_is_crossing(pw.corner, c);
@@ -1240,3 +1303,94 @@ mod compare;
 /// Background rebuilds of the display list for a new view.
 mod images;
 mod rebuild;
+
+/// While a press-and-drag window is open: keep the cursor's path, and close the window where the
+/// button is let go, as a lasso when the path went round an area ([`is_lasso`]).
+fn drag_lasso(app: &mut CadApp, ui: &egui::Ui, resp: &egui::Response, xf: &Xf, shift: bool) {
+    // The path of the drag, a point every few pixels.
+    if app.canvas.drag_window
+        && let Some(at) = ui.input(|i| i.pointer.interact_pos())
+    {
+        let far = app.canvas.lasso.last().is_none_or(|q| (xf.to_screen(*q) - at).length() >= LASSO_STEP_PX);
+        if far && app.canvas.lasso.len() < LASSO_MAX_POINTS {
+            app.canvas.lasso.push(xf.to_world(at));
+        }
+    }
+    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
+        app.canvas.drag_window = false;
+        let path = std::mem::take(&mut app.canvas.lasso);
+        if let Some(pw) = app.session.pending_window
+            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
+        {
+            let end = xf.to_world(end);
+            let mut path = path;
+            path.push(end);
+            // Drawn round the objects: a lasso; dragged straight across: the window it spans.
+            let done = if is_lasso(pw.corner, &path) {
+                app.session.lasso(&path, shift).map(|_| ())
+            } else if app.session.prompting() {
+                app.session.input(Input::Point(end))
+            } else {
+                app.session.idle_click(end, shift)
+            };
+            if let Err(e) = done {
+                app.session.echo(e.to_string());
+            }
+        }
+    }
+}
+
+/// Screen pixels between the points kept along a lasso drag.
+const LASSO_STEP_PX: f32 = 4.0;
+/// The most points a lasso keeps.
+const LASSO_MAX_POINTS: usize = 4096;
+
+/// Twice the signed area of the outline from `start` along `path` (positive: counter-clockwise).
+fn lasso_area(start: Vec2, path: &[Vec2]) -> f64 {
+    let pts: Vec<Vec2> = std::iter::once(start).chain(path.iter().copied()).collect();
+    pts.iter().zip(pts.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum()
+}
+
+/// Whether a drag from `start` along `path` goes round an area (a lasso) rather than straight
+/// across (a window from its start to its end): its outline encloses a fair part of the box
+/// around it.
+fn is_lasso(start: Vec2, path: &[Vec2]) -> bool {
+    if path.len() < 4 {
+        return false;
+    }
+    let b = cadcraft_geom::Bounds2::from_points(std::iter::once(start).chain(path.iter().copied()));
+    let boxed = b.width() * b.height();
+    boxed > 0.0 && (lasso_area(start, path).abs() / 2.0) > boxed * 0.2
+}
+
+/// A filled lasso (even-odd where it crosses itself), from at most 256 of its points.
+fn lasso_fill(pts: &[Pos2], fill: egui::Color32) -> Shape {
+    let step = pts.len().div_ceil(256).max(1);
+    let outline: Vec<Vec2> = pts.iter().step_by(step).map(|p| Vec2::new(f64::from(p.x), f64::from(p.y))).collect();
+    let mut mesh = egui::epaint::Mesh::default();
+    for tri in cadcraft_render::triangulate_evenodd(&[outline]).chunks_exact(3) {
+        let base = u32::try_from(mesh.vertices.len()).unwrap_or(u32::MAX);
+        for q in tri {
+            #[allow(clippy::cast_possible_truncation)]
+            mesh.colored_vertex(pos2(q.x as f32, q.y as f32), fill);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
+    }
+    Shape::mesh(mesh)
+}
+
+#[cfg(test)]
+mod lasso_tests {
+    use super::{Vec2, is_lasso, lasso_area};
+
+    /// A drag straight across is a window; one round an area is a lasso, crossing when drawn
+    /// counter-clockwise.
+    #[test]
+    fn a_drag_round_an_area_is_a_lasso() {
+        let straight: Vec<Vec2> = (1..10).map(|i| Vec2::new(f64::from(i), f64::from(i) * 0.5)).collect();
+        assert!(!is_lasso(Vec2::ZERO, &straight));
+        let ring: Vec<Vec2> = (1..40).map(|i| f64::from(i) / 40.0 * std::f64::consts::TAU).map(|a| Vec2::new(a.cos() - 1.0, a.sin())).collect();
+        assert!(is_lasso(Vec2::ZERO, &ring));
+        assert!(lasso_area(Vec2::ZERO, &ring) > 0.0, "counter-clockwise");
+    }
+}
