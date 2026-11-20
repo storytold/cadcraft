@@ -462,6 +462,10 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
+    // OPEN with a file name reads it in the background, as File ▸ Open does (no frozen window).
+    if !app.session.prompting() && app.open_typed(&text) {
+        return;
+    }
     // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
     let completion = if app.session.prompting() { None } else { suggestions_in(&app.session, text.trim()).into_iter().next() };
     app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
