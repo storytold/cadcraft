@@ -119,15 +119,17 @@ pub(super) fn ocs_n(n: Vec3, p: Vec3) -> Vec3 {
 /// billionth of the object's size and distance from the origin. A normal that is the Z axis
 /// or the Z axis turned over moves nothing, and noise in one moves points by a negligible
 /// amount, so those objects keep their arcs; however small the tilt, an object far enough from
-/// the origin to be moved visibly is projected.
-pub(super) fn tilted(n: Vec3, pts: impl IntoIterator<Item = Vec3>) -> bool {
-    if !n.is_finite() || n.len() < 1e-12 {
+/// the origin to be moved visibly is projected. The points are only gathered for a normal off
+/// the Z axis: along it (x and y exactly 0, as in nearly every drawing) nothing moves, and
+/// sampling every arc of every object for that would be wasted.
+pub(super) fn tilted<I: IntoIterator<Item = Vec3>>(n: Vec3, pts: impl FnOnce() -> I) -> bool {
+    if !n.is_finite() || n.len() < 1e-12 || (n.x == 0.0 && n.y == 0.0) {
         return false;
     }
     let m = cadcraft_geom::Mat4::ocs(n);
     let flip = if n.z < 0.0 { -1.0 } else { 1.0 };
     let (mut moved, mut reach) = (0.0f64, 1.0f64);
-    for p in pts.into_iter().filter(|p| p.is_finite()) {
+    for p in pts().into_iter().filter(|p| p.is_finite()) {
         let shown = Vec2::new(flip * p.x, p.y);
         moved = moved.max((m.apply(p).xy() - shown).len());
         reach = reach.max(p.x.abs()).max(p.y.abs()).max(p.z.abs());
@@ -203,4 +205,27 @@ pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], c
     let to_plan = |p: Vec2| m.apply(Vec3::new(p.x, p.y, elevation));
     let z = if local.is_empty() { elevation } else { local.iter().map(|v| to_plan(v.p).z).sum::<f64>() / local.len() as f64 };
     (local.into_iter().map(|v| PolyVertex { p: to_plan(v.p).xy(), ..v }).collect(), z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A normal on the Z axis, either way up and of any length, moves no point, so [`tilted`]
+    /// answers without sampling the object's arcs; any other normal gathers them.
+    #[test]
+    fn a_normal_on_the_z_axis_gathers_no_points() {
+        let gathered = std::cell::Cell::new(0);
+        let pts = || {
+            gathered.set(gathered.get() + 1);
+            vec![Vec3::new(1.0, 2.0, 3.0)]
+        };
+        for n in [Vec3::Z, Vec3::new(0.0, 0.0, -1.0), Vec3::new(0.0, 0.0, 2.5), Vec3::new(-0.0, 0.0, -0.1)] {
+            assert!(!tilted(n, pts), "{n:?}");
+        }
+        assert_eq!(gathered.get(), 0);
+        assert!(tilted(Vec3::new(0.0, 0.5, -0.75f64.sqrt()), pts));
+        assert!(!tilted(Vec3::new(0.0, 1e-15, 1.0), pts), "noise in a plan normal still moves nothing visible");
+        assert_eq!(gathered.get(), 2);
+    }
 }
