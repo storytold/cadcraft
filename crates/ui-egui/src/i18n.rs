@@ -53,6 +53,8 @@ pub enum Preference {
     Bosnian,
     #[serde(rename = "vi")]
     Vietnamese,
+    #[serde(rename = "th")]
+    Thai,
 }
 impl Preference {
     pub const ALL: [Self; 21] = [
@@ -77,12 +79,13 @@ impl Preference {
         Self::Georgian,
         Self::Bosnian,
         Self::Vietnamese,
+        Self::Thai,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
     /// (the source language), then the rest by the language's own name with accents folded, so
     /// Čeština sits under C and Magyar under M. Names in other scripts follow the Latin ones in
-    /// code point order: Greek, Cyrillic, Arabic, then the CJK languages. The order follows the
+    /// code point order: Greek, Cyrillic, Arabic, Thai, then the CJK languages. The order follows the
     /// registry's native name even where the dialog shows an English label instead (Korean
     /// without a Hangul face), so the list does not reorder when a font appears.
     pub fn for_picker() -> Vec<Self> {
@@ -105,6 +108,7 @@ impl Preference {
         }
     }
 
+    /// The code saved in preferences and accepted by `interfaceLanguage` (`"th"`, `"pt-BR"`).
     pub fn code(self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -128,9 +132,12 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Thai => "th",
         }
     }
 
+    /// The name the Interface Language dialog shows: the language's own name, or its English
+    /// name where no available font has the script (Chinese, Korean, Arabic, Thai).
     pub fn name(self) -> &'static str {
         match self {
             Self::Auto => t("Auto (system language)"),
@@ -144,7 +151,14 @@ impl Preference {
             Self::Czech => "Čeština",
             Self::Russian => "Русский",
             Self::French => "Français",
-            Self::Chinese => "简体中文",
+            // Shown in its own script only where a font has the glyphs (the web build may lack one).
+            Self::Chinese => {
+                if crate::theme::can_show("zh") {
+                    "简体中文"
+                } else {
+                    "Chinese"
+                }
+            }
             Self::Italian => "Italiano",
             Self::Korean => {
                 if crate::theme::shows_hangul(CURRENT.with(Cell::get)) {
@@ -154,7 +168,13 @@ impl Preference {
                 }
             }
             Self::Swedish => "Svenska",
-            Self::Arabic => "العربية",
+            Self::Arabic => {
+                if crate::theme::can_show("ar") {
+                    "العربية"
+                } else {
+                    "Arabic"
+                }
+            }
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
             // Georgian letters come from the craft-fonts Georgian face; a build without it shows
@@ -175,6 +195,13 @@ impl Preference {
                     "Vietnamese"
                 }
             }
+            Self::Thai => {
+                if crate::theme::can_show("th") {
+                    "ไทย"
+                } else {
+                    "Thai"
+                }
+            }
         }
     }
 
@@ -187,6 +214,8 @@ impl Preference {
         saved.and_then(Self::parse).unwrap_or_default()
     }
 
+    /// The catalog code to show: the chosen language, or for Auto the first system locale
+    /// with a catalog (English when none has one).
     pub fn resolve(self, locales: &[String]) -> &'static str {
         match self {
             Self::English => "en",
@@ -209,6 +238,7 @@ impl Preference {
             Self::Georgian => "ka",
             Self::Bosnian => "bs",
             Self::Vietnamese => "vi",
+            Self::Thai => "th",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -285,6 +315,11 @@ pub static LANGUAGES: [Language; 20] = [
     Language {
         code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
     },
+    // ไทย (Thai) has no grammatical plural, so one form covers every count (the Korean rule).
+    // egui's bundled faces carry no Thai glyphs: an installed Thai font (`theme::thai_font`) or
+    // the Noto Sans Thai face embedded from craft-fonts covers them; without one the interface
+    // stays English.
+    Language { code: "th", name: "ไทย", source: include_str!("i18n/th.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
