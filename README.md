@@ -208,6 +208,8 @@ The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser 
 cadcraft-cli mcp
 # …or bridged to the running app (start it with --control 7979):
 cadcraft-cli mcp --connect 127.0.0.1:7979
+# …or headless, with the agent confined to a work folder:
+cadcraft-cli mcp --automation-read-root ~/work --automation-write-root ~/work/out
 
 # One-shot headless runs:
 cadcraft-cli run --sample --script 'CIRCLE 22,3 1\n' --save out.dxf --export out.png
