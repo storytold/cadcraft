@@ -7,9 +7,10 @@ use super::header::{code_page, header_vars};
 use super::layout::{paper_views, record_head, sheet_first, table_head, table_head_x, vport_table};
 use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
-    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
-    TableStyle, Tag, Vec2, Vec3, Version, W, dxf_ext,
+    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, HashSet, Layout, MLeaderStyle, PageSetup,
+    Space, TableStyle, Tag, Vec2, Vec3, Version, W, dxf_ext,
 };
+use super::{entity_handles, structural_start};
 
 struct TableWritePlan<'a> {
     d: &'a Drawing,
@@ -249,7 +250,7 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W { t: Vec::new(), next: 0, used: HashSet::new(), pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -477,14 +478,35 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(17, Vec3::new(0.0, 1.0, 0.0));
     w.i(76, 0);
     w.s(330, brh);
-    // The saved paper-space view (centre, height) as CADCraft xdata.
-    if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+    // CADCraft xdata: the saved paper-space view (centre, height), and the layout's paper units.
+    // Group 72 cannot carry the choice on its own: 0 means inches, but it is also what earlier
+    // CADCraft versions wrote for a layout that follows MEASUREMENT, and 1 is what a layout that
+    // inherits a metric MEASUREMENT writes too. PSUNITS keeps the three states apart: 0 inches,
+    // 1 millimetres, 2 follows MEASUREMENT (#3249).
+    let view = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite());
+    let unit_marker = match page.paper_mm {
+        Some(false) => Some(0),
+        Some(true) => Some(1),
+        // An inherited imperial layout writes group 72 = 0, which already reads back as
+        // inherited; only group 72 = 1 is ambiguous and needs the marker.
+        None if cadcraft_render::paper::page_unit_mm(d, page) == 1.0 => Some(2),
+        None => None,
+    };
+    if view.is_some() || unit_marker.is_some() {
         w.s(1001, dxf_ext::APP);
-        w.s(1000, "PSVIEW");
-        w.s(1002, "{");
-        w.p(1010, c.to3(0.0));
-        w.f(1040, height);
-        w.s(1002, "}");
+        if let Some((c, height)) = view {
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
+        if let Some(units) = unit_marker {
+            w.s(1000, "PSUNITS");
+            w.s(1002, "{");
+            w.i(1070, units);
+            w.s(1002, "}");
+        }
     }
 }
 
@@ -930,7 +952,8 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
+        next: structural_start(d),
+        used: entity_handles(d).collect(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         reactors: hatch_reactors(d),
@@ -1114,11 +1137,11 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         block(&mut w, (n, &b.description), h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
-    // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
+    // Generated geometry entities (dimension, arrowhead and table blocks) need handles; take
+    // them from the writer's allocator, which skips the drawing's own handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
         for e in ents.iter_mut().filter(|e| e.handle.0 == 0) {
-            e.handle = Handle(w.next);
-            w.next = w.next.saturating_add(1);
+            e.handle = Handle(w.next_handle());
         }
     }
     for (n, h, ents) in &dim_defs {
