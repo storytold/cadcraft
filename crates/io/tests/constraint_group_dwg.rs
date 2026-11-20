@@ -61,7 +61,7 @@ fn save(src: &str, name: &str, version: Version) -> Vec<u8> {
 #[test]
 fn constraint_group_nodes_survive_the_dwg_bridge() {
     for (acadver, modern) in [("AC1032", true), ("AC1024", false)] {
-        for version in [Version::R2018, Version::R2010, Version::R2004] {
+        for version in [Version::R2018, Version::R2010, Version::R2004, Version::R2000] {
             let dwg = save(&dxf(acadver, modern), "a.dwg", version);
             let doc = acadrust::DwgReader::from_stream(Cursor::new(dwg)).read().expect("acadrust reads the DWG");
             assert_eq!(nodes(&doc), expected(), "{acadver} drawing saved as {version:?} DWG");

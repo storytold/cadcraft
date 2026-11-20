@@ -978,15 +978,24 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
     }
 }
 
-/// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
-/// file ends up in: `version`, or the DWG version the bridge writes) has.
+/// The DWG bridge's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the DWG
+/// version the bridge writes) has.
 /// `frozen_341`: see [`Ctx::frozen_341`].
 pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
-    tags_kept_for(d, version, target, frozen_341).0
+    tags_kept_for(d, version, target, frozen_341, true).0
 }
 
-/// [`tags_for`], with the foreign objects the file keeps, by their handles in the drawing.
-pub(super) fn tags_kept_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
+/// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
+/// file ends up in) has, and the foreign objects the file keeps, by their handles in the drawing.
+/// `bridge`: the text is for the DWG bridge, not a DXF file. The versions alone can't say so: an
+/// R2000 DWG is bridged from R2000 text.
+pub(super) fn tags_kept_for(
+    d: &Drawing,
+    version: Version,
+    target: Version,
+    frozen_341: bool,
+    bridge: bool,
+) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -1252,17 +1261,14 @@ pub(super) fn tags_kept_for(d: &Drawing, version: Version, target: Version, froz
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334). A file of 2010 or earlier, DXF or DWG, has
     // no data store, so a solid whose geometry is only there is left out of it.
-    // The DWG bridge (`target` another version) keeps proxies in the DWG's own layout.
-    let strings = version != target || version >= Version::R2007;
+    // The DWG bridge keeps proxies in the DWG's own layout.
+    let strings = bridge || version >= Version::R2007;
     let kept = crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, target >= Version::R2013, strings);
     // Kept constraint groups go in the order their reader expects: a DXF's own version. The
     // bridge's R2000 text is read as the version its kept groups came from when that is newer
     // (craft-dwg's `encode_kept_noted` declares it), so there they stay as read.
-    let read_as = if version == target {
-        version
-    } else {
-        d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version)
-    };
+    let read_as =
+        if !bridge { version } else { d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version) };
     crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
     // Kept render settings take the class-version form of the version the text is read as (#907).
     crate::dxf_raw::render_settings_versions(&mut w.t, d.foreign.version.as_deref().and_then(Version::for_acadver), read_as);

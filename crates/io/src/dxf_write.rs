@@ -156,7 +156,7 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 
 /// [`tags`], with the foreign objects the file keeps, by their handles in the drawing.
 fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::HashSet<cadcraft_doc::Handle>) {
-    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004);
+    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
     // Kept proxies in this version's layout (#3229). Not for the DWG bridge, whose writer reads
     // them in the layout of the DWG they came from.
     proxy::proxy_layout(&mut tags, version);
