@@ -219,7 +219,11 @@ fn run_case(dir: &Path) -> Result<(), String> {
 
 #[test]
 fn autolisp_corpus() {
-    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    set_entity_codec(EntityCodec {
+        groups: cadcraft_io::entity_groups,
+        sub_groups: cadcraft_io::entity_sub_groups,
+        entity: cadcraft_io::entity_from_groups,
+    });
     // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
     set_object_records(cadcraft_io::object_records);
     let Some(dir) = cases_dir() else {
