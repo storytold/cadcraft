@@ -185,12 +185,18 @@ pub(crate) fn read(name: &str, tags: &[Tag], lookup: &Lookup, budget: &mut usize
         at += len;
         let groups = group.get(1..len).unwrap_or_default();
         let key = head.str().trim().to_ascii_uppercase();
+        // The layer as the entry leaves it is charged, the strings the entry wrote included; an
+        // update is charged what it adds to the copy it replaces.
         if let Some(slot) = index.get(&key).and_then(|&i| st.layers.get_mut(i)) {
-            entry(slot, groups, lookup);
+            let mut l = slot.clone();
+            entry(&mut l, groups, lookup);
+            let Some(left) = budget.checked_add(cost(slot)).and_then(|b| b.checked_sub(cost(&l))) else { break };
+            *budget = left;
+            *slot = l;
         } else if let Some(mut l) = (lookup.layer)(&head.str()) {
+            entry(&mut l, groups, lookup);
             let Some(left) = budget.checked_sub(cost(&l)) else { break };
             *budget = left;
-            entry(&mut l, groups, lookup);
             index.insert(key, st.layers.len());
             st.layers.push(l);
         }
@@ -290,5 +296,42 @@ mod tests {
         assert_eq!((colours(&st), budget), (vec![("A".to_string(), Color::Index(4))], 0));
         let st = read("T", &tags(&[("B1", 2)]), &lookup, &mut budget);
         assert!(st.layers.is_empty());
+    }
+
+    #[test]
+    fn the_budget_is_charged_for_the_strings_an_entry_writes() {
+        let layer = |h: &str| (h == "A1").then(|| Layer::new("A"));
+        let none = |_: &str| None::<String>;
+        let lookup = Lookup { layer: &layer, ltype: &none, pstyle: &none, colour_dependent: false };
+        let long = "P".repeat(4096);
+        // A state's groups with an entry of layer A per plot style (group 1).
+        let styled = |styles: &[&str]| {
+            let mut t = tags(&[]);
+            for s in styles {
+                t.extend([Tag::s(330, "A1"), Tag::i(90, 8), Tag::s(1, *s)]);
+            }
+            t
+        };
+        let short = |style: &str| {
+            let mut l = Layer::new("A");
+            l.plot_style = style.to_string();
+            cost(&l)
+        };
+        // A copy is charged with the plot style its entry wrote: one the budget can't cover is left out.
+        let mut budget = short("S") + 100;
+        let st = read("S", &styled(&[long.as_str()]), &lookup, &mut budget);
+        assert!(st.layers.is_empty());
+        let mut budget = MAX_COPIED_BYTES;
+        let st = read("S", &styled(&[long.as_str()]), &lookup, &mut budget);
+        assert_eq!(MAX_COPIED_BYTES - budget, short(long.as_str()));
+        // A later entry of the same layer is charged what it adds; past the budget it is left out,
+        // and one that adds nothing still applies.
+        let mut budget = short("S") + 100;
+        let st = read("S", &styled(&["S", long.as_str()]), &lookup, &mut budget);
+        assert_eq!(st.layers.iter().map(|l| l.plot_style.as_str()).collect::<Vec<_>>(), ["S"]);
+        assert_eq!(budget, 100);
+        let mut budget = short("SS");
+        let st = read("S", &styled(&["SS", "T"]), &lookup, &mut budget);
+        assert_eq!((st.layers.iter().map(|l| l.plot_style.as_str()).collect::<Vec<_>>(), budget), (vec!["T"], 1));
     }
 }

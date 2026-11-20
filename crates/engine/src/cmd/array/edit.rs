@@ -244,6 +244,30 @@ fn rebase(s: &mut Session, h: Handle, base: Vec2) -> Result<()> {
     ns.name = d.anonymous_block_name("*U");
     p.source.clone_from(&ns.name);
     d.blocks.insert(ns.name.clone(), Arc::new(ns));
+    // A replacement is placed as the source is, so its base point moves the same way (each block
+    // once, however many items share it). Records no item uses keep their names.
+    let used: Vec<bool> = {
+        let block_for = p.block_lookup();
+        p.replaced.iter().map(|r| block_for(r.i, r.j, r.level) == r.block).collect()
+    };
+    let mut moved: HashMap<String, String> = HashMap::new();
+    for (r, used) in p.replaced.iter_mut().zip(used) {
+        if !used {
+            continue;
+        }
+        let key = r.block.to_ascii_uppercase();
+        if let Some(n) = moved.get(&key) {
+            r.block.clone_from(n);
+            continue;
+        }
+        let Some(rb) = d.block(&r.block).cloned() else { continue };
+        let mut nb = (*rb).clone();
+        nb.base = (nb.base.xy() + b).to3(nb.base.z);
+        nb.name = d.anonymous_block_name("*U");
+        moved.insert(key, nb.name.clone());
+        r.block.clone_from(&nb.name);
+        d.blocks.insert(nb.name.clone(), Arc::new(nb));
+    }
     if let ArrayKind::Polar(k) = &mut p.kind {
         k.center -= b;
     }
@@ -465,14 +489,18 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     let h = super::super::curves::handle_param(p, "handle").ok_or_else(|| bad("arrayedit", "`handle` (the array) is required"))?;
     refuse_while_editing(s)?;
     array_of(s.doc()?, h)?;
+    // Both key points are read before anything changes: a bad one leaves the array as it was.
+    let replace = p.get("replace").filter(|v| !v.is_null());
+    let rep_key = replace.map(|r| key_point_param("arrayedit", r)).transpose()?.flatten();
+    let key = key_point_param("arrayedit", p)?;
     if bool_or(p, "reset", false) {
         let (_, _, mut a) = array_of(s.doc()?, h)?;
         a.replaced.clear();
         rebuild(s, h, a, None)?;
     }
-    if let Some(r) = p.get("replace").filter(|v| !v.is_null()) {
+    if let Some(r) = replace {
         let hs = targets(s, r)?;
-        let base = match key_point_param("arrayedit", r)? {
+        let base = match rep_key {
             Some(k) => key_point_of(s.doc()?, &hs, k)?,
             None => point_param(r, "base").unwrap_or_else(|| s.doc().map(|d| centroid(d, &hs)).unwrap_or_default()),
         };
@@ -493,7 +521,7 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(b) = point_param(p, "base") {
         rebase(s, h, b)?;
     }
-    if let Some(k) = key_point_param("arrayedit", p)? {
+    if let Some(k) = key {
         let at = source_key_point(s.doc()?, h, k, KEY_POINT_TOLERANCE)?;
         rebase(s, h, at)?;
     }

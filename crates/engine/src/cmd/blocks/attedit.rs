@@ -167,6 +167,34 @@ fn move_text(text: &mut Text, to: cadcraft_geom::Vec2) {
     text.align_pt = text.align_pt.map(|ap| ap + d);
 }
 
+/// Move attribute `a` so the point it is placed by lands on `to`. A multiline attribute is drawn
+/// as its multiline text: that text's insertion point lands on `to`, and the single-line text
+/// moves with it.
+fn move_attrib(a: &mut cadcraft_doc::Attrib, to: cadcraft_geom::Vec2) {
+    match &mut a.multiline {
+        Some(m) => {
+            let d = Vec3::new(to.x - m.mtext.insert.x, to.y - m.mtext.insert.y, 0.0);
+            m.mtext.insert = m.mtext.insert + d;
+            a.text.insert = a.text.insert + d;
+            a.text.align_pt = a.text.align_pt.map(|ap| ap + d);
+        }
+        None => move_text(&mut a.text, to),
+    }
+}
+
+/// Turn `text` to angle `ang` (radians). Aligned and fit text is drawn along its baseline from
+/// the insertion point to the alignment point, so that baseline turns about the insertion point,
+/// its length kept.
+fn turn_text(text: &mut Text, ang: f64) {
+    text.rotation = ang;
+    if matches!(text.halign, HAlign::Aligned | HAlign::Fit)
+        && let Some(ap) = text.align_pt
+    {
+        let to = text.insert.xy() + cadcraft_geom::Vec2::from_angle(ang) * ap.xy().dist(text.insert.xy());
+        text.align_pt = Some(to.to3(ap.z));
+    }
+}
+
 /// Change the properties set on attribute `k` of block reference `h`.
 fn set_props(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&mut AttribProps)) -> Result<()> {
     s.doc_mut()?.modify_entity(h, |e| {
@@ -212,6 +240,16 @@ fn current_text(s: &Session, (h, k): (Handle, usize)) -> Option<cadcraft_doc::Te
     let e = d.entity(h)?;
     let EntityKind::Insert(ins) = &e.kind else { return None };
     ins.attribs.get(k).map(|a| a.text.clone())
+}
+
+/// The point attribute `k` of block reference `h` is placed by, which a picked height or angle is
+/// measured from: a multiline attribute's multiline text insertion point, else the text's
+/// alignment point when justified, else its insertion point.
+fn placement_point(s: &Session, (h, k): (Handle, usize)) -> Option<cadcraft_geom::Vec2> {
+    let d = s.doc().ok()?;
+    let EntityKind::Insert(ins) = &d.entity(h)?.kind else { return None };
+    let a = ins.attribs.get(k)?;
+    Some(a.multiline.as_ref().map_or_else(|| a.text.justify_point(), |m| m.mtext.insert.xy()))
 }
 
 /// Replace every `find` in `value` with `with`, unless the result would be too long.
@@ -555,14 +593,14 @@ impl Interactive for DashAtteditM {
                     _ => return Ok(Step::Continue),
                 };
                 if let Some(it) = self.items.get(self.cur).copied() {
-                    modify_attrib(s, it, |a| move_text(&mut a.text, p))?;
+                    modify_attrib(s, it, |a| move_attrib(a, p))?;
                 }
                 self.stage = Stage::Option;
             }
             Stage::Height => {
                 let h = match &i {
                     Input::Point(p) => {
-                        let cur_pt = self.items.get(self.cur).and_then(|it| current_text(s, *it)).map(|t| t.insert.xy());
+                        let cur_pt = self.items.get(self.cur).and_then(|it| placement_point(s, *it));
                         match cur_pt {
                             Some(base) => base.dist(*p).max(1e-9),
                             None => p.len().max(1e-9),
@@ -580,6 +618,9 @@ impl Interactive for DashAtteditM {
                 if let Some(it) = self.items.get(self.cur).copied() {
                     modify_attrib(s, it, |a| {
                         a.text.height = h;
+                        if let Some(m) = &mut a.multiline {
+                            m.mtext.height = h;
+                        }
                     })?;
                 }
                 self.stage = Stage::Option;
@@ -587,7 +628,7 @@ impl Interactive for DashAtteditM {
             Stage::Angle => {
                 let ang = match &i {
                     Input::Point(p) => {
-                        let cur_pt = self.items.get(self.cur).and_then(|it| current_text(s, *it)).map(|t| t.insert.xy());
+                        let cur_pt = self.items.get(self.cur).and_then(|it| placement_point(s, *it));
                         match cur_pt {
                             Some(base) => base.angle_to(*p),
                             None => p.y.atan2(p.x),
@@ -604,7 +645,10 @@ impl Interactive for DashAtteditM {
                 };
                 if let Some(it) = self.items.get(self.cur).copied() {
                     modify_attrib(s, it, |a| {
-                        a.text.rotation = ang;
+                        turn_text(&mut a.text, ang);
+                        if let Some(m) = &mut a.multiline {
+                            m.mtext.rotation = ang;
+                        }
                     })?;
                 }
                 self.stage = Stage::Option;
@@ -617,6 +661,9 @@ impl Interactive for DashAtteditM {
                         s.doc()?.text_style(t).map(|st| st.name.clone()).ok_or_else(|| EngineError::Other(format!("Cannot find style \"{t}\".")))?;
                     if let Some(it) = self.items.get(self.cur).copied() {
                         modify_attrib(s, it, |a| {
+                            if let Some(m) = &mut a.multiline {
+                                m.mtext.style.clone_from(&st);
+                            }
                             a.text.style = st;
                         })?;
                     }

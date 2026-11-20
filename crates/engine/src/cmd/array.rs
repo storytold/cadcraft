@@ -257,13 +257,30 @@ pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &
     if !at.is_finite() {
         return Ok(None);
     }
+    let stretched = m.similarity_scale().is_none();
     let mut best: Option<(Vec2, f64)> = None;
     for (n, e) in ents.enumerate() {
         if n >= MAX_KEY_OBJECTS {
             return Err(other(format!("Too many objects to search for a key point (at most {MAX_KEY_OBJECTS}); specify a point.")));
         }
-        let mut k = e.kind.clone();
-        k.transform(m);
+        let k = match &e.kind {
+            // Under an uneven scale a circle is drawn as an ellipse: its key points are the ellipse's.
+            EntityKind::Circle(c) if stretched => {
+                let g = cadcraft_geom::Ellipse::full(c.center.xy(), Vec2::X * c.radius, 1.0).transformed(m);
+                EntityKind::Ellipse(cadcraft_doc::Ellipse {
+                    center: g.center.to3(c.center.z),
+                    major: g.major.to3(0.0),
+                    ratio: g.ratio,
+                    start: g.start,
+                    end: g.end,
+                })
+            }
+            kind => {
+                let mut k = kind.clone();
+                k.transform(m);
+                k
+            }
+        };
         for g in k.grips().into_iter().filter(|g| g.is_finite()) {
             let d = g.dist(at);
             if best.is_none_or(|(_, bd)| d < bd) {
@@ -1294,5 +1311,23 @@ mod tests {
         // A full clockwise circle does not put the last item on top of the source.
         let c = at(&polar(4, -360.0));
         assert!(c[2].near(Vec2::new(0.0, 1.0), 1e-9));
+    }
+
+    #[test]
+    fn a_circle_under_an_uneven_scale_offers_the_drawn_ellipses_key_points() {
+        let c = Entity {
+            handle: Handle(1),
+            common: Default::default(),
+            kind: EntityKind::Circle(cadcraft_doc::Circle { center: v3(Vec2::ZERO), radius: 1.0 }),
+        };
+        // Scaled (2, 1) the circle is drawn as an ellipse with semi-axes 2 and 1.
+        let m = Mat3::scale(2.0, 1.0);
+        let key = |at: Vec2| nearest_key_point(std::iter::once(&c), &m, at).unwrap().unwrap();
+        assert!(key(Vec2::new(0.1, 1.2)).near(Vec2::new(0.0, 1.0), 1e-9), "{:?}", key(Vec2::new(0.1, 1.2)));
+        assert!(key(Vec2::new(2.2, 0.1)).near(Vec2::new(2.0, 0.0), 1e-9), "{:?}", key(Vec2::new(2.2, 0.1)));
+        // A uniform scale keeps the circle.
+        let m = Mat3::scale(2.0, 2.0);
+        let k = nearest_key_point(std::iter::once(&c), &m, Vec2::new(0.1, 2.2)).unwrap().unwrap();
+        assert!(k.near(Vec2::new(0.0, 2.0), 1e-9), "{k:?}");
     }
 }

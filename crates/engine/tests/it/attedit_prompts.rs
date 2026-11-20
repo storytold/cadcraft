@@ -148,3 +148,98 @@ fn dash_attedit_position_keeps_an_aligned_attributes_baseline() {
         assert!(t.align_pt.is_some_and(|p| p.xy().near(cadcraft_geom::Vec2::new(14.0, 20.0), 1e-9)), "{halign:?}: {:?}", t.align_pt);
     }
 }
+
+/// Change attribute T of reference `h` in place.
+fn set_t(s: &mut Session, h: Handle, f: impl Fn(&mut cadcraft_doc::Attrib)) {
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                for a in i.attribs.iter_mut().filter(|a| a.tag == "T") {
+                    f(a);
+                }
+            }
+        })
+        .unwrap();
+}
+
+fn attrib_t(s: &Session, h: Handle) -> cadcraft_doc::Attrib {
+    let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+    i.attribs.iter().find(|a| a.tag == "T").unwrap().clone()
+}
+
+/// -ATTEDIT Angle turns an aligned or fit attribute's baseline (which sets its direction) about
+/// its insertion point, keeping its length.
+#[test]
+fn dash_attedit_angle_turns_an_aligned_attributes_baseline() {
+    use cadcraft_doc::HAlign;
+    use cadcraft_geom::{Vec2, Vec3};
+    for halign in [HAlign::Aligned, HAlign::Fit] {
+        let mut s = with_block();
+        let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+        set_t(&mut s, h, |a| {
+            a.text.halign = halign;
+            a.text.insert = Vec3::new(100.0, 1.0, 0.0);
+            a.text.align_pt = Some(Vec3::new(104.0, 1.0, 0.0));
+        });
+        type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "a", "90", "n"]);
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let t = attrib_t(&s, h).text;
+        assert!(t.insert.xy().near(Vec2::new(100.0, 1.0), 1e-9), "{halign:?}: {:?}", t.insert);
+        assert!(t.align_pt.is_some_and(|p| p.xy().near(Vec2::new(100.0, 5.0), 1e-9)), "{halign:?}: {:?}", t.align_pt);
+        assert!((t.rotation.to_degrees() - 90.0).abs() < 1e-9, "{halign:?}: {}", t.rotation);
+    }
+}
+
+/// A height or angle picked at -ATTEDIT is measured from the point the text is placed by: the
+/// alignment point of justified text.
+#[test]
+fn dash_attedit_picked_height_and_angle_start_at_the_justification_point() {
+    use cadcraft_doc::HAlign;
+    use cadcraft_geom::Vec3;
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    set_t(&mut s, h, |a| {
+        a.text.halign = HAlign::Center;
+        a.text.insert = Vec3::new(100.0, 1.0, 0.0);
+        a.text.align_pt = Some(Vec3::new(110.0, 1.0, 0.0));
+    });
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "h", "110,6", "a", "110,6", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let t = attrib_t(&s, h).text;
+    assert!((t.height - 5.0).abs() < 1e-9, "{}", t.height);
+    assert!((t.rotation.to_degrees() - 90.0).abs() < 1e-9, "{}", t.rotation.to_degrees());
+}
+
+/// A multiline attribute is drawn as its multiline text: -ATTEDIT Position, Height and Angle
+/// change that text, and a picked angle starts at its insertion point.
+#[test]
+fn dash_attedit_edits_a_multiline_attributes_text() {
+    use cadcraft_doc::{MText, MultilineAttrib};
+    use cadcraft_geom::{Vec2, Vec3};
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    let mtext = MText {
+        insert: Vec3::new(120.0, 3.0, 0.0),
+        height: 2.0,
+        width: 0.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "abc".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    set_t(&mut s, h, |a| a.multiline = Some(MultilineAttrib { mtext: mtext.clone(), read_as: "abc".into() }));
+    let before = attrib_t(&s, h).text.insert;
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "p", "10,20", "h", "2.5", "a", "10,30", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let a = attrib_t(&s, h);
+    let m = a.multiline.as_ref().unwrap().mtext.clone();
+    assert!(m.insert.xy().near(Vec2::new(10.0, 20.0), 1e-9), "{:?}", m.insert);
+    // The single-line text moves with it.
+    assert!((a.text.insert - before).xy().near(Vec2::new(-110.0, 17.0), 1e-9), "{:?}", a.text.insert);
+    assert!((m.height - 2.5).abs() < 1e-9 && (a.text.height - 2.5).abs() < 1e-9, "{} {}", m.height, a.text.height);
+    assert!((m.rotation.to_degrees() - 90.0).abs() < 1e-9, "{}", m.rotation.to_degrees());
+}
