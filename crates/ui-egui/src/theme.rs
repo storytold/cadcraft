@@ -365,6 +365,13 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
+        // עברית: an installed Hebrew face after the Latin ones (egui's bundled faces carry no
+        // Hebrew glyphs), for the Hebrew interface.
+        if language == "he"
+            && let Some(bytes) = hebrew_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
+        {
+            added.push(("system-hebrew".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
     }
     let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
     added.extend(
@@ -483,8 +490,8 @@ pub fn shows_vietnamese(language: &str) -> bool {
 /// shows (#513), with the interface's own face leading. A sans-serif face reads best, and a
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
 /// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
-/// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
-/// the picker names the language ქართული); العربية adds its Arabic face after those.
+/// The Georgian and Hebrew faces follow in every language (egui's bundled faces carry no
+/// Georgian or Hebrew glyphs, and the picker names them ქართული and עברית); العربية adds its Arabic face after those.
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
     let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
@@ -493,6 +500,7 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
         out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
     }
     out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Hebr")));
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
     }
@@ -621,6 +629,51 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
                     ]
                 };
                 first_font(candidates)
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn first_readable_capped(candidates: &[&str], max_bytes: u64) -> Option<std::path::PathBuf> {
+    candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file() && read_capped(p, max_bytes).is_some())
+}
+
+/// An installed font with Hebrew glyphs, for the עברית interface; fonts are never bundled
+/// (only looked for where the OS or common packages put them). Checked once.
+pub fn hebrew_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let candidates: &[&str] = if cfg!(target_os = "macos") {
+                    &[
+                        "/System/Library/Fonts/SFHebrew.ttf",
+                        "/System/Library/Fonts/Supplemental/ArialHB.ttc",
+                        "/System/Library/Fonts/Supplemental/Raanana.ttc",
+                        "/Library/Fonts/Arial.ttf",
+                    ]
+                } else if cfg!(windows) {
+                    &[
+                        "C:\\Windows\\Fonts\\segoeui.ttf",
+                        "C:\\Windows\\Fonts\\tahoma.ttf",
+                        "C:\\Windows\\Fonts\\arial.ttf",
+                        "C:\\Windows\\Fonts\\david.ttf",
+                    ]
+                } else {
+                    &[
+                        "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+                        "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
+                        "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                    ]
+                };
+                first_readable_capped(candidates, MAX_UI_FONT_BYTES)
             })
             .as_deref()
     }
@@ -772,6 +825,7 @@ pub fn can_show(language: &str) -> bool {
         "ko" => shows_hangul("ko"),
         "vi" => vietnamese_font().is_some(),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
+        "he" => hebrew_font().is_some() || embedded_script("Hebr"),
         "ka" => embedded_script("Geor"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
@@ -901,19 +955,42 @@ mod tests {
         let japanese = face("BIZ UDPGothic", &["Jpan", "Latn"]);
         let chinese = face("Han Test Face", &["Hans", "Latn"]);
         let arabic = face("Noto Sans Arabic", &["Arab"]);
+        let hebrew = face("Noto Sans Hebrew", &["Hebr"]);
         let georgian = face("Noto Sans Georgian", &["Geor"]);
-        let faces = [&japanese, &chinese, &arabic, &georgian];
+        let faces = [&japanese, &chinese, &arabic, &hebrew, &georgian];
         // Every interface reads CJK names, so both CJK faces load, the sans-serif face first.
-        // The Georgian face loads in every interface too, after them: the picker shows ქართული.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        // The Georgian and Hebrew faces load in every interface too: the picker shows ქართული and עברית.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Hebrew"]);
         // A Chinese interface takes the Han face first: a Japanese face lacks 图 园 测.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Noto Sans Georgian"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Noto Sans Georgian", "Noto Sans Hebrew"]);
         // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Arabic"]);
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
+        assert_eq!(
+            families(&super::embedded_ui_faces(&faces, "ar")),
+            ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Hebrew", "Noto Sans Arabic"]
+        );
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "he")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Hebrew"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Hebrew"]);
         // Another weight is a style of a face, not an interface face of its own.
         let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
         assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn first_readable_capped_skips_empty_or_oversized_candidates() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-hebrew-font-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty.ttf");
+        let big = dir.join("big.ttf");
+        let ok = dir.join("ok.ttf");
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&big, vec![1u8; 32]).unwrap();
+        std::fs::write(&ok, b"ttf").unwrap();
+        let missing = dir.join("missing.ttf");
+        let candidates = [missing.to_str().unwrap(), empty.to_str().unwrap(), big.to_str().unwrap(), ok.to_str().unwrap()];
+        assert_eq!(super::first_readable_capped(&candidates, 16), Some(ok));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// What the gate asks of the table: an embedded face of the script stands in for an installed
