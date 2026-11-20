@@ -361,7 +361,12 @@ impl EntityKind {
                 if let Some(c) = &mut t.columns {
                     c.scale(s);
                 }
-                t.rotation = cadcraft_geom::norm_angle(t.rotation + rot);
+                // MTEXT has no backwards or upside-down flags: mirrored, it reads forward like
+                // a TEXT (#1169).
+                t.rotation = readable_rotation(t.rotation, rot, mirror);
+                if mirror {
+                    keep_mirrored_mtext_box(t, m);
+                }
             }
             EntityKind::Insert(i) => {
                 t3(&mut i.insert);
@@ -473,8 +478,7 @@ impl EntityKind {
             EntityKind::Tolerance(t) => {
                 t3(&mut t.insert);
                 // Like text with MIRRTEXT = 0: a mirrored frame keeps reading left to right.
-                let a = if mirror { t.rotation() } else { t.rotation() + rot };
-                t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
+                t.dir = Vec2::from_angle(readable_rotation(t.rotation(), rot, mirror)).to3(0.0);
             }
             EntityKind::Unknown(u) if u.is_ole_frame() => crate::ole_frame_transform(&mut u.tags, m),
             EntityKind::Unknown(_) => {}
@@ -654,8 +658,39 @@ fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
         a.y = q.y;
     }
     t.height *= s;
-    // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right.
-    t.rotation = cadcraft_geom::norm_angle(t.rotation + if mirror { 0.0 } else { rot });
+    t.rotation = readable_rotation(t.rotation, rot, mirror);
+}
+
+/// The rotation of text after a transform that turns by `rot`. A mirroring transform leaves it as
+/// it is, so mirrored text keeps reading left to right (MIRRTEXT 0): adding `rot` would turn it
+/// upside down about a vertical mirror line. TEXT, MTEXT and TOLERANCE all follow this rule.
+fn readable_rotation(rotation: f64, rot: f64, mirror: bool) -> f64 {
+    cadcraft_geom::norm_angle(if mirror { rotation } else { rotation + rot })
+}
+
+/// After `m` mirrored `t` and [`readable_rotation`] kept it reading forward: when the mirror line
+/// crosses the text's direction at right angles (a vertical line for horizontal text), move the
+/// insertion point across the defined width, so the copy fills the box its mirror image would.
+/// A left-attached copy then ends where the mirror image ends instead of running back over the
+/// mirror line; the attachment stays. Mirroring twice gives the insertion point back.
+///
+/// A line along the text or at any other angle keeps the mirrored insertion point, and so does an
+/// MTEXT without a defined width: only the font can measure that width, and `doc` has none.
+fn keep_mirrored_mtext_box(t: &mut MText, m: &Mat3) {
+    if !(t.width.is_finite() && t.width > 0.0) {
+        return;
+    }
+    let dir = Vec2::from_angle(t.rotation);
+    if m.apply_vec(dir).normalized().dot(dir) > -1.0 + 1e-9 {
+        return;
+    }
+    let width = t.columns.as_ref().map_or(t.width, |c| c.total_width(t.width));
+    // Attachment 1-9 runs left, centre, right along each row: the copy's insertion point moves by
+    // a whole width for a left or right attachment and stays for a centred one.
+    let column = f64::from((t.attach.clamp(1, 9) - 1) % 3);
+    let shift = dir * (width * (column - 1.0));
+    t.insert.x += shift.x;
+    t.insert.y += shift.y;
 }
 
 #[cfg(test)]
