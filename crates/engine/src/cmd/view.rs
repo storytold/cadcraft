@@ -694,8 +694,11 @@ impl Interactive for PanPointsM {
                 run_pan(s, &json!({ "from": [a.x, a.y], "to": [b.x, b.y] }))?;
                 Ok(Step::Done)
             }
-            // Enter at the second point: the first point is the displacement.
-            (Some(d), Input::Enter) => {
+            // Enter at the second point: the first point is the displacement, as typed in the
+            // current UCS. The point arrives in world coordinates, so take the UCS origin off
+            // (0,0 in a moved UCS does not pan).
+            (Some(p), Input::Enter) => {
+                let d = p - s.input_ucs().origin.xy();
                 run_pan(s, &json!({ "delta": [d.x, d.y] }))?;
                 Ok(Step::Done)
             }

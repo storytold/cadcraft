@@ -219,6 +219,22 @@ fn dash_pan_takes_two_points_or_a_displacement() {
 }
 
 #[test]
+fn dash_pan_displacement_is_measured_in_the_ucs() {
+    // A UCS moved to 100,50: the displacement 0,0 does not pan, and 3,4 pans by 3,4.
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    s.execute("ucs", &json!({ "origin": [100.0, 50.0] })).unwrap();
+    typed(&mut s, &["-pan", "0,0", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::ZERO);
+    typed(&mut s, &["-pan", "3,4", ""]);
+    assert_eq!(view(&s).center, Vec2::new(-3.0, -4.0));
+    // Two points: the difference, which the UCS origin does not change.
+    typed(&mut s, &["-pan", "0,0", "10,5"]);
+    assert_eq!(view(&s).center, Vec2::new(-13.0, -9.0));
+}
+
+#[test]
 fn zoom_dynamic_places_and_sizes_the_view_box() {
     let mut s = session();
     set_view(&mut s, 10.0, 10.0, 20.0);
