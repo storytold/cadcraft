@@ -36,6 +36,7 @@ use super::super::curves::handle_value;
 use super::super::machines::{SelOutcome, SelectPhase};
 use super::references_block;
 use super::xref::load::{self, Sym};
+use crate::cmd::file::Version;
 use crate::cmd::{CommandSpec, bad, bool_or, has_doc, str_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -47,7 +48,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("refedit", "Edit Reference In-Place", run_refedit)
             .menu(&["Tools", "Xref and Block In-place Editing", "Edit Reference In-Place"])
             .alias(&["-refedit"])
-            .params("{handle? | handles? | name? (a block or xref reference, default the selection), path?: [handles of nested block references, outermost first] | nested?: block name (the first nested reference to it), objects?: [block object handles] (default all)} → {block, insert, working: [handles], faded, path, xref?: {name, file}}. Editing an xref writes its file back on REFCLOSE Save.")
+            .params("{handle? | handles? | name? (a block or xref reference, default the selection), path?: [handles of nested block references, outermost first] | nested?: block name (the first nested reference to it), objects?: [block object handles] (default all)} → {block, insert, working: [handles], faded, path, xref?: {name, file, version: its $ACADVER, binary}}. Editing an xref writes its file back on REFCLOSE Save, in the version and form it was read in (refused for versions CADCraft does not write, such as R12).")
             .enabled(has_doc)
             .interactive(|_| Ok(Box::new(RefeditM::default()))),
         CommandSpec::new("refedit.levels", "Reference Nesting Levels", run_levels)
@@ -278,6 +279,40 @@ fn source_handles(blk: &Block, src: &Drawing, inner: Option<&str>) -> Result<Vec
     Ok(blk.entities.iter().zip(store.iter()).map(|(a, b)| (a.handle, b.handle)).collect())
 }
 
+/// The version (`$ACADVER` code) and form (binary DXF or not) of the xref's file `file`, read as
+/// `src`, so it is written back as it was: a DWG's version is its first bytes, a DXF's the
+/// `$ACADVER` it was read with. Refused when CADCraft can't write that version (an R12 DXF,
+/// AC1009): saving would change it, and the xref is often someone else's file.
+fn file_form(file: &std::path::Path, src: &Drawing) -> Result<(Option<String>, bool)> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(file)
+        .and_then(|f| f.take(4096).read_to_end(&mut head))
+        .map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+    let dwg = head
+        .get(..6)
+        .filter(|t| t.starts_with(b"AC") && t.get(2..).is_some_and(|d| d.iter().all(u8::is_ascii_digit)))
+        .map(|t| String::from_utf8_lossy(t).into_owned());
+    let declared = || src.foreign.version.clone().or_else(|| src.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).map(str::to_string));
+    let version = dwg.or_else(declared).map(|v| v.trim().to_ascii_uppercase());
+    if let Some(code) = &version
+        && Version::parse(code).is_none_or(|v| v.code() != code)
+    {
+        return Err(bad(
+            "refedit",
+            format!(
+                "{} is an {code} file, and CADCraft writes only 2000 to 2018 files, so the edit couldn't be saved in the file's own version; open it with XOPEN instead",
+                file.display()
+            ),
+        ));
+    }
+    let binary = craft_dxf::is_binary(&head);
+    if (version.is_some() || binary) && crate::cmd::file::write_as().is_none() {
+        return Err(bad("refedit", "saving an xref in its own version is not available in this build; open it with XOPEN instead"));
+    }
+    Ok((version, binary))
+}
+
 // ---------------- REFEDIT ----------------
 
 fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -325,10 +360,13 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
             let src = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
             let sources = source_handles(&blk, &src, inner.as_deref())?;
             let real = std::fs::canonicalize(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+            let (version, binary) = file_form(&file, &src)?;
             Some(XrefSource {
                 xref: x,
                 file: file.to_string_lossy().into_owned(),
                 real: real.to_string_lossy().into_owned(),
+                version,
+                binary,
                 block: inner,
                 stamp: load::stamp(&file),
                 sources,
@@ -396,7 +434,7 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
         "working": hexes(r.items.iter().map(|i| i.copy)),
         "faded": r.ghosts.len(),
         "path": hexes(r.path.iter().copied()),
-        "xref": r.xref.as_ref().map(|x| json!({ "name": x.xref, "file": x.file })),
+        "xref": r.xref.as_ref().map(|x| json!({ "name": x.xref, "file": x.file, "version": x.version, "binary": x.binary })),
     });
     let sel: Vec<Handle> = r.items.iter().map(|i| i.copy).collect();
     doc.refedit = Some(r);
@@ -629,7 +667,16 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Option<String
             }
         }
     }
-    let bytes = (hooks.write)(&src, &x.file).map_err(|e| bad("refclose", format!("writing {}: {e}", file.display())))?;
+    // In the version and form the file was read in, not the writer's default (a DWG at 2004 or
+    // later): a version change can lock out whoever made the file.
+    let version = x.version.as_deref().and_then(Version::parse);
+    let bytes = if version.is_none() && !x.binary {
+        (hooks.write)(&src, &x.file)
+    } else {
+        let w = crate::cmd::file::write_as().ok_or_else(|| bad("refclose", "saving an xref in its own version is not available in this build"))?;
+        w(&src, &x.file, &crate::cmd::file::SaveAs { version, binary: x.binary, portable_fonts: false })
+    };
+    let bytes = bytes.map_err(|e| bad("refclose", format!("writing {}: {e}", file.display())))?;
     replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))
 }
 

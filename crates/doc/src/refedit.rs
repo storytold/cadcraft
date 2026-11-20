@@ -60,6 +60,11 @@ pub struct XrefSource {
     /// `file` with every symbolic link resolved when the edit began: the file that is written.
     /// The save is refused when `file` leads somewhere else by then.
     pub real: String,
+    /// The version the file was in when the edit began, as its `$ACADVER` code ("AC1015"): it
+    /// is written back in that version (`None`: in the drawing's own).
+    pub version: Option<String>,
+    /// Whether the file is a binary DXF (written back as one).
+    pub binary: bool,
     /// The block of the source drawing being edited; `None` for its model space.
     pub block: Option<String>,
     /// The file's size and modification time (nanoseconds since 1970) when the edit began.

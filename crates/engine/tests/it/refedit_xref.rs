@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use cadcraft_engine::cmd::file::{IoHooks, set_io};
+use cadcraft_engine::cmd::file::{IoHooks, Version, set_io, set_write_as};
 use cadcraft_engine::doc::geom::{Vec2, Vec3};
 use cadcraft_engine::doc::{Block, Circle, Drawing, Entity, EntityKind, Handle, Insert, Layer, Line, XrefStatus};
 use cadcraft_engine::{Input, Session};
@@ -17,6 +17,7 @@ fn hooks() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: None,
     });
+    set_write_as(|d, name, o| cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string()));
 }
 
 /// A fresh folder for one test.
@@ -346,5 +347,101 @@ fn xrefs_of_one_name_in_one_folder_keep_their_own_backups() {
     assert_eq!(std::fs::read(dir.join("site.dxf.bak")).unwrap(), old_dxf, "the DXF's previous file");
     assert_eq!(std::fs::read(dir.join("site.bak")).unwrap(), old_dwg, "the DWG's previous file");
     assert_eq!((read(&dxf).model.len(), read(&dwg).model.len()), (3, 3), "both hold their edit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A host drawing (host.dxf in `dir`) with `file` of `dir` attached as xref `name` at (100, 0).
+fn host_with(dir: &Path, file: &str, name: &str) -> (Session, String) {
+    let host = dir.join("host.dxf");
+    save(&Drawing::new_metric(), &host);
+    let mut s = Session::new();
+    s.execute("open", &json!({ "path": host.to_string_lossy() })).unwrap();
+    let r = s.execute("xattach", &json!({ "path": file, "name": name, "at": [100, 0] })).unwrap();
+    (s, r["handle"].as_str().unwrap().to_string())
+}
+
+/// The `$ACADVER` an ASCII DXF declares.
+fn dxf_version(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines.windows(3).find(|w| w[0] == "$ACADVER" && w[1] == "1").map(|w| w[2].to_string())
+}
+
+/// Review of #2355: the xref was saved in the writer's default version (an R2000 DWG came back
+/// as 2004, AC1018). It is written back in the version, and form, it was read in.
+#[test]
+fn an_xref_is_written_back_in_the_version_it_was_read_in() {
+    hooks();
+    let dir = folder("versions");
+    let (d, _) = site();
+    let write = |name: &str, version: Version, binary: bool| {
+        let p = dir.join(name);
+        let opts = cadcraft_io::SaveOptions { version: Some(version), binary };
+        std::fs::write(&p, cadcraft_io::write_with(&d, &p, &opts).unwrap()).unwrap();
+        p
+    };
+    let dwg = write("old.dwg", Version::R2000, false);
+    let dxf = write("old.dxf", Version::R2004, false);
+    let bin = write("bin.dxf", Version::R2010, true);
+    assert_eq!((&std::fs::read(&dwg).unwrap()[..6], dxf_version(&std::fs::read(&dxf).unwrap()).as_deref()), (&b"AC1015"[..], Some("AC1018")));
+    for (file, name) in [("old.dwg", "a"), ("old.dxf", "b"), ("bin.dxf", "c")] {
+        let (mut s, insert) = host_with(&dir, file, name);
+        let r = s.execute("refedit", &json!({ "handle": insert })).unwrap();
+        assert_eq!(r["xref"]["binary"], file == "bin.dxf", "{r}");
+        s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+        s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    }
+    let (dwg_bytes, dxf_bytes, bin_bytes) = (std::fs::read(&dwg).unwrap(), std::fs::read(&dxf).unwrap(), std::fs::read(&bin).unwrap());
+    assert_eq!(&dwg_bytes[..6], b"AC1015", "the R2000 DWG stays R2000");
+    assert_eq!(dxf_version(&dxf_bytes).as_deref(), Some("AC1018"), "the 2004 DXF stays 2004");
+    assert!(bin_bytes.starts_with(b"AutoCAD Binary DXF"), "the binary DXF stays binary");
+    assert_eq!(read(&bin).header.get("ACADVER").and_then(cadcraft_engine::doc::HVal::as_str), Some("AC1024"), "and 2010");
+    assert_eq!((read(&dwg).model.len(), read(&dxf).model.len(), read(&bin).model.len()), (3, 3, 3), "each holds its edit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review of #2355: an R12 DXF xref came back as an R2000 one. CADCraft doesn't write R12, so the
+/// edit is refused before it begins (no work lost), and the file is left as it is.
+#[test]
+fn an_xref_in_a_version_cadcraft_cannot_write_is_not_edited_in_place() {
+    hooks();
+    let dir = folder("r12");
+    let r12 = "0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1009
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+LINE
+8
+0
+10
+0
+20
+0
+11
+1
+21
+1
+0
+ENDSEC
+0
+EOF
+";
+    std::fs::write(dir.join("r12.dxf"), r12).unwrap();
+    let (mut s, insert) = host_with(&dir, "r12.dxf", "old");
+    let e = s.execute("refedit", &json!({ "handle": insert })).unwrap_err().to_string();
+    assert!(e.contains("AC1009") && e.contains("XOPEN"), "{e}");
+    assert!(s.doc().unwrap().refedit.is_none());
+    assert_eq!(std::fs::read_to_string(dir.join("r12.dxf")).unwrap(), r12, "the file is untouched");
     let _ = std::fs::remove_dir_all(&dir);
 }
