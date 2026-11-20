@@ -885,7 +885,9 @@ mod tests {
 
     /// A Thai MTEXT, which the canvas draws from a Thai fallback font, opens in the editor in
     /// letters, not boxes: the app's interface fonts take the face drawing text takes for a
-    /// character they lack. Runs where a Thai face is found (CI embeds craft-fonts' Noto Sans Thai).
+    /// character they lack. Both interface families do, so Thai typed at the command line or in a
+    /// layer name (proportional) and a FIND result (monospace) are letters too (#2949). Runs where
+    /// a Thai face is found (CI embeds craft-fonts' Noto Sans Thai).
     #[test]
     fn thai_text_opens_in_the_editor_without_boxes() {
         let thai = "แบบขยายผนังห้องน้ำ ชั้นที่ ๒";
@@ -908,7 +910,12 @@ mod tests {
             out.textures_delta.clear();
         }
         assert_eq!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open").fmt.text(), thai);
-        let missing: Vec<char> = ctx.fonts_mut(|f| letters.iter().copied().filter(|c| !f.has_glyph(&FontId::proportional(MIN_PX), *c)).collect());
-        assert!(missing.is_empty(), "drawn as boxes in the editor: {missing:?}");
+        let mut missing = Vec::new();
+        ctx.fonts_mut(|f| {
+            for font in [FontId::proportional(MIN_PX), FontId::monospace(MIN_PX)] {
+                missing.extend(letters.iter().filter(|c| !f.has_glyph(&font, **c)).map(|c| format!("{:?} {c}", font.family)));
+            }
+        });
+        assert!(missing.is_empty(), "drawn as boxes: {missing:?}");
     }
 }
