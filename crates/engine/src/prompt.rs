@@ -128,7 +128,8 @@ pub fn parse_polar_text(text: &str, angles: &crate::units::AngleSettings) -> Opt
     };
     let angles = if world { angles.world() } else { *angles };
     let (d, a) = body.split_once('<')?;
-    let dist = d.trim().parse::<f64>().ok()?;
+    // Read as `parse_point_in` reads it, fractions (`1/2`) included.
+    let dist = crate::units::parse_distance(d)?;
     // The direction `@d<a` draws along, as `parse_point_in` reads it (ANGBASE, ANGDIR and the
     // UCS applied): a world angle.
     let a = a.trim();
@@ -543,6 +544,11 @@ mod tests {
             assert!((d - 10.0).abs() < 1e-12 && a.abs() < 1e-12, "{t}: {d} {a}");
             let p = parse_point_in(t, Vec2::ZERO, &angles, &crate::ucs::UcsFrame::WORLD).unwrap();
             assert!(p.near(Vec2::from_angle(a) * d, 1e-9), "{t}: {p:?}");
+        }
+        // A distance is read as the typed point reads it: a fraction counts.
+        for t in ["@1/2<0", "@*1/2<0", "*@1/2<0"] {
+            let (d, _) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 0.5).abs() < 1e-12, "{t}: {d}");
         }
         assert_eq!(parse_polar_text("*10<0", &angles), None);
         assert_eq!(parse_polar_text("**@10<0", &angles), None);
