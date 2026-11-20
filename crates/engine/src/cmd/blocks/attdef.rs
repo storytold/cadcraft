@@ -103,6 +103,7 @@ impl AttdefM {
     fn finish(&mut self, s: &mut Session, rotation: f64) -> Result<Step> {
         let (h, v) = self.justify;
         let left = h == HAlign::Left && v == VAlign::Baseline;
+        let (style, width_factor, oblique) = super::resolve_style(s, &self.style)?;
         s.add_entity(EntityKind::AttDef(Attrib {
             tag: self.tag.to_uppercase(),
             text: Text {
@@ -111,9 +112,9 @@ impl AttdefM {
                 height: self.height,
                 value: std::mem::take(&mut self.value),
                 rotation,
-                width_factor: 1.0,
-                oblique: 0.0,
-                style: self.style.clone(),
+                width_factor,
+                oblique,
+                style,
                 halign: h,
                 valign: v,
             },
@@ -156,7 +157,7 @@ impl Interactive for AttdefM {
                 Prompt::new(self.point_prompt(), Accept::POINT).kw(&["Justify", "Style"])
             }
             Ask::Point => Prompt::new(self.point_prompt(), Accept::POINT),
-            Ask::Justify => Prompt::new("Enter an option", Accept::TEXT).kw(&JUSTIFY),
+            Ask::Justify => crate::cmd::draw::justify_prompt(false),
             Ask::Style => Prompt::new("Enter style name", Accept::TEXT).kw(&["?"]).default(self.style.clone()),
             Ask::Height => {
                 let th = s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
