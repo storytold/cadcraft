@@ -245,9 +245,21 @@ pub fn generation() -> u64 {
     table().generation
 }
 
+/// Most times [`find`] looks again because the folders or guards changed while it read.
+const MAX_LOOKUPS: usize = 4;
+
 /// The SHX font file a style or linetype names, if CADCraft can find and read it.
+///
+/// A font read while what the search may open changed is never given: the read could have used a
+/// folder or guard since dropped (a folder whose new guard refuses the file). The search runs again
+/// under the new ones, and a table that keeps changing gives no font.
 pub fn find(name: &str) -> Option<Arc<ShxFont>> {
-    let mut k = key(name)?;
+    (0..MAX_LOOKUPS).find_map(|_| lookup(name)).flatten()
+}
+
+/// One search for [`find`]: `None` when the table changed while the file was read.
+fn lookup(name: &str) -> Option<Option<Arc<ShxFont>>> {
+    let Some(mut k) = key(name) else { return Some(None) };
     let (provider, folders, (guarded, overflow), generation) = {
         let t = table();
         // The font map renames once (a map can't loop).
@@ -255,10 +267,10 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
             k = to;
         }
         if let Some(f) = t.registered.get(&k) {
-            return Some(f.clone());
+            return Some(Some(f.clone()));
         }
         if let Some(r) = t.resolved.get(&k) {
-            return r.clone();
+            return Some(r.clone());
         }
         let folders: Vec<PathBuf> = t.drawing_dirs.iter().chain(t.font_dirs.iter()).chain(t.search_path.iter()).cloned().collect();
         let guarded: Vec<(PathBuf, Vec<OpenGuard>)> =
@@ -290,9 +302,10 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
         .and_then(|b| ShxFont::parse(&b).ok())
         .map(Arc::new);
     let mut t = table();
-    // Something changed while the file was read: keep the result out of the new cache.
+    // Something changed while the file was read: the result may come from a folder or under a
+    // guard that no longer applies, so it is neither kept nor given.
     if t.generation != generation {
-        return font;
+        return None;
     }
     if t.resolved.len() >= MAX_FONTS * 4 {
         t.resolved.clear();
@@ -301,11 +314,11 @@ pub fn find(name: &str) -> Option<Arc<ShxFont>> {
     let size = font.as_ref().map_or(0, |f| f.data.len());
     if t.loaded_bytes.saturating_add(size) > MAX_LOADED_BYTES {
         // Over the memory bound: used, not kept.
-        return font;
+        return Some(font);
     }
     t.loaded_bytes += size;
     t.resolved.insert(k, font.clone());
-    font
+    Some(font)
 }
 
 /// Most directory entries looked at for a font file whose name differs only in case.

@@ -413,16 +413,43 @@ fn legacy_protocol_routing_and_version_negotiation() {
     );
 }
 
+/// A folder of this test's own, made here so nothing else put it there first, and removed when the
+/// test ends, also when it fails.
+struct TestDir(std::path::PathBuf);
+
+impl TestDir {
+    /// A new folder named after `tag`: creating it must not find one already there, such as one a
+    /// failed run with the same process id left behind.
+    fn fresh(tag: &str) -> TestDir {
+        let mut n = 0u32;
+        loop {
+            let dir = std::env::temp_dir().join(format!("{tag}-{}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return TestDir(dir),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+                Err(e) => panic!("{}: {e}", dir.display()),
+            }
+        }
+    }
+}
+
+impl Drop for TestDir {
+    /// Removes the folder and all it holds.
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// With a read root and no write root (the read-only use #1931 asks for), an agent still draws,
 /// reads and renders, but no route writes a file outside: the save tool, `execute` of the
 /// writers, a save hidden mid-line at the command line and one in a script. Carried from #1973's
 /// read-only mode tests.
 #[test]
 fn a_read_root_alone_still_draws_but_writes_nothing() {
-    let base = std::env::temp_dir().join(format!("cc-mcp-readonly-{}", std::process::id()));
-    let (inside, outside) = (base.join("in"), base.join("outside"));
-    std::fs::create_dir_all(&inside).unwrap();
-    std::fs::create_dir_all(&outside).unwrap();
+    let base = TestDir::fresh("cc-mcp-readonly");
+    let (inside, outside) = (base.0.join("in"), base.0.join("outside"));
+    std::fs::create_dir(&inside).unwrap();
+    std::fs::create_dir(&outside).unwrap();
     let roots = cadcraft_engine::file_access::AutomationRoots::new(Some(&inside), None).unwrap();
     let mut s = Server::new(Box::new(Headless::default().with_automation_roots(roots)));
     let _ = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
@@ -446,5 +473,4 @@ fn a_read_root_alone_still_draws_but_writes_nothing() {
     let _ = call(&mut s, 96, "tools/call", json!({"name": "script", "arguments": {"text": format!("circle 0,0 1\nsave {}\n", out("f.dxf"))}}));
     let written: Vec<_> = std::fs::read_dir(&outside).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
     assert!(written.is_empty(), "nothing is written outside the roots: {written:?}");
-    let _ = std::fs::remove_dir_all(&base);
 }
