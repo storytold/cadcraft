@@ -6,22 +6,32 @@ mod chprop;
 mod dash_units;
 mod matchprop;
 mod rename;
+mod set;
 
 pub use matchprop::MatchProps;
+use set::run_set;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Handle, Lineweight, Transparency};
-use cadcraft_geom::{Vec2, Vec3};
+use cadcraft_doc::{EntityKind, Lineweight, Transparency};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, point_value, str_param, targets};
+use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, str_param, targets};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); textStyle (text, multiline text, multileaders); text: justify (L C R A M F TL TC TR ML MC MR BL BC BR; the letters stay in place), backwards, upsideDown; multiline text: justify (TL..BR), frame; hatches: pattern, scale, angle, background (colour | \"None\"); multileaders: mleaderStyle, arrow (arrowhead name or block; \"\" = the style's), arrowSize, leaderType: straight|spline|none, dogleg (landing distance; 0 = no landing), textHeight} → {changed, locked, message?}: objects on locked layers (and, during REFEDIT, outside the working set) are left out, and `message` says how many"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params(
+            "{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, annotative?, \
+             <geometry fields: radius, center, start, end, text, height, rotation…>, text: style?, justify?, oblique?, positionX/Y/Z?, alignmentX/Y?, \
+             mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
+             dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
+             multileader: arrow? (a built-in `_Open`… or a block; empty for the style's), leaderType?: straight | spline | none, \
+             <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable]} \
+             → {changed, locked, message?, ignored: keys no selected object took} (the keys are those of `properties.describe` rows): objects on locked layers \
+             (and, during REFEDIT, outside the working set) are left out, and `message` says how many",
+        ),
         CommandSpec::new("chprop", "Change Properties", run_set)
             .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
@@ -29,6 +39,13 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["-ch"])
             .params("{handles?, point?: [x, y], elevation?} → {changed, ignored, differingZ, detachedHatches, locked}: the point moves the nearer end of each line to it (level or plumb with the other end under ORTHOMODE) and, when it is the one object, passes a circle through it or places a text, attribute definition or block reference at it (`ignored` otherwise); `elevation` sets the z of objects whose points share one (`differingZ` otherwise); objects on locked layers are left out (the command line asks Specify change point or [Properties], then about each circle, text, attribute definition and block reference in turn)")
             .interactive(|_| Ok(Box::new(change::ChangeM::new()))),
+        CommandSpec::new("properties.describe", "Describe Properties", run_describe)
+            .params(
+                "{handles?, type?: one of the `types` names, to describe only those objects} → {types: [{type, count}], filter?, count, \
+                 groups: [{name, rows: [{key, label, kind, value, varies, display, editable, note?, overridden?, options?: [{value, label}], quick?}]}]} \
+                 (each row's `key` is the `properties.set` key that changes it; text, mtext and dimensions have their own groups)",
+            )
+            .noundo(),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -181,10 +198,13 @@ fn parse_color(v: &Value) -> Option<Color> {
 
 /// A transparency as JSON, in the form `properties.set` takes: "ByLayer", "ByBlock" or a percentage.
 pub(super) fn transparency_value(t: Transparency) -> Value {
-    match t {
-        Transparency::Percent(p) => json!(p),
-        other => json!(other.name()),
-    }
+    crate::properties::transparency_value(t)
+}
+
+fn run_describe(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    let d = s.doc()?;
+    Ok(serde_json::to_value(crate::properties::describe(d, &hs, str_param(p, "type"))).unwrap_or(Value::Null))
 }
 
 /// "ByLayer", "ByBlock" or a percentage 0..=90 (a number, or a string such as "50" or "50%").
@@ -196,547 +216,6 @@ fn parse_transparency(v: &Value) -> Option<Transparency> {
         None => v.as_f64()?,
     };
     (pct.is_finite() && (0.0..=90.0).contains(&pct)).then(|| Transparency::Percent(pct.round() as u8))
-}
-
-fn set_xy(p: &mut Vec3, v: &Value) {
-    if let Some(q) = point_value(v) {
-        p.x = q.x;
-        p.y = q.y;
-    }
-}
-
-/// The objects `properties.set` leaves alone, as CHPROP, MATCHPROP and MOVE do: those on locked
-/// layers and, while a reference is edited in place, those outside the working set.
-#[derive(Default)]
-struct LeftOut {
-    locked: usize,
-    outside: usize,
-}
-
-impl LeftOut {
-    /// `hs` without the objects that can't be edited, each object once, and how many those were. A
-    /// handle that names no object is an error, before anything changes.
-    fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
-        let d = s.doc()?;
-        // The working set, once: `RefEdit::is_working` searches a list.
-        let working: Option<std::collections::HashSet<Handle>> = d.refedit.as_ref().map(|r| r.items.iter().map(|i| i.copy).collect());
-        let mut seen = std::collections::HashSet::new();
-        let mut out = LeftOut::default();
-        let mut free = Vec::new();
-        for h in hs {
-            let Some(e) = d.entity(h) else {
-                return Err(cadcraft_doc::DocError::NoEntity(h).into());
-            };
-            if !seen.insert(h) {
-                continue;
-            }
-            if working.as_ref().is_some_and(|w| !w.contains(&h)) {
-                out.outside += 1;
-            } else if d.layer(&e.common.layer).is_some_and(|l| l.locked) {
-                out.locked += 1;
-            } else {
-                free.push(h);
-            }
-        }
-        Ok((free, out))
-    }
-
-    /// `{changed, locked}`, and a message saying how many were left out when any were.
-    fn result(&self, changed: usize) -> Value {
-        let mut notes = Vec::new();
-        match self.locked {
-            0 => {}
-            1 => notes.push("1 object was on a locked layer.".to_string()),
-            n => notes.push(format!("{n} objects were on a locked layer.")),
-        }
-        match self.outside {
-            0 => {}
-            1 => notes.push("1 object was not in the working set.".to_string()),
-            n => notes.push(format!("{n} objects were not in the working set.")),
-        }
-        if changed == 0 && !notes.is_empty() {
-            notes.push("Nothing was changed.".to_string());
-        }
-        let mut r = json!({ "changed": changed, "locked": self.locked + self.outside });
-        if !notes.is_empty()
-            && let Some(o) = r.as_object_mut()
-        {
-            o.insert("message".into(), json!(notes.join(" ")));
-        }
-        r
-    }
-}
-
-fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
-    if hs.is_empty() {
-        return Err(bad("properties.set", "nothing selected"));
-    }
-    let (hs, left_out) = LeftOut::split(s, hs)?;
-    let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
-    // A hatch background is a colour or none ("None", "" or null), as HATCH and HATCHEDIT take.
-    if let Some(v) = p.get("background")
-        && !v.is_null()
-        && !v.as_str().is_some_and(|t| t.trim().is_empty() || t.trim().eq_ignore_ascii_case("none"))
-        && parse_color(v).is_none()
-    {
-        return Err(bad("properties.set", "background must be a colour or None"));
-    }
-    let transparency = p
-        .get("transparency")
-        .map(|v| parse_transparency(v).ok_or_else(|| bad("properties.set", "transparency must be ByLayer, ByBlock or a percentage from 0 to 90")))
-        .transpose()?;
-    let thickness = p
-        .get("thickness")
-        .map(|v| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("properties.set", "thickness must be a finite number")))
-        .transpose()?;
-    let lw = p.get("lineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
-    // A new text is worked out like a typed one: a formula becomes the text's formula, other
-    // text drops the one it had.
-    let formula_env = crate::textformula::env(s);
-    let d = s.doc()?;
-    // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
-    let linetype = str_param(p, "linetype")
-        .map(|n| {
-            if n.eq_ignore_ascii_case("ByLayer") || n.eq_ignore_ascii_case("ByBlock") {
-                Ok(n.to_string())
-            } else {
-                d.linetype(n).map(|t| t.name.clone()).ok_or_else(|| bad("properties.set", format!("linetype `{n}` is not loaded")))
-            }
-        })
-        .transpose()?;
-    let dim_style = str_param(p, "dimStyle")
-        .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
-        .transpose()?;
-    let mleader_style = str_param(p, "mleaderStyle")
-        .map(|n| {
-            d.mleader_styles
-                .iter()
-                .find(|st| st.name.eq_ignore_ascii_case(n))
-                .map(|st| st.name.clone())
-                .or_else(|| n.eq_ignore_ascii_case("Standard").then(|| "Standard".to_string()))
-                .ok_or_else(|| bad("properties.set", format!("multileader style `{n}` not found")))
-        })
-        .transpose()?;
-    let text_style = str_param(p, "textStyle")
-        .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
-        .transpose()?;
-    // Justification (text: L C R A M F TL..BR; multiline text: TL..BR), and the text styles it
-    // lays text out with to keep the letters in place.
-    let justify = str_param(p, "justify");
-    let text_justify = justify.and_then(super::draw::justify);
-    let mtext_justify = justify.and_then(mtext_attach);
-    if let Some(j) = justify {
-        if text_justify.is_none() && mtext_justify.is_none() {
-            return Err(bad("properties.set", format!("unknown justification `{j}`")));
-        }
-        // Each selected object must have it: multiline text has no baseline justifications (C, A...).
-        for e in hs.iter().filter_map(|h| d.entity(*h)) {
-            let missing = match &e.kind {
-                EntityKind::Text(_) => text_justify.is_none(),
-                EntityKind::MText(_) => mtext_justify.is_none(),
-                _ => false,
-            };
-            if missing {
-                return Err(bad("properties.set", format!("justification `{j}` does not apply to {}", e.kind.type_name())));
-            }
-        }
-    }
-    let style_doc = justify.map(|_| cadcraft_doc::Drawing { text_styles: d.text_styles.clone(), header: d.header.clone(), ..Default::default() });
-    let dim_over = dim_overrides(p)?;
-    if hs.is_empty() {
-        // Every object was left out: the drawing stays as it was, with no undo step.
-        return Ok(left_out.result(0));
-    }
-    let d = s.doc_mut()?;
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
-    }
-    let anno_scale = d.current_anno_scale();
-    let kind_props = KindProps {
-        dim_style: dim_style.as_ref(),
-        dim_overrides: &dim_over,
-        mleader_style: mleader_style.as_ref(),
-        text_style: text_style.as_ref(),
-        text_justify,
-        mtext_justify,
-        style_doc: style_doc.as_ref(),
-    };
-    let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
-    for h in &hs {
-        // A dimension's measurement, which `<>` in a new formula stands for.
-        let formula_env = match d.entity(*h).map(|e| &e.kind) {
-            Some(EntityKind::Dimension(dm)) => crate::textformula::Env { measured: crate::textformula::measured(d, dm), ..formula_env.clone() },
-            _ => formula_env.clone(),
-        };
-        d.modify_entity(*h, |e| {
-            set_common_properties(e, p, &common);
-            if apply_kind_properties(e, p, &kind_props) {
-                crate::textformula::apply(&mut e.kind, &formula_env, true);
-            }
-        })?;
-    }
-    Ok(left_out.result(hs.len()))
-}
-
-/// The checked kind-specific settings of a `properties.set` call.
-struct KindProps<'a> {
-    dim_style: Option<&'a String>,
-    dim_overrides: &'a serde_json::Map<String, Value>,
-    mleader_style: Option<&'a String>,
-    text_style: Option<&'a String>,
-    text_justify: Option<(cadcraft_doc::HAlign, cadcraft_doc::VAlign)>,
-    mtext_justify: Option<u8>,
-    /// The text styles and header justification lays text out with.
-    style_doc: Option<&'a cadcraft_doc::Drawing>,
-}
-
-/// The text style of text, multiline text, a multileader's text and an attribute definition.
-fn set_text_style(entity: &mut cadcraft_doc::Entity, st: &str) {
-    match &mut entity.kind {
-        EntityKind::Text(t) => t.style = st.to_string(),
-        EntityKind::MText(t) => t.style = st.to_string(),
-        EntityKind::MLeader(m) => {
-            if let Some(t) = &mut m.text {
-                t.style = st.to_string();
-            }
-        }
-        EntityKind::AttDef(a) => a.text.style = st.to_string(),
-        _ => {}
-    }
-}
-
-/// Set a single-line text's properties; whether a text was given.
-fn set_text_properties(t: &mut cadcraft_doc::Text, params: &Value, k: &KindProps<'_>) -> bool {
-    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-    let mut changed = false;
-    if let Some(v) = str_param(params, "text") {
-        t.value = v.to_string();
-        changed = true;
-    }
-    if let Some(x) = num("height").filter(|x| *x > 0.0) {
-        t.height = x;
-    }
-    if let Some(x) = num("rotation") {
-        t.rotation = x.to_radians();
-    }
-    if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
-        t.width_factor = x;
-    }
-    if let Some(f) = params.get("backwards").and_then(Value::as_bool) {
-        t.backwards = f;
-    }
-    if let Some(f) = params.get("upsideDown").and_then(Value::as_bool) {
-        t.upside_down = f;
-    }
-    if let (Some((h, v)), Some(sd)) = (k.text_justify, k.style_doc) {
-        rejustify_text(sd, t, h, v);
-    }
-    // The position is the point the text is placed by: moving it moves the text.
-    if let Some(to) = params.get("position").and_then(point_value) {
-        let d = to - t.justify_point();
-        for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-            q.x += d.x;
-            q.y += d.y;
-        }
-    }
-    changed
-}
-
-/// Set a circle's centre and size (radius, diameter, circumference or area).
-fn set_circle_properties(c: &mut cadcraft_doc::Circle, params: &Value) {
-    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-    if let Some(v) = params.get("center") {
-        set_xy(&mut c.center, v);
-    }
-    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-        c.radius = r;
-    }
-    if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
-        c.radius = dm / 2.0;
-    }
-    if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
-        c.radius = cf / cadcraft_geom::TAU;
-    }
-    if let Some(a) = num("area").filter(|x| *x > 0.0) {
-        c.radius = (a / cadcraft_geom::PI).sqrt();
-    }
-}
-
-/// Set the kind's own properties; whether a text was given (a new value, worked out as typed).
-fn apply_kind_properties(entity: &mut cadcraft_doc::Entity, params: &Value, k: &KindProps<'_>) -> bool {
-    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-    let mut new_text = false;
-    if let Some(st) = k.text_style {
-        set_text_style(entity, st);
-    }
-    match &mut entity.kind {
-        EntityKind::Line(l) => {
-            if let Some(v) = params.get("start") {
-                set_xy(&mut l.a, v);
-            }
-            if let Some(v) = params.get("end") {
-                set_xy(&mut l.b, v);
-            }
-            // Length / angle keep the start point and move the end point.
-            let (a, b) = (l.a.xy(), l.b.xy());
-            let len = num("length").filter(|x| *x > 0.0 && *x < 1e15).unwrap_or_else(|| a.dist(b));
-            let ang = num("angle").map(f64::to_radians).unwrap_or_else(|| a.angle_to(b));
-            if num("length").is_some() || num("angle").is_some() {
-                let e = cadcraft_geom::Vec2::polar(a, len, ang);
-                if e.is_finite() {
-                    l.b.x = e.x;
-                    l.b.y = e.y;
-                }
-            }
-        }
-        EntityKind::Circle(c) => set_circle_properties(c, params),
-        EntityKind::Arc(a) => {
-            if let Some(v) = params.get("center") {
-                set_xy(&mut a.center, v);
-            }
-            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                a.radius = r;
-            }
-            if let Some(x) = num("startAngle") {
-                a.start = cadcraft_geom::norm_angle(x.to_radians());
-            }
-            if let Some(x) = num("endAngle") {
-                a.end = cadcraft_geom::norm_angle(x.to_radians());
-            }
-        }
-        EntityKind::Text(t) => new_text = set_text_properties(t, params, k),
-        EntityKind::MText(t) => {
-            if let Some(v) = str_param(params, "text") {
-                t.contents = v.replace('\n', "\\P");
-                new_text = true;
-            }
-            if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                t.height = x;
-            }
-            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                t.width = x;
-            }
-            if let Some(x) = num("rotation") {
-                t.rotation = x.to_radians();
-            }
-            if let Some(f) = params.get("frame").and_then(Value::as_bool) {
-                t.frame = f;
-            }
-            if let (Some(a), Some(sd)) = (k.mtext_justify, k.style_doc) {
-                rejustify_mtext(sd, t, a);
-            }
-        }
-        EntityKind::LwPolyline(pl) => {
-            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                pl.const_width = x;
-            }
-            if let Some(c) = params.get("closed").and_then(Value::as_bool) {
-                pl.closed = c;
-            }
-        }
-        EntityKind::Insert(insert) => set_insert_properties(insert, params),
-        EntityKind::AttDef(a) => {
-            if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                a.text.height = x;
-            }
-            if let Some(x) = num("rotation") {
-                a.text.rotation = x.to_radians();
-            }
-            if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
-                a.text.width_factor = x;
-            }
-        }
-        EntityKind::Dimension(dimension) => new_text = set_dimension_properties(dimension, params, k.dim_style, k.dim_overrides),
-        EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
-        EntityKind::MLeader(m) => new_text = set_mleader_properties(m, params, k),
-        _ => {}
-    }
-    new_text
-}
-
-/// Set a multileader's properties: its text's contents (#1081) and height, style, arrowhead,
-/// leader type and landing; whether a text was given.
-fn set_mleader_properties(m: &mut cadcraft_doc::MLeader, params: &Value, k: &KindProps<'_>) -> bool {
-    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-    let mut new_text = false;
-    // Its text's contents (#1081).
-    if let (Some(v), Some(t)) = (str_param(params, "text"), &mut m.text) {
-        t.contents = v.replace('\n', "\\P");
-        new_text = true;
-    }
-    if let Some(st) = k.mleader_style {
-        m.style.clone_from(st);
-    }
-    if let Some(v) = str_param(params, "arrow") {
-        m.arrow = v.trim().to_string();
-    }
-    if let Some(x) = num("arrowSize").filter(|x| *x >= 0.0) {
-        m.arrow_size = x;
-    }
-    match str_param(params, "leaderType").map(str::to_ascii_lowercase).as_deref() {
-        Some("spline") => (m.spline, m.no_leader) = (true, false),
-        Some("straight") => (m.spline, m.no_leader) = (false, false),
-        Some("none") => m.no_leader = true,
-        _ => {}
-    }
-    if let Some(x) = num("dogleg").filter(|x| *x >= 0.0) {
-        // The content stays at the end of the landing.
-        let land = m.landing.x;
-        let side = |x: f64| if x >= land { 1.0 } else { -1.0 };
-        let shift = x - m.dogleg;
-        if let Some(t) = &mut m.text {
-            t.insert.x += shift * side(t.insert.x);
-        }
-        if let Some(b) = &mut m.block {
-            b.insert.x += shift * side(b.insert.x);
-        }
-        m.dogleg = x;
-    }
-    if let (Some(x), Some(t)) = (num("textHeight").filter(|x| *x > 0.0), &mut m.text) {
-        t.height = x;
-    }
-    new_text
-}
-
-fn set_insert_properties(insert: &mut cadcraft_doc::Insert, params: &Value) {
-    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-
-    if let Some(x) = number("rotation") {
-        let turn = x.to_radians() - insert.rotation;
-        insert.rotation = x.to_radians();
-        // The attached text turns with the reference, around its insertion point (as ROTATE does).
-        let base = insert.insert.xy();
-        for a in &mut insert.attribs {
-            let t = &mut a.text;
-            for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                let r = q.xy().rotate_about(base, turn);
-                q.x = r.x;
-                q.y = r.y;
-            }
-            t.rotation = cadcraft_geom::norm_angle(t.rotation + turn);
-            if let Some(ml) = &mut a.multiline {
-                let r = ml.mtext.insert.xy().rotate_about(base, turn);
-                ml.mtext.insert.x = r.x;
-                ml.mtext.insert.y = r.y;
-                ml.mtext.rotation = cadcraft_geom::norm_angle(ml.mtext.rotation + turn);
-            }
-        }
-    }
-    if let Some(x) = number("scale").filter(|x| *x != 0.0) {
-        // A new positive scale carries the attached attribute text with it, like SCALE about the insertion point.
-        if x > 0.0 && insert.scale.x > 0.0 {
-            let m = cadcraft_geom::Mat3::scale_about(insert.insert.xy(), x / insert.scale.x);
-            for a in &mut insert.attribs {
-                let mut k = EntityKind::Text(a.text.clone());
-                k.transform(&m);
-                if let EntityKind::Text(t) = k {
-                    a.text = t;
-                }
-                a.transform_multiline(&m);
-            }
-        }
-        insert.scale = Vec3::new(x, x, x);
-    }
-}
-
-/// Set a dimension's properties; whether its text was replaced (like typing over it: a formula
-/// becomes the formula, other text drops it).
-fn set_dimension_properties(
-    dimension: &mut cadcraft_doc::Dimension,
-    params: &Value,
-    style: Option<&String>,
-    overrides: &serde_json::Map<String, Value>,
-) -> bool {
-    let mut new_text = false;
-    if let Some(v) = str_param(params, "textOverride") {
-        dimension.text = v.to_string();
-        dimension.block = None;
-        new_text = true;
-    }
-    if let Some(st) = style {
-        dimension.style.clone_from(st);
-        dimension.block = None;
-    }
-    if !overrides.is_empty() {
-        dimension.overrides.extend(overrides.clone());
-        dimension.block = None;
-    }
-    new_text
-}
-
-fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
-    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
-
-    if let Some(v) = str_param(params, "pattern") {
-        if !hatch.pattern.eq_ignore_ascii_case(v) {
-            hatch.pattern_lines = super::hatch::lines_for(v);
-        }
-        hatch.pattern = v.to_ascii_uppercase();
-        // The old pattern's definition lines no longer apply.
-        hatch.pattern_lines.clear();
-        hatch.solid = hatch.pattern == "SOLID";
-        if !hatch.solid {
-            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
-            hatch.gradient = None;
-        }
-    }
-    if let Some(x) = number("scale").filter(|x| *x > 0.0) {
-        hatch.scale = x;
-    }
-    if let Some(x) = number("angle") {
-        hatch.angle = x.to_radians();
-    }
-    // Background colour: a colour fills the area under the pattern; "None" none.
-    match params.get("background") {
-        Some(Value::Null) => hatch.background = None,
-        Some(v) if v.as_str().is_some_and(|s| s.trim().eq_ignore_ascii_case("none") || s.trim().is_empty()) => hatch.background = None,
-        Some(v) => {
-            if let Some(c) = parse_color(v) {
-                hatch.background = Some(c);
-            }
-        }
-        None => {}
-    }
-}
-
-struct CommonEntityProperties<'a> {
-    anno_scale: &'a cadcraft_doc::AnnoScale,
-    color: Option<Color>,
-    linetype: Option<&'a str>,
-    lineweight: Option<Lineweight>,
-    transparency: Option<Transparency>,
-    thickness: Option<f64>,
-}
-
-fn set_common_properties(entity: &mut cadcraft_doc::Entity, params: &Value, common: &CommonEntityProperties<'_>) {
-    if let Some(annotative) = params.get("annotative").and_then(Value::as_bool) {
-        cadcraft_doc::set_annotative(entity, annotative, common.anno_scale);
-    }
-    if let Some(layer) = str_param(params, "layer") {
-        entity.common.layer = layer.to_string();
-    }
-    if let Some(color) = common.color {
-        entity.common.color = color;
-    }
-    if let Some(linetype) = common.linetype {
-        entity.common.linetype = linetype.to_string();
-    }
-    if let Some(lineweight) = common.lineweight {
-        entity.common.lineweight = lineweight;
-    }
-    if let Some(scale) = params.get("ltscale").and_then(Value::as_f64).filter(|scale| *scale > 0.0) {
-        entity.common.ltscale = scale;
-    }
-    if let Some(transparency) = common.transparency {
-        entity.common.transparency = transparency;
-    }
-    if let Some(thickness) = common.thickness {
-        entity.common.thickness = thickness;
-    }
-    if let Some(visible) = params.get("visible").and_then(Value::as_bool) {
-        entity.common.visible = visible;
-    }
 }
 
 fn run_color(s: &mut Session, p: &Value) -> Result<Value> {
@@ -978,6 +457,8 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("style", "bad style name"));
     }
     let d = s.doc_mut()?;
+    // As it was (none for a new style), so dimensions are redrawn only when it changes.
+    let before = d.text_style(&name).cloned();
     let idx = match d.text_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
         Some(i) => i,
         None => {
@@ -1012,6 +493,13 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
                 *slot = b;
             }
         }
+    }
+    // Dimensions whose text uses the style drop the geometry they were read with when it
+    // changed: their text changes with it. Only making it current keeps that geometry.
+    if before.as_ref() != d.text_styles.get(idx) {
+        let text_style_of: std::collections::HashMap<String, String> =
+            d.dim_styles.iter().map(|st| (st.name.to_ascii_lowercase(), st.text_style.clone())).collect();
+        regen_dims(d, |dm| dim_text_style(dm, &text_style_of).eq_ignore_ascii_case(&name))?;
     }
     if bool_or(p, "current", true) {
         d.header.set_str("TEXTSTYLE", &name);
@@ -1081,17 +569,29 @@ pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
+            out.extend(super::blocks::object_attribs(e).iter().flat_map(attrib_text_styles));
             match &e.kind {
                 EntityKind::Text(t) => out.push(t.style.clone()),
                 EntityKind::MText(t) => out.push(t.style.clone()),
-                EntityKind::AttDef(a) => out.push(a.text.style.clone()),
-                EntityKind::Insert(i) => out.extend(i.attribs.iter().map(|a| a.text.style.clone())),
+                EntityKind::AttDef(a) => out.extend(attrib_text_styles(a)),
                 EntityKind::MLeader(m) => out.extend(m.text.iter().map(|t| t.style.clone())),
+                // A dimension's own text style (a DIMTXSTY override), which a rename follows too.
+                EntityKind::Dimension(dm) => out.extend(
+                    dm.overrides
+                        .iter()
+                        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
+                        .filter_map(|(_, v)| super::blocks::purge::override_name(v)),
+                ),
                 _ => {}
             }
         }
     }
     out
+}
+
+/// The text styles of an attribute or attribute definition, its multiline text included.
+fn attrib_text_styles(a: &cadcraft_doc::Attrib) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(a.text.style.clone()).chain(a.multiline.iter().map(|m| m.mtext.style.clone()))
 }
 
 fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1123,6 +623,7 @@ fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
         EntityKind::AttDef(a) => a.text.style.eq_ignore_ascii_case(&from),
         EntityKind::Insert(i) => i.attribs.iter().any(|a| a.text.style.eq_ignore_ascii_case(&from)),
         EntityKind::MLeader(m) => m.text.iter().any(|t| t.style.eq_ignore_ascii_case(&from)),
+        EntityKind::Dimension(dm) => dm.overrides.iter().any(|(k, v)| is_text_style_override(k, v, &from)),
         _ => false,
     };
     let repoint = |k: &mut EntityKind| match k {
@@ -1131,6 +632,8 @@ fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
         EntityKind::AttDef(a) => fix(&mut a.text.style),
         EntityKind::Insert(i) => i.attribs.iter_mut().for_each(|a| fix(&mut a.text.style)),
         EntityKind::MLeader(m) => m.text.iter_mut().for_each(|t| fix(&mut t.style)),
+        // A dimension's own text style (a DIMTXSTY override).
+        EntityKind::Dimension(dm) => dm.overrides.iter_mut().filter(|(k, v)| is_text_style_override(k, v, &from)).for_each(|(_, v)| *v = json!(to)),
         _ => {}
     };
     let mut hs: Vec<cadcraft_doc::Handle> = d.model.iter().filter(|e| uses(&e.kind)).map(|e| e.handle).collect();
@@ -1180,7 +683,14 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if name.is_empty() || name.len() > 255 {
         return Err(bad("dimstyle", "bad style name"));
     }
+    // A new style's name is one -DIMSTYLE takes (no `~`, which its Restore reads as compare, or
+    // wildcards); a style read from a file keeps the name it has.
+    if s.doc()?.dim_style(&name).is_none() {
+        super::dimstyle_cli::check_name(&name).map_err(|_| bad("dimstyle", "bad style name"))?;
+    }
     let d = s.doc_mut()?;
+    // As it was (none for a new style), so dimensions are redrawn only when it changes.
+    let before = d.dim_style(&name).cloned();
     let base = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
     let idx = match d.dim_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
         Some(i) => i,
@@ -1195,6 +705,12 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
             src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
         rejected = st.apply_fields(&fields);
     }
+    // Dimensions with the style drop the geometry they were read with when it changed, so they
+    // show the edit (as AutoCAD updates every dimension that uses a style; their overrides still
+    // win). Only making it current keeps that geometry.
+    if before.as_ref() != d.dim_styles.get(idx) {
+        regen_dims(d, |dm| dm.style.eq_ignore_ascii_case(&name))?;
+    }
     if bool_or(p, "current", true) {
         d.header.set_str("DIMSTYLE", &name);
     }
@@ -1206,7 +722,8 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if !rejected.is_empty()
         && let Some(o) = out.as_object_mut()
     {
-        o.insert("ignored".into(), json!(rejected));
+        o.insert("ignored".into(), json!(rejected.clone()));
+        o.insert("message".into(), json!(format!("Ignored invalid value for: {}", rejected.join(", "))));
     }
     Ok(out)
 }
@@ -1235,6 +752,44 @@ fn run_dimstyle_current(s: &mut Session, p: &Value) -> Result<Value> {
     d.header.set_str("DIMSTYLE", &n);
     d.sync_dim_vars();
     Ok(dimstyles_json(d))
+}
+
+/// Dimensions (in model space, layouts and block definitions) that `uses` matches drop the
+/// geometry block they were read with, so they are drawn and saved from their style again.
+pub(super) fn regen_dims(d: &mut cadcraft_doc::Drawing, uses: impl Fn(&cadcraft_doc::Dimension) -> bool) -> Result<()> {
+    let stale = |e: &cadcraft_doc::Entity| matches!(&e.kind, EntityKind::Dimension(dm) if dm.block.is_some() && uses(dm));
+    let regen = |e: &mut cadcraft_doc::Entity| {
+        if let EntityKind::Dimension(dm) = &mut e.kind {
+            dm.block = None;
+        }
+    };
+    let mut hs: Vec<cadcraft_doc::Handle> = d.model.iter().filter(|e| stale(e)).map(|e| e.handle).collect();
+    hs.extend(d.layouts.iter().flat_map(|l| l.entities.iter().filter(|e| stale(e)).map(|e| e.handle)));
+    for h in hs {
+        d.modify_entity(h, regen)?;
+    }
+    for block in d.blocks.values_mut() {
+        let hs: Vec<cadcraft_doc::Handle> = block.entities.iter().filter(|e| stale(e)).map(|e| e.handle).collect();
+        if !hs.is_empty() {
+            let b = std::sync::Arc::make_mut(block);
+            for h in hs {
+                b.entities.modify(h, regen);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The text style a dimension's text is drawn with: its DIMTXSTY override, else its style's
+/// (`text_style_of`: lower-case dimension style name → text style).
+fn dim_text_style(dm: &cadcraft_doc::Dimension, text_style_of: &std::collections::HashMap<String, String>) -> String {
+    let own = dm.overrides.iter().find(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle")).and_then(|(_, v)| v.as_str());
+    own.map(str::to_string).or_else(|| text_style_of.get(&dm.style.to_ascii_lowercase()).cloned()).unwrap_or_else(|| "Standard".into())
+}
+
+/// Whether a dimension override `k: v` names text style `style`.
+fn is_text_style_override(k: &str, v: &Value, style: &str) -> bool {
+    cadcraft_doc::DimStyle::field_name(k) == Some("textStyle") && v.as_str().is_some_and(|n| n.eq_ignore_ascii_case(style))
 }
 
 fn dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(cadcraft_doc::Space, cadcraft_doc::Handle)> {
@@ -1279,6 +834,7 @@ fn block_dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(String, cadcr
 fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
     let from = str_param(p, "from").ok_or_else(|| bad("dimstyle.rename", "`from` is required"))?.to_string();
     let to = str_param(p, "to").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("dimstyle.rename", "`to` is required"))?.to_string();
+    let to = super::dimstyle_cli::check_name(&to).map_err(|_| bad("dimstyle.rename", "bad style name"))?;
     let d = s.doc_mut()?;
     if from.eq_ignore_ascii_case("Standard") {
         return Err(bad("dimstyle.rename", "the Standard style cannot be renamed"));
@@ -1553,102 +1109,6 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("rename", "unsupported table")),
     }
     ok()
-}
-
-/// An MTEXT attachment (1..=9) from a justification code: TL TC TR ML MC MR BL BC BR (or 1..9).
-fn mtext_attach(j: &str) -> Option<u8> {
-    let u = j.trim().to_ascii_uppercase();
-    ["TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]
-        .iter()
-        .position(|c| *c == u)
-        .and_then(|i| u8::try_from(i + 1).ok())
-        .or_else(|| u.parse::<u8>().ok().filter(|a| (1..=9).contains(a)))
-}
-
-/// Give text another justification without moving it: the point it is placed by moves so the
-/// letters stay where they are (aligned and fit text span the text's own width).
-fn rejustify_text(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::Text, h: cadcraft_doc::HAlign, v: cadcraft_doc::VAlign) {
-    use cadcraft_doc::{HAlign, VAlign};
-    let before = cadcraft_render::place_text_entity(d, t, &t.value).1;
-    let font = d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font, st.vertical)).unwrap_or_default();
-    // Aligned and fit text take their size and angle from the two points: leaving that
-    // justification, the text keeps the height (aligned), width factor (fit) and angle it was
-    // drawn with.
-    if matches!(t.halign, HAlign::Aligned | HAlign::Fit)
-        && h != t.halign
-        && let Some(p2) = t.align_pt
-    {
-        let (a, b) = (t.insert.xy(), p2.xy());
-        let span = a.dist(b);
-        let natural = cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor);
-        if span > 1e-12 && natural > 1e-12 && span.is_finite() && natural.is_finite() {
-            let k = span / natural;
-            if t.halign == HAlign::Aligned {
-                t.height *= k;
-            } else {
-                t.width_factor *= k;
-            }
-            t.rotation = a.angle_to(b);
-        }
-    }
-    // The baseline's start: where left-baseline text at the same spot would begin.
-    let mut left = t.clone();
-    (left.halign, left.valign, left.align_pt) = (HAlign::Left, VAlign::Baseline, None);
-    let at = t.justify_point();
-    left.insert = cadcraft_geom::Vec3::new(at.x, at.y, t.insert.z);
-    let lb = cadcraft_render::place_text_entity(d, &left, &t.value).1;
-    let start = if before.is_empty() || lb.is_empty() { t.insert.xy() } else { at + (before.min - lb.min) };
-    let width = match t.halign {
-        HAlign::Aligned | HAlign::Fit => t.align_pt.map_or(0.0, |a| a.xy().dist(t.insert.xy())),
-        _ => cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor),
-    };
-    let z = t.insert.z;
-    let v3 = |p: Vec2| cadcraft_geom::Vec3::new(p.x, p.y, z);
-    t.halign = h;
-    t.valign = v;
-    t.insert = v3(start);
-    match (h, v) {
-        (HAlign::Left, VAlign::Baseline) => t.align_pt = None,
-        (HAlign::Aligned | HAlign::Fit, _) => {
-            t.valign = VAlign::Baseline;
-            t.align_pt = Some(v3(start + Vec2::from_angle(t.rotation) * width.max(t.height * 0.1)));
-        }
-        _ => {
-            // Place by the start, then shift by how far the letters moved.
-            t.align_pt = Some(v3(start));
-            let after = cadcraft_render::place_text_entity(d, t, &t.value).1;
-            if !before.is_empty() && !after.is_empty() {
-                let shift = before.min - after.min;
-                if shift.is_finite() {
-                    for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                        q.x += shift.x;
-                        q.y += shift.y;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Give multiline text another attachment without moving it: the insertion point moves to the
-/// matching point of the text's box.
-fn rejustify_mtext(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::MText, attach: u8) {
-    // Laid out unrotated, at the same insertion point: the letters' shift between the two
-    // attachments, turned back by the rotation.
-    let mut flat = t.clone();
-    flat.rotation = 0.0;
-    let before = cadcraft_render::layout_mtext_entity(d, &flat).bounds;
-    flat.attach = attach;
-    let after = cadcraft_render::layout_mtext_entity(d, &flat).bounds;
-    t.attach = attach;
-    if before.is_empty() || after.is_empty() {
-        return;
-    }
-    let shift = (before.min - after.min).rotate(t.rotation);
-    if shift.is_finite() {
-        t.insert.x += shift.x;
-        t.insert.y += shift.y;
-    }
 }
 
 #[cfg(test)]

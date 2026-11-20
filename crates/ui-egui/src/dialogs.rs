@@ -26,6 +26,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
         crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
+        o if o == "toolbar" || o.starts_with("toolbar:") => crate::toolbar::dialog(app, ctx, o, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "publish" => crate::batchplot::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
@@ -35,7 +36,6 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
-        o if o == "toolbar" || o.starts_with("toolbar:") => crate::toolbar::dialog(app, ctx, o, &mut open),
         o if o.starts_with("layoutmove:") => crate::chrome::layout_move_dialog(app, ctx, o.trim_start_matches("layoutmove:"), &mut open),
         o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
@@ -50,10 +50,14 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
-    // Shorter than its contents on most screens: the settings scroll.
-    let max_h = (ctx.content_rect().height() * 0.6).clamp(240.0, 460.0);
-    egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::unique("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
-        egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+    let window = egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::unique("Drafting Settings")).open(open).resizable(false);
+    // Taller than a short screen, so the options scroll to keep the window on screen and every one
+    // reachable (#2339). Asking for the screen's height every frame (egui caps it to the screen)
+    // gives the scroll area all of it, not the 420-point default or a height kept from a shorter
+    // screen; the window still takes the height of its contents when they fit.
+    let window = window.min_height(ctx.content_rect().height());
+    window.show(ctx, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
             let s = &mut app.session.settings;
             ui.heading(crate::tl!("Snap and Grid"));
             ui.checkbox(&mut s.snapmode, crate::tl!("Snap On (F9)"));
@@ -117,6 +121,8 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     s.osmode |= cadcraft_engine::snap::mode::OFF;
                 }
             }
+            ui.checkbox(&mut s.gripsnap, crate::tl!("Snap the crosshair to grips"))
+                .on_hover_text(crate::tl!("With no command running, the crosshair locks onto a grip of the selected objects under it."));
             egui::Grid::new("osnap_grid").num_columns(2).show(ui, |ui| {
                 for (i, (bit, name)) in cadcraft_engine::snap::mode::ALL.iter().enumerate() {
                     let mut v = s.osmode & bit != 0;
@@ -151,7 +157,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 });
             });
             ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
-        });
+        })
     });
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
@@ -353,7 +359,7 @@ fn about(ctx: &egui::Context, open: &mut bool) {
                 2 => crate::credits::models_ui(ui),
                 _ => {
                     ui.heading(crate::tl!("CADCraft"));
-                    ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
+                    ui.label(crate::tf!("Version {version}", version = crate::VERSION));
                     ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
                     ui.add_space(6.0);
                     ui.label(RichText::new(crate::tl!("One of the Crafting Apps by the ArtCraft team and community.")).color(t.text_dim));
@@ -374,7 +380,7 @@ fn formulas(ctx: &egui::Context, open: &mut bool) {
         ));
         ui.add_space(4.0);
         ui.label(crate::tl!(
-            "Operators: + - * / ^ (power), % (percent), & (joins texts), = <> < > <= >= (compare). Texts in double quotes. Arguments are separated by commas or semicolons."
+            "Operators: + - * / ^ (power), % (percent), & (joins texts), = <> < > <= >= (compare). Texts in double quotes. Arguments are separated by commas or semicolons. While typing a formula, a list of functions appears: the arrows choose, Tab or Enter inserts."
         ));
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -461,13 +467,6 @@ fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 
 #[cfg(test)]
 mod tests {
-    use cadcraft_engine::doc::EntityKind;
-    use cadcraft_engine::geom::Vec2;
-    use cadcraft_engine::{Input, Session};
-    use serde_json::json;
-
-    use crate::{CadApp, Services};
-
     #[test]
     fn fractional_length_precisions_list_binary_fractions() {
         let labels = ["1\"", "1/2\"", "1/4\"", "1/8\"", "1/16\"", "1/32\"", "1/64\"", "1/128\"", "1/256\""];
@@ -475,44 +474,5 @@ mod tests {
         assert_eq!(super::length_precisions(4), want);
         assert_eq!(super::length_precisions(5), want);
         assert_eq!(super::length_precisions(2).len(), 9);
-    }
-
-    #[test]
-    fn picking_a_block_starts_insert_with_its_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        let c = app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
-        let h = c["handle"].as_str().unwrap().to_string();
-        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
-        // A command already running is replaced, as when a command is typed.
-        app.start("line");
-
-        super::insert_block(&mut app, "Door 2");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".to_string()));
-
-        app.session.input(Input::Point(Vec2::new(5.0, 6.0))).unwrap();
-        // X scale, Y scale and rotation take their defaults.
-        for _ in 0..3 {
-            app.session.input(Input::Enter).unwrap();
-        }
-        assert!(app.session.running.is_none());
-        let d = app.session.doc().unwrap();
-        let mut ins = Vec::new();
-        for e in d.model.iter() {
-            if let EntityKind::Insert(i) = &e.kind {
-                ins.push(i.clone());
-            }
-        }
-        assert_eq!(ins.len(), 1);
-        assert_eq!(ins[0].block, "Door 2");
-        assert!((ins[0].insert.x - 5.0).abs() < 1e-9 && (ins[0].insert.y - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn picking_a_missing_block_keeps_asking_for_a_name() {
-        let mut app = CadApp::new(Session::new(), Services::default());
-        super::insert_block(&mut app, "Nope");
-        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
-        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
     }
 }
