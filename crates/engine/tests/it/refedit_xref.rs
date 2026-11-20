@@ -22,12 +22,28 @@ fn hooks() {
     });
 }
 
-/// A fresh folder for one test.
-fn folder(tag: &str) -> PathBuf {
+/// A fresh folder for one test, removed when the test ends however it ends (a skip, a failed
+/// assertion).
+struct Folder(PathBuf);
+
+impl std::ops::Deref for Folder {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn folder(tag: &str) -> Folder {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("refedit-xref").join(format!("{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Folder(dir)
 }
 
 fn save(d: &Drawing, path: &Path) {
@@ -76,7 +92,7 @@ fn site() -> (Drawing, Handle) {
 }
 
 /// A host drawing (saved as host.dxf) with site.dxf attached at (100, 0).
-fn attached(tag: &str) -> (Session, PathBuf, Handle, String) {
+fn attached(tag: &str) -> (Session, Folder, Handle, String) {
     hooks();
     let dir = folder(tag);
     let (d, wall) = site();
@@ -107,6 +123,8 @@ fn find_line(s: &Session, hs: &[String]) -> String {
 fn editing_an_xref_writes_its_drawing_back_with_a_backup() {
     let (mut s, dir, wall, insert) = attached("save");
     let file = dir.join("site.dxf");
+    // A layer of the host only, current for what is drawn during the edit.
+    s.execute("layer.new", &json!({ "name": "Added", "current": true })).unwrap();
     let r = s.execute("refedit", &json!({ "handle": insert })).unwrap();
     assert_eq!(r["xref"]["name"], "site");
     let work = working(&r);
@@ -114,7 +132,6 @@ fn editing_an_xref_writes_its_drawing_back_with_a_backup() {
     // Everything but the working set is locked while editing, and drawn faded.
     let l = find_line(&s, &work);
     s.execute("move", &json!({ "handles": [l], "delta": [0, 5] })).unwrap();
-    s.execute("layer", &json!({ "option": "make", "name": "Added" })).ok();
     s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
     let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
     assert_eq!(out["objects"], 3);
@@ -131,13 +148,13 @@ fn editing_an_xref_writes_its_drawing_back_with_a_backup() {
     assert!((ln.a.y - 5.0).abs() < 1e-9 && (ln.a.x).abs() < 1e-9, "{ln:?}");
     assert_eq!(moved.common.layer, "Walls", "the xref's layer loses its prefix");
     let new_line = back.model.iter().find(|e| matches!(&e.kind, EntityKind::Line(l) if (l.a.y - 20.0).abs() < 1e-9)).unwrap();
-    assert!(back.layer(&new_line.common.layer).is_some(), "a host layer the new line uses comes along");
+    assert_eq!(new_line.common.layer, "Added");
+    assert!(back.layer("Added").is_some(), "a host layer the new line uses comes along");
     // The host shows the xref as written (loaded again), and nothing of the edit is left.
     let d = s.doc().unwrap();
     assert!(d.refedit.is_none());
     assert_eq!(d.block("site").unwrap().entities.len(), 3);
     assert_eq!(d.block("site").unwrap().xref_status, XrefStatus::Loaded);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -159,7 +176,6 @@ fn a_block_of_the_xref_is_written_into_that_block() {
     let back = read(&dir.join("site.dxf"));
     let EntityKind::Circle(c) = &back.block("Tree").unwrap().entities.iter().next().unwrap().kind else { panic!() };
     assert!((c.radius - 2.0).abs() < 1e-9);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -207,7 +223,6 @@ fn locked_read_only_or_changed_files_are_not_overwritten() {
     let ih = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Insert(_))).unwrap().handle;
     let e = s.execute("refedit", &json!({ "handle": ih.hex() })).unwrap_err().to_string();
     assert!(e.contains("another drawing tab"), "{e}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -294,7 +309,6 @@ fn links_planted_beside_the_xref_are_not_written_through() {
     assert_eq!(read(&file).model.len(), 3, "and holds the edit");
     assert!(is_plain_file(&dir.join("site.dxf.bak")), "the link at the backup is replaced by the backup");
     assert_eq!(read(&dir.join("site.dxf.bak")).model.len(), 2);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Review of #2355: the xref's own path turned into a link to another file during the edit (here
@@ -323,7 +337,6 @@ fn an_xref_path_turned_into_a_link_during_the_edit_is_not_written() {
     assert!(!elsewhere.join("victim.dxf.bak").exists() && !dir.join("site.dxf.bak").exists(), "no backup either");
     assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
     s.execute("refclose", &json!({ "option": "discard" })).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Review of #2355: `site.dxf` and `site.dwg` in one folder both used to back up to `site.bak`,
@@ -351,7 +364,6 @@ fn xrefs_of_one_name_in_one_folder_keep_their_own_backups() {
     assert_eq!(std::fs::read(dir.join("site.dxf.bak")).unwrap(), old_dxf, "the DXF's previous file");
     assert_eq!(std::fs::read(dir.join("site.bak")).unwrap(), old_dwg, "the DWG's previous file");
     assert_eq!((read(&dxf).model.len(), read(&dwg).model.len()), (3, 3), "both hold their edit");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A host drawing (host.dxf in `dir`) with `file` of `dir` attached as xref `name` at (100, 0).
@@ -401,7 +413,6 @@ fn an_xref_is_written_back_in_the_version_it_was_read_in() {
     assert!(bin_bytes.starts_with(b"AutoCAD Binary DXF"), "the binary DXF stays binary");
     assert_eq!(read(&bin).header.get("ACADVER").and_then(cadcraft_engine::doc::HVal::as_str), Some("AC1024"), "and 2010");
     assert_eq!((read(&dwg).model.len(), read(&dxf).model.len(), read(&bin).model.len()), (3, 3, 3), "each holds its edit");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Review of #2355: an R12 DXF xref came back as an R2000 one. CADCraft doesn't write R12, so the
@@ -447,7 +458,6 @@ EOF
     assert!(e.contains("AC1009") && e.contains("XOPEN"), "{e}");
     assert!(s.doc().unwrap().refedit.is_none());
     assert_eq!(std::fs::read_to_string(dir.join("r12.dxf")).unwrap(), r12, "the file is untouched");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Review of #2355: SAVE says what a file can't keep; the write-back said nothing. A 2013 DXF xref
@@ -513,5 +523,5 @@ EOF
     let warning = s.log.iter().find(|m| m.contains("Not saved in the DXF file")).expect("a warning on the command line");
     assert!(warning.contains("1 3DSOLID") && warning.contains("solid.dxf.bak"), "{warning}");
     assert!(std::fs::read_to_string(dir.join("solid.dxf.bak")).unwrap().contains("3DSOLID"), "the backup still has it");
-    let _ = std::fs::remove_dir_all(&dir);
 }
+
