@@ -51,3 +51,20 @@ fn closed_stdout_still_runs_the_commands_and_saves() {
     assert_eq!(out.status.code(), Some(1));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn lisp_command_pause_uses_scripted_inputs() {
+    let out = Command::new(env!("CARGO_BIN_EXE_cadcraft-cli"))
+        .args([
+            "run",
+            "--metric",
+            "--cmd",
+            r#"lisp {"code": "(command \"_.line\" pause pause \"\") (cdr (assoc 11 (entget (entlast))))", "inputs": [[0, 0], [10, 5]]}"#,
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{:?}: {stdout} {}", out.status, String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("(10.0 5.0 0.0)"), "{stdout}");
+    assert!(!stdout.contains("*Cancel*"), "{stdout}");
+}
