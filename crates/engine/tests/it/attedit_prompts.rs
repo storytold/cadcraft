@@ -231,6 +231,7 @@ fn dash_attedit_edits_a_multiline_attributes_text() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        frame: false,
     };
     set_t(&mut s, h, |a| a.multiline = Some(MultilineAttrib { mtext: mtext.clone(), read_as: "abc".into() }));
     let before = attrib_t(&s, h).text.insert;
