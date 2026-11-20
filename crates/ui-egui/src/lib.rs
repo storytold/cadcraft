@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod arrow_combo;
 pub mod autosave;
 pub mod bedit;
 pub mod bidi_edit;
@@ -32,7 +33,6 @@ pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
-pub mod dimstyles;
 pub mod docking;
 pub mod editor_glyphs;
 pub mod fault;
@@ -48,6 +48,8 @@ pub mod table_editor;
 pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
+
+pub mod blocks_palette;
 
 pub mod dyngrips;
 pub mod dyninput;

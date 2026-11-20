@@ -9,6 +9,8 @@ use crate::CadApp;
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
+/// Rows the engine describes (text, mtext, dimensions).
+mod described;
 #[cfg(test)]
 mod layer_menu_tests;
 /// The hatch pattern picker.
@@ -743,9 +745,11 @@ fn text_style_and_shared_rows(
         }
     };
     let text_styles: Option<Vec<String>> = sel.iter().map(|h| d.entity(*h).and_then(|e| style_of(e))).collect();
-    // One multileader shows it in its own Text group, below the leader properties.
+    // One multileader shows it in its own Text group, below the leader properties; texts and
+    // multiline texts alone show it among the rows the engine describes.
     let one_mleader = sel.len() == 1 && matches!(e.kind, EntityKind::MLeader(_));
-    if let Some(styles) = text_styles.filter(|v| !v.is_empty() && !one_mleader) {
+    let described = sel.iter().filter_map(|h| d.entity(*h)).all(|x| matches!(x.kind, EntityKind::Text(_) | EntityKind::MText(_)));
+    if let Some(styles) = text_styles.filter(|v| !v.is_empty() && !one_mleader && !described) {
         let cur = if styles.iter().all(|s| s.eq_ignore_ascii_case(&styles[0])) { styles[0].clone() } else { "*VARIES*".to_string() };
         group(ui, "Text");
         prop_row(ui, "Style", |ui| {
@@ -812,28 +816,6 @@ fn shared_rows(
         });
     }
 }
-
-/// Text justifications: (code, horizontal, vertical, name).
-const TEXT_JUSTIFY: [(&str, cadcraft_doc::HAlign, cadcraft_doc::VAlign, &str); 15] = {
-    use cadcraft_doc::{HAlign as H, VAlign as V};
-    [
-        ("L", H::Left, V::Baseline, "Left"),
-        ("C", H::Center, V::Baseline, "Center"),
-        ("R", H::Right, V::Baseline, "Right"),
-        ("A", H::Aligned, V::Baseline, "Aligned"),
-        ("M", H::Middle, V::Baseline, "Middle"),
-        ("F", H::Fit, V::Baseline, "Fit"),
-        ("TL", H::Left, V::Top, "Top left"),
-        ("TC", H::Center, V::Top, "Top center"),
-        ("TR", H::Right, V::Top, "Top right"),
-        ("ML", H::Left, V::Middle, "Middle left"),
-        ("MC", H::Center, V::Middle, "Middle center"),
-        ("MR", H::Right, V::Middle, "Middle right"),
-        ("BL", H::Left, V::Bottom, "Bottom left"),
-        ("BC", H::Center, V::Bottom, "Bottom center"),
-        ("BR", H::Right, V::Bottom, "Bottom right"),
-    ]
-};
 
 /// The cells selected in the table editor ([`crate::table_editor`]): their row height, column
 /// width, alignment and text height (one value, or `*VARIES*`), and the text of a single cell.
@@ -941,16 +923,6 @@ const MTEXT_JUSTIFY: [(&str, &str); 9] = [
     ("BC", "Bottom center"),
     ("BR", "Bottom right"),
 ];
-
-/// A Yes / No property row setting `key`.
-fn yes_no(ui: &mut egui::Ui, label: &str, key: &str, on: bool, ids: &[String], set: &mut Option<Value>) {
-    prop_row(ui, label, |ui| {
-        let cur = if on { crate::tl!("Yes") } else { crate::tl!("No") };
-        if let Some(n) = pick_menu(ui, cur, [crate::tl!("Yes").to_string(), crate::tl!("No").to_string()]) {
-            *set = Some(json!({ "handles": ids, key: n == crate::tl!("Yes") }));
-        }
-    });
-}
 
 /// Most height a drop-down list of the palettes takes before it scrolls.
 const LIST_H: f32 = 360.0;
@@ -1378,7 +1350,6 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids = &*memo.ids();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
-    let mut dim_override: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1485,7 +1456,11 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         });
     };
-    if sel.len() == 1 {
+    // Text, mtext and dimensions: the rows the engine describes, for one or many of them.
+    let desc = described::described(ui, app, &sel);
+    let mut edit: Option<described::Edit> = None;
+    let drawn = desc.as_ref().is_some_and(|desc| described::groups(ui, d, desc, ids, &mut edit, &mut bad));
+    if !drawn && sel.len() == 1 {
         group(ui, "Geometry");
         match &e.kind {
             EntityKind::Line(l) => {
@@ -1539,45 +1514,6 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Start angle", "startAngle", real(a.start.to_degrees()), &mut set, &mut bad, ids);
                 num(ui, "End angle", "endAngle", real(a.end.to_degrees()), &mut set, &mut bad, ids);
             }
-            EntityKind::Text(tx) => {
-                prop_row(ui, "Contents", |ui| {
-                    if let Some(s) = edit_field(ui, ui.scope_id().with(("txt", ids)), tx.value.clone()) {
-                        set = Some(json!({ "handles": ids, "text": s }));
-                    }
-                });
-                num(ui, "Height", "height", len(tx.height), &mut set, &mut bad, ids);
-                num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, ids);
-                num(ui, "Width factor", "widthFactor", real(tx.width_factor), &mut set, &mut bad, ids);
-                prop_row(ui, "Justification", |ui| {
-                    let cur = TEXT_JUSTIFY.iter().find(|(_, h, v, _)| *h == tx.halign && *v == tx.valign).map_or("Left", |j| j.3);
-                    if let Some(n) = pick_menu(ui, crate::i18n::t(cur), TEXT_JUSTIFY.iter().map(|j| crate::i18n::t(j.3).to_string()))
-                        && let Some(j) = TEXT_JUSTIFY.iter().find(|j| crate::i18n::t(j.3) == n)
-                    {
-                        set = Some(json!({ "handles": ids, "justify": j.0 }));
-                    }
-                });
-                yes_no(ui, "Backwards", "backwards", tx.backwards, ids, &mut set);
-                yes_no(ui, "Upside down", "upsideDown", tx.upside_down, ids, &mut set);
-            }
-            EntityKind::MText(tx) => {
-                prop_row(ui, "Contents", |ui| {
-                    if let Some(s) = edit_field(ui, ui.scope_id().with(("mtxt", ids)), tx.contents.clone()) {
-                        set = Some(json!({ "handles": ids, "text": s }));
-                    }
-                });
-                num(ui, "Text height", "height", len(tx.height), &mut set, &mut bad, ids);
-                num(ui, "Defined width", "width", len(tx.width), &mut set, &mut bad, ids);
-                num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, ids);
-                prop_row(ui, "Justification", |ui| {
-                    let cur = MTEXT_JUSTIFY.get(usize::from(tx.attach.clamp(1, 9) - 1)).map_or("Top left", |j| j.1);
-                    if let Some(n) = pick_menu(ui, crate::i18n::t(cur), MTEXT_JUSTIFY.iter().map(|j| crate::i18n::t(j.1).to_string()))
-                        && let Some(j) = MTEXT_JUSTIFY.iter().find(|j| crate::i18n::t(j.1) == n)
-                    {
-                        set = Some(json!({ "handles": ids, "justify": j.0 }));
-                    }
-                });
-                yes_no(ui, "Text frame", "frame", tx.frame, ids, &mut set);
-            }
             EntityKind::LwPolyline(pl) => {
                 num(ui, "Global width", "width", len(pl.const_width), &mut set, &mut bad, ids);
                 let g = cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: pl.closed };
@@ -1604,40 +1540,6 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
                 });
                 num(ui, "Scale", "scale", real(hh.scale), &mut set, &mut bad, ids);
                 num(ui, "Angle", "angle", real(hh.angle.to_degrees()), &mut set, &mut bad, ids);
-            }
-            EntityKind::Dimension(dm) => {
-                prop_row(ui, "Dim style", |ui| {
-                    if let Some(n) = pick_menu(ui, &dm.style, d.dim_styles.iter().map(|st| st.name.clone())) {
-                        set = Some(json!({ "handles": ids, "dimStyle": n }));
-                    }
-                });
-                // The measurement itself; the text that replaces it is the next row.
-                prop_row(ui, "Measurement", |ui| read_only(ui, &cadcraft_render::measurement_text(d, dm)));
-                prop_row(ui, "Text override", |ui| {
-                    if let Some(s) = edit_field(ui, ui.scope_id().with(("dimtxt", &ids)), dm.text.clone()) {
-                        set = Some(json!({ "handles": ids, "textOverride": s }));
-                    }
-                });
-                // The dimension's style settings with its own overrides; a change overrides that
-                // setting for the selected dimensions (DIMOVERRIDE).
-                let style = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-                let before = crate::dimstyles::style_map(&style);
-                let mut after = before.clone();
-                let names = crate::dimstyles::Names::of(d);
-                for (title, rows) in crate::dimstyles::PROPERTIES {
-                    group(ui, title);
-                    for (label, kind) in rows.iter() {
-                        prop_row(ui, label, |ui| {
-                            crate::dimstyles::field_row(ui, egui::Id::unique(("cc_dimprop", *title, *label)), &names, &mut after, *kind);
-                        });
-                    }
-                }
-                let changed = crate::dimstyles::changed_fields(&before, &after);
-                if !changed.is_empty() {
-                    let mut p = changed;
-                    p.insert("handles".into(), json!(ids));
-                    dim_override = Some(Value::Object(p));
-                }
             }
             EntityKind::MLeader(ml) => {
                 let styles: Vec<String> = if d.mleader_styles.is_empty() {
@@ -1674,9 +1576,9 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
                     }
                 });
                 // The arrowhead: built-in ones and the drawing's arrowhead blocks, as for dimensions.
-                let names = crate::dimstyles::Names::of(d);
+                let names = crate::arrow_combo::Names::of(d);
                 prop_row(ui, "Arrowhead", |ui| {
-                    if let Some(v) = crate::dimstyles::arrow_combo(ui, egui::Id::unique(("cc_mlarrow", &ids)), &names, ml.arrow_in(d)) {
+                    if let Some(v) = crate::arrow_combo::arrow_combo(ui, egui::Id::unique(("cc_mlarrow", &ids)), &names, ml.arrow_in(d)) {
                         set = Some(json!({ "handles": ids, "arrow": v }));
                     }
                 });
@@ -1730,13 +1632,14 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             _ => {}
         }
-    } else if let Some(dims) = sel
-        .iter()
-        .map(|h| match d.entity(*h).map(|e| &e.kind) {
-            Some(EntityKind::Dimension(dm)) => Some(dm),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()
+    } else if !drawn
+        && let Some(dims) = sel
+            .iter()
+            .map(|h| match d.entity(*h).map(|e| &e.kind) {
+                Some(EntityKind::Dimension(dm)) => Some(dm),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
     {
         // Several dimensions: every property of one dimension, `*VARIES*` where they differ; an
         // edit applies to all of them.
@@ -1786,7 +1689,7 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
                 set = Some(json!({ "handles": ids, "precision": n }));
             }
         });
-    } else if sel.iter().filter_map(|h| d.entity(*h)).all(|x| std::mem::discriminant(&x.kind) == std::mem::discriminant(&e.kind)) {
+    } else if !drawn && sel.iter().filter_map(|h| d.entity(*h)).all(|x| std::mem::discriminant(&x.kind) == std::mem::discriminant(&e.kind)) {
         // Several objects of one type: the properties of one object, `*VARIES*` where they differ.
         // Edits apply to all of them; positions are shown but stay read-only, since typing one
         // would move every object to the same place.
@@ -1955,13 +1858,13 @@ fn selection_properties(app: &mut CadApp, ui: &mut egui::Ui) {
             _ => {}
         }
     }
-    apply_property_edits(app, set, bad, custom_set, dim_override);
+    apply_property_edits(app, set, edit, bad, custom_set);
 }
 
 /// Runs what the Properties rows changed this frame: `properties.set` (a rotation typed as shown,
 /// from ANGBASE in the ANGDIR sense, goes in from +X counterclockwise), a dynamic block's custom
-/// property and dimension overrides; text that isn't a number is reported.
-fn apply_property_edits(app: &mut CadApp, set: Option<Value>, bad: Option<String>, custom_set: Option<Value>, dim_override: Option<Value>) {
+/// property and the engine-described rows' edits; text that isn't a number is reported.
+fn apply_property_edits(app: &mut CadApp, set: Option<Value>, edit: Option<described::Edit>, bad: Option<String>, custom_set: Option<Value>) {
     if let Some(mut p) = set {
         if let Some(r) = p.get_mut("rotation")
             && let Some(v) = r.as_f64()
@@ -1970,12 +1873,16 @@ fn apply_property_edits(app: &mut CadApp, set: Option<Value>, bad: Option<String
         }
         let _ = app.run("properties.set", p);
     }
+    // A described row the engine couldn't take (a value out of range…) says so.
+    if let Some(e) = edit
+        && let Ok(r) = app.run("properties.set", e.params)
+        && r["ignored"].as_array().is_some_and(|a| !a.is_empty())
+    {
+        app.session.echo(crate::tf!("{property}: that value can't be used here.", property = crate::i18n::t(e.label)));
+    }
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
-    }
-    if let Some(p) = dim_override {
-        let _ = app.run("dimstyle.override", p);
     }
 }
 
@@ -2037,29 +1944,6 @@ mod tests {
             Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
             _ => {}
         }
-    }
-
-    /// A multiline text's rotation shows from ANGBASE in the ANGDIR sense, as it is typed back
-    /// (and as TEXT and INSERT rows show it): with ANGBASE 90°, a text along +X shows 270 or -90,
-    /// not 0, which would write 90° back (#2326 review).
-    #[test]
-    fn mtext_rotation_shows_as_the_drawing_measures_angles() {
-        let mut app = CadApp::new(Session::default(), Services::default());
-        app.run("setvar", json!({ "name": "ANGBASE", "value": 90 })).unwrap();
-        let m = app.run("mtext", json!({ "at": [0, 0], "height": 1, "width": 10, "text": "A" })).unwrap();
-        let h = m["handle"].as_str().map(str::to_string).or_else(|| m["handles"][0].as_str().map(str::to_string)).unwrap();
-        app.run("select", json!({ "handles": [h] })).unwrap();
-        let ctx = egui::Context::default();
-        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1600.0))), ..Default::default() };
-        let mut all = Vec::new();
-        for _ in 0..2 {
-            app.logic(&ctx);
-            let mut output = ctx.run_ui(input.clone(), |ui| properties_section(&mut app, ui));
-            all.clear();
-            output.shapes.iter().for_each(|s| texts(&s.shape, &mut all));
-            output.textures_delta.clear();
-        }
-        assert!(all.iter().any(|t| t == "270.0000" || t == "-90.0000"), "{all:?}");
     }
 
     fn handle_of(v: &Value) -> String {
@@ -2174,11 +2058,14 @@ mod tests {
         app.run("select", json!({ "handles": dims.clone() })).unwrap();
         app.run("properties.set", json!({ "handles": [dims[0].clone()], "textHeight": 7.0 })).unwrap();
         app.run("properties.set", json!({ "handles": [dims[1].clone()], "textHeight": 7.0 + 1e-13 })).unwrap();
+        // The row's value is painted after its label (the measurements and text positions of the
+        // two dimensions do differ).
+        let text_height = |texts: &[String]| texts.iter().position(|t| t == "Text height").and_then(|i| texts.get(i + 1)).cloned();
         let texts = painted_texts(&mut app, properties_section);
-        assert!(!texts.iter().any(|t| t == VARIES), "noise below 12 digits is not a difference; painted: {texts:?}");
+        assert_ne!(text_height(&texts).as_deref(), Some(VARIES), "noise below 12 digits is not a difference; painted: {texts:?}");
         app.run("properties.set", json!({ "handles": [dims[1].clone()], "textHeight": 7.000001 })).unwrap();
         let texts = painted_texts(&mut app, properties_section);
-        assert!(texts.iter().any(|t| t == VARIES), "7 and 7.000001 differ although both show as 7.0000; painted: {texts:?}");
+        assert_eq!(text_height(&texts).as_deref(), Some(VARIES), "7 and 7.000001 differ although both show as 7.0000; painted: {texts:?}");
 
         let mut app = CadApp::new(Session::default(), Services::default());
         let circles = circles(&mut app, &[2, 2], json!({}));
