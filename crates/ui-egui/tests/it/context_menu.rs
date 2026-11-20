@@ -93,6 +93,16 @@ fn clipboard_events_run_the_clipboard_commands() {
     frame(&mut app, vec![egui::Event::Paste("text from another program".into())]);
     assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("pasteclip"));
     assert!(app.session.prompt_text().contains("insertion point"));
+
+    // #2793: another program put an image on the system clipboard (a screenshot), so Ctrl+V
+    // arrives as `PasteImage`, not `Paste`. It pastes the drawing clipboard, as the shortcut
+    // menu's Paste does, instead of doing nothing.
+    app.session.cancel();
+    assert!(app.session.running.is_none());
+    let image = std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::WHITE));
+    frame(&mut app, vec![egui::Event::PasteImage(image)]);
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("pasteclip"));
+    assert!(app.session.prompt_text().contains("insertion point"));
 }
 
 /// (label, id, enabled) of the object snap menu's items (#393).
