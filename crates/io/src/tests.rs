@@ -2592,6 +2592,29 @@ fn autocad_header_dim_variables_are_not_overrides() {
 }
 
 #[test]
+fn dim_variable_overrides_are_saved_in_the_header() {
+    // DIMTAD, DIMDEC and DIMTIH set with SETVAR are overrides of the current style kept in the
+    // header; saving wrote the style's values instead, so they were lost on reopening (#3100).
+    let mut d = Drawing::new_imperial();
+    let st = serde_json::to_value(d.dim_style(&d.header.str("DIMSTYLE", "Standard")).unwrap()).unwrap();
+    let tad = if st["textAbove"].as_i64() == Some(1) { 0 } else { 1 };
+    let dec = if st["decimals"].as_i64() == Some(2) { 3 } else { 2 };
+    let tih = i64::from(st["textInsideHorizontal"].as_bool() != Some(false)) ^ 1;
+    d.header.set_i64("DIMTAD", tad);
+    d.header.set_i64("DIMDEC", dec);
+    d.header.set_i64("DIMTIH", tih);
+    let want = d.dim_overrides();
+    assert_eq!(want.len(), 3, "{want:?}");
+    let back = roundtrip(&d);
+    assert_eq!(back.header.get("DIMTAD").and_then(HVal::as_i64), Some(tad));
+    assert_eq!(back.header.get("DIMDEC").and_then(HVal::as_i64), Some(dec));
+    assert_eq!(back.header.get("DIMTIH").and_then(HVal::as_i64), Some(tih));
+    assert_eq!(back.dim_overrides(), want);
+    // The style itself is unchanged: the values are overrides, not edits.
+    assert_eq!(serde_json::to_value(back.dim_style("Standard").unwrap()).unwrap(), st);
+}
+
+#[test]
 fn mirrored_insert_extrusion_maps_to_negative_x_scale() {
     // A block reference mirrored in AutoCAD is stored with extrusion (0,0,-1); its insertion point,
     // scale and rotation are in that OCS, where x runs the other way: OCS (-10,5) is WCS (10,5).
