@@ -3,9 +3,14 @@
 use std::collections::HashMap;
 
 use cadcraft_color::{Color, Rgb};
-use cadcraft_doc::*;
-use cadcraft_dxf::{Tag, records, sections};
+use cadcraft_doc::{
+    Arc, AssocSnap, Attrib, AttribModes, AttribProps, Block, Circle, Common, DashElement, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Ellipse,
+    Entity, EntityKind, Face3d, Gradient, Group, HAlign, HVal, Handle, Hatch, HatchLoop, Helix, HelixConstrain, Insert, Layer, Layout, Leader, Line,
+    Linetype, Lineweight, LwPolyline, MAX_FRAME_CHARS, MLeaderStyle, MText, MultilineAttrib, NamedView, PageSetup, Point, Polyline3d, RawTag,
+    RayLine, Solid, Table, TableCell, Text, TextStyle, Tolerance, Transparency, Ucs, Unknown, VAlign, Viewport, VportConfig, VportTile, Wipeout,
+};
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
+use craft_dxf::{Tag, records, sections};
 
 use crate::{IoError, Result};
 
@@ -19,7 +24,8 @@ mod tables;
 mod text;
 
 use document::{
-    apply_sortents, count_skipped, outside_sections, parse_entities, place_blocks, place_entities, read_blocks, read_objects, setup_layouts,
+    apply_sortents, count_skipped, dropped_paper_views, outside_sections, parse_entities, place_blocks, place_entities, read_blocks, read_objects,
+    setup_layouts,
 };
 #[cfg(test)]
 use entities::acad_table;
@@ -54,8 +60,13 @@ struct Rx {
     pstyles: HashMap<String, String>,
     /// Upper-case block name → associative array parameters from its BLOCK_RECORD.
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
-    /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
+    /// LAYER record handle (upper case) → layer name (VIEWPORT group 331/341 frozen layers).
     layers: HashMap<String, String>,
+    /// Owner handle, paper flag and enclosing block (upper case) of each generated sheet viewport
+    /// (PAPERVIEW) the reader dropped.
+    paper_views_dropped: Vec<(Option<String>, bool, Option<String>)>,
+    /// Upper-case name of the BLOCK whose entities are being read, if any.
+    block: Option<String>,
 }
 
 /// Read a DXF file into a drawing.
@@ -68,11 +79,12 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
 type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);
 
 /// A layout read from OBJECTS: name, tab order, paper block handle and page setup.
-type LayoutDef = (String, u32, String, PageSetup);
+/// A LAYOUT object: name, tab order, block record, page setup and its limits (groups 10/11).
+type LayoutDef = (String, u32, String, PageSetup, Option<(Vec2, Vec2)>);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
 fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
-    let tags = cadcraft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
+    let tags = craft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
     let secs = sections(&tags);
     if secs.is_empty() {
         return Err(IoError::Format("no sections found".into()));
@@ -88,7 +100,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let mut objs = Objects::default();
     // Every handle another program's file already uses is taken before anything gets a new one:
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
-    // a polyface mesh) would otherwise get handles that records further on still have. A file
+    // a polygon mesh) would otherwise get handles that records further on still have. A file
     // CADCraft wrote names its own next handle, above which its rebuilt records are numbered
     // (#495), so it is left to that.
     let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
@@ -120,6 +132,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let (paper_block_for, first_layout) = setup_layouts(&mut d, &mut layout_objs, &rx);
     place_blocks(&mut d, blocks, &mut rx, &paper_block_for, &first_layout);
     place_entities(&mut d, entities, &rx, &paper_block_for, &first_layout);
+    number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
     crate::dxf_image::resolve(&secs, &mut d);
@@ -133,14 +146,48 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    crate::dxf_clip::read(&mut d);
     d.skipped_records = skipped;
     Ok(d)
 }
 
+/// Viewport ids another program left unknown (ZWCAD writes 69 = -1, read as 0). A layout whose
+/// viewports all lack an id gets them numbered in file order, as DWG readers do; when only
+/// some lack one and none is 1, the first viewport is the sheet and gets id 1. Either way the
+/// sheet keeps id 1, so saving does not add a second sheet viewport ahead of it (#1463). A layout
+/// whose generated sheet (PAPERVIEW) the reader just dropped is left alone: none of its viewports
+/// is the sheet, and numbering one as 1 would lose the generated sheet on the next save.
+fn number_unknown_viewport_ids(d: &mut Drawing, sheet_dropped: &std::collections::HashSet<String>) {
+    for l in d.layouts.iter_mut().filter(|l| !sheet_dropped.contains(&l.name)) {
+        let mut vps: Vec<Entity> = l.entities.iter().filter(|e| matches!(&e.kind, EntityKind::Viewport(_))).map(|e| (**e).clone()).collect();
+        let id = |e: &Entity| if let EntityKind::Viewport(v) = &e.kind { v.id } else { 0 };
+        if vps.iter().all(|e| id(e) == 0) {
+            for (i, e) in vps.iter_mut().enumerate() {
+                if let EntityKind::Viewport(v) = &mut e.kind {
+                    v.id = i as u32 + 1;
+                }
+            }
+        } else if vps.iter().all(|e| id(e) != 1) && vps.first().is_some_and(|e| id(e) == 0) {
+            if let Some(EntityKind::Viewport(v)) = vps.first_mut().map(|e| &mut e.kind) {
+                v.id = 1;
+            }
+        } else {
+            continue;
+        }
+        for e in vps {
+            l.entities.replace(e);
+        }
+    }
+}
+
 /// An entity from the groups of a DXF record of type `kind` (without its `0` group), as the
-/// reader makes it. AutoLISP's `entmake` and `entmod` are built on it.
+/// reader makes it, with plain strings as [`crate::entity_groups`] gives them (not the file's
+/// `^ ` escapes). AutoLISP's `entmake` and `entmod` are built on it.
 pub fn entity_from_groups(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
-    entity(&kind.to_ascii_uppercase(), tags)
+    // AutoLISP's strings are plain: escape them as the file has them (see `entity_groups`).
+    let mut tags = tags.to_vec();
+    mtext_dxf::map_text_groups(kind, &mut tags, mtext_dxf::encode_line);
+    entity(&kind.to_ascii_uppercase(), &tags)
 }
 
 #[cfg(test)]

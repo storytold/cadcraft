@@ -8,6 +8,11 @@ use cadcraft_engine::Session;
 use cadcraft_engine::cmd::resolve_alias;
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 const PGP: &str = "\
@@ -55,10 +60,8 @@ fn an_alias_file_adds_and_overrides_aliases() {
 #[test]
 fn reinit_reads_the_alias_file_again() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("cadcraft-aliases-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("mine.pgp").to_string_lossy().into_owned();
-    std::fs::write(&file, "ZZR, *RECTANG\n").unwrap();
+    let dir = TempDir::new("aliases");
+    let file = dir.file("mine.pgp", "ZZR, *RECTANG\n");
     let mut s = Session::new();
     s.execute("aliasedit", &json!({ "file": file })).unwrap();
     assert_eq!(resolve_alias("zzr"), "rectang");
@@ -70,6 +73,57 @@ fn reinit_reads_the_alias_file_again() {
     let r = s.execute("reinit", &json!({ "text": "ZZS, *SCALE\n" })).unwrap();
     assert_eq!(r["aliases"], json!({ "zzs": "scale" }));
     s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+}
+
+#[test]
+fn a_saved_alias_profile_restores_without_overriding_commands() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = Session::new();
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    s.execute("aliasedit", &json!({ "set": { "zzp": "qsave", "zzcmd": "line" } })).unwrap();
+    let saved = cadcraft_engine::cmd::file::alias_profile();
+    assert_eq!(saved["aliases"]["zzp"], json!("qsave"));
+
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("zzp"), "zzp");
+    cadcraft_engine::cmd::file::restore_aliases(&saved);
+    assert_eq!(resolve_alias("zzp"), "qsave");
+    assert_eq!(resolve_alias("zzcmd"), "line");
+    assert_eq!(resolve_alias("line"), "line", "command names win");
+    assert_eq!(resolve_alias("c"), "circle", "built-in aliases still resolve");
+
+    // Hostile saved entries are skipped, and an oversized set is capped without panicking.
+    let mut hostile = serde_json::Map::new();
+    for i in 0..12_000 {
+        hostile.insert(format!("ZZ{i}"), json!("line"));
+    }
+    hostile.insert("LINE".into(), json!("circle"));
+    hostile.insert("ZZLONG".into(), json!("x".repeat(5000)));
+    hostile.insert("ZZNUM".into(), json!(3));
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": hostile, "file": "mine.pgp" }));
+    assert_eq!(resolve_alias("line"), "line", "a restored alias never overrides a command name");
+    assert_eq!(resolve_alias("zzlong"), "zzlong");
+    assert_eq!(resolve_alias("zzn"), "zzn");
+    let listing = s.execute("aliasedit", &json!({})).unwrap();
+    let restored = listing["aliases"].as_object().map_or(0, serde_json::Map::len);
+    assert!(restored <= cadcraft_engine::cmd::file::MAX_ALIASES, "the restored set is capped, not {restored}");
+    assert!(restored > 9_000, "the valid entries restore, not just {restored}");
+    assert_eq!(listing["file"], json!("mine.pgp"));
+
+    // Skipped entries don't use up the cap: invalid ones sorted first leave a full valid set.
+    let mut first_bad = serde_json::Map::new();
+    for i in 0..cadcraft_engine::cmd::file::MAX_ALIASES {
+        first_bad.insert(format!("A{i:05}"), json!("nosuchcommand"));
+        first_bad.insert(format!("B{i:05}"), json!("line"));
+    }
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": first_bad, "file": null }));
+    let listing = s.execute("aliasedit", &json!({})).unwrap();
+    assert_eq!(listing["aliases"].as_object().map_or(0, serde_json::Map::len), cadcraft_engine::cmd::file::MAX_ALIASES);
+    // A malformed section is skipped without changing what ALIASEDIT holds.
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": { "zzchange": "circle" }, "file": 7 }));
+    assert_eq!(resolve_alias("zzchange"), "zzchange", "a malformed section restores nothing");
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("zz0"), "zz0", "clear still empties the restored set");
 }
 
 #[test]

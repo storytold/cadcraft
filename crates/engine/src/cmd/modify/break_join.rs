@@ -1,5 +1,8 @@
-use super::trim::{param_on, sub_polyline};
-use super::*;
+use super::trim::{param_on, replace_with_pieces, sub_polyline};
+use super::{
+    Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
+    Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
+};
 
 /// Gives a rebuilt arc piece its source centre Z, or a rebuilt polyline piece its source elevation.
 fn with_z(mut k: EntityKind, z: f64) -> EntityKind {
@@ -102,19 +105,7 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
         }
         _ => return Err(EngineError::Other("Cannot break that object.".into())),
     };
-    let common = e.common.clone();
-    let space = s.space();
-    let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
-        if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
-        }
-    }
-    Ok(out)
+    replace_with_pieces(s, h, pieces)
 }
 
 pub(super) fn run_break(s: &mut Session, p: &Value) -> Result<Value> {
@@ -247,7 +238,7 @@ impl Interactive for BreakM {
             (None, Input::Point(p)) => {
                 let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                 let space = s.space();
-                match crate::select::pick(s.doc()?, &space, p, ap) {
+                match s.pick_object(&space, p, ap)? {
                     Some(h) => {
                         self.obj = Some((h, p));
                         s.set_selection(vec![h]);

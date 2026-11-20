@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, HAlign, Input, Interactive, MText, PolyVertex, Prompt, Result, Session, Step, Text, VAlign, Value, Vec2, added, bad, bool_or,
+    f64_or, lwpoly, number, point_req, str_param, v3,
+};
 
 /// Justification code → (halign, valign).
 pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
@@ -20,6 +23,16 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
         "BR" => (HAlign::Right, VAlign::Bottom),
         _ => return None,
     })
+}
+
+/// The justification options TEXT offers, in prompt order.
+const JUSTIFY_OPTIONS: [&str; 15] = ["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
+
+/// The prompt for a justification option. Align and Fit run between two baseline points, so a
+/// command that takes one point (`-ATTDEF`) passes `two_points: false` and doesn't list them.
+pub(crate) fn justify_prompt(two_points: bool) -> Prompt {
+    let options: Vec<&str> = JUSTIFY_OPTIONS.into_iter().filter(|o| two_points || !matches!(*o, "Align" | "Fit")).collect();
+    Prompt::new("Enter an option", Accept::TEXT).kw(&options)
 }
 
 pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
@@ -116,8 +129,7 @@ impl Interactive for TextM {
     fn prompt(&self, s: &Session) -> Prompt {
         let th = s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
         if self.asking_justify {
-            return Prompt::new("Enter an option", Accept::TEXT)
-                .kw(&["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]);
+            return justify_prompt(true);
         }
         match (self.at, self.height, self.rotation) {
             (None, _, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),

@@ -1,5 +1,5 @@
 use super::grips::grip_at;
-use super::*;
+use super::{CadApp, Handle, Pos2, Rect, Stroke, Tokens, Vec2, Xf, pos2, vec2};
 
 /// The objects under a click that selection cycling lets the user choose between: where the click
 /// was, each object with its row's label (type and layer), Shift held, and the rows as drawn.

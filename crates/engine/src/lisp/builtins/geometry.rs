@@ -1,5 +1,5 @@
+use super::Value;
 use super::args::{R, arity, num, point};
-use super::*;
 
 // ---------------- geometry ----------------
 

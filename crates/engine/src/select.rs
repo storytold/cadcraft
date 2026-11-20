@@ -29,13 +29,20 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
+                    &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
             }
             v
         }
+        // An OLE object's frame is drawn, so it is picked on its outline (the corners the extents and
+        // the renderer use); a frame with no width or height is drawn as a line, so it is picked as
+        // one. It stays out of prims(), which TRIM, object snap and the dimension commands read.
+        EntityKind::Unknown(u) if u.is_ole_frame() => match cadcraft_doc::ole_frame(&u.tags) {
+            Some(q) => vec![q.to_vec()],
+            None => Vec::new(),
+        },
         kind => {
             let mut out = Vec::new();
             for p in kind.prims() {
@@ -117,11 +124,15 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // A dimension with a block (as AutoCAD saves them) is drawn from that block: its text is
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
-            Some(blk) => blk.entities.iter().any(|be| match &be.kind {
-                EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
-                EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
-                _ => false,
-            }),
+            // The block draws translated by the insertion point (group 12): test there (#2634).
+            Some(blk) => {
+                let p = p - dm.insertion_point.xy();
+                blk.entities.iter().any(|be| match &be.kind {
+                    EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                    EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
+                    _ => false,
+                })
+            }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
@@ -141,8 +152,28 @@ fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     !b.is_empty() && b.contains(turn(p))
 }
 
-fn selectable(d: &Drawing, e: &Entity) -> bool {
-    d.is_visible(e)
+/// Whether `e` is on one of the layers in `frozen`: the layers frozen in a layout viewport, which
+/// does not draw their objects. The names are compared as the renderer compares them.
+pub(crate) fn on_frozen_layer(frozen: &[String], e: &Entity) -> bool {
+    frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer))
+}
+
+/// The last object of `store`, in draw order, that is not on one of the layers in `frozen`, the
+/// layers frozen in the layout viewport the selection is made through: what the Last option
+/// takes there. With no such layers it is the last object, whether the drawing shows it or not.
+pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> Option<Handle> {
+    if frozen.is_empty() {
+        return store.last().map(|e| e.handle);
+    }
+    store.iter().filter(|e| !on_frozen_layer(frozen, e)).last().map(|e| e.handle)
+}
+
+/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]) and it is not
+/// on one of the layers in `frozen`, the layers frozen in the layout viewport the selection is
+/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else). A viewport shows
+/// model space, so `frozen` goes with a selection in model space only.
+pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
+    d.is_visible(e) && !on_frozen_layer(frozen, e)
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -181,47 +212,61 @@ pub(crate) fn candidates<'a>(
     }
 }
 
-/// The topmost entity within `aperture` of `p`.
+/// The topmost entity within `aperture` of `p`: the one drawn last (on top in the draw order), not
+/// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
+/// picked, and DRAWORDER changes which).
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
-    let ix = spatial::index(d, space);
-    pick_with(d, space, &ix, p, aperture)
+    pick_in(d, space, &[], p, aperture)
 }
 
-pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
+/// [`pick`] through a layout viewport: the objects on the layers in `frozen`, the layers frozen
+/// in that viewport, are not drawn there and are not picked.
+pub fn pick_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Option<Handle> {
+    let ix = spatial::index(d, space);
+    pick_with(d, space, &ix, frozen, p, aperture)
+}
+
+pub(crate) fn pick_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    p: Vec2,
+    aperture: f64,
+) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
-    let mut best: Option<(f64, Handle)> = None;
+    // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
-        if !selectable(d, e) {
+        if !selectable(d, e, frozen) {
             continue;
         }
         let infinite = is_infinite(e);
         if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        let dist = entity_distance(d, e, p, aperture / 4.0);
-        if dist <= aperture && best.is_none_or(|(bd, _)| dist < bd - 1e-12) {
-            best = Some((dist, e.handle));
-            if dist == 0.0 {
-                break;
-            }
+        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+            return Some(e.handle);
         }
     }
-    best.map(|(_, h)| h)
+    None
 }
 
-/// Every entity within `aperture` of `p`, nearest first and topmost among equals (so the first is
-/// what [`pick`] chooses): the objects selection cycling lists.
+/// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):
+/// the objects selection cycling lists.
 pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handle> {
+    pick_all_in(d, space, &[], p, aperture)
+}
+
+/// [`pick_all`] through a layout viewport that freezes the layers in `frozen` ([`pick_in`]).
+pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Vec<Handle> {
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
-    let mut hits: Vec<(f64, Handle)> = cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
-        .map(|(e, _)| (entity_distance(d, e, p, aperture / 4.0), e.handle))
-        .filter(|(dist, _)| *dist <= aperture)
-        .collect();
-    hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-    hits.into_iter().map(|(_, h)| h).collect()
+    cands
+        .filter(|(e, known)| selectable(d, e, frozen) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
+        .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
+        .map(|(e, _)| e.handle)
+        .collect()
 }
 
 /// Whether PREVIEWFILTER keeps `e` from being highlighted under the cursor: bits 1 objects on
@@ -246,14 +291,27 @@ fn seg_hits_box(a: Vec2, b: Vec2, bx: &Bounds2) -> bool {
 
 /// Window selection (entirely inside) or crossing selection (inside or touching).
 pub fn select_window(d: &Drawing, space: &Space, bx: Bounds2, crossing: bool) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_window_with(d, space, &ix, bx, crossing)
+    select_window_in(d, space, &[], bx, crossing)
 }
 
-pub(crate) fn select_window_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, bx: Bounds2, crossing: bool) -> Vec<Handle> {
+/// [`select_window`] through a layout viewport: the objects on the layers in `frozen`, the layers
+/// frozen in that viewport, are not drawn there and are not selected.
+pub fn select_window_in(d: &Drawing, space: &Space, frozen: &[String], bx: Bounds2, crossing: bool) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_window_with(d, space, &ix, frozen, bx, crossing)
+}
+
+pub(crate) fn select_window_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    bx: Bounds2,
+    crossing: bool,
+) -> Vec<Handle> {
     let Some(cands) = candidates(d, space, ix, &bx, crossing, false) else { return Vec::new() };
     let tol = window_tol(&bx);
-    cands.filter(|(e, known)| selectable(d, e) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
+    cands.filter(|(e, known)| selectable(d, e, frozen) && in_window(d, e, *known, &bx, crossing, tol)).map(|(e, _)| e.handle).collect()
 }
 
 /// The tessellation tolerance window and crossing tests use for a box.
@@ -299,11 +357,23 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
 
 /// Fence selection: entities crossed by the fence polyline.
 pub fn select_fence(d: &Drawing, space: &Space, fence: &[Vec2]) -> Vec<Handle> {
-    let ix = spatial::index(d, space);
-    select_fence_with(d, space, &ix, fence)
+    select_fence_in(d, space, &[], fence)
 }
 
-pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, fence: &[Vec2]) -> Vec<Handle> {
+/// [`select_fence`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_fence_in(d: &Drawing, space: &Space, frozen: &[String], fence: &[Vec2]) -> Vec<Handle> {
+    let ix = spatial::index(d, space);
+    select_fence_with(d, space, &ix, frozen, fence)
+}
+
+pub(crate) fn select_fence_with(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<SpatialIndex>>,
+    frozen: &[String],
+    fence: &[Vec2],
+) -> Vec<Handle> {
     let fb = Bounds2::from_points(fence.iter().copied());
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
@@ -311,7 +381,7 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
+        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
             continue;
         }
         let polys = hit_polylines(d, e, tol);
@@ -332,6 +402,12 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
 /// Window polygon selection (entities entirely inside `poly`) or crossing polygon selection
 /// (inside or crossing its edges). The polygon closes back to its first point.
 pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool) -> Vec<Handle> {
+    select_polygon_in(d, space, &[], poly, crossing)
+}
+
+/// [`select_polygon`] through a layout viewport that freezes the layers in `frozen`
+/// ([`select_window_in`]).
+pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[Vec2], crossing: bool) -> Vec<Handle> {
     let (Some(first), true) = (poly.first(), poly.len() >= 3) else { return Vec::new() };
     let ix = spatial::index(d, space);
     let pb = Bounds2::from_points(poly.iter().copied());
@@ -342,7 +418,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
     let mut out = Vec::new();
     for (e, known) in cands {
         let infinite = is_infinite(e);
-        if !selectable(d, e) || (infinite && !crossing) {
+        if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
         let eb = bounds_of(d, e, known);
@@ -371,9 +447,15 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
 /// The visible objects in `space` of the group called `name` (any case), or `None` when the
 /// drawing has no such group.
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
+    select_group_in(d, space, &[], name)
+}
+
+/// [`select_group`] through a layout viewport that freezes the layers in `frozen`: the group's
+/// objects on those layers are left out.
+pub fn select_group_in(d: &Drawing, space: &Space, frozen: &[String], name: &str) -> Option<Vec<Handle>> {
     let g = d.groups.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))?;
     let store = d.space(space)?;
-    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
+    Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| selectable(d, e, frozen))).collect())
 }
 
 /// A selection mode typed at "Select objects", collecting its points before it selects.
@@ -447,14 +529,19 @@ impl SelectMode {
     }
     /// The objects the mode selects, or `None` while it has too few points.
     pub fn select(&self, d: &Drawing, space: &Space) -> Option<Vec<Handle>> {
+        self.select_in(d, space, &[])
+    }
+    /// [`SelectMode::select`] through a layout viewport: the objects on the layers in `frozen`,
+    /// the layers frozen in that viewport, are not drawn there and are not selected.
+    pub fn select_in(&self, d: &Drawing, space: &Space, frozen: &[String]) -> Option<Vec<Handle>> {
         match (self.kind, self.pts.as_slice()) {
             (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
-                Some(select_window(d, space, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
+                Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
             }
-            (SelectKind::Box, [a, b, ..]) => Some(select_window(d, space, Bounds2::new(*a, *b), b.x < a.x)),
-            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence(d, space, pts)),
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_in(d, space, frozen, Bounds2::new(*a, *b), b.x < a.x)),
+            (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_in(d, space, frozen, pts)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
-                Some(select_polygon(d, space, pts, self.kind == SelectKind::CPolygon))
+                Some(select_polygon_in(d, space, frozen, pts, self.kind == SelectKind::CPolygon))
             }
             _ => None,
         }
@@ -485,6 +572,94 @@ mod tests {
         assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
+
+    /// Two objects under the pickbox: AutoCAD 2024 picks the one drawn last, not the nearer one,
+    /// and DRAWORDER changes which (`(ssget pt)` in accoreconsole).
+    #[test]
+    fn a_pick_takes_the_object_drawn_last() {
+        let mut d = Drawing::new_metric();
+        let circle = d
+            .add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(50.0, 50.0, 0.0), radius: 10.0 }))
+            .unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(40.5, 45.0, 0.0), b: Vec3::new(40.5, 55.0, 0.0) });
+        let line = d.add(&Space::Model, Common::default(), line).unwrap();
+        // 0.05 from the circle and 0.45 from the line, both inside an aperture of 1.
+        let p = Vec2::new(40.05, 50.0);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(line));
+        assert_eq!(pick_all(&d, &Space::Model, p, 1.0), vec![line, circle]);
+        d.model.send_to_back(line);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
+        // Only one within reach: that one, whatever the order.
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
+    }
+
+    /// An OLE2FRAME draws as its frame, so a click on an edge picks it (review on #2587); a click in
+    /// the middle of the frame, or on a frame without both corners, does not.
+    #[test]
+    fn clicking_an_ole_frame_edge_selects_it() {
+        let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+        let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let mut d = Drawing::new_metric();
+        let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+        d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();
+        let line = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "60"), tag(20, "-19"), tag(11, "60"), tag(21, "-22")])).unwrap();
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -19.0), 0.2), Some(h), "top edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(35.0, -20.5), 0.2), Some(h), "right edge");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(32.5, -20.5), 0.2), None, "inside the frame");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(80.0, 80.0), 0.2), None, "a frame without a second corner");
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(60.0, -20.0), 0.2), Some(line), "a frame with no width is drawn as a line and picked as one");
+    }
+
+    /// A block holding a diagonal dashed line, inserted at `scale`.
+    fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        let mut line =
+            Entity::new(Handle(1), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(length, length, 0.0) }));
+        line.common.linetype = "DASHED".into();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(line);
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let insert = cadcraft_doc::Insert {
+            block: "B".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(scale, scale, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        (d, h)
+    }
+
+    /// Every mouse move over a block hit-tests what it draws. Two blocks with a fine pattern on
+    /// long lines (inserted at 0.001) made 5.8 million dashes, and half a second, per move (#1285).
+    #[test]
+    fn hit_testing_a_block_does_not_lay_out_its_dashes() {
+        let (d, h) = dashed_block(20_000.0, 0.001);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
+        // The line, and the block's bounding rectangle.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+    }
+
+    /// A dashed line in a block is hit across its gaps, as one outside a block is.
+    #[test]
+    fn a_dashed_line_in_a_block_is_picked_in_a_gap() {
+        let (d, h) = dashed_block(100.0, 1.0);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        let (a, b) = (drawn.prims.first().unwrap(), drawn.prims.get(1).unwrap());
+        let (end, start) = (*drawn.points(a).last().unwrap(), *drawn.points(b).first().unwrap());
+        assert!(end.dist(start) > 0.01, "a gap between the first two dashes");
+        let gap = end + (start - end) * 0.5;
+        assert_eq!(pick(&d, &Space::Model, gap, end.dist(start) / 8.0), Some(h));
     }
 }
 

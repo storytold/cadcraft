@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Handle, Input, Interactive, MAX_GEN, PolyVertex, Prompt, Result, Session, Step, Value, Vec2, Wipeout, added, bad, bool_or,
+    curves, json, lwpoly, other, points_param, shoelace, str_param,
+};
 
 // =====================================================================================
 // WIPEOUT

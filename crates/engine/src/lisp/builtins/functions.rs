@@ -1,5 +1,5 @@
 use super::args::{R, arity, list_arg, string};
-use super::*;
+use super::{Arc, Ctx, Flow, LispError, Sym, Value, read, to_text};
 
 // ---------------- functions of functions ----------------
 

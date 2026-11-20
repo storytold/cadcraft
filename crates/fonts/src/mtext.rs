@@ -9,71 +9,33 @@ pub(crate) mod para;
 /// Strip MTEXT formatting codes to plain text with `\n` paragraph breaks.
 /// Stacked fractions `\S1/2;` become `1/2`; `\~` is a space; braces are dropped.
 pub fn plain_mtext(s: &str) -> String {
+    let s = unescape_codes(s);
+    let s = s.as_ref();
     let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    '~' => {
-                        out.push(' ');
-                        i += 2;
-                    }
-                    '\\' | '{' | '}' => {
-                        out.push(code);
-                        i += 2;
-                    }
-                    'S' => {
-                        // \Snum^den; \Snum/den; \Snum#den;
-                        let mut j = i + 2;
-                        let mut stack = String::new();
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            stack.push(match ch {
-                                '^' | '#' => '/',
-                                c => c,
-                            });
-                            j += 1;
-                        }
-                        // "6\S1/2;" reads as "6 1/2".
-                        if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
-                            out.push(' ');
-                        }
-                        out.push_str(stack.trim_end_matches('/'));
-                        i = j + 1;
-                    }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
-                    // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
-                    _ => {
-                        let mut j = i + 2;
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                    }
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens};
+    for token in Tokens::new(s, StackMode::Plain) {
+        match token {
+            Token::Control('P' | 'N') => out.push('\n'),
+            Token::Control('~') => out.push(' '),
+            Token::Control(c @ ('\\' | '{' | '}')) => out.push(c),
+            Token::Stack(raw) => {
+                let stack: String = raw.chars().map(|c| if matches!(c, '^' | '#') { '/' } else { c }).collect();
+                if out.chars().last().is_some_and(|c| c.is_ascii_digit()) && stack.starts_with(|c: char| c.is_ascii_digit()) {
+                    out.push(' ');
+                }
+                out.push_str(stack.trim_end_matches('/'));
+            }
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text. A trailing lone backslash is dropped.
+            Token::Unknown(c) => {
+                out.push('\\');
+                if c != '\r' {
+                    out.push(c);
                 }
             }
-            '{' | '}' => i += 1,
-            '\r' => i += 1,
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            Token::Char('\r') => {}
+            Token::Char(c) => out.push(c),
+            _ => {}
         }
     }
     out
@@ -142,6 +104,40 @@ pub struct MTextLayout {
     pub bounds: Bounds2,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
+    /// Whether the geometry stops short: the layout reached its allowance of retained points
+    /// ([`Allowance`]) and the segments after that are not drawn.
+    pub truncated: bool,
+}
+
+/// The points all the segments of one layout may keep together, each counted for both copies the
+/// layout holds: the allowance one shaped line has (`MAX_SHAPED_POINTS`), so a short repeated detailed glyph over many segments cannot multiply it.
+pub(crate) struct Allowance(usize);
+
+impl Allowance {
+    pub(crate) fn new() -> Self {
+        Allowance(crate::ttf::MAX_SHAPED_POINTS)
+    }
+
+    /// Whether any allowance is left, before a segment is shaped.
+    pub(crate) fn left(&self) -> bool {
+        self.0 > 0
+    }
+
+    /// Charge the points of `sh`; false (and nothing left) when it does not fit.
+    pub(crate) fn charge(&mut self, sh: &Shaped) -> bool {
+        // Kept twice: in the piece and again in the layout's flat `strokes`.
+        let n = 2 * (sh.strokes.iter().map(Vec::len).sum::<usize>() + sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>());
+        match self.0.checked_sub(n) {
+            Some(rest) => {
+                self.0 = rest;
+                true
+            }
+            None => {
+                self.0 = 0;
+                false
+            }
+        }
+    }
 }
 
 /// Inline character format.
@@ -173,22 +169,20 @@ enum Atom {
     Para(usize),
 }
 
-/// Upper bound on parsed atoms (hostile contents).
+/// Upper bound on parsed atoms (words, spaces and paragraph breaks) per MTEXT. Hostile contents
+/// are cut here: once more than this many atoms are parsed, `parse` stops reading and the rest
+/// of the contents is silently dropped from the layout. There is no warning to the caller.
 const MAX_ATOMS: usize = 200_000;
 /// Scale of stacked text relative to the surrounding text.
 const STACK_SCALE: f64 = 0.7;
 
-fn arg(chars: &[char], from: usize) -> (String, usize) {
-    let mut j = from;
-    let mut a = String::new();
-    while let Some(&ch) = chars.get(j) {
-        if ch == ';' {
-            return (a, j + 1);
-        }
-        a.push(ch);
-        j += 1;
-    }
-    (a, j)
+// Shared DXF escape handling and parameterized-command classification.
+pub(crate) use craft_dxf::mtext::unescape_codes;
+
+/// The line-spacing factor to lay out with: AutoCAD's 0.25..=4 range, 1 for a missing or
+/// non-finite value.
+pub(crate) fn sane_line_spacing(v: f64) -> f64 {
+    if v.is_finite() && v > 0.0 { v.clamp(0.25, 4.0) } else { 1.0 }
 }
 
 fn num(a: &str) -> Option<f64> {
@@ -228,7 +222,9 @@ fn font_switch(a: &str) -> Option<TextFont> {
 
 /// Parse MTEXT contents into words, spaces and paragraph breaks with their formats.
 fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
-    let chars: Vec<char> = contents.chars().collect();
+    use craft_dxf::mtext_tokens::{StackMode, Token, Tokens, split_stack};
+    let h_min = base.height * 1e-3;
+    let h_max = if (base.height * 1e3).is_finite() { base.height * 1e3 } else { f64::MAX };
     let mut fmts = vec![base];
     let mut cur = 0usize;
     let mut stack: Vec<usize> = Vec::new();
@@ -248,6 +244,19 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             atoms.push(Atom::Word(std::mem::take(word)));
         }
     };
+    // A character read as text: a line feed breaks the paragraph and a space ends the word.
+    let text_char = |atoms: &mut Vec<Atom>, word: &mut Vec<(Seg, usize)>, c: char, f: usize| match c {
+        '\r' => {}
+        '\n' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Para(f));
+        }
+        ' ' => {
+            end_word(atoms, word);
+            atoms.push(Atom::Space(f));
+        }
+        c => push_char(word, c, f),
+    };
     // Derive a new format from the current one.
     let derive = |fmts: &mut Vec<Fmt>, cur: &mut usize, f: &dyn Fn(&mut Fmt)| {
         let mut n = fmts.get(*cur).cloned().unwrap_or(Fmt {
@@ -266,145 +275,156 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
             *cur = fmts.len() - 1;
         }
     };
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
+    for token in Tokens::new(contents, StackMode::Structured) {
         if atoms.len() > MAX_ATOMS {
             break;
         }
-        match c {
-            '\\' => {
-                let code = chars.get(i + 1).copied().unwrap_or(' ');
-                i += 2;
-                match code {
-                    'P' | 'N' => {
-                        end_word(&mut atoms, &mut word);
-                        atoms.push(Atom::Para(cur));
-                    }
-                    '~' => push_char(&mut word, '\u{a0}', cur),
-                    '\\' | '{' | '}' => push_char(&mut word, code, cur),
-                    'L' => derive(&mut fmts, &mut cur, &|f| f.under = true),
-                    'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
-                    'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
-                    'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' => {}
-                    'S' => {
-                        let mut j = i;
-                        let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);
-                        while let Some(&ch) = chars.get(j) {
-                            if ch == ';' {
-                                break;
-                            }
-                            if ch == '\\' {
-                                if let Some(&n) = chars.get(j + 1) {
-                                    if sep.is_none() { top.push(n) } else { bottom.push(n) }
-                                }
-                                j += 2;
-                                continue;
-                            }
-                            if sep.is_none() && matches!(ch, '/' | '#' | '^') {
-                                sep = Some(ch);
-                            } else if sep.is_none() {
-                                top.push(ch);
-                            } else {
-                                bottom.push(ch);
-                            }
-                            j += 1;
-                        }
-                        i = j + 1;
-                        word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
-                    }
-                    'f' | 'F' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(font) = font_switch(&a) {
-                            derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
-                        }
-                    }
-                    'H' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
-                            Some(r) => (true, num(r)),
-                            None => (false, num(&a)),
-                        };
-                        if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
-                            derive(&mut fmts, &mut cur, &|f| f.height = if rel { f.height * v } else { v });
-                        }
-                    }
-                    'W' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(v) = num(a.trim_end_matches(['x', 'X'])).filter(|v| *v > 0.01 && *v < 100.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.wf = v);
-                        }
-                    }
-                    'Q' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Some(v) = num(&a).filter(|v| v.abs() < 85.0) {
-                            derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
-                        }
-                    }
-                    'C' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u16>() {
-                            let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
-                            derive(&mut fmts, &mut cur, &|f| f.color = col);
-                        }
-                    }
-                    'c' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v) = a.trim().parse::<u32>() {
-                            derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
-                        }
-                    }
-                    'A' => {
-                        let (a, n) = arg(&chars, i);
-                        i = n;
-                        if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
-                            derive(&mut fmts, &mut cur, &|f| f.valign = v);
-                        }
-                    }
-                    _ => {
-                        // \T, \p and unknown codes: argument up to ';'.
-                        let (_, n) = arg(&chars, i);
-                        i = n;
-                    }
+        match token {
+            Token::Control('P' | 'N') => {
+                end_word(&mut atoms, &mut word);
+                atoms.push(Atom::Para(cur));
+            }
+            Token::Control('~') => push_char(&mut word, '\u{a0}', cur),
+            Token::Control(c @ ('\\' | '{' | '}')) => push_char(&mut word, c, cur),
+            Token::Control('L') => derive(&mut fmts, &mut cur, &|f| f.under = true),
+            Token::Control('l') => derive(&mut fmts, &mut cur, &|f| f.under = false),
+            Token::Control('O') => derive(&mut fmts, &mut cur, &|f| f.over = true),
+            Token::Control('o') => derive(&mut fmts, &mut cur, &|f| f.over = false),
+            Token::Stack(raw) => {
+                let (top, bottom, sep) = split_stack(raw);
+                word.push((Seg::Stack(top, bottom, sep.unwrap_or('/')), cur));
+            }
+            Token::Argument('f' | 'F', a) => {
+                if let Some(font) = font_switch(a) {
+                    derive(&mut fmts, &mut cur, &|f| f.font = font.clone());
                 }
             }
-            '{' => {
+            Token::Argument('H', a) => {
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.0 && *v < 1e6) {
+                    // Relative heights compound; keep the result within 1e-3..1e3 times the
+                    // MTEXT's own height, never infinite.
+                    derive(&mut fmts, &mut cur, &|f| f.height = if rel { (f.height * v).min(h_max).max(h_min) } else { v });
+                }
+            }
+            Token::Argument('W', a) => {
+                // `\W2x;` multiplies the current factor (like `\H2x;`); `\W2;` sets it.
+                let (rel, v) = match a.trim().strip_suffix(['x', 'X']) {
+                    Some(r) => (true, num(r)),
+                    None => (false, num(a)),
+                };
+                if let Some(v) = v.filter(|v| *v > 0.01 && *v < 100.0) {
+                    // Relative factors compound; keep the result within the absolute range.
+                    derive(&mut fmts, &mut cur, &|f| f.wf = if rel { (f.wf * v).clamp(0.01, 100.0) } else { v });
+                }
+            }
+            Token::Argument('Q', a) => {
+                if let Some(v) = num(a).filter(|v| v.abs() < 85.0) {
+                    derive(&mut fmts, &mut cur, &|f| f.oblique = v.to_radians());
+                }
+            }
+            Token::Argument('C', a) => {
+                if let Ok(v) = a.trim().parse::<u16>() {
+                    let col = if v == 0 || v >= 256 { None } else { Some(MTextColor::Aci(v)) };
+                    derive(&mut fmts, &mut cur, &|f| f.color = col);
+                }
+            }
+            Token::Argument('c', a) => {
+                if let Ok(v) = a.trim().parse::<u32>() {
+                    derive(&mut fmts, &mut cur, &|f| f.color = Some(MTextColor::Rgb(v & 0xFF_FFFF)));
+                }
+            }
+            Token::Argument('A', a) => {
+                if let Ok(v @ 0..=2) = a.trim().parse::<u8>() {
+                    derive(&mut fmts, &mut cur, &|f| f.valign = v);
+                }
+            }
+            Token::OpenGroup => {
                 if stack.len() < 256 {
                     stack.push(cur);
                 }
-                i += 1;
             }
-            '}' => {
+            Token::CloseGroup => {
                 if let Some(f) = stack.pop() {
                     cur = f;
                 }
-                i += 1;
             }
-            '\r' => i += 1,
-            '\n' => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Para(cur));
-                i += 1;
+            // An unknown code or a malformed `\U+` / `\M+` is shown as typed, as AutoCAD shows it:
+            // keep the backslash and read the code as text (#2952).
+            Token::Unknown(c) => {
+                push_char(&mut word, '\\', cur);
+                text_char(&mut atoms, &mut word, c, cur);
             }
-            ' ' => {
-                end_word(&mut atoms, &mut word);
-                atoms.push(Atom::Space(cur));
-                i += 1;
-            }
-            _ => {
-                push_char(&mut word, c, cur);
-                i += 1;
-            }
+            Token::Char(c) => text_char(&mut atoms, &mut word, c, cur),
+            _ => {}
         }
     }
     end_word(&mut atoms, &mut word);
     (atoms, fmts)
+}
+
+/// `word` split where a line may wrap inside it: between two Thai words, as Thai writes no
+/// spaces between words ([`crate::linebreak::thai_breaks`]). The pieces keep the word's segments
+/// and formats in order and are laid out side by side, so the text looks the same and only gains
+/// places to wrap. A word without Thai comes back whole.
+///
+/// Lines still wrap at spaces first, as before: only a word too wide for a line of its own (which
+/// would run out of the column) is split, so text that fits keeps its line breaks, as its author
+/// saw them.
+fn split_thai(word: Vec<(Seg, usize)>) -> Vec<Vec<(Seg, usize)>> {
+    if !word.iter().any(|(seg, _)| matches!(seg, Seg::Text(t) if t.chars().any(crate::complex::is_thai))) {
+        return vec![word];
+    }
+    // The word's characters, a stacked fraction standing as one object replacement character
+    // (never next to a Thai break).
+    let text: String = word
+        .iter()
+        .map(|(seg, _)| match seg {
+            Seg::Text(t) => t.as_str(),
+            Seg::Stack(..) => "\u{FFFC}",
+        })
+        .collect();
+    let breaks = crate::linebreak::thai_breaks(&text);
+    if breaks.is_empty() {
+        return vec![word];
+    }
+    let mut pieces = Vec::with_capacity(breaks.len().saturating_add(1));
+    let mut breaks = breaks.iter().copied().peekable();
+    let mut piece: Vec<(Seg, usize)> = Vec::new();
+    // Character offset of the segment being split.
+    let mut at = 0usize;
+    for (seg, format) in word {
+        let Seg::Text(t) = seg else {
+            piece.push((seg, format));
+            at += 1;
+            continue;
+        };
+        let n = t.chars().count();
+        let (mut rest, mut rest_at) = (t.as_str(), at);
+        while let Some(b) = breaks.next_if(|&b| b < at + n) {
+            let k = b.saturating_sub(rest_at);
+            let byte = rest.char_indices().nth(k).map_or(rest.len(), |(i, _)| i);
+            let (head, tail) = rest.split_at_checked(byte).unwrap_or((rest, ""));
+            if !head.is_empty() {
+                piece.push((Seg::Text(head.to_string()), format));
+            }
+            if !piece.is_empty() {
+                pieces.push(std::mem::take(&mut piece));
+            }
+            (rest, rest_at) = (tail, b.max(rest_at));
+        }
+        if !rest.is_empty() {
+            piece.push((Seg::Text(rest.to_string()), format));
+        }
+        at += n;
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    pieces
 }
 
 fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
@@ -424,56 +444,56 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
 }
 
 /// Shape a segment with its left end at `x` on the baseline.
-fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
-    let h = f.height;
+fn seg_shape(seg: &Seg, format: &Fmt, origin_x: f64) -> Shaped {
+    let height = format.height;
     let mut out = Shaped::default();
-    let put = |s: &str, size: f64, at: Vec2| {
-        if s.is_empty() {
+    let put = |text: &str, size: f64, at: Vec2| {
+        if text.is_empty() {
             return Shaped::default();
         }
-        let mut sh = shape_line(&f.font, s, size, f.wf, f.oblique);
-        sh.map(|p| p + at);
+        let mut sh = shape_line(&format.font, text, size, format.wf, format.oblique);
+        sh.map(|point| point + at);
         sh
     };
-    let w = seg_width(seg, f);
+    let width = seg_width(seg, format);
     match seg {
-        Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
+        Seg::Text(text) => out.extend(put(text, height, Vec2::new(origin_x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
-            let hs = h * STACK_SCALE;
-            let wt = text_width(&f.font, top, hs, f.wf);
-            let wb = text_width(&f.font, bottom, hs, f.wf);
+            let hs = height * STACK_SCALE;
+            let wt = text_width(&format.font, top, hs, format.wf);
+            let wb = text_width(&format.font, bottom, hs, format.wf);
             match sep {
                 '#' => {
-                    out.extend(put(top, hs, Vec2::new(x, h * 0.4)));
-                    let sx = x + wt + h * 0.1;
-                    out.extend(put(bottom, hs, Vec2::new(sx + h * 0.4, -h * 0.05)));
-                    out.strokes.push(vec![Vec2::new(sx, -h * 0.1), Vec2::new(sx + h * 0.3, h * 1.1)]);
+                    out.extend(put(top, hs, Vec2::new(origin_x, height * 0.4)));
+                    let sx = origin_x + wt + height * 0.1;
+                    out.extend(put(bottom, hs, Vec2::new(sx + height * 0.4, -height * 0.05)));
+                    out.strokes.push(vec![Vec2::new(sx, -height * 0.1), Vec2::new(sx + height * 0.3, height * 1.1)]);
                 }
                 '^' => {
                     // Tolerances: centred on the line, or the lower value on the baseline (\A0) or
                     // the upper value level with the text (\A2).
-                    let (yt, yb) = match f.valign {
-                        0 => (hs + h * 0.1, 0.0),
-                        2 => (0.0, -hs - h * 0.1),
-                        _ => (h * 0.55, h * 0.45 - hs),
+                    let (yt, yb) = match format.valign {
+                        0 => (hs + height * 0.1, 0.0),
+                        2 => (0.0, -hs - height * 0.1),
+                        _ => (height * 0.55, height * 0.45 - hs),
                     };
-                    out.extend(put(top, hs, Vec2::new(x, yt)));
-                    out.extend(put(bottom, hs, Vec2::new(x, yb)));
+                    out.extend(put(top, hs, Vec2::new(origin_x, yt)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x, yb)));
                 }
                 _ => {
-                    let bar = h * 0.45;
-                    out.extend(put(top, hs, Vec2::new(x + (w - wt) / 2.0, bar + h * 0.12)));
-                    out.extend(put(bottom, hs, Vec2::new(x + (w - wb) / 2.0, bar - h * 0.12 - hs)));
-                    out.strokes.push(vec![Vec2::new(x, bar), Vec2::new(x + w, bar)]);
+                    let bar = height * 0.45;
+                    out.extend(put(top, hs, Vec2::new(origin_x + (width - wt) / 2.0, bar + height * 0.12)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x + (width - wb) / 2.0, bar - height * 0.12 - hs)));
+                    out.strokes.push(vec![Vec2::new(origin_x, bar), Vec2::new(origin_x + width, bar)]);
                 }
             }
         }
     }
-    if f.under {
-        out.strokes.push(vec![Vec2::new(x, -h * 0.2), Vec2::new(x + w, -h * 0.2)]);
+    if format.under {
+        out.strokes.push(vec![Vec2::new(origin_x, -height * 0.2), Vec2::new(origin_x + width, -height * 0.2)]);
     }
-    if f.over {
-        out.strokes.push(vec![Vec2::new(x, h * 1.2), Vec2::new(x + w, h * 1.2)]);
+    if format.over {
+        out.strokes.push(vec![Vec2::new(origin_x, height * 1.2), Vec2::new(origin_x + width, height * 1.2)]);
     }
     out
 }
@@ -537,75 +557,99 @@ pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attac
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }
 
+/// The lines of MTEXT without paragraph codes: words wrap at spaces to `width` (0: no wrapping),
+/// and a word too wide for a line of its own wraps between its Thai words.
+fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line> {
+    let fmt = |index: usize| fmts.get(index).unwrap_or(base);
+    let mut lines = Vec::new();
+    let mut line = Line::default();
+    let mut pending_space = None;
+    let mut last_fmt = 0usize;
+    let mut paragraph = 0usize;
+    let finish = |lines: &mut Vec<Line>, line: &mut Line, format: &Fmt, paragraph: usize| {
+        if line.items.is_empty() {
+            line.max_h = format.height;
+        }
+        line.para = paragraph;
+        lines.push(std::mem::take(line));
+    };
+
+    for atom in atoms {
+        match atom {
+            Atom::Space(format) => {
+                if !line.items.is_empty() || pending_space.is_some() {
+                    pending_space = Some(*format);
+                }
+                last_fmt = *format;
+            }
+            Atom::Para(format) => {
+                pending_space = None;
+                finish(&mut lines, &mut line, fmt(*format), paragraph);
+                paragraph += 1;
+                last_fmt = *format;
+            }
+            Atom::Word(word) => {
+                let word_width =
+                    |segments: &[(Seg, usize)]| -> f64 { segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum() };
+                // Wider than the column: Thai breaks between its words (see `split_thai`).
+                let split;
+                let pieces = if width > 0.0 && word_width(word) > width + 1e-9 {
+                    split = split_thai(word.clone());
+                    split.as_slice()
+                } else {
+                    std::slice::from_ref(word)
+                };
+                for segments in pieces {
+                    let word_width = word_width(segments);
+                    let space_width = pending_space.map_or(0.0, |format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf));
+                    if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                        finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
+                    } else if !line.items.is_empty() || pending_space.is_some() {
+                        if let Some(format) = pending_space {
+                            let at = line.chars;
+                            line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
+                            line.text.push(' ');
+                            line.chars += 1;
+                        }
+                        line.width += space_width;
+                    }
+                    pending_space = None;
+                    for (segment, format) in segments {
+                        let segment_width = seg_width(segment, fmt(*format));
+                        line.max_h = line.max_h.max(fmt(*format).height);
+                        let at = line.chars;
+                        let plain = seg_plain(segment);
+                        line.chars += plain.chars().count();
+                        line.text.push_str(&plain);
+                        line.items.push(Item { seg: Some(segment.clone()), fmt: *format, x: line.width, w: segment_width, at });
+                        line.width += segment_width;
+                        last_fmt = *format;
+                    }
+                }
+            }
+        }
+    }
+    finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
+    lines
+}
+
 /// Lay out MTEXT: inline formatting runs, stacked fractions, paragraphs, word wrap to the
 /// column width and the attachment point.
 pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
+    let contents = unescape_codes(contents);
+    let contents = contents.as_ref();
     let h = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
     let wf = if p.width_factor.is_finite() && p.width_factor > 0.0 { p.width_factor } else { 1.0 };
     let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
     let rotation = if p.rotation.is_finite() { p.rotation } else { 0.0 };
-    let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, oblique: p.oblique, valign: 1 };
-    let (atoms, fmts) = parse(contents, base.clone());
+    let oblique = if p.oblique.is_finite() { p.oblique } else { 0.0 };
+    let base = Fmt { font: p.font.clone(), height: h, color: None, under: false, over: false, wf, oblique, valign: 1 };
     if para::needed(contents, p) {
         return para::layout(contents, p, &base);
     }
+    let (atoms, fmts) = parse(contents, base.clone());
     let fmt = |i: usize| fmts.get(i).unwrap_or(&base);
-    let mut lines: Vec<Line> = Vec::new();
-    let mut line = Line::default();
-    let mut pending_space: Option<usize> = None;
-    let mut last_fmt = 0usize;
-    let mut para = 0usize;
-    let finish = |lines: &mut Vec<Line>, line: &mut Line, f: &Fmt, para: usize| {
-        if line.items.is_empty() {
-            line.max_h = f.height;
-        }
-        line.para = para;
-        lines.push(std::mem::take(line));
-    };
-    for a in &atoms {
-        match a {
-            Atom::Space(f) => {
-                if !line.items.is_empty() || pending_space.is_some() {
-                    pending_space = Some(*f);
-                }
-                last_fmt = *f;
-            }
-            Atom::Para(f) => {
-                pending_space = None;
-                finish(&mut lines, &mut line, fmt(*f), para);
-                para += 1;
-                last_fmt = *f;
-            }
-            Atom::Word(segs) => {
-                let ww: f64 = segs.iter().map(|(sg, f)| seg_width(sg, fmt(*f))).sum();
-                let sw = pending_space.map(|f| crate::space_width(&fmt(f).font, fmt(f).height, fmt(f).wf)).unwrap_or(0.0);
-                if width > 0.0 && !line.items.is_empty() && line.width + sw + ww > width + 1e-9 {
-                    finish(&mut lines, &mut line, fmt(last_fmt), para);
-                } else if !line.items.is_empty() || pending_space.is_some() {
-                    if let Some(f) = pending_space {
-                        let at = line.chars;
-                        line.items.push(Item { seg: None, fmt: f, x: line.width, w: sw, at });
-                        line.text.push(' ');
-                        line.chars += 1;
-                    }
-                    line.width += sw;
-                }
-                pending_space = None;
-                for (sg, f) in segs {
-                    let fw = seg_width(sg, fmt(*f));
-                    line.max_h = line.max_h.max(fmt(*f).height);
-                    let at = line.chars;
-                    let plain = seg_plain(sg);
-                    line.chars += plain.chars().count();
-                    line.text.push_str(&plain);
-                    line.items.push(Item { seg: Some(sg.clone()), fmt: *f, x: line.width, w: fw, at });
-                    line.width += fw;
-                    last_fmt = *f;
-                }
-            }
-        }
-    }
-    finish(&mut lines, &mut line, fmt(last_fmt), para);
+    let mut lines = plain_lines(&atoms, &fmts, &base, width);
     // Right-to-left text: each line in display order, its paragraph's direction from the
     // paragraph's first strong character.
     let mut bases: Vec<Option<bool>> = Vec::new();
@@ -622,7 +666,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     for l in &mut lines {
         l.reorder_bidi(bases.get(l.para).copied().flatten());
     }
-    let ls = if p.line_spacing > 0.0 && p.line_spacing.is_finite() { p.line_spacing } else { 1.0 };
+    let ls = sane_line_spacing(p.line_spacing);
     // Baselines below the top of the first line.
     let mut baselines = Vec::with_capacity(lines.len());
     let mut y = 0.0;
@@ -649,6 +693,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     let insert = p.insert;
     let xf = |q: Vec2| insert + q.rotate(rotation);
     let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
+    let mut allowance = Allowance::new();
     for (l, base_y) in lines.iter().zip(baselines) {
         let x0 = match col {
             0 => 0.0,
@@ -658,7 +703,15 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
         for it in &l.items {
             let Some(sg) = &it.seg else { continue };
             let fm = fmt(it.fmt);
+            if !allowance.left() {
+                out.truncated = true;
+                continue;
+            }
             let mut sh = seg_shape(sg, fm, it.x);
+            if !allowance.charge(&sh) {
+                out.truncated = true;
+                continue;
+            }
             let off = Vec2::new(x0, top + base_y);
             sh.map(|q| xf(q + off));
             match out.pieces.last_mut() {
@@ -695,6 +748,17 @@ mod tests {
         assert_eq!(l.lines[0], "alpha beta gamma");
     }
 
+    /// The points of all the segments of one layout are charged against one allowance.
+    #[test]
+    fn a_layout_shares_one_point_allowance() {
+        let big = Shaped { strokes: vec![vec![Vec2::ZERO; crate::ttf::MAX_SHAPED_POINTS / 4 + 1]], ..Default::default() };
+        let mut a = Allowance::new();
+        assert!(a.left() && a.charge(&big), "the first segment fits");
+        assert!(!a.charge(&big), "the second does not, though each alone would");
+        assert!(!a.left(), "and nothing is left to shape another");
+        assert!(!layout_mtext("plain text", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0).truncated);
+    }
+
     #[test]
     fn strips_formatting() {
         assert_eq!(plain_mtext("{\\fArial|b1;Bold}\\Pline 2"), "Bold\nline 2");
@@ -702,6 +766,115 @@ mod tests {
         assert_eq!(plain_mtext("a\\~b\\\\c"), "a b\\c");
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
+        assert_eq!(plain_mtext("\\U+0041B \\U+00E8"), "AB è");
+        assert_eq!(plain_mtext("\\U+12"), "\\U+12", "a short escape is shown as typed");
+    }
+
+    #[test]
+    fn unicode_escapes_are_decoded_in_every_parser() {
+        // The escape has no `;`, so it must not swallow the rest of the text.
+        assert_eq!(plain_mtext("A\\U+00B0 B C;D"), "A\u{b0} B C;D");
+        assert_eq!(lay("A\\U+00B0 B C;D", 0.0).lines, vec!["A\u{b0} B C;D"]);
+        // The paragraph path (`\p`) and the plain path agree.
+        assert_eq!(lay("\\pxql;A\\U+00B0 B C;D", 0.0).lines, vec!["A\u{b0} B C;D"]);
+        let scanned = para::Paragraphs::scan("\\U+00B0\\pi1;x\\U+0041 y;z");
+        assert!(scanned.formatted());
+        // A surrogate pair is one character; a lone surrogate is U+FFFD.
+        assert_eq!(plain_mtext("\\U+D83D\\U+DE00!"), "\u{1f600}!");
+        assert_eq!(lay("\\U+D83D\\U+DE00!", 0.0).lines, vec!["\u{1f600}!"]);
+        assert_eq!(plain_mtext("a\\U+D83Db"), "a\u{fffd}b");
+        assert_eq!(plain_mtext("a\\U+DE00b\\U+D83D"), "a\u{fffd}b\u{fffd}");
+        // A decoded backslash or brace is text, not markup; an escaped backslash is not an escape.
+        assert_eq!(plain_mtext("\\U+005CH2;x"), "\\H2;x");
+        assert_eq!(plain_mtext("\\\\U+0041"), "\\U+0041");
+        // `\M+n` double-byte characters, decoded like the DXF reader does.
+        assert_eq!(plain_mtext("\\M+5BCFE x;y"), "\u{4ef6} x;y");
+        // Malformed escapes are shown as typed, backslash included, as AutoCAD 2024 shows them.
+        for s in ["a\\U+12 b", "\\U+12x", "a\\U+12;b", "a\\U+123 b", "a\\U+ b", "a\\U+00G1b", "a\\M+ b"] {
+            assert_eq!(plain_mtext(s), s);
+            assert_eq!(lay(s, 0.0).lines, vec![s]);
+            assert_eq!(lay(&format!("\\pxql;{s}"), 0.0).lines, vec![s]);
+        }
+        // A valid escape takes exactly four digits.
+        assert_eq!(plain_mtext("a\\U+12345b"), "a\u{1234}5b");
+    }
+
+    #[test]
+    fn unknown_code_without_semicolon_keeps_the_text() {
+        // An unknown code is shown as typed, as AutoCAD 2024 shows it.
+        assert_eq!(plain_mtext("A\\Zbc d"), "A\\Zbc d");
+        assert_eq!(lay("A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        assert_eq!(lay("\\pxql;A\\Zbc d", 0.0).lines, vec!["A\\Zbc d"]);
+        // The text after it is read as usual: here a paragraph break.
+        assert_eq!(plain_mtext("A\\Z\\Pb"), "A\\Z\nb");
+        // A trailing lone backslash is dropped.
+        assert_eq!(plain_mtext("A\\"), "A");
+        // Codes with an argument still take it up to the `;`, or to the end.
+        assert_eq!(plain_mtext("A\\H2;B"), "AB");
+        assert_eq!(plain_mtext("A\\H2 B"), "A");
+    }
+
+    #[test]
+    fn non_finite_oblique_and_line_spacing_are_repaired() {
+        let run = |oblique: f64, spacing: f64| {
+            let p = MTextParams { oblique, line_spacing: spacing, ..MTextParams::new(Vec2::ZERO, 1.0) };
+            layout_mtext_with("AB\\PCD", &p)
+        };
+        let finite =
+            |l: &MTextLayout| l.bounds.min.x.is_finite() && l.bounds.max.x.is_finite() && l.bounds.min.y.is_finite() && l.bounds.max.y.is_finite();
+        let reference = run(0.0, 1.0);
+        for o in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let l = run(o, 1.0);
+            assert!(finite(&l), "oblique {o}");
+            assert_eq!(l.bounds, reference.bounds, "oblique {o}");
+        }
+        for s in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -2.0] {
+            let l = run(0.0, s);
+            assert!(finite(&l), "spacing {s}");
+            assert_eq!(l.bounds, reference.bounds, "spacing {s}");
+        }
+        // Spacing is clamped to AutoCAD's 0.25..=4 range.
+        assert_eq!(run(0.0, 1e9).bounds, run(0.0, 4.0).bounds);
+        assert_eq!(run(0.0, 1e-9).bounds, run(0.0, 0.25).bounds);
+        assert!(run(0.0, 4.0).bounds.height() > reference.bounds.height());
+        // The paragraph layout takes the same path.
+        let p = MTextParams { oblique: f64::NAN, line_spacing: f64::NAN, ..MTextParams::new(Vec2::ZERO, 1.0) };
+        assert!(finite(&layout_mtext_with("\\pxql;AB\\PCD", &p)));
+    }
+
+    #[test]
+    fn relative_heights_do_not_run_away() {
+        let src = format!("{}A", "\\H999999x;".repeat(60));
+        let l = lay(&src, 0.0);
+        assert!(l.bounds.height().is_finite() && l.bounds.width().is_finite());
+        assert!(l.bounds.height() <= 1e3 * 1.5, "{}", l.bounds.height());
+        assert!(l.bounds.height() > 100.0, "the glyph must not vanish: {}", l.bounds.height());
+        // Shrinking is bounded too.
+        let tiny = lay(&format!("{}A", "\\H0.000001x;".repeat(60)), 0.0);
+        assert!(tiny.bounds.height() > 0.0);
+    }
+
+    /// The width factor of the last format `parse` derived.
+    fn last_wf(contents: &str, base_wf: f64) -> f64 {
+        let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: base_wf, oblique: 0.0, valign: 1 };
+        parse(contents, base).1.last().map_or(f64::NAN, |f| f.wf)
+    }
+
+    #[test]
+    fn width_factor_x_is_relative() {
+        assert_eq!(last_wf("\\W2;a", 1.5), 2.0, "absolute sets the factor");
+        assert_eq!(last_wf("\\W2x;a", 1.5), 3.0, "x multiplies the current factor");
+        assert_eq!(last_wf("\\W2;\\W2x;a", 1.0), 4.0, "relative builds on the last absolute");
+        assert_eq!(last_wf("\\W0.5X;a", 1.0), 0.5, "capital X too");
+        // Hostile: a long relative chain stays inside the absolute range.
+        let chain = "\\W99x;".repeat(50);
+        assert_eq!(last_wf(&chain, 1.0), 100.0);
+        let down = "\\W0.02x;".repeat(50);
+        assert_eq!(last_wf(&down, 1.0), 0.01);
+        // Out of range or not a number: ignored.
+        assert_eq!(last_wf("\\W1e999x;a", 1.5), 1.5);
+        assert_eq!(last_wf("\\WNaNx;a", 1.5), 1.5);
+        assert_eq!(last_wf("\\Wx;a", 1.5), 1.5);
     }
 
     #[test]
@@ -762,7 +935,7 @@ mod tests {
         let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
         assert_eq!(cols, vec![None, Some(MTextColor::Aci(1)), None]);
         let l = lay("\\c16711680;R", 0.0);
-        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0xFF0000))));
+        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0x00FF_0000))));
     }
 
     #[test]
@@ -784,8 +957,8 @@ mod tests {
         let bar = l.strokes.iter().find(|s| s.len() == 2 && (s[0].y - s[1].y).abs() < 1e-12 && (s[0].y + 0.55).abs() < 1e-9);
         assert!(bar.is_some());
         let ys: Vec<f64> = l.strokes.iter().flatten().map(|p| p.y).collect();
-        let max = ys.iter().cloned().fold(f64::MIN, f64::max);
-        let min = ys.iter().cloned().fold(f64::MAX, f64::min);
+        let max = ys.iter().copied().fold(f64::MIN, f64::max);
+        let min = ys.iter().copied().fold(f64::MAX, f64::min);
         assert!(max > 0.0 && min < -1.0, "{min}..{max}");
         // Narrower than the two digits side by side at full size.
         assert!(l.bounds.width() < crate::line_width("12", 1.0, 1.0));
@@ -867,5 +1040,89 @@ mod tests {
         }
         let long = "word ".repeat(5000);
         assert!(lay(&long, 10.0).lines.len() > 100);
+        // Thai with stacks, format runs, stray marks and unpaired braces in one word.
+        for s in ["ก\\S1/2;ข{\\C1;ภาษา}ไทย\u{0E4C}\u{0E4C}", "{\\H2x;ภาษา}{\\H3x;ไทย}", "\u{0E33}\u{0E49}\\S/;ไทย}}", "ภาษาไทย\tภาษาไทย"]
+        {
+            let _ = lay(s, 0.5);
+            let _ = lay(&format!("\\pi1,l2,t3;{s}"), 0.5);
+        }
+        // Too long to look up: one unbreakable word, like a long Latin word.
+        assert_eq!(lay(&"ภาษาไทย".repeat(20_000), 3.0).lines.len(), 1);
+    }
+
+    /// Thai writes no spaces between words: a long line wraps between words, in the plain and the
+    /// paragraph layout, without fonts installed (the line breaks don't depend on glyph widths).
+    #[test]
+    fn thai_wraps_between_words() {
+        let text = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคาเมทัลชีทแผ่นเรียบสีขาว";
+        let one = lay(text, 0.0);
+        assert_eq!(one.lines, vec![text]);
+        let wide = one.bounds.width();
+        for contents in [text.to_string(), format!("\\pi0,l0;{text}"), format!("{{\\C1;เหล็กกล่อง}}{}", text.trim_start_matches("เหล็กกล่อง"))]
+        {
+            let l = lay(&contents, wide / 3.0);
+            assert!(l.lines.len() >= 3, "{contents}: {:?}", l.lines);
+            assert_eq!(l.lines.concat(), text, "nothing lost or added: {:?}", l.lines);
+            for line in &l.lines {
+                let first = line.chars().next().unwrap_or(' ');
+                assert!(!crate::bidi::is_mark(first) && !matches!(first, 'ะ' | 'า' | 'ำ'), "{line}");
+                assert!(!line.ends_with(['เ', 'แ', 'โ', 'ใ', 'ไ']), "{line}");
+            }
+        }
+        // The pieces sit side by side with nothing between them: drawn with a Thai font they are
+        // as wide as the word laid out in one piece (up to kerning).
+        let pieces = split_thai(vec![(Seg::Text(text.to_string()), 0)]);
+        if one.pieces.iter().any(|p| !p.shaped.glyphs.is_empty()) {
+            let base = Fmt { font: TextFont::Stroke, height: 1.0, color: None, under: false, over: false, wf: 1.0, oblique: 0.0, valign: 1 };
+            let sum: f64 = pieces.iter().flatten().map(|(seg, _)| seg_width(seg, &base)).sum();
+            assert!((sum - wide).abs() < 0.01 * wide, "{sum} {wide}");
+        }
+        assert!(pieces.len() > 3);
+        // Latin and other words stay whole; stacks keep their place.
+        assert_eq!(split_thai(vec![(Seg::Text("hello".into()), 0)]).len(), 1);
+        let mixed = split_thai(vec![(Seg::Text("ภาษา".into()), 0), (Seg::Stack("1".into(), "2".into(), '/'), 0), (Seg::Text("ภาษาไทย".into()), 1)]);
+        let flat: Vec<String> = mixed.iter().map(|p| p.iter().map(|(s, _)| seg_plain(s)).collect()).collect();
+        assert_eq!(flat, ["ภาษา1/2ภาษา", "ไทย"]);
+    }
+
+    /// A Thai run that would fit a line at the left indent but not after a first-line indent or a
+    /// leading tab still breaks between its words instead of running out of the column. The indent
+    /// is well over the slack: with no Thai font the stroke font's pieces are narrower than the run
+    /// (each loses its trailing letter gap).
+    #[test]
+    fn thai_wraps_after_first_line_indent_and_tab() {
+        let text = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคา";
+        let wide = lay(text, 0.0).bounds.width();
+        for contents in [format!("\\pi4,l0;{text}"), format!("\\pxt4;\t{text}")] {
+            let l = lay(&contents, wide + 1.0);
+            assert!(l.lines.len() >= 2, "{contents}: {:?}", l.lines);
+            assert_eq!(l.lines.concat().trim_start(), text, "{contents}: {:?}", l.lines);
+        }
+    }
+
+    /// Text that fits at its spaces keeps those line breaks: a note from the sample drawing
+    /// (frame, box section 50x50 mm, painted white) at every column width from one word up never
+    /// breaks inside ทาสีขาว or any other spaced word, in the plain and the paragraph layout.
+    #[test]
+    fn spaced_thai_keeps_its_space_breaks() {
+        let text = "โครงแนวนอน เหล็กกล่อง ขนาด 50x50 mm. ทาสีขาว";
+        let words: Vec<&str> = text.split(' ').collect();
+        let widest = words.iter().map(|w| lay(w, 0.0).bounds.width()).fold(0.0, f64::max);
+        let full = lay(text, 0.0).bounds.width();
+        let mut width = widest * 1.001;
+        while width < full * 1.05 {
+            for contents in [text.to_string(), format!("\\pxql;\\A1;{text}")] {
+                let l = lay(&contents, width);
+                assert_eq!(l.lines.join(" "), text, "{width}: {:?}", l.lines);
+                assert!(l.lines.iter().flat_map(|line| line.split(' ')).all(|w| words.contains(&w)), "{width}: {:?}", l.lines);
+            }
+            width *= 1.05;
+        }
+        // After a Latin word, a Thai run too long for any line breaks between its words, filling
+        // the line it starts on.
+        let long = "เหล็กกล่องขนาดมาตรฐานสำหรับโครงหลังคา";
+        let l = lay(&format!("abc {long}"), lay(long, 0.0).bounds.width() / 2.0);
+        assert!(l.lines.len() >= 3 && l.lines.first().is_some_and(|f| f.starts_with("abc ") && f.len() > 4), "{:?}", l.lines);
+        assert_eq!(l.lines.concat(), format!("abc {long}"));
     }
 }

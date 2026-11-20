@@ -3,7 +3,7 @@
 use cadcraft_doc::{Constraint, ConstraintKind, DistAxis, GeomRef};
 use cadcraft_geom::Vec2;
 
-use crate::curves::circle_at;
+use crate::curves::{Ell, circle_at};
 use crate::model::Model;
 
 /// Contact parameter samples per curve when guessing where two curves touch.
@@ -205,42 +205,7 @@ impl Built {
                 };
                 b.rows = 1;
             }
-            K::Tangent | K::Smooth => {
-                if n != 2 {
-                    return need("two objects");
-                }
-                if c.refs.iter().any(|r| m.is_spline(r)) {
-                    return Self::spline_form(b, m, x);
-                }
-                b.rows = 1;
-                if let (Some((a, bb)), Some((cc, _))) = (ln(0), ci(1)) {
-                    b.form = Form::LC { swap: false };
-                    b.sign = sgn(dir_n(a, bb).cross(cc - a));
-                } else if let (Some((a, bb)), Some((cc, _))) = (ln(1), ci(0)) {
-                    b.form = Form::LC { swap: true };
-                    b.sign = sgn(dir_n(a, bb).cross(cc - a));
-                } else if let (Some((c1, r1)), Some((c2, r2))) = (ci(0), ci(1)) {
-                    b.form = Form::CC;
-                    // sign > 0: external tangency; < 0: internal.
-                    let d = c1.dist(c2);
-                    b.sign = if d >= r1.abs().max(r2.abs()) { 1.0 } else { -1.0 };
-                    b.target = sgn(r1 - r2);
-                } else if let (Some((a, bb)), Some(e)) = (ln(0), el(1)) {
-                    b.form = Form::LE { swap: false };
-                    b.sign = sgn(dir_n(a, bb).cross(e.c - a));
-                } else if let (Some((a, bb)), Some(e)) = (ln(1), el(0)) {
-                    b.form = Form::LE { swap: true };
-                    b.sign = sgn(dir_n(a, bb).cross(e.c - a));
-                } else if (ci(0).is_some() || el(0).is_some()) && (ci(1).is_some() || el(1).is_some()) {
-                    b.form = Form::Contact;
-                    b.rows = 3;
-                    b.aux_init = b.contact_guess(m, x).ok_or_else(|| format!("{} could not find where the curves touch", c.kind.name()))?;
-                } else if ln(0).is_some() && ln(1).is_some() && c.kind == K::Smooth {
-                    b.form = Form::LL;
-                } else {
-                    return need("a line and a circle/arc/ellipse, two curves, or a spline end and a curve");
-                }
-            }
+            K::Tangent | K::Smooth => return Self::tangent_form(b, c, m, x),
             K::Symmetric => {
                 if n != 3 || ln(2).is_none() {
                     return need("two objects and a symmetry line");
@@ -347,154 +312,8 @@ impl Built {
         out.resize(start + self.rows, 0.0);
     }
 
-    fn eval_inner(&self, m: &Model, x: &[f64], out: &mut Vec<f64>) -> Option<()> {
-        use ConstraintKind as K;
-        let r = |i: usize| self.refs.get(i);
-        let pt = |i: usize| m.point(x, r(i)?);
-        let ln = |i: usize| m.line(x, r(i)?);
-        let ci = |i: usize| m.circle(x, r(i)?);
-        let el = |i: usize| m.ellipse(x, r(i)?);
-        match (self.kind, self.form) {
-            (_, Form::Lock) => {}
-            (_, Form::PE { swap }) => {
-                let (p, e) = if swap { (pt(1)?, el(0)?) } else { (pt(0)?, el(1)?) };
-                out.push(e.on(p));
-            }
-            (_, Form::LE { swap }) => {
-                let ((a, b), e) = if swap { (ln(1)?, el(0)?) } else { (ln(0)?, el(1)?) };
-                let d = dir_n(a, b);
-                out.push(self.sign * d.cross(e.c - a) - e.support(d.perp()));
-            }
-            (_, Form::Contact) => {
-                let (p0, d0) = self.curve_at(m, x, 0, *x.get(self.aux)?)?;
-                let (p1, d1) = self.curve_at(m, x, 1, *x.get(self.aux + 1)?)?;
-                out.extend([p0.x - p1.x, p0.y - p1.y, d0.normalized().cross(d1.normalized())]);
-            }
-            (_, Form::EndOn { spline, at_end }) => {
-                let f = m.end_frame(x, r(spline)?, at_end)?;
-                let o = 1 - spline.min(1);
-                if let Some((a, b)) = ln(o) {
-                    let d = dir_n(a, b);
-                    out.extend([d.cross(f.p - a), f.t.cross(d)]);
-                } else if let Some((c, rad)) = ci(o) {
-                    out.extend([f.p.dist(c) - rad, f.t.dot(dir_n(c, f.p))]);
-                } else {
-                    let e = el(o)?;
-                    out.extend([e.on(f.p), f.t.dot(e.normal(f.p))]);
-                }
-            }
-            (_, Form::Join { a_end, b_end, g2 }) => {
-                // Orient both so the first curve runs into the joint and the second out of it.
-                let fa = m.end_frame(x, r(0)?, a_end)?;
-                let fb = m.end_frame(x, r(1)?, b_end)?;
-                let fa = if a_end { fa } else { fa.reversed() };
-                let fb = if b_end { fb.reversed() } else { fb };
-                out.extend([fa.p.x - fb.p.x, fa.p.y - fb.p.y, fa.t.cross(fb.t)]);
-                if g2 {
-                    out.push(fa.k - fb.k);
-                }
-            }
-            (_, Form::Anchor(a)) => {
-                let p = pt(0)?;
-                out.extend([p.x - a.x, p.y - a.y]);
-            }
-            (K::Coincident, Form::PP) => {
-                let (p, q) = (pt(0)?, pt(1)?);
-                out.extend([p.x - q.x, p.y - q.y]);
-            }
-            (K::Coincident, Form::PL { swap }) => {
-                let (p, (a, b)) = if swap { (pt(1)?, ln(0)?) } else { (pt(0)?, ln(1)?) };
-                out.push(dir_n(a, b).cross(p - a));
-            }
-            (K::Coincident, Form::PC { swap }) => {
-                let (p, (c, rad)) = if swap { (pt(1)?, ci(0)?) } else { (pt(0)?, ci(1)?) };
-                out.push(p.dist(c) - rad);
-            }
-            (K::Horizontal | K::Vertical, f) => {
-                let (a, b) = if f == Form::L1 { ln(0).or_else(|| el(0).map(|e| (e.c - e.mj, e.c + e.mj)))? } else { (pt(0)?, pt(1)?) };
-                out.push(if self.kind == K::Horizontal { a.y - b.y } else { a.x - b.x });
-            }
-            (K::Parallel | K::Smooth, Form::LL) => {
-                let ((a1, b1), (a2, b2)) = (ln(0)?, ln(1)?);
-                out.push(dir_n(a1, b1).cross(dir_n(a2, b2)));
-            }
-            (K::Perpendicular, _) => {
-                let ((a1, b1), (a2, b2)) = (ln(0)?, ln(1)?);
-                out.push(dir_n(a1, b1).dot(dir_n(a2, b2)));
-            }
-            (K::Collinear, _) => {
-                let ((a1, b1), (a2, b2)) = (ln(0)?, ln(1)?);
-                let d = dir_n(a1, b1);
-                out.extend([d.cross(a2 - a1), d.cross(b2 - a1)]);
-            }
-            (K::Concentric, _) => {
-                let center = |i: usize| ci(i).map(|(c, _)| c).or_else(|| el(i).map(|e| e.c)).or_else(|| pt(i));
-                let (p, q) = (center(0)?, center(1)?);
-                out.extend([p.x - q.x, p.y - q.y]);
-            }
-            (K::Equal, Form::LL) => {
-                let ((a1, b1), (a2, b2)) = (ln(0)?, ln(1)?);
-                out.push(a1.dist(b1) - a2.dist(b2));
-            }
-            (K::Equal, _) => {
-                let ((_, r1), (_, r2)) = (ci(0)?, ci(1)?);
-                out.push(r1 - r2);
-            }
-            (K::Tangent | K::Smooth, Form::LC { swap }) => {
-                let ((a, b), (c, rad)) = if swap { (ln(1)?, ci(0)?) } else { (ln(0)?, ci(1)?) };
-                out.push(self.sign * dir_n(a, b).cross(c - a) - rad);
-            }
-            (K::Tangent | K::Smooth, _) => {
-                let ((c1, r1), (c2, r2)) = (ci(0)?, ci(1)?);
-                let d = c1.dist(c2);
-                out.push(if self.sign > 0.0 { d - (r1 + r2) } else { d - self.target * (r1 - r2) });
-            }
-            (K::Symmetric, Form::PP) => {
-                let (p, q, (a, b)) = (pt(0)?, pt(1)?, ln(2)?);
-                let d = dir_n(a, b);
-                out.extend([d.cross(p.mid(q) - a), d.dot(q - p)]);
-            }
-            (K::Symmetric, Form::SymLines { crossed }) => {
-                let ((a1, b1), (a2, b2), (a, b)) = (ln(0)?, ln(1)?, ln(2)?);
-                let (a2, b2) = if crossed { (b2, a2) } else { (a2, b2) };
-                let d = dir_n(a, b);
-                out.extend([d.cross(a1.mid(a2) - a), d.dot(a2 - a1), d.cross(b1.mid(b2) - a), d.dot(b2 - b1)]);
-            }
-            (K::Symmetric, _) => {
-                let ((p, r1), (q, r2), (a, b)) = (ci(0)?, ci(1)?, ln(2)?);
-                let d = dir_n(a, b);
-                out.extend([d.cross(p.mid(q) - a), d.dot(q - p), r1 - r2]);
-            }
-            (K::Distance(axis), f) => {
-                let v = match (axis, f) {
-                    (_, Form::PL { swap }) => {
-                        let (p, (a, b)) = if swap { (pt(1)?, ln(0)?) } else { (pt(0)?, ln(1)?) };
-                        dir_n(a, b).cross(p - a)
-                    }
-                    _ => {
-                        let (a, b) = if f == Form::L1 { ln(0)? } else { (pt(0)?, pt(1)?) };
-                        match axis {
-                            DistAxis::Aligned => a.dist(b),
-                            DistAxis::Horizontal => b.x - a.x,
-                            DistAxis::Vertical => b.y - a.y,
-                        }
-                    }
-                };
-                out.push(self.sign * v - self.target);
-            }
-            (K::Angular, Form::ArcSweep) => {
-                out.push(m.arc_sweep(x, r(0)?)? - self.target);
-            }
-            (K::Angular, Form::Rays { rev }) => {
-                let ((a1, b1), (a2, b2)) = (ln(0)?, ln(1)?);
-                let (d1, d2) = (ray(a1, b1, rev[0]), ray(a2, b2, rev[1]));
-                out.push(wrap(d1.cross(d2).atan2(d1.dot(d2)) - self.sign * self.target));
-            }
-            (K::Radius, _) => out.push(ci(0)?.1 - self.target),
-            (K::Diameter, _) => out.push(2.0 * ci(0)?.1 - self.target),
-            _ => {}
-        }
-        Some(())
+    fn eval_inner(&self, model: &Model, values: &[f64], out: &mut Vec<f64>) -> Option<()> {
+        ResidualEval { built: self, model, values, out }.evaluate()
     }
 
     /// Point and derivative of curve reference `i` (circle, arc or ellipse) at parameter `t`.
@@ -527,6 +346,54 @@ impl Built {
     /// Tangent or Smooth with a spline: the spline end and the other curve's nearest end are
     /// joined (Smooth: G2; Tangent between splines: G1), or the spline's end touches a line,
     /// circle, arc or ellipse tangentially. A `start`/`end` reference picks the end.
+    fn tangent_form(mut built: Built, constraint: &Constraint, model: &Model, values: &[f64]) -> Result<Built, String> {
+        use ConstraintKind as K;
+
+        let need = |what: &str| Err(format!("{} needs {what}", constraint.kind.name()));
+        if built.refs.len() != 2 {
+            return need("two objects");
+        }
+        if constraint.refs.iter().any(|reference| model.is_spline(reference)) {
+            return Self::spline_form(built, model, values);
+        }
+
+        let line = |index| r_at(constraint, index).and_then(|reference| model.line(values, reference));
+        let circle = |index| r_at(constraint, index).and_then(|reference| model.circle(values, reference));
+        let ellipse = |index| r_at(constraint, index).and_then(|reference| model.ellipse(values, reference));
+        built.rows = 1;
+
+        if let (Some((start, end)), Some((center, _))) = (line(0), circle(1)) {
+            built.form = Form::LC { swap: false };
+            built.sign = sgn(dir_n(start, end).cross(center - start));
+        } else if let (Some((start, end)), Some((center, _))) = (line(1), circle(0)) {
+            built.form = Form::LC { swap: true };
+            built.sign = sgn(dir_n(start, end).cross(center - start));
+        } else if let (Some((first_center, first_radius)), Some((second_center, second_radius))) = (circle(0), circle(1)) {
+            built.form = Form::CC;
+            // sign > 0: external tangency; < 0: internal.
+            let distance = first_center.dist(second_center);
+            built.sign = if distance >= first_radius.abs().max(second_radius.abs()) { 1.0 } else { -1.0 };
+            built.target = sgn(first_radius - second_radius);
+        } else if let (Some((start, end)), Some(ellipse)) = (line(0), ellipse(1)) {
+            built.form = Form::LE { swap: false };
+            built.sign = sgn(dir_n(start, end).cross(ellipse.c - start));
+        } else if let (Some((start, end)), Some(ellipse)) = (line(1), ellipse(0)) {
+            built.form = Form::LE { swap: true };
+            built.sign = sgn(dir_n(start, end).cross(ellipse.c - start));
+        } else if (circle(0).is_some() || ellipse(0).is_some()) && (circle(1).is_some() || ellipse(1).is_some()) {
+            built.form = Form::Contact;
+            built.rows = 3;
+            built.aux_init =
+                built.contact_guess(model, values).ok_or_else(|| format!("{} could not find where the curves touch", constraint.kind.name()))?;
+        } else if line(0).is_some() && line(1).is_some() && constraint.kind == K::Smooth {
+            built.form = Form::LL;
+        } else {
+            return need("a line and a circle/arc/ellipse, two curves, or a spline end and a curve");
+        }
+
+        Ok(built)
+    }
+
     fn spline_form(mut b: Built, m: &Model, x: &[f64]) -> Result<Built, String> {
         let (Some(r0), Some(r1)) = (b.refs.first().copied(), b.refs.get(1).copied()) else {
             return Err(format!("{} needs two objects", b.kind.name()));
@@ -594,5 +461,294 @@ impl Built {
         b.eval(m, x, &mut out);
         let v = out.first().copied().unwrap_or(0.0).abs();
         if self.kind == ConstraintKind::Angular { v.to_degrees() } else { v }
+    }
+}
+
+/// Shared access to a constraint's geometry, values, and output while evaluating one residual.
+struct ResidualEval<'a> {
+    built: &'a Built,
+    model: &'a Model,
+    values: &'a [f64],
+    out: &'a mut Vec<f64>,
+}
+
+impl ResidualEval<'_> {
+    fn evaluate(&mut self) -> Option<()> {
+        use ConstraintKind as K;
+
+        match (self.built.kind, self.built.form) {
+            (_, Form::Lock) => Some(()),
+            (_, Form::PE { swap }) => self.eval_point_ellipse(swap),
+            (_, Form::LE { swap }) => self.eval_line_ellipse(swap),
+            (_, Form::Contact) => self.eval_contact(),
+            (_, Form::EndOn { spline, at_end }) => self.eval_end_on(spline, at_end),
+            (_, Form::Join { a_end, b_end, g2 }) => self.eval_join(a_end, b_end, g2),
+            (_, Form::Anchor(anchor)) => self.eval_anchor(anchor),
+            (K::Coincident, Form::PP) => self.eval_coincident_points(),
+            (K::Coincident, Form::PL { swap }) => self.eval_point_line(swap),
+            (K::Coincident, Form::PC { swap }) => self.eval_point_circle(swap),
+            (K::Horizontal | K::Vertical, form) => self.eval_horizontal_vertical(form),
+            (K::Parallel | K::Smooth, Form::LL) => self.eval_parallel(),
+            (K::Perpendicular, _) => self.eval_perpendicular(),
+            (K::Collinear, _) => self.eval_collinear(),
+            (K::Concentric, _) => self.eval_concentric(),
+            (K::Equal, Form::LL) => self.eval_equal_lines(),
+            (K::Equal, _) => self.eval_equal_circles(),
+            (K::Tangent | K::Smooth, Form::LC { swap }) => self.eval_tangent_line_circle(swap),
+            (K::Tangent | K::Smooth, _) => self.eval_tangent_circles(),
+            (K::Symmetric, Form::PP) => self.eval_symmetric_points(),
+            (K::Symmetric, Form::SymLines { crossed }) => self.eval_symmetric_lines(crossed),
+            (K::Symmetric, _) => self.eval_symmetric_circles(),
+            (K::Distance(axis), form) => self.eval_distance(axis, form),
+            (K::Angular, Form::ArcSweep) => self.eval_angular_arc(),
+            (K::Angular, Form::Rays { rev }) => self.eval_angular_rays(rev),
+            (K::Radius, _) => self.eval_radius(),
+            (K::Diameter, _) => self.eval_diameter(),
+            _ => Some(()),
+        }
+    }
+
+    fn reference(&self, index: usize) -> Option<&GeomRef> {
+        self.built.refs.get(index)
+    }
+
+    fn point(&self, index: usize) -> Option<Vec2> {
+        self.model.point(self.values, self.reference(index)?)
+    }
+
+    fn line(&self, index: usize) -> Option<(Vec2, Vec2)> {
+        self.model.line(self.values, self.reference(index)?)
+    }
+
+    fn circle(&self, index: usize) -> Option<(Vec2, f64)> {
+        self.model.circle(self.values, self.reference(index)?)
+    }
+
+    fn ellipse(&self, index: usize) -> Option<Ell> {
+        self.model.ellipse(self.values, self.reference(index)?)
+    }
+
+    fn eval_point_ellipse(&mut self, swap: bool) -> Option<()> {
+        let (point, ellipse) = if swap { (self.point(1)?, self.ellipse(0)?) } else { (self.point(0)?, self.ellipse(1)?) };
+        self.out.push(ellipse.on(point));
+        Some(())
+    }
+
+    fn eval_line_ellipse(&mut self, swap: bool) -> Option<()> {
+        let (line, ellipse) = if swap { (self.line(1)?, self.ellipse(0)?) } else { (self.line(0)?, self.ellipse(1)?) };
+        let (start, end) = line;
+        let direction = dir_n(start, end);
+        self.out.push(self.built.sign * direction.cross(ellipse.c - start) - ellipse.support(direction.perp()));
+        Some(())
+    }
+
+    fn eval_contact(&mut self) -> Option<()> {
+        let first_parameter = *self.values.get(self.built.aux)?;
+        let second_parameter = *self.values.get(self.built.aux + 1)?;
+        let (first_point, first_tangent) = self.built.curve_at(self.model, self.values, 0, first_parameter)?;
+        let (second_point, second_tangent) = self.built.curve_at(self.model, self.values, 1, second_parameter)?;
+        self.out.extend([
+            first_point.x - second_point.x,
+            first_point.y - second_point.y,
+            first_tangent.normalized().cross(second_tangent.normalized()),
+        ]);
+        Some(())
+    }
+
+    fn eval_end_on(&mut self, spline: usize, at_end: bool) -> Option<()> {
+        let frame = self.model.end_frame(self.values, self.reference(spline)?, at_end)?;
+        let other = 1 - spline.min(1);
+        if let Some((start, end)) = self.line(other) {
+            let direction = dir_n(start, end);
+            self.out.extend([direction.cross(frame.p - start), frame.t.cross(direction)]);
+        } else if let Some((center, radius)) = self.circle(other) {
+            self.out.extend([frame.p.dist(center) - radius, frame.t.dot(dir_n(center, frame.p))]);
+        } else {
+            let ellipse = self.ellipse(other)?;
+            self.out.extend([ellipse.on(frame.p), frame.t.dot(ellipse.normal(frame.p))]);
+        }
+        Some(())
+    }
+
+    fn eval_join(&mut self, a_end: bool, b_end: bool, g2: bool) -> Option<()> {
+        let first = self.model.end_frame(self.values, self.reference(0)?, a_end)?;
+        let second = self.model.end_frame(self.values, self.reference(1)?, b_end)?;
+        let first = if a_end { first } else { first.reversed() };
+        let second = if b_end { second.reversed() } else { second };
+        self.out.extend([first.p.x - second.p.x, first.p.y - second.p.y, first.t.cross(second.t)]);
+        if g2 {
+            self.out.push(first.k - second.k);
+        }
+        Some(())
+    }
+
+    fn eval_anchor(&mut self, anchor: Vec2) -> Option<()> {
+        let point = self.point(0)?;
+        self.out.extend([point.x - anchor.x, point.y - anchor.y]);
+        Some(())
+    }
+
+    fn eval_coincident_points(&mut self) -> Option<()> {
+        let (first, second) = (self.point(0)?, self.point(1)?);
+        self.out.extend([first.x - second.x, first.y - second.y]);
+        Some(())
+    }
+
+    fn eval_point_line(&mut self, swap: bool) -> Option<()> {
+        let (point, (start, end)) = if swap { (self.point(1)?, self.line(0)?) } else { (self.point(0)?, self.line(1)?) };
+        self.out.push(dir_n(start, end).cross(point - start));
+        Some(())
+    }
+
+    fn eval_point_circle(&mut self, swap: bool) -> Option<()> {
+        let (point, (center, radius)) = if swap { (self.point(1)?, self.circle(0)?) } else { (self.point(0)?, self.circle(1)?) };
+        self.out.push(point.dist(center) - radius);
+        Some(())
+    }
+
+    fn eval_horizontal_vertical(&mut self, form: Form) -> Option<()> {
+        use ConstraintKind as K;
+
+        let (first, second) = if form == Form::L1 {
+            self.line(0).or_else(|| self.ellipse(0).map(|ellipse| (ellipse.c - ellipse.mj, ellipse.c + ellipse.mj)))?
+        } else {
+            (self.point(0)?, self.point(1)?)
+        };
+        let value = if self.built.kind == K::Horizontal { first.y - second.y } else { first.x - second.x };
+        self.out.push(value);
+        Some(())
+    }
+
+    fn eval_parallel(&mut self) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end)) = (self.line(0)?, self.line(1)?);
+        self.out.push(dir_n(first_start, first_end).cross(dir_n(second_start, second_end)));
+        Some(())
+    }
+
+    fn eval_perpendicular(&mut self) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end)) = (self.line(0)?, self.line(1)?);
+        self.out.push(dir_n(first_start, first_end).dot(dir_n(second_start, second_end)));
+        Some(())
+    }
+
+    fn eval_collinear(&mut self) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end)) = (self.line(0)?, self.line(1)?);
+        let direction = dir_n(first_start, first_end);
+        self.out.extend([direction.cross(second_start - first_start), direction.cross(second_end - first_start)]);
+        Some(())
+    }
+
+    fn eval_concentric(&mut self) -> Option<()> {
+        let center = |index| {
+            self.circle(index).map(|(center, _)| center).or_else(|| self.ellipse(index).map(|ellipse| ellipse.c)).or_else(|| self.point(index))
+        };
+        let (first, second) = (center(0)?, center(1)?);
+        self.out.extend([first.x - second.x, first.y - second.y]);
+        Some(())
+    }
+
+    fn eval_equal_lines(&mut self) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end)) = (self.line(0)?, self.line(1)?);
+        self.out.push(first_start.dist(first_end) - second_start.dist(second_end));
+        Some(())
+    }
+
+    fn eval_equal_circles(&mut self) -> Option<()> {
+        let ((_, first_radius), (_, second_radius)) = (self.circle(0)?, self.circle(1)?);
+        self.out.push(first_radius - second_radius);
+        Some(())
+    }
+
+    fn eval_tangent_line_circle(&mut self, swap: bool) -> Option<()> {
+        let ((start, end), (center, radius)) = if swap { (self.line(1)?, self.circle(0)?) } else { (self.line(0)?, self.circle(1)?) };
+        self.out.push(self.built.sign * dir_n(start, end).cross(center - start) - radius);
+        Some(())
+    }
+
+    fn eval_tangent_circles(&mut self) -> Option<()> {
+        let ((first_center, first_radius), (second_center, second_radius)) = (self.circle(0)?, self.circle(1)?);
+        let distance = first_center.dist(second_center);
+        let residual = if self.built.sign > 0.0 {
+            distance - (first_radius + second_radius)
+        } else {
+            distance - self.built.target * (first_radius - second_radius)
+        };
+        self.out.push(residual);
+        Some(())
+    }
+
+    fn eval_symmetric_points(&mut self) -> Option<()> {
+        let (first, second, (line_start, line_end)) = (self.point(0)?, self.point(1)?, self.line(2)?);
+        let direction = dir_n(line_start, line_end);
+        self.out.extend([direction.cross(first.mid(second) - line_start), direction.dot(second - first)]);
+        Some(())
+    }
+
+    fn eval_symmetric_lines(&mut self, crossed: bool) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end), (line_start, line_end)) = (self.line(0)?, self.line(1)?, self.line(2)?);
+        let (second_start, second_end) = if crossed { (second_end, second_start) } else { (second_start, second_end) };
+        let direction = dir_n(line_start, line_end);
+        self.out.extend([
+            direction.cross(first_start.mid(second_start) - line_start),
+            direction.dot(second_start - first_start),
+            direction.cross(first_end.mid(second_end) - line_start),
+            direction.dot(second_end - first_end),
+        ]);
+        Some(())
+    }
+
+    fn eval_symmetric_circles(&mut self) -> Option<()> {
+        let ((first_center, first_radius), (second_center, second_radius), (line_start, line_end)) =
+            (self.circle(0)?, self.circle(1)?, self.line(2)?);
+        let direction = dir_n(line_start, line_end);
+        self.out.extend([
+            direction.cross(first_center.mid(second_center) - line_start),
+            direction.dot(second_center - first_center),
+            first_radius - second_radius,
+        ]);
+        Some(())
+    }
+
+    fn eval_distance(&mut self, axis: DistAxis, form: Form) -> Option<()> {
+        let value = match (axis, form) {
+            (_, Form::PL { swap }) => {
+                let (point, (start, end)) = if swap { (self.point(1)?, self.line(0)?) } else { (self.point(0)?, self.line(1)?) };
+                dir_n(start, end).cross(point - start)
+            }
+            _ => {
+                let (first, second) = if form == Form::L1 { self.line(0)? } else { (self.point(0)?, self.point(1)?) };
+                match axis {
+                    DistAxis::Aligned => first.dist(second),
+                    DistAxis::Horizontal => second.x - first.x,
+                    DistAxis::Vertical => second.y - first.y,
+                }
+            }
+        };
+        self.out.push(self.built.sign * value - self.built.target);
+        Some(())
+    }
+
+    fn eval_angular_arc(&mut self) -> Option<()> {
+        let reference = self.reference(0)?;
+        self.out.push(self.model.arc_sweep(self.values, reference)? - self.built.target);
+        Some(())
+    }
+
+    fn eval_angular_rays(&mut self, reversed: [bool; 2]) -> Option<()> {
+        let ((first_start, first_end), (second_start, second_end)) = (self.line(0)?, self.line(1)?);
+        let (first, second) = (ray(first_start, first_end, reversed[0]), ray(second_start, second_end, reversed[1]));
+        let residual = wrap(first.cross(second).atan2(first.dot(second)) - self.built.sign * self.built.target);
+        self.out.push(residual);
+        Some(())
+    }
+
+    fn eval_radius(&mut self) -> Option<()> {
+        self.out.push(self.circle(0)?.1 - self.built.target);
+        Some(())
+    }
+
+    fn eval_diameter(&mut self) -> Option<()> {
+        self.out.push(2.0 * self.circle(0)?.1 - self.built.target);
+        Some(())
     }
 }

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, EngineError, Entity, EntityKind, Handle, Line, PolyVertex, Polyline, Prim, Result, Segment, Session, TAU, Vec2, angle_in_sweep, arc,
+    ccw_sweep, intersect_ext, line, lwpoly, norm_angle,
+};
 
 // ---------------- trim / extend ----------------
 
@@ -167,17 +170,45 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
         EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick)?,
         k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
     };
-    let common = e.common.clone();
-    let space = s.space();
+    replace_with_pieces(s, h, pieces)
+}
+
+/// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
+/// piece (the one holding the object's start, or the only piece of a circle or closed polyline)
+/// is the object itself, keeping its handle, its place in the drawing order, its groups and its
+/// extended data; the others are new objects with its properties, added at the end of its space
+/// (`entlast`); with no pieces the object is erased. Returns the pieces' handles. (A line broken
+/// in its middle keeps its handle on the piece from its start point, the piece to its end point is
+/// new; a circle broken or trimmed becomes an arc with the circle's handle.)
+///
+/// Dimensions attached to the object follow [`crate::assoc::follow_pieces`]. Its parametric
+/// constraints are removed: its new shape no longer meets them, and solving them again would move
+/// the objects they tie it to.
+pub(super) fn replace_with_pieces(s: &mut Session, h: Handle, pieces: Vec<EntityKind>) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
+    let mut pieces = pieces.into_iter();
+    let Some(first) = pieces.next() else {
+        d.remove_entity(h);
+        return Ok(Vec::new());
+    };
+    let (Some(space), Some(old)) = (d.space_of(h), d.entity(h).cloned()) else {
+        return Err(EngineError::Other("no such object".into()));
+    };
+    d.modify_entity(h, |e| e.kind = first)?;
+    let mut out = vec![h];
+    for kind in pieces {
+        let handle = d.new_handle();
         if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
+            st.push(Entity { handle, common: old.common.clone(), kind });
+            out.push(handle);
         }
+    }
+    crate::assoc::follow_pieces(d, &old.kind, &out);
+    let n = d.constraints.len();
+    d.constraints.retain(|c| c.refs.iter().all(|r| r.handle != h));
+    let removed = n - d.constraints.len();
+    if removed > 0 {
+        s.echo(format!("{removed} constraint(s) of the broken or trimmed object removed."));
     }
     Ok(out)
 }
@@ -280,6 +311,28 @@ pub(super) fn param_on(s: &Segment, p: Vec2) -> f64 {
     }
 }
 
+/// A polyline arc segment on `ga`'s circle that ends at `end` after turning through `sweep`
+/// (signed, positive counterclockwise), run on round the circle to the nearest boundary edge: the
+/// new end point and the segment's new bulge. `None` when no edge crosses the rest of the circle.
+fn extend_arc_segment(ga: &Arc, end: Vec2, sweep: f64, cut: &[Segment]) -> Option<(Vec2, f64)> {
+    let full = Segment::Arc { arc: Arc { start: 0.0, end: TAU - 1e-12, ..*ga }, ccw: true };
+    let a_end = ga.center.angle_to(end);
+    let ccw = sweep > 0.0;
+    // How far past `end` each crossing is, turning the way the segment turns; crossings on the
+    // segment itself (the last |sweep| of a turn) are not ahead of it.
+    let (x, more) = cut
+        .iter()
+        .flat_map(|c| intersect_ext(&full, c, false))
+        .map(|x| {
+            let a = ga.center.angle_to(x);
+            (x, norm_angle(if ccw { a - a_end } else { a_end - a }))
+        })
+        .filter(|(_, more)| *more > 1e-9 && *more + sweep.abs() < TAU - 1e-9)
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let total = sweep.abs() + more;
+    Some((x, cadcraft_geom::arc_to_bulge(if ccw { total } else { -total })))
+}
+
 /// Extend the end of `h` nearest `pick` to the nearest boundary edge.
 pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Result<()> {
     if crate::cmd::curves::is_locked(s, h) {
@@ -323,18 +376,34 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             let (i_end, i_prev) = if from_end { (n - 1, n - 2) } else { (0, 1) };
             let end = vs.get(i_end).map(|v| v.p).unwrap_or_default();
             let prev = vs.get(i_prev).map(|v| v.p).unwrap_or_default();
-            let dir = (end - prev).normalized();
-            let ray = Segment::Line(Line::new(end, end + dir * 1e8));
-            let np = cut
-                .iter()
-                .flat_map(|c| intersect_ext(&ray, c, false))
-                .filter(|x| (*x - end).dot(dir) > 1e-9)
-                .min_by(|x, y| x.dist(end).total_cmp(&y.dist(end)))
-                .ok_or_else(|| EngineError::Other("Object does not intersect an edge.".into()))?;
-            if let Some(v) = vs.get_mut(i_end) {
-                v.p = np;
+            // The end segment's bulge, signed for travel from `prev` out to `end`.
+            let i_seg = if from_end { i_prev } else { i_end };
+            let bulge = vs.get(i_seg).map_or(0.0, |v| if from_end { v.bulge } else { -v.bulge });
+            let none = || EngineError::Other("Object does not intersect an edge.".into());
+            if let Some((ga, _)) = cadcraft_geom::bulge_to_arc(prev, end, bulge) {
+                // An arc end segment runs on round its circle, as an arc does.
+                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), &cut).ok_or_else(none)?;
+                if let Some(v) = vs.get_mut(i_end) {
+                    v.p = np;
+                }
+                if let Some(v) = vs.get_mut(i_seg) {
+                    v.bulge = if from_end { b } else { -b };
+                }
+            } else {
+                let dir = (end - prev).normalized();
+                let ray = Segment::Line(Line::new(end, end + dir * 1e8));
+                let np = cut
+                    .iter()
+                    .flat_map(|c| intersect_ext(&ray, c, false))
+                    .filter(|x| (*x - end).dot(dir) > 1e-9)
+                    .min_by(|x, y| x.dist(end).total_cmp(&y.dist(end)))
+                    .ok_or_else(none)?;
+                if let Some(v) = vs.get_mut(i_end) {
+                    v.p = np;
+                }
             }
-            lwpoly(vs, false)
+            // Width, elevation and linetype generation stay as they were.
+            EntityKind::LwPolyline(cadcraft_doc::LwPolyline { vertices: vs, ..p.clone() })
         }
         k => crate::cmd::modify2::extend_other(k, &cut, pick)?,
     };

@@ -1,5 +1,5 @@
 use super::ctx::OsnapRef;
-use super::*;
+use super::{AssocSnap, DimAssoc, DimKind, Dimension, Drawing, EntityKind, LwPolyline};
 
 /// Whether a DIMASSOC point reference to `k` names a point of it without naming a segment:
 /// true for objects made of one curve. Polylines are referenced by segment ([`polyline_vertex_ref`]);

@@ -11,6 +11,11 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
+
+use temp_dir::TempDir;
+
 /// Test drawings: any file holds one line on layer Walls.
 fn read(_bytes: &[u8], _name: &str) -> Result<Drawing, String> {
     let mut d = Drawing::new_metric();
@@ -21,14 +26,6 @@ fn read(_bytes: &[u8], _name: &str) -> Result<Drawing, String> {
     Ok(d)
 }
 
-fn site_file() -> String {
-    let dir = std::env::temp_dir().join(format!("cadcraft-xref-palette-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join("site.dxf");
-    std::fs::write(&p, "site").unwrap();
-    p.to_string_lossy().into_owned()
-}
-
 fn status(app: &CadApp) -> Option<XrefStatus> {
     app.session.doc().ok()?.block("site").map(|b| b.xref_status)
 }
@@ -37,7 +34,8 @@ fn status(app: &CadApp) -> Option<XrefStatus> {
 fn xref_opens_the_palette_and_its_buttons_manage_the_xref() {
     set_io(IoHooks { read, write: |_, _| Err("no writer in this test".into()), plot: None });
     let mut app = CadApp::new(Session::default(), Services::default());
-    app.run("xattach", json!({ "path": site_file(), "at": [10, 10] })).unwrap();
+    let dir = TempDir::new("xref-palette");
+    app.run("xattach", json!({ "path": dir.file("site.dxf", "site"), "at": [10, 10] })).unwrap();
     assert_eq!(status(&app), Some(XrefStatus::Loaded));
     // Typed (by its alias) it opens the palette instead of listing.
     assert!(app.cmdline("XR").is_none());

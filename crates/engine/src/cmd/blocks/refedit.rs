@@ -512,6 +512,8 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
         notes = load::load(&mut nd, &x.xref, host.as_deref(), false);
     }
     *s.doc_mut()? = nd;
+    // The objects the edit managed were its own: OOPS doesn't bring them back after it.
+    s.state_mut()?.erased.forget(|h| r.owns(h));
     s.set_selection(Vec::new());
     for o in notes {
         s.echo(o.message());

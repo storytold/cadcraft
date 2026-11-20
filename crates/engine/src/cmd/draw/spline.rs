@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Input, Interactive, Prompt, Result, Session, Spline, Step, Value, Vec2, added, bad, bool_or, distinct_points, find_command,
+    points_param,
+};
 
 pub(super) fn run_spline(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("object").is_some() {
