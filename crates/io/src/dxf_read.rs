@@ -1,6 +1,6 @@
 //! DXF → Drawing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{
@@ -24,8 +24,8 @@ mod tables;
 mod text;
 
 use document::{
-    apply_sortents, count_skipped, dropped_paper_views, outside_sections, parse_entities, place_blocks, place_entities, read_blocks, read_objects,
-    setup_layouts,
+    HandlePolicy, apply_sortents, count_skipped, dropped_paper_views, outside_sections, parse_entities, place_blocks, place_entities, read_blocks,
+    read_objects, setup_layouts,
 };
 #[cfg(test)]
 use entities::acad_table;
@@ -71,6 +71,8 @@ struct Rx {
     block: Option<String>,
     /// The points HATCH boundary curves may still be sampled into.
     curves: hatch::CurvePoints,
+    /// IMAGE entity handle, as read (a repeated one reassigned) → its IMAGEDEF handle (upper case).
+    image_defs: HashMap<Handle, String>,
 }
 
 /// Read a DXF file into a drawing.
@@ -102,6 +104,18 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     let mut blocks: Vec<BlockDef> = Vec::new();
     let mut layout_objs: Vec<LayoutDef> = Vec::new();
     let mut entities = Vec::new();
+    // One set for every list: a generated handle must be unique across blocks and ENTITIES
+    // (a *MODEL_SPACE block and an ENTITIES record both land in the model space).
+    let mut seen_handles = HashSet::new();
+    // Model/paper-space handles retain priority if an in-memory drawing or damaged DXF also
+    // assigns one to a block entity. This preserves top-level references while letting block
+    // handles be repaired before their deferred fixups are recorded.
+    let reserved_entity_handles: HashSet<Handle> = secs
+        .iter()
+        .filter(|s| s.name == "ENTITIES")
+        .flat_map(|s| record_slices(s.tags))
+        .filter_map(|(_, tags)| common::T(tags).s(5).and_then(|h| Handle::parse_hex(&h)))
+        .collect();
     let mut objs = Objects::default();
     // Every handle another program's file already uses is taken before anything gets a new one:
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
@@ -145,11 +159,20 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
         match s.name {
             "HEADER" => header(s.tags, &mut d),
             "TABLES" => tables(s.tags, &mut d, &mut rx),
-            "BLOCKS" => blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
+            "BLOCKS" => {
+                blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped, &mut seen_handles, &reserved_entity_handles))
+            }
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&record_slices(s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(
+                    &record_slices(s.tags),
+                    &mut d,
+                    &mut rx,
+                    &mut n,
+                    &mut table_cells_left,
+                    &mut HandlePolicy { seen: &mut seen_handles, reserved: &reserved_entity_handles, source_wins: true },
+                ));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
             "OBJECTS" => read_objects(s.tags, &mut objs, &mut layout_objs),
@@ -165,7 +188,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
-    crate::dxf_image::resolve(&secs, &mut d);
+    crate::dxf_image::resolve(&secs, &mut d, &rx.image_defs);
     crate::dxf_mline::resolve(&secs, &mut d);
     // Keep handles unique against the header's seed.
     let seed = d.header.str("HANDSEED", "");

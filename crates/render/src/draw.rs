@@ -48,6 +48,16 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Set the transparency `e` draws with: its own (with transparency display on), at least its
+/// locked layer's `fade` on screen, which shows even when transparency display is off. Returns
+/// its own, without the fade: what a block's ByBlock children inherit.
+fn shown_transparency(b: &mut Builder, ctx: &Ctx, e: &Entity, layer_transparency: u8, fade: u8) -> u8 {
+    let fade = if b.opts.on_screen { fade } else { 0 };
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
+    own
+}
+
 /// The planar Z elevation of an entity `kind` when rendered or tested in a 3D orbit (0.0 for
 /// non-planar 3D entities that carry per-vertex Z coordinates).
 pub fn entity_elevation(kind: &EntityKind) -> f64 {
@@ -88,13 +98,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             cadcraft_doc::AnnoDraw::Plain => {}
         }
     }
-    let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
+    let (rgb, lw, lt, ltscale, visible, layer_transparency, fade) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
     }
-    if b.opts.transparency {
-        b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
-    }
+    let own = shown_transparency(b, ctx, e, layer_transparency, fade);
     let orbit = b.active_orbit(ctx);
     let ent_z = if orbit.is_top() { 0.0 } else { entity_elevation(&e.kind) };
     let ctx_z = Ctx { z_offset: ctx.z_offset + ent_z * ctx.z_scale, ..ctx.clone() };
@@ -157,8 +165,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 mtext(b, ctx, t, rgb, lw);
             }
         }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
-        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb, own),
+        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, (lt.as_ref(), ltscale), own),
         EntityKind::Hatch(h) => hatch::draw(b, ctx, e, h, rgb, lw, tol),
         EntityKind::MLine(m) => mline::draw(b, ctx, e, m, rgb, lw, tol),
         EntityKind::LwPolyline(p) if p.const_width > 0.0 || p.vertices.iter().any(|v| v.start_width > 0.0 || v.end_width > 0.0) => {
@@ -244,7 +252,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.tris(ctx, rgb, &g.tris);
             }
         }
-        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw),
+        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw, own),
         EntityKind::Point(p) => draw_point(b, ctx, p, rgb, lw, tol),
         // An OLE object's content is not drawn; its frame, from its two corner points, is.
         EntityKind::Unknown(u) if u.is_ole_frame() => {
@@ -325,7 +333,8 @@ fn draw_3d_wire(b: &mut Builder, ctx: &Ctx, kind: &EntityKind, rgb: Ink, lw: f32
     }
 }
 
-fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
+/// `own`: the leader's transparency without its locked-layer fade, for its block content.
+fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32, own: u8) {
     // Straight or spline leader lines; block content draws like a block reference.
     for pts in m.leader_paths() {
         b.polyline(ctx, rgb, lw, &pts);
@@ -345,7 +354,7 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
-        insert(b, ctx, e, ins, rgb);
+        insert(b, ctx, e, ins, rgb, own);
     }
 }
 
@@ -386,14 +395,25 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
     }
 }
 
-fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimension, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64) {
+/// `stroke`: the linetype and its scale; `own`: the dimension's transparency without its
+/// locked-layer fade, which its block's ByBlock children inherit.
+fn draw_dimension(
+    b: &mut Builder,
+    ctx: &Ctx,
+    e: &Entity,
+    dm: &cadcraft_doc::Dimension,
+    lw: f32,
+    stroke: (Option<&cadcraft_doc::Linetype>, f64),
+    own: u8,
+) {
+    let (lt, ltscale) = stroke;
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
         // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
         // the insertion point, so the block draws translated by it (#2634).
         let off = dm.insertion_point.xy();
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::translate(off)) };
+        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.

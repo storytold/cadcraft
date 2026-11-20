@@ -243,3 +243,50 @@ fn dash_attedit_edits_a_multiline_attributes_text() {
     assert!((m.height - 2.5).abs() < 1e-9 && (a.text.height - 2.5).abs() < 1e-9, "{} {}", m.height, a.text.height);
     assert!((m.rotation.to_degrees() - 90.0).abs() < 1e-9, "{}", m.rotation.to_degrees());
 }
+
+/// The Height, Angle and Style defaults of a multiline attribute are its multiline text's, which
+/// is what is drawn; a single-line attribute's are its text's.
+#[test]
+fn dash_attedit_defaults_of_a_multiline_attribute_come_from_its_multiline_text() {
+    use cadcraft_doc::{MText, MultilineAttrib};
+    use cadcraft_geom::Vec3;
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
+    let mtext = MText {
+        insert: Vec3::new(120.0, 3.0, 0.0),
+        height: 3.5,
+        width: 0.0,
+        attach: 1,
+        rotation: 30f64.to_radians(),
+        style: "NOTES".into(),
+        contents: "abc".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    set_t(&mut s, h, |a| {
+        a.text.height = 1.25;
+        a.text.rotation = 0.0;
+        a.text.style = "Standard".into();
+        a.multiline = Some(MultilineAttrib { mtext: mtext.clone(), read_as: "abc".into() });
+    });
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", "", "h"]);
+    assert!(s.prompt_text().contains("<3.5000>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "a"]);
+    assert!(s.prompt_text().contains("<30.0000>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "s"]);
+    assert!(s.prompt_text().contains("<NOTES>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "n"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // A single-line attribute keeps its text's.
+    let g = handle(&insert(&mut s, 200.0, json!({"T": "abc"})));
+    set_t(&mut s, g, |a| {
+        a.text.height = 1.25;
+        a.text.style = "Standard".into();
+    });
+    type_lines(&mut s, &["-attedit", "y", "", "T", "", "205,0", "", "h"]);
+    assert!(s.prompt_text().contains("<1.2500>"), "{}", s.prompt_text());
+    type_lines(&mut s, &["", "s"]);
+    assert!(s.prompt_text().contains("<Standard>"), "{}", s.prompt_text());
+}

@@ -1390,7 +1390,8 @@ fn joined_into<'a>(merged_into: &HashMap<String, &'a ForeignObject>, b: &[Tag]) 
 
 /// The entries of kept dictionary `kept` that written dictionary `b` doesn't have (by key, without
 /// regard to case), appended to it with their handles remapped; entries whose object is gone are
-/// left out.
+/// left out. Then the kept dictionary's xdata of applications `b` doesn't carry, its references
+/// remapped (the kept dictionary's own handle, owner and reactors are not copied).
 fn join_entries(map: &Map, b: &[Tag], kept: &ForeignObject, out: &mut Vec<Tag>) {
     let has = |key: &str| b.iter().any(|t| t.code == 3 && up(&t.str()) == up(key));
     let mut key: Option<&str> = None;
@@ -1407,6 +1408,16 @@ fn join_entries(map: &Map, b: &[Tag], kept: &ForeignObject, out: &mut Vec<Tag>) 
                 }
             }
             _ => {}
+        }
+    }
+    let own: HashSet<String> = b.iter().filter(|t| t.code == 1001).map(|t| up(&t.str())).collect();
+    let mut skip = false;
+    for r in kept.tags.iter().skip_while(|t| t.code < 1000) {
+        if r.code == 1001 {
+            skip = own.contains(&up(&r.value));
+        }
+        if !skip {
+            out.push(map.group(r));
         }
     }
 }

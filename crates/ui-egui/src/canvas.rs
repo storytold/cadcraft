@@ -290,11 +290,18 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     });
     handle_scroll_zoom(app, ui, nav, inside);
     handle_button_navigation(app, nav, inside);
-    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
+    // Only a drag that started on the current tile navigates it: the canvas response covers
+    // every tile, and a drag from another one would move this one's view.
+    let pressed_here = ui.input(|i| i.pointer.press_origin()).is_some_and(|at| nav.rect.contains(at));
+    if pressed_here && nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
+    if pressed_here && nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_pan_active() {
+        let d = nav.response.drag_delta();
+        let _ = app.session.realtime_pan(f64::from(d.x), f64::from(d.y));
+    }
     // 3DORBIT: dragging with the primary button rotates the 3D view.
-    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.orbit_active() {
+    if pressed_here && nav.response.dragged_by(egui::PointerButton::Primary) && app.session.orbit_active() {
         let d = nav.response.drag_delta();
         let _ = app.session.orbit_drag(f64::from(d.x), f64::from(d.y));
     }
@@ -785,7 +792,7 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 if (app.session.prompting() || grip_clicks) && press_takes(app, &xf, pos) {
                     let opened = press_at(app, &xf, current_orbit, ui.ctx(), pos, m);
                     app.canvas.press = Some(press::Press::new(pos, opened));
-                } else if grip_clicks && !app.session.realtime_zoom_active() && !app.session.orbit_active() {
+                } else if grip_clicks && !app.session.realtime_zoom_active() && !app.session.realtime_pan_active() && !app.session.orbit_active() {
                     // A grip with no command running: clicked when the button comes up. egui
                     // calls a press held longer than 0.8 s a drag, and a slow drawing's frames
                     // can make an ordinary click that long (#2813).
@@ -1105,9 +1112,9 @@ fn track_cursor(
 
 /// Whether the press at `pos` is acted on when the button goes down ([`press_at`]): at any prompt
 /// and on the drawing with no command running. Grips (with no command running), ZOOM Realtime and
-/// 3DORBIT keep their clicks.
+/// PAN and 3DORBIT keep their clicks.
 fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
-    if app.session.realtime_zoom_active() || app.session.orbit_active() {
+    if app.session.realtime_zoom_active() || app.session.realtime_pan_active() || app.session.orbit_active() {
         return false;
     }
     if app.session.prompting() {
