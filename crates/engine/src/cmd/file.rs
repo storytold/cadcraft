@@ -538,20 +538,7 @@ pub(super) fn has_dwg_header(bytes: &[u8]) -> bool {
 /// the backup. A file that doesn't (truncated, overwritten by another program) never replaces a
 /// good `.bak`.
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
-    // DWG: a version tag like `AC1032` (R12 is `AC1009`).
-    if has_dwg_header(bytes) || craft_dxf::is_binary(bytes) {
-        return true;
-    }
-    // ASCII DXF: optional comments (999), then group 0 SECTION.
-    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
-    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
-    loop {
-        match (lines.next(), lines.next()) {
-            (Some("999"), Some(_)) => continue,
-            (Some("0"), Some(v)) => return v.eq_ignore_ascii_case("SECTION"),
-            _ => return false,
-        }
-    }
+    has_dwg_header(bytes) || Format::has_dxf_header(bytes)
 }
 
 /// How much of a drawing's end [`looks_complete`] reads.

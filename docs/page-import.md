@@ -32,8 +32,10 @@ converted. Unsupported compositing, gradients and patterns may be refused. Raste
 content retains its original pixel detail; converting it to rectangles does not
 increase its resolution. Outlined text can produce many entities and large files.
 
-The page dimensions are converted from millimetres for drawings using inches,
-feet, millimetres, centimetres or metres; other drawing units use one unit per mm.
+In model space, CADCraft converts the page dimensions from millimetres to inches,
+feet, millimetres, centimetres or metres according to the drawing units. Other
+drawing units use one unit per mm. In paper space, CADCraft uses the layout's
+paper units.
 Explicit `at` and `scale` import parameters override placement and scale.
 
 `oleconvert` can also replace a selected OLE frame containing a supported cached

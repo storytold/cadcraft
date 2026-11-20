@@ -581,9 +581,12 @@ pub fn page_resize_transform(frame: &[Vec2; 5], corner: usize, to: Vec2) -> Opti
     }
     let delta = to - anchor;
     let factor = (delta.x * diagonal.x + delta.y * diagonal.y) / length_squared;
-    if !factor.is_finite() || !(1e-6..=1e6).contains(&factor) {
+    // Projection of an exact boundary drag can round one ULP outside the range.
+    let (min, max) = (1e-6_f64, 1e6_f64);
+    if !(min.next_down()..=max.next_up()).contains(&factor) {
         return None;
     }
+    let factor = factor.clamp(min, max);
     // A successful shrink must remain large enough for the same operation to
     // accept it as a starting page on the next drag.
     let transform = Mat3::scale_about(anchor, factor);

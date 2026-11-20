@@ -105,16 +105,20 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
     }
+    let extension = ext(name);
+    if matches!(extension.as_str(), "pdf" | "docx" | "olepreview") && Format::has_dxf_header(bytes) {
+        return dxf_read::read(bytes).map(|drawing| (drawing, None));
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    match ext(name).as_str() {
+    match extension.as_str() {
         "pdf" => return word::read_pdf(bytes).map(|drawing| (drawing, None)),
         "docx" => return word::read(bytes).map(|drawing| (drawing, None)),
         _ => {}
     }
-    if ext(name) == "olepreview" {
+    if extension == "olepreview" {
         return ole::read(bytes).map(|d| (d, None));
     }
-    let d = match (Format::from_path(name), ext(name).as_str()) {
+    let d = match (Format::from_path(name), extension.as_str()) {
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),
         (Some(Format::Dxf), _) => dxf_read::read(bytes),
         (_, e) if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),

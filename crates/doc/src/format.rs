@@ -15,6 +15,22 @@ pub enum Format {
 }
 
 impl Format {
+    /// Recognise binary DXF and the opening SECTION of ASCII DXF, including leading comments.
+    pub fn has_dxf_header(bytes: &[u8]) -> bool {
+        if craft_dxf::is_binary(bytes) {
+            return true;
+        }
+        let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+        let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+        loop {
+            match (lines.next(), lines.next()) {
+                (Some("999"), Some(_)) => continue,
+                (Some("0"), Some(v)) => return v.eq_ignore_ascii_case("SECTION"),
+                _ => return false,
+            }
+        }
+    }
+
     /// The formats a drawing can be read from by name. DXF and DWG are also recognised by content.
     pub const READ: &'static [Format] = &[Format::Dxf, Format::Dwg, Format::Svg, Format::Svgz];
     /// The formats a drawing can be written to.

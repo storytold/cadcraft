@@ -237,6 +237,7 @@ mod tests {
         let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 10.0, twist: 0.0 };
         let clip = PolyClip::new(&[Vec2::new(-1.0, -1.0), Vec2::new(8.0, -1.0), Vec2::new(-1.0, 8.0)]).unwrap();
         assert!(at(&app, &xf, xf.to_screen(Vec2::ZERO), Some(&clip)).is_some());
+        assert!(super::super::grips::grip_at(&app, &xf, Some(xf.to_screen(Vec2::ZERO))).is_none());
         assert!(at(&app, &xf, xf.to_screen(Vec2::new(20.0, 0.0)), Some(&clip)).is_none());
         let clip = PolyClip::new(&[Vec2::new(-0.1, -1.0), Vec2::new(8.0, -1.0), Vec2::new(-0.1, 8.0)]).unwrap();
         assert!(at(&app, &xf, xf.to_screen(Vec2::new(-0.3, 0.0)), Some(&clip)).is_none());

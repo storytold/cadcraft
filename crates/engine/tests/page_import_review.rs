@@ -77,15 +77,44 @@ fn page_import_without_document_and_response_contract() {
     }
 }
 #[test]
-fn dwg_with_a_page_extension_imports_as_a_drawing() {
+fn drawing_with_a_page_extension_imports_as_a_drawing() {
+    for data in ["QUMxMDMyAA==", "OTk5ClBsYW4KMApTRUNUSU9OCg=="] {
+        let mut s = session();
+        let params = json!({"name":"plan.pdf", "data":data});
+        let result = s.execute("import", &params).unwrap();
+        assert_eq!(result["blocks"], 0);
+        assert!(matches!(s.doc().unwrap().model.iter().next().unwrap().kind, EntityKind::Solid(_)));
+        s.docs.clear();
+        assert!(s.execute("import", &params).is_err());
+        assert!(s.docs.is_empty());
+    }
+}
+
+#[test]
+fn page_import_uses_the_destination_space_units() {
     let mut s = session();
-    let params = json!({"name":"plan.pdf", "data":"QUMxMDMyAA=="});
-    let result = s.execute("import", &params).unwrap();
-    assert_eq!(result["blocks"], 0);
-    assert!(matches!(s.doc().unwrap().model.iter().next().unwrap().kind, EntityKind::Solid(_)));
-    s.docs.clear();
-    assert!(s.execute("import", &params).is_err());
-    assert!(s.docs.is_empty());
+    s.doc_mut().unwrap().header.set_i64("INSUNITS", 6);
+    for (tab, paper_mm, unit) in [("Model", true, 1000.0), ("Layout1", true, 1.0), ("Layout1", false, 25.4)] {
+        s.execute("layout.set", &json!({"name":tab})).unwrap();
+        if tab != "Model" {
+            s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == tab).unwrap().page.paper_mm = Some(paper_mm);
+        }
+        let r = s.execute("import", &json!({"name":"page.pdf","data":"AA==","scale":2.0})).unwrap();
+        let handle = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let EntityKind::Insert(insert) = &s.doc().unwrap().entity(handle).unwrap().kind else { panic!("expected page block") };
+        assert!((insert.scale.x * unit - 2.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn dxf_bytes_take_precedence_over_page_file_extensions() {
+    for binary in [false, true] {
+        let bytes = cadcraft_io::write_with(&page(), "source.dxf", &cadcraft_io::SaveOptions { version: None, binary }).unwrap();
+        for name in ["source.pdf", "source.docx", "source.olepreview"] {
+            let drawing = cadcraft_io::read(&bytes, name).unwrap();
+            assert!(matches!(drawing.model.iter().next().unwrap().kind, EntityKind::Solid(_)));
+        }
+    }
 }
 
 fn ole(s: &mut Session, width: f64, height: f64) -> Handle {
@@ -152,6 +181,7 @@ fn successful_shrink_never_disables_subsequent_enlargement() {
     let anchor = frame[0];
     let small = cadcraft_engine::grips::page_resize_transform(&frame, 2, anchor + (frame[2] - anchor) * 1e-6).unwrap();
     let frame = frame.map(|p| small.apply(p));
+    assert!(cadcraft_engine::grips::page_resize_transform(&frame, 2, anchor + (frame[2] - anchor) * 1e6).is_some());
     let second = cadcraft_engine::grips::page_resize_transform(&frame, 2, anchor + (frame[2] - anchor) * 1e-6);
     if let Some(transform) = second {
         let next = frame.map(|p| transform.apply(p));

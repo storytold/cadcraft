@@ -8,9 +8,9 @@ use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Common, Drawing, EntityKind, Solid, Space};
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use craft_svg::tree::{self, usvg};
-use lyon_tessellation::geometry_builder::{BuffersBuilder, VertexBuffers};
+use lyon_tessellation::geometry_builder::{FillGeometryBuilder, GeometryBuilder, GeometryBuilderError};
 use lyon_tessellation::math::point;
-use lyon_tessellation::{FillOptions, FillRule, FillTessellator, FillVertex};
+use lyon_tessellation::{FillOptions, FillRule, FillTessellator, FillVertex, VertexId};
 
 use crate::{IoError, Result};
 
@@ -381,9 +381,33 @@ fn draw_group(group: &usvg::Group, drawing: &mut Drawing, size: [f32; 2], depth:
                         return Err(bad("nonopaque path strokes are not supported"));
                     }
                     let pen = stroke.to_tiny_skia();
+                    let dashed;
+                    let centerline = if let Some(pattern) = &pen.dash {
+                        let Some(path) = p.data().dash(pattern, 16.0) else {
+                            // A short contour can fall entirely within a gap. tiny-skia also
+                            // returns None for excessive dash counts. Use the control polygon
+                            // length as an upper bound before treating the stroke as empty.
+                            let length: f64 = p
+                                .data()
+                                .points()
+                                .array_windows()
+                                .map(|[a, b]| (f64::from(a.x) - f64::from(b.x)).hypot(f64::from(a.y) - f64::from(b.y)))
+                                .sum();
+                            let intervals = stroke.dasharray().unwrap_or_default();
+                            let period: f64 = intervals.iter().copied().map(f64::from).sum();
+                            if length * intervals.len() as f64 / period > MAX_SOLIDS as f64 {
+                                return Err(bad("dash geometry exceeds limits"));
+                            }
+                            continue;
+                        };
+                        dashed = path;
+                        &dashed
+                    } else {
+                        p.data()
+                    };
                     // PDF can emit zero-length, butt-capped segments. The stroker
                     // returns no outline for these because they paint nothing.
-                    if let Some(path) = p.data().stroke(&pen, 16.0).or_else(|| p.data().stroke(&pen, 1.0)) {
+                    if let Some(path) = centerline.stroke(&pen, 16.0).or_else(|| centerline.stroke(&pen, 1.0)) {
                         add_path(drawing, &path, p.abs_transform(), stroke.paint(), FillRule::NonZero, size, clip)?;
                     }
                 }
@@ -393,6 +417,38 @@ fn draw_group(group: &usvg::Group, drawing: &mut Drawing, size: [f32; 2], depth:
         }
     }
     Ok(())
+}
+
+/// Lyon reports vertex overflow through a Result, while triangle callbacks
+/// return nothing. Stop retaining triangles at the limit and reject the mesh.
+#[derive(Default)]
+struct PageMesh {
+    vertices: Vec<usvg::tiny_skia_path::Point>,
+    triangles: Vec<[VertexId; 3]>,
+    limit: usize,
+    overflow: bool,
+}
+
+impl GeometryBuilder for PageMesh {
+    fn add_triangle(&mut self, a: VertexId, b: VertexId, c: VertexId) {
+        if self.triangles.len() < self.limit {
+            self.triangles.push([a, b, c]);
+        } else {
+            self.overflow = true;
+        }
+    }
+}
+
+impl FillGeometryBuilder for PageMesh {
+    fn add_fill_vertex(&mut self, vertex: FillVertex<'_>) -> std::result::Result<VertexId, GeometryBuilderError> {
+        if self.overflow || self.vertices.len() >= self.limit * 3 {
+            return Err(GeometryBuilderError::TooManyVertices);
+        }
+        let id = VertexId::from_usize(self.vertices.len());
+        let p = vertex.position();
+        self.vertices.push(usvg::tiny_skia_path::Point::from_xy(p.x, p.y));
+        Ok(id)
+    }
 }
 
 fn add_path(
@@ -442,18 +498,17 @@ fn add_path(
     let bounds = data.bounds();
     let stretch = transform.sx.hypot(transform.ky).hypot(transform.kx.hypot(transform.sy));
     let tolerance = (0.035 / stretch.max(1e-6)).min(bounds.width().max(bounds.height()) / 1024.0).clamp(1e-6, 0.1);
-    let mut buffers: VertexBuffers<usvg::tiny_skia_path::Point, u32> = VertexBuffers::new();
+    let mut mesh = PageMesh { limit: MAX_SOLIDS, ..Default::default() };
     FillTessellator::new()
-        .tessellate_path(
-            &path.build(),
-            &FillOptions::default().with_fill_rule(rule).with_tolerance(tolerance),
-            &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| usvg::tiny_skia_path::Point::from_xy(v.position().x, v.position().y)),
-        )
+        .tessellate_path(&path.build(), &FillOptions::default().with_fill_rule(rule).with_tolerance(tolerance), &mut mesh)
         .map_err(bad)?;
-    for indices in buffers.indices.as_chunks::<3>().0 {
+    if mesh.overflow {
+        return Err(bad("CAD geometry exceeds limits"));
+    }
+    for indices in &mesh.triangles {
         let mut triangle = [Vec3::ZERO; 3];
         for (out, index) in triangle.iter_mut().zip(indices) {
-            let mut p = *buffers.vertices.get(*index as usize).ok_or_else(|| bad("invalid mesh"))?;
+            let mut p = *mesh.vertices.get(index.to_usize()).ok_or_else(|| bad("invalid mesh"))?;
             transform.map_point(&mut p);
             *out = Vec3::new(f64::from(p.x / size[0]), f64::from(-p.y / size[1]), 0.0);
             if !out.x.is_finite() || !out.y.is_finite() {
@@ -533,6 +588,39 @@ mod tests {
     }
 
     #[test]
+    fn dashed_stroke_keeps_its_gaps_and_phase() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">
+            <path d="M2 5H18" fill="none" stroke="red" stroke-width="1" stroke-dasharray="2 2" stroke-dashoffset="1"/></svg>"#;
+        let drawing = read_vector_svg(svg, true).unwrap();
+        let spans: Vec<_> = drawing
+            .model
+            .iter()
+            .filter(|e| e.common.color == Color::True(Rgb(255, 0, 0)))
+            .map(|e| {
+                let EntityKind::Solid(s) = &e.kind else { panic!("expected solid") };
+                Bounds2::from_points(s.corners.map(|p| p.xy()))
+            })
+            .collect();
+        for (x, painted) in [(2.5, true), (4.5, false), (5.5, true), (7.5, false), (10.5, true)] {
+            assert_eq!(spans.iter().any(|b| b.min.x < x / 20.0 && x / 20.0 < b.max.x), painted, "at {x}");
+        }
+    }
+
+    #[test]
+    fn a_tessellation_cannot_retain_more_than_its_mesh_budget() {
+        let mut path = lyon_tessellation::path::Path::builder();
+        path.begin(point(0.0, 0.0));
+        path.line_to(point(2.0, 0.0));
+        path.line_to(point(2.0, 2.0));
+        path.line_to(point(0.0, 2.0));
+        path.close();
+        let mut mesh = PageMesh { limit: 1, ..Default::default() };
+        let result = FillTessellator::new().tessellate_path(&path.build(), &FillOptions::default(), &mut mesh);
+        assert!(result.is_err() || mesh.overflow);
+        assert!(mesh.vertices.len() <= 3 && mesh.triangles.len() <= 1);
+    }
+
+    #[test]
     fn fragmented_metafile_is_reassembled_and_missing_chunks_are_rejected() {
         let mut wmf = vec![0; 18];
         wmf[2..4].copy_from_slice(&[9, 0]);
@@ -606,6 +694,7 @@ mod tests {
     fn empty_stroke_does_not_discard_the_page() {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
           <path d="M20 20L20 20" fill="none" stroke="black" stroke-width="1"/>
+          <path d="M20 30h1" fill="none" stroke="black" stroke-dasharray="2 8" stroke-dashoffset="4"/>
           <path d="M10 10H90" fill="none" stroke="black" stroke-width="1"/>
         </svg>"#;
         let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).unwrap();

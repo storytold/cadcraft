@@ -85,6 +85,8 @@ pub const NO_FILES: &[&str] = &[
     "dimstyle.overrides",
     "dimstyle.saveas",
     "properties.describe",
+    "page.resize",
+    "oleconvert",
     "close",
     "closeall",
     "document.switch",

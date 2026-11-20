@@ -512,12 +512,13 @@ fn page_frame_highlights_obey_a_concave_viewport_polygon() {
 #[test]
 fn dashed_page_frame_does_not_close_clipped_open_runs() {
     let polygon =
-        [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (15.0, 20.0), (15.0, 5.0), (5.0, 5.0), (5.0, 20.0), (0.0, 20.0)].map(|(x, y)| Vec2::new(x, y));
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (15.0, 20.0), (15.0, 5.0), (5.25, 5.0), (5.25, 20.0), (0.0, 20.0)].map(|(x, y)| Vec2::new(x, y));
     let clip = cadcraft_render::clip::PolyClip::new(&polygon).unwrap();
     let frame = [(1.0, 1.0), (19.0, 1.0), (19.0, 19.0), (1.0, 19.0), (1.0, 1.0)].map(|(x, y)| Vec2::new(x, y));
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0));
     let xf = Xf { rect, center: Vec2::new(10.0, 10.0), scale: 10.0, twist: 0.0 };
     let ctx = egui::Context::default();
+    let mut original = Vec::new();
     for clipping in [None, Some(&clip)] {
         let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
             draw_imported_page_frame(ui.painter(), &xf, frame, Color32::WHITE, Look { width: 1.0, dashed: true }, clipping);
@@ -531,6 +532,11 @@ fn dashed_page_frame_does_not_close_clipped_open_runs() {
                 let edge =
                     on_edge.iter().position(|distance| *distance < 1e-5).expect("dash must follow the paper, never an artificial closing chord");
                 edges[edge] = true;
+                if clipping.is_none() {
+                    original.push([a, b]);
+                } else if edge == 2 && p.x > 1.8 && p.x < 4.5 {
+                    assert!(original.iter().any(|[x, y]| a.distance(*x) < 1e-3 && b.distance(*y) < 1e-3), "clipped dash moved");
+                }
                 assert!(clipping.is_none_or(|clip| clip.contains(p)), "dash must remain inside the U-shaped viewport");
             }
         }

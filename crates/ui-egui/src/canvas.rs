@@ -28,7 +28,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{dashed_polygon, dashed_polyline, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_edges, dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -407,12 +407,22 @@ fn draw_imported_page_frame(
     clip: Option<&cadcraft_render::clip::PolyClip>,
 ) {
     let stroke = Stroke::new(look.width, color);
-    for line in imported_page_lines(&frame, clip) {
-        let corners: Vec<_> = line.into_iter().map(|p| xf.to_screen(p)).collect();
-        if look.dashed {
-            painter.extend(dashed_polyline(painter.clip_rect(), &corners, stroke, 6.0, 4.0));
+    if look.dashed {
+        if let Some(clip) = clip {
+            let edges = frame.array_windows::<2>().flat_map(|&[start, end]| {
+                clip.clip_polyline(&[start, end]).into_iter().filter_map(move |piece| {
+                    let (&a, &b) = (piece.first()?, piece.last()?);
+                    Some((xf.to_screen(a), xf.to_screen(b), start.dist(a) * xf.scale))
+                })
+            });
+            painter.extend(dashed_edges(painter.clip_rect(), edges, stroke, 6.0, 4.0));
         } else {
-            painter.add(egui::Shape::line(corners, stroke));
+            let [a, b, c, d, _] = frame.map(|p| xf.to_screen(p));
+            painter.extend(dashed_polygon(painter.clip_rect(), &[a, b, c, d], stroke, 6.0, 4.0));
+        }
+    } else {
+        for line in imported_page_lines(&frame, clip) {
+            painter.add(egui::Shape::line(line.into_iter().map(|p| xf.to_screen(p)).collect(), stroke));
         }
     }
 }

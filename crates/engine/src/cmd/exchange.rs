@@ -280,8 +280,8 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
     };
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
-    let format = if super::file::has_dwg_header(&bytes) { "dwg".to_owned() } else { extension(&name) };
-    let page = match format.as_str() {
+    let page = match extension(&name).as_str() {
+        "docx" | "pdf" if super::file::looks_like_drawing(&bytes) => None,
         "docx" => Some(("WORD_ANTET", "Word page embedded as a CAD block.")),
         "pdf" => Some(("PDF_ANTET", "PDF page embedded as a CAD block.")),
         _ => None,
@@ -298,15 +298,22 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
     if s.state().is_err() {
         s.new_drawing(true);
     }
-    let mm_per_unit = match s.doc()?.header.i64("INSUNITS", 0) {
-        1 => 25.4,
-        2 => 304.8,
-        5 => 10.0,
-        6 => 1000.0,
-        _ => 1.0,
+    let space = s.space();
+    let doc = s.doc()?;
+    let mm_per_unit = match &space {
+        Space::Paper(name) => {
+            let layout = doc.layout(name).ok_or_else(|| bad("import", "layout is missing"))?;
+            cadcraft_render::paper::page_unit_mm(doc, &layout.page)
+        }
+        Space::Model => match doc.header.i64("INSUNITS", 0) {
+            1 => 25.4,
+            2 => 304.8,
+            5 => 10.0,
+            6 => 1000.0,
+            _ => 1.0,
+        },
     };
     let scale = scale / mm_per_unit;
-    let space = s.space();
     let at = if params.get("at").is_none() {
         let bounds = src.extents(&Space::Model);
         s.state()?.view().center - bounds.center() * scale

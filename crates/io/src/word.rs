@@ -27,7 +27,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Drawing> {
     let mut office = converter("CADCRAFT_SOFFICE", "soffice");
     office
         .arg(format!("-env:UserInstallation={profile}"))
-        .args(["--headless", "--norestore", "--convert-to", "pdf:writer_pdf_Export"])
+        .args(["--headless", "--norestore", "--convert-to", r#"pdf:writer_pdf_Export:{"PageRange":{"type":"string","value":"1"}}"#])
         .arg("--outdir")
         .arg(path)
         .arg(path.join("antet.docx"));
@@ -119,10 +119,52 @@ fn bitmap(node: Node<'_, '_>) -> Result<Raster> {
     raster::decode(&bytes)
 }
 
+/// Expand image references while they still refer to the original pixels. A
+/// reused logo and its soft mask can each reference a different first placement.
+fn expand_masked_image_uses(svg: &str, xml: &roxmltree::Document<'_>) -> Result<Option<String>> {
+    if !xml.descendants().any(|node| node.has_tag_name("mask")) {
+        return Ok(None);
+    }
+    let images: std::collections::HashMap<_, _> =
+        xml.descendants().filter(|n| n.has_tag_name("image")).filter_map(|n| Some((n.attribute("id")?, n))).collect();
+    let mut edits = Vec::new();
+    let mut expanded_bytes = 0usize;
+    for placement in xml.descendants().filter(|n| n.has_tag_name("use")) {
+        let href = placement.attribute(("http://www.w3.org/1999/xlink", "href")).or_else(|| placement.attribute("href"));
+        let Some(image) = href.and_then(|s| s.strip_prefix('#')).and_then(|id| images.get(id)) else { continue };
+        // MuPDF emits the placement transform on a surrounding group. Keep
+        // more general SVG placements intact when neither occurrence is masked.
+        let masked = |n: Node<'_, '_>| n.ancestors().any(|a| a.has_tag_name("mask") || a.has_attribute("mask"));
+        if !masked(placement) && !masked(*image) {
+            continue;
+        }
+        if placement.attributes().any(|a| !matches!(a.name(), "href" | "x" | "y" | "width" | "height"))
+            || ["x", "y"].iter().any(|&name| placement.attribute(name).is_some_and(|v| v.parse::<f64>() != Ok(0.0)))
+        {
+            return Err(error("unsupported masked image placement"));
+        }
+        let id = image.attribute_node("id").ok_or_else(|| error("missing bitmap id"))?.range();
+        let range = image.range();
+        expanded_bytes = expanded_bytes.saturating_add(range.len() - id.len());
+        if expanded_bytes > MAX_BYTES {
+            return Err(error("expanded image references exceed limits"));
+        }
+        let mut replacement = String::from(&svg[range.start..id.start]);
+        replacement.push_str(&svg[id.end..range.end]);
+        edits.push((placement.range(), replacement));
+    }
+    if edits.is_empty() { Ok(None) } else { ole::apply_svg_edits(svg, edits, MAX_BYTES).map(Some) }
+}
+
 /// MuPDF writes image soft masks as a second inline bitmap. Preserve opaque
 /// pixel runs, including white; reject partial coverage requiring compositing.
 fn inline_bitmaps(svg: &str) -> Result<String> {
     let xml = ole::parse_svg_xml(svg)?;
+    let expanded = expand_masked_image_uses(svg, &xml)?;
+    let (svg, xml) = match expanded.as_deref() {
+        Some(data) => (data, ole::parse_svg_xml(data)?),
+        None => (svg, xml),
+    };
     let root = xml.root_element();
     let mut edits = Vec::new();
     let mut replacement_bytes = 0usize;
@@ -267,13 +309,41 @@ mod tests {
         );
         let svg = inline_bitmaps(&svg).unwrap();
         let drawing = ole::read_vector_svg(&svg, false).unwrap();
-        let red: Vec<_> =
-            drawing.model.iter().filter(|e| e.common.color == cadcraft_doc::color::Color::True(cadcraft_doc::color::Rgb(255, 0, 0))).collect();
-        for e in &red {
+        assert_two_logos(&drawing, 25.4 / 96.0);
+    }
+
+    fn assert_two_logos(drawing: &Drawing, mm: f64) {
+        use cadcraft_doc::color::{Color, Rgb};
+        let mut counts = [0; 2];
+        for e in drawing.model.iter().filter(|e| e.common.color == Color::True(Rgb(255, 0, 0))) {
             let cadcraft_doc::EntityKind::Solid(solid) = &e.kind else { panic!("expected solid") };
-            assert!(solid.corners.iter().all(|p| p.x >= 1.0 && p.y <= -1.5));
+            let index = [4.0, 14.0]
+                .iter()
+                .position(|x| solid.corners.iter().all(|p| (x - 1e-4..=x + 1.0001).contains(&(p.x / mm)) && (5.9999..=7.0001).contains(&(-p.y / mm))))
+                .expect("triangle is outside both expected logo rectangles");
+            counts[index] += 1;
         }
-        assert_eq!(red.len(), 4, "two triangles at each of the two placements");
+        assert_eq!(counts, [2, 2]);
+    }
+
+    #[test]
+    fn reused_logo_and_soft_mask_are_baked_at_each_placement() {
+        let png = |pixels| {
+            let bitmap = Raster::new(2, 1, pixels).unwrap();
+            base64::engine::general_purpose::STANDARD.encode(raster::encode_png(&bitmap).unwrap())
+        };
+        let mask = png(vec![255, 255, 255, 255, 0, 0, 0, 255]);
+        let logo = png(vec![255, 0, 0, 255, 0, 0, 255, 255]);
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">
+            <defs><mask id="m1"><g transform="translate(4 6)"><image id="alpha" width="2" height="1" href="data:image/png;base64,{mask}"/></g></mask>
+            <mask id="m2"><g transform="translate(14 6)"><use href="#alpha" x="0" y="0" width="2" height="1"/></g></mask></defs>
+            <g mask="url(#m1)"><g transform="translate(4 6)"><image id="logo" width="2" height="1" href="data:image/png;base64,{logo}"/></g></g>
+            <g mask="url(#m2)"><g transform="translate(14 6)"><use href="#logo" x="0" y="0" width="2" height="1"/></g></g></svg>"##
+        );
+        let drawing = ole::read_vector_svg(&inline_bitmaps(&svg).unwrap(), false).unwrap();
+        assert_two_logos(&drawing, 25.4 / 72.0);
+        assert_eq!(drawing.model.len(), 5, "paper and two red rectangles, with both blue pixels masked");
     }
 
     #[test]
