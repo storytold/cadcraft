@@ -235,7 +235,8 @@ pub(super) fn autoload(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispErr
             return Err(LispError::bad_arg("command name", &cmd));
         }
         // The stub forgets itself, loads the file and calls what it defined.
-        let file_lit = to_text(&Value::Str(file.clone()), true);
+        // A file in the support folder is loaded from there, never from a same-named file of the working folder.
+        let file_lit = to_text(&Value::Str(crate::lisp::support_file(ctx.s, &file).map_or_else(|| file.clone(), |p| p.into())), true);
         let src = format!(
             "(lambda () (setq C:{name} nil) (load {file_lit}) (if C:{name} (C:{name}) (princ \"\\n; error: {} did not define {name}\")) (princ))",
             file.replace(['"', '\\'], "/")
