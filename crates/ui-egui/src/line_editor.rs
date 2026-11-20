@@ -112,6 +112,13 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     // As wide as worked out above (an area is otherwise narrower than a long text).
                     ui.set_width(width);
+                    // Every box shares one text field: a new one starts with no undo history, so
+                    // Ctrl+Z can't bring back another object's text.
+                    if !st.focused {
+                        let mut s = egui::TextEdit::load_state(ui.ctx(), edit_id()).unwrap_or_default();
+                        s.clear_undoer();
+                        s.store(ui.ctx(), edit_id());
+                    }
                     let out = egui::TextEdit::singleline(&mut st.text)
                         .id(edit_id())
                         .font(font)

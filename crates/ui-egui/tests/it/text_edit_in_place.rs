@@ -205,3 +205,23 @@ fn the_box_covers_the_drawn_text_whatever_its_justification() {
         press(&mut h, Key::Escape);
     }
 }
+
+/// Each box starts with no undo history: Ctrl+Z in a newly opened box can't bring back the text
+/// typed into the last one (review of #842).
+#[test]
+fn undo_in_a_new_box_does_not_bring_back_another_objects_text() {
+    let (mut h, d) = harness();
+    double_click(&mut h, TEXT_AT);
+    type_text(&mut h, "WORLD");
+    press(&mut h, Key::Enter);
+    assert_eq!(value(&h, d.text), "WORLD");
+    h.state_mut().session.cancel();
+
+    double_click(&mut h, ATTDEF_AT);
+    assert_eq!(editor(&h).map(|e| e.1), Some("D1".into()));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    press(&mut h, Key::Enter);
+    assert_eq!(value(&h, d.attdef), "D1", "Ctrl+Z took another object's text");
+    assert_eq!(value(&h, d.text), "WORLD");
+}
