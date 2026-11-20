@@ -103,7 +103,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{name, value}")
             .transparent()
             .interactive(|_| Ok(Box::new(SetvarM::default()))),
-        CommandSpec::new("getvar", "Get Variable", run_getvar).params("{name}").enabled(always).noundo(),
+        CommandSpec::new("getvar", "Get Variable", run_getvar)
+            .params("{name}")
+            .enabled(always)
+            .noundo()
+            .transparent()
+            .interactive(|_| Ok(Box::new(GetvarM))),
         CommandSpec::new("sysvars", "List System Variables", |s, _| Ok(crate::sysvars::list(s))).enabled(always).noundo(),
     ]
 }
@@ -249,6 +254,31 @@ impl Interactive for SetvarM {
             },
             _ => Ok(Step::Continue),
         }
+    }
+}
+
+/// GETVAR at the command line: "Enter variable name", then the value is echoed, so a drawing's
+/// settings (`GETVAR DIMSCALE`) can be read without changing them (#3273). Run without a name it
+/// said only that `name` was required.
+struct GetvarM;
+
+impl Interactive for GetvarM {
+    fn name(&self) -> &'static str {
+        "GETVAR"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        // Space ends the name, as for SETVAR.
+        Prompt::new("Enter variable name", Accept { number: true, ..Accept::TEXT })
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Input::Text(t) = i {
+            let n = t.trim().to_ascii_uppercase();
+            match crate::sysvars::get(s, &n) {
+                Some(v) => s.echo(format!("{n} = {}", show_value(&v))),
+                None => s.echo(format!("Unknown variable {n}. Type SETVAR ? to list variables.")),
+            }
+        }
+        Ok(Step::Done)
     }
 }
 
