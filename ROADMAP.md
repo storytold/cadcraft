@@ -119,7 +119,7 @@ and the beta checklist are in [docs/roadmap.md](docs/roadmap.md).
 - Crashes and hangs with a reproduction: the web build on a large DXF (#1603), a DWG with 3D content
   (#2174), startup on older graphics hardware (#1724, #1631, #3222).
 
-**2. Parity with AutoCAD: the alpha gate rows, then the beta checklist.**
+**2. Parity with AutoCAD: the alpha gate rows, then the beta checklist (apart from its items named under tier 3).**
 - It starts on common hardware (#1596, then an automatic fallback renderer).
 - It opens the DWG and DXF files people already have: large files (#3102, #2633, #1088), layouts and
   paper units (#1672, #2836), and a corpus of real files run in CI.
