@@ -242,7 +242,7 @@ pub(crate) fn set_current_color_value(s: &mut Session, v: &Value) -> Option<()> 
 
 /// `getvar CECOLOR` as AutoCAD gives it, always text: "BYLAYER", "BYBLOCK", the index ("1" for
 /// red) or "RGB:r,g,b".
-pub(crate) fn current_color_value(d: &cadcraft_doc::Drawing) -> String {
+pub fn current_color_value(d: &cadcraft_doc::Drawing) -> String {
     if let Some(rgb) = d.header.get("CECOLOR_RGB").and_then(|v| v.as_i64()).and_then(|v| u32::try_from(v).ok()) {
         let cadcraft_color::Rgb(r, g, b) = cadcraft_color::Rgb::from_u32(rgb);
         return format!("RGB:{r},{g},{b}");

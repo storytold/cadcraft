@@ -123,6 +123,9 @@ pub struct Settings {
     pub polar_flags: u32,
     /// POLARADDANG: additional polar tracking angles (radians), used with POLARMODE bit 4.
     pub polaraddang: Vec<f64>,
+    /// More increment angles (radians) tracked besides POLARANG's: polar tracking follows every
+    /// multiple of each (Drafting Settings lets several increments be ticked at once).
+    pub polar_increments: Vec<f64>,
     /// SNAPTYPE 1: snap mode (F9) snaps along tracking paths at POLARDIST steps (PolarSnap)
     /// instead of to the grid.
     pub polarsnap: bool,
@@ -195,6 +198,7 @@ impl Default for Settings {
             selectionareaopacity: 25,
             polar_flags: 0,
             polaraddang: Vec::new(),
+            polar_increments: Vec::new(),
             polarsnap: false,
             polardist: 0.0,
             auditctl: false,

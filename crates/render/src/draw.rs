@@ -276,8 +276,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
 }
 
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
-    // Straight or spline leader lines; block content draws like a block reference.
-    for pts in m.leader_paths() {
+    // Straight or spline leader lines; block content draws like a block reference. A leader that
+    // comes from another side of the text joins the text there (the text's box as laid out).
+    let paths = match &m.text {
+        Some(t) if m.leaders_off_landing_side() => m.leader_paths_around(Some(crate::text_entity::layout_mtext_entity(ctx.d, t).bounds)),
+        _ => m.leader_paths(),
+    };
+    for pts in paths {
         b.polyline(ctx, rgb, lw, &pts);
         if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
             let g = named_arrow(ctx.d, m.arrow_in(ctx.d), *a, (*a - *n).normalized(), m.arrow_size);

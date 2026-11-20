@@ -76,11 +76,6 @@ pub(super) fn grip_menu(app: &mut CadApp, resp: &egui::Response) {
     apply_grip_choice(app, g, choice);
 }
 
-/// Seconds the cursor rests on a grip before its menu opens.
-const GRIP_HOVER_DELAY: f64 = 0.4;
-/// The same with the crosshair locked onto grips (GRIPSNAP).
-const GRIP_HOVER_DELAY_SNAPPED: f64 = 0.2;
-
 /// The grip menu that opens when the cursor rests on a grip with options (a dimension's text
 /// grip, a polyline vertex…); it closes when the cursor leaves the grip and the menu.
 pub(super) fn hover_grip_menu(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, hover: Option<Pos2>, inside: bool) {
@@ -95,24 +90,26 @@ pub(super) fn hover_grip_menu(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, hover: O
             return;
         }
         let mut chosen: Option<Option<cadcraft_engine::grips::GripAction>> = None;
-        let area = egui::Area::new(egui::Id::unique("cc_grip_hover_menu")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
-            egui::Frame::menu(ui.style()).show(ui, |ui| {
-                ui.set_min_width(170.0);
-                // Menu items: the whole row lights up, no button frames.
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                    ui.spacing_mut().button_padding = vec2(8.0, 4.0);
-                    let item = |ui: &mut egui::Ui, label: &str| ui.add(egui::Button::new(crate::i18n::t(label)).frame_when_inactive(false)).clicked();
-                    if item(ui, stretch_label(&options)) {
-                        chosen = Some(None);
-                    }
-                    for a in &options {
-                        if item(ui, a.label()) {
-                            chosen = Some(Some(*a));
+        let area =
+            egui::Area::new(egui::Id::unique("cc_grip_hover_menu")).order(egui::Order::Foreground).fixed_pos(at).fade_in(false).show(&ctx, |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(170.0);
+                    // Menu items: the whole row lights up, no button frames.
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        ui.spacing_mut().button_padding = vec2(8.0, 4.0);
+                        let item =
+                            |ui: &mut egui::Ui, label: &str| ui.add(egui::Button::new(crate::i18n::t(label)).frame_when_inactive(false)).clicked();
+                        if item(ui, stretch_label(&options)) {
+                            chosen = Some(None);
                         }
-                    }
+                        for a in &options {
+                            if item(ui, a.label()) {
+                                chosen = Some(Some(*a));
+                            }
+                        }
+                    });
                 });
             });
-        });
         let on_menu = ctx.pointer_latest_pos().is_some_and(|p| area.response.rect.expand(8.0).contains(p));
         if let Some(choice) = chosen {
             app.canvas.grip_popup = None;
@@ -124,24 +121,18 @@ pub(super) fn hover_grip_menu(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, hover: O
         }
         return;
     }
-    match (over, app.canvas.grip_hover) {
-        (Some(g), Some((h, since))) if h == g => {
-            // A crosshair locked onto the grip (GRIPSNAP) holds still: the menu can come sooner.
-            let delay = if app.session.settings.gripsnap { GRIP_HOVER_DELAY_SNAPPED } else { GRIP_HOVER_DELAY };
-            if now - since >= delay {
-                let point = app.session.grips_of(g.0).ok().and_then(|p| p.get(g.1).copied());
-                if let Some(p) = point {
-                    app.canvas.grip_popup = Some((g, xf.to_screen(p) + vec2(10.0, 10.0)));
-                }
-            } else {
-                ctx.request_repaint_after(std::time::Duration::from_secs_f64(delay - (now - since) + 0.01));
+    // The menu opens as soon as the cursor is on the grip (as GRIPSNAP locks the crosshair onto
+    // it): waiting for the cursor to rest left it late, or missing until the mouse moved again.
+    match over {
+        Some(g) => {
+            let point = app.session.grips_of(g.0).ok().and_then(|p| p.get(g.1).copied());
+            if let Some(p) = point {
+                app.canvas.grip_popup = Some((g, xf.to_screen(p) + vec2(10.0, 10.0)));
+                app.canvas.grip_hover = Some((g, now));
+                ctx.request_repaint();
             }
         }
-        (Some(g), _) => {
-            app.canvas.grip_hover = Some((g, now));
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(GRIP_HOVER_DELAY + 0.01));
-        }
-        (None, _) => app.canvas.grip_hover = None,
+        None => app.canvas.grip_hover = None,
     }
 }
 

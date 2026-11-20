@@ -258,10 +258,15 @@ impl TrackConfig {
     /// As [`TrackConfig::new`]; with POLARMODE bit 1 polar angles are measured from `last`, the
     /// direction (radians) of the last segment when the base point ends it.
     pub fn relative_to(s: &crate::Settings, angbase: f64, last: Option<f64>) -> Self {
-        let additional: &[f64] = if s.polar_flags & polarmode::ADDITIONAL != 0 { &s.polaraddang } else { &[] };
-        let absolute = polar_angles(s.polarang, additional, angbase);
+        let mut additional: Vec<f64> = if s.polar_flags & polarmode::ADDITIONAL != 0 { s.polaraddang.clone() } else { Vec::new() };
+        // Every multiple of each further increment angle.
+        for inc in s.polar_increments.iter().filter(|a| a.is_finite() && **a > 1e-6) {
+            let n = ((TAU / inc) - 1e-9).ceil().clamp(1.0, MAX_ANGLES as f64) as usize;
+            additional.extend((0..n).map(|k| k as f64 * inc));
+        }
+        let absolute = polar_angles(s.polarang, &additional, angbase);
         let polar = match last.filter(|a| a.is_finite() && s.polar_flags & polarmode::RELATIVE != 0) {
-            Some(a) => polar_angles(s.polarang, additional, a),
+            Some(a) => polar_angles(s.polarang, &additional, a),
             None => absolute.clone(),
         };
         let track_angles = if s.polar_flags & polarmode::TRACK_POLAR != 0 { absolute } else { orthogonal() };

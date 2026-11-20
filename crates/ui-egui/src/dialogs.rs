@@ -94,22 +94,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.separator();
             ui.heading(crate::tl!("Polar Tracking"));
             ui.checkbox(&mut s.polarmode, crate::tl!("Polar Tracking On (F10)"));
-            // POLARANG is held in radians and 15 or 30 come back as 14.999999999999998: round like
-            // the additional angles, and write back only a newly picked angle.
-            let current = (s.polarang.to_degrees() * 1e6).round() / 1e6;
-            let mut deg = current;
-            ui.horizontal(|ui| {
-                let label = ui.label(crate::tl!("Increment angle"));
-                let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
-                    for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
-                        ui.selectable_value(&mut deg, a, format!("{a}"));
-                    }
-                });
-                combo.response.labelled_by(label.id);
-            });
-            if deg != current {
-                s.polarang = deg.to_radians();
-            }
+            increment_angles(ui, s);
             tracking_options(ui, s);
             ui.separator();
             ui.heading(crate::tl!("Object Snap"));
@@ -167,6 +152,43 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// The increment angles polar tracking follows, several at once: POLARANG and the further
+/// ones ([`cadcraft_engine::Settings::polar_increments`]), each ticked in the list.
+fn increment_angles(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
+    const CHOICES: [f64; 8] = [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0];
+    // Held in radians, 15 or 30 come back as 14.999999999999998: rounded like the additional angles.
+    let round = |r: f64| (r.to_degrees() * 1e6).round() / 1e6;
+    let mut on: Vec<f64> = std::iter::once(s.polarang).chain(s.polar_increments.iter().copied()).map(round).collect();
+    on.dedup();
+    let shown = on.iter().map(|a| format!("{a}")).collect::<Vec<_>>().join(", ");
+    let before = on.clone();
+    ui.horizontal(|ui| {
+        let label = ui.label(crate::tl!("Increment angle"));
+        let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(shown).width(140.0).show_ui(ui, |ui| {
+            for a in CHOICES.iter().copied().chain(on.clone().into_iter().filter(|a| !CHOICES.contains(a))) {
+                let mut ticked = on.contains(&a);
+                // One angle stays ticked.
+                if ui.checkbox(&mut ticked, format!("{a}")).changed() && (ticked || on.len() > 1) {
+                    if ticked {
+                        on.push(a);
+                    } else {
+                        on.retain(|x| *x != a);
+                    }
+                }
+            }
+        });
+        combo.response.labelled_by(label.id);
+    });
+    if on != before {
+        // The largest is POLARANG (what other programs read), the rest track besides it.
+        on.sort_by(|a, b| b.total_cmp(a));
+        if let Some((first, rest)) = on.split_first() {
+            s.polarang = first.to_radians();
+            s.polar_increments = rest.iter().map(|a| a.to_radians()).collect();
+        }
+    }
+}
+
 /// The polar and object snap tracking options of Drafting Settings: additional angles
 /// (POLARMODE bit 4, POLARADDANG), tracking on every polar angle (bit 2) and angles relative to
 /// the last segment (bit 1).
@@ -184,9 +206,9 @@ fn tracking_options(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
         if additional_label.changed() {
             s.polar_flags ^= polarmode::ADDITIONAL;
         }
-        // The list as typed (degrees separated by `;`), kept while it doesn't parse yet.
+        // The list as typed (degrees separated by commas), kept while it doesn't parse yet.
         let id = ui.scope_id().with("polaraddang");
-        let shown = cadcraft_engine::sysvars::format_angle_list(&s.polaraddang);
+        let shown = cadcraft_engine::sysvars::format_angle_list(&s.polaraddang).replace(';', ", ");
         let mut text = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.clone());
         let resp = ui.add_enabled(additional, egui::TextEdit::singleline(&mut text).desired_width(140.0)).labelled_by(additional_label.id);
         if resp.changed()
@@ -200,6 +222,7 @@ fn tracking_options(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
             ui.data_mut(|d| d.remove::<String>(id));
         }
     });
+    ui.label(RichText::new(crate::tl!("(separate with commas)")).weak().small());
     ui.label(crate::tl!("Object Snap Tracking Settings"));
     ui.horizontal(|ui| {
         flag(ui, &mut s.polar_flags, polarmode::TRACK_POLAR, false, crate::tl!("Track orthogonally only"));

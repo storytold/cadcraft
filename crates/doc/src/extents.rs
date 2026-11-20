@@ -743,6 +743,53 @@ mod tests {
         assert!(!EntityKind::MLeader(shown).prims().is_empty());
     }
 
+    /// A leader that comes to the text from another side than the landing's joins the text on
+    /// that side: the far side gets a landing of its own, above or below ends at the text's top or
+    /// bottom middle; one from the landing's side still runs to the landing.
+    #[test]
+    fn multileader_leaders_join_the_text_on_their_side() {
+        let mtext = crate::MText {
+            frame: false,
+            formula: None,
+            insert: Vec3::new(2.0, 1.0, 0.0),
+            height: 1.0,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "Note".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        let v = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let ml = crate::MLeader {
+            arrow: String::new(),
+            no_leader: false,
+            // From the left (the landing's side), the right, above and below.
+            leaders: vec![vec![v(-10.0, 0.0)], vec![v(20.0, 0.0)], vec![v(5.0, 9.0)], vec![v(6.0, -9.0)]],
+            landing: v(0.0, 0.5),
+            dogleg: 1.0,
+            text: Some(mtext),
+            style: "Standard".into(),
+            arrow_size: 1.0,
+            spline: false,
+            block: None,
+        };
+        assert!(ml.leaders_off_landing_side());
+        // The text's box: x 2..8, y -1..1 (the gap between dogleg and text is 1).
+        let b = Bounds2 { min: Vec2::new(2.0, -1.0), max: Vec2::new(8.0, 1.0) };
+        let ends: Vec<Vec<Vec2>> = ml.leader_paths_around(Some(b)).into_iter().map(|p| p.into_iter().skip(1).collect()).collect();
+        assert_eq!(ends[0], vec![Vec2::new(0.0, 0.5)], "the landing's side keeps the landing");
+        assert_eq!(ends[1], vec![Vec2::new(10.0, 0.5), Vec2::new(9.0, 0.5)], "a mirrored landing on the right");
+        assert_eq!(ends[2], vec![Vec2::new(5.0, 2.0)], "above: the top's middle");
+        assert_eq!(ends[3], vec![Vec2::new(5.0, -2.0)], "below: the bottom's middle");
+        // Without the box (or from the landing's side only) every leader ends at the landing.
+        assert!(ml.leader_paths().iter().all(|p| p.last() == Some(&Vec2::new(0.0, 0.5))));
+        let one_side = crate::MLeader { leaders: vec![vec![v(-10.0, 0.0)], vec![v(-5.0, 6.0)]], ..ml };
+        assert!(!one_side.leaders_off_landing_side());
+    }
+
     /// An OLE2FRAME counts in the extents through its corner tags (#2422); a missing or
     /// non-finite corner counts as nothing.
     #[test]

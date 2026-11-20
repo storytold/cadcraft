@@ -122,6 +122,9 @@ pub struct UiState {
     /// (missing from saved settings: not yet).
     #[serde(default)]
     pub lweight_combo_added: bool,
+    /// The same for the current-colour drop-down (after the lineweight one).
+    #[serde(default)]
+    pub color_combo_added: bool,
     pub show_file_tabs: bool,
     pub show_status_bar: bool,
     pub show_command_line: bool,
@@ -236,6 +239,7 @@ impl Default for UiState {
             toolsets_bar: toolbar::Bar::ToolSets.default_state(),
             layers_bar: toolbar::Bar::Layers.default_state(),
             lweight_combo_added: true,
+            color_combo_added: true,
             show_file_tabs: true,
             show_status_bar: true,
             show_command_line: true,

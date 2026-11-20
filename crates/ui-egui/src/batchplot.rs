@@ -448,9 +448,15 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 }
                 ui.label(RichText::new(format!("{} {}", st.sheets.len(), crate::tl!("sheets"))).color(t.text_dim));
             });
-            // Ctrl+A picks every sheet.
+            // Ctrl+A picks every sheet; Delete removes the picked ones (unless a field is typed in).
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
                 act = Some(Act::SelectAll);
+            }
+            if !ui.ctx().egui_wants_keyboard_input()
+                && !st.selected.is_empty()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+            {
+                act = Some(Act::Remove);
             }
         });
     let n = st.sheets.len();

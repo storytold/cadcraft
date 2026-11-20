@@ -468,7 +468,7 @@ fn reset_ui(app: &mut CadApp) {
 }
 
 /// Fonts for font lists, refreshed when the font set changes: (text style font names — the
-/// user's folders' fonts first —, family names of the user's fonts).
+/// user's folders' fonts first —, family names of every font, the user's first).
 pub fn font_choices() -> (Vec<String>, Vec<String>) {
     thread_local! {
         static CACHE: std::cell::RefCell<Option<(u64, Vec<String>, Vec<String>)>> = const { std::cell::RefCell::new(None) };
@@ -484,10 +484,11 @@ pub fn font_choices() -> (Vec<String>, Vec<String>) {
         let fonts = cadcraft_fonts::ttf::installed();
         let mut names = vec![cadcraft_fonts::BUILTIN_FONT.to_string()];
         names.extend(fonts.iter().map(|f| f.name.clone()));
+        // Every font's family: the user's folders' first, then the installed ones.
         let mut families: Vec<String> = Vec::new();
-        for f in fonts.iter().filter(|f| f.user) {
+        for f in fonts.iter() {
             if let Some(fam) = &f.family
-                && !families.contains(fam)
+                && !families.iter().any(|x| x.eq_ignore_ascii_case(fam))
             {
                 families.push(fam.clone());
             }
@@ -520,6 +521,7 @@ impl CadApp {
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
             "roundedCorners": self.options.rounded_corners,
+            "polarIncrements": self.session.settings.polar_increments.iter().map(|a| a.to_degrees()).collect::<Vec<f64>>(),
         })
         .to_string()
     }
@@ -587,6 +589,11 @@ impl CadApp {
         }
         if let Some(b) = c.rounded_corners {
             self.options.rounded_corners = b;
+        }
+        // Drafting Settings' further increment angles (degrees, at most 8 of them).
+        if let Some(list) = v.get("polarIncrements").and_then(Value::as_array) {
+            self.session.settings.polar_increments =
+                list.iter().filter_map(Value::as_f64).filter(|a| a.is_finite() && *a > 0.0 && *a <= 360.0).take(8).map(f64::to_radians).collect();
         }
     }
 }
