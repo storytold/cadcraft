@@ -54,6 +54,30 @@ pub fn surface_config(vsync: Switch, low_latency: bool) -> egui_wgpu::SurfaceCon
     }
 }
 
+/// Ask the wgpu device for the largest buffer the adapter supports, not wgpu's default 256 MiB.
+///
+/// egui tessellates command previews (COPY, MOVE...) of large selections and dialog previews of a
+/// whole drawing (BEDIT's Edit Block Definition, #2291) into single vertex and index buffers that
+/// outgrow the default cap. The validation error is fatal on the desktop and leaves the web canvas
+/// black until the page is reloaded, so both apps call this on their `wgpu_setup` before eframe
+/// creates the device.
+pub fn request_adapter_buffer_limit(setup: &mut egui_wgpu::WgpuSetup) {
+    if let egui_wgpu::WgpuSetup::CreateNew(create) = setup {
+        let base = Arc::clone(&create.device_descriptor);
+        create.device_descriptor = Arc::new(move |adapter| {
+            let mut d = base(adapter);
+            d.required_limits = with_adapter_buffer_limit(d.required_limits, &adapter.limits());
+            d
+        });
+    }
+}
+
+/// `required` with its `max_buffer_size` raised to the adapter's; never lowered, so a descriptor
+/// that already asks for more keeps it.
+fn with_adapter_buffer_limit(required: wgpu::Limits, adapter: &wgpu::Limits) -> wgpu::Limits {
+    wgpu::Limits { max_buffer_size: required.max_buffer_size.max(adapter.max_buffer_size), ..required }
+}
+
 /// Frame-rate cap for presenting without vsync. Nothing else paces frames then (on X11; Wayland
 /// still throttles to the compositor), so a 1000 Hz mouse made the app render ~900 frames per
 /// second and keep a CPU core busy. Waiting out the rest of a short minimum interval adds at most
@@ -813,6 +837,23 @@ mod tests {
         assert_eq!(surface_config(Switch::On, true).present_mode, AutoVsync);
         assert_eq!(surface_config(Switch::Off, false).present_mode, AutoNoVsync);
         assert_eq!(surface_config(Switch::Default, true).desired_maximum_frame_latency, Some(1));
+    }
+
+    /// Guards #2291: a whole-drawing preview of 354 MB needs more than wgpu's default 256 MiB
+    /// buffer cap, so the device asks for the adapter's own `max_buffer_size`. Without it the web
+    /// BEDIT dialog's preview failed validation and the canvas stayed black.
+    #[test]
+    fn device_asks_for_the_adapters_largest_buffer() {
+        let default = wgpu::Limits::default();
+        let adapter = wgpu::Limits { max_buffer_size: 4_294_967_292, ..wgpu::Limits::default() };
+        let limits = with_adapter_buffer_limit(default.clone(), &adapter);
+        assert_eq!(limits.max_buffer_size, 4_294_967_292);
+        assert!(limits.max_buffer_size > 354_208_880, "the BEDIT preview buffer from the report fits");
+        // Every other limit stays as the descriptor asked.
+        assert_eq!(wgpu::Limits { max_buffer_size: default.max_buffer_size, ..limits }, default);
+        // An adapter with less than the descriptor asks for never lowers it.
+        let small = wgpu::Limits { max_buffer_size: 1 << 20, ..wgpu::Limits::default() };
+        assert_eq!(with_adapter_buffer_limit(default.clone(), &small).max_buffer_size, default.max_buffer_size);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
