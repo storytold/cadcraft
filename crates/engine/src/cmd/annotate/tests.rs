@@ -112,6 +112,22 @@ fn interactive_dimlinear_select_object_is_associative() {
 }
 
 #[test]
+fn interactive_dimlinear_select_object_measures_the_picked_polyline_segment() {
+    // #3014: picking the second segment of a polyline dimensioned the first one.
+    let mut s = Session::new();
+    s.execute("pline", &json!({ "points": [[0, 0], [10, 0], [10, 20]] })).unwrap();
+    s.cmdline("dimlinear").unwrap();
+    s.cmdline("").unwrap(); // <select object>
+    s.cmdline("10,10").unwrap(); // on the second segment, (10,0)-(10,20)
+    s.cmdline("13,10").unwrap();
+    assert!(s.running.is_none());
+    let dm = dim(&s, s.last_dim.unwrap());
+    assert!(near(dm.p13.xy(), Vec2::new(10.0, 0.0)) && near(dm.p14.xy(), Vec2::new(10.0, 20.0)), "{dm:?}");
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "20.0000");
+    assert_eq!(dm.assoc.len(), 2, "both origins attach to the polyline: {:?}", dm.assoc);
+}
+
+#[test]
 fn radius_and_diameter_follow_circle() {
     let mut s = Session::new();
     s.execute("circle", &json!({ "center": [0, 0], "radius": 2 })).unwrap();
