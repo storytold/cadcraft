@@ -338,6 +338,11 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// The text the in-place editor edits: where, how, its current contents and what kind of
+    /// object holds it. By default the new multiline text of [`Interactive::editing_mtext`].
+    fn text_editor(&self) -> Option<TextEditor> {
+        self.editing_mtext().map(|mtext| TextEditor { mtext, kind: EditorKind::NewMText, key: String::new(), extents: None })
+    }
     /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
     /// only its preview set); `None` shows the drawing.
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
@@ -354,6 +359,34 @@ pub struct DisplayOnly {
     /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
     /// DVIEWBLOCK block), with its own properties.
     pub extra: Vec<cadcraft_doc::Entity>,
+}
+
+/// What the in-place text editor edits ([`Interactive::text_editor`]). The editor answers the
+/// command's text prompt with the new contents (`Input::Text`), or Enter to keep the old text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextEditor {
+    /// Where the box sits (insertion point, attachment, rotation), its width (0: grows with the
+    /// text), text height and style; `contents` is the text to start from.
+    pub mtext: cadcraft_doc::MText,
+    pub kind: EditorKind,
+    /// Which object is being edited: a new key means a new text to load.
+    pub key: String,
+    /// The drawn text's extents in drawing units, when known (one line of text): the box covers
+    /// them, whatever the justification.
+    pub extents: Option<cadcraft_geom::Bounds2>,
+}
+
+/// The kind of text the in-place editor edits.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorKind {
+    /// Multiline text being created (MTEXT).
+    NewMText,
+    /// Existing multiline text: an MTEXT, a multileader's text.
+    MText,
+    /// One line of plain text (TEXT, attribute definition): no formatting, Enter finishes.
+    Line,
+    /// A dimension's text: `<>` stands for the measured value, shown as `measured`.
+    Dimension { measured: String },
 }
 
 /// See [`Interactive::drag`].

@@ -36,6 +36,7 @@ pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
+mod line_editor;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
