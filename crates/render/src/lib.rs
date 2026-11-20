@@ -125,6 +125,24 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// While a reference is edited in place: what is drawn faded ([`Fade::of`]).
+    fade: Option<&'a Fade>,
+}
+
+/// While a reference is edited in place (REFEDIT), everything outside the working set is drawn
+/// faded by XFADECTL percent on screen. Built once per display list: a lookup per object drawn
+/// would scan the working set each time.
+struct Fade {
+    working: std::collections::HashSet<Handle>,
+    percent: u8,
+}
+
+impl Fade {
+    fn of(d: &Drawing) -> Option<Fade> {
+        let r = d.refedit.as_ref()?;
+        let percent = u8::try_from(d.header.i64("XFADECTL", 50).clamp(0, 90)).unwrap_or(50);
+        Some(Fade { working: r.items.iter().map(|i| i.copy).collect(), percent })
+    }
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -340,6 +358,7 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            fade: self.fade,
         }
     }
     /// Take one unit of the block-expansion budget; false once it is spent.

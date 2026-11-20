@@ -43,6 +43,15 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// While a reference is edited in place (REFEDIT), everything outside the working set is faded by
+/// XFADECTL percent on screen: how much `e` fades (0 when it doesn't).
+fn refedit_fade(b: &Builder, ctx: &Ctx, e: &Entity) -> u8 {
+    match b.fade {
+        Some(f) if !b.plotting && !f.working.contains(&if ctx.depth == 0 { e.handle } else { ctx.top }) => f.percent,
+        _ => 0,
+    }
+}
+
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -69,6 +78,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
     }
+    b.transparency = b.transparency.max(refedit_fade(b, ctx, e));
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,

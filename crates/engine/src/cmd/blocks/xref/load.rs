@@ -134,7 +134,7 @@ struct Ctx {
 }
 
 /// The folder of the host drawing at `host` (a file path).
-fn folder(host: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn folder(host: Option<&Path>) -> Option<PathBuf> {
     let p = host?.parent()?;
     Some(if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() })
 }
@@ -256,7 +256,10 @@ fn case_insensitive(p: &Path) -> Option<PathBuf> {
 }
 
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
-fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
+/// Also returns the [`Stamp`] of the bytes read: taken from the opened file, so it describes them
+/// even when the path is pointed at another file meanwhile; `None` when the file changed while it
+/// was read (or the system can't tell its time), so an edit in place refuses until it is reloaded.
+fn read(file: &Path, cx: &mut Ctx) -> Result<(Drawing, Option<Stamp>), String> {
     let hooks = super::super::super::file::io().ok_or("file formats are not available in this build")?;
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -264,7 +267,9 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
         let left = MAX_XREF_TOTAL_BYTES.saturating_sub(cx.bytes);
         let limit = MAX_XREF_BYTES.min(left);
         let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
-        let len = f.metadata().map_err(|e| e.to_string())?.len();
+        let meta = f.metadata().map_err(|e| e.to_string())?;
+        let len = meta.len();
+        let before = stamp_of(&meta);
         let too_big = || {
             if limit < MAX_XREF_BYTES {
                 format!("the referenced files are larger than {} MB together", MAX_XREF_TOTAL_BYTES >> 20)
@@ -282,13 +287,41 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<Drawing, String> {
             return Err(too_big());
         }
         cx.bytes = cx.bytes.saturating_add(n);
-        (hooks.read)(&bytes, &file.to_string_lossy())
+        let after = f.metadata().ok().as_ref().and_then(stamp_of);
+        let read_as = before.filter(|b| Some(*b) == after);
+        Ok(((hooks.read)(&bytes, &file.to_string_lossy())?, read_as))
     }
     #[cfg(target_arch = "wasm32")]
     {
         let _ = (hooks, file, cx);
         Err("files are not available on the web".into())
     }
+}
+
+/// A file's size and modification time (nanoseconds since 1970): how an edit in place (REFEDIT)
+/// tells whether an xref's file changed since it was read ([`cadcraft_doc::Block::xref_stamp`]).
+pub(crate) type Stamp = (u64, u128);
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn stamp_of(m: &std::fs::Metadata) -> Option<Stamp> {
+    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some((m.len(), t))
+}
+
+/// The [`Stamp`] of the file at `file` now.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stamp(file: &Path) -> Option<Stamp> {
+    stamp_of(&std::fs::metadata(file).ok()?)
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn stamp(_file: &Path) -> Option<Stamp> {
+    None
+}
+
+/// Read the drawing file `file` (with the size limits of xref loading), with the [`Stamp`] of the
+/// bytes read (see [`read`]).
+pub(crate) fn read_file(file: &Path) -> Result<(Drawing, Option<Stamp>), String> {
+    read(file, &mut Ctx::new(None))
 }
 
 /// Load every xref of `d` that isn't unloaded from the paths saved in it; `host` is the drawing's
@@ -354,8 +387,14 @@ fn load_in(d: &mut Drawing, name: &str, host: Option<&Path>, chosen: bool, cx: &
     let Some(path) = b.xref_path.clone() else { return (XrefStatus::Unresolved, "not an xref".into()) };
     clear(d, &key);
     let (status, detail) = match fetch(&path, host, chosen, cx, depth) {
-        Ok((x, file)) => match import(d, &key, &x, cx) {
-            Ok(()) => (XrefStatus::Loaded, file.to_string_lossy().into_owned()),
+        Ok((x, file, read_as)) => match import(d, &key, &x, cx) {
+            Ok(()) => {
+                // This drawing's own baseline: another drawing loading the file later doesn't move it.
+                if let Some(b) = d.blocks.get_mut(&key) {
+                    Arc::make_mut(b).xref_stamp = read_as;
+                }
+                (XrefStatus::Loaded, file.to_string_lossy().into_owned())
+            }
             Err(e) => {
                 // Whatever made it in before the failure goes again. A fetch that failed imported
                 // nothing, so it doesn't pay for a second scan of the block table.
@@ -370,7 +409,13 @@ fn load_in(d: &mut Drawing, name: &str, host: Option<&Path>, chosen: bool, cx: &
 }
 
 /// Read the drawing referenced as `path` and load its own attached xrefs into it.
-fn fetch(path: &str, host: Option<&Path>, chosen: bool, cx: &mut Ctx, depth: usize) -> Result<(Drawing, PathBuf), (XrefStatus, String)> {
+fn fetch(
+    path: &str,
+    host: Option<&Path>,
+    chosen: bool,
+    cx: &mut Ctx,
+    depth: usize,
+) -> Result<(Drawing, PathBuf, Option<Stamp>), (XrefStatus, String)> {
     let unresolved = |m: &str| (XrefStatus::Unresolved, m.to_string());
     if depth >= MAX_BLOCK_DEPTH {
         return Err(unresolved("xrefs are nested too deeply"));
@@ -384,7 +429,7 @@ fn fetch(path: &str, host: Option<&Path>, chosen: bool, cx: &mut Ctx, depth: usi
         return Err(unresolved("too many referenced files"));
     }
     cx.files += 1;
-    let mut x = read(&file, cx).map_err(|e| (XrefStatus::Unresolved, format!("{}: {e}", file.to_string_lossy())))?;
+    let (mut x, read_as) = read(&file, cx).map_err(|e| (XrefStatus::Unresolved, format!("{}: {e}", file.to_string_lossy())))?;
     cx.chain.push(canon);
     let nested: Vec<String> =
         x.blocks.values().filter(|b| b.xref_path.is_some() && !b.xref_overlay && !b.name.contains('|')).map(|b| b.name.clone()).collect();
@@ -395,15 +440,20 @@ fn fetch(path: &str, host: Option<&Path>, chosen: bool, cx: &mut Ctx, depth: usi
         }
     }
     cx.chain.pop();
-    Ok((x, file))
+    Ok((x, file, read_as))
+}
+
+/// The objects loading drawing `x` as an xref counts against [`MAX_XREF_OBJECTS`]: its model
+/// space and every block's.
+pub(crate) fn object_count(x: &Drawing) -> usize {
+    x.blocks.values().fold(x.model.len(), |n, b| n.saturating_add(b.entities.len()))
 }
 
 /// Bring referenced drawing `x` into xref `key`: its model space becomes the block's objects, its
 /// symbols and blocks are added as `key|name` (dependent symbols the host already has keep the
 /// host's settings, so layer changes survive a reload).
 fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), String> {
-    let count = x.blocks.values().fold(x.model.len(), |n, b| n.saturating_add(b.entities.len()));
-    cx.objects = cx.objects.saturating_add(count);
+    cx.objects = cx.objects.saturating_add(object_count(x));
     if cx.objects > MAX_XREF_OBJECTS {
         return Err(format!("more than {MAX_XREF_OBJECTS} objects"));
     }

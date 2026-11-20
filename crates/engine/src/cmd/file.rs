@@ -681,19 +681,20 @@ fn adopt_source_group(out: &std::fs::File, src: &std::fs::Metadata) -> std::io::
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
 /// ([`looks_like_drawing`]) is not backed up, and the `.bak` already there is left alone.
+/// Returns whether the backup was written. Also used for an xref REFEDIT writes back.
 #[cfg(not(target_arch = "wasm32"))]
-fn backup(path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn backup(path: &std::path::Path) -> std::io::Result<bool> {
     let mut src = match std::fs::File::open(path) {
         Ok(f) if f.metadata()?.is_file() => f,
-        Ok(_) => return Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e),
     };
     let (head, tail, len) = ends(&mut src)?;
     let bak = backup_path(path);
     if !backup_replaced(&head, &tail, len, bak.exists()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
-        return Ok(());
+        return Ok(false);
     }
     // The backup is no more readable than the drawing, nor than the .bak it replaces (a private
     // 0600 drawing or .bak stays private). The mode is set as the new file is created, so a
@@ -719,7 +720,8 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
         }
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
-    })
+    })?;
+    Ok(true)
 }
 
 /// Store the bytes, then mark the drawing saved under `path`. If storing fails the drawing keeps
@@ -900,6 +902,34 @@ pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<Strin
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
 }
 
+/// What writing `d` to the drawing file `path` as `version` leaves out, as [`loss_on_save`] tells
+/// it for the active drawing: a DXF of 2013 or later the solids whose SAT text has no data store
+/// record, a DWG the entities [`not_saved_as`] counts. For a drawing other than the active one
+/// (an xref REFEDIT writes back).
+pub fn loss_writing(d: &Drawing, path: &str, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if is_dxf_file(path) {
+        return if version >= Version::R2013 { cadcraft_doc::foreign::sat_text_dropped(d) } else { Default::default() };
+    }
+    if drops_unknown(path) { not_saved_as(d, version) } else { Default::default() }
+}
+
+/// The command-line warning for [`loss_writing`] of `path`, or `None` when the file keeps everything.
+pub fn loss_message(path: &str, lost: &std::collections::BTreeMap<String, usize>) -> Option<String> {
+    if is_dxf_file(path) { sat_text_message(lost) } else { not_saved_message(lost) }
+}
+
+/// The warning for solid modeler entities a DXF of 2013 or later leaves out, or `None`.
+fn sat_text_message(lost: &std::collections::BTreeMap<String, usize>) -> Option<String> {
+    if lost.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
+    Some(format!(
+        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
+        list.join(", ")
+    ))
+}
+
 /// Report what the file `path`, just written at the drawing's own version, left out.
 pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
     if is_dxf_file(path) {
@@ -933,14 +963,8 @@ fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
 fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
     // The drawing a file holds: the host while the Block Editor is open.
     let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
-    if lost.is_empty() {
-        return;
-    }
-    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    s.echo(format!(
-        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
-        list.join(", ")
-    ));
+    let Some(msg) = sat_text_message(&lost) else { return };
+    s.echo(msg);
     if let Some(o) = r.as_object_mut() {
         o.insert("notSaved".into(), json!(lost));
     }

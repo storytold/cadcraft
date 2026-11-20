@@ -136,6 +136,7 @@ mod recent_commands;
 mod rectang_ortho;
 mod rectang_polygon_order;
 mod refedit;
+mod refedit_xref;
 mod region;
 mod rename_cmdline;
 mod rotate_reference;
