@@ -1,8 +1,8 @@
 //! Table cell styles, formulas, TABLEDIT and TABLEEXPORT.
 
 use cadcraft_color::Color;
-use cadcraft_doc::{CellBorder, CellFormat, CellStyle, Drawing, EntityKind, Handle, Lineweight, Table, TableStyle};
-use cadcraft_geom::Vec2;
+use cadcraft_doc::{CellBorder, CellFormat, CellStyle, Drawing, EntityKind, Handle, Lineweight, MText, Table, TableStyle};
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::formula::{self, cell_name, parse_cell_name};
@@ -398,7 +398,7 @@ fn run_recalc(s: &mut Session, p: &Value) -> Result<Value> {
 // ---------------------------------------------------------------- TABLEDIT
 
 /// The table and cell (row, col) under `p` in the current space.
-fn cell_under(s: &Session, p: Vec2) -> Option<(Handle, usize, usize)> {
+pub fn cell_under(s: &Session, p: Vec2) -> Option<(Handle, usize, usize)> {
     let d = s.doc().ok()?;
     let space = d.space(&s.space())?;
     for e in space.iter() {
@@ -430,34 +430,61 @@ fn run_tabledit(s: &mut Session, p: &Value) -> Result<Value> {
 #[derive(Default)]
 struct TableEditM {
     cell: Option<(Handle, usize, usize)>,
+    /// The picked cell's text box, for the UI's in-place editor (#3136).
+    editor: Option<MText>,
+}
+
+/// The MTEXT the in-place editor opens on cell `(r, c)`: the cell's text box and its current text
+/// (a formula's), so a double-click edits the cell where it is drawn.
+fn cell_mtext(s: &Session, (h, r, c): (Handle, usize, usize)) -> Option<MText> {
+    let d = s.doc().ok()?;
+    let EntityKind::Table(t) = &d.entity(h)?.kind else { return None };
+    let cell = cadcraft_render::table_cell_text(d, t, r, c)?;
+    let contents = t.cells.get(r).and_then(|row| row.get(c)).map(|x| x.formula.clone().unwrap_or_else(|| x.text.clone())).unwrap_or_default();
+    Some(MText {
+        insert: Vec3::new(cell.text.at.x, cell.text.at.y, 0.0),
+        height: cell.text.height,
+        width: cell.width,
+        attach: cell.text.attach,
+        rotation: 0.0,
+        style: cell.text.style,
+        contents,
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    })
+}
+
+impl TableEditM {
+    fn pick(&mut self, s: &Session, c: (Handle, usize, usize)) {
+        self.cell = Some(c);
+        self.editor = cell_mtext(s, c);
+    }
 }
 
 impl Interactive for TableEditM {
     fn name(&self) -> &'static str {
         "TABLEDIT"
     }
-    fn prompt(&self, s: &Session) -> Prompt {
+    fn prompt(&self, _s: &Session) -> Prompt {
         match self.cell {
             None => Prompt::new("Pick a table cell", Accept::POINT),
-            Some((h, r, c)) => {
-                let cur = s
-                    .doc()
-                    .ok()
-                    .and_then(|d| d.entity(h))
-                    .and_then(|e| if let EntityKind::Table(t) = &e.kind { t.cells.get(r).and_then(|row| row.get(c)).cloned() } else { None })
-                    .map(|c| c.formula.unwrap_or(c.text))
-                    .unwrap_or_default();
+            Some((_, r, c)) => {
+                let cur = self.editor.as_ref().map(|m| m.contents.clone()).unwrap_or_default();
                 let p = Prompt::new(format!("Enter text for cell {} (=formula)", cell_name(r, c)), Accept::TEXT);
                 if cur.is_empty() { p } else { p.default(cur) }
             }
         }
+    }
+    fn editing_mtext(&self) -> Option<MText> {
+        self.editor.clone()
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (&self.cell, i) {
             (_, Input::Cancel) => Ok(Step::Cancel),
             (None, Input::Point(p)) => {
                 match cell_under(s, p) {
-                    Some(c) => self.cell = Some(c),
+                    Some(c) => self.pick(s, c),
                     None => s.echo("No table cell there."),
                 }
                 Ok(Step::Continue)

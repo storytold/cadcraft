@@ -125,6 +125,12 @@ fn tabledit_at_the_command_line() {
     // Cell A4 spans y -3..-4.
     s.cmdline("tabledit").unwrap();
     s.cmdline("1,-3.5").unwrap();
+    // The picked cell's text box goes to the UI's in-place editor (#3136), empty cell included.
+    let box_text = s.editing_mtext().expect("the in-place editor opens on the picked cell");
+    assert!(box_text.contents.is_empty());
+    assert_eq!(box_text.attach, 4);
+    assert!(box_text.width > 0.0);
+    assert!((box_text.insert.y + 3.5).abs() < 1e-9, "the box is centred down A4: {}", box_text.insert.y);
     s.cmdline("=Sum(A1:A3)").unwrap();
     assert_eq!(text(&s, &h, 3, 0), "6");
     // JSON form with a point.
