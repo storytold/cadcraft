@@ -234,12 +234,20 @@ fn current_props(s: &Session, (h, k): (Handle, usize)) -> Option<(String, Color)
     Some((layer, c.color))
 }
 
-/// The current text properties of attribute `k` of block reference `h`.
+/// The current text properties of attribute `k` of block reference `h`: a multiline attribute's
+/// height, rotation and style are its multiline text's, which is what is drawn.
 fn current_text(s: &Session, (h, k): (Handle, usize)) -> Option<cadcraft_doc::Text> {
     let d = s.doc().ok()?;
     let e = d.entity(h)?;
     let EntityKind::Insert(ins) = &e.kind else { return None };
-    ins.attribs.get(k).map(|a| a.text.clone())
+    let a = ins.attribs.get(k)?;
+    let mut t = a.text.clone();
+    if let Some(m) = &a.multiline {
+        t.height = m.mtext.height;
+        t.rotation = m.mtext.rotation;
+        t.style.clone_from(&m.mtext.style);
+    }
+    Some(t)
 }
 
 /// The point attribute `k` of block reference `h` is placed by, which a picked height or angle is

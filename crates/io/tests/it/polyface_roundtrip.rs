@@ -49,6 +49,7 @@ fn polyface_mesh_is_read_as_one_object_with_its_hidden_edges() {
 
 #[test]
 fn polyface_mesh_round_trips_through_dxf_and_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(POLYFACE_DXF.as_bytes()).unwrap();
     let text = write_dxf(&d);
     assert!(text.contains("AcDbPolyFaceMesh") && text.contains("AcDbFaceRecord"));

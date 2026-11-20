@@ -138,6 +138,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             view: if st.orbit.is_top() { Some(area) } else { None },
             skip_viewport: None,
             transparency,
+            on_screen: true,
             cancel: None,
             orbit: st.orbit,
             orbit_viewport: Some(h),

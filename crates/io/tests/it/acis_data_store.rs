@@ -90,6 +90,7 @@ fn dxf_keeps_the_data_store_and_drops_records_of_deleted_entities() {
 
 #[test]
 fn dwg_keeps_the_solids_geometry() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
     // The DWG read back (as the bridge's DXF) binds the same bytes to both solids.
@@ -134,6 +135,7 @@ fn sat_text_solids_are_left_out_of_dxf_2013_and_later() {
 /// out the contents of xref blocks, which the DXF doesn't hold anyway (#2334).
 #[test]
 fn sat_text_solids_stay_in_dwg_2018_and_xref_contents_are_not_counted() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
         0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n\
         0\nLINE\n5\n2D\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
@@ -202,6 +204,7 @@ fn a_data_store_record_stores_only_its_first_entity() {
 /// note has to say (#2334).
 #[test]
 fn a_dwg_keeps_a_sat_text_region_only_before_2013() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
         0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n0\nENDSEC\n0\nEOF\n";
     let d = cadcraft_io::read_dxf(sat.as_bytes()).unwrap();
