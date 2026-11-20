@@ -70,6 +70,8 @@ pub const REFUSED: &[(&str, &str)] = &[
 
 /// Commands that touch no file.
 pub const NO_FILES: &[&str] = &[
+    "menubar",
+    "toolbar",
     "blockspalette",
     "dimoverride.clear",
     "-dimstyle",
