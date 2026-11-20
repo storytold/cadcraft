@@ -292,7 +292,7 @@ impl OrbitIndex {
         let mut items = Vec::new();
         let mut infinite = Vec::new();
         for e in store.iter() {
-            if !selectable(d, e) {
+            if !selectable(d, e, &[]) {
                 continue;
             }
             let ptr = std::sync::Arc::as_ptr(e) as usize;
