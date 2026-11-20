@@ -817,8 +817,9 @@ pub struct PageSetup {
     /// and no turn (#1463). `None` for page setups made in CADCraft.
     #[serde(skip)]
     pub file_paper: Option<(f64, f64, i64)>,
-    /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
-    /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
+    /// The paper image origin (DXF groups 148/149, in paper-space drawing coordinates) as the
+    /// file had it; its negative locates the printable origin. `None` for a page CADCraft made,
+    /// written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_origin: Option<Vec2>,
 }
