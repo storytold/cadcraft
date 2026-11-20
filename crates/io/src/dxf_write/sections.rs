@@ -182,7 +182,15 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
             *t = Tag::s(345, h);
         }
     }
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP, dxf_ext::FORMULA_APP];
+    let apps = [
+        "ACAD",
+        dxf_ext::APP,
+        "AcadAnnotative",
+        dxf_ext::LAYER_TRANSPARENCY_APP,
+        dxf_ext::LAYER_DESCRIPTION_APP,
+        dxf_ext::HATCH_BACKGROUND_APP,
+        dxf_ext::FORMULA_APP,
+    ];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
