@@ -127,7 +127,7 @@ Detail: [localization-parity.md](localization-parity.md).
 |---|---|---|
 | P1 | Web build: plot shows raw PDF bytes (#134), no DWG (File > Open and save downloads fixed, #55, #133) | 3–5 |
 | P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25: the vsync fix landed, #183, the issue is open); Windows magnifier (#39: system-cursor option landed, #187, the issue is open) | 6–10 |
-| P3 | macOS file associations: opening `.dxf` from Finder fails (#158; open PRs #683 and #899) | 1–2 |
+| P3 | macOS file associations: opening `.dxf` from Finder fails (#158; Finder-delivery PRs #683, #1347 and #1503 are open) | 1–2 |
 
 ## Ecosystem and automation
 
