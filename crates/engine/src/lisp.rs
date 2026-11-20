@@ -12,6 +12,7 @@ pub mod builtins;
 mod drawing;
 pub mod eval;
 pub mod input;
+mod layerstates;
 mod objects;
 pub mod read;
 mod startup;
@@ -754,3 +755,6 @@ mod tests;
 
 #[cfg(test)]
 mod block_tests;
+
+#[cfg(test)]
+mod layerstate_tests;
