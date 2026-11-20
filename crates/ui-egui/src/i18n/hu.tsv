@@ -298,6 +298,7 @@
 	Distance	Távolság
 	Divide	Felosztás
 	Do not plot (click: plot)	Nem nyomtatandó (kattintás: nyomtatandó)
+	Don't Save	Ne mentse
 	Donut	Gyűrű
 	Double-click to edit the description	Dupla kattintással szerkesztheted a leírást
 	Down	Lefelé
@@ -894,6 +895,7 @@
 	Save Layer State	Rétegállapot mentése
 	Save Reference Edits	Hivatkozásmódosítások mentése
 	Save State	Állapot mentése
+	Save changes to {name}?	Menti a(z) {name} módosításait?
 	Save new drawings as	Új rajzok mentési formátuma
 	Saved Path	Mentett elérési út
 	Scale	Átméretezés
@@ -1313,6 +1315,7 @@
 	Xrefs	Külső hivatkozások
 	Yellow	Sárga
 	Yes	Igen
+	Your changes will be lost if you don't save them.	A módosítások elvesznek, ha nem menti őket.
 	Zoom	Nézetnagyítás
 	Zoom All	Nagyítás a teljes rajzra
 	Zoom Dynamic	Dinamikus nagyítás
