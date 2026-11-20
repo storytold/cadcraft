@@ -32,6 +32,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+mod drawing_fonts;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
@@ -1065,6 +1066,7 @@ impl CadApp {
         let ctx = &ctx;
         let language = self.language();
         if self.fonts_language != Some(language) {
+            drawing_fonts::install(ctx);
             theme::install_fonts(ctx, language);
             self.fonts_language = Some(language);
         }
