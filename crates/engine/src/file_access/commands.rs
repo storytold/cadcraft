@@ -356,6 +356,7 @@ pub const NO_FILES: &[&str] = &[
     "layout.new",
     "layout.delete",
     "layout.rename",
+    "layout.move",
     "layout.copy",
     "layout.list",
     "mview",
