@@ -1,5 +1,5 @@
 use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
-use super::hatch::hatch;
+use super::hatch::{CurvePoints, hatch};
 use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
@@ -11,7 +11,7 @@ use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
-    entity_with_table_budget(kind, tags, &mut 4_000_000)
+    entity_with_table_budget(kind, tags, &mut 4_000_000, &mut CurvePoints::default())
 }
 
 /// Parse one entity while charging materialized table cells to the caller's shared import budget.
@@ -123,7 +123,12 @@ fn spline(t: &T) -> Spline {
     sp
 }
 
-pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {
+pub(super) fn entity_with_table_budget(
+    kind: &str,
+    tags: &[Tag],
+    table_cells_left: &mut usize,
+    curves: &mut CurvePoints,
+) -> Option<(Common, EntityKind)> {
     // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
     if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
         return None;
@@ -236,7 +241,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "MLINE" => EntityKind::MLine(crate::dxf_mline::read_entity(tags)),
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
-            let mut k = hatch(tags, &t)?;
+            let mut k = hatch(tags, &t, curves)?;
             if let EntityKind::Hatch(h) = &mut k
                 && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
             {
