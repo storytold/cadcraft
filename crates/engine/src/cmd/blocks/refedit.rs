@@ -62,7 +62,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(RefsetM::default()))),
         CommandSpec::new("refclose", "Save Reference Edits", run_refclose)
             .menu(&["Tools", "Xref and Block In-place Editing", "Save Reference Edits"])
-            .params("{option?: \"save\"|\"discard\" | save?: bool (default true)} → {block, saved, objects, file? (an xref's source drawing written), backup? (its previous file, as SAVE names it; null when none was kept)}")
+            .params("{option?: \"save\"|\"discard\" | save?: bool (default true)} → {block, saved, objects, file? (an xref's source drawing written), backup? (its previous file, as SAVE names it; null when none was kept), notSaved?: {type: count} (what the file couldn't keep, also echoed)}")
             .enabled(editing)
             .interactive(|_| Ok(Box::new(RefcloseM))),
     ]
@@ -567,12 +567,25 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
         s.echo(o.message());
     }
     let mut out = json!({ "block": r.block, "saved": save, "objects": objects });
-    if let (Some(x), Some(backup)) = (&r.xref, written) {
+    if let (Some(x), Some(w)) = (&r.xref, written) {
         out["file"] = json!(x.file);
         // `null` when the file didn't look like a whole drawing and the `.bak` there was kept.
-        out["backup"] = json!(backup);
+        out["backup"] = json!(w.backup);
+        // What the file couldn't keep, said as SAVE says it (nothing is dropped silently).
+        if let Some(msg) = crate::cmd::file::loss_message(&x.file, &w.lost) {
+            let kept = w.backup.as_ref().map(|b| format!(" The previous file, with them, is kept as {b}.")).unwrap_or_default();
+            s.echo(format!("{}: {msg}.{kept}", x.file));
+            out["notSaved"] = json!(w.lost);
+        }
     }
     Ok(out)
+}
+
+/// What writing an xref back did: the backup it kept, and what the file couldn't keep
+/// ([`crate::cmd::file::loss_writing`]).
+struct Written {
+    backup: Option<String>,
+    lost: std::collections::BTreeMap<String, usize>,
 }
 
 /// Replace the block's objects by the working set (and move the drawing objects added to it
@@ -623,9 +636,8 @@ fn commit_block(nd: &mut Drawing, r: &RefEdit) -> Result<usize> {
 
 // ---------------- writing an xref back ----------------
 
-/// Write the edited block of `nd` (committed) into xref source `x`. Returns the backup's path
-/// (`None` when none was kept).
-fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Option<String>> {
+/// Write the edited block of `nd` (committed) into xref source `x`.
+fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let file = std::path::Path::new(&x.file);
     let real = std::path::Path::new(&x.real);
     writable(file).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
@@ -677,7 +689,10 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Option<String
         w(&src, &x.file, &crate::cmd::file::SaveAs { version, binary: x.binary, portable_fonts: false })
     };
     let bytes = bytes.map_err(|e| bad("refclose", format!("writing {}: {e}", file.display())))?;
-    replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))
+    let as_version = version.unwrap_or_else(|| src.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver).unwrap_or_default());
+    let lost = crate::cmd::file::loss_writing(&src, &x.file, as_version);
+    let backup = replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))?;
+    Ok(Written { backup, lost })
 }
 
 /// Refuse a save when `file` no longer leads to `real` (the file the edit began with), or `real`

@@ -116,6 +116,7 @@ fn editing_an_xref_writes_its_drawing_back_with_a_backup() {
     s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
     let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
     assert_eq!(out["objects"], 3);
+    assert!(out.get("notSaved").is_none() && !s.log.iter().any(|m| m.contains("Not saved")), "the file keeps everything: no warning");
     assert!(out["file"].as_str().unwrap().ends_with("site.dxf"));
     let bak = dir.join("site.dxf.bak");
     assert!(out["backup"].as_str().unwrap().ends_with("site.dxf.bak"), "{out}");
@@ -444,5 +445,71 @@ EOF
     assert!(e.contains("AC1009") && e.contains("XOPEN"), "{e}");
     assert!(s.doc().unwrap().refedit.is_none());
     assert_eq!(std::fs::read_to_string(dir.join("r12.dxf")).unwrap(), r12, "the file is untouched");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Review of #2355: SAVE says what a file can't keep; the write-back said nothing. A 2013 DXF xref
+/// holding a solid whose ACIS geometry is SAT text (no data store record) loses it when written:
+/// the save says so, names it in `notSaved`, and points at the backup that still has it.
+#[test]
+fn what_the_xref_file_cannot_keep_is_reported() {
+    hooks();
+    let dir = folder("lost");
+    let dxf = "0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1027
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+               0
+LINE
+5
+20
+8
+0
+10
+0
+20
+0
+11
+1
+21
+1
+               0
+3DSOLID
+5
+21
+100
+AcDbEntity
+8
+0
+100
+AcDbModelerGeometry
+70
+1
+1
+400 0 1 0
+               0
+ENDSEC
+0
+EOF
+";
+    std::fs::write(dir.join("solid.dxf"), dxf).unwrap();
+    let (mut s, insert) = host_with(&dir, "solid.dxf", "solid");
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(out["notSaved"], json!({ "3DSOLID": 1 }), "{out}");
+    let warning = s.log.iter().find(|m| m.contains("Not saved in the DXF file")).expect("a warning on the command line");
+    assert!(warning.contains("1 3DSOLID") && warning.contains("solid.dxf.bak"), "{warning}");
+    assert!(std::fs::read_to_string(dir.join("solid.dxf.bak")).unwrap().contains("3DSOLID"), "the backup still has it");
     let _ = std::fs::remove_dir_all(&dir);
 }
