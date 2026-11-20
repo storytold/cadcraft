@@ -67,7 +67,7 @@ CADCraft is a pure-Rust CAD and drafting application (egui/eframe), run natively
 
 Layout:
 
-- Layers (`cargo xtask layers` checks them): L0 `geom`, `dxf`; L1 `color`, `doc`; L2 `fonts`, `render`, `constraints`; L3 `io`; L4 `engine`; L5 `ui-egui`, `mcp`; then apps. Nothing below L5 depends on egui, eframe, winit, wgpu or rfd.
+- Layers (`cargo xtask layers` checks them): L0 `geom`, `color`; L1 `doc`; L2 `constraints`, `fonts`, `render`; L3 `io`; L4 `engine`; L5 `ui-egui`, `mcp`; then apps. Nothing below L5 depends on egui, eframe, winit, wgpu or rfd.
 - Commands live in `crates/engine/src/cmd/*` (`CommandSpec`: id is AutoCAD's command name in lower case, label, menu path, shortcut, aliases, params doc, `enabled`, JSON `run`, optional `interactive` prompt machine). UI-only commands live in `crates/ui-egui/src/menus.rs` (`UI_COMMANDS`). Panels act through `app.run(id, params)`, `app.start(id)` or `app.cmdline(text)`; colours come from `theme::Tokens`. `engine.execute` runs the JSON form with defaults; only menu or toolbar invocation starts the interactive prompts.
 
 Checks for the crates you changed: `cargo test -p <crate>`, `cargo clippy -p <crate> --all-targets -- -D warnings`, `cargo xtask layers`, `cargo xtask assets`, `cargo xtask wasm`, `cargo xtask parity` (regenerates `docs/parity-checklist.md`).
