@@ -928,6 +928,7 @@
 	Time	时间
 	To get started, create or open a drawing.	若要开始，请创建或打开一个图形。
 	Tool Bar	工具栏
+	Menu Bar	菜单栏
 	Tool Sets	工具集
 	Tools	工具
 	Torus	圆环体
@@ -1503,6 +1504,13 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	3 Point	三点
+	New UCS	新建 UCS
+	Origin	原点
+	UCS	UCS
+	UCS Icon at Origin	原点处的 UCS 图标
+	World	世界
+	Z	Z
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框

@@ -143,11 +143,13 @@
 	Xref Clip Frame	Рамка обрізки зовнішнього посилання
 	Clipboard	Буфер обміну
 	Close	Закрити
+	Close {panel}	Закрити {panel}
 	Close All	Закрити всі
 	Close All Other Drawings	Закрити всі інші креслення
 	Closed	Замкнений
 	Close Comparison	Закрити порівняння
 	Export Comparison	Експортувати порівняння
+	Close panel	Закрити панель
 	Coincident	Збіг
 	Collapse Palettes	Згорнути палітри
 	Collapse Tool Sets	Згорнути набори інструментів
@@ -534,6 +536,7 @@
 	Measure	Розмітити
 	Measure Distance	Виміряти відстань
 	Measure Geometry	Виміряти геометрію
+	Menu Bar	Рядок меню
 	Merge Cells	Об'єднати комірки
 	Merged PRs	Об'єднані PR
 	Mid Between 2 Points	Середина між 2 точками
@@ -1356,6 +1359,14 @@
 	Justify	За шириною
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
+	3 Point	3 точки
+	New UCS	Нова СКК
+	Origin	Початок координат
+	UCS	СКК
+	UCS Icon at Origin	Піктограма СКК на початку координат
+	World	Світова
+	Z	Z
+	Unnamed	Без назви
 	Select using two clicks only	Вибирати лише двома клацаннями
 	Define each corner of the selection window with a separate click.	Задайте кожен кут рамки вибору окремим клацанням.
 	Type an alias name.	Введіть назву псевдоніма.
