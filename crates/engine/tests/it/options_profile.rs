@@ -186,3 +186,21 @@ fn preview_filter_excludes_each_kind_it_names() {
     assert!(preview_filtered(d, line, 1) && !preview_filtered(d, line, 62));
     assert!(preview_filtered(d, &mtext, 32));
 }
+
+#[test]
+fn proxyobjectsimport_is_a_profile_variable_so_it_survives_restarts() {
+    let mut a = Session::new();
+    assert_eq!(profile(&a)["PROXYOBJECTSIMPORT"], json!(0), "proxies stay as read by default");
+    a.execute("options", &json!({"PROXYOBJECTSIMPORT": 2})).unwrap();
+    let saved = profile(&a);
+    assert_eq!(saved["PROXYOBJECTSIMPORT"], json!(2));
+    // A new session restores it, as the app does at start.
+    let mut b = Session::new();
+    restore(&mut b, &saved);
+    assert_eq!(profile(&b)["PROXYOBJECTSIMPORT"], json!(2));
+    // A value out of range is skipped, and reset puts it back.
+    restore(&mut b, &json!({"PROXYOBJECTSIMPORT": 7}));
+    assert_eq!(profile(&b)["PROXYOBJECTSIMPORT"], json!(2));
+    let r = b.execute("options", &json!({"reset": true})).unwrap();
+    assert_eq!(r["PROXYOBJECTSIMPORT"], json!(0));
+}

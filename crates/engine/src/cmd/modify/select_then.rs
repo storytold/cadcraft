@@ -301,7 +301,8 @@ impl Interactive for SelectThen {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         if !self.sel.done {
-            return self.sel.prompt();
+            // EXPLODE can take every proxy of the drawing at once.
+            return if self.op == Op::Explode { self.sel.prompt().kw(&["PRoxies"]) } else { self.sel.prompt() };
         }
         if self.ask_erase {
             return Prompt::new("Erase source objects?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
@@ -349,6 +350,12 @@ impl Interactive for SelectThen {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.sel.done {
+            if self.op == Op::Explode && matches!(&i, Input::Keyword(k) if k == "PRoxies") {
+                let n = super::explode::explode_proxies(s, super::explode::ProxyAs::Objects)?;
+                s.set_selection(Vec::new());
+                s.echo(format!("{n} proxy objects exploded."));
+                return Ok(Step::Done);
+            }
             match self.sel.feed(s, &i)? {
                 SelOutcome::More => return Ok(Step::Continue),
                 SelOutcome::Empty => return Ok(Step::Done),

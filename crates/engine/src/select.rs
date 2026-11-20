@@ -173,7 +173,39 @@ pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> O
 /// A proxy (or another record CADCraft keeps as it was read) is drawn and snapped to, but never
 /// selected: commands can't edit it, and saving writes its record as it was read.
 pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
-    d.is_visible(e) && !on_frozen_layer(frozen, e) && !kept_as_read(&e.kind)
+    d.is_visible(e) && !on_frozen_layer(frozen, e) && (!kept_as_read(&e.kind) || (proxies_pickable() && is_drawn_proxy(&e.kind)))
+}
+
+thread_local! {
+    static PROXIES_PICKABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the selection under way may take a proxy ([`ProxyPicking`]).
+fn proxies_pickable() -> bool {
+    PROXIES_PICKABLE.with(std::cell::Cell::get)
+}
+
+/// A proxy that draws something: the kind of record ERASE and EXPLODE take ([`ProxyPicking`]).
+fn is_drawn_proxy(k: &EntityKind) -> bool {
+    matches!(k, EntityKind::Unknown(u) if !u.graphics.is_empty())
+}
+
+/// While it lives, selections take proxies that draw something. Only the "Select objects" step of
+/// ERASE and EXPLODE sets it: erasing a proxy leaves nothing out of step with its saved record, and
+/// exploding replaces it by its picture as ordinary objects. Any other command keeps leaving a
+/// proxy out: it can't edit one without the saved record telling another story.
+pub(crate) struct ProxyPicking(bool);
+
+impl ProxyPicking {
+    pub(crate) fn allow(on: bool) -> Self {
+        Self(PROXIES_PICKABLE.with(|c| c.replace(on)))
+    }
+}
+
+impl Drop for ProxyPicking {
+    fn drop(&mut self) {
+        PROXIES_PICKABLE.with(|c| c.set(self.0));
+    }
 }
 
 /// Whether `k` is a record CADCraft keeps as it was read and commands can't edit: every

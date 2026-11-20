@@ -1596,6 +1596,71 @@ fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
     assert!(d.entity(proxy).is_some(), "the proxy is kept");
 }
 
+/// A drawing with a line at y = 0 and a proxy whose picture is a line at y = 5 on layer `L5`.
+fn proxy_drawing() -> (Session, cadcraft_doc::Handle, cadcraft_doc::Handle) {
+    use cadcraft_doc::{Common, Entity, Handle, Line, Space, Unknown};
+    use cadcraft_geom::Vec3;
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let line = s.doc().unwrap().model.last().unwrap().handle;
+    let mut drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
+    drawn.common.color = cadcraft_doc::color::Color::ByBlock;
+    let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
+    let common = Common { layer: "0".into(), color: cadcraft_doc::color::Color::Index(4), ..Common::default() };
+    let proxy = s.doc_mut().unwrap().add(&Space::Model, common, EntityKind::Unknown(unknown)).unwrap();
+    (s, line, proxy)
+}
+
+#[test]
+fn erase_takes_a_proxy_but_move_does_not() {
+    let (mut s, line, proxy) = proxy_drawing();
+    // No command running: a click still leaves the proxy out, so nothing is picked up to edit.
+    s.idle_click(Vec2::new(5.0, 5.0), false).unwrap();
+    assert_eq!(s.selection(), Vec::<Handle>::new());
+    // MOVE's "Select objects" leaves it out too.
+    s.start("move").unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    assert!(s.doc().unwrap().entity(proxy).is_some());
+    s.input(Input::Cancel).unwrap();
+    // ERASE's takes it, by a pick and by a window, and takes the line with it.
+    s.start("erase").unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(proxy).is_none(), "the proxy is erased");
+    assert!(d.entity(line).is_some(), "the line is not");
+    let (mut s, line, proxy) = proxy_drawing();
+    s.start("erase").unwrap();
+    s.input(Input::Point(Vec2::new(-1.0, -1.0))).unwrap();
+    s.input(Input::Point(Vec2::new(11.0, 6.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(proxy).is_none() && d.entity(line).is_none(), "a window round both erases both");
+    // Once the command is over, proxies are out of selections again.
+    let (mut s, _, _) = proxy_drawing();
+    s.idle_click(Vec2::new(5.0, 5.0), false).unwrap();
+    assert_eq!(s.selection(), Vec::<Handle>::new());
+}
+
+#[test]
+fn explode_turns_a_proxy_into_its_picture() {
+    let (mut s, line, proxy) = proxy_drawing();
+    s.start("explode").unwrap();
+    s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(proxy).is_none(), "the proxy is gone");
+    assert!(d.entity(line).is_some(), "the line stays");
+    let lines: Vec<_> = d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Line(l) if l.a.y == 5.0 && l.b.y == 5.0)).collect();
+    assert_eq!(lines.len(), 1, "its picture is an ordinary line now");
+    assert_eq!(lines[0].common.color, cadcraft_doc::color::Color::Index(4), "ByBlock in the picture is the proxy's colour");
+    // By handle, as a script does.
+    let (mut s, _, proxy) = proxy_drawing();
+    let r = s.execute("explode", &json!({"handles": [proxy.hex()]})).unwrap();
+    assert_eq!(r["handles"].as_array().map(Vec::len), Some(1));
+    assert!(s.doc().unwrap().entity(proxy).is_none());
+}
+
 #[test]
 fn additional_tools_keeps_compatible_command_ids() {
     assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
@@ -1604,4 +1669,26 @@ fn additional_tools_keeps_compatible_command_ids() {
         assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
         assert!(!command.menu.contains(&"Express Tools"));
     }
+}
+
+#[test]
+fn explode_takes_every_proxy_with_the_proxies_option() {
+    // As a script: explode {"proxies": true}.
+    let (mut s, line, proxy) = proxy_drawing();
+    let r = s.execute("explode", &json!({"proxies": true})).unwrap();
+    assert_eq!(r["exploded"], 1);
+    let d = s.doc().unwrap();
+    assert!(d.entity(proxy).is_none() && d.entity(line).is_some(), "only the proxy went");
+    assert_eq!(d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Line(l) if l.a.y == 5.0)).count(), 1);
+    assert_eq!(s.execute("explode", &json!({"proxies": true})).unwrap()["exploded"], 0, "nothing left to explode");
+    // One UNDO brings the proxy back.
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().entity(proxy).is_some(), "undone");
+    // At the prompt: the Proxies option, typed.
+    let (mut s, line, proxy) = proxy_drawing();
+    s.start("explode").unwrap();
+    s.cmdline("proxies").unwrap();
+    assert!(s.running.is_none(), "the command is over");
+    let d = s.doc().unwrap();
+    assert!(d.entity(proxy).is_none() && d.entity(line).is_some());
 }

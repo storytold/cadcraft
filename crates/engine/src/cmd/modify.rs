@@ -28,7 +28,7 @@ mod trim;
 
 use break_join::{BreakAtPointM, BreakM, run_break, run_breakat, run_join};
 use explode::run_explode;
-pub(crate) use explode::{explode_kind, explode_with};
+pub(crate) use explode::{ProxyAs, explode_kind, explode_proxies, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
 use offset::{OffsetM, run_offset};
 use oops::run_oops;
@@ -117,9 +117,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("explode", "Explode", run_explode)
             .menu(&["Modify", "Explode"])
             .alias(&["x"])
-            .params("{handles?}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::Explode)))),
-        CommandSpec::new("break", "Break", run_break)
+            .params("{handles?} | {proxies: true} → {exploded: every proxy of the drawing, as ordinary objects}")
+            .interactive(|_| Ok(Box::new(SelectThen::new(Op::Explode)))),        CommandSpec::new("break", "Break", run_break)
             .menu(&["Modify", "Break"])
             .alias(&["br"])
             .params("{handle, p1, p2} → {handles: the object (kept, reshaped) then the new pieces; none when nothing is left}")
