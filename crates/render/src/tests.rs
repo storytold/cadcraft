@@ -34,6 +34,34 @@ fn linetype_dashes_line() {
     assert!(l.prims.len() > 10);
 }
 
+/// Loose entities built as a layout viewport draws them leave out what is on a layer frozen in
+/// it, the part of a block reference on that layer too, whatever the case of the layer's name.
+/// With no such layer the list is the one [`build_entities`] gives.
+#[test]
+fn loose_entities_built_for_a_viewport_leave_out_its_frozen_layers() {
+    let line = |handle: u64, y: f64, layer: &str| {
+        let kind = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) });
+        let mut e = cadcraft_doc::Entity::new(Handle(handle), kind);
+        e.common.layer = layer.into();
+        e
+    };
+    let mut d = Drawing::new_metric();
+    d.ensure_layer("Hidden");
+    let mut b = cadcraft_doc::Block::new("B");
+    for part in [line(1, 0.0, "0"), line(2, 5.0, "Hidden")] {
+        b.entities.push(part);
+    }
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    let reference = cadcraft_doc::Insert { block: "B".into(), ..Default::default() };
+    let ents = [cadcraft_doc::Entity::new(Handle(3), EntityKind::Insert(reference)), line(4, 5.0, "Hidden"), line(5, 8.0, "0")];
+    let ys = |l: &DisplayList| -> Vec<f64> { l.prims.iter().map(|p| l.points(p)[0].y).collect() };
+    let opts = Options::default();
+    let frozen = ["HIDDEN".to_string()];
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &frozen)), [0.0, 8.0]);
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &[])), [0.0, 5.0, 5.0, 8.0]);
+    assert_eq!(ys(&build_entities(&d, &ents, &opts)), [0.0, 5.0, 5.0, 8.0]);
+}
+
 #[test]
 fn frozen_layer_hidden() {
     let mut d = sample();

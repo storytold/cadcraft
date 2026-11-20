@@ -270,15 +270,62 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
 /// entities a visibility state hides are invisible this way, and they sit far from the block's
 /// geometry in real drawings. Layer "0" takes the insert's layer, which the caller has checked.
 /// `off_counts`: a layer turned off counts too, as in the drawing's extents ([`extent_bounds`]).
-fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool) -> bool {
+/// `frozen`: the layers frozen in the layout viewport measured through ([`ViewportBounds`]).
+fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool, frozen: &[String]) -> bool {
     // Attribute definitions are not drawn in an insert (its attribs are, see below).
-    !matches!(e.kind, EntityKind::AttDef(_)) && e.common.visible && layer_counts(d, &e.common.layer, off_counts)
+    !matches!(e.kind, EntityKind::AttDef(_)) && e.common.visible && layer_counts(d, &e.common.layer, off_counts, frozen)
 }
 
 /// Whether what lies on `layer` inside an insert counts: layer "0" takes the insert's layer, which
 /// the caller has checked; a frozen layer never counts, one turned off only with `off_counts`.
-fn layer_counts(d: &Drawing, layer: &str, off_counts: bool) -> bool {
-    layer == "0" || d.layer(layer).is_none_or(|l| !l.frozen && (l.on || off_counts))
+/// Nor does one of the layers in `frozen`, those frozen in the layout viewport measured through,
+/// which does not draw them (the names compared as the renderer compares them).
+fn layer_counts(d: &Drawing, layer: &str, off_counts: bool, frozen: &[String]) -> bool {
+    layer == "0" || (d.layer(layer).is_none_or(|l| !l.frozen && (l.on || off_counts)) && !frozen_in(frozen, layer))
+}
+
+/// Whether `layer` is one of the layers in `frozen`, those frozen in a layout viewport (the names
+/// compared as the renderer compares them).
+fn frozen_in(frozen: &[String], layer: &str) -> bool {
+    frozen.iter().any(|f| f.eq_ignore_ascii_case(layer))
+}
+
+/// The box of the contents of the block `blk`, referenced at `depth`, in the block's coordinates:
+/// the parts that count there ([`in_block_visible`]). It is read from `blocks`, or measured and
+/// kept there, so a block is measured once per depth and not again for every reference to it
+/// ([`bounds_in`] says what the maps hold and why the depth is part of the key).
+fn block_contents_box<'a>(
+    d: &'a Drawing,
+    blk: &'a crate::Block,
+    depth: usize,
+    blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    in_drawing: &mut HashMap<(&'a str, usize), Bounds2>,
+    off_counts: bool,
+    frozen: &[String],
+) -> Bounds2 {
+    if let Some(known) = blocks.get(&(blk.name.as_str(), depth)) {
+        return *known;
+    }
+    let mut inner = Bounds2::EMPTY;
+    for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts, frozen)) {
+        inner = inner.union(&bounds_in(d, be, depth + 1, blocks, in_drawing, off_counts, frozen));
+    }
+    blocks.insert((blk.name.as_str(), depth), inner);
+    inner
+}
+
+/// The box of the contents of the block `blk`, referenced at `depth`, as the drawing shows them:
+/// no viewport's frozen layers are left out. For a clipped reference measured through a viewport
+/// ([`bounds_in`]). `in_drawing` keeps these boxes, apart from that viewport's own block bounds.
+fn drawing_block_box<'a>(
+    d: &'a Drawing,
+    blk: &'a crate::Block,
+    depth: usize,
+    off_counts: bool,
+    in_drawing: &mut HashMap<(&'a str, usize), Bounds2>,
+) -> Bounds2 {
+    // With no layer left out, the measure never asks for the drawing's boxes itself.
+    block_contents_box(d, blk, depth, in_drawing, &mut HashMap::new(), off_counts, &[])
 }
 
 /// The layer an insert's attribute draws on, as the renderer takes it: its own, else its
@@ -327,13 +374,13 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
 
 /// The box of what `e` draws (block contents on layers turned off left out).
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
-    bounds_of(d, e, depth, false, &mut HashMap::new())
+    bounds_of(d, e, depth, false, &[], &mut HashMap::new(), &mut HashMap::new())
 }
 
 /// The box `e` takes in the drawing's extents: as [`entity_bounds`], but block contents on a layer
 /// turned off count, as AutoCAD 2024's ZOOM Extents counts them (a frozen layer's do not).
 pub fn extent_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
-    bounds_of(d, e, 0, true, &mut HashMap::new())
+    bounds_of(d, e, 0, true, &[], &mut HashMap::new(), &mut HashMap::new())
 }
 
 /// The bounds of block contents measured so far, kept across the entities of one unchanged
@@ -351,24 +398,79 @@ pub struct BlockBoundsCache<'a> {
 
 /// [`entity_bounds`] reusing the block bounds `cache` holds from earlier calls on drawing `d`.
 pub fn entity_bounds_cached<'a>(d: &'a Drawing, e: &Entity, depth: usize, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
-    bounds_of(d, e, depth, false, &mut cache.drawn)
+    bounds_of(d, e, depth, false, &[], &mut cache.drawn, &mut HashMap::new())
 }
 
 /// [`extent_bounds`] reusing the block bounds `cache` holds from earlier calls on drawing `d`.
 pub fn extent_bounds_cached<'a>(d: &'a Drawing, e: &Entity, cache: &mut BlockBoundsCache<'a>) -> Bounds2 {
-    bounds_of(d, e, 0, true, &mut cache.extents)
+    bounds_of(d, e, 0, true, &[], &mut cache.extents, &mut HashMap::new())
 }
 
-fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blocks: &mut HashMap<(&'a str, usize), Bounds2>) -> Bounds2 {
+/// The boxes of what one layout viewport draws: [`entity_bounds`] with the block contents on the
+/// layers frozen in that viewport left out, as the viewport leaves them out when it draws. It
+/// keeps the block bounds it has measured, as a [`BlockBoundsCache`] does, so use one only while
+/// the drawing it measured is unchanged. The layers belong to it, so the bounds measured through
+/// one viewport never answer for another. One thing a selection counts whatever the viewport
+/// draws stays in: a clipped reference (XCLIP) is selected by its boundary, so it keeps the box
+/// the drawing gives it.
+pub struct ViewportBounds<'a> {
+    /// The layers frozen in the viewport.
+    frozen: &'a [String],
+    /// By block name and depth, the box of the block contents the viewport draws.
+    blocks: HashMap<(&'a str, usize), Bounds2>,
+    /// The same with no layer of the viewport left out: the box the drawing gives the contents,
+    /// which a clipped reference keeps.
+    in_drawing: HashMap<(&'a str, usize), Bounds2>,
+}
+
+impl<'a> ViewportBounds<'a> {
+    /// For a viewport that freezes the layers in `frozen` (none: the drawing as it shows anywhere).
+    pub fn new(frozen: &'a [String]) -> Self {
+        ViewportBounds { frozen, blocks: HashMap::new(), in_drawing: HashMap::new() }
+    }
+
+    /// The layers frozen in the viewport.
+    pub fn frozen(&self) -> &'a [String] {
+        self.frozen
+    }
+
+    /// Whether the viewport leaves `part` out for its layer. `part` is an entity of the block
+    /// that an object the viewport draws is drawn from (a block reference, a dimension, a
+    /// multileader), and it is left out when its layer is frozen in the viewport, as in the
+    /// boxes above. A part on layer 0 never is: it takes the layer of the object, which the
+    /// caller has checked. What the drawing itself hides (a layer frozen for the whole drawing
+    /// or turned off) is not looked at here.
+    pub fn leaves_out(&self, part: &Entity) -> bool {
+        part.common.layer != "0" && frozen_in(self.frozen, &part.common.layer)
+    }
+
+    /// The box of what the viewport draws of `e`. Like [`entity_bounds`] it does not look at the
+    /// layer `e` itself is on: whether the viewport draws `e` at all is the caller's to check.
+    pub fn entity_bounds(&mut self, d: &'a Drawing, e: &Entity) -> Bounds2 {
+        bounds_of(d, e, 0, false, self.frozen, &mut self.blocks, &mut self.in_drawing)
+    }
+}
+
+/// The box of `e` at `depth` with the block bounds in `blocks` and `in_drawing`: [`bounds_in`], a
+/// top-level annotative object measured as it draws.
+fn bounds_of<'a>(
+    d: &'a Drawing,
+    e: &Entity,
+    depth: usize,
+    off_counts: bool,
+    frozen: &[String],
+    blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    in_drawing: &mut HashMap<(&'a str, usize), Bounds2>,
+) -> Bounds2 {
     // A top-level annotative object measures as it draws at the current annotation scale.
     if depth == 0 {
         match d.anno_draw(e) {
             crate::AnnoDraw::Plain => {}
             crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
-            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, blocks, off_counts),
+            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, blocks, in_drawing, off_counts, frozen),
         }
     }
-    bounds_in(d, e, depth, blocks, off_counts)
+    bounds_in(d, e, depth, blocks, in_drawing, off_counts, frozen)
 }
 
 /// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
@@ -376,8 +478,20 @@ fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blo
 /// expanding the block again, so nested or self-referencing blocks cost at most one pass over each
 /// definition per depth instead of one per reference (which grows exponentially with the nesting
 /// depth). The depth is part of the key because [`MAX_BLOCK_DEPTH`] cuts a deep visit short: its
-/// bounds must not stand in for a shallower reference to the same block (#706).
-fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
+/// bounds must not stand in for a shallower reference to the same block (#706). The bounds in
+/// `blocks` depend on `off_counts` and on `frozen` (see [`layer_counts`]), so one map goes with
+/// one value of each. `in_drawing` is the map that goes with the same `off_counts` and no frozen
+/// layer: a measure through a viewport takes from it the box the drawing gives the block of a
+/// clipped reference ([`drawing_block_box`]). A measure with no frozen layer does not use it.
+fn bounds_in<'a>(
+    d: &'a Drawing,
+    e: &Entity,
+    depth: usize,
+    blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    in_drawing: &mut HashMap<(&'a str, usize), Bounds2>,
+    off_counts: bool,
+    frozen: &[String],
+) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
         EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
@@ -400,17 +514,16 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             let mut b = Bounds2::EMPTY;
             if let Some(blk) = d.block(&ins.block) {
                 let m = ins.transform(blk.base.xy());
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(b) => *b,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
-                        }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
-                    }
-                };
+                let mut inner = block_contents_box(d, blk, depth, blocks, in_drawing, off_counts, frozen);
+                // XCLIP: the reference app selects a clipped reference by its boundary whatever a
+                // viewport draws inside it, so a clipped reference keeps the box the drawing gives it.
+                // One that is not inverted and has a part drawn gets the boundary's box below as it is.
+                if !frozen.is_empty()
+                    && let Some(c) = ins.clip.as_ref().filter(|c| c.active())
+                    && (c.inverted || inner.is_empty())
+                {
+                    inner = drawing_block_box(d, blk, depth, off_counts, in_drawing);
+                }
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
                 // XCLIP: the reference app takes the boundary's box, also where it reaches past the
                 // block or misses it (an inverted clip can show anything, so it keeps the block's).
@@ -432,7 +545,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 }
             }
             for a in &ins.attribs {
-                if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
+                if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts, frozen) {
                     b = b.union(&match a.multiline_text() {
                         Some(m) => mtext_box(&m),
                         None => text_box(&a.text, a.text.value.chars().count()),
@@ -469,17 +582,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 // Reuse the shared block-bounds cache (as the Insert branch does) so a dimension
                 // block with branching or self-referencing children costs one pass per definition
                 // per depth, not one per reference (which grows exponentially) (CWE-400).
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(cached) => *cached,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
-                        }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
-                    }
-                };
+                let inner = block_contents_box(d, blk, depth, blocks, in_drawing, off_counts, frozen);
                 // The block draws translated by the insertion point (group 12), so its bounds
                 // move with it (#2634); the cache above keeps the block's own bounds.
                 let off = dm.insertion_point.xy();
@@ -498,7 +601,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             }
             if let Some(ins) = &m.block {
                 let be = Entity { handle: e.handle, common: e.common.clone(), kind: EntityKind::Insert(ins.clone()) };
-                b = b.union(&bounds_in(d, &be, depth, blocks, off_counts));
+                b = b.union(&bounds_in(d, &be, depth, blocks, in_drawing, off_counts, frozen));
             }
             b
         }
@@ -795,6 +898,170 @@ mod tests {
             assert_eq!((drawn.min, drawn.max), (want_drawn.min, want_drawn.max));
             assert_eq!((extents.min, extents.max), (want_extents.min, want_extents.max));
             assert!(extents.width() > drawn.width());
+        }
+    }
+
+    /// A viewport leaves a part of a block out for its layer when that layer is frozen in the
+    /// viewport, its name matched whatever its case. A part on layer 0 is never left out, also
+    /// where the viewport freezes layer 0: it takes the layer of the object drawn from the block.
+    /// A layer the drawing itself hides (frozen for the whole drawing, or turned off) is not the
+    /// viewport's to leave out, and a viewport that freezes no layer leaves nothing out.
+    #[test]
+    fn a_viewport_leaves_out_the_parts_on_its_frozen_layers() {
+        let part = |layer: &str| {
+            let kind = EntityKind::Line(crate::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) });
+            let mut e = Entity::new(crate::Handle(1), kind);
+            e.common.layer = layer.into();
+            e
+        };
+        let frozen = ["hidden".to_string(), "0".to_string()];
+        let (through, plain) = (ViewportBounds::new(&frozen), ViewportBounds::new(&[]));
+        assert!(through.leaves_out(&part("Hidden")), "a layer frozen in the viewport, its name in another case");
+        assert!(!plain.leaves_out(&part("Hidden")), "the same part where no layer is frozen");
+        assert!(!through.leaves_out(&part("0")), "layer 0 takes the object's layer");
+        assert!(!through.leaves_out(&part("Other")), "a layer the viewport does not freeze");
+    }
+
+    /// Through a layout viewport the block contents on a layer frozen in it take no room: a part
+    /// of a reference, a part two blocks deep, a nested reference that is itself on that layer
+    /// (with everything in it), an attribute, the parts of the block a dimension or a multileader
+    /// draws (a reference nested in a dimension's block too), and the parts of an annotative
+    /// reference. A clipped reference (XCLIP) keeps the box the drawing gives it, whatever is drawn
+    /// of it. The layer's name is matched whatever its case. With no layer frozen
+    /// the box is the one [`entity_bounds`] gives, and one [`ViewportBounds`] gives every entity
+    /// the box a fresh one gives it.
+    #[test]
+    fn a_viewport_leaves_out_block_contents_on_the_layers_frozen_in_it() {
+        let line = |handle: u64, y: f64, layer: &str| {
+            let kind = EntityKind::Line(crate::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) });
+            let mut e = Entity::new(crate::Handle(handle), kind);
+            e.common.layer = layer.into();
+            e
+        };
+        let reference = |block: &str| crate::Insert { block: block.into(), ..crate::Insert::default() };
+        let ins = |block: &str, layer: &str| {
+            let mut e = Entity::new(crate::Handle(2), EntityKind::Insert(reference(block)));
+            e.common.layer = layer.into();
+            e
+        };
+        let mut d = Drawing::new_metric();
+        d.ensure_layer("Hidden");
+        let mut add = |name: &str, parts: Vec<Entity>| {
+            let mut b = crate::Block::new(name);
+            for part in parts {
+                b.entities.push(part);
+            }
+            d.blocks.insert(name.into(), std::sync::Arc::new(b));
+        };
+        // B: a line on layer 0 along y = 0 and one on "Hidden" along y = 50. N nests B. Z holds a
+        // reference to B that is itself on "Hidden", and a line along y = 90. H is all on "Hidden".
+        add("B", vec![line(1, 0.0, "0"), line(3, 50.0, "Hidden")]);
+        add("N", vec![ins("B", "0")]);
+        add("Z", vec![ins("B", "Hidden"), line(1, 90.0, "0")]);
+        add("H", vec![line(1, 50.0, "Hidden")]);
+        // A reference to B with an attribute on "Hidden" at y = 70.
+        let mut tagged = ins("B", "0");
+        if let EntityKind::Insert(i) = &mut tagged.kind {
+            i.attribs.push(crate::Attrib {
+                tag: "T".into(),
+                text: Text { insert: Vec3::new(0.0, 70.0, 0.0), align_pt: None, ..text(HAlign::Left, VAlign::Baseline) },
+                invisible: false,
+                constant: false,
+                prompt: String::new(),
+                props: crate::AttribProps { layer: Some("Hidden".into()), ..Default::default() },
+                multiline: None,
+                modes: Default::default(),
+            });
+        }
+        // References to H clipped to a boundary around its line, and with that clip inverted: no
+        // part of either is drawn where "Hidden" is frozen in the viewport. And a reference to B
+        // with the inverted clip: its line along y = 0 is drawn there.
+        let clip = |block: &str, inverted: bool| {
+            let mut e = ins(block, "0");
+            if let EntityKind::Insert(i) = &mut e.kind {
+                let boundary = crate::ClipBoundary::new(vec![Vec2::new(-2.0, 40.0), Vec2::new(12.0, 60.0)]);
+                i.clip = Some(crate::ClipBoundary { inverted, ..boundary });
+            }
+            e
+        };
+        let (clipped, clipped_inverted, clipped_partly) = (clip("H", false), clip("H", true), clip("B", true));
+        // An annotative reference to B: measured as it draws at the annotation scale, here 1:1.
+        let mut scaled = ins("B", "0");
+        scaled.common.anno_scales = vec![crate::AnnoScale::unit()];
+        // Dimensions that draw B and N, and a multileader that draws B.
+        let dimension = |block: &str| {
+            let kind = EntityKind::Dimension(crate::Dimension {
+                kind: crate::DimKind::Aligned,
+                defpt: Vec3::new(5.0, 1.0, 0.0),
+                text_mid: Vec3::ZERO,
+                p13: Vec3::ZERO,
+                p14: Vec3::new(10.0, 0.0, 0.0),
+                p15: Vec3::ZERO,
+                p16: Vec3::ZERO,
+                text: String::new(),
+                style: "Standard".into(),
+                measurement: 0.0,
+                text_rotation: 0.0,
+                user_text_pos: false,
+                block: Some(block.into()),
+                insertion_point: Vec3::ZERO,
+                overrides: Default::default(),
+                assoc: Vec::new(),
+                marks: Default::default(),
+            });
+            Entity::new(crate::Handle(3), kind)
+        };
+        let (dim, dim_nested) = (dimension("B"), dimension("N"));
+        let leader = Entity::new(
+            crate::Handle(4),
+            EntityKind::MLeader(crate::MLeader {
+                leaders: vec![vec![Vec3::ZERO]],
+                landing: Vec3::new(1.0, 0.0, 0.0),
+                dogleg: 0.45,
+                text: None,
+                style: "Standard".into(),
+                arrow_size: 1.0,
+                spline: false,
+                block: Some(reference("B")),
+            }),
+        );
+        let frozen = ["HIDDEN".to_string()];
+        let mut view = ViewportBounds::new(&frozen);
+        let ys = |b: Bounds2| (b.min.y, b.max.y);
+        assert_eq!(ys(entity_bounds(&d, &ins("B", "0"), 0)), (0.0, 50.0));
+        assert_eq!(ys(view.entity_bounds(&d, &ins("B", "0"))), (0.0, 0.0), "a part on the frozen layer");
+        assert_eq!(ys(view.entity_bounds(&d, &ins("N", "0"))), (0.0, 0.0), "a part two blocks deep");
+        assert_eq!(ys(entity_bounds(&d, &ins("Z", "0"), 0)), (0.0, 90.0));
+        assert_eq!(ys(view.entity_bounds(&d, &ins("Z", "0"))), (90.0, 90.0), "a nested reference on the frozen layer");
+        assert!(!entity_bounds(&d, &ins("H", "0"), 0).is_empty());
+        assert!(view.entity_bounds(&d, &ins("H", "0")).is_empty(), "nothing of it is drawn");
+        let boundary = (Vec2::new(-2.0, 40.0), Vec2::new(12.0, 60.0));
+        let (drawn, seen) = (entity_bounds(&d, &clipped, 0), view.entity_bounds(&d, &clipped));
+        assert_eq!((drawn.min, drawn.max), boundary);
+        assert_eq!((seen.min, seen.max), boundary, "a clipped reference no part of which is drawn keeps its boundary");
+        assert_eq!(ys(entity_bounds(&d, &clipped_inverted, 0)), (50.0, 50.0));
+        assert_eq!(ys(view.entity_bounds(&d, &clipped_inverted)), (50.0, 50.0), "and one clipped the other way its block's box");
+        assert_eq!(ys(entity_bounds(&d, &clipped_partly, 0)), (0.0, 50.0));
+        assert_eq!(ys(view.entity_bounds(&d, &clipped_partly)), (0.0, 50.0), "with a part drawn too");
+        assert!(entity_bounds(&d, &tagged, 0).max.y >= 70.0);
+        assert_eq!(ys(view.entity_bounds(&d, &tagged)), (0.0, 0.0), "an attribute on the frozen layer");
+        assert_eq!(ys(entity_bounds(&d, &scaled, 0)), (0.0, 50.0));
+        assert_eq!(ys(view.entity_bounds(&d, &scaled)), (0.0, 0.0), "an annotative reference");
+        assert_eq!(entity_bounds(&d, &dim, 0).max.y, 50.0);
+        assert!(view.entity_bounds(&d, &dim).max.y < 50.0, "the block a dimension draws");
+        assert_eq!(entity_bounds(&d, &dim_nested, 0).max.y, 50.0);
+        assert!(view.entity_bounds(&d, &dim_nested).max.y < 50.0, "a reference nested in the block a dimension draws");
+        assert_eq!(entity_bounds(&d, &leader, 0).max.y, 50.0);
+        assert!(view.entity_bounds(&d, &leader).max.y < 50.0, "the block a multileader draws");
+        let clips = [clipped, clipped_inverted, clipped_partly];
+        let all = [ins("B", "0"), ins("N", "0"), ins("Z", "0"), ins("H", "0"), tagged, scaled, dim, dim_nested, leader].into_iter().chain(clips);
+        let all: Vec<Entity> = all.collect();
+        let mut plain = ViewportBounds::new(&[]);
+        for e in &all {
+            let (shared, fresh) = (view.entity_bounds(&d, e), ViewportBounds::new(&frozen).entity_bounds(&d, e));
+            assert_eq!((shared.min, shared.max), (fresh.min, fresh.max));
+            let (unfrozen, drawn) = (plain.entity_bounds(&d, e), entity_bounds(&d, e, 0));
+            assert_eq!((unfrozen.min, unfrozen.max), (drawn.min, drawn.max));
         }
     }
 

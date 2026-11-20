@@ -444,6 +444,37 @@ fn the_viewport_highlight_leaves_out_objects_the_viewport_does_not_draw() {
     assert_eq!(outlined(&app, &mut highlight, both), both);
 }
 
+/// The highlight of a block reference inside the active viewport shows the parts that viewport
+/// draws: not its part on a layer frozen there, which the other viewport's highlight shows.
+#[test]
+fn the_viewport_highlight_of_a_reference_leaves_out_the_parts_the_viewport_does_not_draw() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for y in [0, 30] {
+        app.run("line", serde_json::json!({ "points": [[0, y], [100, y]] })).unwrap();
+    }
+    let lines = app.session.doc().unwrap().model.handles();
+    let (a, b) = viewports_freezing_hidden(&mut app);
+    // Inside a viewport the block's reference is made in model space, where the lines are.
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    app.session.execute("properties.set", &serde_json::json!({ "handles": [lines[1].hex()], "layer": "Hidden" })).unwrap();
+    let parts: Vec<String> = lines.iter().map(|h| h.hex()).collect();
+    let made = app.session.execute("block", &serde_json::json!({ "name": "B", "base": [0, 0], "handles": parts })).unwrap();
+    let reference = Handle::parse_hex(made["insert"].as_str().unwrap()).unwrap();
+    assert_eq!(app.session.doc().unwrap().model.handles(), [reference], "the reference must be the one object in model space");
+    /// The heights at which `highlight` draws something for the reference.
+    fn heights(app: &CadApp, highlight: &mut VpHighlight, reference: Handle) -> Vec<f64> {
+        highlight.update(app.session.state().unwrap(), &[reference], 10.0);
+        let mut ys: Vec<f64> = highlight.list.prims.iter().map(|p| highlight.list.points(p)[0].y).collect();
+        ys.sort_by(f64::total_cmp);
+        ys
+    }
+    let mut highlight = VpHighlight::default();
+    app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
+    assert_eq!(heights(&app, &mut highlight, reference), [0.0, 30.0], "this viewport draws both parts");
+    app.session.execute("mspace", &serde_json::json!({ "handle": a })).unwrap();
+    assert_eq!(heights(&app, &mut highlight, reference), [0.0], "a part the viewport does not draw was highlighted");
+}
+
 /// Selection cycling's badge beside a resting pointer follows the layers frozen in the active
 /// viewport: over two overlapping lines it shows while the viewport draws both, goes when the
 /// layer of one of them is frozen there, and comes back when the layer is thawed.
