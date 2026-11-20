@@ -94,6 +94,8 @@ struct State {
     redo: Vec<(Formatted, usize, usize)>,
     /// When the last undo step was recorded (typing within a second makes one step).
     undo_at: f64,
+    /// What is typed in the font list to narrow it.
+    font_filter: String,
 }
 
 fn state_id() -> egui::Id {
@@ -166,6 +168,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_at: 0.0,
+            font_filter: String::new(),
         }
     });
     let line = kind == EditorKind::Line;
@@ -482,6 +485,19 @@ fn set_flag(c: &mut CharFmt, f: Flag, on: bool) {
     }
 }
 
+/// The font list: the fonts in the user's font folders, then the installed and usual ones, then
+/// the text's own (`current`), those whose name holds `filter` (any case).
+fn font_families(mut families: Vec<String>, current: Option<String>, filter: &str) -> Vec<String> {
+    for f in FAMILIES.iter().map(|s| s.to_string()).chain(current) {
+        if !families.iter().any(|x| x.eq_ignore_ascii_case(&f)) {
+            families.push(f);
+        }
+    }
+    let want = filter.trim().to_lowercase();
+    families.retain(|f| want.is_empty() || f.to_lowercase().contains(&want));
+    families
+}
+
 /// MTEXT formatting toolbar for the current selection: font, height, bold/italic/underline/overline, colour, alignment, lists, tab, degree/plus-minus and Diameter. Font, bold/italic/underline/overline, ByLayer/palette colour, alignment, list, tab and special-character changes refocus the editor; height and custom RGB colour changes do not.
 fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
     let cur = current(st);
@@ -496,16 +512,20 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
             .width(120.0)
             .selected_text(shown.clone())
             .show_ui(ui, |ui| {
-                // The fonts in the user's font folders, then the usual ones, then the text's own.
-                let mut families = crate::options::font_choices().1;
-                for f in FAMILIES.iter().map(|s| s.to_string()).chain(cur.font.clone()) {
-                    if !families.iter().any(|x| x.eq_ignore_ascii_case(&f)) {
-                        families.push(f);
-                    }
+                // Typing narrows the list: the field takes the keyboard while the list is open.
+                let filter =
+                    ui.add(egui::TextEdit::singleline(&mut st.font_filter).hint_text(crate::tl!("Type to search")).desired_width(f32::INFINITY));
+                if !filter.has_focus() {
+                    filter.request_focus();
+                }
+                let families = font_families(crate::options::font_choices().1, cur.font.clone(), &st.font_filter);
+                if families.is_empty() {
+                    ui.label(RichText::new(crate::tl!("No font matches")).weak());
                 }
                 for fam in families {
                     if ui.selectable_label(shown == fam, &fam).clicked() {
                         change(st, |c| c.font = Some(fam.clone()));
+                        st.font_filter.clear();
                         refocus = true;
                     }
                 }
@@ -938,7 +958,9 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
     );
     st.fx_at = out.caret;
     let focused = ui.memory(|m| m.has_focus(id));
-    if !focused && (st.focus || (buf.is_empty() && st.fmt.is_empty())) {
+    // An empty editor takes the keyboard back, unless another field has it (the font list's
+    // search field while the list is open).
+    if !focused && (st.focus || (buf.is_empty() && st.fmt.is_empty() && ui.memory(|m| m.focused().is_none()))) {
         ui.memory_mut(|m| m.request_focus(id));
     }
     st.focus = false;
@@ -1037,11 +1059,23 @@ mod tests {
             undo: Vec::new(),
             redo: Vec::new(),
             undo_at: 0.0,
+            font_filter: String::new(),
         }
     }
 
     /// Additional symbols ▸ Diameter inserts U+2300 into both the formatted text and
     /// `to_contents()`, and leaves no unnamed widget.
+    /// The font list holds every font family and the usual ones, and typing narrows it.
+    #[test]
+    fn the_font_list_narrows_to_what_is_typed() {
+        let installed = vec!["Segoe UI".to_string(), "Noto Sans Hebrew".to_string(), "Arial".to_string()];
+        let all = super::font_families(installed.clone(), Some("My Font".into()), "");
+        assert!(all.iter().any(|f| f == "Segoe UI") && all.iter().any(|f| f == "Calibri") && all.iter().any(|f| f == "My Font"));
+        assert_eq!(all.iter().filter(|f| f.eq_ignore_ascii_case("arial")).count(), 1, "no family twice");
+        assert_eq!(super::font_families(installed.clone(), None, "  heb "), vec!["Noto Sans Hebrew".to_string()]);
+        assert!(super::font_families(installed, None, "zzz").is_empty());
+    }
+
     #[test]
     fn diameter_insertion_keeps_real_text_and_renders_without_optional_fonts() {
         let mut harness = Harness::builder().with_size(vec2(1100.0, 500.0)).with_context_setup(install_diameter_glyph).build_ui_state(
