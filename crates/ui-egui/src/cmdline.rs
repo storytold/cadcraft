@@ -829,11 +829,15 @@ mod tests {
     #[test]
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
         use cadcraft_engine::geom::Vec2;
+        // TEXT's own text prompt: the command line collects it (TEXTEDIT on a TEXT edits it in
+        // place instead, #842, with the IME going into that box).
         let mut app = CadApp::new(Session::new(), crate::Services::default());
-        app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
-        app.start("textedit");
-        app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
-        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
+        app.start("text");
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        app.session.input(Input::Text("2.5".into())).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
+        assert!(app.session.text_editor().is_none(), "no in-place editor at this prompt");
         let ctx = egui::Context::default();
         let out = frame(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
@@ -853,7 +857,10 @@ mod tests {
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
-        // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
+        // An empty line ends TEXT.
+        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        assert!(app.session.running.is_none());
+        // No text asked for: the next frame lets the IME go, so it can't swallow ASCII typing.
         let out = frame(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
