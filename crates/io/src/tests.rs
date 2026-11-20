@@ -3722,3 +3722,21 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+/// A dimension's `*D` block draws its lines in the style's lineweights (DIMLWD, DIMLWE), not in
+/// its layer's: a reopened drawing showed the dimension thicker than a new one of the style.
+#[test]
+fn a_dimension_block_keeps_the_style_lineweights() {
+    let mut d = Drawing::new_metric();
+    d.layers.push(Layer { name: "Heavy".into(), lineweight: Lineweight::Mm100(100), ..Layer::default() });
+    d.dim_styles.push(DimStyle { name: "Fine".into(), dim_lineweight: 5, ext_lineweight: 9, ..DimStyle::default() });
+    let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+    dm.style = "Fine".into();
+    d.add(&Space::Model, Common { layer: "Heavy".into(), ..Common::default() }, EntityKind::Dimension(dm)).unwrap();
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Dimension(x) = k { Some(x.clone()) } else { None });
+    let blk = got.block.as_deref().and_then(|n| back.block(n)).expect("the dimension's block");
+    let weights: Vec<Lineweight> = blk.entities.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).map(|e| e.common.lineweight).collect();
+    assert!(weights.contains(&Lineweight::Mm100(5)) && weights.contains(&Lineweight::Mm100(9)), "{weights:?}");
+    assert!(!weights.contains(&Lineweight::ByLayer), "{weights:?}");
+}

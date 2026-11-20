@@ -88,6 +88,51 @@ fn move_table_part(k: &mut EntityKind, index: usize, delta: Vec2) -> bool {
     true
 }
 
+/// [`stretch_grip`] for a dimension: grips 0 and 1 the measured points, 2 and 4 the line's ends,
+/// 3 the text.
+fn stretch_dimension(d: &mut cadcraft_doc::Dimension, index: usize, to: Vec2, grips: &[Vec2]) -> Option<()> {
+    match index {
+        0 => set_xy(&mut d.p13, to),
+        1 => set_xy(&mut d.p14, to),
+        // Either end of a linear or aligned dimension's line places the line.
+        2 | 4 => {
+            set_xy(&mut d.defpt, to);
+            if matches!(d.kind, DimKind::Radius | DimKind::Diameter) {
+                d.user_text_pos = false;
+            }
+        }
+        _ => match d.kind {
+            // Stretch: the dimension line follows the text across, and the text keeps its
+            // place along the line (relative to the arrowheads). Move with Dim Line also
+            // slides it along.
+            DimKind::Linear { .. } | DimKind::Aligned => {
+                let u = match d.kind {
+                    DimKind::Linear { rotation } => Vec2::from_angle(rotation),
+                    _ => (d.p14.xy() - d.p13.xy()).normalized(),
+                };
+                let n = u.perp();
+                let from = *grips.get(3)?;
+                let shift = n * (to - from).dot(n);
+                if !shift.is_finite() {
+                    return None;
+                }
+                let q = d.defpt.xy() + shift;
+                set_xy(&mut d.defpt, q);
+                if d.user_text_pos {
+                    let t = d.text_mid.xy() + shift;
+                    set_xy(&mut d.text_mid, t);
+                }
+            }
+            _ => {
+                set_xy(&mut d.text_mid, to);
+                d.user_text_pos = true;
+            }
+        },
+    }
+    d.block = None;
+    Some(())
+}
+
 /// The shape after dragging grip `index` to `to` (STRETCH mode). `None` when the grip does not
 /// exist or the result would be degenerate.
 pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityKind> {
@@ -95,7 +140,12 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         return None;
     }
     let grips = kind.grips();
-    let from = *grips.get(index)?;
+    // A linear or aligned dimension's fifth grip (the first end of its line, [`grip_points`])
+    // moves the line like the other end.
+    let from = match (kind, index) {
+        (EntityKind::Dimension(dm), 4) if matches!(dm.kind, DimKind::Linear { .. } | DimKind::Aligned) => *grips.get(2)?,
+        _ => *grips.get(index)?,
+    };
     let delta = to - from;
     let mut k = kind.clone();
     if move_table_part(&mut k, index, delta) {
@@ -181,46 +231,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
                 set_xy(al, q);
             }
         }
-        EntityKind::Dimension(d) => {
-            match index {
-                0 => set_xy(&mut d.p13, to),
-                1 => set_xy(&mut d.p14, to),
-                2 => {
-                    set_xy(&mut d.defpt, to);
-                    if matches!(d.kind, DimKind::Radius | DimKind::Diameter) {
-                        d.user_text_pos = false;
-                    }
-                }
-                _ => match d.kind {
-                    // Stretch: the dimension line follows the text across, and the text keeps its
-                    // place along the line (relative to the arrowheads). Move with Dim Line also
-                    // slides it along.
-                    DimKind::Linear { .. } | DimKind::Aligned => {
-                        let u = match d.kind {
-                            DimKind::Linear { rotation } => Vec2::from_angle(rotation),
-                            _ => (d.p14.xy() - d.p13.xy()).normalized(),
-                        };
-                        let n = u.perp();
-                        let from = *grips.get(3)?;
-                        let shift = n * (to - from).dot(n);
-                        if !shift.is_finite() {
-                            return None;
-                        }
-                        let q = d.defpt.xy() + shift;
-                        set_xy(&mut d.defpt, q);
-                        if d.user_text_pos {
-                            let t = d.text_mid.xy() + shift;
-                            set_xy(&mut d.text_mid, t);
-                        }
-                    }
-                    _ => {
-                        set_xy(&mut d.text_mid, to);
-                        d.user_text_pos = true;
-                    }
-                },
-            }
-            d.block = None;
-        }
+        EntityKind::Dimension(d) => stretch_dimension(d, index, to, &grips)?,
         EntityKind::Leader(l) => set_xy(l.vertices.get_mut(index)?, to),
         EntityKind::MLine(m) => set_xy(&mut m.vertices.get_mut(index)?.p, to),
         EntityKind::MLeader(m) => {
@@ -401,6 +412,14 @@ pub fn grip_points(d: &cadcraft_doc::Drawing, kind: &EntityKind) -> Vec<Vec2> {
             let p = dm.defpt.xy() + u * (dm.p14.xy() - dm.defpt.xy()).dot(u);
             if p.is_finite() {
                 *l = p;
+            }
+        }
+        // The other end of the line, where it meets the first extension line: a fifth grip that
+        // moves the line as the other one does (grip 4).
+        if let Some(u) = u {
+            let p = dm.defpt.xy() + u * (dm.p13.xy() - dm.defpt.xy()).dot(u);
+            if p.is_finite() && g.len() == 4 {
+                g.push(p);
             }
         }
     }
