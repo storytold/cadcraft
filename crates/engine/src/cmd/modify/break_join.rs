@@ -266,6 +266,12 @@ impl Interactive for BreakM {
             Some(_) => Prompt::new("Specify second break point", Accept::POINT).kw(&["First point"]),
         }
     }
+    /// Esc after the object is picked drops the selection the pick made, as Enter does.
+    fn cancelled(&mut self, s: &mut Session) {
+        if self.obj.is_some() {
+            s.set_selection(Vec::new());
+        }
+    }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (self.obj, i) {
             (None, Input::Point(p)) => {
@@ -309,6 +315,12 @@ impl Interactive for BreakAtPointM {
         match self.obj {
             None => Prompt::new("Select object", Accept::POINT),
             Some(_) => Prompt::new("Specify break point", Accept::POINT),
+        }
+    }
+    /// Esc after the object is picked drops the selection the pick made, as Enter does.
+    fn cancelled(&mut self, s: &mut Session) {
+        if self.obj.is_some() {
+            s.set_selection(Vec::new());
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {

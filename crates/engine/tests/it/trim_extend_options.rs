@@ -115,6 +115,18 @@ fn crossing_window_trims_what_it_touches() {
 }
 
 #[test]
+fn a_crossing_window_pick_stays_before_a_cut_near_the_end() {
+    // The edge crosses the line 1e-4 from its start, nearer than the window's tolerance (2e-3):
+    // the pick nearest the first corner is before the cut, so the short piece goes.
+    let mut s = Session::new();
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let r = s.execute("line", &json!({ "points": [[0.0001, -0.5], [0.0001, 0.5]] })).unwrap();
+    let edge = r.get("handle").unwrap_or(&r["handles"][0]).as_str().unwrap().to_string();
+    s.execute("trim", &json!({ "crossing": [[-1, -1], [1, 1]], "edges": [edge], "mode": "standard" })).unwrap();
+    assert_eq!(lines(&s), vec![((0.0001, -0.5), (0.0001, 0.5)), ((0.0001, 0.0), (10.0, 0.0))]);
+}
+
+#[test]
 fn a_pick_in_empty_space_starts_a_fence_in_quick_mode_and_a_window_in_standard_mode() {
     // #1594: Quick mode's two-point fence trims what it crosses and returns to the first prompt.
     for cmd in ["TRIM", "EXTEND"] {

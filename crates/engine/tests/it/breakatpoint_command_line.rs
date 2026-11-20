@@ -88,6 +88,23 @@ fn enter_ends_breakatpoint_and_leaves_nothing_selected() {
 }
 
 #[test]
+fn esc_after_the_pick_ends_break_and_breakatpoint_and_leaves_nothing_selected() {
+    let mut s = Session::new();
+    let l = handle(&s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap());
+    for cmd in ["BREAKATPOINT", "BREAK"] {
+        s.cmdline(cmd).unwrap();
+        s.cmdline("5,0").unwrap();
+        assert_eq!(s.selection(), vec![l], "{cmd}: the pick selects the line");
+        s.cancel();
+        assert!(s.running.is_none(), "{cmd}: {}", s.prompt_text());
+        assert!(s.selection().is_empty(), "{cmd}: {:?}", s.selection());
+        let objs = objects(&s);
+        assert_eq!(objs.len(), 1, "{cmd}");
+        assert_eq!(line_ends(&objs[0].1), ((0.0, 0.0), (10.0, 0.0)), "{cmd}");
+    }
+}
+
+#[test]
 fn an_object_on_a_locked_layer_is_refused_when_picked() {
     let mut s = Session::new();
     s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();

@@ -422,7 +422,11 @@ fn self_cuts(segs: &[Segment], closed: bool, k: usize) -> Result<Vec<f64>> {
     }
     // A crossing, or a vertex of another segment touching this one, cuts it; so does a crossing
     // where it runs straight on into the next. Two segments meeting at a vertex cut nothing more.
-    let cuts = |t: f64, i: usize| (t > 1e-9 && t < 1.0 - 1e-9) || (t <= 1e-9 && straight(i)) || (t >= 1.0 - 1e-9 && after(i).is_some_and(straight));
+    // An open polyline's ends are no cuts, so a crossing that near one, in parameter, still cuts
+    // it (those within 1e-9 of the ends along it are dropped later).
+    let open_before = |i: usize| before(i).is_none() || straight(i);
+    let open_after = |i: usize| after(i).is_none_or(straight);
+    let cuts = |t: f64, i: usize| (t > 1e-9 && t < 1.0 - 1e-9) || (t <= 1e-9 && open_before(i)) || (t >= 1.0 - 1e-9 && open_after(i));
     let vertices = ts.len();
     for &i in &run {
         let (Some(a), Some(box_a), Some(a0)) = (segs.get(i), boxes.get(i), starts.get(i)) else { continue };
@@ -514,8 +518,10 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itse
         // A piece whose ends meet (the polyline touched itself there) is closed, without its
         // repeated vertex, as AutoCAD leaves it.
         let piece = |mut vs: Vec<PolyVertex>| {
-            // Within rounding of the coordinates, however far from the origin, and no more.
-            let meets = vs.len() >= 4
+            // Within rounding of the coordinates, however far from the origin, and no more. Two
+            // spans close only when one is an arc: two lines there would run back on themselves.
+            let spans = vs.len() >= 4 || (vs.len() == 3 && vs.iter().take(2).any(|v| v.bulge.abs() > 1e-12));
+            let meets = spans
                 && matches!((vs.first(), vs.last()), (Some(a), Some(b)) if a.p.near(b.p, 64.0 * f64::EPSILON * (1.0 + a.p.len().max(b.p.len()))));
             if meets {
                 vs.pop();

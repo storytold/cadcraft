@@ -317,6 +317,26 @@ fn a_closed_piece_keeps_its_arcs() {
 }
 
 #[test]
+fn a_piece_of_two_arcs_whose_ends_meet_is_closed() {
+    // A line into a circle drawn as two half-circle arcs, back to where the arcs start: the piece
+    // after the line is the two arcs alone, and it is closed with both bulges.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[2, -2], { "p": [1, 0], "bulge": 1 }, { "p": [-1, 0], "bulge": 1 }, [1, 0]]), false);
+    trim(&mut s, p, [1.5, -1.0], Some(&[p]));
+    expect(&s, p, &[(true, true, &[(1.0, 0.0, 1.0), (-1.0, 0.0, 1.0)])]);
+}
+
+#[test]
+fn a_self_crossing_near_an_open_end_of_a_long_segment_cuts_it() {
+    // The last segment crosses the first, 1e9 long, 0.5 from the polyline's open start: a
+    // parameter of 5e-10 on it, but half a unit along it. The piece picked ends at the crossing.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([[0, 0], [1e9, 0], [1e9, 10], [0.5, 10], [0.5, -10]]), false);
+    trim(&mut s, p, [0.25, 0.0], Some(&[p]));
+    expect(&s, p, &[(true, false, &[(0.5, 0.0, 0.0), (1e9, 0.0, 0.0), (1e9, 10.0, 0.0), (0.5, 10.0, 0.0), (0.5, -10.0, 0.0)])]);
+}
+
+#[test]
 fn a_pick_half_a_unit_from_a_vertex_1e9_out_trims_the_segment_it_is_on() {
     let mut s = Session::new();
     let p = pline(&mut s, json!([[0, 0], [1e9, 0], [1e9, 10]]), false);

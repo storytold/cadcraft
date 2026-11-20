@@ -84,6 +84,11 @@ fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bo
     run_picks(s, work, extending, edges, quick, tol)
 }
 
+/// How far along a segment from its end a crossing window's pick is kept: past the 5e-7 within
+/// which a pick is on a polyline's own cut at that vertex. A cut this near the end is taken as at
+/// the end, the pick landing just past it.
+const OFF_VERTEX: f64 = 1e-6;
+
 /// Trim (or extend) every object a crossing window from `a` to `b` touches, picked at its point
 /// in the window nearest the first corner `a`.
 fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, quick: bool) -> Result<usize> {
@@ -106,9 +111,11 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
             for w in pl.windows(2) {
                 let (Some(p), Some(q)) = (w.first(), w.get(1)) else { continue };
                 let seg = Line::new(*p, *q);
-                // Kept `tol` inside the segment: a vertex, where two segments meet, is a cut of a
-                // polyline that is one of its own edges, and a pick on a cut trims nothing.
-                let e = (tol / seg.len()).min(0.5);
+                // Kept off the segment's ends: a vertex, where two segments meet, is a cut of a
+                // polyline that is one of its own edges, and a pick on a cut trims nothing. No
+                // further than [`OFF_VERTEX`] (or `tol`, in a smaller window), so the pick stays
+                // before a cut near the end, whatever the window's size.
+                let e = (tol.min(OFF_VERTEX) / seg.len()).min(0.5);
                 let cands = [seg.at(e), seg.at(1.0 - e), seg.at(seg.param_of(a).clamp(e, 1.0 - e))]
                     .into_iter()
                     .chain(sides.iter().filter_map(|sd| line_line(sd, &seg)));
