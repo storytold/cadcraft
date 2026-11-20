@@ -21,6 +21,7 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         landing: v3(*landing_pt),
         dogleg,
         text: (!text.is_empty()).then(|| MText {
+            formula: None,
             insert: v3(tpos),
             height: th,
             width: 0.0,
