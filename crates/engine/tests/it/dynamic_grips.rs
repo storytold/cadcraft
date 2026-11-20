@@ -145,3 +145,30 @@ fn a_grip_drag_previews_the_reference_in_its_own_colours() {
     let blue = cadcraft_engine::doc::color::Color::True(cadcraft_engine::doc::color::Rgb(0x2f, 0x6b, 0xff));
     assert!(preview[n..].iter().all(|e| e.common.color == blue));
 }
+
+#[test]
+fn a_grip_with_a_value_list_marks_its_stops_while_dragged() {
+    let (mut s, h) = session();
+    // Width is a list (30, 32, 36) from (0, -4): its end can stop 30, 32 or 36 along it.
+    let stops = cadcraft_engine::doc::dynblock::grip_stops(s.doc().unwrap(), h, 2, GripPart::End);
+    let at: Vec<(f64, f64)> = stops.iter().map(|(p, _)| (p.x, p.y)).collect();
+    assert_eq!(at, [(130.0, -4.0), (132.0, -4.0), (136.0, -4.0)]);
+    assert!(stops.iter().all(|(_, way)| (way.x - 1.0).abs() < 1e-12 && way.y.abs() < 1e-12));
+    // A grip that isn't on a list or increments has none; nor a list grip.
+    assert!(cadcraft_engine::doc::dynblock::grip_stops(s.doc().unwrap(), h, 1, GripPart::At).is_empty());
+
+    // The preview marks each stop with a tick across the travel, a few pixels long.
+    s.start_dyn_grip(h, 2, GripPart::End).unwrap();
+    let half = 6.0 * s.pixel_size();
+    let ticks: Vec<(f64, f64)> = s
+        .preview(Vec2::new(133.0, 0.0))
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            cadcraft_engine::doc::EntityKind::Line(l) if (l.a.x - l.b.x).abs() < 1e-9 && ((l.b.y - l.a.y).abs() - 2.0 * half).abs() < 1e-9 => {
+                Some((l.a.x, (l.a.y + l.b.y) / 2.0))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ticks, [(130.0, -4.0), (132.0, -4.0), (136.0, -4.0)]);
+}
