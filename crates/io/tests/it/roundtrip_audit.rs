@@ -1000,6 +1000,7 @@ fn hostile_raw_data_never_panics() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_keeps_extension_dictionaries_xrecords_and_entity_xdata() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let via_dwg = |d: &Drawing| cadcraft_io::read(&cadcraft_io::write(d, "x.dwg").expect("write DWG"), "x.dwg").expect("read DWG");
     let d = via_dwg(&via_dwg(&read_dxf(fixture().as_bytes()).expect("read fixture")));
     let o = Out::new(&write_dxf(&d));

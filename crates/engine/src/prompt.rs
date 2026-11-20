@@ -109,12 +109,27 @@ pub struct Prompt {
     pub takes_block: bool,
 }
 
-/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
+/// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`. The
+/// world-relative forms `@*distance<angle` and `*@distance<angle` measure the angle in the WCS.
 /// Returns `None` for any other form.
 pub fn parse_polar_text(text: &str, angles: &crate::units::AngleSettings) -> Option<(f64, f64)> {
-    let body = text.trim().strip_prefix('@')?; // relative form only
+    let t = text.trim();
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
+    let body = t.strip_prefix('@')?.trim(); // relative form only
+    let body = match body.strip_prefix('*') {
+        Some(r) => {
+            world = true;
+            r.trim_start()
+        }
+        None => body,
+    };
+    let angles = if world { angles.world() } else { *angles };
     let (d, a) = body.split_once('<')?;
-    let dist = d.trim().parse::<f64>().ok()?;
+    // Read as `parse_point_in` reads it, fractions (`1/2`) included.
+    let dist = crate::units::parse_distance(d)?;
     // The direction `@d<a` draws along, as `parse_point_in` reads it (ANGBASE, ANGDIR and the
     // UCS applied): a world angle.
     let a = a.trim();
@@ -514,5 +529,28 @@ mod tests {
         let v = Prompt::new("", Accept::TEXT).kw(&["Next", "Previous", "Break", "Insert", "Move", "Regen", "Straighten", "Tangent", "Width", "eXit"]);
         assert_eq!(v.match_keyword("e"), None);
         assert_eq!(v.match_keyword("ex").as_deref(), Some("eXit"));
+    }
+
+    /// The world-relative prefixes, in either order, measure the polar angle in the WCS as
+    /// `parse_point_in` does; plain relative polar input is measured in the UCS.
+    #[test]
+    fn polar_text_reads_world_relative_prefixes() {
+        let half_pi = std::f64::consts::FRAC_PI_2;
+        let angles = crate::units::AngleSettings { ucs: half_pi, ..Default::default() };
+        let (d, a) = parse_polar_text("@10<0", &angles).unwrap();
+        assert!((d - 10.0).abs() < 1e-12 && (a - half_pi).abs() < 1e-12, "{d} {a}");
+        for t in ["@*10<0", "*@10<0", " * @ 10<0", "@ *10<0"] {
+            let (d, a) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 10.0).abs() < 1e-12 && a.abs() < 1e-12, "{t}: {d} {a}");
+            let p = parse_point_in(t, Vec2::ZERO, &angles, &crate::ucs::UcsFrame::WORLD).unwrap();
+            assert!(p.near(Vec2::from_angle(a) * d, 1e-9), "{t}: {p:?}");
+        }
+        // A distance is read as the typed point reads it: a fraction counts.
+        for t in ["@1/2<0", "@*1/2<0", "*@1/2<0"] {
+            let (d, _) = parse_polar_text(t, &angles).unwrap_or_else(|| panic!("{t}"));
+            assert!((d - 0.5).abs() < 1e-12, "{t}: {d}");
+        }
+        assert_eq!(parse_polar_text("*10<0", &angles), None);
+        assert_eq!(parse_polar_text("**@10<0", &angles), None);
     }
 }

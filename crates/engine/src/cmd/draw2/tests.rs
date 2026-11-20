@@ -756,9 +756,43 @@ fn revcloud_json() {
 }
 
 #[test]
+fn revcloud_saves_revcloudprops_xdata() {
+    let mut s = Session::new();
+    let props = |s: &Session| {
+        let xd = s.doc().unwrap().model.last().unwrap().common.xdata.clone();
+        xd.iter().map(|t| (t.code, t.value.clone())).collect::<Vec<_>>()
+    };
+    let want = vec![(1001, "RevcloudProps".to_string()), (1070, "0".to_string()), (1040, "2".to_string())];
+    s.execute("revcloud", &json!({"p1": [0, 0], "p2": [100, 50], "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let groups: Vec<(&str, &str)> = lines.chunks(2).filter_map(|c| Some((*c.first()?, *c.get(1)?))).collect();
+    assert!(groups.contains(&("1001", "RevcloudProps")), "no RevcloudProps xdata in the DXF");
+    let appid = groups
+        .iter()
+        .enumerate()
+        .any(|(i, g)| *g == ("0", "APPID") && groups[i + 1..].iter().take_while(|g| g.0 != "0").any(|g| *g == ("2", "RevcloudProps")));
+    assert!(appid, "no RevcloudProps APPID record");
+    // Made from an object: the object's properties are kept, the cloud is still a revision cloud.
+    let c = h(&s.execute("circle", &json!({"center": [10, 10], "radius": 1})).unwrap());
+    s.execute("revcloud", &json!({"handle": c, "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive (the arc length takes a minimum and a maximum, #1714).
+    s.cmdline("revcloud a 2 2").unwrap();
+    s.cmdline("0,0 4,2").unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive Object, after the "Reverse direction" prompt.
+    s.execute("rectang", &json!({"p1": [20, 20], "p2": [24, 22]})).unwrap();
+    s.cmdline("revcloud o 20,21 n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(props(&s), want);
+}
+
+#[test]
 fn revcloud_command_line() {
     let mut s = Session::new();
-    s.cmdline("revcloud a 1").unwrap();
+    s.cmdline("revcloud a 1 1").unwrap();
     s.cmdline("0,0 4,2").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() == 12));
@@ -771,9 +805,48 @@ fn revcloud_command_line() {
     assert_eq!(kinds(&s).len(), 3);
     // Object option converts a closed polyline.
     s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
-    s.cmdline("revcloud o 10,11").unwrap();
+    s.cmdline("revcloud o 10,11 n").unwrap();
     assert!(s.running.is_none());
     assert_eq!(kinds(&s).len(), 4);
+}
+
+#[test]
+fn revcloud_object_accepts_entity_name() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [0, 0], "p2": [4, 4]})).unwrap();
+    let h = s.doc().unwrap().model.last().unwrap().handle;
+    s.cmdline("revcloud o").unwrap();
+    s.input(Input::Pick(vec![h])).unwrap();
+    // Object asks "Reverse direction" next (#1714); Enter keeps it.
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(kinds(&s).len(), 1);
+    assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() > 4));
+}
+
+#[test]
+fn revcloud_arc_length_asks_max_and_object_asks_reverse() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
+    s.cmdline("revcloud a 200 800").unwrap();
+    assert!(s.prompt_text().contains("first corner"), "{}", s.prompt_text());
+    s.cmdline("0,0 2000,1000").unwrap();
+    assert!(s.running.is_none());
+    s.cmdline("revcloud").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Minimum arc length: 200.0000   Maximum arc length: 800.0000")), "{:?}", s.log);
+    s.cmdline("o").unwrap();
+    s.cmdline("10,11").unwrap();
+    assert!(s.running.is_some() && s.prompt_text().contains("Reverse direction"), "{}", s.prompt_text());
+    s.cmdline("n").unwrap();
+    assert!(s.running.is_none());
+    // Yes reverses the arcs (negative bulges).
+    s.execute("rectang", &json!({"p1": [30, 30], "p2": [32, 32]})).unwrap();
+    s.cmdline("revcloud o 30,31 y").unwrap();
+    assert!(s.running.is_none());
+    match last(&s) {
+        EntityKind::LwPolyline(p) => assert!(p.vertices.iter().all(|v| v.bulge < 0.0)),
+        k => panic!("{k:?}"),
+    }
 }
 
 // ---------------- BREAKLINE ----------------

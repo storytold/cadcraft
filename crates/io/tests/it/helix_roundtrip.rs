@@ -170,6 +170,7 @@ fn hostile_helix_does_not_panic() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn helix_survives_dwg_save_and_reopen() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     let a = Helix {
         center: Vec3::ZERO,

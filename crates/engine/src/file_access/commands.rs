@@ -123,6 +123,7 @@ pub const NO_FILES: &[&str] = &[
     "zoom.extents",
     "zoom.object",
     "pan",
+    "-pan",
     "pan.left",
     "pan.right",
     "pan.up",
