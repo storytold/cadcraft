@@ -154,6 +154,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
+    if let Some(r) = crate::plugin_panels::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }

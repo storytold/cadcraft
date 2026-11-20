@@ -161,6 +161,44 @@ The equivalent `{"action": ...}` form accepts a serialized shared docking action
 this is also the form emitted by the renderer, and it takes every action of craft-ui's docking, group, column and window moves included. Protected-canvas and app-specific panel
 rules apply equally to both forms.
 
+## Panels declared by another program
+
+An external program (the same clients the control channel serves) can declare its own titled
+panel — the proof-of-concept surface planned for the plug-in API (docs/customization.md). The
+panel is shown as a floating palette with the declaring program's buttons; each button carries
+the command id and JSON parameters that run when it is clicked, exactly like
+`engine.execute`. Optional message lines give the program a place to report progress.
+
+- `ui.panel.register {"id", "title", "show"?, "buttons"?}` — declares or refreshes a panel
+  (at most 16 panels, 64 buttons each). A button is `{"label", "command", "params"?,
+  "tooltip"?, "id"?}`; the command must be one `engine.execute` can run (UI or engine
+  command; LISP `c:` commands cannot run programmatically). Re-registering keeps the panel's
+  message lines.
+- `ui.panel.message {"id", "text"}` — posts one progress line (at most 200 lines kept, newest
+  first). Requires the panel to be registered.
+- `ui.panel.unregister {"id"}` — removes the panel. Panels are per-session: the declaring
+  program re-declares after restarts; the app keeps no hidden third-party state.
+- `ui.panel.list` — the registered panels with their buttons.
+
+`ui.panel.register` through `engine.execute`, for example:
+`{"command":"ui.panel.register","params":{"id":"magicraft","title":"MagiCraft","buttons":[{"label":"Fan","command":"line","params":{"points":[[0,0],[10,0]]}}]}}`.
+
+### Object extended data for external programs
+
+Entities already carry every other application's xdata through the file: the data follows
+copies (COPY, MIRROR, ARRAY, paste) and is written back unchanged on save. The write path for
+it (`engine.execute`):
+
+- `xdata.set {"handle" | "handles", "app", "tags": [[code, "value"], …]}` — the app's chunk
+  replaces its previous one; each tag pairs a group code with a value (codes 1000..=1071,
+  `1002` holds `"{"` or `"}"`, no `1001`; at most 4096 tags, strings cut at 255 bytes).
+- `xdata.get {"handle" | "handles", "app"?}` → `{xdata: [{app, tags}]}` (all applications
+  when `app` is left out).
+- `xdata.erase {"handle" | "handles", "app"}` — erases the app's chunk.
+
+The chunk head is the `app` name itself; `CADCRAFT`, `ACAD` and `AcDbBlockRepBTag` are
+reserved.
+
 ## Command-line replies
 
 The app and the headless session reply with the same fields.
