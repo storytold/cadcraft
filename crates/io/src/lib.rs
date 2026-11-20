@@ -2,8 +2,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
-/// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
+/// A DWG hatch's elliptic boundary edge angles, in degrees in the DXF the DWG is read through (#3332).
 mod dwg_hatch;
+/// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
 /// XCLIP boundaries as SPATIAL_FILTER objects.
