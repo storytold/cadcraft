@@ -178,10 +178,13 @@ fn bridge_markers(tags: &mut [Tag]) {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
+    // A handle the writer makes here goes only on the entity's later records (VERTEX, ATTRIB,
+    // SEQEND), which are dropped below, so no walk over the drawing's handles is needed: AutoLISP
+    // calls this once per entity, and that walk would make a loop over a drawing quadratic.
     let mut w = W {
         t: Vec::new(),
-        next: structural_start(d),
-        used: entity_handles(d).collect(),
+        next: d.handseed.max(0x100).saturating_add(0x1000),
+        used: HashSet::new(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         reactors: HashMap::new(),

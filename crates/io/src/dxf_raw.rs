@@ -1063,6 +1063,10 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     });
     // New handles for the written kept objects, above every written handle and the seed.
     let mut fresh = Fresh::new(tags);
+    // The entities of unmodeled types join the records only below, so their handles are not in
+    // `tags` yet: no kept object may take one of them.
+    let placed = planned.values().flatten().filter_map(|(_, t)| head(t.get(1..).unwrap_or(&[])).handle);
+    fresh.used.extend(placed.filter_map(|h| Handle::parse_hex(&h)).map(|h| h.0));
     let mut alive: HashMap<String, String> = HashMap::new();
     for o in f.objects.iter().filter(|o| alive_memo.get(&o.handle.hex()) == Some(&true)) {
         alive.insert(o.handle.hex(), format!("{:X}", fresh.take()));

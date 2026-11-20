@@ -3,7 +3,7 @@
 //! handle instead of replacing the file's own object (#913).
 #![cfg(not(target_arch = "wasm32"))]
 
-use cadcraft_doc::{Common, DimKind, Dimension, Drawing, Entity, EntityKind, Handle, Line, Space};
+use cadcraft_doc::{Common, DimKind, Dimension, Drawing, Entity, EntityKind, Handle, Line, RawTag, Space, Unknown};
 use cadcraft_geom::Vec3;
 
 const TOP: &str = "FFFFFFFFFFFFFFFF";
@@ -357,4 +357,46 @@ fn records_added_on_save_after_the_top_handle_take_free_handles() {
 
     let r = read(&String::from_utf8_lossy(&bytes));
     assert!(r.entity(Handle::parse_hex(TOP).unwrap()).is_some(), "the file's line is gone");
+}
+
+/// [`top_line_with_kept_objects`] with an entity of a type CADCraft doesn't model at `handle`.
+fn top_line_kept_objects_and_unknown(handle: Handle) -> Drawing {
+    let mut d = read(&top_line_with_kept_objects());
+    let tags = vec![
+        RawTag { code: 5, value: handle.hex() },
+        RawTag { code: 330, value: "0".into() },
+        RawTag { code: 100, value: "AcDbEntity".into() },
+        RawTag { code: 8, value: "0".into() },
+        RawTag { code: 100, value: "SyntheticWidget".into() },
+        RawTag { code: 1, value: "widget".into() },
+    ];
+    let kind = EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags });
+    d.model.push(Entity { handle, common: Common::default(), kind });
+    d
+}
+
+#[test]
+fn a_kept_object_does_not_take_the_handle_of_an_unmodeled_entity() {
+    // The writer places entities of unmodeled types after it numbers the kept objects. With the
+    // line at the top handle that numbering runs in the reserved band, where it can reach the
+    // handle of such an entity: the kept object must skip it rather than repeat it.
+    let far = Handle(cadcraft_doc::HANDLE_LIMIT + 0x10_0000);
+    let bytes = cadcraft_io::write(&top_line_kept_objects_and_unknown(far), "kept-far.dxf").unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
+    let kept = tags.iter().position(|t| t.code == 1 && t.str() == "kept").expect("the kept XRECORD was not written");
+    let start = tags[..kept].iter().rposition(|t| t.code == 0).unwrap();
+    // The handle the kept XRECORD takes when nothing else holds it.
+    let taken = Handle::parse_hex(&tags[start..kept].iter().find(|t| t.code == 5).unwrap().str()).unwrap();
+    assert_ne!(taken, far);
+
+    let bytes = cadcraft_io::write(&top_line_kept_objects_and_unknown(taken), "kept-unknown.dxf").unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("\nkept"), "the kept XRECORD was not written");
+    assert!(text.contains("\nSYNTHETIC_WIDGET"), "the unmodeled entity was not written");
+    let tags = craft_dxf::parse(&bytes).unwrap();
+    let after_header = tags.iter().position(|t| t.code == 2 && t.str() == "TABLES").unwrap();
+    let written: Vec<String> = tags[after_header..].iter().filter(|t| t.code == 5 || t.code == 105).map(|t| t.str().to_string()).collect();
+    let unique: std::collections::HashSet<&String> = written.iter().collect();
+    assert_eq!(unique.len(), written.len(), "the save repeats a handle: {written:?}");
+    assert_eq!(written.iter().filter(|h| h.as_str() == taken.hex()).count(), 1, "the entity's handle was not written exactly once");
 }
