@@ -390,3 +390,35 @@ fn a_spline_fit_grip_option_runs_at_the_hot_grip_prompt() {
     s.input(crate::Input::Keyword(super::GripAction::RemoveFitPoint.keyword().to_string())).unwrap();
     assert!(matches!(kind(&s, sp), EntityKind::Spline(x) if x.fit.len() == 4 && !x.fit.contains(&v(5.0, 1.0))));
 }
+
+/// A multileader's leader grips offer Add Leader (a new leader from a picked point) and, with more
+/// than one leader, Remove Leader (the grip's leader); its landing grip offers Add Leader.
+#[test]
+fn multileader_grips_add_and_remove_leaders() {
+    use super::GripAction;
+    let mut s = Session::new();
+    let ml = h(&s.execute("mleader", &json!({"points": [[0, 0], [4, 4]], "text": "note"})).unwrap());
+    let leaders = |s: &Session| match kind(s, ml) {
+        EntityKind::MLeader(m) => m.leaders.clone(),
+        _ => panic!(),
+    };
+    let landing = leaders(&s).iter().map(Vec::len).sum::<usize>();
+    assert_eq!(grip_actions(&kind(&s, ml), 0), vec![GripAction::AddLeader], "one leader: nothing to remove");
+    assert_eq!(grip_actions(&kind(&s, ml), landing), vec![GripAction::AddLeader]);
+    s.set_selection(vec![ml]);
+    s.start_grip_edit(&[(ml, landing)]).unwrap();
+    s.input(crate::Input::Keyword(GripAction::AddLeader.keyword().to_string())).unwrap();
+    assert!(s.prompt_text().contains("ADD LEADER"), "{}", s.prompt_text());
+    s.input(crate::Input::Point(v(10.0, -3.0))).unwrap();
+    let after = leaders(&s);
+    assert_eq!(after.len(), 2);
+    assert!(near(after[1][0].xy(), 10.0, -3.0), "{after:?}");
+    // The new leader's grip removes it.
+    let grip = after[0].len();
+    assert!(grip_actions(&kind(&s, ml), grip).contains(&GripAction::RemoveLeader));
+    s.start_grip_edit(&[(ml, grip)]).unwrap();
+    s.input(crate::Input::Keyword(GripAction::RemoveLeader.keyword().to_string())).unwrap();
+    let left = leaders(&s);
+    assert_eq!(left.len(), 1);
+    assert!(near(left[0][0].xy(), 0.0, 0.0), "the first leader stays: {left:?}");
+}

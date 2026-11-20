@@ -302,15 +302,90 @@ impl MLeader {
 
     /// Each leader line as drawn: through its points to the landing, smoothed for spline leaders.
     pub fn leader_paths(&self) -> Vec<Vec<Vec2>> {
+        self.leader_paths_around(None)
+    }
+
+    /// Whether a leader comes to the text from another side than the landing's: its last point
+    /// is past the text from the landing. Only then [`MLeader::leader_paths_around`] needs the
+    /// text's box.
+    pub fn leaders_off_landing_side(&self) -> bool {
+        let Some(t) = self.text.as_ref().filter(|t| t.rotation.abs() < 1e-9) else { return false };
+        let land = self.landing.xy();
+        let dir = if t.insert.x < land.x { -1.0 } else { 1.0 };
+        !self.leaderless() && self.leaders.iter().filter_map(|l| l.last()).any(|p| (p.x - land.x) * dir > 0.0)
+    }
+
+    /// [`MLeader::leader_paths`] with the text's box as drawn (unrotated text): a leader that
+    /// comes from another side of the text than the landing joins the text there, as one coming
+    /// from the landing's side joins the landing. From the other side it gets a landing of its own
+    /// (the landing mirrored about the text), from above or below the text it ends at the middle of
+    /// the text's top or bottom.
+    pub fn leader_paths_around(&self, text_box: Option<cadcraft_geom::Bounds2>) -> Vec<Vec<Vec2>> {
         if self.no_leader {
             return Vec::new();
         }
         self.leaders
             .iter()
             .map(|l| {
-                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(self.landing.xy())).collect();
+                let root = match (l.last(), text_box) {
+                    (Some(p), Some(b)) => self.leader_root(p.xy(), b),
+                    _ => vec![self.landing.xy()],
+                };
+                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(root).collect();
                 if self.spline && pts.len() > 2 { GSpline::from_fit_points(&pts).tessellate(1e-3) } else { pts }
             })
             .collect()
+    }
+
+    /// Where a leader whose last point is `p` meets text whose box is `b`: the points after `p`.
+    fn leader_root(&self, p: Vec2, b: cadcraft_geom::Bounds2) -> Vec<Vec2> {
+        let land = self.landing.xy();
+        let Some(t) = self.text.as_ref().filter(|t| t.rotation.abs() < 1e-9) else { return vec![land] };
+        if !(b.min.is_finite() && b.max.is_finite()) || b.min.x > b.max.x || b.min.y > b.max.y {
+            return vec![land];
+        }
+        #[derive(PartialEq)]
+        enum Side {
+            Left,
+            Right,
+            Top,
+            Bottom,
+        }
+        let side_of = |q: Vec2, eps: f64| {
+            if q.x <= b.min.x + eps {
+                Some(Side::Left)
+            } else if q.x >= b.max.x - eps {
+                Some(Side::Right)
+            } else if q.y >= b.max.y - eps {
+                Some(Side::Top)
+            } else if q.y <= b.min.y + eps {
+                Some(Side::Bottom)
+            } else {
+                None
+            }
+        };
+        let Some(side) = side_of(p, 0.0) else { return vec![land] };
+        let tol = 1e-9 * (1.0 + land.len());
+        if side_of(land, tol).as_ref() == Some(&side) {
+            return vec![land];
+        }
+        let gap = self.text_gap();
+        // The landing's height when it is beside the text, else the middle of the first line.
+        let y = if (b.min.y..=b.max.y).contains(&land.y) { land.y } else { b.max.y - t.height / 2.0 };
+        let dogleg = Vec2::new(self.dogleg.max(0.0), 0.0);
+        let vgap = gap.max(t.height * 0.25);
+        let mid = (b.min.x + b.max.x) / 2.0;
+        match side {
+            Side::Left => {
+                let end = Vec2::new(b.min.x - gap, y);
+                vec![end - dogleg, end]
+            }
+            Side::Right => {
+                let end = Vec2::new(b.max.x + gap, y);
+                vec![end + dogleg, end]
+            }
+            Side::Top => vec![Vec2::new(mid, b.max.y + vgap)],
+            Side::Bottom => vec![Vec2::new(mid, b.min.y - vgap)],
+        }
     }
 }

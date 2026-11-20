@@ -534,6 +534,10 @@ pub enum GripAction {
     AddFitPoint,
     /// Spline with fit data: remove this fit point (both copies of a kink), refitting the curve.
     RemoveFitPoint,
+    /// Multileader: a new leader line from a picked arrowhead point to the text.
+    AddLeader,
+    /// Multileader with more than one leader line: remove the leader of this grip.
+    RemoveLeader,
 }
 
 impl GripAction {
@@ -554,6 +558,8 @@ impl GripAction {
             GripAction::ResetTextPosition => "Reset text position",
             GripAction::AddFitPoint => "Add fit point",
             GripAction::RemoveFitPoint => "Remove fit point",
+            GripAction::AddLeader => "Add leader",
+            GripAction::RemoveLeader => "Remove leader",
         }
     }
     /// The grip menu label.
@@ -573,6 +579,8 @@ impl GripAction {
             GripAction::ResetTextPosition => "Reset Text Position",
             GripAction::AddFitPoint => "Add Fit Point",
             GripAction::RemoveFitPoint => "Remove Fit Point",
+            GripAction::AddLeader => "Add Leader",
+            GripAction::RemoveLeader => "Remove Leader",
         }
     }
     /// The mode name on the command line ("** ADD VERTEX **").
@@ -592,6 +600,8 @@ impl GripAction {
             GripAction::ResetTextPosition => "** RESET TEXT POSITION **",
             GripAction::AddFitPoint => "** ADD FIT POINT **",
             GripAction::RemoveFitPoint => "** REMOVE FIT POINT **",
+            GripAction::AddLeader => "** ADD LEADER **",
+            GripAction::RemoveLeader => "** REMOVE LEADER **",
         }
     }
     /// Whether the option needs a point (or value); the others act at once.
@@ -604,8 +614,25 @@ impl GripAction {
                 | GripAction::CenterVertically
                 | GripAction::ResetTextPosition
                 | GripAction::RemoveFitPoint
+                | GripAction::RemoveLeader
         )
     }
+}
+
+/// Most leader lines a grip can give a multileader.
+const MAX_LEADERS: usize = 1_000;
+
+/// The leader line grip `index` of a multileader is a point of (its points come leader by leader).
+fn mleader_leader_of(m: &cadcraft_doc::MLeader, index: usize) -> Option<usize> {
+    let mut start = 0usize;
+    for (i, l) in m.leaders.iter().enumerate() {
+        let end = start.checked_add(l.len())?;
+        if index < end {
+            return Some(i);
+        }
+        start = end;
+    }
+    None
 }
 
 /// Most fit points a grip can add to a spline.
@@ -680,6 +707,17 @@ pub fn grip_actions(kind: &EntityKind, index: usize) -> Vec<GripAction> {
         EntityKind::MLeader(m) if m.text_grip() == Some(index) => {
             vec![GripAction::MoveWithLeader, GripAction::MoveTextOnly, GripAction::ResetTextPosition]
         }
+        // A leader point of a multileader (Add or Remove Leader) and its landing (Add Leader).
+        EntityKind::MLeader(m) if !m.no_leader && index <= m.leaders.iter().map(Vec::len).sum::<usize>() => {
+            let mut v = Vec::new();
+            if m.leaders.len() < MAX_LEADERS {
+                v.push(GripAction::AddLeader);
+            }
+            if m.leaders.len() > 1 && mleader_leader_of(m, index).is_some() {
+                v.push(GripAction::RemoveLeader);
+            }
+            v
+        }
         // A fit point grip of a spline with fit data.
         EntityKind::Spline(sp) if index < sp.fit.len() => {
             let mut v = Vec::new();
@@ -706,6 +744,15 @@ pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Opti
     }
     let mut k = kind.clone();
     match (&mut k, action) {
+        (EntityKind::MLeader(m), GripAction::AddLeader) => {
+            let to = to?;
+            let z = m.landing.z;
+            m.leaders.push(vec![Vec3::new(to.x, to.y, z)]);
+        }
+        (EntityKind::MLeader(m), GripAction::RemoveLeader) => {
+            let i = mleader_leader_of(m, index)?;
+            m.leaders.remove(i);
+        }
         (EntityKind::LwPolyline(p), GripAction::AddVertex) => {
             let to = to?;
             let at = match poly_grip(p, index)? {
