@@ -11,6 +11,8 @@ pub(super) fn attrib_props(t: &T, insert_layer: &str) -> AttribProps {
         color: (t.i(62).is_some() || t.i(420).is_some()).then_some(c.color),
         linetype: t.s(6).filter(|l| !l.is_empty()),
         lineweight: t.i(370).is_some().then_some(c.lineweight),
+        // Kept only where it differs from the definition's (`attribs_follow_definitions`).
+        visible: Some(c.visible),
     }
 }
 
