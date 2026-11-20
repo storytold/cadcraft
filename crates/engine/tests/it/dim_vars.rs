@@ -102,6 +102,8 @@ fn new_variables_are_style_overrides_and_read_back() {
 
 #[test]
 fn setvar_dimension_variables_are_saved_with_the_drawing() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     // DIMSCALE was kept and DIMTIH, DIMDEC and DIMTAD were not (#3100).
     let mut s = Session::new();
     for (name, v) in [("DIMSCALE", json!(2.5)), ("DIMTIH", json!(0)), ("DIMDEC", json!(2)), ("DIMTAD", json!(1))] {
