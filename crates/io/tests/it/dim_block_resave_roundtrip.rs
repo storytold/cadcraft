@@ -313,12 +313,13 @@ fn an_unedited_dimension_keeps_a_block_with_any_name() {
         let h = d.new_handle();
         b.entities.push(Entity::new(h, kind));
     }
+    b.base = Vec3::new(1.0, 2.0, 0.0);
     d.blocks.insert(NAME.into(), Arc::new(b));
     let mut dm = linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]);
     dm.block = Some(NAME.into());
     let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
 
-    // (block the dimension names, its circles, its texts)
+    // (block the dimension names, anonymous, base point, its circles, its texts)
     let picture = |d: &Drawing| {
         let Some(EntityKind::Dimension(dm)) = d.entity(h).map(|e| &e.kind) else { panic!("dimension lost") };
         let name = dm.block.clone().unwrap_or_default();
@@ -326,9 +327,9 @@ fn an_unedited_dimension_keeps_a_block_with_any_name() {
         let circles = blk.entities.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count();
         let texts: Vec<String> =
             blk.entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
-        (name, circles, texts)
+        (name, blk.anonymous, blk.base, circles, texts)
     };
-    let kept = (NAME.to_string(), 1, vec!["10,00".to_string()]);
+    let kept = (NAME.to_string(), false, Vec3::new(1.0, 2.0, 0.0), 1, vec!["10,00".to_string()]);
     let dxf = cadcraft_io::write_dxf(&d);
     assert_eq!(picture(&cadcraft_io::read_dxf(dxf.as_bytes()).unwrap()), kept, "DXF save");
     assert!(dim_blocks(&dxf).is_empty(), "no *D copy is written: {:?}", dim_blocks(&dxf));
@@ -345,6 +346,6 @@ fn an_unedited_dimension_keeps_a_block_with_any_name() {
         })
         .unwrap();
     let again = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&edited).as_bytes()).unwrap();
-    let (name, circles, texts) = picture(&again);
+    let (name, _, _, circles, texts) = picture(&again);
     assert!(name.starts_with("*D") && circles == 0 && !texts.contains(&"10,00".to_string()), "edited: {name} {circles} {texts:?}");
 }

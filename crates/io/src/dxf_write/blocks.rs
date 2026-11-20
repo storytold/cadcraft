@@ -14,7 +14,7 @@ pub(super) struct DimBlockPlan {
     pub(super) skip: std::collections::HashSet<String>,
 }
 
-fn is_dim_block(name: &str) -> bool {
+pub(super) fn is_dim_block(name: &str) -> bool {
     name.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("*D"))
 }
 
