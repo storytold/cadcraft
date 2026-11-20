@@ -65,8 +65,8 @@ pub fn census(dxf: &[u8]) -> Option<Census> {
             _ => {}
         }
     };
-    for s in craft_dxf::sections(&tags) {
-        let records = craft_dxf::records(&s.tags);
+    for s in craft_dxf::section_slices(&tags) {
+        let records = craft_dxf::record_slices(s.tags);
         match s.name.trim().to_ascii_uppercase().as_str() {
             "ENTITIES" => {
                 for (t, g) in &records {

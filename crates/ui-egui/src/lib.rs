@@ -103,7 +103,6 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
-    pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
@@ -201,7 +200,6 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
-            show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,
             toolset_tab: "Drafting".into(),
@@ -283,6 +281,9 @@ pub struct CadApp {
     pub system_animations: Option<bool>,
     /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
     pub system_cursor_default: bool,
+    /// Whether the host has a native menu bar: off where the menus stay in the window
+    /// ([`Self::set_native_menus`]).
+    pub native_menus: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -381,6 +382,7 @@ impl CadApp {
             system_languages: Vec::new(),
             system_animations: None,
             system_cursor_default: false,
+            native_menus: cfg!(target_os = "macos"),
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
@@ -588,7 +590,11 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        // The bars as the interface shows them now (a `ui.set` may have just changed one), and any
+        // MENUBAR or TOOLBAR request applied at once.
+        self.sync_bars();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        self.sync_bars();
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -607,6 +613,7 @@ impl CadApp {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        self.sync_bars();
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -622,6 +629,7 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        self.sync_bars();
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -636,13 +644,27 @@ impl CadApp {
                 return None;
             }
         }
-        let e = match (self.session.cmdline(text), fallback) {
+        let r = self.session.cmdline(text);
+        self.sync_bars();
+        let e = match (r, fallback) {
             (Ok(()), _) => return None,
             (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
             (Err(e), _) => e.to_string(),
         };
         self.session.echo(e.clone());
         Some(e)
+    }
+
+    /// Apply a menu bar / tool bar change MENUBAR or TOOLBAR asked for, and report the bars shown.
+    fn sync_bars(&mut self) {
+        let b = std::mem::take(&mut self.session.bars_request);
+        if let Some(on) = b.menubar {
+            self.ui.in_window_menu = on;
+        }
+        if let Some(show) = b.toolbar {
+            self.ui.show_toolbar = show;
+        }
+        self.session.bars_shown = cadcraft_engine::cmd::interface::InterfaceBars { menubar: self.ui.in_window_menu, toolbar: self.ui.show_toolbar };
     }
 
     /// The theme the interface shows now (the choice resolved against the OS appearance).
@@ -728,6 +750,15 @@ impl CadApp {
         self.system_cursor_default = on;
         if on {
             self.ui.system_cursor = true;
+        }
+    }
+
+    /// Tell the interface whether the host has a native menu bar. Where it has none, the
+    /// in-window menu is the only menu, so it is shown and a reset keeps it.
+    pub fn set_native_menus(&mut self, on: bool) {
+        self.native_menus = on;
+        if !on {
+            self.ui.in_window_menu = true;
         }
     }
 
@@ -1087,6 +1118,7 @@ impl CadApp {
     /// Draw one UI pass: title/toolbar, optional menu/status bar/file tabs, the standalone tool-set strip when a drawing is shown but Tool Sets is not docked, docking or the start page, and the floating overlays; record `frame_ms`. Runs on every pass, including one egui later discards.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        self.sync_bars();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
@@ -1407,5 +1439,55 @@ mod tests {
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
         assert_eq!(ui.save_format, SaveFormat::Dwg);
+    }
+
+    #[test]
+    fn options_reset_brings_the_interface_back() {
+        // Hiding the interface (View/Window toggles) can leave no way back — on Windows the
+        // in-window menu bar is the only menu there is. Options > Reset must restore it (#1240).
+        let mut a = app();
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("ui.toggle.menubar", json!({ "on": cfg!(target_os = "macos") })).unwrap();
+        a.start("ui.hidepalettes");
+        assert!(!a.ui.show_toolbar && !a.ui.show_palettes && !a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, cfg!(target_os = "macos"), "the test did not hide the menu bar");
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert!(a.ui.show_palettes, "the palettes are still hidden");
+        assert!(a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, !cfg!(target_os = "macos"), "the menu bar did not come back");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_menu_where_the_host_has_no_native_one() {
+        // With CADCRAFT_NO_NATIVE_MENU=1 the menus stay in the window: the host reports no native
+        // menu bar, so the in-window one is the only menu and the reset must leave it (#1240).
+        let mut a = app();
+        a.set_native_menus(false);
+        assert!(a.ui.in_window_menu, "the host's setting did not show the in-window menu");
+        a.run("ui.toggle.menubar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.in_window_menu, "the only menu bar did not come back");
+        // Beside a native menu bar, the reset returns to the platform default.
+        a.set_native_menus(true);
+        a.run("ui.toggle.menubar", json!({ "on": true })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(!a.ui.in_window_menu, "the in-window menu is not the default beside a native one");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_users_shortcuts_and_folders() {
+        // The reset brings hidden bars back (#1240); it must not also lose the user's own
+        // keyboard shortcuts or the folders the file pickers remember.
+        let mut a = app();
+        a.ui.shortcuts.insert("line".into(), "Ctrl+Shift+L".into());
+        a.ui.last_lisp_dir = Some("lisp-folder".into());
+        a.ui.last_pgp_dir = Some("pgp-folder".into());
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert_eq!(a.ui.shortcuts.get("line").map(String::as_str), Some("Ctrl+Shift+L"), "the reset lost a user shortcut");
+        assert_eq!(a.ui.last_lisp_dir.as_deref(), Some("lisp-folder"));
+        assert_eq!(a.ui.last_pgp_dir.as_deref(), Some("pgp-folder"));
     }
 }
