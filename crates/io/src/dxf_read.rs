@@ -71,6 +71,8 @@ struct Rx {
     block: Option<String>,
     /// The points HATCH boundary curves may still be sampled into.
     curves: hatch::CurvePoints,
+    /// IMAGE entity handle, as read (a repeated one reassigned) → its IMAGEDEF handle (upper case).
+    image_defs: HashMap<Handle, String>,
 }
 
 /// Read a DXF file into a drawing.
@@ -186,7 +188,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
-    crate::dxf_image::resolve(&secs, &mut d);
+    crate::dxf_image::resolve(&secs, &mut d, &rx.image_defs);
     crate::dxf_mline::resolve(&secs, &mut d);
     // Keep handles unique against the header's seed.
     let seed = d.header.str("HANDSEED", "");
