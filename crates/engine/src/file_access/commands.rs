@@ -516,9 +516,8 @@ mod tests {
 
     /// Words in a command's parameter doc that usually name a file. In these commands they don't:
     /// `array` and `arraypath` follow a path of objects, and `blocks.reference.grips` reports a
-    /// direction. UPDATEFIELD uses the loaded drawing's file name from session state; it does
-    /// not accept a path or read the named file.
-    const NOT_FILES: &[&str] = &["array", "arraypath", "blocks.reference.grips", "updatefield"];
+    /// direction.
+    const NOT_FILES: &[&str] = &["array", "arraypath", "blocks.reference.grips"];
 
     /// The words of a command's documentation, lower case.
     fn words(doc: &str) -> BTreeSet<String> {
