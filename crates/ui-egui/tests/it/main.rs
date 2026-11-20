@@ -23,6 +23,7 @@ mod measure_distance_snapping;
 mod menubar_hover;
 mod moving_clicks;
 mod mspace_viewport_view;
+mod mtext_double_click;
 mod named_viewports_dialog;
 mod native_menu_text_keys;
 mod native_windows;
