@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod arrow_combo;
 pub mod autosave;
 pub mod batchplot;
 pub mod bedit;
@@ -36,7 +37,6 @@ pub mod control;
 pub mod credits;
 pub mod custom_patterns;
 pub mod dialogs;
-pub mod dimstyles;
 pub mod docking;
 pub mod editor_glyphs;
 pub mod fault;

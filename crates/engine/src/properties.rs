@@ -351,6 +351,8 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
         c.row("rotation", "Rotation", Kind::Direction, texts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
         c.row("widthFactor", "Width factor", Kind::Number, texts.iter().map(|t| json!(t.width_factor))),
         c.row("oblique", "Obliquing", Kind::Angle, texts.iter().map(|t| json!(t.oblique.to_degrees()))),
+        c.row("backwards", "Backwards", Kind::Bool, texts.iter().map(|t| json!(t.backwards))),
+        c.row("upsideDown", "Upside down", Kind::Bool, texts.iter().map(|t| json!(t.upside_down))),
     ];
     // Aligned and fit text sit between two points: the second is the text alignment point.
     let second: Option<Vec<cadcraft_geom::Vec3>> =
@@ -394,6 +396,7 @@ fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
             mts.iter().map(|t| json!(if t.line_spacing_exact { "exactly" } else { "atLeast" })),
         ),
         c.row("width", "Defined width", Kind::Distance, mts.iter().map(|t| json!(t.width))),
+        c.row("frame", "Text frame", Kind::Bool, mts.iter().map(|t| json!(t.frame))),
         c.row("columns", "Columns", Kind::Text, mts.iter().map(|t| json!(columns(t)))).read_only(),
     ];
     let geometry = vec![

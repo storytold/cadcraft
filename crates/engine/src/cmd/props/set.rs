@@ -211,6 +211,10 @@ struct Call<'a> {
     linetype: Option<String>,
     dim_style: Option<String>,
     text_style: Option<String>,
+    /// A multileader style to give multileaders (`mleaderStyle`).
+    mleader_style: Option<String>,
+    /// A hatch background (`background`): a colour, or `None` for none.
+    background: Option<Option<Color>>,
     dim_vars: DimVars,
     prep: Prepared,
     anno_scale: AnnoScale,
@@ -323,9 +327,27 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
+    // `textStyle` names it too (texts, multiline texts and multileaders' texts alike).
     let text_style = str_param(p, "style")
+        .or_else(|| str_param(p, "textStyle"))
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
+    let mleader_style = str_param(p, "mleaderStyle")
+        .map(|n| {
+            d.mleader_styles
+                .iter()
+                .find(|st| st.name.eq_ignore_ascii_case(n))
+                .map(|st| st.name.clone())
+                .or_else(|| n.eq_ignore_ascii_case("Standard").then(|| "Standard".to_string()))
+                .ok_or_else(|| bad("properties.set", format!("multileader style `{n}` not found")))
+        })
+        .transpose()?;
+    // A hatch background is a colour or none ("None", "" or null), as HATCH and HATCHEDIT take.
+    let background = match p.get("background") {
+        None => None,
+        Some(v) if v.is_null() || v.as_str().is_some_and(|t| t.trim().is_empty() || t.trim().eq_ignore_ascii_case("none")) => Some(None),
+        Some(v) => Some(Some(parse_color(v).ok_or_else(|| bad("properties.set", "background must be a colour or None"))?)),
+    };
     let dim_vars = DimVars::new(d, p)?;
     // A pattern must be one each hatch can take, as HATCHEDIT refuses others.
     if let Some(v) = str_param(p, "pattern").filter(|v| !v.trim().is_empty())
@@ -349,7 +371,21 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         })
         .collect();
     let anno_scale = d.current_anno_scale();
-    let c = Call { p, color, transparency, thickness, lineweight, linetype, dim_style, text_style, dim_vars, prep, anno_scale };
+    let c = Call {
+        p,
+        color,
+        transparency,
+        thickness,
+        lineweight,
+        linetype,
+        dim_style,
+        text_style,
+        mleader_style,
+        background,
+        dim_vars,
+        prep,
+        anno_scale,
+    };
     // A failed call changes nothing (a command's error doesn't undo what it did), so the drawing
     // is taken for writing, and the layer made, only after every check.
     let d = s.doc_mut()?;
@@ -418,7 +454,28 @@ fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'
     if str_param(c.p, "leaderType").is_some() {
         used.insert("leaderType");
     }
+    if let Some(st) = &c.mleader_style {
+        m.style.clone_from(st);
+        used.insert("mleaderStyle");
+    }
+    if let Some(x) = c.num("arrowSize").filter(|x| *x >= 0.0) {
+        m.arrow_size = x;
+        used.insert("arrowSize");
+    }
+    // The landing distance (0: no landing).
+    if let Some(x) = c.num("dogleg").filter(|x| *x >= 0.0) {
+        m.dogleg = x;
+        used.insert("dogleg");
+    }
     let Some(t) = &mut m.text else { return };
+    if let Some(st) = &c.text_style {
+        t.style.clone_from(st);
+        used.insert(style_key(c.p));
+    }
+    if let Some(x) = c.num("textHeight").filter(|x| *x > 0.0) {
+        t.height = x;
+        used.insert("textHeight");
+    }
     if let Some(v) = str_param(c.p, "text") {
         t.contents = v.replace('\n', "\\P");
         used.insert("text");
@@ -557,11 +614,18 @@ fn text(t: &mut Text, c: &Call<'_>, h: Handle, used: &mut Used<'_>) {
     }
     if let Some(st) = &c.text_style {
         t.style.clone_from(st);
-        used.insert("style");
+        used.insert(style_key(p));
     }
     if let Some(x) = c.num("height").filter(|x| *x > 0.0) {
         t.height = x;
         used.insert("height");
+    }
+    // Text generation flags.
+    for (k, slot) in [("backwards", &mut t.backwards), ("upsideDown", &mut t.upside_down)] {
+        if let Some(b) = p.get(k).and_then(Value::as_bool) {
+            *slot = b;
+            used.insert(k);
+        }
     }
     if let Some(x) = c.num("rotation") {
         t.rotation = x.to_radians();
@@ -632,11 +696,16 @@ fn mtext(t: &mut MText, c: &Call<'_>, used: &mut Used<'_>) {
     }
     if let Some(st) = &c.text_style {
         t.style.clone_from(st);
-        used.insert("style");
+        used.insert(style_key(p));
     }
     if let Some(x) = c.num("height").filter(|x| *x > 0.0) {
         t.height = x;
         used.insert("height");
+    }
+    // The text frame.
+    if let Some(b) = p.get("frame").and_then(Value::as_bool) {
+        t.frame = b;
+        used.insert("frame");
     }
     if let Some(x) = c.num("width").filter(|x| *x >= 0.0) {
         t.width = x;
@@ -812,4 +881,13 @@ fn hatch(ha: &mut Hatch, c: &Call<'_>, used: &mut Used<'_>) {
         ha.angle = x.to_radians();
         used.insert("angle");
     }
+    if let Some(bg) = c.background {
+        ha.background = bg;
+        used.insert("background");
+    }
+}
+
+/// The key the text style was given as (`style`, else `textStyle`).
+fn style_key(p: &Value) -> &'static str {
+    if str_param(p, "style").is_some() { "style" } else { "textStyle" }
 }
