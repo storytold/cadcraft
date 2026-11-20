@@ -1079,7 +1079,14 @@ pub(crate) fn render_settings_versions(tags: &mut [Tag], source: Option<Version>
 /// `strings`: whether the file has a form for a proxy's separate string stream (a DXF of 2007 or
 /// later, or the DWG bridge); without one such a proxy is left out (#3229). Returns the foreign
 /// objects written, by their handles in the drawing (the file gives them new ones).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool, target_modern: bool, strings: bool) -> HashSet<Handle> {
+pub(crate) fn finish(
+    tags: &mut Vec<Tag>,
+    d: &Drawing,
+    reactors: &HashMap<Handle, Vec<String>>,
+    modern: bool,
+    target_modern: bool,
+    strings: bool,
+) -> HashSet<Handle> {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();

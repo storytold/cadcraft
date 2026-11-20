@@ -817,7 +817,7 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
-fn drawing_version(s: &Session, path: &str) -> Version {
+pub fn drawing_version(s: &Session, path: &str) -> Version {
     let v = s.state().ok().and_then(|st| acadver(st.drawing())).unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
 }
