@@ -239,8 +239,9 @@ fn saved_window(app_ron: &str) -> bool {
 fn restores_window() -> bool {
     let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
+    // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
     if let Some(fixed) = without_tiny_window(&ron)
-        && std::fs::write(&path, &fixed).is_ok()
+        && cadcraft_engine::atomic_write::write_atomic(&path, fixed.as_bytes()).is_ok()
     {
         ron = fixed;
     }
