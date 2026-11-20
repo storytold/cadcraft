@@ -146,16 +146,68 @@ pub fn sat_text_dropped(d: &crate::Drawing) -> BTreeMap<String, usize> {
 pub fn acis_dropped(d: &crate::Drawing, modern: bool) -> BTreeMap<String, usize> {
     let stored = d.foreign.data_store_entities();
     let mut out = BTreeMap::new();
-    // The writer saves xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
-    let own_blocks = d.blocks.values().filter(|b| b.xref_path.is_none() && !xref_dependent(&b.name));
-    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(own_blocks.map(|b| &b.entities));
-    for e in stores.flat_map(|s| s.iter()) {
+    for e in saved_entities(d) {
         if let crate::EntityKind::Unknown(u) = &e.kind
             && acis_left_out(u, e.handle, &stored, modern)
         {
-            let n: &mut usize = out.entry(u.dxf_type.to_ascii_uppercase()).or_default();
-            *n = n.saturating_add(1);
+            count(&mut out, &u.dxf_type);
         }
+    }
+    out
+}
+
+/// The entities a DXF file holds: model space, layouts and block definitions. The writer saves
+/// xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
+fn saved_entities(d: &crate::Drawing) -> impl Iterator<Item = &std::sync::Arc<crate::Entity>> {
+    let own_blocks = d.blocks.values().filter(|b| b.xref_path.is_none() && !xref_dependent(&b.name));
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(own_blocks.map(|b| &b.entities));
+    stores.flat_map(|s| s.iter())
+}
+
+/// Add one record of DXF type `kind` to `out`.
+fn count(out: &mut BTreeMap<String, usize>, kind: &str) {
+    let n: &mut usize = out.entry(kind.to_ascii_uppercase()).or_default();
+    *n = n.saturating_add(1);
+}
+
+/// Whether a DXF type is a proxy (ACAD_PROXY_OBJECT, ACAD_PROXY_ENTITY).
+pub fn is_proxy(kind: &str) -> bool {
+    let k = kind.trim();
+    k.eq_ignore_ascii_case("ACAD_PROXY_OBJECT") || k.eq_ignore_ascii_case("ACAD_PROXY_ENTITY")
+}
+
+/// Whether a proxy's groups (after its type) give it a separate string stream: a size above 0 in
+/// group 96 (2007) or 162 (2010 and later) after the `AcDbProxy…` marker. Before 2007 a proxy's
+/// strings are part of its data, so a file of an earlier version has no form for one that keeps
+/// them apart (#3229).
+pub fn proxy_has_string_stream<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> bool {
+    let mut own = false;
+    for (code, value) in groups {
+        let v = value.as_ref().trim();
+        match code {
+            100 => own = own || v.to_ascii_lowercase().starts_with("acdbproxy"),
+            96 | 162 if own && v.parse::<i64>().is_ok_and(|n| n > 0) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The proxies a DXF earlier than 2007 leaves out because they have a separate string stream
+/// ([`proxy_has_string_stream`]), counted by DXF type.
+pub fn proxies_dropped_before_2007(d: &crate::Drawing) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    let has_strings = |tags: &[RawTag]| proxy_has_string_stream(tags.iter().map(|t| (t.code, t.value.as_str())));
+    for e in saved_entities(d) {
+        if let crate::EntityKind::Unknown(u) = &e.kind
+            && is_proxy(&u.dxf_type)
+            && has_strings(&u.tags)
+        {
+            count(&mut out, &u.dxf_type);
+        }
+    }
+    for o in d.foreign.objects.iter().filter(|o| is_proxy(&o.kind) && has_strings(&o.tags)) {
+        count(&mut out, &o.kind);
     }
     out
 }

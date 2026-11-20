@@ -108,6 +108,28 @@ impl CadApp {
     }
 }
 
+/// Which files keep what a save would lose: the hint under the warning.
+#[derive(Debug, PartialEq, Eq)]
+enum Keeps {
+    /// A DXF before 2007 leaves out proxies whose strings it can't hold (#3229).
+    Dxf2007,
+    /// A DXF of 2013 or later leaves out a solid's SAT text.
+    Dxf2010,
+    /// Any other file: DXF keeps everything.
+    Dxf,
+}
+
+/// The hint for saving to `path` and losing `lost`. A path names a DXF the way the save does
+/// (`Format::from_path`), so a name without an extension is a DXF too.
+fn keeps_hint(path: &std::path::Path, lost: &BTreeMap<String, usize>) -> Keeps {
+    if cadcraft_doc::Format::from_path(path) != Some(cadcraft_doc::Format::Dxf) {
+        return Keeps::Dxf;
+    }
+    // Before 2007 the proxies go with what they own (an XRECORD, a DICTIONARY); a 2013 or later
+    // file only leaves out solids.
+    if lost.keys().any(|k| cadcraft_doc::foreign::is_proxy(k)) { Keeps::Dxf2007 } else { Keeps::Dxf2010 }
+}
+
 /// The warning, while a save waits for an answer. Cancel is what Escape does.
 pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
     let Some(pending) = app.save_loss.clone() else { return };
@@ -121,10 +143,10 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.label(RichText::new(crate::tf!("Saving {name} will remove content", name = file)).strong());
         ui.add_space(4.0);
         ui.label(crate::tf!("This format can't keep these objects yet: {objects}.", objects = pending.summary()));
-        let keeps = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dxf")) {
-            crate::tl!("DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.")
-        } else {
-            crate::tl!("DXF keeps them. Use Save As to keep them in the drawing.")
+        let keeps = match keeps_hint(path, &pending.loss.lost) {
+            Keeps::Dxf2007 => crate::tl!("DXF 2007 and later keep them. Use Save As to keep them in the drawing."),
+            Keeps::Dxf2010 => crate::tl!("DXF 2010 and earlier keep them. Use Save As to keep them in the drawing."),
+            Keeps::Dxf => crate::tl!("DXF keeps them. Use Save As to keep them in the drawing."),
         };
         ui.label(RichText::new(keeps).color(t.text_dim));
         let on_disk = if save_keeps_current(path) {
@@ -156,5 +178,25 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
     if let Some(c) = choice {
         app.answer_save_loss(c);
         ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lost(kind: &str) -> BTreeMap<String, usize> {
+        BTreeMap::from([(kind.to_string(), 1)])
+    }
+
+    #[test]
+    fn a_name_without_an_extension_is_a_dxf_for_the_hint() {
+        let path = std::path::Path::new("plans/site");
+        assert_eq!(keeps_hint(path, &lost("ACAD_PROXY_ENTITY")), Keeps::Dxf2007);
+        assert_eq!(keeps_hint(path, &lost("3DSOLID")), Keeps::Dxf2010);
+        let with_owned = BTreeMap::from([("ACAD_PROXY_OBJECT".to_string(), 1), ("XRECORD".to_string(), 2)]);
+        assert_eq!(keeps_hint(path, &with_owned), Keeps::Dxf2007);
+        assert_eq!(keeps_hint(std::path::Path::new("plans/site.DXF"), &lost("ACAD_PROXY_ENTITY")), Keeps::Dxf2007);
+        assert_eq!(keeps_hint(std::path::Path::new("plans/site.dwg"), &lost("ACAD_PROXY_ENTITY")), Keeps::Dxf);
     }
 }

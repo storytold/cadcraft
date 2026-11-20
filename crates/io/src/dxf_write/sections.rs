@@ -982,6 +982,11 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
 /// file ends up in: `version`, or the DWG version the bridge writes) has.
 /// `frozen_341`: see [`Ctx::frozen_341`].
 pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
+    tags_kept_for(d, version, target, frozen_341).0
+}
+
+/// [`tags_for`], with the foreign objects the file keeps, by their handles in the drawing.
+pub(super) fn tags_kept_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -1247,14 +1252,16 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
     // DWG writer, which keeps SAT-text solids (#2334). A file of 2010 or earlier, DXF or DWG, has
     // no data store, so a solid whose geometry is only there is left out of it.
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, target >= Version::R2013);
+    // The DWG bridge (`target` another version) keeps proxies in the DWG's own layout.
+    let strings = version != target || version >= Version::R2007;
+    let kept = crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, target >= Version::R2013, strings);
     // Kept constraint groups go in the order their reader expects: a DXF's own version. The
     // bridge's R2000 text is read as the version its kept groups came from when that is newer
     // (craft-dwg's `encode_kept_noted` declares it), so there they stay as read.
     let read_as = if version == target {
         version
     } else {
-        d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|kept| *kept > version).unwrap_or(version)
+        d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version)
     };
     crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
     // Kept render settings take the class-version form of the version the text is read as (#907).
@@ -1262,7 +1269,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
-    w.t
+    (w.t, kept)
 }
 
 /// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups
