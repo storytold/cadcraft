@@ -23,6 +23,7 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod portable;
 #[cfg(target_os = "macos")]
 mod sheet;
 mod single_instance;
@@ -235,9 +236,12 @@ fn saved_window(app_ron: &str) -> bool {
 
 /// The window state from the last session is saved and will be restored (#2595). A saved size
 /// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
-/// unusable) is dropped first, so the window opens at its default size.
-fn restores_window() -> bool {
-    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+/// unusable) is dropped first, so the window opens at its default size. `portable_file`: the
+/// portable copy's settings file, read instead of the user profile's.
+fn restores_window(portable_file: Option<&std::path::Path>) -> bool {
+    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron"))) else {
+        return false;
+    };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
     // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
     if let Some(fixed) = without_tiny_window(&ron)
@@ -391,7 +395,8 @@ fn main() -> eframe::Result {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options(restores_window(), stencil)
+        persistence_path: vars.portable_storage_file.clone(),
+        ..window_options(restores_window(vars.portable_storage_file.as_deref()), stencil)
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
