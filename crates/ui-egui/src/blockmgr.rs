@@ -397,7 +397,7 @@ fn apply(app: &mut CadApp, st: &mut State, act: Option<Act>) -> bool {
         }
         Some(Act::ToWindow) => {
             app.ui.blocks_window = true;
-            let _ = crate::docking::command(app, false, &json!({ "operation": "close", "panel": crate::docking::Panel::Blocks.id() }));
+            let _ = crate::docking::command(app, false, &json!({ "operation": "close", "panel": crate::docking::Panel::BlockManager.id() }));
             app.ui.dialog = Some("blocks".into());
         }
         None => {}
@@ -420,7 +420,7 @@ fn open_panel(app: &mut CadApp) -> Result<serde_json::Value, String> {
     if app.ui.dialog.as_deref() == Some("blocks") {
         app.ui.dialog = None;
     }
-    let panel = crate::docking::Panel::Blocks;
+    let panel = crate::docking::Panel::BlockManager;
     let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
     let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
     // The first time: pinned at the right edge, beside the Layers and Properties palettes.
