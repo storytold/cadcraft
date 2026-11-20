@@ -1237,10 +1237,23 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     }
     let candidates =
         if std::path::Path::new(name).extension().is_none() { vec![format!("{name}.lsp"), name.to_string()] } else { vec![name.to_string()] };
-    // As given (a path, or relative to the working folder), then in the support folder.
-    let support =
-        s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
+    // An absolute path is read as given. A relative name is looked up in the support folder only,
+    // never in the process working folder: that can be the folder of a drawing just opened from a
+    // file manager, and a `tools.lsp` shipped beside it must not answer a startup file's
+    // `(load "tools")` (#1927). Without a support folder (the command-line tool, which has no
+    // startup files) a relative name is read as given.
+    let dir = match s.lisp_support_dir() {
+        Some(d) if !std::path::Path::new(name).is_absolute() => d,
+        _ => return candidates.iter().find_map(super::builtins::read_text_file),
+    };
+    // A relative name stays inside the support folder: plain folder and file names only. `..` would
+    // climb out of it, and on Windows a rooted name (`\tools`) or a drive-relative one (`C:tools`,
+    // the working folder of drive C) is not absolute, yet joined to the folder it replaces it.
+    use std::path::Component;
+    if !std::path::Path::new(name).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
+        return None;
+    }
+    candidates.iter().find_map(|c| super::builtins::read_text_file(dir.join(c)))
 }
 
 #[cfg(test)]

@@ -1597,3 +1597,74 @@ fn atof_out_of_range_exponent_reads_whole_token() {
     assert_eq!(ok(&mut s, "(< (atof \"-1e400\") -1e300)"), "T");
     assert_eq!(ok(&mut s, "(= (atof \"1e-400\") 0.0)"), "T");
 }
+
+/// #1927: with a support folder, a relative `load` name is found there, never through the
+/// process working folder; an absolute path is still read as given.
+#[cfg(unix)]
+#[test]
+fn relative_load_uses_the_support_folder_not_the_working_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-loadpath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(support.join("tools.lsp"), "(setq which \"support\")").unwrap();
+    std::fs::write(other.join("tools.lsp"), "(setq which \"other\")").unwrap();
+    std::fs::write(other.join("only.lsp"), "(setq only 1)").unwrap();
+    // `other/…` as a path relative to the working folder.
+    let cwd = std::env::current_dir().unwrap();
+    let up = "../".repeat(cwd.components().count().saturating_sub(1));
+    let rel = |f: &str| format!("{up}{}", other.join(f).to_string_lossy().trim_start_matches('/'));
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    assert_eq!(ok(&mut s, "(load \"tools\") which"), "\"support\"");
+    let r = eval(&mut s, &format!("(load \"{}\") only", rel("only.lsp")));
+    assert!(!matches!(r.as_deref(), Ok("1")), "not read through the working folder: {r:?}");
+    assert_eq!(ok(&mut s, &format!("(load \"{}\") which", other.join("tools.lsp").to_string_lossy())), "\"other\"");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1927 on Windows: a rooted name (`\folder\tools.lsp`, no drive) or a drive-relative one
+/// (`C:tools`) is not absolute, but joined to the support folder it replaces that folder; such a
+/// name is refused rather than read from outside the support folder.
+#[cfg(windows)]
+#[test]
+fn rooted_and_drive_relative_load_names_stay_in_the_support_folder() {
+    let base = std::env::temp_dir().join(format!("cadcraft-lisp-rooted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (support, other) = (base.join("support"), base.join("other"));
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let outside = other.join("only.lsp");
+    std::fs::write(&outside, "(setq only 1)").unwrap();
+    // The same file without its drive (`\Users\...\other\only.lsp`), escaped for a LISP string.
+    let full = outside.to_string_lossy().into_owned();
+    let rooted = full.get(full.find('\\').unwrap()..).unwrap().replace('\\', "\\\\");
+    let drive = full.get(..2).unwrap().to_string();
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(support.clone()));
+    let r = eval(&mut s, &format!("(load \"{rooted}\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a rooted name is not read outside the support folder: {r:?}");
+    let r = eval(&mut s, &format!("(load \"{drive}only\") only"));
+    assert!(!matches!(r.as_deref(), Ok("1")), "a drive-relative name is refused: {r:?}");
+    std::fs::write(support.join("only.lsp"), "(setq only 2)").unwrap();
+    assert_eq!(ok(&mut s, "(load \".\\\\only\") only"), "2", "a plain relative name is still read from the support folder");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1930: `append` over many references to one long list is refused before it builds the
+/// result, not after it has filled memory.
+#[test]
+fn append_checks_the_cell_cap_before_building_its_result() {
+    let _heavy = super::value::HEAVY_CELLS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = session();
+    s.lisp.limits.cells = 50_000;
+    let before = super::value::live_cells();
+    let e =
+        eval(&mut s, "(setq l nil) (repeat 10000 (setq l (cons 1 l))) (setq m nil) (repeat 1000 (setq m (cons l m))) (apply 'append m)").unwrap_err();
+    assert!(e.contains("too many list cells"), "{e}");
+    assert!(super::value::live_cells() < before + 50_000, "no oversized result was built");
+    assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
+}
