@@ -78,8 +78,9 @@ pub fn command() -> clap::Command {
 /// is a usage error, never a panic as with `std::env::args()`.
 ///
 /// Reading or writing DWG needs a conversion worker, which this function does not set up: the
-/// binary calls `cadcraft_io::dwg_worker::use_own_worker()` first. A caller that hasn't set one up
-/// gets "no worker is configured" and exit code 1 for a DWG file.
+/// binary calls `cadcraft_io::dwg_worker::use_own_worker()` first. A caller that converts only its
+/// own, trusted files can call `cadcraft_io::dwg_worker::allow_in_process()` instead. With
+/// neither, a DWG file gets "no worker is configured" and exit code 1.
 pub fn run<I, T>(args: I, out: &mut dyn Write, err: &mut dyn Write) -> i32
 where
     I: IntoIterator<Item = T>,
