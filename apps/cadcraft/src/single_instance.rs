@@ -355,7 +355,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_test_socket_path_stays_far_below_the_limit() {
-        let (_dir, path) = socket_dir("together");
+        // Its own folder, with a name as long as the longest one used here: `socket_dir` empties the
+        // folder, and the launches test may be using "together" at the same moment.
+        let (_dir, path) = socket_dir("lengthck");
         let added = path.as_os_str().len() - std::env::temp_dir().as_os_str().len();
         assert!(added <= 40, "{added} bytes on top of %TEMP%");
     }

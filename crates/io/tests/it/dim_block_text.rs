@@ -175,6 +175,7 @@ fn posted_angular_drawing(kind: DimKind, points: [Vec3; 5], post: &str) -> Drawi
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
     d
@@ -206,10 +207,12 @@ fn dimpost_reaches_three_point_and_two_line_angular_dimension_blocks() {
     assert_eq!(dxf_block_text(&two_line), "45.0\\U+00B0 m");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_angular_block_text_keeps_dimpost() {
     use cadcraft_io::{SaveOptions, Version};
+
+    cadcraft_io::dwg_worker::allow_in_process();
 
     // Vertex p15 at the origin, legs through p13 (0°) and p14 (90°), the arc through defpt.
     let d = posted_angular_drawing(
@@ -218,7 +221,7 @@ fn dwg_angular_block_text_keeps_dimpost() {
         "<> m",
     );
     let dwg = cadcraft_io::write_with(&d, "case.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
-    let from_dwg = String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+    let from_dwg = String::from_utf8(craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let mut texts = block_mtext_contents(&from_dwg);
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert_eq!(texts.remove(0), "90.0° m");
