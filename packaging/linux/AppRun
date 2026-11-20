@@ -1,0 +1,23 @@
+#!/bin/sh
+# AppImage entry point for CADCraft: launches the app with its arguments.
+#
+# `CADCraft.AppImage cli <args>` runs the bundled headless cadcraft-cli with <args>
+# (e.g. `cli mcp`) instead of the app.
+
+set -u
+
+APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+
+# The CLI is headless and its stdout may be a protocol stream (`cli mcp`): straight to
+# the binary.
+if [ "${1:-}" = cli ]; then
+  shift
+  cli="$APPDIR/usr/bin/cadcraft-cli"
+  if [ ! -x "$cli" ]; then
+    echo "cadcraft: this AppImage was built without cadcraft-cli" >&2
+    exit 127
+  fi
+  exec "$cli" "$@"
+fi
+
+exec "$APPDIR/usr/bin/cadcraft" "$@"
