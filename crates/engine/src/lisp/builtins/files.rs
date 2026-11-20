@@ -77,6 +77,43 @@ pub(super) fn findfile(a: &[Value]) -> R {
     Ok(if file_exists(&p) { Value::Str(p) } else { Value::Nil })
 }
 
+/// `(startapp appcmd [file])`: start a program without waiting for it and answer its process id,
+/// or nil when it cannot be started. No shell is involved: `appcmd` is the program and `file` is
+/// passed to it as one argument, whatever it contains. The child gets no stdin, so it cannot read
+/// from (and block on) the interpreter's input.
+pub(super) fn startapp(a: &[Value]) -> R {
+    arity(a, 1, 2)?;
+    let app = string(&a[0])?;
+    let arg = a.get(1).map(string).transpose()?;
+    Ok(spawn_detached(&app, arg.as_deref()).map_or(Value::Nil, |pid| Value::Int(i32::try_from(pid).unwrap_or(i32::MAX).max(1))))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_detached(app: &str, arg: Option<&str>) -> Option<u32> {
+    // An empty name or one with a NUL cannot name a program; reject before asking the OS.
+    if app.is_empty() || app.contains('\0') || arg.is_some_and(|f| f.contains('\0')) {
+        return None;
+    }
+    let mut cmd = std::process::Command::new(app);
+    if let Some(f) = arg {
+        cmd.arg(f);
+    }
+    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok()?;
+    let pid = child.id();
+    // Dropping the handle neither waits for nor kills the process. A thread reaps it when it
+    // ends, so a finished program does not stay a zombie for the life of the session.
+    let _ = std::thread::Builder::new().spawn(move || {
+        let _ = child.wait();
+    });
+    Some(pid)
+}
+
+/// There are no processes on the web build.
+#[cfg(target_arch = "wasm32")]
+fn spawn_detached(_app: &str, _arg: Option<&str>) -> Option<u32> {
+    None
+}
+
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_text_file(path: impl AsRef<std::path::Path>) -> Option<String> {
