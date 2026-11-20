@@ -117,6 +117,9 @@ mod tests {
 
     fn app() -> CadApp {
         crate::install_io();
+        // The DWG written and read here is the test's own synthetic file; the app starts its DWG
+        // worker in `main`, which a test does not run.
+        cadcraft_io::dwg_worker::allow_in_process();
         CadApp::new(Session::new(), Services::default())
     }
 
