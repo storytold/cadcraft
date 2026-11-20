@@ -16,9 +16,9 @@
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: `rightClickCommand` decides |
+//! | `timeSensitiveRightClick` | a quick right-click is Enter (between commands it runs what was typed, or repeats the last command) and holding the button opens the shortcut menu (default); `false`: `rightClickCommand` decides while a command runs, `rightClickDefault` and `rightClickEdit` between commands |
 //! | `rightClickDuration` | how long the right button is held to open the menu while a command runs, 100–2000 ms (250) |
-//! | `rightClickDefault`, `rightClickEdit` | a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
+//! | `rightClickDefault`, `rightClickEdit` | with the time-sensitive right-click off, a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
 //! | `rightClickCommand` | a right-click while a command runs, with the time-sensitive right-click off: `"menu"` (default), `"enter"`, or `"menuWithOptions"` (the menu when the prompt has options, else Enter) |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
@@ -139,13 +139,16 @@ pub struct UiOptions {
     pub snap_marker_size: f32,
     /// The selection highlight colour; `None` keeps the theme's.
     pub selection_color: Option<Color32>,
-    /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
-    /// (AutoCAD's time-sensitive right-click). Off: [`Self::right_click_command`] decides.
+    /// A quick right-click is Enter and a held one opens the shortcut menu (AutoCAD's
+    /// time-sensitive right-click). Between commands that Enter runs what was typed, or repeats
+    /// the last command; with neither, the click opens the shortcut menu. Off:
+    /// [`Self::right_click_command`] decides while a command runs, and [`Self::right_click_default`]
+    /// and [`Self::right_click_edit`] between commands.
     pub time_sensitive_right_click: bool,
     /// How long the right button is held to open the menu while a command runs, in milliseconds.
     pub right_click_hold_ms: u32,
     /// A right-click with no command running and nothing selected (Default mode) or a selection
-    /// (Edit mode).
+    /// (Edit mode), with the time-sensitive right-click off.
     pub right_click_default: IdleClick,
     pub right_click_edit: IdleClick,
     /// A right-click while a command runs, with the time-sensitive right-click off.
@@ -434,13 +437,30 @@ fn apply_right_click(o: &mut UiOptions, c: &UiChanges) {
 
 /// The interface preferences back to their defaults (the interface language stays).
 fn reset_ui(app: &mut CadApp) {
-    let d = crate::UiState::default();
-    app.ui.theme = d.theme;
-    app.ui.animations = d.animations;
-    app.ui.save_format = d.save_format;
-    app.ui.save_version = d.save_version;
+    // Everything interface, back to its defaults: a hidden menu bar, tool bar, palettes or
+    // panels and a rearranged panel layout come back — once the menu bar is hidden there may be
+    // no other way to reach the toggles (#1240). The interface language stays; the open dialog,
+    // the start tab, the recent files and the remembered folders are state, not preferences, and
+    // stay too. The user's keyboard shortcuts are their own customisation, which Window > Reset
+    // Palettes keeps as well: a reset meant to bring a bar back must not lose them.
+    let (language, dialog, start_tab) = (app.ui.interface_language, app.ui.dialog.take(), app.ui.start_tab);
+    let recent_files = std::mem::take(&mut app.ui.recent_files);
+    let shortcuts = std::mem::take(&mut app.ui.shortcuts);
+    let (last_lisp_dir, last_pgp_dir) = (app.ui.last_lisp_dir.take(), app.ui.last_pgp_dir.take());
+    app.ui = crate::UiState {
+        interface_language: language,
+        dialog,
+        start_tab,
+        recent_files,
+        shortcuts,
+        last_lisp_dir,
+        last_pgp_dir,
+        ..Default::default()
+    };
+    // Where the host has no native menu bar the in-window one is the only menu: the reset must
+    // leave it in place (#1240).
+    app.ui.in_window_menu = !app.native_menus;
     app.ui.system_cursor = app.system_cursor_default;
-    app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
 }
 

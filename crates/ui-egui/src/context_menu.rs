@@ -1,6 +1,7 @@
 //! The canvas's right-click menus, after AutoCAD's shortcut menus:
 //!
-//! - **No command running** ([`entries`]): Repeat the last command, Recent Commands, the
+//! - **No command running** ([`entries`], opened by holding the button: a quick right-click is
+//!   Enter, which repeats the last command): Repeat the last command, Recent Commands, the
 //!   Clipboard and Isolate; with a selection the editing commands, Draw Order, Group, the edit
 //!   commands of the selected object type, Select Similar and Deselect All; then Undo/Redo,
 //!   Pan/Zoom, Quick Select, Find, Properties and Options.
@@ -10,8 +11,8 @@
 //!   Preferences ▸ Right-Click Customization sets how long, `rightClickDuration`). With that turned
 //!   off (`timeSensitiveRightClick`), Command mode says what a right-click does
 //!   (`rightClickCommand`: the menu, Enter, or the menu only when the prompt has options).
-//!   `rightClickDefault` and `rightClickEdit` can make a right-click with no command running
-//!   repeat the last command instead of opening the menu.
+//!   With it off, `rightClickDefault` and `rightClickEdit` can make a right-click with no command
+//!   running repeat the last command instead of opening the menu.
 //! - **Shift/Ctrl+right-click** ([`snap_entries`]): the object snap menu. Its items type the point
 //!   modifiers and snap overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
 //!
@@ -387,13 +388,16 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
-    // Right-Click Customization: with nothing selected (Default mode) or a selection (Edit mode),
-    // a right-click may repeat the last command instead of opening the menu. With no last command
-    // yet, it opens the menu.
+    // Right-Click Customization: with the time-sensitive right-click off and nothing selected
+    // (Default mode) or a selection (Edit mode), a right-click may repeat the last command instead
+    // of opening the menu. With no last command yet, it opens the menu. With the time-sensitive
+    // right-click on, a quick click is already Enter ([`in_command`]) and a longer one is this
+    // menu, as in AutoCAD.
     let o = &app.options;
     let mode =
         if o.right_click_default == o.right_click_edit || app.session.selection().is_empty() { o.right_click_default } else { o.right_click_edit };
     if !snap
+        && !o.time_sensitive_right_click
         && mode == crate::options::IdleClick::Repeat
         && let Some(last) = app.session.last_command.clone()
     {
@@ -417,13 +421,15 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
 #[derive(Clone, Copy, Default)]
 struct Press(f64, egui::Pos2);
 
-/// The canvas's right button while a command runs (Shift/Ctrl+right-click is the snap menu's): a
-/// quick click is Enter — returns `true` when the caller should send it — and a click held for
-/// OPTIONS `rightClickDuration` opens the command menu ([`command_entries`]) at the pointer. With
-/// the time-sensitive right-click turned off, `rightClickCommand` says whether a click opens the
-/// menu or is Enter. Call it every frame
-/// with whether the pointer is on the canvas and whether a right-click ended there; it also shows
-/// the menu while it is open.
+/// The canvas's right button (Shift/Ctrl+right-click is the snap menu's). With the time-sensitive
+/// right-click on, a quick click is Enter — returns `true` when the caller should send it; between
+/// commands that runs what was typed or repeats the last command — and while a command runs a
+/// click held for OPTIONS `rightClickDuration` opens the command menu ([`command_entries`]) at the
+/// pointer (between commands a held click is left to the caller's shortcut menu). With it turned
+/// off, `rightClickCommand` says whether a click while a command runs opens the menu or is Enter,
+/// and between commands the caller follows `rightClickDefault` and `rightClickEdit`. Call it every
+/// frame with whether the pointer is on the canvas and whether a right-click ended there; it also
+/// shows the menu while it is open.
 pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool) -> bool {
     let ctx = ui.ctx().clone();
     let press_id = egui::Id::unique("cc_command_menu_press");
@@ -448,15 +454,21 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
     };
     let hold = f64::from(o.right_click_hold_ms) / 1000.0;
     let mut open = false;
+    let mut quick = false;
     if released && let Some(Press(t0, p0)) = ctx.data_mut(|d| d.remove_temp::<Press>(press_id)) {
         // A drag isn't a click; a click held long enough asks for the menu.
         let still = pos.is_some_and(|p| p.distance(p0) <= 6.0);
         let held = if timed { now - t0 >= hold } else { menu };
         open = running && still && held;
+        quick = !held;
     }
     let enter = running && inside && right_clicked && !open && (timed || !menu);
     if !running {
-        return false;
+        // Between commands a quick click is Enter too (as in AutoCAD): it runs the typed command,
+        // or repeats the last one; held, it opens the shortcut menu. A grip with options keeps
+        // its menu.
+        let something = !app.cmd.buffer.trim().is_empty() || app.session.last_command.is_some();
+        return timed && quick && inside && right_clicked && !app.canvas.snap_menu && app.canvas.grip_menu.is_none() && something;
     }
     let mut clicked = None;
     let popup = egui::Popup::new(popup_id, ctx, egui::PopupAnchor::PointerFixed, ui.layer_id())
