@@ -620,7 +620,8 @@ impl Session {
         let st = self.state_mut()?;
         let v = st.view();
         let scale = px / v.height;
-        st.set_view_quiet(View { center: v.center - Vec2::new(dx / scale, -dy / scale), height: v.height });
+        // A twisted view (DVIEW TWist) turns the screen drag into the drawing's axes.
+        st.set_view_quiet(View { center: v.center - Vec2::new(dx / scale, -dy / scale).rotate(-v.twist), ..v });
         self.touch();
         Ok(())
     }

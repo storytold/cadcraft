@@ -174,8 +174,23 @@ fn pan_realtime_drags_and_enter_ends() {
         s.realtime_pan(80.0, -40.0).unwrap();
         assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0));
         s.execute("zoom.previous", &json!({})).unwrap();
-        assert_eq!(view(&s), View { center: Vec2::ZERO, height: 100.0 });
+        assert_eq!(view(&s), View { center: Vec2::ZERO, height: 100.0, twist: 0.0 });
     }
+}
+
+#[test]
+fn pan_realtime_in_a_twisted_view_moves_the_drawing_with_the_cursor() {
+    // A view twisted a quarter turn (DVIEW TWist) shows the drawing's -Y to the right: a drag
+    // 80 px right moves the drawing with it, so the centre moves 10 units up the drawing's Y.
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    s.state_mut().unwrap().set_view_quiet(View { center: Vec2::ZERO, height: 100.0, twist: std::f64::consts::FRAC_PI_2 });
+    typed(&mut s, &["pan"]);
+    assert!(s.realtime_pan_active(), "{}", s.prompt_text());
+    s.realtime_pan(80.0, 0.0).unwrap();
+    let v = view(&s);
+    assert!(close(v.center.x, 0.0) && close(v.center.y, 10.0), "{v:?}");
+    assert!(close(v.twist, std::f64::consts::FRAC_PI_2), "the pan kept the twist: {v:?}");
 }
 
 #[test]
