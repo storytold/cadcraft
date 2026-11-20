@@ -33,7 +33,8 @@ pub(super) enum Include {
 /// Font directories in priority order, without duplicates: the user's XDG font directories,
 /// `$XDG_DATA_DIRS/fonts` (`/usr/local/share/fonts` and `/usr/share/fonts` whether listed or
 /// not), Flatpak's host font mounts, then the `<dir>` entries of fontconfig's configuration
-/// (`$FONTCONFIG_FILE`, else `/etc/fonts/fonts.conf`, following its `<include>`s). `env` reads an
+/// (`$FONTCONFIG_FILE`, else `fonts.conf` in the configuration path, following its `<include>`s;
+/// as in fontconfig, the path is `$FONTCONFIG_PATH`'s directories then `/etc/fonts`). `env` reads an
 /// environment variable, `read` a configuration file or directory (`None` when missing).
 pub(super) fn font_dirs(env: impl Fn(&str) -> Option<OsString>, read: impl Fn(&Path) -> Option<Include>) -> Vec<PathBuf> {
     let var = |k: &str| env(k).filter(|v| !v.is_empty());
@@ -46,19 +47,15 @@ pub(super) fn font_dirs(env: impl Fn(&str) -> Option<OsString>, read: impl Fn(&P
     let mut user: Vec<PathBuf> = data_home.iter().map(|d| d.join("fonts")).chain(home.iter().map(|h| h.join(".fonts"))).collect();
     user.extend(list("XDG_DATA_DIRS", "/usr/local/share:/usr/share").into_iter().map(|d| d.join("fonts")));
     user.extend(["/usr/local/share/fonts", "/usr/share/fonts"].iter().chain(FLATPAK_FONT_DIRS).map(PathBuf::from));
-    let mut r = Resolver {
-        home,
-        data_home,
-        config_home,
-        config_path: list("FONTCONFIG_PATH", "/etc/fonts"),
-        read: &read,
-        out: Vec::new(),
-        visited: HashSet::new(),
-    };
+    let mut config_path = list("FONTCONFIG_PATH", "/etc/fonts");
+    if !config_path.iter().any(|p| p == Path::new("/etc/fonts")) {
+        config_path.push(PathBuf::from("/etc/fonts"));
+    }
+    let mut r = Resolver { home, data_home, config_home, config_path, read: &read, out: Vec::new(), visited: HashSet::new() };
     for d in user {
         r.add(d);
     }
-    r.include(&var("FONTCONFIG_FILE").map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "/etc/fonts/fonts.conf".into()), None, 0);
+    r.include(&var("FONTCONFIG_FILE").map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "fonts.conf".into()), None, 0);
     r.out
 }
 
@@ -66,7 +63,8 @@ struct Resolver<'a> {
     home: Option<PathBuf>,
     data_home: Option<PathBuf>,
     config_home: Option<PathBuf>,
-    /// Where a relative `<include>` name is looked up: `$FONTCONFIG_PATH`, else `/etc/fonts`.
+    /// Where a relative top-level name is looked up: `$FONTCONFIG_PATH`'s directories, then
+    /// `/etc/fonts`.
     config_path: Vec<PathBuf>,
     read: &'a dyn Fn(&Path) -> Option<Include>,
     out: Vec<PathBuf>,
@@ -372,6 +370,20 @@ mod tests {
         let d = font_dirs(env_of(&[("FONTCONFIG_FILE", "/cfg/custom.conf")]), reader(&files, &[]));
         assert_eq!(d.last(), Some(&PathBuf::from("/custom/fonts")));
         assert_eq!(font_dirs(env_of(&[("FONTCONFIG_FILE", "/cfg/missing.conf")]), reader(&files, &[])), paths(XDG));
+    }
+
+    #[test]
+    fn fontconfig_path_names_the_default_configuration() {
+        // FONTCONFIG_PATH alone: its fonts.conf is the configuration, and /etc/fonts still
+        // follows it in the path, as in fontconfig.
+        let files = [
+            ("/cfg/fonts.conf", "<fontconfig><dir>/cfg/fonts</dir></fontconfig>"),
+            ("/etc/fonts/fonts.conf", "<fontconfig><dir>/etc/listed</dir></fontconfig>"),
+        ];
+        let d = font_dirs(env_of(&[("FONTCONFIG_PATH", "/nowhere:/cfg")]), reader(&files, &[]));
+        assert_eq!(d.last(), Some(&PathBuf::from("/cfg/fonts")), "{d:?}");
+        let d = font_dirs(env_of(&[("FONTCONFIG_PATH", "/nowhere")]), reader(&files, &[]));
+        assert_eq!(d.last(), Some(&PathBuf::from("/etc/listed")), "{d:?}");
     }
 
     #[test]
