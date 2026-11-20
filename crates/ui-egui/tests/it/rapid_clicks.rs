@@ -88,11 +88,12 @@ fn a_click_made_while_the_mouse_moves_still_places_the_point() {
     let down = screen(&h, Vec2::new(40.0, 10.0));
     button(&mut h, down, true);
     h.run_steps(1);
-    // The hand is already on its way to the next point when the button comes up.
+    // The hand is already on its way to the next point when the button comes up; the point is
+    // where the button went down (#1001), not where the hand got to.
     let up = down + vec2(12.0, 0.0);
     button(&mut h, up, false);
     h.run_steps(2);
     let got = lines(&h);
     assert_eq!(got.len(), 1, "{got:?}");
-    assert!(got[0].1.near(h.state().canvas.xf.unwrap().to_world(up), 1e-4), "{got:?}");
+    assert!(got[0].1.near(h.state().canvas.xf.unwrap().to_world(down), 1e-4), "{got:?}");
 }
