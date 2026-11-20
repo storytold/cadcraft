@@ -128,7 +128,7 @@ and the beta checklist are in [docs/roadmap.md](docs/roadmap.md).
 - Input feels like AutoCAD for Windows: the fixes for clicks while the mouse moves, right-click and
   Space as Enter, and double-click text editing landed (#3307, #3345); waiting for the reporters to
   confirm, and table cells are left (#842).
-- The prompt options that still say "not available yet", and TRIM/EXTEND depth.
+- The prompt options that still say "not available yet" (gaps F1).
 - Layouts print at scale on a system printer (#3216); the menu bar and panels can be restored since
   #3308.
 - 661 pull requests are open (2026-11-20; 714 the day before). About 230 were mergeable, passed CI and were small; they are
