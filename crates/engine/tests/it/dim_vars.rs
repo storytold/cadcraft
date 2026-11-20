@@ -101,6 +101,22 @@ fn new_variables_are_style_overrides_and_read_back() {
 }
 
 #[test]
+fn setvar_dimension_variables_are_saved_with_the_drawing() {
+    // DIMSCALE was kept and DIMTIH, DIMDEC and DIMTAD were not (#3100).
+    let mut s = Session::new();
+    for (name, v) in [("DIMSCALE", json!(2.5)), ("DIMTIH", json!(0)), ("DIMDEC", json!(2)), ("DIMTAD", json!(1))] {
+        set(&mut s, name, v);
+    }
+    let want = s.doc().unwrap().dim_overrides();
+    for file in ["out.dxf", "out.dwg"] {
+        let bytes = cadcraft_io::write(s.doc().unwrap(), file).unwrap();
+        let back = cadcraft_io::read(&bytes, file).unwrap();
+        assert_eq!(back.dim_overrides(), want, "{file}");
+        assert_eq!(back.header.get("DIMTAD").and_then(|h| h.as_i64()), Some(1), "{file}");
+    }
+}
+
+#[test]
 fn text_fill_variables_are_style_overrides() {
     let mut s = Session::new();
     set(&mut s, "DIMTFILL", json!(2));
