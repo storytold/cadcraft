@@ -277,6 +277,163 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+// ---------- a fixture TrueType font, made here: no font file, no installed font ----------
+
+fn be16(v: &mut Vec<u8>, x: u16) {
+    v.extend_from_slice(&x.to_be_bytes());
+}
+
+fn be32(v: &mut Vec<u8>, x: u32) {
+    v.extend_from_slice(&x.to_be_bytes());
+}
+
+/// One simple glyph: closed contours of on-curve points, with the box the file records for it.
+fn simple_glyph(contours: &[Vec<(i16, i16)>]) -> Vec<u8> {
+    let points: Vec<(i16, i16)> = contours.iter().flatten().copied().collect();
+    let mut g = Vec::new();
+    be16(&mut g, contours.len() as u16);
+    let box_ = points.iter().fold((i16::MAX, i16::MAX, i16::MIN, i16::MIN), |b, p| (b.0.min(p.0), b.1.min(p.1), b.2.max(p.0), b.3.max(p.1)));
+    for v in [box_.0, box_.1, box_.2, box_.3] {
+        be16(&mut g, v as u16);
+    }
+    let mut end = 0u16;
+    for c in contours {
+        end = end.saturating_add(c.len() as u16);
+        be16(&mut g, end.saturating_sub(1));
+    }
+    be16(&mut g, 0);
+    g.extend(std::iter::repeat_n(1u8, points.len()));
+    let (mut px, mut py) = (0i16, 0i16);
+    for (x, _) in &points {
+        be16(&mut g, x.wrapping_sub(px) as u16);
+        px = *x;
+    }
+    for (_, y) in &points {
+        be16(&mut g, y.wrapping_sub(py) as u16);
+        py = *y;
+    }
+    while g.len() % 4 != 0 {
+        g.push(0);
+    }
+    g
+}
+
+/// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
+fn ring(rx: f64, ry: f64, points: usize, clockwise: bool) -> Vec<(i16, i16)> {
+    let dir = if clockwise { -1.0 } else { 1.0 };
+    (0..points)
+        .map(|i| {
+            (
+                (500.0 + rx * (dir * std::f64::consts::TAU * i as f64 / points as f64).cos()) as i16,
+                (350.0 + ry * (dir * std::f64::consts::TAU * i as f64 / points as f64).sin()) as i16,
+            )
+        })
+        .collect()
+}
+
+/// A TrueType font whose only glyph, "O", is a 128-point ring: the flattened outline a real font's
+/// curve gives, at the same scale, with plenty of detail to simplify. It is built in code so the
+/// level-of-detail test needs no installed font and no font file in the repository (#651).
+fn fixture_font() -> &'static str {
+    const NAME: &str = "cadcraft-render-lod.ttf";
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| cadcraft_fonts::ttf::register(NAME, fixture_font_bytes()));
+    NAME
+}
+
+fn fixture_font_bytes() -> Vec<u8> {
+    let mut glyf = Vec::new();
+    let mut loca = Vec::new();
+    be32(&mut loca, 0); // .notdef: no contours
+    be32(&mut loca, 0);
+    glyf.extend_from_slice(&simple_glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)]));
+    be32(&mut loca, glyf.len() as u32);
+    let mut head = Vec::new();
+    be32(&mut head, 0x0001_0000);
+    be32(&mut head, 0x0001_0000);
+    be32(&mut head, 0);
+    be32(&mut head, 0x5F0F_3CF5);
+    be16(&mut head, 0);
+    be16(&mut head, 1000);
+    head.extend_from_slice(&[0; 16]);
+    for v in [0i16, 0, 1000, 700] {
+        be16(&mut head, v as u16);
+    }
+    for v in [0u16, 8, 2, 1, 0] {
+        be16(&mut head, v);
+    }
+    let mut hhea = Vec::new();
+    be32(&mut hhea, 0x0001_0000);
+    for v in [800i16, -200, 0, 1000, 0, 0, 1000, 1, 0, 0, 0, 0, 0, 0, 0] {
+        be16(&mut hhea, v as u16);
+    }
+    be16(&mut hhea, 2);
+    let mut maxp = Vec::new();
+    be32(&mut maxp, 0x0001_0000);
+    for v in [2u16, 256, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0] {
+        be16(&mut maxp, v);
+    }
+    let mut hmtx = Vec::new();
+    for _ in 0..2 {
+        be16(&mut hmtx, 1000);
+        be16(&mut hmtx, 0);
+    }
+    // cmap: format 4, 'O' → glyph 1.
+    let mut sub = Vec::new();
+    let segs: [(u16, u16, u16); 2] = [(0x4F, 0x4F, 1u16.wrapping_sub(0x4F)), (0xFFFF, 0xFFFF, 1)];
+    be16(&mut sub, 4);
+    be16(&mut sub, (16 + segs.len() * 8) as u16);
+    be16(&mut sub, 0);
+    be16(&mut sub, (segs.len() * 2) as u16);
+    for v in [4u16, 1, 0] {
+        be16(&mut sub, v);
+    }
+    for s in segs {
+        be16(&mut sub, s.1);
+    }
+    be16(&mut sub, 0);
+    for s in segs {
+        be16(&mut sub, s.0);
+    }
+    for s in segs {
+        be16(&mut sub, s.2);
+    }
+    for _ in segs {
+        be16(&mut sub, 0);
+    }
+    let mut cmap = Vec::new();
+    for v in [0u16, 1, 3, 1] {
+        be16(&mut cmap, v);
+    }
+    be32(&mut cmap, 12);
+    cmap.extend_from_slice(&sub);
+    let mut os2 = vec![0u8; 78];
+    os2[8..10].copy_from_slice(&0u16.to_be_bytes());
+    let mut tables: Vec<(&[u8; 4], Vec<u8>)> =
+        vec![(b"OS/2", os2), (b"cmap", cmap), (b"glyf", glyf), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"loca", loca), (b"maxp", maxp)];
+    tables.sort_by_key(|t| *t.0);
+    let mut out = Vec::new();
+    be32(&mut out, 0x0001_0000);
+    for v in [tables.len() as u16, 128, 3, tables.len() as u16 * 16 - 128] {
+        be16(&mut out, v);
+    }
+    let mut off = 12 + 16 * tables.len();
+    for (t, d) in &tables {
+        out.extend_from_slice(*t);
+        be32(&mut out, 0);
+        be32(&mut out, off as u32);
+        be32(&mut out, d.len() as u32);
+        off += d.len().div_ceil(4) * 4;
+    }
+    for (_, d) in &tables {
+        out.extend_from_slice(d);
+        while out.len() % 4 != 0 {
+            out.push(0);
+        }
+    }
+    out
+}
+
 #[test]
 fn truetype_text_is_filled_or_outlined() {
     let Some(font) = system_font() else { return };
@@ -296,6 +453,31 @@ fn truetype_text_is_filled_or_outlined() {
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().all(|p| p.kind == Kind::Polyline), "TEXTFILL=0 outlines");
     assert!(l.prims.len() >= 3, "O has two contours, H one");
+}
+
+// Regression test for #651: filled TrueType text was triangulated at full outline detail at every
+// zoom, so a page of small text on screen produced millions of triangles and froze the canvas.
+#[test]
+fn small_filled_text_on_screen_is_simplified_but_plots_keep_full_detail() {
+    let d = text_doc(fixture_font(), "OOOO");
+    let tris = |l: &DisplayList| l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p).len() / 3).sum::<usize>();
+    let plot = build_plot(&d, &Space::Model, &Options::default());
+    let full = tris(&plot);
+    assert!(full > 100, "a plot keeps every point of the 128-point rings: {full} triangles");
+    // One pixel is a tenth of the cap height: the rings are simplified to a few points, the shapes
+    // stay.
+    let reduced = build(&d, &Space::Model, &screen(0.1, None));
+    assert!(tris(&reduced) < full / 2, "{} triangles at 10 px per cap height, {full} in a plot", tris(&reduced));
+    assert!(tris(&reduced) > 0 && reduced.bounds.width() > plot.bounds.width() * 0.9, "{:?} vs {:?}", reduced.bounds, plot.bounds);
+    // An em under two pixels is drawn as the ink's box: two triangles a glyph, same extent.
+    let tiny = build(&d, &Space::Model, &screen(2.0, None));
+    assert_eq!(tris(&tiny), 2 * 4, "one box per glyph");
+    assert!(
+        tiny.bounds.width() > plot.bounds.width() * 0.9 && tiny.bounds.height() > plot.bounds.height() * 0.9,
+        "{:?} vs {:?}",
+        tiny.bounds,
+        plot.bounds
+    );
 }
 
 #[test]
