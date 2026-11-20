@@ -553,7 +553,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "he", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -730,5 +730,77 @@ fn polish_plural_forms() {
     for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
     {
         assert_eq!(plural_pl(n), expected, "n={n}");
+    }
+}
+
+/// The partial Hebrew UI catalog retains exact English keys, placeholders, and locale IDs.
+#[test]
+fn hebrew_language_catalog_and_preference_roundtrip() {
+    assert_eq!(Preference::parse("he"), Some(Preference::Hebrew));
+    assert_eq!(Preference::Hebrew.name(), "עברית");
+    assert_eq!(Preference::Hebrew.resolve(&[]), "he");
+    assert_eq!(Preference::restore(Some("he")), Preference::Hebrew);
+    assert_eq!(locale_language("he-IL"), Some("he"));
+    assert_eq!(tr("he", "Block Editor"), "עורך בלוקים");
+    assert_eq!(tr("he", "Layer Properties Manager"), "מנהל מאפייני שכבות");
+    assert_eq!(tr("he", "File"), "קובץ");
+    assert_eq!(tr("he", "Edit"), "עריכה");
+    assert_eq!(tr("he", "Save"), "שמור");
+    assert_eq!(tr("he", "Open..."), "פתח...");
+    assert_eq!(tr("he", "Select All"), "בחר הכול");
+    let source = "Layers displayed: {shown} of {total}.   Current layer: {layer}";
+    assert_eq!(placeholders(source), placeholders(tr("he", source)));
+    assert_eq!(tr("he", "A new untranslated feature"), "A new untranslated feature");
+    for (n, category) in [(0, 2), (1, 0), (2, 1), (3, 2), (10, 2), (20, 2), (101, 2)] {
+        assert_eq!(plural_he(n), category);
+    }
+}
+
+#[test]
+fn hebrew_night04_cadcraft_source_critical_messages() {
+    for source in [
+        "Degrees of freedom: {n}",
+        "Version {version}",
+        "{alias} is already defined; select it and use Edit.",
+        "{command} is an unknown command.",
+        "{contributors} · {commits}",
+        "{count} more types",
+        "{kind} (constraint {id})",
+        "{kind} constraint {name} = {expression}  (double-click to edit)",
+        "{n} more warnings; see the command line.",
+        "Alias file: {file}",
+        "Boundaries picked: {n}",
+        "Changed: {n}",
+        "contains authoring elements. Open in Block Editor?",
+        "Current: {color}",
+        "Importing a file replaces your {n} aliases, and any changes not applied yet.",
+        "Layout {name}: {table}",
+        "More than {n} aliases.",
+        "None",
+        "Not a number or distance: {text}",
+        "Only in {name}: {n}",
+        "Only in this drawing: {n}",
+        "Origin: {x}, {y}",
+        "Polar: {distance} < {angle}°",
+        "References: {n}",
+        "Repeat {command}",
+        "Replaces the shortcut of {commands}",
+        "Save cancelled: {path} was not changed.",
+        "Save changes to {name}?",
+        "Save changes to block \"{name}\"?",
+        "Saving {name} will remove content",
+        "Scale List...",
+        "The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.",
+        "The current file is kept as {name} until the next save.",
+        "This drawing",
+        "This format can't keep these objects yet: {objects}.",
+        "Type something to find",
+        "Viewport {id}",
+    ] {
+        let translated = tr("he", source);
+        assert_ne!(translated, source, "English fallback: {source}");
+        assert_eq!(placeholders(source), placeholders(translated), "placeholders: {source}");
+        assert!(translated.chars().any(|c| ('א'..='ת').contains(&c)), "Hebrew missing: {source}");
+        assert_eq!(tr("en", source), source, "English changed: {source}");
     }
 }
