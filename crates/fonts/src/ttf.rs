@@ -1103,14 +1103,15 @@ fn cap_height_overrides() -> &'static HashMap<String, f64> {
     OVERRIDES.get_or_init(|| parse_cap_height_overrides(&std::env::var("CADCRAFT_CAP_HEIGHT").unwrap_or_default()))
 }
 
-/// Parse a `Name=height;…` list; entries without a name or with a non-positive or non-finite
-/// height are dropped. Names are matched normalised, like family names.
+/// Parse a `Name=height;…` list; entries without a name or with a height below 1 unit or not
+/// finite are dropped (a font's own cap height is never taken below 1 either: a tiny one would
+/// scale its glyphs past any drawing's extent). Names are matched normalised, like family names.
 fn parse_cap_height_overrides(spec: &str) -> HashMap<String, f64> {
     spec.split(';')
         .filter_map(|entry| {
             let (name, height) = entry.split_once('=')?;
             let height: f64 = height.trim().parse().ok()?;
-            (height.is_finite() && height > 0.0 && !name.trim().is_empty()).then(|| (norm(name.trim()), height))
+            (height.is_finite() && height >= 1.0 && !name.trim().is_empty()).then(|| (norm(name.trim()), height))
         })
         .collect()
 }
@@ -1477,6 +1478,10 @@ mod cap_height_override_tests {
             "entries without a name or a positive finite height are dropped"
         );
         assert!(parse_cap_height_overrides("").is_empty());
+        assert!(
+            parse_cap_height_overrides("Arial=0.0001;Arial=1e-300").is_empty(),
+            "a height below 1 unit is dropped, as `cap_height` never goes below 1"
+        );
     }
 
     #[test]

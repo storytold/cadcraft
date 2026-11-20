@@ -41,7 +41,7 @@ metric-compatible substitute font is scaled by, so text on a substitute keeps th
 font it stands in for (`LiberationSans=715.8;LiberationSans-Bold=715.8`; each entry names the
 substitute's PostScript name and the cap height to give it, in font units at 1000 units per em —
 the cap height of the font it replaces, not the substitute's own; entries without a name or with
-a non-positive or non-finite height are dropped). It is a packaging hook for installations whose
+a height below 1 or not finite are dropped). It is a packaging hook for installations whose
 substitutes lack the original's OS/2 cap height, and applies to every subcommand.
 
 ## Not followed yet
