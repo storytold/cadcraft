@@ -114,7 +114,7 @@ impl SnapCurve {
     }
     /// Points on the curve whose perpendicular passes through `p`; `picked` is where the curve
     /// was picked, kept when `p` is the center of a circle or arc (every radius is perpendicular).
-    fn perpendiculars(&self, p: Vec2, picked: Vec2) -> Vec<Vec2> {
+    pub(crate) fn perpendiculars(&self, p: Vec2, picked: Vec2) -> Vec<Vec2> {
         match self {
             SnapCurve::Circle { center, radius } | SnapCurve::Arc { center, radius, .. } => {
                 let u = (p - *center).normalized();
@@ -206,7 +206,10 @@ fn prim_segments(p: &Prim) -> Vec<Segment> {
 /// Tangent and perpendicular snaps need the base point (the other end of the line). With no
 /// base and `deferred` set (the prompt says it can resolve them, `Prompt.deferred`),
 /// they snap as *deferred*: the hit carries the curve and is resolved once the other end is
-/// known. Deferred hits only win where no other snap does (they are as unspecific as Nearest).
+/// known. With a base and `deferred` set, tangents to circles and circular arcs are deferred too
+/// (CIRCLE's radius: the circle around the base that touches the curve, #1512); an elliptical arc
+/// or a spline keeps its ordinary tangent from the base. Deferred hits only win
+/// where no other snap does (they are as unspecific as Nearest).
 pub fn osnap(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Option<SnapHit> {
     if osmode == 0 || osmode & mode::OFF != 0 {
         return None;
@@ -572,7 +575,7 @@ fn finish(
     deferred: bool,
     clip: Option<Bounds2>,
 ) -> Option<(SnapHit, Rank)> {
-    let from_base = base_snaps(near_prims, osmode, base, cursor);
+    let from_base = base_snaps(near_prims, osmode, base, cursor, deferred);
     cands.extend(from_base.iter().map(|f| (f.mode, f.point)));
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
     // Prefer more specific modes when nearly equidistant.
@@ -602,10 +605,9 @@ fn finish(
         (Some(h), None) | (None, Some(h)) => return Some(h),
         (None, None) => {}
     }
-    if base.is_none()
-        && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
-    {
+    // With a base, perpendiculars are resolved from it above; only tangents are left to defer.
+    let deferrable = if base.is_some() { osmode & mode::TAN } else { osmode };
+    if deferred && let Some(h) = deferred_hit(near_prims, cursor, aperture, deferrable, clip) {
         let score = h.point.dist(cursor);
         return Some((h, Rank { tier: 2, score }));
     }
@@ -634,7 +636,7 @@ fn finish_all(
     deferred: bool,
     clip: Option<Bounds2>,
 ) -> Vec<(SnapHit, Rank)> {
-    let from_base = base_snaps(near_prims, osmode, base, cursor);
+    let from_base = base_snaps(near_prims, osmode, base, cursor, deferred);
     cands.extend(from_base.iter().map(|f| (f.mode, f.point)));
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
     let mut out: Vec<(SnapHit, Rank)> = cands
@@ -653,10 +655,8 @@ fn finish_all(
             .filter(|(_, c)| visible(*c))
             .map(|(score, c)| (SnapHit::plain(mode::CEN, c), Rank { tier: 1, score })),
     );
-    if base.is_none()
-        && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
-    {
+    let deferrable = if base.is_some() { osmode & mode::TAN } else { osmode };
+    if deferred && let Some(h) = deferred_hit(near_prims, cursor, aperture, deferrable, clip) {
         let score = h.point.dist(cursor);
         out.push((h, Rank { tier: 2, score }));
     }
@@ -686,8 +686,9 @@ fn nearest_points(near_prims: &[Prim], cursor: Vec2, aperture: f64, clip: Option
 }
 
 /// The perpendicular and tangent points from the base point `base` (none without one), each
-/// with the index in `near_prims` of the object it lies on.
-fn base_snaps(near_prims: &[Prim], osmode: u32, base: Option<Vec2>, cursor: Vec2) -> Vec<FromBase> {
+/// with the index in `near_prims` of the object it lies on. At a `deferred` prompt the tangents to
+/// circles and arcs are left out: the prompt resolves them itself (CIRCLE's radius, #1512).
+fn base_snaps(near_prims: &[Prim], osmode: u32, base: Option<Vec2>, cursor: Vec2, deferred: bool) -> Vec<FromBase> {
     let mut from_base: Vec<FromBase> = Vec::new();
     let Some(bp) = base else { return from_base };
     for (prim, p) in near_prims.iter().enumerate() {
@@ -713,6 +714,8 @@ fn base_snaps(near_prims: &[Prim], osmode: u32, base: Option<Vec2>, cursor: Vec2
         }
         if osmode & mode::TAN != 0 {
             let pts = match p {
+                // A deferred prompt resolves tangents to circles and arcs itself.
+                Prim::Seg(Segment::Arc { .. }) | Prim::Circle(_) if deferred => Vec::new(),
                 // Only the tangent points that lie on the arc itself (not its circle).
                 Prim::Seg(Segment::Arc { arc, .. }) => Circle::new(arc.center, arc.radius)
                     .tangent_points(bp)
@@ -1497,9 +1500,14 @@ mod tests {
         let df = h.deferred.unwrap();
         assert_eq!(df.curve, SnapCurve::Circle { center: Vec2::new(20.0, 0.0), radius: 2.0 });
         assert_eq!(h.input(), crate::Input::Deferred(df));
-        // With a base it is an ordinary tangent.
-        let t = osnap(&d, &Space::Model, Vec2::new(19.9, 1.9), 1.0, mode::TAN, Some(Vec2::new(10.0, 0.0)), true).unwrap();
+        // With a base it is an ordinary tangent, unless the prompt resolves it (CIRCLE's radius).
+        let t = osnap(&d, &Space::Model, Vec2::new(19.9, 1.9), 1.0, mode::TAN, Some(Vec2::new(10.0, 0.0)), false).unwrap();
         assert!(t.deferred.is_none() && t.name == "Tangent");
+        let t = osnap(&d, &Space::Model, at, 0.5, mode::TAN, Some(Vec2::new(10.0, 0.0)), true).unwrap();
+        assert_eq!(t.name, "Deferred Tangent");
+        // A perpendicular from the base is still resolved from it.
+        let p = osnap(&d, &Space::Model, Vec2::new(2.0, 0.2), 0.5, mode::PER, Some(Vec2::new(2.0, 5.0)), true).unwrap();
+        assert!(p.deferred.is_none() && p.point.near(Vec2::new(2.0, 0.0), 1e-9));
         // A specific snap still wins over a deferred one.
         let q = osnap(&d, &Space::Model, at, 0.5, mode::TAN | mode::QUA, None, true).unwrap();
         assert_eq!(q.mode, mode::QUA);
