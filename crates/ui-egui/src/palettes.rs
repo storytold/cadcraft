@@ -1457,7 +1457,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // A hatch's or multileader's annotative scaling, after its own rows.
     if let Some(desc) = &desc {
-        described::extra_groups(ui, d, desc, &ids, &mut edit, &mut bad);
+        described::extra_groups(ui, d, desc, ids, &mut edit, &mut bad);
     }
     if described::take_open_scales(ui) {
         crate::objectscale::open(app, &sel);
