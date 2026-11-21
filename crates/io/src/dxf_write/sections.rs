@@ -893,6 +893,44 @@ fn annotative_dimension_blocks(
 }
 
 /// The dimensions' anonymous blocks, and the blocks of each annotative dimension by scale (from
+/// The scales annotative text, MText and dimensions support that the drawing's scale list lacks
+/// (each context names its SCALE object, so they are added to the list written).
+fn missing_anno_scales(d: &Drawing, all_spaces: &[&EntityStore]) -> Vec<cadcraft_doc::AnnoScale> {
+    let mut extra: Vec<cadcraft_doc::AnnoScale> = Vec::new();
+    for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| crate::dxf_anno::has_contexts(e)) {
+        for s in crate::dxf_anno::scales(d, e).0 {
+            let known = |x: &cadcraft_doc::AnnoScale| x.is_valid() && x.name.eq_ignore_ascii_case(&s.name);
+            if !d.scales.iter().any(known) && !extra.iter().any(known) && extra.len() < cadcraft_doc::MAX_SCALES {
+                extra.push(s);
+            }
+        }
+    }
+    extra
+}
+
+/// Plan the annotation scale contexts of annotative text, MText and dimensions: their objects in
+/// `cx.anno`, and the extension dictionaries made for them in `w.xdicts`.
+fn plan_anno_contexts(
+    d: &Drawing,
+    all_spaces: &[&EntityStore],
+    scales: &[(&cadcraft_doc::AnnoScale, String)],
+    anno_dim_blocks: &HashMap<Handle, Vec<String>>,
+    w: &mut W,
+    cx: &mut Ctx,
+) {
+    let scale_handle = |name: &str| scales.iter().find(|(s, _)| s.name.eq_ignore_ascii_case(name)).map(|(_, h)| h.clone());
+    for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| crate::dxf_anno::has_contexts(e)) {
+        let xdict = cx.assoc.get(&e.handle).map(|a| a.xdict.clone());
+        let blocks = anno_dim_blocks.get(&e.handle).map(Vec::as_slice);
+        if let Some(o) = crate::dxf_anno::plan_one(d, e, scale_handle, xdict, blocks, || w.h()) {
+            if o.own_xdict {
+                w.xdicts.insert(e.handle, o.xdict.clone());
+            }
+            cx.anno.objs.insert(e.handle, o);
+        }
+    }
+}
+
 /// AutoCAD 2008, the 2007 format: `contexts`).
 fn dimension_block_definitions(
     d: &Drawing,
@@ -1158,30 +1196,11 @@ pub(super) fn tags_kept_for(
     let scale_dict = w.h();
     // Scales annotative objects support that the list lacks are added to it (each context names
     // its SCALE object).
-    let mut extra_scales: Vec<cadcraft_doc::AnnoScale> = Vec::new();
-    for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| contexts && crate::dxf_anno::has_contexts(e)) {
-        for s in crate::dxf_anno::scales(d, e).0 {
-            let known = |x: &cadcraft_doc::AnnoScale| x.is_valid() && x.name.eq_ignore_ascii_case(&s.name);
-            if !d.scales.iter().any(known) && !extra_scales.iter().any(known) && extra_scales.len() < cadcraft_doc::MAX_SCALES {
-                extra_scales.push(s);
-            }
-        }
-    }
+    let extra_scales = if contexts { missing_anno_scales(d, &all_spaces) } else { Vec::new() };
     let scales: Vec<(&cadcraft_doc::AnnoScale, String)> =
         d.scales.iter().filter(|s| s.is_valid()).chain(extra_scales.iter()).map(|s| (s, w.h())).collect();
-    // The annotation scale contexts of annotative text, MText and dimensions.
     if contexts {
-        let scale_handle = |name: &str| scales.iter().find(|(s, _)| s.name.eq_ignore_ascii_case(name)).map(|(_, h)| h.clone());
-        for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| crate::dxf_anno::has_contexts(e)) {
-            let xdict = cx.assoc.get(&e.handle).map(|a| a.xdict.clone());
-            let blocks = anno_dim_blocks.get(&e.handle).map(Vec::as_slice);
-            if let Some(o) = crate::dxf_anno::plan_one(d, e, scale_handle, xdict, blocks, || w.h()) {
-                if o.own_xdict {
-                    w.xdicts.insert(e.handle, o.xdict.clone());
-                }
-                cx.anno.objs.insert(e.handle, o);
-            }
-        }
+        plan_anno_contexts(d, &all_spaces, &scales, &anno_dim_blocks, &mut w, &mut cx);
     }
     // Plot style names used by layers and objects (Normal always), each a placeholder object; in
     // a drawing of named plot styles also those of the layers of saved layer states, which name
