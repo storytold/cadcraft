@@ -695,7 +695,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     };
     for c in cadcraft_engine::command_specs() {
         if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
+            add(c.menu, c.label, c.id, c.shortcut, crate::clipboard::offered(&app.session, c));
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
@@ -952,6 +952,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.closing.is_some() {
         return;
     }
+    crate::clipboard::pump(app, ctx);
     // A palette toggle is global even while its expression field owns keyboard focus.
     let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
@@ -971,6 +972,10 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     });
     for id in fire {
         let id = id.as_str();
+        if let Some(id) = crate::clipboard::paste_id(id) {
+            crate::clipboard::run_read(app, id);
+            continue;
+        }
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {
