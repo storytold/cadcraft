@@ -96,3 +96,32 @@ fn opening_binary_dxf_keeps_it_binary() {
     assert!(!s.state().unwrap().binary_dxf);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #3213: EXPORT to DXF or DWG takes the same version and binary options; the drawing keeps its
+/// own version and name, and other formats refuse a version.
+#[test]
+fn export_takes_the_version_and_binary_options() {
+    install();
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 5").unwrap();
+    let data = |r: &serde_json::Value| String::from_utf8(base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap();
+
+    let r = s.execute("export", &json!({ "format": "dxf", "version": "2000" })).unwrap();
+    assert_eq!(data(&r), "2000|false");
+    assert_eq!(r["version"], json!("2000"));
+    assert_eq!(acadver(&s).as_deref(), Some("AC1032"), "an export leaves the drawing's version alone");
+    let r = s.execute("export", &json!({ "format": "dwg", "version": 2004 })).unwrap();
+    assert_eq!(data(&r), "2004|false");
+    let r = s.execute("export", &json!({ "format": "dxf", "binary": true })).unwrap();
+    assert_eq!(data(&r), "-|true");
+    // Without options: the plain writer, at the drawing's own version.
+    let r = s.execute("export", &json!({ "format": "dxf" })).unwrap();
+    assert_eq!(data(&r), "plain");
+    assert!(r.get("version").is_none());
+
+    let err = |s: &mut Session, p: serde_json::Value| s.execute("export", &p).unwrap_err().to_string();
+    assert!(err(&mut s, json!({ "format": "svg", "version": "2000" })).contains("DXF and DWG"));
+    assert!(err(&mut s, json!({ "format": "dwg", "binary": true })).contains("DXF"));
+    assert!(err(&mut s, json!({ "format": "dxf", "version": "2005" })).contains("unknown version"));
+    assert!(s.state().unwrap().path.is_none(), "the drawing keeps its name");
+}

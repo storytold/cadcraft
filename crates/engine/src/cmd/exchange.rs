@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension), version?: 2000|2004|2007|2010|2013|2018 (DXF and DWG; default: the drawing's own), binary?: false (DXF only)} → {format, bytes, version? (DXF and DWG), path? | data}")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
@@ -119,7 +119,23 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
     let file = format!("export.{format}");
-    let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
+    // DXF and DWG take SAVEAS's version and binary options; the drawing keeps its own version and
+    // name (an export is not a save).
+    let opts = super::file::save_options("export", p)?;
+    let drawing_format = matches!(format.as_str(), "dxf" | "dwg");
+    if opts.version.is_some() && !drawing_format {
+        return Err(bad("export", "`version` applies to DXF and DWG files only"));
+    }
+    if opts.binary && format != "dxf" {
+        return Err(bad("export", "`binary` applies to DXF files only"));
+    }
+    let bytes = if opts.version.is_some() || opts.binary {
+        let w =
+            super::file::write_as().ok_or_else(|| bad("export", "exporting at a chosen version or as binary DXF is not available in this build"))?;
+        w(s.doc()?, &file, &opts).map_err(|e| bad("export", e))?
+    } else {
+        (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?
+    };
     let folder = path.and_then(super::file::new_folder);
     let mut r = match path {
         Some(path) => {
@@ -128,8 +144,11 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() }),
     };
+    if let (Some(v), Some(o)) = (opts.version, r.as_object_mut()) {
+        o.insert("version".into(), json!(v.year()));
+    }
     super::file::report_new_folder(s, &mut r, folder);
-    super::file::report_loss(s, &mut r, &file);
+    super::file::report_loss(s, &mut r, &file, opts.version);
     Ok(r)
 }
 
