@@ -210,3 +210,35 @@ fn a_crossing_inside_block_text_or_fill_selects_the_reference_and_empty_space_do
     let poly = [Vec2::new(121.0, 100.5), Vec2::new(122.0, 100.5), Vec2::new(122.0, 101.5), Vec2::new(121.0, 101.5)];
     assert_eq!(select_polygon(d, &Space::Model, &poly, true), [h], "a crossing polygon inside the text");
 }
+
+/// A block reference's fills (SOLIDs, TRACEs, solid hatches, arrowheads), which are drawn
+/// without outlines, are hit on the closed boundary of what they cover: a crossing box over any
+/// edge of a filled triangle selects the reference, and nothing joins one fill to the next.
+#[test]
+fn block_fills_are_hit_on_their_closed_outline() {
+    use cadcraft_engine::doc::{Common, Solid};
+    use cadcraft_engine::geom::Vec3;
+    use cadcraft_engine::select::{hit_polylines, select_window};
+    let mut s = Session::new();
+    let v = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+    let mut solids = Vec::new();
+    for x in [30.0, 50.0] {
+        let corners = [v(x, 0.0), v(x + 10.0, 0.0), v(x, 10.0), v(x, 10.0)];
+        solids.push(s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Solid(Solid { corners })).unwrap().hex());
+    }
+    s.execute("block", &json!({"name": "Fills", "base": [0, 0], "handles": solids})).unwrap();
+    let r = s.execute("insert", &json!({"name": "Fills", "at": [100, 100]})).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    let d = s.doc().unwrap();
+    let polys = hit_polylines(d, d.entity(h).unwrap(), 0.01);
+    assert_eq!(polys.len(), 2, "one outline per fill, none joining them: {polys:?}");
+    for pl in &polys {
+        assert_eq!(pl.first(), pl.last(), "each outline is closed: {pl:?}");
+        assert!(pl.iter().all(|p| p.x <= 140.0 + 1e-9 || p.x >= 150.0 - 1e-9), "no point between the fills: {pl:?}");
+    }
+    let crossing = |x0: f64, y0: f64, x1: f64, y1: f64| select_window(d, &Space::Model, Bounds2::new(Vec2::new(x0, y0), Vec2::new(x1, y1)), true);
+    assert_eq!(crossing(134.0, 99.0, 136.0, 101.0), [h], "over the bottom edge");
+    assert_eq!(crossing(129.0, 104.0, 131.0, 106.0), [h], "over the left edge");
+    assert_eq!(crossing(134.0, 104.0, 136.0, 106.0), [h], "over the slope");
+    assert!(crossing(144.0, 99.0, 146.0, 101.0).is_empty(), "between the fills");
+}

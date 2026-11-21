@@ -34,8 +34,15 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 // Picked on what they draw (their text inside its box, see `in_text`), not on their
                 // bounding box: its edges run through empty space, out to a dimension's definition
                 // points or a block's farthest object. Only something that draws nothing but text
-                // keeps the box.
-                v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
+                // keeps the box. A fill (a SOLID, TRACE, solid hatch or arrowhead) is drawn without
+                // an outline, so it is hit on the closed boundary of what it covers: its triangle
+                // list read as one polyline missed each triangle's closing edge and joined one
+                // triangle to the next through empty space.
+                v = list
+                    .prims
+                    .iter()
+                    .flat_map(|p| if matches!(p.kind, cadcraft_render::Kind::Tris) { list.fill_outlines(p) } else { vec![list.points(p).to_vec()] })
+                    .collect();
                 if v.is_empty() {
                     v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
                 }
