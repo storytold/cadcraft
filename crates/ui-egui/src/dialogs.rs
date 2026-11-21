@@ -12,6 +12,10 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
     crate::line_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
+    // The Annotation Object Scale dialog replaced or closed from elsewhere leaves no state behind.
+    if app.ui.dialog.as_deref() != Some("objectscale") {
+        app.objectscale = None;
+    }
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {
@@ -26,6 +30,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "aliasedit" => crate::aliasdlg::dialog(app, ctx, &mut open),
         "find" => crate::finddlg::dialog(app, ctx, &mut open),
         crate::keys::DIALOG => crate::keys::dialog(app, ctx, &mut open),
+        "objectscale" => crate::objectscale::dialog(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
