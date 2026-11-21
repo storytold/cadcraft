@@ -21,41 +21,45 @@ const MAX_BOX_CHECKS: usize = 50_000_000;
 const MAX_EDGE_PAIRS: usize = 20_000_000;
 /// Sampled points above which a nonzero fill is tessellated without looking for crossings.
 const MAX_TOPOLOGY_POINTS: usize = 1_000_000;
-/// Lyon uses `f32`; work in a local frame and reject spans that would lose useful CAD precision.
-const MAX_LOCAL_SPAN: f64 = 1_000_000.0;
-/// Maximum points used to approximate one bulge arc for topology checks and tessellation.
-const ARC_TOLERANCE: f64 = 0.02;
+/// Lyon uses `f32`; work in a local frame and refuse a fill wider than this many tolerances.
+const MAX_SPAN_OVER_TOLERANCE: f64 = 5.0e7;
+/// Most points one bulge arc is sampled into.
 const MAX_ARC_STEPS: usize = 10_000;
 
 /// Convert PDF boundaries to hatch boundaries that keep the PDF's fill rule.
 ///
-/// `max_vertices` covers sampled input points and output triangle vertices. Even-odd loops and
-/// nonzero loops that don't cross retain their original curves. Crossing nonzero contours are
-/// tessellated into disjoint triangles, each represented by one hatch loop.
-pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices: usize) -> Result<Vec<HatchLoop>, &'static str> {
+/// `max_vertices` covers sampled input points and output triangle vertices. `tolerance` is how far,
+/// in drawing units, a sampled arc may leave the real one. Even-odd loops and nonzero loops that
+/// don't cross retain their original curves. Crossing nonzero contours are tessellated into
+/// disjoint triangles, each represented by one hatch loop.
+pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices: usize, tolerance: f64) -> Result<Vec<HatchLoop>, &'static str> {
     if loops.is_empty() {
         return Ok(loops);
+    }
+    if !tolerance.is_finite() || tolerance <= 0.0 {
+        return Err("PDF fill tolerance is not usable");
     }
     let mut work = 0usize;
     let mut sampled = 0usize;
     let mut polygons = Vec::new();
     for loop_ in &loops {
-        let polygon = flatten_loop(loop_, &mut work, max_vertices.saturating_sub(sampled))?;
+        let polygon = flatten_loop(loop_, tolerance, &mut work, max_vertices.saturating_sub(sampled))?;
         sampled = sampled.checked_add(polygon.len()).ok_or("PDF fill exceeds vertex limit")?;
         polygons.push(polygon);
     }
 
     match rule {
         FillRule::EvenOdd => {
+            let probes: Vec<Vec2> = polygons.iter().map(|p| interior_probe(p)).collect();
             let mut depth = vec![0usize; loops.len()];
-            containment(&polygons, &mut work, |i, _| depth[i] += 1)?;
+            containment(&polygons, &probes, &mut work, |i, _| depth[i] += 1)?;
             for (loop_, depth) in loops.iter_mut().zip(depth) {
                 loop_.outer = depth.is_multiple_of(2);
             }
             Ok(loops)
         }
         FillRule::NonZero if sampled > MAX_TOPOLOGY_POINTS || edges_meet(&polygons).unwrap_or(true) => {
-            tessellate_nonzero(&polygons, sampled, max_vertices)
+            tessellate_nonzero(&polygons, sampled, max_vertices, tolerance)
         }
         FillRule::NonZero => {
             let sign: Vec<i64> = polygons
@@ -65,13 +69,16 @@ pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices:
                     if p.len() < 3 || area == 0.0 { 0 } else { area.signum() as i64 }
                 })
                 .collect();
+            // No two contours meet, so a contour lies inside another exactly when a point of its
+            // own boundary does.
+            let probes: Vec<Vec2> = polygons.iter().map(|p| longest_edge(p).map_or(Vec2::ZERO, |(a, b)| (a + b) * 0.5)).collect();
             // The winding number just inside each contour.
             let mut winding = sign.clone();
-            containment(&polygons, &mut work, |i, j| winding[i] += sign[j])?;
+            containment(&polygons, &probes, &mut work, |i, j| winding[i] += sign[j])?;
             // A contour bounds the fill where the winding number changes between zero and non-zero.
             let keep: Vec<bool> = winding.iter().zip(&sign).map(|(&w, &s)| s != 0 && (w != 0) != (w - s != 0)).collect();
             let mut depth = vec![0usize; loops.len()];
-            containment(&polygons, &mut work, |i, j| {
+            containment(&polygons, &probes, &mut work, |i, j| {
                 if keep[i] && keep[j] {
                     depth[i] += 1;
                 }
@@ -89,9 +96,10 @@ pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices:
     }
 }
 
-fn flatten_loop(loop_: &HatchLoop, work: &mut usize, max_vertices: usize) -> Result<Vec<Vec2>, &'static str> {
+fn flatten_loop(loop_: &HatchLoop, tolerance: f64, work: &mut usize, max_vertices: usize) -> Result<Vec<Vec2>, &'static str> {
     let n = loop_.vertices.len();
-    if n < 3 {
+    // Two vertices enclose an area only through an arc.
+    if n < 2 || (n == 2 && loop_.vertices.iter().all(|v| v.bulge.abs() < 1e-12)) {
         return Ok(Vec::new());
     }
     let mut points = Vec::new();
@@ -120,7 +128,7 @@ fn flatten_loop(loop_: &HatchLoop, work: &mut usize, max_vertices: usize) -> Res
         if !radius.is_finite() {
             return Err("PDF fill contains invalid coordinates");
         }
-        let max_angle = if radius <= ARC_TOLERANCE { std::f64::consts::TAU } else { 2.0 * (1.0 - ARC_TOLERANCE / radius).clamp(-1.0, 1.0).acos() };
+        let max_angle = if radius <= tolerance { std::f64::consts::TAU } else { 2.0 * (1.0 - tolerance / radius).clamp(-1.0, 1.0).acos() };
         let steps = (sweep.abs() / max_angle.max(1e-12)).ceil().max(1.0) as usize;
         if steps > MAX_ARC_STEPS {
             return Err("PDF fill arc exceeds sampling limit");
@@ -149,15 +157,15 @@ fn push_bounded(points: &mut Vec<Vec2>, point: Vec2, max_vertices: usize) -> Res
     Ok(())
 }
 
-/// Call `found(i, j)` for each contour `j` that contains a point just inside contour `i`.
-fn containment(polygons: &[Vec<Vec2>], work: &mut usize, mut found: impl FnMut(usize, usize)) -> Result<(), &'static str> {
+/// Call `found(i, j)` for each contour `j` that contains `probes[i]`, the point standing for contour `i`.
+fn containment(polygons: &[Vec<Vec2>], probes: &[Vec2], work: &mut usize, mut found: impl FnMut(usize, usize)) -> Result<(), &'static str> {
     let boxes: Vec<(Vec2, Vec2)> = polygons.iter().map(|p| bounds(p)).collect();
     let mut checks = 0usize;
     for (i, polygon) in polygons.iter().enumerate() {
         if polygon.len() < 3 {
             continue;
         }
-        let probe = interior_probe(polygon);
+        let probe = probes[i];
         for (j, other) in polygons.iter().enumerate() {
             if i == j || other.len() < 3 {
                 continue;
@@ -279,9 +287,8 @@ fn segments_meet(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
 fn interior_probe(polygon: &[Vec2]) -> Vec2 {
     let area = signed_area(polygon);
     let sign = if area >= 0.0 { 1.0 } else { -1.0 };
-    let longest = polygon.iter().zip(polygon.iter().cycle().skip(1)).take(polygon.len()).max_by(|(a, b), (c, d)| a.dist(**b).total_cmp(&c.dist(**d)));
-    let Some((a, b)) = longest else { return Vec2::ZERO };
-    let edge = *b - *a;
+    let Some((a, b)) = longest_edge(polygon) else { return Vec2::ZERO };
+    let edge = b - a;
     let len = edge.len().max(1e-30);
     let mut epsilon = (len * 1e-6).max(1e-12);
     for _ in 0..32 {
@@ -292,6 +299,15 @@ fn interior_probe(polygon: &[Vec2]) -> Vec2 {
         epsilon *= 0.5;
     }
     Vec2::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
+}
+
+fn longest_edge(polygon: &[Vec2]) -> Option<(Vec2, Vec2)> {
+    polygon
+        .iter()
+        .copied()
+        .zip(polygon.iter().copied().cycle().skip(1))
+        .take(polygon.len())
+        .max_by(|(a, b), (c, d)| a.dist(*b).total_cmp(&c.dist(*d)))
 }
 
 fn signed_area(polygon: &[Vec2]) -> f64 {
@@ -308,13 +324,14 @@ fn contains(polygon: &[Vec2], point: Vec2) -> bool {
     inside
 }
 
-fn tessellate_nonzero(polygons: &[Vec<Vec2>], sampled_vertices: usize, max_vertices: usize) -> Result<Vec<HatchLoop>, &'static str> {
+fn tessellate_nonzero(polygons: &[Vec<Vec2>], sampled_vertices: usize, max_vertices: usize, tolerance: f64) -> Result<Vec<HatchLoop>, &'static str> {
     let Some(origin) = polygons.iter().flatten().next().copied() else { return Ok(Vec::new()) };
     let (min, max) = polygons
         .iter()
         .flatten()
         .fold((origin, origin), |(lo, hi), p| (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y))));
-    if max.x - min.x > MAX_LOCAL_SPAN || max.y - min.y > MAX_LOCAL_SPAN {
+    let span = tolerance * MAX_SPAN_OVER_TOLERANCE;
+    if max.x - min.x > span || max.y - min.y > span {
         return Err("PDF fill is too large for stable vector conversion");
     }
     let mut path = Path::builder();
@@ -407,14 +424,65 @@ mod tests {
         polygon(&points)
     }
 
+    /// The arc tolerance of a drawing in millimetres.
+    const TOL: f64 = 0.02;
+
     fn filled(loops: &[HatchLoop], point: Vec2) -> bool {
         loops.iter().filter(|l| contains(&l.vertices.iter().map(|v| v.p).collect::<Vec<_>>(), point)).count() % 2 == 1
+    }
+
+    /// A circle about the origin as four quarter arcs.
+    fn circle(r: f64, clockwise: bool) -> HatchLoop {
+        let quarter = (std::f64::consts::PI / 8.0).tan();
+        let turn = if clockwise { -1.0 } else { 1.0 };
+        HatchLoop {
+            vertices: [(r, 0.0), (0.0, r * turn), (-r, 0.0), (0.0, -r * turn)]
+                .iter()
+                .map(|&(x, y)| PolyVertex { bulge: quarter * turn, ..PolyVertex::new(Vec2::new(x, y)) })
+                .collect(),
+            outer: false,
+            sources: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_small_circle_keeps_its_curve_when_tessellated_in_a_large_unit() {
+        // A circle of radius 5 mm in a drawing in metres, crossed by a bar so the fill is
+        // tessellated. Its arcs are sampled to the given tolerance, not cut to their four vertices.
+        let r = 0.005;
+        let metres = 0.02 * 25.4 / 72.0 / 1000.0;
+        let bar = square(0.5 * r, -0.2 * r, 2.0 * r, 0.2 * r, false);
+        let result = normalize(vec![circle(r, false), bar], FillRule::NonZero, 100_000, metres).expect("valid contours");
+        assert!(result.len() > 3, "tessellated into triangles");
+        assert!(filled(&result, Vec2::new(0.65 * r, 0.65 * r)), "the arc between two vertices stays filled");
+    }
+
+    #[test]
+    fn a_disc_of_two_half_circles_is_kept() {
+        let half = |x: f64| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(x, 0.0)) };
+        let disc = HatchLoop { vertices: vec![half(-1.0), half(1.0)], outer: false, sources: Vec::new() };
+        for rule in [FillRule::EvenOdd, FillRule::NonZero] {
+            let result = normalize(vec![disc.clone()], rule, 10_000, TOL).expect("valid contour");
+            assert_eq!(result.len(), 1);
+            assert!(result[0].outer);
+            assert_eq!(result[0].vertices, disc.vertices, "the arcs are kept");
+        }
+    }
+
+    #[test]
+    fn nonzero_contour_hugging_its_parents_edge_keeps_the_fill() {
+        // The inner square runs 1e-7 from the outer one's left edge, closer than a point nudged
+        // inside that edge: each contour is placed by a point of its own boundary.
+        let input = vec![square(0.0, 0.0, 10.0, 10.0, false), square(1e-7, 4.0, 1.0, 6.0, false)];
+        let result = normalize(input, FillRule::NonZero, 1000, TOL).expect("valid contours");
+        assert!(filled(&result, Vec2::new(5.0, 5.0)) && filled(&result, Vec2::new(0.5, 5.0)), "{result:?}");
+        assert!(result.iter().all(|l| l.vertices.len() == 4), "kept as drawn, not split into triangles");
     }
 
     #[test]
     fn even_odd_disconnected_contours_are_both_outer() {
         let input = vec![square(0.0, 0.0, 2.0, 2.0, false), square(4.0, 0.0, 6.0, 2.0, false)];
-        let result = normalize(input, FillRule::EvenOdd, 100).expect("valid contours");
+        let result = normalize(input, FillRule::EvenOdd, 100, TOL).expect("valid contours");
         assert!(result.iter().all(|loop_| loop_.outer));
         assert!(filled(&result, Vec2::new(1.0, 1.0)));
         assert!(filled(&result, Vec2::new(5.0, 1.0)));
@@ -422,8 +490,8 @@ mod tests {
 
     #[test]
     fn nonzero_nested_same_direction_contours_keep_the_center_filled() {
-        let result =
-            normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, false)], FillRule::NonZero, 1000).expect("valid contours");
+        let result = normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, false)], FillRule::NonZero, 1000, TOL)
+            .expect("valid contours");
         assert!(filled(&result, Vec2::new(5.0, 5.0)));
         assert!(filled(&result, Vec2::new(1.0, 1.0)));
         assert!(result.iter().all(|l| l.vertices.len() == 4), "the outer square is kept, not split into triangles");
@@ -431,8 +499,8 @@ mod tests {
 
     #[test]
     fn nonzero_nested_opposite_direction_contours_leave_a_hole() {
-        let result =
-            normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, true)], FillRule::NonZero, 1000).expect("valid contours");
+        let result = normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, true)], FillRule::NonZero, 1000, TOL)
+            .expect("valid contours");
         assert!(!filled(&result, Vec2::new(5.0, 5.0)));
         assert!(filled(&result, Vec2::new(1.0, 1.0)));
         assert!(result.iter().all(|l| l.vertices.len() == 4), "both squares are kept as drawn");
@@ -442,7 +510,7 @@ mod tests {
     #[test]
     fn nonzero_concave_contour_stays_one_loop() {
         let points = [(0.0, 0.0), (10.0, 0.0), (10.0, 3.0), (3.0, 3.0), (3.0, 10.0), (0.0, 10.0)];
-        let result = normalize(vec![polygon(&points)], FillRule::NonZero, 1000).expect("valid contour");
+        let result = normalize(vec![polygon(&points)], FillRule::NonZero, 1000, TOL).expect("valid contour");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].vertices, polygon(&points).vertices);
         assert!(result[0].outer);
@@ -450,28 +518,16 @@ mod tests {
 
     #[test]
     fn nonzero_curved_nested_contours_keep_their_arcs() {
-        // Circles of radius 10 and 5 as four quarter arcs each, wound opposite ways.
-        let quarter = (std::f64::consts::PI / 8.0).tan();
-        let circle = |r: f64, clockwise: bool| {
-            let turn = if clockwise { -1.0 } else { 1.0 };
-            HatchLoop {
-                vertices: [(r, 0.0), (0.0, r * turn), (-r, 0.0), (0.0, -r * turn)]
-                    .iter()
-                    .map(|&(x, y)| PolyVertex { bulge: quarter * turn, ..PolyVertex::new(Vec2::new(x, y)) })
-                    .collect(),
-                outer: false,
-                sources: Vec::new(),
-            }
-        };
-        let result = normalize(vec![circle(10.0, false), circle(5.0, true)], FillRule::NonZero, 10_000).expect("valid contours");
+        // Circles of radius 10 and 5, wound opposite ways.
+        let result = normalize(vec![circle(10.0, false), circle(5.0, true)], FillRule::NonZero, 10_000, TOL).expect("valid contours");
         assert_eq!(result.len(), 2);
         assert!(result.iter().all(|l| l.vertices.iter().all(|v| v.bulge != 0.0)), "the arcs are kept");
     }
 
     #[test]
     fn nonzero_overlapping_contours_keep_the_overlap_filled() {
-        let result =
-            normalize(vec![square(0.0, 0.0, 6.0, 6.0, false), square(3.0, 0.0, 9.0, 6.0, false)], FillRule::NonZero, 1000).expect("valid contours");
+        let result = normalize(vec![square(0.0, 0.0, 6.0, 6.0, false), square(3.0, 0.0, 9.0, 6.0, false)], FillRule::NonZero, 1000, TOL)
+            .expect("valid contours");
         assert!(filled(&result, Vec2::new(4.0, 3.0)));
         assert!(filled(&result, Vec2::new(1.0, 3.0)));
         assert!(filled(&result, Vec2::new(8.0, 3.0)));
@@ -480,7 +536,7 @@ mod tests {
     #[test]
     fn nonzero_self_crossing_contour_is_split_into_triangles() {
         let points = [(0.0, 0.0), (10.0, 10.0), (0.0, 10.0), (6.0, 0.0), (3.0, 8.0)];
-        let result = normalize(vec![polygon(&points)], FillRule::NonZero, 1000).expect("valid contour");
+        let result = normalize(vec![polygon(&points)], FillRule::NonZero, 1000, TOL).expect("valid contour");
         assert!(result.len() > 1);
         assert!(filled(&result, Vec2::new(4.0, 5.0)));
     }
@@ -494,7 +550,7 @@ mod tests {
             square(shift + 2.0, shift + 2.0, shift + 8.0, shift + 8.0, true),
             square(shift + 9.0, shift + 4.0, shift + 12.0, shift + 6.0, false),
         ];
-        let result = normalize(input, FillRule::NonZero, 1000).expect("valid translated contours");
+        let result = normalize(input, FillRule::NonZero, 1000, TOL).expect("valid translated contours");
         assert!(result.len() > 3, "tessellated into triangles");
         assert!(!filled(&result, Vec2::new(shift + 5.0, shift + 5.0)));
         assert!(filled(&result, Vec2::new(shift + 1.0, shift + 1.0)));
@@ -503,8 +559,8 @@ mod tests {
 
     #[test]
     fn even_odd_nested_contours_are_classified_by_depth() {
-        let result =
-            normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, false)], FillRule::EvenOdd, 1000).expect("valid contours");
+        let result = normalize(vec![square(0.0, 0.0, 10.0, 10.0, false), square(2.0, 2.0, 8.0, 8.0, false)], FillRule::EvenOdd, 1000, TOL)
+            .expect("valid contours");
         assert!(result[0].outer);
         assert!(!result[1].outer);
         assert!(!filled(&result, Vec2::new(5.0, 5.0)));

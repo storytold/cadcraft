@@ -98,3 +98,22 @@ fn page_focus_placement_acceptance_and_escape_cancellation_work() {
     assert!(cancelled.state().session.doc().unwrap().model.is_empty(), "cancelling leaves the drawing unchanged");
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn the_page_goes_to_the_drawing_the_window_was_opened_for() {
+    set_pdf_import(read_pdf);
+    let (path, name) = pdf_path();
+    let mut h = harness(name);
+    h.run_steps(3);
+    // Another drawing is made active while the window is still open.
+    h.state_mut().run("new", serde_json::json!({ "template": "." })).unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().session.active, 1);
+    set_number(&mut h, "Page number", 2.0);
+    h.get_by_role_and_label(Role::Button, "Import Page").click();
+    h.run_steps(3);
+    let docs = &h.state().session.docs;
+    assert!(!docs[0].doc.model.is_empty(), "the page went into the drawing that asked for it");
+    assert!(docs[1].doc.model.is_empty(), "the drawing shown meanwhile is unchanged");
+    std::fs::remove_file(path).unwrap();
+}

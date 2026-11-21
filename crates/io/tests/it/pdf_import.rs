@@ -312,12 +312,10 @@ fn the_general_reader_does_not_take_a_pdf() {
     assert!(e.contains("unsupported file type"), "{e}");
 }
 
-/// A form that draws itself twice asks for about 2^50 nested interpretations unless the interpreter
-/// limits how often forms nest (craft-libs' patched hayro-interpret does).
-#[test]
-fn a_form_that_draws_itself_twice_is_stopped() {
-    let form = "/X Do /X Do 0 0 m 1 1 l S";
-    let pdf = format!(
+/// A one-page PDF whose page draws the form `/X` once; the form's content is `form`, and it may
+/// draw `/X` itself.
+fn form_page(form: &str) -> String {
+    format!(
         "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
          2 0 obj << /Type /Pages /Kids [10 0 R] /Count 1 >> endobj\n\
          10 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Contents 11 0 R /Resources << /XObject << /X 5 0 R >> >> >> endobj\n\
@@ -326,12 +324,29 @@ fn a_form_that_draws_itself_twice_is_stopped() {
          4 0 obj << /Producer (AutoCAD) >> endobj\n\
          trailer << /Root 1 0 R /Info 4 0 R >>\n%%EOF\n",
         form.len()
-    );
+    )
+}
+
+fn lines_of(d: &Drawing) -> usize {
+    kinds(d).iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count()
+}
+
+/// A form that draws itself twice asks for about 2^50 nested interpretations unless the interpreter
+/// limits how often forms nest (craft-libs' patched hayro-interpret does).
+#[test]
+fn a_form_that_draws_itself_twice_is_stopped() {
+    // The same page with a form that doesn't call itself draws its line once.
+    let (d, _) = read(form_page("0 0 m 1 1 l S").as_bytes(), &PdfImportOptions::default()).unwrap();
+    assert_eq!(lines_of(&d), 1);
+    let pdf = form_page("/X Do /X Do 0 0 m 1 1 l S");
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(read(pdf.as_bytes(), &PdfImportOptions::default()).map(|_| ()));
+        let _ = tx.send(read(pdf.as_bytes(), &PdfImportOptions::default()).map(|(d, _)| lines_of(&d)));
     });
-    assert!(rx.recv_timeout(std::time::Duration::from_secs(20)).is_ok(), "the self-calling form was not stopped");
+    let result = rx.recv_timeout(std::time::Duration::from_secs(20)).expect("the self-calling form was not stopped");
+    // The page still reads, with the form's own line drawn and the nesting cut off.
+    let lines = result.unwrap_or_else(|e| panic!("{e}"));
+    assert!((1..1000).contains(&lines), "{lines} lines");
 }
 
 #[test]
@@ -481,9 +496,26 @@ fn text_and_shapes_keep_their_paint_order() {
 }
 
 #[test]
+fn the_same_text_drawn_again_over_a_shape_is_kept() {
+    // A label, a fill over it, then the label again on top: the second one is what shows.
+    let d = import("BT /F1 12 Tf 20 20 Td (Label) Tj ET 1 0 0 rg 10 10 100 40 re f BT /F1 12 Tf 20 20 Td (Label) Tj ET");
+    assert_eq!(texts(&d), ["Label", "Label"]);
+    assert!(matches!(kinds(&d).last().map(|e| &e.kind), Some(EntityKind::Text(_))));
+}
+
+#[test]
 fn diagonal_edges_are_not_mistaken_for_a_rectangular_clip() {
     let d = import("q 0 0 m 100 100 l 100 0 l 0 100 l h W n 0 50 m 150 50 l S Q");
     assert!(d.read_notes.iter().any(|n| n.contains("clips by a shape other than a rectangle")));
+}
+
+#[test]
+fn a_path_that_doubles_back_along_an_edge_is_not_a_rectangular_clip() {
+    // Every point lies on the box's edges, but the corner at (0, 100) is never reached.
+    let d = import("q 0 0 m 100 0 l 100 100 l 100 0 l h W n 0 50 m 150 50 l S Q");
+    assert!(d.read_notes.iter().any(|n| n.contains("clips by a shape other than a rectangle")), "{:?}", d.read_notes);
+    let EntityKind::Line(line) = &kinds(&d)[0].kind else { panic!("expected a line") };
+    assert!(line.b.x > 100.0 * MM_PER_PT, "the line was cut at the box: {line:?}");
 }
 
 #[test]

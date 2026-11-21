@@ -168,6 +168,7 @@ fn read_within(bytes: &[u8], o: &PdfImportOptions, verts: usize) -> Result<(Draw
 /// `{page?, password?, unit?, text?, fills?, lineweights?}`. A value of the wrong type is an error.
 pub fn read_json(bytes: &[u8], opts: &serde_json::Value) -> Result<(Drawing, usize)> {
     let mut o = PdfImportOptions::default();
+    let opts = opts.as_object().ok_or_else(|| IoError::Format("PDF: the options must be a JSON object".into()))?;
     let bad = |key: &str, want: &str| IoError::Format(format!("PDF: `{key}` must be {want}"));
     if let Some(v) = opts.get("page") {
         o.page = v.as_u64().and_then(|n| usize::try_from(n).ok()).filter(|n| *n >= 1).ok_or_else(|| bad("page", "a page number from 1"))?;
@@ -498,7 +499,8 @@ impl Collector {
         let loops: Vec<HatchLoop> = self
             .subpaths(path, to_page)
             .into_iter()
-            .filter(|(v, _)| v.len() >= 3)
+            // Two vertices enclose an area only through an arc.
+            .filter(|(v, _)| v.len() >= 3 || (v.len() == 2 && v.iter().any(|p| p.bulge != 0.0)))
             .filter_map(|(v, closed)| {
                 let Some((lo, hi)) = clip else { return Some((v, closed)) };
                 match relation(&v, closed, lo, hi) {
@@ -524,7 +526,7 @@ impl Collector {
             return;
         }
         let curved = loops.iter().any(|l| l.vertices.iter().any(|v| v.bulge != 0.0));
-        let loops = match fill::normalize(loops, *rule, self.verts_left) {
+        let loops = match fill::normalize(loops, *rule, self.verts_left, FLATTEN_TOL_PT * self.opts.unit) {
             Ok(loops) => loops,
             Err(reason) => return self.fail(reason),
         };
@@ -722,7 +724,13 @@ fn rect_of(path: &BezPath) -> Option<Rect> {
     let (x0, x1) = pts.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)));
     let (y0, y1) = pts.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.y), b.max(p.y)));
     let on = |v: f64, a: f64, b: f64| (v - a).abs() < 1e-6 || (v - b).abs() < 1e-6;
-    (pts.iter().all(|p| on(p.x, x0, x1) && on(p.y, y0, y1)) && x0.is_finite() && y0.is_finite()).then(|| Rect::new(x0, y0, x1, y1))
+    // A path that goes back along an edge touches the box without enclosing it; a box with no area
+    // clips everything, as the PDF does.
+    let flat = (x1 - x0).abs() < 1e-6 || (y1 - y0).abs() < 1e-6;
+    let at = |p: &Point, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].iter().all(|&(x, y)| pts.iter().filter(|p| at(p, x, y)).count() == 1);
+    (pts.iter().all(|p| on(p.x, x0, x1) && on(p.y, y0, y1)) && (flat || corners) && x0.is_finite() && y0.is_finite())
+        .then(|| Rect::new(x0, y0, x1, y1))
 }
 
 /// How a shape lies against a clip rectangle.
@@ -925,6 +933,8 @@ impl<'a> Device<'a> for Collector {
             return;
         }
         self.flush_text();
+        // Text drawn again after a shape is a new label on top, not the stroke of the text before.
+        self.last_text = None;
         match mode {
             PathDrawMode::Fill(rule) => self.fill(path, transform, paint, rule),
             PathDrawMode::Stroke(p) => {
@@ -958,6 +968,7 @@ impl<'a> Device<'a> for Collector {
     }
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {
         self.flush_text();
+        self.last_text = None;
         self.left_out(LeftOut::Image);
     }
     fn pop_clip_path(&mut self) {

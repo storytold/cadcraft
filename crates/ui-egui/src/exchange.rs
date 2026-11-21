@@ -28,8 +28,10 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
         "pdfimport" | "pdfi" => app
             .pick_then(Pick::Open, |app, path| {
+                let doc = app.session.state().ok().map(|s| s.uid);
                 PDF_PENDING.with(|pending| {
                     *pending.borrow_mut() = Some(PdfImport {
+                        doc,
                         path,
                         page: 1,
                         scale: 1.0,
@@ -57,6 +59,8 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
 
 /// A chosen PDF and the editable content requested from its page.
 struct PdfImport {
+    /// The drawing the window was opened for; the page goes there even if another is shown now.
+    doc: Option<u64>,
     path: String,
     page: u32,
     scale: f64,
@@ -130,7 +134,13 @@ pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         if !state.password.is_empty() {
             params["password"] = json!(state.password);
         }
-        match app.run("pdfimport", params) {
+        let index = state.doc.and_then(|uid| app.session.docs.iter().position(|d| d.uid == uid));
+        let result = match index {
+            None => Err(crate::tl!("The drawing this window was opened for is closed; nothing was imported.").to_string()),
+            Some(i) if i != app.session.active => app.run("document.switch", json!({ "index": i })).and_then(|_| app.run("pdfimport", params)),
+            Some(_) => app.run("pdfimport", params),
+        };
+        match result {
             Ok(_) => *open = false,
             Err(error) => state.error = Some(error),
         }
