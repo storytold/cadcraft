@@ -44,7 +44,7 @@ pub(crate) struct GripEdit {
     /// Typed `GRIP`: still collecting grips ("Select grips").
     picking: bool,
     /// What MOVE/ROTATE/SCALE/MIRROR transform: the hot grips' objects and the objects of the
-    /// selection that the drawing shows.
+    /// selection that the view being edited shows.
     targets: Vec<Handle>,
     base: Vec2,
     mode: GripMode,
@@ -70,10 +70,11 @@ fn positive(v: Option<f64>) -> Result<f64> {
     v.filter(|f| f.is_finite() && *f > 1e-12).ok_or_else(|| other("Requires a positive number."))
 }
 
-/// Whether the drawing shows `h`. A hidden object (HIDEOBJECTS, an off or frozen layer) takes no
-/// part in a grip edit, even when Undo or a selection command put it back into the selection.
+/// Whether the view being edited shows `h`. A hidden object (HIDEOBJECTS, an off or frozen layer,
+/// a layer frozen in the active MSPACE viewport) takes no part in a grip edit, even when Undo or
+/// a selection command put it back into the selection.
 fn shown(s: &Session, h: Handle) -> bool {
-    s.doc().is_ok_and(|d| d.entity(h).is_some_and(|e| d.is_visible(e)))
+    s.state().is_ok_and(|st| st.doc.entity(h).is_some_and(|e| st.shows(e)))
 }
 
 impl GripEdit {
@@ -95,7 +96,8 @@ impl GripEdit {
     }
 
     /// Make grip `index` of `h` hot (the first one becomes the base point). The grip of an object
-    /// the drawing does not show is left out, and so are the hidden objects of the selection.
+    /// the view being edited does not show is left out, and so are the hidden objects of the
+    /// selection.
     fn add_hot(&mut self, s: &Session, (h, i): (Handle, usize)) -> Result<()> {
         if self.hot.contains(&(h, i)) || self.hot.len() >= MAX_HOT {
             return Ok(());
@@ -119,13 +121,13 @@ impl GripEdit {
     /// The grips of the selected objects at `p` (typed `GRIP`): all objects with a grip there.
     fn grips_at(s: &Session, p: Vec2) -> Vec<(Handle, usize)> {
         let tol = (s.pixel_size() * (s.settings.gripsize + 3.0)).max(1e-9 * (1.0 + p.len()));
-        let Ok(d) = s.doc() else { return Vec::new() };
+        let Ok(st) = s.state() else { return Vec::new() };
         let mut out = Vec::new();
         for h in s.selection().into_iter().take(MAX_HOT) {
             if super::curves::is_locked(s, h) {
                 continue;
             }
-            let Some(e) = d.entity(h).filter(|e| d.is_visible(e)) else { continue };
+            let Some(e) = st.doc.entity(h).filter(|e| st.shows(e)) else { continue };
             let gs = e.kind.grips();
             // The nearest grip of this object within the tolerance.
             let best = gs
@@ -483,8 +485,8 @@ impl Session {
     /// Make grips hot and start editing them (the UI's click on a grip; Shift+click collects
     /// several first). `hot` lists (object, grip index); the first is the base grip. The grip
     /// modes and their options then run at the command line like any prompt. Grips of objects the
-    /// drawing does not show are left out (the first grip left is the base grip), and it is an
-    /// error when none is left.
+    /// view being edited does not show are left out (the first grip left is the base grip), and it
+    /// is an error when none is left.
     pub fn start_grip_edit(&mut self, hot: &[(Handle, usize)]) -> Result<()> {
         if self.running.is_some() {
             self.cancel();
