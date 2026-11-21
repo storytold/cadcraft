@@ -655,7 +655,7 @@ fn finish(
 
 /// [`finish`], keeping every candidate with its [`Rank`], in the order [`finish`] prefers them:
 /// the snap points best first, then the perpendiculars and tangents on the objects under the
-/// cursor and the centers found from their curves, then the deferred snap, then the nearest point
+/// cursor and the centers found from their curves, then the deferred snaps, then the nearest point
 /// of each object nearby.
 #[allow(clippy::too_many_arguments)]
 fn finish_all(
@@ -688,9 +688,9 @@ fn finish_all(
             .map(|(score, c)| (SnapHit::plain(mode::CEN, c), Rank { tier: 1, score })),
     );
     let deferrable = if base.is_some() { osmode & mode::TAN } else { osmode };
-    if deferred && let Some(h) = deferred_hit(near_prims, cursor, aperture, deferrable, clip) {
-        let score = h.point.dist(cursor);
-        out.push((h, Rank { tier: 2, score }));
+    if deferred {
+        let hits = deferred_hits(near_prims, cursor, aperture, deferrable, clip);
+        out.extend(hits.into_iter().map(|h| (h, Rank { tier: 2, score: h.point.dist(cursor) })));
     }
     if osmode & mode::NEA != 0 {
         let near = near_prims.iter().filter_map(|p| nearest_point(p, cursor, aperture, &visible));
@@ -1138,6 +1138,47 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
         Prim::Infinite { base, dir, ray } => Prim::Infinite { base: m.apply(*base), dir: m.apply_vec(*dir).normalized(), ray: *ray },
         Prim::Fill(f) => Prim::Fill(f.iter().map(|q| m.apply(*q)).collect()),
     }
+}
+
+/// Every deferred tangent and perpendicular within `aperture` of `cursor`, for Tab: one per curve
+/// and mode, in drawing order (the caller ranks them), so Tab can go from the tangent to the
+/// perpendicular on the same circle, and to the deferred snap of each curve nearby. A click takes
+/// the nearest one ([`deferred_hit`]).
+fn deferred_hits(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Vec<SnapHit> {
+    let mut hits = Vec::new();
+    if osmode & (mode::TAN | mode::PER) == 0 {
+        return hits;
+    }
+    for p in prims {
+        let curve = match p {
+            Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius },
+            Prim::Seg(Segment::Arc { arc, .. }) => SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end },
+            Prim::Seg(Segment::Line(l)) => SnapCurve::Line { a: l.a, b: l.b },
+            Prim::Infinite { base, dir, .. } => SnapCurve::Line { a: *base, b: *base + *dir },
+            _ => continue,
+        };
+        // Where the curve was picked: a circle's, an arc's or a segment's own span, an xline/ray
+        // anywhere.
+        let at = match curve {
+            SnapCurve::Circle { center, radius } => Circle::new(center, radius).closest(cursor),
+            SnapCurve::Arc { center, radius, start, end } => cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor),
+            SnapCurve::Line { a, b } => {
+                let l = cadcraft_geom::Line::new(a, b);
+                if matches!(p, Prim::Seg(_)) { l.closest(cursor) } else { l.project(cursor) }
+            }
+        };
+        if !(at.is_finite() && clip.is_none_or(|c| c.contains(at)) && at.dist(cursor) <= aperture) {
+            continue;
+        }
+        let modes: &[(u32, &'static str)] = match curve {
+            SnapCurve::Circle { .. } | SnapCurve::Arc { .. } => &[(mode::TAN, "Deferred Tangent"), (mode::PER, "Deferred Perpendicular")],
+            SnapCurve::Line { .. } => &[(mode::PER, "Deferred Perpendicular")],
+        };
+        for &(m, name) in modes.iter().filter(|(m, _)| osmode & m != 0) {
+            hits.push(SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) });
+        }
+    }
+    hits
 }
 
 /// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
