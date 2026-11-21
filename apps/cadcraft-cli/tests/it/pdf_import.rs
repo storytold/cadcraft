@@ -75,7 +75,12 @@ fn filled(drawing: &Value, at: (f64, f64)) -> bool {
     entities.iter().filter(|e| e["type"] == "Hatch").any(|hatch| {
         let loops = hatch["geometry"]["loops"].as_array().cloned().unwrap_or_default();
         let rings = loops.iter().map(|l| {
-            l["vertices"].as_array().into_iter().flatten().map(|v| (v["p"]["x"].as_f64().unwrap_or(0.0), v["p"]["y"].as_f64().unwrap_or(0.0))).collect()
+            l["vertices"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|v| (v["p"]["x"].as_f64().unwrap_or(0.0), v["p"]["y"].as_f64().unwrap_or(0.0)))
+                .collect()
         });
         rings.filter(|ring: &Vec<(f64, f64)>| inside(ring, at)).count() % 2 == 1
     })
