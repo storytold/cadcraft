@@ -21,6 +21,8 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod blookup;
+pub mod bvstate;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
@@ -375,6 +377,10 @@ pub struct CadApp {
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
+    /// The Visibility States dialog ([`bvstate`]).
+    pub bvstate: bvstate::State,
+    /// The Property Lookup Table dialog ([`blookup`]).
+    pub blookup: blookup::State,
 }
 
 impl CadApp {
@@ -433,6 +439,8 @@ impl CadApp {
             bedit: bedit::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
+            bvstate: bvstate::State::default(),
+            blookup: blookup::State::default(),
             pending_pick: None,
         }
     }
