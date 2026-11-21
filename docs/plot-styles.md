@@ -81,7 +81,8 @@ prints as `Normal`. A colour-dependent table ignores the property.
   style and the named styles.
 - `layer.set {name, plotStyle}` sets a layer's plot style.
 - `stylesmanager {action, …}` manages the tables: `list`, `get`, `new` (`kind`, `from`), `set`
-  (`style: {name, …fields}`, `removeStyle`, `description`), `delete`, `load` (`path` or `text`)
+  (`style: {name, …fields}`, `removeStyle`, `description`; it replies with the table's name and
+  only what changed), `delete`, `load` (`path` or `text`)
   and `save` (`path`, or returns `text`). Typed or chosen from **File ▸ Plot Styles...**, it
   opens the Plot Style Manager dialog.
 

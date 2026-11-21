@@ -56,13 +56,13 @@ pub fn route(app: &mut CadApp, id: &str, params: &serde_json::Value) -> Option<R
     if !matches!(id, "wblock" | "w") || !params.is_null() {
         return None;
     }
-    let has_selection = app.session.state().is_ok_and(|st| !st.selection.is_empty());
+    let has_selection = app.session.state().is_ok_and(|st| !st.shown_selection().is_empty());
     app.wblock.reset();
     if has_selection {
         app.wblock.source = Source::Objects;
         // Pre-fill picked handles from current selection.
         if let Ok(st) = app.session.state() {
-            app.wblock.picked_handles = st.selection.iter().map(|h| h.hex()).collect();
+            app.wblock.picked_handles = st.shown_selection().iter().map(|h| h.hex()).collect();
         }
     }
     app.ui.dialog = Some("wblock".into());

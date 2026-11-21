@@ -33,6 +33,7 @@ fn source_payload(version: DxfVersion, payload: ProxyPayload) -> Vec<u8> {
 }
 
 fn check(bytes: &[u8], name: &str) -> cadcraft_doc::Drawing {
+    cadcraft_io::dwg_worker::allow_in_process();
     let drawing = cadcraft_io::read(bytes, name).unwrap();
     assert_eq!(drawing.entity_count(), 2);
     let line = drawing.model.iter().find(|e| matches!(e.kind, EntityKind::Line(_))).unwrap().handle;
@@ -45,7 +46,7 @@ fn check(bytes: &[u8], name: &str) -> cadcraft_doc::Drawing {
         })
         .unwrap();
     assert!(unknown.tags.iter().any(|t| t.code == 340 && t.value == line.hex()));
-    let dxf = if name.ends_with(".dwg") { cadcraft_dwg::dwg_to_dxf(bytes).unwrap() } else { bytes.to_vec() };
+    let dxf = if name.ends_with(".dwg") { craft_dwg::dwg_to_dxf(bytes).unwrap() } else { bytes.to_vec() };
     let tags = craft_dxf::parse(&dxf).unwrap();
     let sections = craft_dxf::sections(&tags);
     let classes = sections.iter().find(|s| s.name == "CLASSES").unwrap();
@@ -117,6 +118,7 @@ fn duplicate_class_dxf() -> Vec<u8> {
 
 #[test]
 fn duplicate_names_keep_distinct_classes_for_entities_and_dictionary_objects() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let source = duplicate_class_dxf();
     for binary in [false, true] {
         let input = if binary { craft_dxf::write_binary(&craft_dxf::parse(&source).unwrap(), true) } else { source.clone() };
@@ -124,7 +126,7 @@ fn duplicate_names_keep_distinct_classes_for_entities_and_dictionary_objects() {
         for _ in 0..3 {
             for name in ["copy.dxf", "copy.dwg"] {
                 let bytes = cadcraft_io::write_with(&drawing, name, &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
-                let dxf = if name.ends_with(".dwg") { cadcraft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes.clone() };
+                let dxf = if name.ends_with(".dwg") { craft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes.clone() };
                 let tags = craft_dxf::parse(&dxf).unwrap();
                 let sections = craft_dxf::sections(&tags);
                 let classes = craft_dxf::records(&sections.iter().find(|s| s.name == "CLASSES").unwrap().tags);
@@ -163,6 +165,7 @@ fn duplicate_names_keep_distinct_classes_for_entities_and_dictionary_objects() {
 
 #[test]
 fn zero_bit_opaque_entities_are_still_retained() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let source = source_payload(DxfVersion::AC1032, ProxyPayload::default());
     let mut drawing = cadcraft_io::read(&source, "source.dwg").unwrap();
     for name in ["copy.dxf", "copy.dwg", "again.dwg"] {
@@ -193,11 +196,12 @@ fn proxies_inside_block_definitions_survive_repeated_saves() {
 
 #[test]
 fn unused_malformed_classes_do_not_block_plain_geometry() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for (name, cpp, flags, count) in [("", "Unused", 0, 0), ("UNUSED", "", 0, 0), ("UNUSED", "Unused", 65536, 0), ("UNUSED", "Unused", 0, i64::MAX)] {
         let dxf = format!(
             "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n0\nENDSEC\n0\nSECTION\n2\nCLASSES\n0\nCLASS\n1\n{name}\n2\n{cpp}\n3\nSynthetic\n90\n{flags}\n91\n{count}\n281\n1\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n10\n100\nAcDbEntity\n8\n0\n100\nAcDbLine\n10\n2\n20\n3\n11\n12\n21\n13\n0\nENDSEC\n0\nEOF\n"
         );
-        let bytes = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1032").unwrap();
+        let bytes = craft_dwg::dxf_to_dwg_as(dxf.as_bytes(), "AC1032").unwrap();
         let drawing = cadcraft_io::read(&bytes, "plain.dwg").unwrap();
         let lines: Vec<_> = drawing.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l) } else { None }).collect();
         assert_eq!(lines.len(), 1);
@@ -210,6 +214,7 @@ fn unused_malformed_classes_do_not_block_plain_geometry() {
 
 #[test]
 fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let source = String::from_utf8(duplicate_class_dxf()).unwrap();
     for (entity, object) in [("acad_proxy_entity", "acad_proxy_object"), ("AcAd_PrOxY_EnTiTy", "AcAd_PrOxY_ObJeCt")] {
         let dxf = source.replace("ACAD_PROXY_ENTITY", entity).replace("ACAD_PROXY_OBJECT", object);
@@ -219,7 +224,7 @@ fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
         let tags = craft_dxf::parse(&out).unwrap();
         assert!(tags.iter().any(|t| t.code == 0 && t.str() == entity));
         let bytes = cadcraft_io::write_with(&drawing, "copy.dwg", &SaveOptions { version: Some(Version::R2018), ..Default::default() }).unwrap();
-        let decoded = cadcraft_dwg::dwg_to_dxf(&bytes).unwrap();
+        let decoded = craft_dwg::dwg_to_dxf(&bytes).unwrap();
         let tags = craft_dxf::parse(&decoded).unwrap();
         let proxies: Vec<_> =
             craft_dxf::sections(&tags).iter().flat_map(|s| craft_dxf::records(&s.tags)).filter(|(kind, _)| kind.starts_with("ACAD_PROXY_")).collect();
@@ -236,6 +241,7 @@ fn proxy_spelling_is_preserved_in_dxf_and_normalized_only_for_dwg() {
 /// Exercise the actual ASCII bridge, which writes Unicode as CIF escapes.
 #[test]
 fn unicode_class_identity_survives_the_ascii_bridge() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut tags = craft_dxf::parse(&duplicate_class_dxf()).unwrap();
     for tag in &mut tags {
         let text = tag.str();
@@ -271,6 +277,7 @@ fn unicode_class_identity_survives_the_ascii_bridge() {
 /// A malformed unused class must not silently collapse two otherwise valid class identities.
 #[test]
 fn ambiguous_fallback_classes_are_reported_without_losing_plain_geometry() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for escaped in [false, true] {
         let mut source = String::from_utf8(duplicate_class_dxf()).unwrap().replacen(
             "0\nENDSEC\n0\nSECTION\n2\nENTITIES",
@@ -283,7 +290,7 @@ fn ambiguous_fallback_classes_are_reported_without_losing_plain_geometry() {
             source = source.replace("1\nCUSTOM\n2\nSecond", "1\n\\U+0043USTOM\n2\nSecond");
             source = source.replace("1\nCUSTOM\n2\nObject", "1\nOTHER\n2\nObject");
         }
-        let (bytes, unwritten) = cadcraft_dwg::dxf_to_dwg_noted(source.as_bytes(), "AC1032").unwrap();
+        let (bytes, unwritten) = craft_dwg::dxf_to_dwg_noted(source.as_bytes(), "AC1032").unwrap();
         assert_eq!(unwritten.get("ACAD_PROXY_ENTITY"), Some(&2));
         assert_eq!(unwritten.get("ACAD_PROXY_OBJECT"), if escaped { None } else { Some(&1) });
         let drawing = cadcraft_io::read(&bytes, "copy.dwg").unwrap();

@@ -59,6 +59,7 @@ fn translation_gaps() {
     for language in translated() {
         let mut missing: BTreeSet<String> = missing_commands_menus_tools_and_snap_labels(language.code).into_iter().collect();
         missing.extend(missing_marked_ui_literals(language.code));
+        missing.extend(missing_property_labels(language.code));
         if missing.is_empty() {
             println!("{}: nothing missing", language.code);
             continue;
@@ -68,6 +69,48 @@ fn translation_gaps() {
             println!("  {source}");
         }
     }
+}
+
+/// The labels the engine gives the Properties palette (`properties.describe`) for text, fit
+/// text, mtext and dimensions: group names, row labels and the labels of choices. Part of the
+/// report above.
+fn missing_property_labels(language: &str) -> Vec<String> {
+    use cadcraft_engine::properties::{Kind, describe};
+    let catalog = catalog(language).unwrap();
+    let mut s = Session::new();
+    for (cmd, p) in [
+        ("text", json!({ "at": [0, 0], "text": "A", "height": 1 })),
+        ("text", json!({ "at": [0, 5], "text": "B", "height": 1, "justify": "Fit" })),
+        ("mtext", json!({ "at": [0, 10], "text": "C", "height": 1 })),
+        ("dimlinear", json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })),
+    ] {
+        s.execute(cmd, &p).unwrap();
+    }
+    let d = s.doc().unwrap();
+    let mut labels = BTreeSet::new();
+    for e in d.model.iter() {
+        for g in describe(d, &[e.handle], None).groups {
+            labels.insert(g.name.to_string());
+            for r in g.rows {
+                labels.insert(r.label.to_string());
+                if r.kind == Kind::Choice {
+                    labels.extend(r.options.into_iter().map(|o| o.label));
+                }
+            }
+        }
+    }
+    labels.extend(["Yes", "No"].map(String::from));
+    // The Dimension Style dialog edits every dimension variable, the style's own ones too.
+    for p in cadcraft_engine::properties::DIM_PROPS {
+        labels.insert(p.label.to_string());
+        labels.extend(p.kind.options().into_iter().map(|o| o.label));
+    }
+    // Numbers (precisions, lineweights in mm) aren't words to translate.
+    labels
+        .into_iter()
+        .filter(|l| l.chars().any(char::is_alphabetic) && !l.ends_with(" mm"))
+        .filter(|l| !catalog.contains_key(&("", l.as_str())))
+        .collect()
 }
 
 fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
@@ -98,10 +141,12 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
         "xrefs",
+        "blocks_palette",
         "canvas",
         "chrome",
         "cmdline",
         "credits",
+        "docking",
         "dialogs",
         "hatchdlg",
         "aliasdlg",
@@ -110,6 +155,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "layers",
         "bedit",
         "palettes",
+        "managers/dimstyle",
         "parametric",
         "quick",
         "vpscale",
@@ -195,12 +241,20 @@ fn assert_primary_locale_aliases() {
     for (tag, code) in [("ru", "ru"), ("ru-RU", "ru"), ("ru_RU.UTF-8", "ru"), ("fr", "fr"), ("fr-FR", "fr"), ("fr_CA.UTF-8", "fr")] {
         assert_eq!(locale_language(tag), Some(code), "{tag}");
     }
+
+    for tag in ["ua", "ukulele", "xx-XX", "", "garbage", "💙"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
+    assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
 }
 
 fn assert_portuguese_and_spanish_aliases() {
     for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
     }
+
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
     }
@@ -228,7 +282,7 @@ fn assert_additional_locale_aliases() {
 
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
-    let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
+    let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
@@ -236,10 +290,11 @@ fn assert_unrecognized_locale_tags() {
 }
 
 fn assert_auto_locale_precedence() {
-    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
-    let locales = vec!["pl-PL".into(), "uk-UA".into(), "en-US".into()];
+    let locales = vec!["nl-NL".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
@@ -262,7 +317,7 @@ fn assert_preference_resolution(preference: Preference) {
     // A chosen language wins over the system's; Auto takes the first system language there is.
     assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
     if preference != Preference::English {
-        assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), preference.code().into(), "en-US".into()]), preference.code());
+        assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), preference.code().into(), "en-US".into()]), preference.code());
     }
 }
 
@@ -279,6 +334,8 @@ fn assert_saved_preference_persistence(preference: Preference) {
 #[test]
 fn locale_and_saved_preference_resolution() {
     assert_primary_locale_aliases();
+    assert_eq!(locale_language("pl-PL"), Some("pl"));
+    assert_eq!(Preference::parse("pl"), Some(Preference::Polish));
     assert_portuguese_and_spanish_aliases();
     assert_additional_locale_aliases();
     assert_unrecognized_locale_tags();
@@ -470,7 +527,6 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             ("dsettings", "Drafting Settings"),
             ("about", "About CADCraft"),
             ("commands", "Command Reference"),
-            ("blocks", "Blocks"),
             ("layers", "Layer Properties Manager"),
             ("qselect", "Quick Select"),
             ("parameters", "Parameters Manager"),
@@ -666,5 +722,13 @@ fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
     if !shown {
         assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
         assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
+    }
+}
+
+#[test]
+fn polish_plural_forms() {
+    for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
+    {
+        assert_eq!(plural_pl(n), expected, "n={n}");
     }
 }

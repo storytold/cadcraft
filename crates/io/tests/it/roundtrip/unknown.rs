@@ -69,6 +69,7 @@ fn dxf_owner(bytes: &[u8]) {
 }
 
 pub(super) fn check(path: &str, version: Version, binary: bool) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let original = drawing();
     let mut current = original.clone();
     for pass in 1..=2 {
@@ -82,7 +83,7 @@ pub(super) fn check(path: &str, version: Version, binary: bool) {
             assert_eq!(craft_dxf::is_binary(&bytes), binary, "{context}: encoding");
             dxf_owner(&bytes);
         } else {
-            assert_eq!(cadcraft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
+            assert_eq!(craft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
         }
         let back = read(&bytes, path).unwrap();
         preserved(&original, &back, &context);

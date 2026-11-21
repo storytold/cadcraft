@@ -268,19 +268,27 @@ fn the_note_counts_the_host_drawing_while_a_block_is_edited() {
     assert_eq!(r["notSaved"], json!({ "REGION": 1 }));
 }
 
-/// A DWG before 2013 writes a solid's SAT text as it is, so a save there doesn't list a solid that
-/// holds it; from 2013 the geometry must be in the data store and SAT text alone is lost, so the
-/// save lists it. A solid with neither is always listed (#2334).
+/// A DWG before 2013 writes a solid's SAT text of ACIS 7.0 and later, so a save there doesn't list
+/// a solid that holds it; from 2013 the geometry must be in the data store and SAT text alone is
+/// lost, so the save lists it. Older SAT (ACIS 4.0) and a solid with neither are always listed
+/// (#2334).
 #[test]
 fn a_dwg_keeps_sat_text_solids_only_before_2013() {
     use cadcraft_engine::cmd::file::{Version, not_saved_as};
     let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
     let solid = |tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: "3DSOLID".into(), tags });
     let mut d = Drawing::new_imperial();
-    d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "400 1 1 0")])).unwrap();
+    d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "700 0 1 0")])).unwrap();
     d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(70, "1")])).unwrap();
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 1)].into_iter().collect(), "2010 keeps the SAT-text solid");
     assert_eq!(not_saved_as(&d, Version::R2018), [("3DSOLID".to_string(), 2)].into_iter().collect(), "2018 loses it");
+    d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "400 85 1 0")])).unwrap();
+    assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2)].into_iter().collect(), "ACIS 4.0 SAT is listed");
+    // The same versions encoded, as a DXF before 2013 holds them: 700 is kept, 400 is listed.
+    d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "hoo o n o")])).unwrap();
+    assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2)].into_iter().collect(), "encoded ACIS 7.0 SAT is kept");
+    d.add(&Space::Model, Common::default(), solid(vec![tag(100, "AcDbModelerGeometry"), tag(1, "koo gj n o")])).unwrap();
+    assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 3)].into_iter().collect(), "encoded ACIS 4.0 SAT is listed");
 }
 
 /// The DWG bridge writes OLE objects (`ole2frame_roundtrip` in the io tests), so saving one as
@@ -301,4 +309,110 @@ fn ole_objects_are_not_reported() {
     for v in [Version::R2000, Version::R2010, Version::R2018] {
         assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
     }
+}
+
+/// A solid whose geometry only the data store keeps (read from a 2013+ file) has nothing to write
+/// to a DXF of 2010 or earlier, which has no data store: the save leaves it out and says so, and
+/// the interactive save knows it beforehand; 2013 and later keep it (#2334).
+#[test]
+fn saving_data_store_solids_as_dxf_2010_reports_them() {
+    use cadcraft_engine::cmd::file::loss_on_save;
+    use cadcraft_engine::doc::foreign::Foreign;
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    set_write_as(|_, _, _: &SaveAs| Ok(b"x".to_vec()));
+    let mut d = Drawing::new_imperial();
+    d.header.set_str("ACADVER", "AC1032");
+    let h = d.add(&Space::Model, Common::default(), unknown("3DSOLID")).unwrap();
+    let record = vec![
+        RawTag { code: 0, value: "ACDSRECORD".into() },
+        RawTag { code: 320, value: h.hex() },
+        RawTag { code: 2, value: "ASM_Data".into() },
+        RawTag { code: 310, value: "00".into() },
+    ];
+    d.foreign = std::sync::Arc::new(Foreign { data_store: record, ..Foreign::default() });
+    let mut s = Session::empty();
+    s.open_drawing(d, "solid.dxf", None);
+    assert!(loss_on_save(&s, "solid.dxf").is_empty(), "2018 keeps it");
+
+    let path = std::env::temp_dir().join(format!("cadcraft-ds-note-{}.dxf", std::process::id()));
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2010 })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "3DSOLID": 1 }));
+    assert!(s.log.iter().any(|l| l.contains("2010 and earlier have no data store") && l.contains("1 3DSOLID")), "{:?}", s.log);
+    assert_eq!(loss_on_save(&s, "solid.dxf"), [("3DSOLID".to_string(), 1)].into_iter().collect(), "now a 2010 drawing");
+
+    let n = s.log.len();
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2018 })).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(r.get("notSaved").is_none() && s.log.len() == n);
+}
+
+/// A proxy entity (as a 2010 file has it) whose string stream is `strings` long (group 162).
+fn proxy_entity(strings: &str) -> EntityKind {
+    let tags = [(8, "0"), (100, "AcDbProxyEntity"), (90, "498"), (91, "500"), (162, strings), (161, "16"), (310, "AABB")];
+    EntityKind::Unknown(Unknown {
+        dxf_type: "ACAD_PROXY_ENTITY".into(),
+        tags: tags.iter().map(|(code, value)| RawTag { code: *code, value: (*value).into() }).collect(),
+    })
+}
+
+/// A DXF before 2007 has no form for a proxy's separate string stream: the writer leaves such a
+/// proxy out, and the save says so instead of dropping it silently (#3229).
+#[test]
+fn a_dxf_before_2007_reports_the_proxies_it_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    // SAVEAS at a chosen version goes through this hook (each test may run in its own process).
+    set_write_as(|_, _, _: &SaveAs| Ok(b"x".to_vec()));
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+    d.add(&Space::Model, Common::default(), proxy_entity("0")).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "proxy.dxf", None);
+    let path = std::env::temp_dir().join(format!("cadcraft-proxy-r2000-{}.dxf", std::process::id()));
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2000 })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACAD_PROXY_ENTITY": 1 }), "only the one with strings");
+    assert!(s.log.iter().any(|l| l.contains("DXF before 2007") && l.contains("1 ACAD_PROXY_ENTITY")), "{:?}", s.log);
+    let r = s.execute("saveas", &json!({ "path": path.to_string_lossy(), "version": 2007 })).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(r.get("notSaved").is_none(), "2007 keeps it");
+}
+
+/// The interactive QSAVE asks before a pre-2007 DXF replaces a file and leaves such proxies out,
+/// with the same list (#3229).
+#[test]
+fn a_pre_2007_dxf_proxy_loss_is_known_before_saving() {
+    use cadcraft_engine::cmd::file::loss_on_save;
+    let drawing = |acadver: &str| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_str("ACADVER", acadver);
+        d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+        d
+    };
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1015"), "proxy.dxf", None);
+    assert_eq!(loss_on_save(&s, "proxy.dxf"), [("ACAD_PROXY_ENTITY".to_string(), 1)].into_iter().collect());
+    s.open_drawing(drawing("AC1021"), "proxy.dxf", None);
+    assert!(loss_on_save(&s, "proxy.dxf").is_empty(), "2007 keeps it");
+}
+
+/// EXPORT writes a DXF at the drawing's own version: before 2007 it leaves the same proxies out
+/// and says so, like a save (#3229).
+#[test]
+fn exporting_a_dxf_before_2007_reports_the_proxies_it_leaves_out() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
+    let drawing = |acadver: &str| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_str("ACADVER", acadver);
+        d.add(&Space::Model, Common::default(), proxy_entity("8")).unwrap();
+        d.add(&Space::Model, Common::default(), proxy_entity("0")).unwrap();
+        d
+    };
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1015"), "proxy.dxf", None);
+    let r = s.execute("export", &json!({ "format": "dxf" })).unwrap();
+    assert_eq!(r["notSaved"], json!({ "ACAD_PROXY_ENTITY": 1 }), "only the one with strings");
+    assert!(s.log.iter().any(|l| l.contains("DXF before 2007") && l.contains("1 ACAD_PROXY_ENTITY")), "{:?}", s.log);
+    let mut s = Session::empty();
+    s.open_drawing(drawing("AC1021"), "proxy.dxf", None);
+    let r = s.execute("export", &json!({ "format": "dxf" })).unwrap();
+    assert!(r.get("notSaved").is_none(), "2007 keeps it");
 }

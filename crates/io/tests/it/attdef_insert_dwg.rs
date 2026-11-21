@@ -32,6 +32,7 @@ fn centred_attdef_point_near_the_alignment_point_is_kept() {
 /// read from DXF and kept by a write as DXF and as DWG (both versions). The displayed text is the
 /// tag whatever the prompt: with a prompt, an empty one (group 3 empty) and none (no group 3).
 fn assert_kept(start: f64) {
+    cadcraft_io::dwg_worker::allow_in_process();
     for prompt in ["3\nprompt\n", "3\n\n", ""] {
         let dxf = format!(
             "0\nSECTION\n2\nENTITIES\n0\nATTDEF\n8\n0\n10\n{start}\n20\n5.0\n40\n2.5\n1\n\n7\nSTANDARD\n72\n1\n11\n100.0\n21\n5.0\n{prompt}2\nLONGTAG\n70\n8\n0\nENDSEC\n0\nEOF\n"
