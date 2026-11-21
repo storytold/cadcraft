@@ -243,7 +243,8 @@ impl StretchM {
                 None => {
                     let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
-                    match crate::select::pick_in(s.doc()?, &space, s.viewport_frozen(), p, aperture) {
+                    // A removal names its object (`picks_one`): the named one is found, not another lying there.
+                    match s.pick_object(&space, p, aperture)? {
                         Some(h) => self.add(s, vec![h], true),
                         None => self.corner = Some(p),
                     }
@@ -323,13 +324,16 @@ impl Interactive for StretchM {
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
     }
+    /// Returns the active interactive prompt for the current `STRETCH` phase.
     fn prompt(&self, _s: &Session) -> Prompt {
         if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
             return m.prompt();
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            (StretchPhase::Select, None) => {
+                Prompt { picks_one: self.removing, ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT) }
+            }
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),

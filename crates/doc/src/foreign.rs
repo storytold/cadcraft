@@ -85,6 +85,9 @@ pub struct Foreign {
     /// The drawing's own `$ACADVER` is the version it is saved as, which SAVEAS changes, so a
     /// later save must not take it for this one (#2471).
     pub version: Option<String>,
+    /// The file's registered applications (APPID names as read, in file order). Saving writes
+    /// them all back, whether or not any xdata still names them.
+    pub appids: Vec<String>,
 }
 
 impl Foreign {
@@ -103,6 +106,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.appids.is_empty()
     }
 
     /// The entities with a geometry record in the data store: an `ACDSRECORD` naming the entity
@@ -126,21 +130,88 @@ pub fn sat_text_acis(u: &crate::Unknown, handle: Handle, stored: &std::collectio
     ["3DSOLID", "REGION", "BODY"].iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && !stored.contains(&handle) && has_sat_text(&u.tags)
 }
 
+/// Whether a solid modeler entity can't be written to a DXF of 2013 and later (`modern`: SAT text
+/// with no data store record, [`sat_text_acis`]) or of 2010 and earlier (geometry only in the data
+/// store, which those files don't have, and no SAT text to write instead) (#2334).
+pub fn acis_left_out(u: &crate::Unknown, handle: Handle, stored: &std::collections::BTreeSet<Handle>, modern: bool) -> bool {
+    if modern {
+        return sat_text_acis(u, handle, stored);
+    }
+    ["3DSOLID", "REGION", "BODY"].iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&handle) && !has_sat_text(&u.tags)
+}
+
 /// The entities a DXF of 2013 or later leaves out because they hold SAT-text ACIS data
 /// ([`sat_text_acis`]), counted by DXF type, across model space, layouts and block definitions.
 pub fn sat_text_dropped(d: &crate::Drawing) -> BTreeMap<String, usize> {
+    acis_dropped(d, true)
+}
+
+/// The entities a DXF leaves out by [`acis_left_out`], counted like [`sat_text_dropped`].
+pub fn acis_dropped(d: &crate::Drawing, modern: bool) -> BTreeMap<String, usize> {
     let stored = d.foreign.data_store_entities();
     let mut out = BTreeMap::new();
-    // The writer saves xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
+    for e in saved_entities(d) {
+        if let crate::EntityKind::Unknown(u) = &e.kind
+            && acis_left_out(u, e.handle, &stored, modern)
+        {
+            count(&mut out, &u.dxf_type);
+        }
+    }
+    out
+}
+
+/// The entities a DXF file holds: model space, layouts and block definitions. The writer saves
+/// xrefs as references: their blocks (and `xref|` ones) hold nothing in the file.
+fn saved_entities(d: &crate::Drawing) -> impl Iterator<Item = &std::sync::Arc<crate::Entity>> {
     let own_blocks = d.blocks.values().filter(|b| b.xref_path.is_none() && !xref_dependent(&b.name));
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(own_blocks.map(|b| &b.entities));
-    for e in stores.flat_map(|s| s.iter()) {
-        if let crate::EntityKind::Unknown(u) = &e.kind
-            && sat_text_acis(u, e.handle, &stored)
-        {
-            let n: &mut usize = out.entry(u.dxf_type.to_ascii_uppercase()).or_default();
-            *n = n.saturating_add(1);
+    stores.flat_map(|s| s.iter())
+}
+
+/// Add one record of DXF type `kind` to `out`.
+fn count(out: &mut BTreeMap<String, usize>, kind: &str) {
+    let n: &mut usize = out.entry(kind.to_ascii_uppercase()).or_default();
+    *n = n.saturating_add(1);
+}
+
+/// Whether a DXF type is a proxy (ACAD_PROXY_OBJECT, ACAD_PROXY_ENTITY).
+pub fn is_proxy(kind: &str) -> bool {
+    let k = kind.trim();
+    k.eq_ignore_ascii_case("ACAD_PROXY_OBJECT") || k.eq_ignore_ascii_case("ACAD_PROXY_ENTITY")
+}
+
+/// Whether a proxy's groups (after its type) give it a separate string stream: a size above 0 in
+/// group 96 (2007) or 162 (2010 and later) after the `AcDbProxy…` marker. Before 2007 a proxy's
+/// strings are part of its data, so a file of an earlier version has no form for one that keeps
+/// them apart (#3229).
+pub fn proxy_has_string_stream<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> bool {
+    let mut own = false;
+    for (code, value) in groups {
+        let v = value.as_ref().trim();
+        match code {
+            100 => own = own || v.to_ascii_lowercase().starts_with("acdbproxy"),
+            96 | 162 if own && v.parse::<i64>().is_ok_and(|n| n > 0) => return true,
+            _ => {}
         }
+    }
+    false
+}
+
+/// The proxies a DXF earlier than 2007 leaves out because they have a separate string stream
+/// ([`proxy_has_string_stream`]), counted by DXF type.
+pub fn proxies_dropped_before_2007(d: &crate::Drawing) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    let has_strings = |tags: &[RawTag]| proxy_has_string_stream(tags.iter().map(|t| (t.code, t.value.as_str())));
+    for e in saved_entities(d) {
+        if let crate::EntityKind::Unknown(u) = &e.kind
+            && is_proxy(&u.dxf_type)
+            && has_strings(&u.tags)
+        {
+            count(&mut out, &u.dxf_type);
+        }
+    }
+    for o in d.foreign.objects.iter().filter(|o| is_proxy(&o.kind) && has_strings(&o.tags)) {
+        count(&mut out, &o.kind);
     }
     out
 }
@@ -162,6 +233,23 @@ pub fn data_store_records(tags: &[RawTag]) -> Vec<&[RawTag]> {
         start = end;
     }
     out
+}
+
+/// The ACIS version a modeler entity's SAT text declares (the first number of its first line:
+/// 400, 700, 21800…), if it has SAT text.
+pub fn sat_version(tags: &[RawTag]) -> Option<u32> {
+    let marked = tags.iter().take_while(|r| r.code < 1000).any(|r| r.code == 100);
+    let mut in_modeler = !marked;
+    for r in tags.iter().take_while(|r| r.code < 1000) {
+        if r.code == 100 {
+            in_modeler = r.value.trim().eq_ignore_ascii_case("AcDbModelerGeometry");
+        } else if in_modeler && r.code == 1 {
+            let first = r.value.split_whitespace().next()?;
+            // DXF before 2013 encodes SAT text: each character but a space is 159 minus it ("hoo" is 700).
+            return first.parse().ok().or_else(|| first.bytes().map(|b| char::from(159u8.wrapping_sub(b))).collect::<String>().parse().ok());
+        }
+    }
+    None
 }
 
 /// Whether an entity's groups hold SAT text: groups 1 and 3 inside its `AcDbModelerGeometry`

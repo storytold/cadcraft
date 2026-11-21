@@ -26,7 +26,6 @@ fn preserves_or_refuses(path: &str, binary: bool) {
 }
 
 #[test]
-#[ignore = "Confirmed DXF data loss: exhausted generated handles produce a successful save that reopens with no model entities"]
 fn dxf_exhausted_handles_are_preserved_or_refused() {
     for binary in [false, true] {
         preserves_or_refuses("memory.dxf", binary);
@@ -36,5 +35,6 @@ fn dxf_exhausted_handles_are_preserved_or_refused() {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn dwg_exhausted_handles_are_preserved_or_refused() {
+    cadcraft_io::dwg_worker::allow_in_process();
     preserves_or_refuses("memory.dwg", false);
 }
