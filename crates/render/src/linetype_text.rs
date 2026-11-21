@@ -46,8 +46,12 @@ struct Element {
 }
 
 /// The texts and shapes of `lt` along the polyline `pts`, in the coordinates of `pts`. Empty
-/// when the linetype has none or its scaled pattern is drawn continuous (shorter than
-/// `min_pattern`, or repeating too often).
+/// when the linetype has none, or its scaled pattern is drawn continuous: shorter than
+/// `min_pattern`, or repeating more often than the expansion allows (#1069, #1285). A plot's
+/// shared dash budget is not read here: [`crate::linetype::apply_report`] says whether the run
+/// was expanded, and its caller keeps these labels or drops them with its dashes. At most
+/// [`MAX_TEXTS`] texts and shapes are placed along one run, the first ones: the cap keeps a
+/// hostile scale from placing millions of them.
 pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Shaped> {
     let mut out = Vec::new();
     if pts.len() < 2 || !lt.pattern.iter().any(|e| e.text.as_deref().is_some_and(|t| !t.trim().is_empty()) || e.shape.is_some()) {
@@ -56,7 +60,13 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern || len / total > 50_000.0 {
+    // `apply` draws a run past the dash ceiling as one continuous line (#1285), so its texts and
+    // shapes go with the dashes.
+    if !(total.is_finite() && total > 1e-12 && len.is_finite())
+        || total < min_pattern
+        || len / total > crate::linetype::MAX_DASHES
+        || (min_pattern > 0.0 && len / total > 50_000.0)
+    {
         return out;
     }
     let elements = elements(d, lt, scale);
@@ -228,11 +238,38 @@ mod tests {
     }
 
     #[test]
+    fn no_text_past_the_dash_ceiling() {
+        // 2,000,001 repeats of the 0.95-long pattern: `apply` draws the run as one continuous
+        // line there, so its texts go with the dashes (#1285).
+        let d = Drawing::new_imperial();
+        let len = 2_000_001.0 * 0.95;
+        assert!(texts(&d, &[Vec2::ZERO, Vec2::new(len, 0.0)], &gas(), 1.0, 0.0).is_empty());
+    }
+
+    #[test]
     fn no_text_when_drawn_continuous() {
         let d = Drawing::new_imperial();
         assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &gas(), 1.0, 5.0).is_empty());
         let plain = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         assert!(texts(&d, &[Vec2::ZERO, Vec2::new(2.0, 0.0)], &plain, 1.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn a_spent_plot_budget_draws_the_run_continuous_and_reports_it() {
+        // The dashes and the labels of a run are decided once, by `apply_report`: a spent budget
+        // keeps the line whole and says so, so the caller drops the labels with the dashes.
+        let lt = gas();
+        let pts = [Vec2::ZERO, Vec2::new(2.0, 0.0)];
+        let spent = crate::linetype::DashBudget::new(0);
+        let (runs, expanded) = crate::linetype::apply_report(&pts, &lt, 1.0, 0.0, Some(&spent));
+        assert_eq!(runs, vec![pts.to_vec()], "a spent budget keeps the line whole");
+        assert!(!expanded);
+        // Room enough: the run expands, and its labels are placed.
+        let room = crate::linetype::DashBudget::new(1_000_000);
+        let (runs, expanded) = crate::linetype::apply_report(&pts, &lt, 1.0, 0.0, Some(&room));
+        assert!(expanded && runs.len() > 1, "{runs:?}");
+        let d = Drawing::new_imperial();
+        assert_eq!(texts(&d, &pts, &lt, 1.0, 0.0).len(), 2);
     }
 
     /// A long label repeated along a long run stops at the point allowance, well before MAX_TEXTS.
