@@ -60,6 +60,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("INSNAME", Kind::Name, Def::Str("")),
+    // Percent that objects on locked layers fade on screen; 0 or negative: no fade.
+    ("LAYLOCKFADECTL", Kind::Int(-90, 90), Def::Int(50)),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
     // Negative: Through (OFFSET picks a point).
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),
@@ -73,7 +75,12 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("TEXTFILL", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMEXTENDMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
+    ("UCSAXISANG", Kind::Choice(&[5, 10, 15, 18, 22, 30, 45, 90, 180]), Def::Int(90)),
+    // 1: the UCS icon is shown; 2: at the UCS origin when that is on screen.
+    ("UCSICON", Kind::Int(0, 3), Def::Int(3)),
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
+    // XCLIP boundaries: 0 hidden, 1 shown and plotted, 2 shown but not plotted.
+    ("XCLIPFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.
@@ -81,8 +88,11 @@ const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));
-const SETTINGS: &[Toggle] =
-    &[("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v), ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v)];
+const SETTINGS: &[Toggle] = &[
+    ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
+    ("ATTREQ", |s| s.attreq, |s, v| s.attreq = v),
+    ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v),
+];
 
 fn header_var(name: &str) -> Option<&'static (&'static str, Kind, Def)> {
     HEADER.iter().find(|(n, _, _)| *n == name)

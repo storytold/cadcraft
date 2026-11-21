@@ -30,7 +30,7 @@ mod lm;
 mod model;
 mod residual;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cadcraft_doc::{Constraint, ConstraintKind, Drawing, GeomRef, Handle};
 use cadcraft_geom::Vec2;
@@ -41,7 +41,7 @@ pub use dof::{DofReport, DofStatus, ObjectDof, dof};
 pub use expr::{Env, ExprError};
 pub use model::{ref_points, rigid_points, supported};
 
-use model::Model;
+use model::{Model, Prep};
 use residual::{Built, Form};
 
 /// Most constraints one drawing may hold.
@@ -50,6 +50,11 @@ pub const MAX_CONSTRAINTS: usize = 5000;
 const MAX_CONFLICT_PROBES: usize = 48;
 /// Solver iterations.
 const MAX_ITER: usize = 200;
+/// Largest residual-evaluation work (including spline rebuilds) one numerical Jacobian may take,
+/// shared by solving, redundancy checks and DOF analysis.
+pub(crate) const MAX_EVAL_WORK: f64 = 2e9;
+/// Residual evaluations a solver iteration makes besides its Jacobian (damped trial steps).
+const TRIAL_EVALS: f64 = 14.0;
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum SolveError {
@@ -81,6 +86,12 @@ pub struct SolveOptions {
     pub keep: Vec<Handle>,
     /// Entities that should take up the change.
     pub prefer_move: Vec<Handle>,
+    /// Points held where they are for this solve, as a Fix would hold them (the grip an edit
+    /// just put down): see [`edited_points`].
+    pub hold: Vec<GeomRef>,
+    /// Where a Fix on a derived point (by constraint id) holds it, instead of where the point is
+    /// now: see [`moved_anchors`].
+    pub anchors: Vec<(u32, Vec2)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -163,10 +174,26 @@ pub fn name_in_use(d: &Drawing, name: &str) -> bool {
     d.parametric.parameters.iter().any(|p| p.name == name) || d.constraints.iter().any(|c| c.name == name)
 }
 
+/// Highest numbered default name [`next_name`] tries.
+const MAX_NAME_SUFFIX: u32 = 100_000;
+
 /// Next free parameter name for a dimensional constraint kind (`d1`, `rad2`, `ang1`, …).
 pub fn next_name(d: &Drawing, kind: ConstraintKind) -> String {
     let prefix = kind.name_prefix();
-    (1..=100_000).map(|i| format!("{prefix}{i}")).find(|n| !name_in_use(d, n)).unwrap_or_else(|| format!("{prefix}_x"))
+    // Collect the suffixes in use in one pass, then take the first free one: checking every
+    // candidate against every name is quadratic in the number of names (CWE-407). Only a
+    // suffix spelled as `format!("{prefix}{i}")` spells it counts (`d07` does not take `d7`).
+    let taken: HashSet<u32> = d
+        .parametric
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .chain(d.constraints.iter().map(|c| c.name.as_str()))
+        .filter_map(|n| n.strip_prefix(prefix))
+        .filter(|s| !s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit()))
+        .filter_map(|s| s.parse::<u32>().ok())
+        .collect();
+    (1..=MAX_NAME_SUFFIX).find(|i| !taken.contains(i)).map_or_else(|| format!("{prefix}_x"), |i| format!("{prefix}{i}"))
 }
 
 /// Next free constraint id.
@@ -205,12 +232,19 @@ pub(crate) struct Comp {
     pub(crate) model: Model,
     pub(crate) built: Vec<Built>,
     weights: Vec<f64>,
+    /// Parameters of the points held by [`SolveOptions::hold`].
+    held: Vec<usize>,
     tol: f64,
 }
 
 impl Comp {
     fn locks(&self, skip: Option<usize>) -> Vec<bool> {
         let mut locked = vec![false; self.model.x0.len()];
+        for &j in &self.held {
+            if let Some(l) = locked.get_mut(j) {
+                *l = true;
+            }
+        }
         for (i, b) in self.built.iter().enumerate() {
             if Some(i) == skip || b.form != Form::Lock {
                 continue;
@@ -238,14 +272,66 @@ impl Comp {
     pub(crate) fn rows(&self, skip: Option<usize>) -> usize {
         self.built.iter().enumerate().filter(|(i, _)| Some(*i) != skip).map(|(_, b)| b.rows).sum()
     }
+    /// Work of one solver iteration's residual evaluations over `free`: every residual twice per
+    /// free parameter, plus a spline rebuild each time a spline's own defining points move (rebuilds
+    /// are shared by residuals at the same points, see [`Model`]).
+    pub(crate) fn eval_work(&self, free: &[usize], skip: Option<usize>) -> f64 {
+        let rows = self.rows(skip) as f64;
+        let evals = 2.0 * free.len() as f64 + TRIAL_EVALS;
+        let mut splines: Vec<Handle> = Vec::new();
+        for (i, b) in self.built.iter().enumerate() {
+            if Some(i) != skip && b.spline_reconstruct_cost(&self.model) > 0.0 {
+                splines.extend(b.refs.iter().map(|r| r.handle).filter(|h| self.model.spline_reconstruct_cost(*h) > 0.0));
+            }
+        }
+        splines.sort_unstable();
+        splines.dedup();
+        let rebuilds: f64 = splines
+            .iter()
+            .filter_map(|h| self.model.slot(*h))
+            .map(|s| {
+                let own = free.iter().filter(|j| (s.off..s.off + s.len).contains(*j)).count() as f64;
+                (2.0 * own + TRIAL_EVALS + 1.0) * self.model.spline_reconstruct_cost(s.handle)
+            })
+            .sum();
+        evals * rows + rebuilds
+    }
     fn run(&self, skip: Option<usize>) -> Result<lm::Outcome, SolveError> {
         let free = self.free(skip);
         let rows = self.rows(skip);
         if rows > lm::MAX_ROWS || (rows as f64) * (rows as f64) * (free.len() as f64) > 4e8 {
             return Err(SolveError::TooLarge);
         }
+        // Numerical differentiation rebuilds a fit spline through a dense solve for every move of
+        // its own fit points: refuse before iterating when that alone is too much (CWE-407).
+        if self.eval_work(&free, skip) > MAX_EVAL_WORK {
+            return Err(SolveError::TooLarge);
+        }
         let f = |x: &[f64], out: &mut Vec<f64>| self.eval(x, out, skip);
-        Ok(lm::solve(&f, &self.model.x0, &free, &self.weights, self.tol, MAX_ITER))
+        let mut o = lm::solve(&f, &self.model.x0, &free, &self.weights, self.tol, MAX_ITER);
+        // A solution the ellipses would be stored differently from (axes swapped, minor axis
+        // mirrored) holds only if the constraints still hold on the stored form: a constraint on
+        // an axis end by index does not.
+        if o.converged && !self.model.storable(&o.x) {
+            let mut out = Vec::new();
+            match self.model.stored_form(&o.x) {
+                Some(mut xc) => {
+                    // Contact parameters are positions along the curves: they follow the stored form.
+                    for b in self.built.iter().filter(|b| b.form == Form::Contact) {
+                        for (k, r) in b.refs.iter().enumerate() {
+                            if let (Some(&t), Some(slot)) = (o.x.get(b.aux + k), xc.get_mut(b.aux + k)) {
+                                *slot = self.model.stored_t(&o.x, r.handle, t);
+                            }
+                        }
+                    }
+                    self.eval(&xc, &mut out, skip);
+                    o.converged = lm::max_abs(&out) <= self.tol;
+                    o.x = xc;
+                }
+                None => o.converged = false,
+            }
+        }
+        Ok(o)
     }
     /// Constraint ids in conflict (each one whose removal makes the rest solvable).
     fn conflicts(&self, x_failed: &[f64]) -> Vec<u32> {
@@ -322,67 +408,98 @@ fn components<'a>(cons: &[&'a Constraint]) -> Vec<Vec<&'a Constraint>> {
     groups.into_values().collect()
 }
 
+/// The solver weight of each unknown of `model`: kept handles weigh more, preferred-to-move ones
+/// less, angles and ratios by size², and contact parameters move freely.
+fn solver_weights(model: &Model, opts: &SolveOptions) -> Vec<f64> {
+    let mut weights = vec![1.0; model.x0.len()];
+    for s in &model.slots {
+        let w = if opts.keep.contains(&s.handle) {
+            1e4
+        } else if opts.prefer_move.contains(&s.handle) {
+            1e-2
+        } else {
+            1.0
+        };
+        for j in s.off..s.off + s.len {
+            if let Some(slot) = weights.get_mut(j) {
+                *slot = w;
+            }
+        }
+        for (j, f) in slot_scales(model, s) {
+            if let Some(slot) = weights.get_mut(j) {
+                *slot *= f;
+            }
+        }
+    }
+    // Contact parameters move freely.
+    let geo = model.slots.iter().map(|s| s.off + s.len).max().unwrap_or(0);
+    for w in weights.iter_mut().skip(geo) {
+        *w = 1e-3;
+    }
+    weights
+}
+
+/// Per-unknown factors for the angles and ratios of one slot: size², so that the movement of
+/// points is what is minimised.
+fn slot_scales(model: &Model, s: &model::Slot) -> Vec<(usize, f64)> {
+    let sq = |j: usize| model.x0.get(j).map_or(1.0, |r| (r * r).max(1e-6));
+    match s.shape {
+        model::Shape::Arc => vec![(s.off + 3, sq(s.off + 2)), (s.off + 4, sq(s.off + 2))],
+        model::Shape::Ellipse { arc } => {
+            let a2 = (sq(s.off + 2) + sq(s.off + 3)).max(1e-6);
+            let mut v = vec![(s.off + 4, a2)];
+            if arc {
+                v.extend([(s.off + 5, a2), (s.off + 6, a2)]);
+            }
+            v
+        }
+        model::Shape::Insert { .. } => vec![(s.off + 2, model.rigid_extent2(s.handle).max(1.0))],
+        _ => Vec::new(),
+    }
+}
+
 /// Build the component systems. Constraints that cannot be interpreted are returned as skipped.
 pub(crate) fn build(d: &Drawing, cons: &[&Constraint], opts: &SolveOptions) -> Result<(Vec<Comp>, Vec<(u32, String)>), SolveError> {
+    build_with(d, cons, opts, &mut Prep::new(model::MAX_RIGID_WORK))
+}
+
+/// Build constraint components sharing one caller-owned geometry preparation (block sampling and
+/// its member budget, spline rebuilds) between every model.
+/// Return constraints that cannot be interpreted as skipped entries.
+pub(crate) fn build_with(
+    d: &Drawing,
+    cons: &[&Constraint],
+    opts: &SolveOptions,
+    prep: &mut Prep,
+) -> Result<(Vec<Comp>, Vec<(u32, String)>), SolveError> {
     let mut e = env(d);
     let mut skipped = Vec::new();
     let mut comps = Vec::new();
     for group in components(cons) {
         let handles: Vec<Handle> = group.iter().flat_map(|c| c.refs.iter().map(|r| r.handle)).collect();
-        let mut model = Model::build(d, &handles);
+        let mut model = Model::build_with(d, &handles, prep);
         let mut built = Vec::new();
         for c in group {
             let target = if c.kind.is_dimensional() { constraint_value(&mut e, c)? } else { 0.0 };
             match interpret(c, &mut model, target) {
-                Ok(b) => built.push(b),
+                Ok(mut b) => {
+                    if let Form::Anchor(_) = b.form
+                        && let Some(&(_, a)) = opts.anchors.iter().find(|(id, _)| *id == c.id)
+                    {
+                        b.form = Form::Anchor(a);
+                    }
+                    built.push(b);
+                }
                 Err(msg) => skipped.push((c.id, msg)),
             }
         }
         if built.is_empty() {
             continue;
         }
-        let mut weights = vec![1.0; model.x0.len()];
-        for s in &model.slots {
-            let w = if opts.keep.contains(&s.handle) {
-                1e4
-            } else if opts.prefer_move.contains(&s.handle) {
-                1e-2
-            } else {
-                1.0
-            };
-            for j in s.off..s.off + s.len {
-                if let Some(slot) = weights.get_mut(j) {
-                    *slot = w;
-                }
-            }
-            // Angles and ratios: weight by size² so the movement of points is what is minimised.
-            let sq = |j: usize| model.x0.get(j).map_or(1.0, |r| (r * r).max(1e-6));
-            let scaled: Vec<(usize, f64)> = match s.shape {
-                model::Shape::Arc => vec![(s.off + 3, sq(s.off + 2)), (s.off + 4, sq(s.off + 2))],
-                model::Shape::Ellipse { arc } => {
-                    let a2 = (sq(s.off + 2) + sq(s.off + 3)).max(1e-6);
-                    let mut v = vec![(s.off + 4, a2)];
-                    if arc {
-                        v.extend([(s.off + 5, a2), (s.off + 6, a2)]);
-                    }
-                    v
-                }
-                model::Shape::Insert { .. } => vec![(s.off + 2, model.rigid_extent2(s.handle).max(1.0))],
-                _ => Vec::new(),
-            };
-            for (j, f) in scaled {
-                if let Some(slot) = weights.get_mut(j) {
-                    *slot *= f;
-                }
-            }
-        }
-        // Contact parameters move freely.
-        let geo = model.slots.iter().map(|s| s.off + s.len).max().unwrap_or(0);
-        for w in weights.iter_mut().skip(geo) {
-            *w = 1e-3;
-        }
+        let weights = solver_weights(&model, opts);
+        let held = opts.hold.iter().filter_map(|r| model.lock_indices(r)).flatten().collect();
         let tol = scale_tol(&model.x0);
-        comps.push(Comp { model, built, weights, tol });
+        comps.push(Comp { model, built, weights, held, tol });
     }
     Ok((comps, skipped))
 }
@@ -433,6 +550,9 @@ pub fn residuals(d: &Drawing) -> Vec<(u32, Option<f64>)> {
 /// A Fix keeps no position of its own: the solver locks the parameters at their current values.
 /// Without this, an edit that moves a fixed point (a grip drag) would carry the lock along with
 /// it. Only Fixes that already existed in `before`, on objects of the same shape, are restored.
+/// An object held by a Fix on a derived point (a line's midpoint, an arc's end) has nothing to
+/// lock: when the edit only moved it (MOVE), it is put back whole, so it is not reshaped to bring
+/// the point back.
 pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
     let refs: Vec<GeomRef> = d
         .constraints
@@ -449,10 +569,21 @@ pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
     let mut changed = false;
     for r in &refs {
         let same_shape = matches!((now.slot(r.handle), old.slot(r.handle)), (Some(a), Some(b)) if a.shape == b.shape);
-        let (Some(i), Some(j)) = (now.lock_indices(r), old.lock_indices(r)) else { continue };
         if !same_shape {
             continue;
         }
+        let (Some(i), Some(j)) = (now.lock_indices(r), old.lock_indices(r)) else {
+            if let (Some(a), Some(b)) = (now.slot(r.handle), old.slot(r.handle))
+                && translated(&now, &old, r.handle)
+                && let (Some(dst), Some(src)) = (x.get_mut(a.off..a.off + a.len), old.x0.get(b.off..b.off + b.len))
+            {
+                for (v, &w) in dst.iter_mut().zip(src) {
+                    *v = w;
+                }
+                changed = true;
+            }
+            continue;
+        };
         for (i, j) in i.into_iter().zip(j) {
             if let (Some(slot), Some(&v)) = (x.get_mut(i), old.x0.get(j))
                 && *slot != v
@@ -468,6 +599,88 @@ pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
     changed
 }
 
+/// The parameters of `h`'s points (see [`Model::point_refs`]) in `m`, as (x, y) pairs.
+fn point_params(m: &Model, h: Handle) -> Vec<(usize, usize)> {
+    m.point_refs(h)
+        .iter()
+        .filter_map(|r| m.lock_indices(r))
+        .flat_map(|ix| ix.as_chunks::<2>().0.iter().map(|&[x, y]| (x, y)).collect::<Vec<_>>())
+        .collect()
+}
+
+/// Is `h` in `now` its shape in `old` moved by one vector, and nothing else?
+fn translated(now: &Model, old: &Model, h: Handle) -> bool {
+    let (Some(a), Some(b)) = (now.slot(h), old.slot(h)) else { return false };
+    let (Some(xa), Some(xb)) = (now.x0.get(a.off..a.off + a.len), old.x0.get(b.off..b.off + b.len)) else { return false };
+    let tol = scale_tol(xb) * 10.0;
+    let pts: Vec<(usize, usize)> =
+        point_params(old, h).into_iter().filter_map(|(i, j)| Some((i.checked_sub(b.off)?, j.checked_sub(b.off)?))).collect();
+    let delta = |(i, j): (usize, usize)| Some(Vec2::new(xa.get(i)? - xb.get(i)?, xa.get(j)? - xb.get(j)?));
+    let Some(v) = pts.first().and_then(|&p| delta(p)) else { return false };
+    if v.len() <= tol || !pts.iter().all(|&p| delta(p).is_some_and(|d| d.near(v, tol))) {
+        return false;
+    }
+    (0..xb.len())
+        .filter(|k| !pts.iter().any(|&(i, j)| *k == i || *k == j))
+        .all(|k| matches!((xa.get(k), xb.get(k)), (Some(p), Some(q)) if (p - q).abs() <= tol))
+}
+
+/// The points of `h` (its ends, centre or vertices) the edit from `before` to `d` moved, when it
+/// moved some of them but not all: the grip that was dragged, to pass as [`SolveOptions::hold`] so
+/// it stays where it was put and the rest of the object takes up the constraints. Empty when the
+/// object kept its points or moved them all.
+pub fn edited_points(d: &Drawing, before: &Drawing, h: Handle) -> Vec<GeomRef> {
+    let (now, old) = (Model::build(d, &[h]), Model::build(before, &[h]));
+    if !matches!((now.slot(h), old.slot(h)), (Some(a), Some(b)) if a.shape == b.shape) {
+        return Vec::new();
+    }
+    let tol = scale_tol(&old.x0) * 10.0;
+    let refs = now.point_refs(h);
+    let moved: Vec<GeomRef> = refs
+        .iter()
+        .filter(|r| matches!((now.lock_indices(r), old.lock_indices(r)), (Some(i), Some(j)) if i.iter().zip(&j).any(|(&i, &j)| matches!((now.x0.get(i), old.x0.get(j)), (Some(p), Some(q)) if (p - q).abs() > tol))))
+        .copied()
+        .collect();
+    if moved.len() == refs.len() { Vec::new() } else { moved }
+}
+
+/// Where `before` had each derived point held by a Fix (a line's midpoint, an arc's end), for the
+/// Fixes whose point has moved since, to pass as [`SolveOptions::anchors`].
+///
+/// A Fix on a derived point anchors it where it is when the system is built, and
+/// [`restore_fixed`] has no parameters to put back: without this, an edit that moves the point
+/// would leave the Fix satisfied at the new place.
+pub fn moved_anchors(d: &Drawing, before: &Drawing) -> Vec<(u32, Vec2)> {
+    let fixes: Vec<(u32, GeomRef)> = d
+        .constraints
+        .iter()
+        .filter(|c| c.kind == ConstraintKind::Fix && before.constraints.contains(c))
+        .filter_map(|c| match c.refs.as_slice() {
+            [r] => Some((c.id, *r)),
+            _ => None,
+        })
+        .collect();
+    if fixes.is_empty() {
+        return Vec::new();
+    }
+    let handles: Vec<Handle> = fixes.iter().map(|(_, r)| r.handle).collect();
+    let (now, old) = (Model::build(d, &handles), Model::build(before, &handles));
+    let tol = scale_tol(&old.x0);
+    let mut out = Vec::new();
+    for (id, r) in fixes {
+        let same_shape = matches!((now.slot(r.handle), old.slot(r.handle)), (Some(a), Some(b)) if a.shape == b.shape);
+        if !same_shape || now.lock_indices(&r).is_some() {
+            continue;
+        }
+        if let (Some(p), Some(a)) = (now.point(&now.x0, &r), old.point(&old.x0, &r))
+            && !p.near(a, tol)
+        {
+            out.push((id, a));
+        }
+    }
+    out
+}
+
 /// True when every interpretable constraint holds at the current geometry.
 pub fn all_satisfied(d: &Drawing) -> bool {
     let handles: Vec<Handle> = d.constraints.iter().flat_map(|c| c.refs.iter().map(|r| r.handle)).collect();
@@ -477,6 +690,11 @@ pub fn all_satisfied(d: &Drawing) -> bool {
 
 /// Check that a constraint's references make sense for its type.
 pub fn validate(d: &Drawing, c: &Constraint) -> Result<(), String> {
+    validate_with(d, c, &mut Prep::new(model::MAX_RIGID_WORK))
+}
+
+/// [`validate`] sharing block samples and spline rebuilds with other checks of the same drawing.
+fn validate_with(d: &Drawing, c: &Constraint, prep: &mut Prep) -> Result<(), String> {
     let handles: Vec<Handle> = c.refs.iter().map(|r| r.handle).collect();
     for h in &handles {
         match d.entity(*h) {
@@ -485,7 +703,7 @@ pub fn validate(d: &Drawing, c: &Constraint) -> Result<(), String> {
             _ => {}
         }
     }
-    let mut model = Model::build(d, &handles);
+    let mut model = Model::build_with(d, &handles, prep);
     interpret(c, &mut model, 1.0).map(|_| ())
 }
 
@@ -502,7 +720,12 @@ pub fn measure(d: &Drawing, kind: ConstraintKind, refs: &[GeomRef]) -> Result<f6
 /// Returns the removed ids.
 pub fn purge_invalid(d: &mut Drawing) -> Vec<u32> {
     let mut gone = Vec::new();
-    let keep: Vec<bool> = d.constraints.iter().map(|c| validate(d, c).is_ok()).collect();
+    // One preparation for every check: each block is sampled and each spline rebuilt once,
+    // however many constraints refer to them (CWE-407). Its member budget is not shared, so
+    // a constraint is never dropped because earlier ones spent it: every block is still
+    // examined at most once, up to its own member limit.
+    let mut prep = Prep::new(usize::MAX);
+    let keep: Vec<bool> = d.constraints.iter().map(|c| validate_with(d, c, &mut prep).is_ok()).collect();
     let mut i = 0;
     d.constraints.retain(|c| {
         let k = keep.get(i).copied().unwrap_or(true);
@@ -589,6 +812,9 @@ pub fn add(d: &mut Drawing, mut c: Constraint, opts: &SolveOptions) -> Result<u3
         && comp.built.get(pos).is_some_and(|b| b.form == Form::Lock)
     {
         let before = comp.free(Some(pos));
+        if comp.eval_work(&before, Some(pos)) > MAX_EVAL_WORK {
+            return Err(SolveError::TooLarge);
+        }
         let after = comp.free(None);
         let locked: Vec<usize> = before.iter().enumerate().filter(|(_, j)| !after.contains(j)).map(|(k, _)| k).collect();
         let rows_old = comp.rows(Some(pos));

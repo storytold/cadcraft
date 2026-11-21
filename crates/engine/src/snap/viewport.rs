@@ -40,7 +40,8 @@ impl<'a> Projection<'a> {
         }
         let half = Vec2::new(viewport.width / 2.0, viewport.height / 2.0);
         let paper_clip = Bounds2::new(center - half, center + half);
-        let model_clip = Bounds2::new(viewport.view_center - half / scale, viewport.view_center + half / scale);
+        // The model box the viewport shows (turned, with a view twist).
+        let model_clip = Bounds2::from_points(paper_clip.corners().map(|p| viewport.paper_to_model(p)));
         if ![paper_clip.min, paper_clip.max, model_clip.min, model_clip.max].into_iter().all(Vec2::is_finite) {
             return None;
         }
@@ -48,11 +49,11 @@ impl<'a> Projection<'a> {
     }
 
     pub fn to_model(&self, point: Vec2) -> Vec2 {
-        self.viewport.view_center + (point - self.viewport.center.xy()) / self.scale
+        self.viewport.paper_to_model(point)
     }
 
     fn to_paper(&self, point: Vec2) -> Vec2 {
-        self.viewport.center.xy() + (point - self.viewport.view_center) * self.scale
+        self.viewport.model_to_paper(point)
     }
 
     pub fn hit(&self, mut hit: SnapHit) -> Option<SnapHit> {
@@ -70,6 +71,15 @@ impl<'a> Projection<'a> {
                         return None;
                     }
                     SnapCurve::Circle { center, radius }
+                }
+                SnapCurve::Arc { center, radius, start, end } => {
+                    let (center, radius) = (self.to_paper(center), radius * self.scale);
+                    if !(center.is_finite() && radius.is_finite() && radius > 0.0) {
+                        return None;
+                    }
+                    // The arc turns on the sheet with the viewport's twist.
+                    let twist = self.viewport.view_twist();
+                    SnapCurve::Arc { center, radius, start: start + twist, end: end + twist }
                 }
                 SnapCurve::Line { a, b } => {
                     let (a, b) = (self.to_paper(a), self.to_paper(b));

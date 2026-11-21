@@ -305,7 +305,7 @@ fn keep_option_moves_the_other_entity() {
     let mut d = Drawing::default();
     let a = line(&mut d, (0.0, 0.0), (10.0, 0.0));
     let b = line(&mut d, (0.0, 2.0), (10.0, 4.0));
-    add(&mut d, con(ConstraintKind::Parallel, &[w(a), w(b)]), &SolveOptions { keep: vec![a], prefer_move: vec![b] }).unwrap();
+    add(&mut d, con(ConstraintKind::Parallel, &[w(a), w(b)]), &SolveOptions { keep: vec![a], prefer_move: vec![b], ..Default::default() }).unwrap();
     let (a0, a1) = ln(&d, a);
     assert!(a0.near(Vec2::new(0.0, 0.0), 1e-3) && a1.near(Vec2::new(10.0, 0.0), 1e-3), "{a0:?} {a1:?}");
 }
@@ -412,7 +412,7 @@ fn glyphs_and_residuals() {
     })
     .unwrap();
     assert!(!all_satisfied(&d));
-    let r = solve(&mut d, &SolveOptions { keep: vec![], prefer_move: vec![] }).unwrap();
+    let r = solve(&mut d, &SolveOptions::default()).unwrap();
     assert_eq!(r.moved, vec![a]);
     assert!(all_satisfied(&d));
 }
@@ -488,4 +488,31 @@ fn arc_solved_with_a_negative_radius_keeps_its_points() {
             assert!(circ(&d, a).1 > 0.0);
         }
     }
+}
+
+/// The default name is the first free numbered one, found in one pass over many names in use.
+#[test]
+fn next_name_skips_names_in_use() {
+    let mut d = Drawing::default();
+    assert_eq!(next_name(&d, ConstraintKind::Radius), "rad1");
+    for i in (1..=20_000).filter(|i| *i != 15_000) {
+        d.parametric.parameters.push(cadcraft_doc::Parameter { name: format!("d{i}"), expr: "1".into(), description: String::new() });
+    }
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d15000");
+    d.parametric.parameters.push(cadcraft_doc::Parameter { name: "d15000".into(), expr: "1".into(), description: String::new() });
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d20001");
+    // A differently spelled suffix does not occupy the plain name.
+    let mut d = Drawing::default();
+    for name in ["d01", "d+1", "d1x", "D1"] {
+        d.parametric.parameters.push(cadcraft_doc::Parameter { name: name.into(), expr: "1".into(), description: String::new() });
+    }
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d1");
+    d.constraints.push(Constraint {
+        id: 1,
+        kind: ConstraintKind::Distance(DistAxis::Aligned),
+        refs: Vec::new(),
+        name: "d1".into(),
+        expr: "1".into(),
+    });
+    assert_eq!(next_name(&d, ConstraintKind::Distance(DistAxis::Aligned)), "d2");
 }

@@ -14,7 +14,7 @@ const ASSET_EXT: &[&str] = &[
 const ASSET_DIRS: &[&str] = &["assets/", "docs/images/", "examples/"];
 
 pub fn is_asset(path: &str) -> bool {
-    let ext = Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    let ext = Path::new(path).extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).unwrap_or_default();
     ASSET_DIRS.iter().any(|d| path.starts_with(d)) || ASSET_EXT.contains(&ext.as_str())
 }
 

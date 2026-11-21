@@ -117,6 +117,8 @@ fn interface_scale_in_options() {
     assert_eq!(r["interfaceScale"], json!(1.5));
     let ctx = egui::Context::default();
     frame(&mut a, &ctx, Vec::new(), 0.0);
+    // egui applies a newly requested zoom factor at the start of the next pass.
+    frame(&mut a, &ctx, Vec::new(), 0.1);
     assert_eq!(ctx.zoom_factor(), 1.5, "applied as egui's zoom factor");
 
     // Refused all or nothing.
@@ -143,13 +145,14 @@ fn interface_scale_in_options() {
 
     // Reset brings back the system's own size.
     assert_eq!(a.run("options", json!({"reset": true})).unwrap()["interfaceScale"], json!(1.0));
-    frame(&mut a, &ctx, Vec::new(), 0.1);
+    frame(&mut a, &ctx, Vec::new(), 0.2);
+    frame(&mut a, &ctx, Vec::new(), 0.3);
     assert_eq!(ctx.zoom_factor(), 1.0);
 
     // The Display tab shows it.
     a.run("options", json!({"interfaceScale": 1.25})).unwrap();
     a.ui.dialog = Some("options:display".into());
-    frame(&mut a, &ctx, Vec::new(), 0.2);
-    let text = frame(&mut a, &ctx, Vec::new(), 0.3);
+    frame(&mut a, &ctx, Vec::new(), 0.4);
+    let text = frame(&mut a, &ctx, Vec::new(), 0.5);
     assert!(text.contains("Interface scale") && text.contains("125 %"), "{text}");
 }

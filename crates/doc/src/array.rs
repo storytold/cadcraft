@@ -204,6 +204,23 @@ impl ArrayParams {
         self.replaced.iter().rev().find(|r| (r.i, r.j, r.level) == (i, j, level)).map_or(self.source.as_str(), |r| r.block.as_str())
     }
 
+    /// [`block_for`](Self::block_for) for many items: the replacements are indexed once (the last
+    /// entry for a place wins, as there), so each lookup is O(1) instead of a scan of `replaced`.
+    pub fn block_lookup<'a>(&'a self) -> impl Fn(u32, u32, u32) -> &'a str + 'a {
+        // Only places `items()` generates are indexed, so stray out-of-range records cost nothing.
+        let (cols, rows) = match &self.kind {
+            ArrayKind::Rect(r) => (r.cols, r.rows),
+            ArrayKind::Polar(p) => (p.items, p.rows),
+        };
+        let index: std::collections::HashMap<(u32, u32, u32), &str> = self
+            .replaced
+            .iter()
+            .filter(|r| r.i < cols && r.j < rows && r.level < self.levels)
+            .map(|r| ((r.i, r.j, r.level), r.block.as_str()))
+            .collect();
+        move |i, j, level| index.get(&(i, j, level)).copied().unwrap_or(self.source.as_str())
+    }
+
     /// The block references that make up the array block: one per item, on layer 0 with ByBlock
     /// properties so they take the array's. Handles are allocated from `d`. `None` when the
     /// parameters are not [valid](Self::is_valid).
@@ -217,9 +234,10 @@ impl ArrayParams {
             ..Common::default()
         };
         let mut out = Vec::with_capacity(items.len());
+        let block_for = self.block_lookup();
         for it in items {
             let ins = Insert {
-                block: self.block_for(it.i, it.j, it.level).to_string(),
+                block: block_for(it.i, it.j, it.level).to_string(),
                 insert: it.insert,
                 scale: Vec3::new(1.0, 1.0, 1.0),
                 rotation: it.rotation,
@@ -228,6 +246,7 @@ impl ArrayParams {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             };
             out.push(Entity { handle: d.new_handle(), common: common.clone(), kind: EntityKind::Insert(ins) });
         }
@@ -248,10 +267,17 @@ impl ArrayParams {
             return false;
         }
         let Some(items) = self.items() else { return false };
+        // Index the replacement entries by placement so each item is matched in O(1) instead of
+        // scanning the whole `replaced` vector per item, which is quadratic when both the items
+        // and the replacements are large (CWE-407). Last entry wins, as `.rev().find` did.
+        let mut last_replaced: std::collections::HashMap<(u32, u32, u32), usize> = std::collections::HashMap::with_capacity(self.replaced.len());
+        for (idx, r) in self.replaced.iter().enumerate() {
+            last_replaced.insert((r.i, r.j, r.level), idx);
+        }
         let mut source: Option<&str> = None;
         for (it, e) in items.iter().zip(&ents) {
             let EntityKind::Insert(ins) = &e.kind else { return false };
-            match self.replaced.iter_mut().rev().find(|r| (r.i, r.j, r.level) == (it.i, it.j, it.level)) {
+            match last_replaced.get(&(it.i, it.j, it.level)).and_then(|&idx| self.replaced.get_mut(idx)) {
                 Some(r) => r.block.clone_from(&ins.block),
                 None => match source {
                     None => source = Some(&ins.block),
@@ -291,6 +317,18 @@ mod tests {
             replaced: Vec::new(),
             editing: None,
         }
+    }
+
+    #[test]
+    fn block_lookup_agrees_with_block_for_and_the_last_replacement_wins() {
+        let mut p = rect(3, 2);
+        let r = |i, j, level, b: &str| ReplacedItem { i, j, level, block: b.into() };
+        p.replaced = vec![r(1, 0, 0, "A"), r(1, 0, 0, "B"), r(2, 1, 1, "C")];
+        let look = p.block_lookup();
+        for (i, j, level) in [(0, 0, 0), (1, 0, 0), (2, 1, 1), (2, 1, 0)] {
+            assert_eq!(look(i, j, level), p.block_for(i, j, level));
+        }
+        assert_eq!((look(1, 0, 0), look(0, 0, 0)), ("B", "*U1"));
     }
 
     #[test]

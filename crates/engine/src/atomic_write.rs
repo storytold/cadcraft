@@ -1,0 +1,410 @@
+//! Safe, atomic file replacement.
+//!
+//! Save, export, plot, autosave and the audit log all write a file by first putting the bytes in
+//! a sibling temporary file and then renaming it over the destination, so a failed or partial
+//! write never truncates the real file. The temporary file must be created *exclusively*: opening
+//! a predictable, pre-existing temporary path for a truncating write lets another local user plant
+//! a symlink there and redirect the write onto a file the victim can write but the attacker chose
+//! (CWE-59). [`write_atomic`] creates a fresh temporary file with `create_new` (`O_CREAT|O_EXCL`),
+//! so an existing entry at that path — symlink or not — makes the create fail rather than follow
+//! it. The handle is retained for the whole write, and only its own fresh file is renamed into
+//! place.
+
+#![cfg(not(target_arch = "wasm32"))]
+
+use std::fs::{File, OpenOptions, Permissions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
+/// Monotonic counter making temporary names unique within this process without a RNG dependency.
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Locks held from destination metadata inspection through rename, so concurrent writes cannot
+/// combine permissions from one version of a path with the group of another.
+fn path_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let key = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()).join(name),
+        _ => absolute,
+    };
+    let mut locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        lock
+    } else {
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+}
+
+/// How many fresh temporary names to try before giving up (each collision is another local race).
+const MAX_TRIES: u32 = 32;
+
+/// Write `bytes` to `path`, replacing it atomically and without ever following a pre-existing
+/// temporary symlink.
+///
+/// A fresh temporary file is created with exclusive semantics in `path`'s own directory, the bytes
+/// are written through the retained handle and flushed, and the temporary is then renamed over
+/// `path`. On any failure the temporary is removed and the original `path` is left untouched.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // A symlinked destination is resolved so the link stays a link and its target is replaced.
+    let resolved = resolve_symlink(path)?;
+    let path = resolved.as_deref().unwrap_or(path);
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let permissions = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => Some(meta.permissions()),
+        Ok(_) => None,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    write_atomic_with_locked(path, permissions, |file| file.write_all(bytes))
+}
+
+/// The topmost folder missing above `path`: what [`write_atomic_making_folders`] will create.
+/// `None` when the file's folder exists, or when `path` itself exists (a dangling symlink's target
+/// folder is not ours to make).
+pub fn missing_folder(path: &Path) -> Option<PathBuf> {
+    if std::fs::symlink_metadata(path).is_ok() {
+        return None;
+    }
+    path.ancestors().skip(1).filter(|a| !a.as_os_str().is_empty()).take_while(|a| std::fs::symlink_metadata(a).is_err()).last().map(Path::to_path_buf)
+}
+
+/// [`write_atomic`] to a path the user named, first creating the folders missing above it: a
+/// mistyped folder costs less than a drawing that could not be written. The caller reports
+/// [`missing_folder`], asked before this call, so the new folder is never a surprise.
+pub fn write_atomic_making_folders(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(folder) = missing_folder(path) {
+        let dir = path.parent().unwrap_or(&folder);
+        std::fs::create_dir_all(dir).map_err(|e| io::Error::new(e.kind(), format!("the folder {} could not be created: {e}", dir.display())))?;
+    }
+    write_atomic(path, bytes)
+}
+
+/// [`write_atomic`] filling the temporary file through `fill` (streamed rather than one buffer),
+/// with `permissions` given to it from its creation (`None`: the usual creation mode). A symlink
+/// at `path` is replaced by the new file, never written through.
+pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+/// [`write_atomic_with`] with permissions derived under the same destination lock as the write.
+pub fn write_atomic_with_permissions(
+    path: &Path,
+    permissions: impl FnOnce() -> io::Result<Option<Permissions>>,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let permissions = permissions()?;
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+fn write_atomic_with_locked(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let (mut file, tmp) = create_temp(&dir, permissions.as_ref())?;
+    let write = (|| {
+        if let Some(permissions) = permissions {
+            #[cfg(unix)]
+            let permissions = keep_group(&file, path, permissions);
+            file.set_permissions(permissions)?;
+        }
+        fill(&mut file)?;
+        file.flush()?;
+        file.sync_all()
+    })();
+    if let Err(e) = write {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    drop(file);
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    sync_dir(&dir);
+    Ok(())
+}
+
+/// `permissions` for the new file when `path` already exists: the group bits mean "this group" only
+/// if the file is still in the old file's group, so the group is restored first. When it can't be
+/// (the user is not a member of it), the group bits are dropped rather than handed to another group.
+#[cfg(unix)]
+fn keep_group(file: &File, path: &Path, permissions: Permissions) -> Permissions {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    let Ok(old) = std::fs::symlink_metadata(path) else { return permissions };
+    // A file already in the old group needs no change (and a restrictive syscall policy may refuse a no-op fchown).
+    if !old.is_file() || file.metadata().is_ok_and(|m| m.gid() == old.gid()) || fchown(file, None, Some(old.gid())).is_ok() {
+        return permissions;
+    }
+    Permissions::from_mode(permissions.mode() & !0o070)
+}
+
+/// Flush `dir` so a rename just made in it survives a crash or power loss (POSIX records a
+/// rename in the directory, not in the file). Best effort: some file systems (network shares)
+/// refuse to sync a directory, and the file itself is already on disk.
+fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// Resolve `path` when it is a symlink, or return `None` if it is not one.
+///
+/// A dangling link (for example into an unavailable mount) cannot be canonicalized, so its target
+/// is followed by hand with `read_link`, joining relative targets onto the link's directory.
+fn resolve_symlink(path: &Path) -> io::Result<Option<PathBuf>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {}
+        _ => return Ok(None),
+    }
+    if let Ok(target) = std::fs::canonicalize(path) {
+        return Ok(Some(target));
+    }
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        let target = std::fs::read_link(&current)?;
+        current = if target.is_absolute() { target } else { current.parent().map_or(target.clone(), |p| p.join(&target)) };
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {}
+            Ok(_) => return finish_target(&current),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return finish_target(&current),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::InvalidInput, "too many levels of symbolic links"))
+}
+
+/// Build the write path for a resolved, non-link (possibly missing) target.
+fn finish_target(current: &Path) -> io::Result<Option<PathBuf>> {
+    // The target's directory must exist; otherwise report the error rather than replacing the link.
+    let parent = current.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let parent = std::fs::canonicalize(parent)?;
+    let name = current.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "symlink target has no file name"))?;
+    Ok(Some(parent.join(name)))
+}
+
+/// Create a fresh, exclusively-owned temporary file inside `dir`, returning its handle and path.
+///
+/// `create_new(true)` opens with `O_CREAT | O_EXCL`, which refuses to follow or reuse an existing
+/// entry (including a symlink), closing the plant-a-symlink race. Names are unpredictable enough to
+/// avoid collisions in practice, and genuine collisions are retried with a new name.
+fn create_temp(dir: &Path, permissions: Option<&Permissions>) -> io::Result<(File, PathBuf)> {
+    let pid = std::process::id();
+    let mut last_err = None;
+    for _ in 0..MAX_TRIES {
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        let tmp = dir.join(format!(".cadcraft-tmp-{pid}-{seq}-{nanos}"));
+        match create_exclusive(&tmp, permissions) {
+            Ok(file) => return Ok((file, tmp)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, "could not create a unique temporary file")))
+}
+
+fn create_exclusive(path: &Path, permissions: Option<&Permissions>) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if let Some(permissions) = permissions {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // Restrict access in the create syscall: chmod afterwards leaves a window in which a
+        // different user can open the inode and retain read access to bytes written later.
+        options.mode(permissions.mode() & 0o777);
+    }
+    #[cfg(not(unix))]
+    let _ = permissions;
+    options.open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creates_missing_parent_directories() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-mkdir-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        let dest = dir.join("new_folder").join("deeper").join("out.bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(missing_folder(&dest), Some(dir.join("new_folder")));
+        assert!(write_atomic(&dest, b"created").is_err(), "the plain writer never makes folders");
+        write_atomic_making_folders(&dest, b"created").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"created");
+        assert_eq!(missing_folder(&dest), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_made_is_named_in_the_error() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-nomk-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("a_file");
+        std::fs::write(&blocker, b"x").unwrap();
+        let e = write_atomic_making_folders(&blocker.join("sub").join("out.bin"), b"new").unwrap_err();
+        assert!(e.to_string().contains("could not be created"), "{e}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn replaces_contents_atomically() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("out.bin");
+        std::fs::write(&dest, b"old").unwrap();
+        write_atomic(&dest, b"new bytes").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new bytes");
+        // No temporary files left behind.
+        let leftovers: Vec<_> =
+            std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).filter(|n| n.to_string_lossy().starts_with(".cadcraft-tmp")).collect();
+        assert!(leftovers.is_empty(), "left temp files: {leftovers:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A write into a folder whose entries can be listed syncs that folder without failing, and
+    /// a folder that can't be opened (gone) is no error for the sync itself.
+    #[test]
+    fn the_folder_is_synced_after_the_rename() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-sync-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_atomic(&dir.join("a.bin"), b"x").unwrap();
+        assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"x");
+        sync_dir(&dir.join("missing"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The replacement keeps the old file's group (when the user is in another group, as `id -G`
+    /// says) together with its mode, so the group bits never name a different group.
+    #[cfg(unix)]
+    #[test]
+    fn keeps_the_group_and_mode_of_the_file_it_replaces() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-grp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("out.bin");
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::set_permissions(&dest, Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&dest).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&dest, None, Some(gid)).unwrap();
+        }
+        let want = std::fs::metadata(&dest).unwrap();
+        write_atomic(&dest, b"new").unwrap();
+        let got = std::fs::metadata(&dest).unwrap();
+        assert_eq!((got.gid(), got.mode() & 0o777), (want.gid(), 0o640));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_follow_a_planted_temp_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-sym-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        let planted = dir.join(".cadcraft-tmp-plant");
+        symlink(&victim, &planted).unwrap();
+        assert_eq!(create_exclusive(&planted, None).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        let dest = dir.join("drawing.dxf");
+        write_atomic(&dest, b"drawing bytes").unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious", "victim file was overwritten");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"drawing bytes");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-mode-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("private.adt");
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&dest, b"private report").unwrap();
+        assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"private report");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_destination_updates_the_target() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-link-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("real.dxf");
+        let link = dir.join("link.dxf");
+        std::fs::write(&real, b"old").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&real, &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "symlink was replaced by a regular file");
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_destination_creates_the_target() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-dangle-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(dir.join("mnt")).unwrap();
+        let real = dir.join("mnt").join("real.dxf");
+        let link = dir.join("link.dxf");
+        symlink("mnt/real.dxf", &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "symlink was replaced by a regular file");
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_with_missing_parent_errors_and_keeps_the_link() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-nomnt-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("link.dxf");
+        symlink("missing/real.dxf", &link).unwrap();
+        assert!(write_atomic(&link, b"new").is_err());
+        assert!(write_atomic_making_folders(&link, b"new").is_err());
+        assert!(!dir.join("missing").exists(), "a link's unavailable target folder must not be created");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_temp_is_restricted_from_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-create-mode-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("private-temp");
+        let permissions = Permissions::from_mode(0o600);
+        let file = create_exclusive(&path, Some(&permissions)).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o077, 0);
+        drop(file);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

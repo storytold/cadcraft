@@ -140,7 +140,8 @@ fn what_the_block_editor_refuses() {
     assert!(s.execute("bclose", &json!({})).is_err(), "not open");
 
     s.execute("bedit", &json!({ "name": "Door" })).unwrap();
-    assert!(s.execute("bedit", &json!({ "name": "Door" })).is_err(), "already open");
+    s.execute("bedit", &json!({ "name": "DOOR" })).unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Door"), "the block already open stays open");
     let r = s.execute("layout.set", &json!({ "name": "Layout1" }));
     assert!(r.is_err_and(|e| e.to_string().contains("Block Editor")));
     assert_eq!(s.layout_space(), cadcraft_engine::doc::Space::Model);
@@ -217,7 +218,7 @@ fn a_file_save_writes_the_drawing_outside_the_editor() {
     s.execute("bedit", &json!({ "name": "Door" })).unwrap();
     line(&mut s, [0.0, 0.0], [0.0, 3.0]);
     // Autosave keeps the editor's unsaved change in the block.
-    let rec = s.state().unwrap().recovery_drawing();
+    let rec = s.state().unwrap().recovery_drawing().unwrap();
     assert_eq!(rec.block("Door").unwrap().entities.len(), 2);
     assert_eq!(rec.model.len(), 2);
 
@@ -369,4 +370,130 @@ fn the_current_drawing_opens_in_the_block_editor() {
     assert!(s.doc().unwrap().block(CURRENT_DRAWING).is_none(), "no block is made");
     s.undo().unwrap();
     assert_eq!(s.doc().unwrap().model.len(), 1);
+}
+
+/// BEDIT in the Block Editor switches to another block, as AutoCAD's does: changes not saved yet
+/// are saved or discarded first (`save`), and a block it can't open leaves the editor as it was.
+#[test]
+fn bedit_in_the_block_editor_switches_blocks() {
+    let mut s = Session::new();
+    door(&mut s);
+    let l = line(&mut s, [0.0, 50.0], [5.0, 50.0]);
+    s.execute("block", &json!({ "name": "Frame", "base": [0, 50], "handles": [l] })).unwrap();
+    let model = s.doc().unwrap().model.len();
+
+    s.execute("bedit", &json!({ "name": "Door" })).unwrap();
+    line(&mut s, [0.0, 0.0], [0.0, 3.0]);
+    // Changes not saved: JSON must say what to do with them.
+    let e = s.execute("bedit", &json!({ "name": "Frame" })).unwrap_err().to_string();
+    assert!(e.contains("save"), "{e}");
+    assert_eq!(editor(&s).as_deref(), Some("Door"));
+    assert!(s.state().unwrap().block_unsaved(), "nothing was lost");
+    // A block that isn't there, or `save` that isn't a bool: refused, nothing changes.
+    assert!(s.execute("bedit", &json!({ "name": "Nope", "save": true })).is_err());
+    assert!(s.execute("bedit", &json!({ "name": "Frame", "save": "yes" })).is_err());
+    assert_eq!(editor(&s).as_deref(), Some("Door"));
+    assert!(s.state().unwrap().block_unsaved());
+
+    // Saved, then switched.
+    let r = s.execute("bedit", &json!({ "name": "frame", "save": true })).unwrap();
+    assert_eq!((r["block"].as_str(), r["saved"].as_bool()), (Some("Frame"), Some(true)));
+    assert_eq!(editor(&s).as_deref(), Some("Frame"));
+    assert_eq!(lines_of(&s, "Door").len(), 2, "Door keeps the new line");
+
+    // Discarded, then switched; with nothing to save `save` isn't needed.
+    line(&mut s, [1.0, 1.0], [2.0, 2.0]);
+    s.execute("bedit", &json!({ "name": "Door", "save": false })).unwrap();
+    assert_eq!(lines_of(&s, "Frame").len(), 1, "Frame's change was discarded");
+    s.execute("bedit", &json!({ "name": "Frame" })).unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Frame"));
+    // A new block, and the drawing itself.
+    s.execute("bedit", &json!({ "name": "Gate", "create": true })).unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Gate"));
+    s.execute("bedit", &json!({ "name": "<Current Drawing>" })).unwrap();
+    s.execute("bclose", &json!({ "save": false })).unwrap();
+    assert!(editor(&s).is_none());
+    assert_eq!(s.doc().unwrap().model.len(), model, "the drawing as it was");
+}
+
+/// A block BEDIT can't switch to is refused before it asks about the changes not saved, so the
+/// question never traps the user; `check` asks the same of JSON callers.
+#[test]
+fn bedit_refuses_a_bad_target_before_asking_to_save() {
+    let mut s = Session::new();
+    door(&mut s);
+    s.execute("bedit", &json!({ "name": "Door" })).unwrap();
+    line(&mut s, [1.0, 1.0], [2.0, 2.0]);
+    assert!(s.state().unwrap().block_unsaved());
+    s.script(
+        "BEDIT
+Nope
+",
+    )
+    .unwrap();
+    let message = s.current_prompt().map(|p| p.message).unwrap_or_default();
+    assert!(!message.contains("Save changes"), "no question for a block it can't open: {message}");
+    s.input(cadcraft_engine::Input::Cancel).unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Door"));
+    assert!(s.state().unwrap().block_unsaved(), "nothing lost");
+    // The check, without switching or saving.
+    assert!(s.execute("bedit", &json!({ "name": "Nope", "check": true })).is_err());
+    assert!(s.execute("bedit", &json!({ "name": "Nope", "create": true, "check": true })).is_ok(), "a new name is fine");
+    assert_eq!(editor(&s).as_deref(), Some("Door"));
+    assert!(s.state().unwrap().block_unsaved());
+}
+
+/// Typed, BEDIT in the Block Editor asks whether to save the changes before it switches.
+#[test]
+fn bedit_typed_in_the_block_editor_asks_to_save_first() {
+    let mut s = Session::new();
+    door(&mut s);
+    let l = line(&mut s, [0.0, 50.0], [5.0, 50.0]);
+    s.execute("block", &json!({ "name": "Frame", "base": [0, 50], "handles": [l] })).unwrap();
+    s.execute("bedit", &json!({ "name": "Door" })).unwrap();
+
+    // Nothing changed: it switches at once.
+    s.script(
+        "BEDIT
+Frame
+",
+    )
+    .unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(editor(&s).as_deref(), Some("Frame"));
+
+    line(&mut s, [1.0, 1.0], [2.0, 2.0]);
+    s.script(
+        "BEDIT
+Door
+",
+    )
+    .unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Save changes to block \"Frame\"?");
+    // Escape keeps the editor on Frame with its change.
+    s.input(cadcraft_engine::Input::Cancel).unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Frame"));
+    assert!(s.state().unwrap().block_unsaved());
+
+    s.script(
+        "BEDIT
+Door
+Y
+",
+    )
+    .unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(editor(&s).as_deref(), Some("Door"));
+    assert_eq!(lines_of(&s, "Frame").len(), 2, "saved before switching");
+
+    line(&mut s, [3.0, 3.0], [4.0, 4.0]);
+    s.script(
+        "BEDIT
+Frame
+N
+",
+    )
+    .unwrap();
+    assert_eq!(editor(&s).as_deref(), Some("Frame"));
+    assert_eq!(lines_of(&s, "Door").len(), 1, "discarded");
 }

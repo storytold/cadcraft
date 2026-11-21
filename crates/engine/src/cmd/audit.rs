@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, file, str_param};
+
+use super::always;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -132,6 +134,7 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+/// Write the report to the `.adt` file beside the saved drawing, held to the automation roots.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     let (path_str, title) = match s.state() {
@@ -141,8 +144,15 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
     // An unsaved drawing has no folder of its own to hold the log.
     let Some(path) = &path_str else { return };
     let adt_path = std::path::PathBuf::from(path).with_extension("adt");
+    if let Err(e) = crate::file_access::check_write(&adt_path) {
+        log::warn!("AUDITCTL: not writing audit log {}: {e}", adt_path.display());
+        return;
+    }
     let content = report.format_adt(&title, path_str.as_deref());
-    if let Err(e) = std::fs::write(&adt_path, content) {
+    // Write through an exclusively-created temporary and rename over the companion path, so a
+    // planted `.adt` symlink beside the drawing cannot redirect the report onto another file
+    // writable by the victim (CWE-59).
+    if let Err(e) = crate::atomic_write::write_atomic(&adt_path, content.as_bytes()) {
         log::warn!("AUDITCTL: could not write audit log {}: {e}", adt_path.display());
     }
 }
@@ -151,10 +161,13 @@ fn write_audit_log(s: &Session, report: &crate::audit::Report) {
 fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
+/// The bytes of the file at `path`, once the automation roots allow reading it.
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| bad(cmd, format!("{path}: {e}")))
+    crate::file_access::check_read(path).map_err(|e| bad(cmd, e))?;
+    crate::capped_read::read_capped(std::path::Path::new(path), file::MAX_DRAWING_BYTES).map_err(|e| bad(cmd, format!("{path}: {e}")))
 }
 
+/// The bytes of the drawing at `path`, held to the automation roots.
 #[cfg(target_arch = "wasm32")]
 fn read_path(cmd: &str, _path: &str) -> Result<Vec<u8>> {
     Err(bad(cmd, "paths are not available on the web; pass `data`"))

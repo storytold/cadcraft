@@ -64,6 +64,8 @@ thread_local! {
     static STRING_BYTES: Cell<(u64, u64)> = const { Cell::new((0, STRING_BUDGET)) };
     /// The running slice's cap on live cons cells.
     static CELL_LIMIT: Cell<usize> = const { Cell::new(MAX_CELLS) };
+    /// Work done inside the current machine step: list cells walked, steps of synchronous callbacks.
+    static WORK: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Start a slice of a run on this thread: it fails when more than `limit` cells are alive.
@@ -74,6 +76,22 @@ pub fn set_cell_limit(limit: usize) {
 /// Too many cons cells are alive: the error that stops the run.
 pub fn check_cells() -> Result<(), LispError> {
     if live_cells() > CELL_LIMIT.with(Cell::get) { Err(LispError::quit("out of memory: too many list cells")) } else { Ok(()) }
+}
+
+/// Count `n` units of work done inside one machine step ([`super::eval::Machine::run`] charges them as steps).
+pub fn charge_work(n: u64) {
+    WORK.with(|c| c.set(c.get().saturating_add(n)));
+}
+
+/// The work counted since the last call.
+pub fn take_work() -> u64 {
+    WORK.with(|c| c.replace(0))
+}
+
+/// `n` more cons cells would exceed the cap: checked before a built-in allocates a result many
+/// times the size of its arguments (`append` over the same long list, #1930).
+pub fn check_new_cells(n: usize) -> Result<(), LispError> {
+    if live_cells().saturating_add(n) > CELL_LIMIT.with(Cell::get) { Err(LispError::quit("out of memory: too many list cells")) } else { Ok(()) }
 }
 
 /// Start a slice of a run on this thread: it has made `used` bytes of its `budget`.
@@ -262,7 +280,10 @@ impl Value {
         loop {
             match v {
                 Value::Nil => return true,
-                Value::Cons(c) => v = c.cdr.clone(),
+                Value::Cons(c) => {
+                    charge_work(1);
+                    v = c.cdr.clone();
+                }
                 _ => return false,
             }
         }
@@ -318,6 +339,7 @@ impl Iterator for ListIter {
     fn next(&mut self) -> Option<Value> {
         match std::mem::take(&mut self.next) {
             Value::Cons(c) => {
+                charge_work(1);
                 self.next = c.cdr.clone();
                 Some(c.car.clone())
             }
@@ -343,25 +365,53 @@ pub fn eq(a: &Value, b: &Value) -> bool {
 
 /// `equal`: the same structure, numbers within `fuzz`.
 pub fn equal(a: &Value, b: &Value, fuzz: f64) -> bool {
-    equal_depth(a, b, fuzz, 0)
+    // A shared cons DAG can expand into exponentially many node visits when compared as a tree.
+    // Bound the total comparisons so `equal` on adversarial shared structure cannot monopolise the
+    // thread (CWE-407); exhausting the budget reports "not equal" rather than looping.
+    equal_within(a, b, fuzz, EQUAL_BUDGET)
 }
 
-fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize) -> bool {
-    if depth > MAX_DEPTH {
+/// [`equal`] with its work allowance (node visits plus string bytes / 64) given.
+fn equal_within(a: &Value, b: &Value, fuzz: f64, mut budget: u64) -> bool {
+    equal_depth(a, b, fuzz, 0, &mut budget)
+}
+
+/// Largest number of node comparisons one `equal` call may perform.
+const EQUAL_BUDGET: u64 = 50_000_000;
+
+/// Compare nested values within depth and node-work limits, returning false when either limit is reached.
+fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize, budget: &mut u64) -> bool {
+    if depth > MAX_DEPTH || *budget == 0 {
         return false;
     }
+    *budget -= 1;
     let (mut a, mut b) = (a.clone(), b.clone());
     loop {
+        if *budget == 0 {
+            return false;
+        }
         match (&a, &b) {
             (Value::Cons(x), Value::Cons(y)) => {
-                if !equal_depth(&x.car, &y.car, fuzz, depth + 1) {
+                if !equal_depth(&x.car, &y.car, fuzz, depth + 1, budget) {
                     return false;
                 }
                 let (na, nb) = (x.cdr.clone(), y.cdr.clone());
                 a = na;
                 b = nb;
             }
-            _ => return atom_equal(&a, &b, fuzz),
+            _ => {
+                // Comparing two strings costs their length, not one visit: a shared list of long
+                // equal strings must spend the allowance by the bytes it compares (one unit per 64).
+                if let (Value::Str(x), Value::Str(y)) = (&a, &b) {
+                    let cost = (x.len().min(y.len()) / 64) as u64;
+                    if cost >= *budget {
+                        *budget = 0;
+                        return false;
+                    }
+                    *budget -= cost;
+                }
+                return atom_equal(&a, &b, fuzz);
+            }
         }
     }
 }
@@ -527,6 +577,20 @@ fn write_value(out: &mut String, v: &Value, escape: bool, depth: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `equal` charges the bytes of the strings it compares: a list of long equal strings fits a
+    /// big allowance but not a small one, though it has few nodes.
+    #[test]
+    fn equal_spends_its_allowance_on_string_bytes() {
+        let long = Value::str(&"x".repeat(6_400));
+        let other = Value::str(&"x".repeat(6_400));
+        let list = |v: &Value| Value::list(vec![v.clone(); 100]);
+        let (a, b) = (list(&long), list(&other));
+        // 100 strings x 100 units each, plus about 100 node visits.
+        assert!(equal_within(&a, &b, 0.0, 20_000));
+        assert!(!equal_within(&a, &b, 0.0, 5_000));
+        assert!(equal(&a, &b, 0.0));
+    }
 
     #[test]
     fn reals_print_with_six_significant_digits() {

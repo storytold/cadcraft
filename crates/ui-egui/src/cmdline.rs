@@ -33,6 +33,16 @@ pub struct CmdLine {
     pub option_rows: Vec<(Rect, String)>,
     /// Where the Dynamic Input tooltip stays while the options menu is open.
     pub options_anchor: Option<Pos2>,
+    /// The IME's composition (pre-edit) text: shown after the buffer while composing, never saved.
+    pub preedit: String,
+    /// The command line's editing rectangle and caret (screen) from the last frame, for the IME's
+    /// composition window (see `enable_ime`).
+    pub ime_rect: Option<(Rect, Rect)>,
+    /// The command line's IME context generation: a new one each time it starts collecting text,
+    /// as egui asks of an IME owner that (re)gains focus.
+    ime_generation: u64,
+    /// Whether the command line published an IME context last frame.
+    ime_on: bool,
 }
 
 /// The most history lines the command line shows above its bar.
@@ -47,7 +57,8 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         return None;
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
-    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
+    let ucs = app.session.input_ucs();
+    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -92,7 +103,7 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
+    } else if let Some(s) = suggestions_in(&app.session, &app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
 }
@@ -108,12 +119,26 @@ pub struct Suggestion {
     pub label: &'static str,
 }
 
-/// Matching command names/aliases for AutoComplete.
-fn suggestions(prefix: &str) -> Vec<Suggestion> {
+/// [`suggestions`] for what `session` can run: a Greek word that is a command of its own there (an
+/// alias, a command the drawing's LISP defines) stays as typed.
+fn suggestions_in(session: &cadcraft_engine::Session, prefix: &str) -> Vec<Suggestion> {
+    suggestions(prefix, &|word| session.greek_word_is_a_command(word))
+}
+
+/// Matching command names/aliases for AutoComplete. `is_own_command` tells whether a Greek-layout
+/// word is a command of its own rather than the Latin name its keys type.
+fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    let p = prefix.to_ascii_lowercase();
+    // Typed with the Greek keyboard layout (ΛΙΝ), it completes as the Latin name (LINE), unless the word
+    // as typed already names a command, alias or LISP command: that is what Enter runs.
+    let typed = prefix.to_ascii_lowercase();
+    let p = if cadcraft_engine::cmd::find_command(&cadcraft_engine::cmd::resolve_alias(&typed)).is_some() {
+        typed
+    } else {
+        cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_own_command(prefix)).unwrap_or(typed)
+    };
 
     let mut out: Vec<Suggestion> = Vec::new();
     let mut seen_ids: HashSet<&'static str> = HashSet::new();
@@ -247,9 +272,36 @@ pub struct KeyPress {
     pub plain: bool,
 }
 
+/// Let the operating system's IME compose into the command line while a prompt asks for text.
+/// Nothing owns keyboard focus there (typing goes to the command line from anywhere), so egui
+/// never enables the IME by itself: publishing an IME output does it, with the command line's
+/// rectangle and caret for the composition window. Without this a Windows IME (Pinyin, Japanese,
+/// Korean...) cannot even switch on (#1761).
+fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
+    if !app.cmd.ime_on {
+        app.cmd.ime_on = true;
+        app.cmd.ime_generation = app.cmd.ime_generation.wrapping_add(1);
+    }
+    let (rect, cursor_rect) = app.cmd.ime_rect.unwrap_or_else(|| {
+        let r = ctx.content_rect();
+        (r, Rect::from_min_size(pos2(r.left() + 30.0, r.bottom() - 34.0), vec2(1.0, 18.0)))
+    });
+    ctx.output_mut(|o| {
+        o.ime = Some(egui::output::IMEOutput::new(
+            egui::Id::unique("cc_cmdline_ime"),
+            app.cmd.ime_generation,
+            egui::IMEPurpose::Normal,
+            rect,
+            cursor_rect,
+        ));
+    });
+}
+
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() {
+        app.cmd.preedit.clear();
+        app.cmd.ime_on = false;
         return;
     }
     let events = ctx.input(|i| i.events.clone());
@@ -257,6 +309,13 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     app.cmd.watch_selection(&selection);
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
     let text_prompt = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number);
+    if text_prompt {
+        enable_ime(app, ctx);
+    } else {
+        // No prompt is collecting text: a composition left over from one cannot belong here.
+        app.cmd.preedit.clear();
+        app.cmd.ime_on = false;
+    }
     options_still_fit(app);
     for ev in events {
         // The options menu takes the arrows, Enter and Escape; typing closes it.
@@ -297,15 +356,24 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                 } else if t == " " && !text_prompt {
                     submit(app);
                 } else {
+                    app.cmd.preedit.clear();
                     app.cmd.buffer.push_str(&t);
                 }
             }
+            // IME composition: the pre-edit is shown but stays out of the buffer; the commit is
+            // the only text that is inserted. Enter/Return commits arrive separately as keys, so
+            // a newline commit is ignored (as egui's own text fields do) instead of submitting.
+            egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => app.cmd.preedit = text,
+            egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
+                app.cmd.preedit.clear();
+                if text != "\n" && text != "\r" {
+                    app.cmd.buffer.push_str(&text);
+                }
+            }
+            egui::Event::Ime(_) => {}
             egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
                 Key::Enter => submit(app),
-                Key::Escape => {
-                    app.cmd.buffer.clear();
-                    app.session.cancel();
-                }
+                Key::Escape => escape(app),
                 Key::Backspace => {
                     let press = KeyPress { repeat, plain: !(modifiers.alt || modifiers.ctrl || modifiers.command) };
                     let erase = backspace_erases(
@@ -322,13 +390,11 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         app.cmd.buffer.pop();
                     }
                 }
-                Key::ArrowUp if !modifiers.any() => {
-                    if !app.cmd.history.is_empty() {
-                        let n = app.cmd.history.len();
-                        let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
-                        app.cmd.history_pos = Some(pos);
-                        app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
-                    }
+                Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
+                    let n = app.cmd.history.len();
+                    let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
+                    app.cmd.history_pos = Some(pos);
+                    app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
                 }
                 Key::ArrowDown if !modifiers.any() => {
                     if !options_key(app, 1)
@@ -356,7 +422,16 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
+/// What Escape does, and the right-click or menu "Cancel" that stand for it: what was typed so far
+/// goes, and so does the running command.
+pub fn escape(app: &mut CadApp) {
+    app.cmd.buffer.clear();
+    app.cmd.preedit.clear();
+    app.session.cancel();
+}
+
 pub fn submit(app: &mut CadApp) {
+    app.cmd.preedit.clear();
     // Grip dimensional input: the typed lengths and angles place the grip.
     if crate::grip_dyn::submit(app) {
         return;
@@ -387,7 +462,13 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
-    app.cmdline(&text);
+    // OPEN with a file name reads it in the background, as File ▸ Open does (no frozen window).
+    if !app.session.prompting() && app.open_typed(&text) {
+        return;
+    }
+    // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
+    let completion = if app.session.prompting() { None } else { suggestions_in(&app.session, text.trim()).into_iter().next() };
+    app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -395,6 +476,7 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
     app.ui.history_lines.min(MAX_LINES).min(available)
 }
 
+/// Draw the floating command bar and its history over the bottom-centre of `canvas`; the bar is 48 % of the canvas width, clamped to 360–760 points and never wider than the canvas minus 8 points.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
     let w = (canvas.width() * 0.48).clamp(360.0, 760.0).min((canvas.width() - 8.0).max(0.0));
@@ -435,7 +517,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                // As the engine's prompt text says it; only " or [" has words to translate.
+                let lead = match pr.keyword_lead() {
+                    " or [" => crate::tl!(" or ["),
+                    lead => lead,
+                };
+                let g = p.layout_no_wrap(lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -443,7 +530,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 for (i, k) in kws.iter().enumerate() {
                     let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
-                    let resp = ui.interact(r, ui.id().with(("kw", i)), Sense::click());
+                    let resp = ui.interact(r, ui.scope_id().with(("kw", i)), Sense::click());
                     if resp.hovered() {
                         p.rect_filled(r, 2.0, t.cmd_keyword_hover);
                     }
@@ -492,14 +579,26 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font, t.text);
+    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
+    let mut caret_x = x + gw;
+    // The IME's composition text sits after the buffer (underlined) until it is committed.
+    if !app.cmd.preedit.is_empty() {
+        let pg = p.layout_no_wrap(app.cmd.preedit.clone(), font, t.text);
+        let pw = pg.size().x;
+        p.galley(pos2(caret_x, bar.center().y - pg.size().y / 2.0), pg, t.text);
+        p.line_segment([pos2(caret_x, bar.bottom() - 7.0), pos2(caret_x + pw, bar.bottom() - 7.0)], Stroke::new(1.0, t.accent));
+        caret_x += pw;
+    }
     // Caret.
     let blink = (ui.input(|i| i.time) * 2.0).floor() as i64 % 2 == 0;
     if blink {
-        p.line_segment([pos2(x + gw + 1.0, bar.top() + 5.0), pos2(x + gw + 1.0, bar.bottom() - 5.0)], Stroke::new(1.0, t.text));
+        p.line_segment([pos2(caret_x + 1.0, bar.top() + 5.0), pos2(caret_x + 1.0, bar.bottom() - 5.0)], Stroke::new(1.0, t.text));
     }
+    // Where the IME's composition window follows: the whole command line and the caret in it.
+    let caret = Rect::from_min_size(pos2(caret_x + 1.0, bar.top() + 5.0), vec2(1.0, h - 10.0));
+    app.cmd.ime_rect = Some((bar, caret));
     // History chevron.
     crate::icons::paint(
         &p,
@@ -509,7 +608,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     );
     // AutoComplete list.
     if !app.session.prompting() {
-        let sug = suggestions(&app.cmd.buffer);
+        let sug = suggestions_in(&app.session, &app.cmd.buffer);
         if !sug.is_empty() {
             let rh = 20.0;
             let lr = Rect::from_min_size(
@@ -523,7 +622,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.rect_stroke(lr, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
             for (i, s) in sug.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(lr.left(), lr.top() + rh * i as f32), vec2(lr.width(), rh));
-                let resp = ui.interact(r, ui.id().with(("sug", i)), Sense::click());
+                let resp = ui.interact(r, ui.scope_id().with(("sug", i)), Sense::click());
                 if resp.hovered() || i == 0 {
                     p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
@@ -571,7 +670,7 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
     let mut all = bar.union(grip);
     if !app.session.prompting() {
-        let k = suggestions(&app.cmd.buffer).len();
+        let k = suggestions_in(&app.session, &app.cmd.buffer).len();
         if k > 0 {
             let above = if n == 0 { 0.0 } else { LINE_H * n as f32 + 6.0 };
             all = all.union(Rect::from_min_size(pos2(bar.left(), bar.top() - 6.0 - 20.0 * k as f32 - above), vec2(bar.width(), 1.0)));
@@ -586,7 +685,7 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
 /// the top edge sets how many lines show (`ui.cmdline.lines`).
 fn history(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect, bar: Rect) {
     let z = zones(app, canvas, bar);
-    let resp = ui.interact(z.all, ui.id().with("cmdline"), Sense::click_and_drag());
+    let resp = ui.interact(z.all, ui.scope_id().with("cmdline"), Sense::click_and_drag());
     let at = resp.hover_pos().or(resp.interact_pointer_pos());
     let on_grip = |p: Pos2| z.grip.contains(p) && z.window.is_none();
     let on_toggle = |p: Pos2| z.chevron.contains(p) || z.lines.is_some_and(|r| r.contains(p));
@@ -667,17 +766,103 @@ mod tests {
         assert_eq!(app.ui.history_lines, 12);
     }
 
-    fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) {
+    fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) -> egui::FullOutput {
         let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
         let mut out = ctx.run_ui(raw, |ui| {
             app.logic(ui.ctx());
             app.ui(ui);
         });
         out.textures_delta.clear();
+        out
     }
 
     fn press(app: &mut CadApp, ctx: &egui::Context, at: Pos2, pressed: bool) {
         frame(app, ctx, vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }]);
+    }
+
+    /// A Greek-layout prefix completes like its Latin keys; a prefix in another script is matched
+    /// as it is.
+    #[test]
+    fn autocomplete_reads_a_greek_layout_prefix_as_its_latin_keys() {
+        // ΛΙΝ is the keys L-I-N on the Greek layout: it completes like the Latin prefix does.
+        let latin: Vec<String> = suggestions("lin", &|_| false).into_iter().map(|s| s.id).collect();
+        assert!(latin.iter().any(|id| id == "LINE"), "{latin:?}");
+        let greek: Vec<String> = suggestions("ΛΙΝ", &|_| false).into_iter().map(|s| s.id).collect();
+        assert_eq!(greek, latin);
+        // A prefix that is not Greek-layout typing is matched as it is.
+        assert!(suggestions("ЖЖЖ", &|_| false).is_empty());
+    }
+
+    /// A Greek word the user made an alias is offered as that alias's command, which is what Enter
+    /// runs.
+    #[test]
+    fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
+        // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
+        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE. The alias store is
+        // process-wide and the alias dialog's tests clear it, so this test takes its turn with them.
+        let _alone = crate::aliasdlg::lock_alias_store();
+        let mut session = Session::empty();
+        session.execute("aliasedit", &serde_json::json!({ "set": { "Ξ": "qsave" } })).unwrap();
+        let first = suggestions("Ξ", &|_| false).into_iter().next().map(|s| s.id);
+        session.execute("aliasedit", &serde_json::json!({ "remove": ["Ξ"] })).unwrap();
+        assert_eq!(first.as_deref(), Some("QSAVE"));
+    }
+
+    /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
+    /// its keys.
+    #[test]
+    fn autocomplete_leaves_a_greek_word_the_drawings_lisp_defines_as_typed() {
+        // ΛΙΝΕ is the keys of LINE, but the drawing defines a command of that Greek name: Enter runs that
+        // command, so Tab must not replace the word with LINE.
+        let mut session = Session::new();
+        session.cmdline("(defun c:ΛΙΝΕ () (princ))").unwrap();
+        for word in ["ΛΙΝΕ", "λινε", "λίνε"] {
+            assert!(suggestions_in(&session, word).is_empty(), "{word}: {:?}", suggestions_in(&session, word));
+        }
+        // Another word of the same keys is still read as Latin: Enter would start LINE for it too.
+        assert!(suggestions_in(&session, "ΛΙΝ").iter().any(|s| s.id == "LINE"));
+        // Without the definition ΛΙΝΕ completes as LINE.
+        let plain = Session::new();
+        assert!(suggestions_in(&plain, "ΛΙΝΕ").iter().any(|s| s.id == "LINE"));
+    }
+
+    #[test]
+    fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
+        use cadcraft_engine::geom::Vec2;
+        // TEXT's own text prompt: the command line collects it (TEXTEDIT on a TEXT edits it in
+        // place instead, #842, with the IME going into that box).
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        app.start("text");
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        app.session.input(Input::Text("2.5".into())).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
+        assert!(app.session.text_editor().is_none(), "no in-place editor at this prompt");
+        let ctx = egui::Context::default();
+        let out = frame(&mut app, &ctx, Vec::new());
+        // The IME is enabled for the command line while it is collecting text.
+        assert!(out.platform_output.ime.is_some());
+        // Composition is shown at the command line but is not part of the text being edited.
+        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
+        assert_eq!(app.cmd.preedit, "zhong");
+        assert!(app.cmd.buffer.is_empty());
+        // The committed text replaces the pre-edit, exactly once.
+        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
+        assert!(app.cmd.preedit.is_empty());
+        assert_eq!(app.cmd.buffer, "中文");
+        let enter = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        let text = app.session.doc().unwrap().model.iter().next().map(|e| match &e.kind {
+            cadcraft_engine::doc::EntityKind::Text(t) => t.value.clone(),
+            _ => String::new(),
+        });
+        assert_eq!(text.as_deref(), Some("中文"));
+        // An empty line ends TEXT.
+        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        assert!(app.session.running.is_none());
+        // No text asked for: the next frame lets the IME go, so it can't swallow ASCII typing.
+        let out = frame(&mut app, &ctx, Vec::new());
+        assert!(out.platform_output.ime.is_none());
     }
 
     #[test]
@@ -781,7 +966,7 @@ mod autocomplete_tests {
 
     #[test]
     fn exact_alias_is_first_suggestion_with_alias_display() {
-        let rec = suggestions("rec");
+        let rec = suggestions("rec", &|_| false);
         assert!(!rec.is_empty());
         assert_eq!(rec[0].id, "RECTANG");
         assert_eq!(rec[0].display, "REC (RECTANG)");
@@ -791,26 +976,26 @@ mod autocomplete_tests {
         assert_eq!(rec[1].id, "RECOVER");
         assert_eq!(rec[1].display, "RECOVER");
 
-        let l = suggestions("l");
+        let l = suggestions("l", &|_| false);
         assert_eq!(l[0].id, "LINE");
         assert_eq!(l[0].display, "L (LINE)");
 
-        let c = suggestions("c");
+        let c = suggestions("c", &|_| false);
         assert_eq!(c[0].id, "CIRCLE");
         assert_eq!(c[0].display, "C (CIRCLE)");
 
-        let co = suggestions("co");
+        let co = suggestions("co", &|_| false);
         assert_eq!(co[0].id, "COPY");
         assert_eq!(co[0].display, "CO (COPY)");
     }
 
     #[test]
     fn prefix_without_alias_shows_command_id() {
-        let rect = suggestions("rect");
+        let rect = suggestions("rect", &|_| false);
         assert_eq!(rect[0].id, "RECTANG");
         assert_eq!(rect[0].display, "RECTANG");
 
-        let line = suggestions("line");
+        let line = suggestions("line", &|_| false);
         assert_eq!(line[0].id, "LINE");
         assert_eq!(line[0].display, "LINE");
     }
@@ -821,5 +1006,40 @@ mod autocomplete_tests {
         app.cmd.buffer = "rec".to_string();
         tab(&mut app);
         assert_eq!(app.cmd.buffer, "RECTANG");
+    }
+
+    fn app() -> CadApp {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        app
+    }
+
+    #[test]
+    fn enter_on_a_partial_name_runs_the_highlighted_suggestion() {
+        let mut app = app();
+        app.cmd.buffer = "RECT".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("rectang"));
+        assert!(!app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+
+    #[test]
+    fn enter_keeps_exact_names_and_reports_names_nothing_matches() {
+        let mut app = app();
+        // An exact alias is not replaced by a longer suggestion.
+        app.cmd.buffer = "l".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+        app.session.cancel();
+        // A system variable name still acts as SETVAR.
+        app.cmd.buffer = "orthomode".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("setvar"));
+        app.session.cancel();
+        // No suggestion: still an unknown command.
+        app.cmd.buffer = "zzqx".to_string();
+        submit(&mut app);
+        assert!(app.session.running.is_none());
+        assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
     }
 }

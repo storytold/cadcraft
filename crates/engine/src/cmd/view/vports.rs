@@ -6,16 +6,18 @@
 //! tiles is an undo step. The session keeps each tile's view ([`crate::ModelTiles`]); the current
 //! tile shows the model space view itself, so ZOOM, PAN and every pick work in it unchanged. The
 //! UI draws the tiles from [`Session::model_tiles`] and hands clicks in other tiles to
-//! [`Session::click_tile`]. In a layout -VPORTS is MVIEW.
+//! [`Session::click_tile`]. In a layout -VPORTS is MVIEW. View > Viewports > Named Viewports...
+//! restores or deletes a saved configuration.
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Drawing, Space, VportConfig, VportTile};
+use cadcraft_doc::{Drawing, EntityKind, Space, VportConfig, VportTile};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::super::qselect::wildcard;
-use super::super::*;
+use super::super::{CommandSpec, bad, find_command, str_param};
+
 use crate::{Accept, DocState, EngineError, Input, Interactive, ModelTile, ModelTiles, Prompt, Result, Session, Step, View};
 
 /// Most tiles on screen at once.
@@ -36,6 +38,12 @@ pub fn specs() -> Vec<CommandSpec> {
             )
             .interactive(vports_factory),
         CommandSpec::new("vports.activate", "Set Current Viewport", run_activate).params("{index: tile number from 1}").noundo(),
+        CommandSpec::new("vports.named", "Named Viewports...", run_named)
+            .menu(&["View", "Viewports", "Named Viewports..."])
+            .params(
+                "{name?: a saved viewport configuration, delete?: bool, p1?, p2?, layout?} (no name: → {current, configurations: [{name, viewports}]}; the Model tab shows the configuration's tiles, a layout gets one viewport per tile over p1-p2 or the printable area; typed or from the menu: the Named Viewports dialog)",
+            )
+            .interactive(named_factory),
     ]
 }
 
@@ -96,7 +104,7 @@ fn rect(t: &VportTile) -> Rect {
 }
 
 fn view_of(t: &VportTile) -> View {
-    View { center: t.center, height: t.height }
+    View { center: t.center, height: t.height, twist: if t.twist.is_finite() { t.twist } else { 0.0 } }
 }
 
 fn active_config(d: &Drawing) -> Option<&VportConfig> {
@@ -109,7 +117,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect }], 0);
+        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, twist: now.twist }], 0);
     };
     let mut tiles = cfg.tiles.clone();
     let synced =
@@ -117,11 +125,11 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let active = if synced { st.tiles.active.min(tiles.len() - 1) } else { 0 };
     if synced {
         for (t, v) in tiles.iter_mut().zip(&st.tiles.views) {
-            (t.center, t.height) = (v.center, v.height);
+            (t.center, t.height, t.twist) = (v.center, v.height, v.twist);
         }
     }
     if let Some(t) = tiles.get_mut(active) {
-        (t.center, t.height) = (now.center, now.height);
+        (t.center, t.height, t.twist) = (now.center, now.height, now.twist);
     }
     // Screen aspects from the current tile's size in pixels.
     if let Some(cur) = tiles.get(active).copied() {
@@ -163,7 +171,7 @@ fn summary(s: &Session) -> Result<Value> {
     let rows: Vec<Value> = tiles
         .iter()
         .enumerate()
-        .map(|(i, t)| json!({ "index": i + 1, "min": [t.min.x, t.min.y], "max": [t.max.x, t.max.y], "center": [t.center.x, t.center.y], "height": t.height, "current": i == active }))
+        .map(|(i, t)| json!({ "index": i + 1, "min": [t.min.x, t.min.y], "max": [t.max.x, t.max.y], "center": [t.center.x, t.center.y], "height": t.height, "twist": t.twist.to_degrees(), "current": i == active }))
         .collect();
     Ok(json!({ "tiles": rows }))
 }
@@ -387,7 +395,59 @@ fn run_activate(s: &mut Session, p: &Value) -> Result<Value> {
     summary(s)
 }
 
+/// View > Viewports > Named Viewports...: without a name, the saved configurations and the one
+/// the Model tab shows; with one, restore it (its tiles in the Model tab, MVIEW Restore in a
+/// layout) or, with `delete`, delete it.
+fn run_named(s: &mut Session, p: &Value) -> Result<Value> {
+    let delete = match p.get("delete") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("vports.named", "`delete` must be true or false")),
+    };
+    let Some(name) = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()) else {
+        let configs: Vec<Value> =
+            s.doc()?.vports.iter().filter(|c| !c.is_active()).map(|c| json!({ "name": c.name, "viewports": c.tiles.len() })).collect();
+        return Ok(json!({ "current": s.viewport_configuration(), "configurations": configs }));
+    };
+    let saved = s
+        .doc()?
+        .vports
+        .iter()
+        .find(|c| !c.is_active() && c.name.eq_ignore_ascii_case(name))
+        .map(|c| c.name.clone())
+        .ok_or_else(|| EngineError::Other(format!("Could not find viewport configuration \"{}\".", name.chars().take(64).collect::<String>())))?;
+    if delete {
+        s.doc_mut()?.vports.retain(|c| c.is_active() || c.name != saved);
+        return Ok(json!({ "deleted": saved, "message": format!("Viewport configuration \"{saved}\" deleted.") }));
+    }
+    if s.layout_space() != Space::Model || p.get("layout").is_some() {
+        let mview = find_command("mview").ok_or_else(|| EngineError::UnknownCommand("mview".into()))?;
+        let mut p = p.clone();
+        if let Some(o) = p.as_object_mut() {
+            o.remove("delete");
+            o.insert("option".into(), json!("restore"));
+            o.insert("name".into(), json!(saved));
+        }
+        return (mview.run)(s, &p);
+    }
+    run_vports(s, &json!({ "option": "restore", "name": saved }))
+}
+
+/// Whether two configurations have their tiles in the same places (in any order).
+fn same_places(a: &[VportTile], b: &[VportTile]) -> bool {
+    let near = |p: Vec2, q: Vec2| (p.x - q.x).abs() < EPS && (p.y - q.y).abs() < EPS;
+    a.len() == b.len() && a.iter().all(|t| b.iter().any(|u| near(t.min, u.min) && near(t.max, u.max)))
+}
+
 impl Session {
+    /// The saved viewport configuration whose tiles are where the Model tab's tiles are now (the
+    /// first such one in the drawing), if any.
+    pub fn viewport_configuration(&self) -> Option<String> {
+        let st = self.state().ok()?;
+        let (tiles, _) = live(st, self.viewport_px);
+        st.doc.vports.iter().filter(|c| !c.is_active()).find(|c| same_places(&c.tiles, &tiles)).map(|c| c.name.clone())
+    }
+
     /// The model space tiles to draw (empty: one view, or not in the Model tab).
     pub fn model_tiles(&self) -> Vec<ModelTile> {
         let Ok(st) = self.state() else { return Vec::new() };
@@ -595,5 +655,35 @@ impl VportsM {
             }
             _ => Err(EngineError::Other("Requires a viewport.".into())),
         }
+    }
+}
+
+/// Named Viewports... without the dialog: -VPORTS Restore in the Model tab, MVIEW Restore in a
+/// layout.
+fn named_factory(s: &Session) -> Result<Box<dyn Interactive>> {
+    Ok(Box::new(Restoring(vports_factory(s)?)))
+}
+
+/// -VPORTS or MVIEW started at its Restore option.
+struct Restoring(Box<dyn Interactive>);
+
+impl Interactive for Restoring {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        match self.0.begin(s)? {
+            Step::Continue => self.0.input(s, Input::Keyword("Restore".into())),
+            other => Ok(other),
+        }
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        self.0.prompt(s)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        self.0.input(s, i)
+    }
+    fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        self.0.preview(s, cursor)
     }
 }

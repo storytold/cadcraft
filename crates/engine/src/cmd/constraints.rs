@@ -14,7 +14,8 @@ use cadcraft_geom::{Line, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, point_value, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 macro_rules! gc {
@@ -327,7 +328,7 @@ fn add_constraint(s: &mut Session, c: Constraint) -> Result<u32> {
     let keep: Vec<Handle> = c.refs.first().map(|r| r.handle).into_iter().collect();
     let prefer_move: Vec<Handle> = c.refs.iter().skip(1).map(|r| r.handle).filter(|h| !keep.contains(h)).collect();
     let mut d = s.doc()?.clone();
-    let id = cs::add(&mut d, c, &cs::SolveOptions { keep, prefer_move }).map_err(err)?;
+    let id = cs::add(&mut d, c, &cs::SolveOptions { keep, prefer_move, ..Default::default() }).map_err(err)?;
     *s.doc_mut()? = d;
     Ok(id)
 }
@@ -460,7 +461,7 @@ impl Interactive for GcM {
             }
             Input::Point(p) => {
                 let space = s.space();
-                let Some(h) = crate::select::pick(s.doc()?, &space, p, aperture(s)) else {
+                let Some(h) = s.pick_object(&space, p, aperture(s))? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
@@ -705,11 +706,11 @@ impl Interactive for DcM {
             Input::Point(p) => {
                 let space = s.space();
                 let ap = aperture(s);
-                let d = s.doc()?;
-                let Some(h) = crate::select::pick(d, &space, p, ap) else {
+                let Some(h) = s.pick_object(&space, p, ap)? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
+                let d = s.doc()?;
                 let want = match dc {
                     Dc::Radius | Dc::Diameter => Want::Curve,
                     Dc::Angular if self.refs.is_empty() => {
@@ -1119,7 +1120,7 @@ fn infer_after(s: &mut Session, before: &Drawing) {
         return;
     }
     let mut nd = d.clone();
-    let opts = cs::SolveOptions { keep: others, prefer_move: placed };
+    let opts = cs::SolveOptions { keep: others, prefer_move: placed, ..Default::default() };
     let added = cands.into_iter().take(200).filter(|c| cs::add(&mut nd, c.clone(), &opts).is_ok()).count();
     if added > 0
         && let Ok(st) = s.state_mut()
@@ -1148,7 +1149,8 @@ pub fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, ok: bool) {
     let mut d = (*st.doc).clone();
     let purged = cs::purge_invalid(&mut d);
     let restored = cs::restore_fixed(&mut d, before);
-    let satisfied = cs::all_satisfied(&d);
+    let anchors = cs::moved_anchors(&d, before);
+    let satisfied = anchors.is_empty() && cs::all_satisfied(&d);
     if purged.is_empty() && !restored && satisfied {
         return;
     }
@@ -1167,9 +1169,25 @@ pub fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, ok: bool) {
                 keep.push(h);
             }
         }
-        let mut trial = d.clone();
-        match cs::solve(&mut trial, &cs::SolveOptions { keep, prefer_move: Vec::new() }) {
-            Ok(_) => d = trial,
+        // A grip drag moved some of an object's points: they stay where they were put, and the
+        // edited objects still move least. When that cannot be solved, the edited objects are
+        // only kept as a whole, as for any other edit.
+        let hold: Vec<GeomRef> = keep.iter().flat_map(|&h| cs::edited_points(&d, before, h)).collect();
+        let mut solved = None;
+        if !hold.is_empty() {
+            let mut trial = d.clone();
+            let opts = cs::SolveOptions { keep: keep.clone(), prefer_move: Vec::new(), hold, anchors: anchors.clone() };
+            solved = cs::solve(&mut trial, &opts).ok().map(|_| trial);
+        }
+        let solved = match solved {
+            Some(t) => Ok(t),
+            None => {
+                let mut trial = d.clone();
+                cs::solve(&mut trial, &cs::SolveOptions { keep, anchors, ..Default::default() }).map(|_| trial)
+            }
+        };
+        match solved {
+            Ok(t) => d = t,
             Err(e) => msg.push(format!("Constraints could not be satisfied: {e}")),
         }
     }
@@ -1182,5 +1200,4 @@ pub fn after_command(s: &mut Session, before: Option<&Arc<Drawing>>, ok: bool) {
 }
 
 #[cfg(test)]
-#[path = "constraints_tests.rs"]
 mod tests;

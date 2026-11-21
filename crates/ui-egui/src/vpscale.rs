@@ -120,7 +120,7 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let p = ui.painter().clone();
     // Lock toggle.
     let lr = Rect::from_min_size(pos2(right - 20.0, cy - 9.0), vec2(18.0, 18.0));
-    let lresp = ui.interact(lr, ui.id().with("vp_lock"), Sense::click());
+    let lresp = ui.interact(lr, ui.scope_id().with("vp_lock"), Sense::click());
     if lresp.hovered() {
         p.rect_filled(lr, 3.0, t.control_hover.gamma_multiply(0.5));
     }
@@ -138,7 +138,7 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let g = p.layout_no_wrap(text, crate::theme::small(), if vp.locked { t.text_dim } else { t.text });
     let w = g.size().x + 22.0;
     let sr = Rect::from_min_max(pos2(lr.left() - 4.0 - w, cy - 9.0), pos2(lr.left() - 4.0, cy + 9.0));
-    let sresp = ui.interact(sr, ui.id().with("vp_scale"), Sense::click());
+    let sresp = ui.interact(sr, ui.scope_id().with("vp_scale"), Sense::click());
     p.rect_filled(sr, 3.0, if sresp.hovered() { t.control_hover } else { t.control.gamma_multiply(0.5) });
     p.galley(pos2(sr.left() + 6.0, sr.center().y - g.size().y / 2.0), g, t.text);
     let (ax, ay) = (sr.right() - 9.0, sr.center().y);
