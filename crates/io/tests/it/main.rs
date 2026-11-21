@@ -36,6 +36,7 @@ mod helix_roundtrip;
 mod layer_states_acad;
 mod layout_limits_roundtrip;
 mod layout_paper_units;
+mod layout_plot_flags;
 mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,6 +69,8 @@ mod plot_styles;
 mod polyface_roundtrip;
 mod portable_fonts;
 mod region_roundtrip;
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+mod render_settings_version;
 mod roundtrip;
 mod roundtrip_audit;
 mod skipped_records;

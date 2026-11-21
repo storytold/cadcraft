@@ -2,6 +2,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// A DWG hatch's elliptic boundary edge angles, in degrees in the DXF the DWG is read through (#3332).
+mod dwg_hatch;
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
@@ -35,7 +37,7 @@ pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::entity_groups;
+pub use dxf_write::{entity_groups, proxies_lost};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.
@@ -98,6 +100,8 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if craft_dwg::is_dwg(bytes) {
         let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
+        // The decoder writes an elliptic hatch edge's angles in radians; DXF keeps degrees.
+        let dxf = dwg_hatch::elliptic_edge_degrees(dxf);
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
