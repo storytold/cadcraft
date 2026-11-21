@@ -336,3 +336,24 @@ fn annotative_mtext_columns_follow_the_scale() {
         assert_eq!((t.height, t.width, c.count, c.gutter, c.height, c.heights), (2.0, 20.0, 2, 2.0, 40.0, vec![6.0, 10.0]));
     }
 }
+
+/// TEXTEDIT's in-place box for annotative text at a non-unit annotation scale has the height and
+/// extents of the text as drawn (scaled), not as stored (#842 review).
+#[test]
+fn the_text_edit_box_of_annotative_text_is_as_drawn() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "Notes", "annotative": true, "current": true })).unwrap();
+    setvar(&mut s, "CANNOSCALE", json!("1:50"));
+    let r = s.execute("text", &json!({ "at": [0, 0], "text": "NOTE", "height": 0.25 })).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    let drawn = drawn_height(s.doc().unwrap(), h).unwrap();
+    assert!(drawn > 5.0, "drawn {drawn}");
+    s.cmdline("TEXTEDIT").unwrap();
+    s.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(0.0, 0.0))).unwrap();
+    let ed = s.text_editor().expect("the editor opens on the text");
+    assert!((ed.mtext.height - 12.5).abs() < 1e-9, "box height {}", ed.mtext.height);
+    let b = ed.extents.unwrap();
+    // The text's layout box (cell height), so a little taller than the strokes, never the
+    // stored 0.25-high text's.
+    assert!(b.height() >= drawn * 0.95 && b.height() <= drawn * 2.0, "box extents {} vs drawn {drawn}", b.height());
+}

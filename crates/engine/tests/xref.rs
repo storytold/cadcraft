@@ -31,6 +31,7 @@ fn folder(tag: &str) -> TempDir {
 }
 
 fn save(d: &Drawing, path: &Path) {
+    cadcraft_io::dwg_worker::allow_in_process();
     std::fs::write(path, cadcraft_io::write(d, path).unwrap()).unwrap();
 }
 
