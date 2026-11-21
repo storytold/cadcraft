@@ -949,7 +949,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Some(f) = dyn_frame
                 && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
             {
-                app.cmd.buffer.clear();
+                app.cmd.clear_entry();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
             let result = match app.canvas.snap {
@@ -1022,10 +1022,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Context, dyn_frame: Option<crate::dyninput::Frame>) {
     if let Some(w) = raw {
         let mut eff = effective_point(app, w, xf, ctx);
-        // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
+        // A locked Dynamic Input value (`40,` or `40<` typed, or a Tab-locked second value) holds the
+        // cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
+            && crate::dyninput::holds_cursor(&e, app.cmd.second_locked())
         {
             eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
             app.canvas.snap = None;
@@ -1042,7 +1043,10 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if dyn_frame
+            .and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f))
+            .is_none_or(|e| !crate::dyninput::holds_cursor(&e, app.cmd.second_locked()))
+        {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.
