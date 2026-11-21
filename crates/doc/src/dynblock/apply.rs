@@ -458,6 +458,16 @@ fn in_frame(frame: &[Vec2], p: Vec2) -> bool {
     }
 }
 
+/// An attribute or attribute definition's key among a list of them: its tag (any case) and how
+/// many before it in `seen` had that tag.
+fn nth_key(seen: &mut HashMap<String, usize>, tag: &str) -> (String, usize) {
+    let tag = tag.to_ascii_uppercase();
+    let n = seen.entry(tag.clone()).or_insert(0);
+    let key = (tag, *n);
+    *n = n.saturating_add(1);
+    key
+}
+
 /// Give `insert` a new anonymous block with the plan's values applied (visibility states, and
 /// the stretch and move actions of the changed parameters, with the parameters in their selections
 /// carried along), and record the new values on it.
@@ -624,6 +634,23 @@ fn apply(
         f.targets.insert(h, ("BLOCK_RECORD".to_string(), definition.to_ascii_uppercase()));
         h
     }));
+    // The attribute definitions a visibility state showed or hid in the new block (shown or not
+    // there): the reference's attribute made from it is hidden with it. Any other keeps its own
+    // hidden state (group 60, as read), whatever else changed. Definitions and attributes are
+    // paired by tag and by their place among those of that tag, so two definitions sharing a tag
+    // each keep their own.
+    let shown_in = |blk: &Block| -> HashMap<(String, usize), bool> {
+        let mut nth: HashMap<String, usize> = HashMap::new();
+        blk.entities
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::AttDef(ad) => Some((nth_key(&mut nth, &ad.tag), e.common.visible)),
+                _ => None,
+            })
+            .collect()
+    };
+    let was_shown = shown_in(&src);
+    let def_shown: HashMap<(String, usize), bool> = shown_in(&b).into_iter().filter(|(key, now)| was_shown.get(key) != Some(now)).collect();
     let old = ins.block.clone();
     d.blocks.insert(name.clone(), std::sync::Arc::new(b));
     let f = std::sync::Arc::make_mut(&mut d.foreign);
@@ -652,7 +679,11 @@ fn apply(
     d.modify_entity(insert, |e| {
         if let EntityKind::Insert(i) = &mut e.kind {
             i.block = name.clone();
+            let mut nth: HashMap<String, usize> = HashMap::new();
             for a in &mut i.attribs {
+                if let Some(shown) = def_shown.get(&nth_key(&mut nth, &a.tag)) {
+                    a.modes.hidden = !shown;
+                }
                 if let Some(v) = attrib_moves.get(&a.tag.to_ascii_uppercase()) {
                     let w = to_world.apply(*v) - origin;
                     let mut k = EntityKind::Text(a.text.clone());
