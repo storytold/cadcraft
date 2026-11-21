@@ -398,4 +398,17 @@ mod tests {
         let b = line_end(&app);
         assert!(b.near(Vec2::new(5.0, 0.0), 1e-9), "{b:?}");
     }
+
+    /// Distance prompts (`Accept::POINT_OR_NUMBER` with `Prompt::distance`, e.g. CIRCLE radius)
+    /// must keep `dyn_frame` active so Dynamic Input remains available when `grip_dyn` is not overriding.
+    #[test]
+    fn distance_prompt_keeps_dyn_frame_active() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        app.session.cmdline("circle").unwrap();
+        app.session.input(Input::Point(Vec2::ZERO)).unwrap();
+        let prompt = app.session.current_prompt().unwrap();
+        assert!(prompt.accept.number && prompt.distance);
+        assert!(crate::cmdline::dyn_frame(&app).is_some(), "CIRCLE radius prompt must keep dyn_frame active");
+    }
 }

@@ -51,13 +51,15 @@ const LINE_H: f32 = 16.0;
 
 /// The Dynamic Input pointer-input frame for the prompt on screen, or `None` when the pointer
 /// value boxes are not live (Dynamic Input off, a selection window pending, not a point prompt, or
-/// a prompt that also takes a scalar number like SCALE's factor or ROTATE's angle).
+/// a non-distance scalar-number prompt like SCALE's factor or ROTATE's angle).
 pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     let st = &app.session.settings;
     if !st.dynmode || app.session.pending_window.is_some() {
         return None;
     }
-    let p = app.session.current_prompt().filter(|p| cadcraft_engine::pointmod::accepts(p) && !p.accept.number)?;
+    // Why: keep Dynamic Input live for distance prompts (e.g. CIRCLE radius/diameter with `p.distance`);
+    // disable the two-box pointer frame only for scalar-number prompts like SCALE factor or ROTATE angle.
+    let p = app.session.current_prompt().filter(|p| cadcraft_engine::pointmod::accepts(p) && (!p.accept.number || p.distance))?;
     let ucs = app.session.input_ucs();
     Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
 }
