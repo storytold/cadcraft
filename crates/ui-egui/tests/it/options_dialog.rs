@@ -271,3 +271,21 @@ fn reset_brings_back_hidden_menu_bar_toolbar_and_status_bar() {
     assert_eq!(a.ui.show_command_line, d.show_command_line);
     assert_eq!(a.ui.show_palettes, d.show_palettes);
 }
+
+#[test]
+fn the_open_and_save_tab_sets_what_proxy_objects_become_through_the_options_command() {
+    let mut a = app();
+    let ctx = egui::Context::default();
+    a.ui.dialog = Some("options:files".into());
+    let text = render(&mut a, &ctx);
+    assert!(text.contains("Proxy objects of opened drawings") && text.contains("Stay as they were read"), "{text}");
+    // The choice is the profile variable the OPTIONS JSON form sets, so a script does the same.
+    a.run("options", json!({"PROXYOBJECTSIMPORT": 2})).unwrap();
+    assert_eq!(a.session.settings.proxy_objects_import, 2);
+    assert!(render(&mut a, &ctx).contains("Become blocks"));
+    // It is kept with the profile.
+    let mut b = app();
+    b.load_profile(&a.profile_json());
+    assert_eq!(b.session.settings.proxy_objects_import, 2);
+    assert!(a.run("options", json!({"PROXYOBJECTSIMPORT": 3})).is_err(), "a value out of range is refused");
+}

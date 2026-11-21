@@ -404,6 +404,20 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
         // QSAVE keeps a binary DXF binary.
         st.binary_dxf = binary_dxf;
     }
+    // PROXYOBJECTSIMPORT: the custom objects of the file become their pictures as it opens, as ordinary
+    // objects (1) or one block each (2).
+    let how = match s.settings.proxy_objects_import {
+        1 => Some(super::modify::ProxyAs::Objects),
+        2 => Some(super::modify::ProxyAs::Blocks),
+        _ => None,
+    };
+    if let Some(how) = how
+        && let Ok(n) = super::modify::explode_proxies(s, how)
+        && n > 0
+    {
+        let into = if how == super::modify::ProxyAs::Blocks { "blocks" } else { "ordinary objects" };
+        s.echo(format!("{n} proxy objects made into {into} (PROXYOBJECTSIMPORT)."));
+    }
     for note in notes {
         s.echo(note);
     }
@@ -1325,5 +1339,73 @@ mod pr193_tests {
         assert!(!st.is_dirty());
         assert_eq!((st.path.as_deref(), st.title.as_str()), (Some("a/Owned.dxf"), "Owned.dxf"));
         assert_eq!(saved("a/Owned.dxf", n)["bytes"], 6);
+    }
+}
+
+#[cfg(test)]
+mod proxy_objects_import_on_open_tests {
+    use super::*;
+    use cadcraft_doc::{Common, Entity, EntityKind, Handle, Line, Space, Unknown};
+    use cadcraft_geom::Vec3;
+
+    /// A drawing with one proxy whose picture is a line.
+    fn with_proxy() -> Drawing {
+        let mut d = Drawing::new_metric();
+        let drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
+        let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
+        d.add(&Space::Model, Common::default(), EntityKind::Unknown(unknown)).unwrap();
+        d
+    }
+
+    fn proxies(s: &Session, i: usize) -> usize {
+        s.docs[i].doc.model.iter().filter(|e| matches!(&e.kind, EntityKind::Unknown(u) if !u.graphics.is_empty())).count()
+    }
+
+    #[test]
+    fn a_proxy_opens_as_it_is_unless_proxyobjectsimport_says_otherwise() {
+        let mut s = Session::new();
+        let i = add_read(&mut s, with_proxy(), false, "a.dxf", None);
+        assert_eq!(proxies(&s, i), 1, "left as read by default");
+        crate::sysvars::set(&mut s, "PROXYOBJECTSIMPORT", &json!(1)).unwrap();
+        let i = add_read(&mut s, with_proxy(), false, "b.dxf", None);
+        assert_eq!(proxies(&s, i), 0, "exploded as it opens");
+        assert!(s.docs[i].doc.model.iter().any(|e| matches!(&e.kind, EntityKind::Line(l) if l.a.y == 5.0)), "into its picture");
+        crate::sysvars::set(&mut s, "PROXYOBJECTSIMPORT", &json!(2)).unwrap();
+        let i = add_read(&mut s, with_proxy(), false, "c.dxf", None);
+        assert_eq!(proxies(&s, i), 0);
+        assert!(s.docs[i].doc.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(n) if n.block.starts_with("PROXY_"))), "into a block");
+    }
+
+    #[test]
+    fn proxies_can_become_blocks_that_explode_back_into_their_picture() {
+        use super::super::modify::{ProxyAs, explode_proxies};
+        let mut s = Session::new();
+        let i = add_read(&mut s, with_proxy(), false, "a.dxf", None);
+        let proxy = s.docs[i].doc.model.iter().find(|e| matches!(&e.kind, EntityKind::Unknown(_))).map(|e| e.handle).unwrap();
+        assert_eq!(explode_proxies(&mut s, ProxyAs::Blocks).unwrap(), 1);
+        let d = s.doc().unwrap();
+        assert!(d.entity(proxy).is_none());
+        let insert = d.model.iter().find(|e| matches!(&e.kind, EntityKind::Insert(_))).expect("a block reference");
+        let name = match &insert.kind {
+            EntityKind::Insert(i) => i.block.clone(),
+            _ => String::new(),
+        };
+        assert!(name.starts_with("PROXY_") && d.block(&name).is_some_and(|b| b.entities.len() == 1));
+        // Its grip sits on the picture, not at the drawing's origin.
+        let (at, b) = match &insert.kind {
+            EntityKind::Insert(i) => (i.insert, i.insert.xy()),
+            _ => (Default::default(), Default::default()),
+        };
+        let picture = d.model.iter().find(|e| e.handle == insert.handle).map(|e| cadcraft_doc::entity_bounds(d, e, 0)).unwrap_or_default();
+        assert!(
+            b.x >= picture.min.x - 1e-9 && b.x <= picture.max.x + 1e-9 && b.y >= picture.min.y - 1e-9 && b.y <= picture.max.y + 1e-9,
+            "insertion point {at:?} is inside the picture {picture:?}"
+        );
+        // The reference moves as one object, and EXPLODE takes it apart.
+        let h = insert.handle;
+        s.execute("move", &json!({"handles": [h.hex()], "delta": [0, 10]})).unwrap();
+        s.execute("explode", &json!({"handles": [h.hex()]})).unwrap();
+        let d = s.doc().unwrap();
+        assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::Line(l) if l.a.y == 15.0)), "the picture's line, moved");
     }
 }

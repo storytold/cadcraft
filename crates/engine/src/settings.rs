@@ -75,6 +75,10 @@ pub struct Settings {
     /// FILEDIA: kept for routines that switch file dialogs off around a script; no command reads it yet.
     pub filedia: bool,
     pub pickadd: bool,
+    /// PROXYOBJECTSIMPORT: what a drawing's proxies (custom objects, drawn from their proxy graphics)
+    /// become as it opens: 0 they stay as read, 1 ordinary objects, 2 one block each. CADCraft only,
+    /// and 0 by default: saving then writes the pictures in place of the custom objects.
+    pub proxy_objects_import: u8,
     /// PICKDRAG: false = two-click windows (0), true = clicks or dragging (2).
     /// Drag-only mode (1) is not supported yet.
     pub pickdrag: bool,
@@ -177,6 +181,7 @@ impl Default for Settings {
             cmdecho: true,
             filedia: true,
             pickadd: true,
+            proxy_objects_import: 0,
             pickdrag: true,
             pickstyle: 1,
             gripsize: 5.0,

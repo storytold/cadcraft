@@ -161,19 +161,57 @@ pub(crate) fn on_frozen_layer(frozen: &[String], e: &Entity) -> bool {
 /// The last object of `store`, in draw order, that is not on one of the layers in `frozen`, the
 /// layers frozen in the layout viewport the selection is made through: what the Last option
 /// takes there. With no such layers it is the last object, whether the drawing shows it or not.
+/// A proxy is passed over: no selection takes one in ([`kept_as_read`]).
 pub(crate) fn last_in(store: &cadcraft_doc::EntityStore, frozen: &[String]) -> Option<Handle> {
-    if frozen.is_empty() {
-        return store.last().map(|e| e.handle);
-    }
-    store.iter().filter(|e| !on_frozen_layer(frozen, e)).last().map(|e| e.handle)
+    store.iter_rev().find(|e| !kept_as_read(&e.kind) && !on_frozen_layer(frozen, e)).map(|e| e.handle)
 }
 
-/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]) and it is not
+/// Whether a selection can take `e`: the drawing shows it ([`Drawing::is_visible`]), it is not
 /// on one of the layers in `frozen`, the layers frozen in the layout viewport the selection is
-/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else). A viewport shows
-/// model space, so `frozen` goes with a selection in model space only.
+/// made through ([`crate::DocState::viewport_frozen`]; empty anywhere else), and commands can
+/// edit it. A viewport shows model space, so `frozen` goes with a selection in model space only.
+/// A proxy (or another record CADCraft keeps as it was read) is drawn and snapped to, but never
+/// selected: commands can't edit it, and saving writes its record as it was read.
 pub(crate) fn selectable(d: &Drawing, e: &Entity, frozen: &[String]) -> bool {
-    d.is_visible(e) && !on_frozen_layer(frozen, e)
+    d.is_visible(e) && !on_frozen_layer(frozen, e) && (!kept_as_read(&e.kind) || (proxies_pickable() && is_drawn_proxy(&e.kind)))
+}
+
+thread_local! {
+    static PROXIES_PICKABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the selection under way may take a proxy ([`ProxyPicking`]).
+fn proxies_pickable() -> bool {
+    PROXIES_PICKABLE.with(std::cell::Cell::get)
+}
+
+/// A proxy that draws something: the kind of record ERASE and EXPLODE take ([`ProxyPicking`]).
+fn is_drawn_proxy(k: &EntityKind) -> bool {
+    matches!(k, EntityKind::Unknown(u) if !u.graphics.is_empty())
+}
+
+/// While it lives, selections take proxies that draw something. Only the "Select objects" step of
+/// ERASE and EXPLODE sets it: erasing a proxy leaves nothing out of step with its saved record, and
+/// exploding replaces it by its picture as ordinary objects. Any other command keeps leaving a
+/// proxy out: it can't edit one without the saved record telling another story.
+pub(crate) struct ProxyPicking(bool);
+
+impl ProxyPicking {
+    pub(crate) fn allow(on: bool) -> Self {
+        Self(PROXIES_PICKABLE.with(|c| c.replace(on)))
+    }
+}
+
+impl Drop for ProxyPicking {
+    fn drop(&mut self) {
+        PROXIES_PICKABLE.with(|c| c.set(self.0));
+    }
+}
+
+/// Whether `k` is a record CADCraft keeps as it was read and commands can't edit: every
+/// [`EntityKind::Unknown`] but an OLE2FRAME, which moves and scales with its frame.
+pub(crate) fn kept_as_read(k: &EntityKind) -> bool {
+    matches!(k, EntityKind::Unknown(u) if !u.is_ole_frame())
 }
 
 /// Entities to test, in the order to test them, each with its bounds when already known.
@@ -599,7 +637,8 @@ mod tests {
     #[test]
     fn clicking_an_ole_frame_edge_selects_it() {
         let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
-        let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let frame =
+            |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
         let mut d = Drawing::new_metric();
         let h = d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
         d.add(&Space::Model, Common::default(), frame(vec![tag(10, "80"), tag(20, "80")])).unwrap();

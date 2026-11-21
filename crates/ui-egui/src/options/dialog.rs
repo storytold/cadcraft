@@ -229,10 +229,34 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         ui.end_row();
         savefile_row(ui, changes);
         ui.end_row();
+        proxy_row(ui, app, changes);
+        ui.end_row();
     });
     hint(ui, crate::tl!("New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE)."));
     hint(ui, crate::tl!("A drawing opened from a file keeps that file's format."));
     hint(ui, crate::tl!("Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off."));
+    hint(ui, crate::tl!("Proxy objects made into blocks or ordinary objects are saved as those, not as the custom objects they were."));
+}
+
+/// PROXYOBJECTSIMPORT: what the custom objects (proxies) of a drawing become as it opens.
+fn proxy_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    let caption = ui.label(crate::tl!("Proxy objects of opened drawings"));
+    let name = |v: u8| match v {
+        1 => crate::tl!("Become ordinary objects"),
+        2 => crate::tl!("Become blocks"),
+        _ => crate::tl!("Stay as they were read"),
+    };
+    let current = app.session.settings.proxy_objects_import.min(2);
+    let mut value = current;
+    let combo = craft_ui::ComboBox::from_id_salt("options_proxy_objects_import").selected_text(name(value)).show_ui(ui, |ui| {
+        for v in 0..=2u8 {
+            ui.selectable_value(&mut value, v, name(v));
+        }
+    });
+    combo.response.labelled_by(caption.id);
+    if value != current {
+        changes.insert("PROXYOBJECTSIMPORT".into(), json!(value));
+    }
 }
 
 fn save_format_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
