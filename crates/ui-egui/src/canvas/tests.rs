@@ -43,7 +43,7 @@ fn dragged_objects_keep_their_transparency() {
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
     let mut alpha = |transparency: bool| {
-        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency);
+        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency, cadcraft_render::Orbit3d::default());
         let mesh = c.drag_slot.lock().unwrap().take().unwrap();
         // The first line vertex's colour alpha (after its 2 × f32 position).
         mesh.lines[11]
@@ -73,7 +73,7 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     // Built with transparency, the preview would take CLAYER's 40 %.
     let with = cadcraft_render::build_entities(doc, ents.iter(), &cadcraft_render::Options { transparency: true, ..preview_options(1.0) });
     assert!(with.prims.iter().all(|p| p.transparency == 40));
-    let list = rebuilt_preview(doc, ents.iter(), 1.0);
+    let list = rebuilt_preview(doc, ents.iter(), 1.0, cadcraft_render::Orbit3d::default());
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
     s.cancel();
     // MOVE's base-to-cursor rubber band (a drag extra).
@@ -84,7 +84,7 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     s.cmdline("0,0").unwrap();
     let (_, extra) = s.drag(Vec2::new(4.0, 4.0)).unwrap();
     assert!(!extra.is_empty());
-    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0);
+    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0, cadcraft_render::Orbit3d::default());
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
 }
 

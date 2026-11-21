@@ -65,10 +65,6 @@ pub fn specs() -> Vec<CommandSpec> {
         })
         .params("not available yet")
         .noundo(),
-        CommandSpec::new("3dorbit", "Orbit", |_, _| Err(EngineError::Other("3DORBIT is not available yet: CADCraft draws in 2D (plan view) only".into())))
-            .alias(&["3do", "orbit"])
-            .params("not available yet")
-            .noundo(),
     ]
 }
 
@@ -283,10 +279,13 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         None => paper::model_page(d),
     };
     if let Some(name) = str_param(p, "paper") {
-        let ps = paper::paper_size(name).ok_or_else(|| bad("preview", format!("unknown paper size `{name}`")))?;
-        page.paper = ps.name.into();
-        page.width_mm = ps.width_mm;
-        page.height_mm = ps.height_mm;
+        if let Some(ps) = paper::paper_size(name) {
+            page.paper = ps.name.into();
+            page.width_mm = ps.width_mm;
+            page.height_mm = ps.height_mm;
+        } else if !(page.paper.eq_ignore_ascii_case(name) && page.width_mm > 0.0 && page.height_mm > 0.0) {
+            return Err(bad("preview", format!("unknown paper size `{name}`")));
+        }
     }
     // A model-space plot takes its units from the paper it was given (a layout keeps its page setup's).
     if matches!(space, Space::Model) {
@@ -921,9 +920,9 @@ mod tests {
     }
 
     #[test]
-    fn attach_share_and_orbit_say_they_are_not_available_yet() {
+    fn attach_and_share_are_not_available_yet() {
         let mut s = session();
-        for c in ["attach", "share", "3dorbit", "orbit"] {
+        for c in ["attach", "share"] {
             let e = s.execute(&resolve_alias(c), &Value::Null).unwrap_err().to_string();
             assert!(e.contains("not available yet"), "{c}: {e}");
         }
