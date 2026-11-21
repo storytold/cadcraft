@@ -114,7 +114,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
         .iter()
         .filter(|s| s.name == "ENTITIES")
         .flat_map(|s| record_slices(s.tags))
-        .filter_map(|(_, tags)| common::T(tags).s(5).and_then(|h| Handle::parse_hex(&h)))
+        .filter_map(|(_, tags)| tags.iter().find(|t| t.code == 5).and_then(Tag::str_ref).and_then(Handle::parse_hex))
         .collect();
     let mut objs = Objects::default();
     // Every handle another program's file already uses is taken before anything gets a new one:
@@ -124,7 +124,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     // (#495), so for it only the entity records are reserved. Handles in the reserved band are
     // reserved for allocation rather than followed (#913): a handle-less entity read before the
     // section that names one is placed would otherwise be given it and replace the record (#1276).
-    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
+    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str_ref() == Some(crate::dxf_ext::HANDSEED_KEY)));
     if ours {
         // Its table and object records are numbered above its seed and rebuilt on save (#495),
         // so only its entities are reserved. Reading is section by section: an entity that has
@@ -135,7 +135,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
             if matches!(kind.as_str(), "BLOCK" | "ENDBLK") {
                 continue;
             }
-            if let Some(h) = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(t.str().trim())) {
+            if let Some(h) = tags.iter().find(|t| t.code == 5).and_then(Tag::str_ref).and_then(Handle::parse_hex) {
                 d.bump_handseed(h);
                 d.reserve_handle(h);
             }
@@ -144,7 +144,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
         for s in &secs {
             let entity_section = s.name == "BLOCKS" || s.name == "ENTITIES";
             for t in s.tags.iter().filter(|t| t.code == 5 || t.code == 105) {
-                if let Some(h) = Handle::parse_hex(t.str().trim()) {
+                if let Some(h) = t.str_ref().and_then(Handle::parse_hex) {
                     d.bump_handseed(h);
                     if entity_section {
                         d.reserve_handle(h);
@@ -160,7 +160,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
             "HEADER" => header(s.tags, &mut d),
             "TABLES" => tables(s.tags, &mut d, &mut rx),
             "BLOCKS" => {
-                blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped, &mut seen_handles, &reserved_entity_handles))
+                blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped, &mut seen_handles, &reserved_entity_handles)?)
             }
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
@@ -172,7 +172,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
                     &mut n,
                     &mut table_cells_left,
                     &mut HandlePolicy { seen: &mut seen_handles, reserved: &reserved_entity_handles, source_wins: true },
-                ));
+                )?);
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
             "OBJECTS" => read_objects(s.tags, &mut objs, &mut layout_objs),
@@ -332,5 +332,41 @@ mod hatch_budget_tests {
         assert!(hatch_points(&d) <= 1000 + 4001 + 20 * 4, "{}", hatch_points(&d));
         assert_eq!(d.model.len(), 2);
         assert!(matches!(d.read_notes.as_slice(), [note] if note.contains("2 hatches")), "{:?}", d.read_notes);
+    }
+}
+
+#[cfg(test)]
+mod entity_list_tests {
+    use super::*;
+    /// Vertices, attributes and SEQEND fold into the record before them, so they reserve no slots.
+    #[test]
+    fn follower_records_reserve_no_entity_slots() -> Result<()> {
+        let rec = |kind: &str, tags: Vec<Tag>| (kind.to_string(), tags);
+        let mut recs = vec![rec("POLYLINE", vec![Tag::s(8, "0"), Tag::i(66, 1)])];
+        for x in 0..200 {
+            recs.push(rec("VERTEX", vec![Tag::s(8, "0"), Tag::f(10, f64::from(x)), Tag::f(20, 0.0)]));
+        }
+        recs.push(rec("SEQEND", vec![Tag::s(8, "0")]));
+        recs.push(rec("LINE", vec![Tag::s(8, "0"), Tag::f(11, 1.0)]));
+        let recs: Vec<(String, &[Tag])> = recs.iter().map(|(kind, tags)| (kind.clone(), tags.as_slice())).collect();
+        let mut d = Drawing::new_imperial();
+        let (mut rx, mut skipped, mut cells) = (Rx::default(), 0, 100);
+        let (mut seen, reserved) = (HashSet::new(), HashSet::new());
+        let mut hp = HandlePolicy { seen: &mut seen, reserved: &reserved, source_wins: true };
+        let out = parse_entities(&recs, &mut d, &mut rx, &mut skipped, &mut cells, &mut hp)?;
+        assert_eq!(out.len(), 2, "the polyline and the line");
+        assert!(out.capacity() < 10, "capacity {}", out.capacity());
+        Ok(())
+    }
+
+    /// The reservation stops at its cap, and one that can't be had is an error, not an abort.
+    #[test]
+    fn entity_list_reservation_is_capped_and_fallible() -> Result<()> {
+        use document::entity_list;
+        assert_eq!(entity_list(100, 8)?.capacity(), 8);
+        assert_eq!(entity_list(5, 8)?.capacity(), 5);
+        assert_eq!(entity_list(0, 8)?.capacity(), 0);
+        assert!(matches!(entity_list(usize::MAX / 2, usize::MAX), Err(IoError::Format(m)) if m.contains("out of memory")));
+        Ok(())
     }
 }

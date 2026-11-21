@@ -472,10 +472,10 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
             if in_entity {
                 break;
             }
-            in_entity = t.str() == "AcDbEntity";
+            in_entity = t.str_ref() == Some("AcDbEntity");
         } else if in_entity {
             match t.code {
-                390 => return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned(),
+                390 => return rx.pstyles.get(&t.str_ref().unwrap_or_default().trim().to_ascii_uppercase()).cloned(),
                 380 => by_block = t.i64() == 1,
                 _ => {}
             }

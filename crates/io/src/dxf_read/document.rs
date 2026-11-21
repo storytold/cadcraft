@@ -4,6 +4,7 @@ use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
+use crate::{IoError, Result};
 
 /// Allocate an entity handle that is unique within the DXF, including against handles assigned
 /// to earlier malformed or generated entities.
@@ -45,6 +46,22 @@ pub(super) struct HandlePolicy<'a> {
     pub source_wins: bool,
 }
 
+/// Most entities an entity list reserves room for before its records are read. The record count
+/// is bounded by the tag limit, but a file of tiny records could still ask for gigabytes (an
+/// entry takes several hundred bytes) before any record is admitted. Drawings of up to this many
+/// entities are sized in one step; larger ones grow as usual. At the cap the reservation is
+/// about 46 MiB (728 bytes an entry on 64-bit targets).
+pub(super) const MAX_RESERVED_ENTITIES: usize = 1 << 16;
+
+/// An empty entity list with room for `records` entities, or `cap` if that is fewer. A refused
+/// reservation is an error rather than an abort.
+pub(super) fn entity_list(records: usize, cap: usize) -> Result<Vec<(Option<String>, bool, Entity)>> {
+    let mut out = Vec::new();
+    let n = records.min(cap);
+    out.try_reserve_exact(n).map_err(|_| IoError::Format(format!("DXF: out of memory reserving {n} entities")))?;
+    Ok(out)
+}
+
 pub(super) fn parse_entities(
     recs: &[(String, &[Tag])],
     d: &mut Drawing,
@@ -52,14 +69,19 @@ pub(super) fn parse_entities(
     skipped: &mut usize,
     table_cells_left: &mut usize,
     hp: &mut HandlePolicy<'_>,
-) -> Vec<(Option<String>, bool, Entity)> {
-    let mut out = Vec::new();
+) -> Result<Vec<(Option<String>, bool, Entity)>> {
+    // Every record but a polyline's vertices, a reference's attributes and their SEQEND becomes
+    // at most one entity (`recs` is already in memory, bounded by the tag limit), so the list is
+    // sized once rather than moved at every doubling, up to MAX_RESERVED_ENTITIES; past that, and
+    // for mesh faces past the count, it grows as usual.
+    let mut out =
+        entity_list(recs.iter().filter(|(kind, _)| !matches!(kind.as_str(), "VERTEX" | "ATTRIB" | "SEQEND")).count(), MAX_RESERVED_ENTITIES)?;
     let mut i = 0;
     while let Some((kind, tags)) = recs.get(i) {
         let t = T(tags);
         let owner = crate::dxf_ext::owner(tags);
         let paper = t.i(67) == Some(1);
-        let handle = t.s(5).and_then(|h| Handle::parse_hex(&h));
+        let handle = tags.iter().find(|t| t.code == 5).and_then(Tag::str_ref).and_then(Handle::parse_hex);
         if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
             rx.paper_views_dropped.push((owner.clone(), paper, rx.block.clone()));
         }
@@ -121,7 +143,7 @@ pub(super) fn parse_entities(
             *skipped = skipped.saturating_add(1);
         }
     }
-    out
+    Ok(out)
 }
 
 /// Read the BLOCKS section: the xref paths of external blocks, then each block's entities.
@@ -133,7 +155,7 @@ pub(super) fn read_blocks(
     skipped: &mut std::collections::BTreeMap<String, usize>,
     seen_handles: &mut HashSet<Handle>,
     reserved_handles: &HashSet<Handle>,
-) -> Vec<BlockDef> {
+) -> Result<Vec<BlockDef>> {
     let recs = record_slices(tags);
     for (k, tg) in &recs {
         let t = T(tg);
@@ -165,7 +187,7 @@ pub(super) fn read_blocks(
                 &mut n,
                 table_cells_left,
                 &mut HandlePolicy { seen: seen_handles, reserved: reserved_handles, source_wins: false },
-            );
+            )?;
             rx.block = None;
             blocks.push((name, base, description, ents, xref));
             i = j + 1;
@@ -178,7 +200,7 @@ pub(super) fn read_blocks(
         }
     }
     count_skipped(skipped, "BLOCKS", n);
-    blocks
+    Ok(blocks)
 }
 
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
