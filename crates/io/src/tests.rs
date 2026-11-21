@@ -2683,6 +2683,84 @@ fn mirrored_2d_polyline_extrusion_flips_x_and_bulge() {
     assert_eq!(got, vec![(-1.0, 0.0, -1.0), (-3.0, 0.0, 0.0)]);
 }
 
+/// Objects whose normal is 0,0,-1, at OCS height 5 and most of them 2 thick, keep their world height
+/// and the side they extrude to through a save. They are written with no normal (along Z), so an
+/// elevation or a thickness written as read put a polyline or a hatch at Z +5 instead of -5, and
+/// extruded a circle, point, solid or text up instead of down (AutoCAD 2024 opening the saved file,
+/// measured). A line writes its normal, and keeps its thickness as read. The same objects facing up
+/// (no normal, and 0,0,1) keep +5 and +2: only a normal pointing down Z changes the sign.
+#[test]
+fn mirrored_objects_keep_their_world_height_and_thickness_side() {
+    let records = |normal: &str| {
+        format!(
+            "0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n5\n39\n2\n{normal}10\n0\n20\n0\n42\n0.5\n10\n-10\n20\n0\n\
+             0\nPOLYLINE\n8\n0\n66\n1\n70\n0\n10\n0\n20\n0\n30\n5\n{normal}0\nVERTEX\n8\n0\n10\n0\n20\n10\n0\nVERTEX\n8\n0\n10\n-10\n20\n10\n0\nSEQEND\n\
+             0\nCIRCLE\n8\n0\n10\n-10\n20\n5\n30\n5\n40\n5\n39\n2\n{normal}\
+             0\nARC\n8\n0\n10\n-30\n20\n5\n30\n5\n40\n5\n50\n180\n51\n270\n{normal}\
+             0\nPOINT\n8\n0\n10\n-40\n20\n0\n30\n5\n39\n2\n{normal}\
+             0\nSOLID\n8\n0\n10\n50\n20\n0\n30\n5\n11\n60\n21\n0\n31\n5\n12\n50\n22\n5\n32\n5\n13\n60\n23\n5\n33\n5\n39\n2\n{normal}\
+             0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n5\n{normal}2\nSOLID\n70\n1\n71\n0\n91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n\
+             10\n70\n20\n0\n10\n80\n20\n0\n10\n80\n20\n5\n10\n70\n20\n5\n97\n0\n75\n0\n76\n1\n98\n0\n\
+             0\nTEXT\n8\n0\n10\n-90\n20\n0\n30\n5\n40\n2\n1\nA\n39\n2\n{normal}\
+             0\nLINE\n8\n0\n39\n2\n10\n0\n20\n20\n30\n3\n11\n10\n21\n20\n31\n3\n{normal}"
+        )
+    };
+    let (down, up) = ("210\n0\n220\n0\n230\n-1\n", "210\n0\n220\n0\n230\n1\n");
+    let text = format!("0\nSECTION\n2\nENTITIES\n{}{}{}0\nENDSEC\n0\nEOF\n", records(down), records(""), records(up));
+    // Each object's kind, world height and thickness along world Z.
+    let place = |d: &Drawing| -> Vec<(&'static str, f64, f64)> {
+        d.model
+            .iter()
+            .map(|e| {
+                let n = e.common.extrusion.z.signum();
+                let (kind, z) = match &e.kind {
+                    EntityKind::LwPolyline(p) => ("polyline", n * p.elevation),
+                    EntityKind::Circle(c) => ("circle", c.center.z),
+                    EntityKind::Arc(a) => ("arc", a.center.z),
+                    EntityKind::Point(p) => ("point", p.p.z),
+                    EntityKind::Solid(s) => ("solid", s.corners[0].z),
+                    EntityKind::Hatch(h) => ("hatch", n * h.elevation),
+                    EntityKind::Text(t) => ("text", t.insert.z),
+                    EntityKind::Line(l) => ("line", l.a.z),
+                    _ => ("other", f64::NAN),
+                };
+                (kind, z, n * e.common.thickness)
+            })
+            .collect()
+    };
+    let d = read(text.as_bytes(), "m.dxf").unwrap();
+    let mut want = vec![
+        ("polyline", -5.0, -2.0),
+        ("polyline", -5.0, 0.0),
+        ("circle", -5.0, -2.0),
+        ("arc", -5.0, 0.0),
+        ("point", 5.0, -2.0),
+        ("solid", -5.0, -2.0),
+        ("hatch", -5.0, 0.0),
+        ("text", -5.0, -2.0),
+        ("line", 3.0, -2.0),
+    ];
+    let facing_up = [
+        ("polyline", 5.0, 2.0),
+        ("polyline", 5.0, 0.0),
+        ("circle", 5.0, 2.0),
+        ("arc", 5.0, 0.0),
+        ("point", 5.0, 2.0),
+        ("solid", 5.0, 2.0),
+        ("hatch", 5.0, 0.0),
+        ("text", 5.0, 2.0),
+        ("line", 3.0, 2.0),
+    ];
+    want.extend(facing_up);
+    want.extend(facing_up);
+    assert_eq!(place(&d), want, "as read");
+    let out = write(&d, "m.dxf").unwrap();
+    assert_eq!(place(&read(&out, "m.dxf").unwrap()), want, "after a save");
+    let pairs = dxf_pairs(std::str::from_utf8(&out).unwrap());
+    let lines: Vec<_> = dxf_records(&pairs, "LINE").into_iter().map(|l| (group(l, "39"), group(l, "230"))).collect();
+    assert_eq!(lines, [(Some("2.0"), Some("-1.0")), (Some("2.0"), None), (Some("2.0"), None)]);
+}
+
 #[test]
 fn mirrored_hatch_extrusion_flips_boundary() {
     // HATCH boundaries are OCS: the square (1,0)..(3,2) under extrusion (0,0,-1) lies at (-3,0)..(-1,2).
@@ -2725,6 +2803,20 @@ fn tilted_hatch_turns_its_gradient() {
     let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
     let g = h.gradient.expect("a gradient");
     assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
+}
+
+/// A tilted polyline with a thickness, its normal pointing partly down Z, still extrudes toward -Z
+/// once it is drawn as seen from above and saved with no normal.
+#[test]
+fn tilted_thick_polyline_keeps_its_extrusion_side() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n39\n5\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n10\n3\n20\n2\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let e = d.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z));
+    let back = roundtrip(&d);
+    let e = back.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z), "saved with no normal, it still extrudes toward -Z");
 }
 
 /// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
@@ -2839,6 +2931,57 @@ fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
     let plain = read(circle("").as_bytes(), "p.dxf").unwrap();
     let p = first(&plain, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
     assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
+}
+
+/// A 2D POLYLINE (heavy polyline) in a tilted plane is drawn as seen from above, like a
+/// LWPOLYLINE: before, its OCS points were taken for world coordinates. With extrusion
+/// (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and y = (0, √3/2, 1/2), and the elevation of 2
+/// moves the plane by twice the normal, (0, 1, -√3): the square (1,0)..(3,2) lies over
+/// (-3,1)..(-1,1+√3), its corners at a mean height of 1/2 - √3.
+#[test]
+fn tilted_2d_polyline_is_drawn_as_seen_from_above() {
+    let square = |n: &str| {
+        format!(
+            "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n2\n70\n1\n{n}\
+             0\nVERTEX\n8\n0\n10\n1\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n2\n\
+             0\nVERTEX\n8\n0\n10\n1\n20\n2\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let d = read(square("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let r3 = 3f64.sqrt();
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 1.0), (b.max.x, -1.0), (b.max.y, 1.0 + r3)] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("not a polyline") };
+    assert!((p.elevation - (0.5 - r3)).abs() < 1e-9, "the mean height of its corners: {}", p.elevation);
+    // In plan and in the mirrored plane the polyline stays as it was: mirrored only in x.
+    let plain = read(square("").as_bytes(), "p.dxf").unwrap();
+    let b = plain.extents(&Space::Model);
+    assert!((b.min.x - 1.0).abs() < 1e-9 && (b.max.y - 2.0).abs() < 1e-9, "extents {b:?}");
+    let mirrored = read(square("210\n0\n220\n0\n230\n-1\n").as_bytes(), "p.dxf").unwrap();
+    let b = mirrored.extents(&Space::Model);
+    assert!((b.min.x + 3.0).abs() < 1e-9 && (b.max.x + 1.0).abs() < 1e-9, "extents {b:?}");
+    assert_eq!(mirrored.model.iter().next().unwrap().common.extrusion, Vec3::new(0.0, 0.0, -1.0));
+}
+
+/// A tilted 2D POLYLINE with an arc keeps its shape as seen from above: the half circle from
+/// (0,0) to (2,0) is flattened into its half ellipse, in plan x from -2 to 0 and reaching √3/2.
+#[test]
+fn tilted_2d_polyline_arc_is_flattened() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                0\nVERTEX\n8\n0\n10\n0\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n2\n20\n0\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let b = d.extents(&Space::Model);
+    // Bulge 1 turns counter-clockwise from (0,0) to (2,0), so the arc runs below its chord, down
+    // to OCS y -1: plan y -√3/2.
+    for (got, want) in [(b.min.x, -2.0), (b.max.x, 0.0), (b.min.y, -(3f64.sqrt()) / 2.0), (b.max.y, 0.0)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
 }
 
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).

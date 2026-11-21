@@ -88,6 +88,9 @@ pub struct Foreign {
     /// Block references with kept annotation scale contexts, as they were read: what a context
     /// is brought up to date from (see [`KeptPlacement`]), by handle.
     pub placements: BTreeMap<Handle, KeptPlacement>,
+    /// The file's registered applications (APPID names as read, in file order). Saving writes
+    /// them all back, whether or not any xdata still names them.
+    pub appids: Vec<String>,
 }
 
 /// A block reference as read: its insertion point, rotation (radians) and scale, and each of its
@@ -129,6 +132,7 @@ impl Foreign {
             && self.class_order.is_empty()
             && self.data_store.is_empty()
             && self.placements.is_empty()
+            && self.appids.is_empty()
     }
 
     /// The entities with a geometry record in the data store: an `ACDSRECORD` naming the entity
