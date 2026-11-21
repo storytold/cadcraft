@@ -413,6 +413,23 @@ struct LayoutWriteData<'a> {
     limits: Option<(Vec2, Vec2)>,
 }
 
+/// The plot layout flags (AcDbPlotSettings group 70) for `page`. The bits CADCraft models come
+/// from the page: 2 display plot styles, 4 centred, 128 lineweights, and 16 standard scale where
+/// the scale decides it (scaled to fit: set; a custom scale: clear). The rest are kept as the file
+/// had them (#3227); a page CADCraft made gets 512 (plot paper space last) and 32 (plot with plot
+/// styles), and 16 when its scale is standard.
+fn plot_layout_flags(page: &PageSetup, standard: bool) -> i64 {
+    const MODELED: i64 = 2 | 4 | 128;
+    const STANDARD_SCALE: i64 = 16;
+    let kept = match page.file_plot_flags {
+        Some(f) if page.scale_to_fit => (f & !MODELED) | STANDARD_SCALE,
+        Some(f) if !standard => f & !MODELED & !STANDARD_SCALE,
+        Some(f) => f & !MODELED,
+        None => 512 | 32 | if standard { STANDARD_SCALE } else { 0 },
+    };
+    kept | if page.lineweights { 128 } else { 0 } | if page.center { 4 } else { 0 } | if page.show_plot_styles { 2 } else { 0 }
+}
+
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
     let d = context.drawing;
     let layout_dict = context.dictionary;
@@ -426,13 +443,10 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
     // per 143 drawing units).
     let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
-    let standard = page.scale_to_fit || scale == 1.0;
-    let plot_flags = 512
-        | 32
-        | if standard { 16 } else { 0 }
-        | if page.lineweights { 128 } else { 0 }
-        | if page.center { 4 } else { 0 }
-        | if page.show_plot_styles { 2 } else { 0 };
+    // The file's standard scale (such as 1:50) while the scale is still the one read with it.
+    let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
+    let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
+    let plot_flags = plot_layout_flags(page, standard);
     let plot_type = match page.plot_area.as_str() {
         "display" => 0,
         "extents" => 1,
@@ -474,7 +488,7 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(73, rotation);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
-    w.i(75, if page.scale_to_fit { 0 } else { 16 });
+    w.i(75, if page.scale_to_fit { 0 } else { file_standard.unwrap_or(16) });
     w.f(147, scale);
     // The paper image origin the file had (#2109), else 0,0.
     let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
