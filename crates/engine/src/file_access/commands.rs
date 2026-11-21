@@ -272,6 +272,7 @@ pub const NO_FILES: &[&str] = &[
     "bvstate",
     "bvhide",
     "bvshow",
+    "blookuptable",
     "blocks.element.select",
     "blocks.element.point",
     "blocks.element.points",
