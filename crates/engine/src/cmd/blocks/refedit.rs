@@ -931,7 +931,7 @@ fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name:
 }
 
 /// Replace the xref's file (`file` as the xref names it, `real` the file it leads to) by `bytes`,
-/// the way SAVE replaces a drawing: the old file is kept as its `.bak`
+/// the way SAVE replaces a drawing: the old file is kept as its `.bak` (when ISAVEBAK is on)
 /// ([`crate::cmd::file::backup_path`]: `site.dwg` as `site.bak`, `site.dxf` as `site.dxf.bak`),
 /// and the new one goes into a fresh, exclusively created temporary file that is renamed over
 /// `real` ([`crate::atomic_write`]). A symbolic link planted at the temporary or backup path is
@@ -945,8 +945,13 @@ fn replace_file(file: &std::path::Path, real: &std::path::Path, bytes: &[u8]) ->
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let kept = crate::cmd::file::backup(real)
-            .map_err(|e| format!("the backup copy of {} could not be written ({e}); it is unchanged", file.display()))?;
+        // As SAVE: ISAVEBAK off keeps no backup.
+        let kept = if crate::autosave::isavebak() {
+            crate::cmd::file::backup(real)
+                .map_err(|e| format!("the backup copy of {} could not be written ({e}); it is unchanged", file.display()))?
+        } else {
+            false
+        };
         let permissions = std::fs::symlink_metadata(real).ok().filter(std::fs::Metadata::is_file).map(|m| m.permissions());
         crate::atomic_write::write_atomic_with(real, permissions, |f| std::io::Write::write_all(f, bytes))
             .map_err(|e| format!("{} can't be replaced: {e}; it is unchanged", file.display()))?;
