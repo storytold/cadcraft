@@ -162,11 +162,19 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "options/dialog",
         "finddlg",
         "textdlg",
+        "closing",
+        "xdedit",
+        "context_menu",
+        "plotstyles",
+        "spacemouse",
     ];
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     for module in modules {
-        files.push(src.join(format!("{module}.rs")));
+        let p = src.join(format!("{module}.rs"));
+        if p.exists() {
+            files.push(p);
+        }
         module_files(&src.join(module), &mut files);
     }
     let mut missing = BTreeSet::new();
@@ -251,10 +259,12 @@ fn assert_primary_locale_aliases() {
 }
 
 fn assert_portuguese_and_spanish_aliases() {
-    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
+    for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
     }
-
+    for tag in ["pt-PT", "pt_PT.UTF-8", "PT-pt"] {
+        assert_eq!(locale_language(tag), Some("pt-PT"), "{tag}");
+    }
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
     }
@@ -282,7 +292,7 @@ fn assert_additional_locale_aliases() {
 
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
-    let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
+    let look_alikes = ["ua", "ukulele", "fi-FI", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
@@ -290,11 +300,11 @@ fn assert_unrecognized_locale_tags() {
 }
 
 fn assert_auto_locale_precedence() {
-    assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), "pt-BR".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["fi-FI".into(), "pt-BR".into()]), "pt-BR");
     assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pl");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
-    let locales = vec!["nl-NL".into(), "uk-UA".into(), "en-US".into()];
+    let locales = vec!["fi-FI".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
@@ -317,7 +327,7 @@ fn assert_preference_resolution(preference: Preference) {
     // A chosen language wins over the system's; Auto takes the first system language there is.
     assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
     if preference != Preference::English {
-        assert_eq!(Preference::Auto.resolve(&["nl-NL".into(), preference.code().into(), "en-US".into()]), preference.code());
+        assert_eq!(Preference::Auto.resolve(&["fi-FI".into(), preference.code().into(), "en-US".into()]), preference.code());
     }
 }
 
@@ -663,6 +673,30 @@ fn georgian_counts_menu_headings_and_no_mtavruli() {
     });
     let mtavruli: Vec<char> = include_str!("ka.tsv").chars().filter(|c| ('\u{1c90}'..='\u{1cbf}').contains(c)).collect();
     assert!(mtavruli.is_empty(), "{mtavruli:?}");
+}
+
+#[test]
+fn dutch_catalog_locale_preferences_and_contexts() {
+    assert_eq!(Preference::parse("nl"), Some(Preference::Dutch));
+    assert_eq!(Preference::Dutch.code(), "nl");
+    assert_eq!(Preference::Dutch.name(), "Nederlands");
+    for locale in ["nl", "nl-NL", "nl-BE", "nl_NL.UTF-8", "NL-be"] {
+        assert_eq!(locale_language(locale), Some("nl"));
+    }
+    assert_eq!(Preference::Dutch.resolve(&["en-US".into()]), "nl");
+    let saved = serde_json::to_string(&Preference::Dutch).unwrap();
+    assert_eq!(saved, "\"nl\"");
+    assert_eq!(serde_json::from_str::<Preference>(&saved).unwrap(), Preference::Dutch);
+    assert_eq!(tr("nl", "Layer"), "Laag");
+    assert_eq!(tr_menu("nl", "View"), "Beeld");
+    assert_eq!(tr("nl", "View"), "Weergave");
+    with_language("nl", || {
+        assert_eq!(t("Open"), "Openen");
+        assert_eq!(count(1, "{n} contributor", "{n} contributors"), "1 bijdrager");
+        assert_eq!(count(0, "{n} contributor", "{n} contributors"), "0 bijdragers");
+        assert_eq!(count(2, "{n} contributor", "{n} contributors"), "2 bijdragers");
+    });
+    assert_eq!(t("Open"), "Open", "language must not leak outside a render scope");
 }
 
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.

@@ -18,7 +18,7 @@ const OPTIONS: &[&str] = &[
     "New",
     "Rename",
     "ON",
-    "OFF",
+    "OFf",
     "Color",
     "Ltype",
     "LWeight",
@@ -32,6 +32,7 @@ const OPTIONS: &[&str] = &[
     "stAte",
     "Description",
     "rEconcile",
+    "FILter",
 ];
 
 /// Keyword-only: spaces separate inputs.
@@ -109,6 +110,7 @@ enum Stage {
     Transparency,
     Plot,
     Description,
+    Filter,
     Layers(Change),
     /// Turning the current layer off asks first.
     ConfirmOff(Vec<String>),
@@ -180,7 +182,7 @@ impl LayerM {
             "New" => Stage::New,
             "Rename" => Stage::RenameFrom,
             "ON" => Stage::Layers(Change::On),
-            "OFF" => Stage::Layers(Change::Off),
+            "OFF" | "OFf" => Stage::Layers(Change::Off),
             "Color" => Stage::Color,
             "Ltype" => Stage::Ltype,
             "LWeight" => Stage::Lweight,
@@ -192,6 +194,7 @@ impl LayerM {
             "Unlock" => Stage::Layers(Change::Unlock),
             "Description" => Stage::Description,
             "stAte" => Stage::State(state_prompts::Stage::Option),
+            "FILter" => Stage::Filter,
             other => {
                 // MATerial, rEconcile: report and stay at the option prompt.
                 s.echo(format!("-LAYER {other} is not available yet."));
@@ -394,6 +397,7 @@ impl LayerM {
                 }
             },
             Stage::Description => back(self, Stage::Layers(Change::Description(text.unwrap_or_default()))),
+            Stage::Filter => back(self, Stage::Filter),
             Stage::Layers(change) => self.layers(s, change, text.as_deref()),
             Stage::ConfirmOff(names) => {
                 let cur = current_layer(s);
@@ -432,6 +436,7 @@ impl Interactive for LayerM {
             Stage::Transparency => Prompt::new("Enter transparency value (0-90)", NAME).default("0"),
             Stage::Plot => Prompt::new("Enter a plotting preference", KW).kw(&["Plot", "No"]).default("Plot"),
             Stage::Description => Prompt::new("Enter layer description", Accept::TEXT),
+            Stage::Filter => Prompt::new("Enter a layer filter option", NAME),
             Stage::Layers(c) => {
                 let (msg, enter_is_current) = c.prompt();
                 let p = Prompt::new(msg, NAME);
@@ -452,7 +457,7 @@ impl Interactive for LayerM {
         }
         match (&self.stage, &i) {
             (_, Input::Cancel) => Ok(Step::Cancel),
-            (Stage::Option, Input::Enter) => Ok(Step::Done),
+            (Stage::Option | Stage::Filter, Input::Enter) => Ok(Step::Done),
             (Stage::Option, Input::Keyword(k)) => {
                 let k = k.clone();
                 self.option(s, &k)
