@@ -60,6 +60,8 @@ pub(super) struct Ctx {
     pub(super) legacy_columns: bool,
     /// Annotative text, MText and dimensions: their annotation scale contexts.
     pub(super) anno: crate::dxf_anno::Plan,
+    /// Saved layer states in AutoCAD's form (the LAYER table's extension dictionary).
+    pub(super) layer_states: crate::dxf_layer_states::Plan,
 }
 
 impl Ctx {
