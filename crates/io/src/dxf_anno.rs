@@ -21,7 +21,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use cadcraft_doc::{AnnoScale, DimKind, Drawing, Entity, EntityKind, HAlign, Handle, MLeader, MTextColumnType, Text, VAlign};
 use cadcraft_geom::Vec3;
-use craft_dxf::{Section, Tag};
+use craft_dxf::{SectionRef, Tag};
 
 /// The context classes: (DXF record name, C++ class name).
 const TEXT: (&str, &str) = ("ACDB_TEXTOBJECTCONTEXTDATA_CLASS", "AcDbTextObjectContextData");
@@ -382,10 +382,10 @@ fn all_entries(tags: &[Tag]) -> Vec<Handle> {
 /// layouts: each becomes annotative with the scales of its contexts (in their order), and
 /// its sizes are taken back to paper size from the default scale. Contexts of other objects, and
 /// contexts whose scale is unknown, are passed over.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return };
     let mut objs: HashMap<Handle, (String, &[Tag])> = HashMap::new();
-    each_record(&objects.tags, |kind, tags| {
+    each_record(objects.tags, |kind, tags| {
         if let Some(h) = own(tags).iter().find(|t| t.code == 5).and_then(|t| key(&t.str())) {
             objs.entry(h).or_insert((kind.to_ascii_uppercase(), tags));
         }
@@ -399,7 +399,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     // The entities that may have contexts: their extension dictionaries.
     let mut found: Vec<(Handle, Handle)> = Vec::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if !matches!(kind, "TEXT" | "MTEXT" | "DIMENSION" | "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" | "MULTILEADER") {
                 return;
             }
