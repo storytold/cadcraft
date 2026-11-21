@@ -211,13 +211,29 @@ fn prim_segments(p: &Prim) -> Vec<Segment> {
 /// or a spline keeps its ordinary tangent from the base. Deferred hits only win
 /// where no other snap does (they are as unspecific as Nearest).
 pub fn osnap(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Option<SnapHit> {
+    osnap_with_frozen(d, space, cursor, aperture, osmode, base, deferred, &[])
+}
+
+/// [`osnap`] skipping entities (and block leaves) on `frozen` layers in `space`.
+#[allow(clippy::too_many_arguments)]
+pub fn osnap_with_frozen(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+    frozen: &[String],
+) -> Option<SnapHit> {
     if osmode == 0 || osmode & mode::OFF != 0 {
         return None;
     }
     let ix = crate::spatial::index(d, space);
-    osnap_with(d, space, &ix, cursor, aperture, osmode, base, deferred)
+    osnap_with_neighborhood(d, space, &ix, cursor, aperture, osmode, base, deferred, frozen).0
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn osnap_with(
     d: &Drawing,
@@ -229,7 +245,7 @@ pub(crate) fn osnap_with(
     base: Option<Vec2>,
     deferred: bool,
 ) -> Option<SnapHit> {
-    osnap_with_neighborhood(d, space, ix, cursor, aperture, osmode, base, deferred).0
+    osnap_with_neighborhood(d, space, ix, cursor, aperture, osmode, base, deferred, &[]).0
 }
 
 /// Find the best object snap and retain the local-space primitives gathered for that query.
@@ -243,11 +259,12 @@ pub(crate) fn osnap_with_neighborhood(
     osmode: u32,
     base: Option<Vec2>,
     deferred: bool,
+    frozen: &[String],
 ) -> (Option<SnapHit>, Option<Vec<Prim>>) {
     if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
         return (None, None);
     }
-    let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
+    let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, None) {
         Some((hit, prims)) => (hit, Some(prims)),
         None => (None, None),
     };
@@ -347,12 +364,27 @@ fn osnap_in_with_prims(
 /// nearest point of each object, ranked as [`osnap`] ranks them, without repeats and at most
 /// [`MAX_CYCLE`]; in viewports too, as [`osnap`] snaps.
 pub fn osnap_all(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    osnap_all_with_frozen(d, space, cursor, aperture, osmode, base, deferred, &[])
+}
+
+/// [`osnap_all`] skipping entities (and block leaves) on `frozen` layers in `space`.
+#[allow(clippy::too_many_arguments)]
+pub fn osnap_all_with_frozen(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+    frozen: &[String],
+) -> Vec<SnapHit> {
     if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
         return Vec::new();
     }
     let ix = crate::spatial::index(d, space);
     let mut out: Vec<(SnapHit, Rank)> = Vec::new();
-    if let Some((cands, prims)) = collect_in(d, space, &ix, cursor, aperture, osmode, &[]) {
+    if let Some((cands, prims)) = collect_in(d, space, &ix, cursor, aperture, osmode, frozen) {
         out = finish_all(cands, &prims, cursor, aperture, osmode, base, deferred, None);
     }
     let model = Space::Model;
@@ -483,18 +515,7 @@ pub(crate) fn extendable(p: &Prim) -> bool {
 
 /// The snap candidates of `osmode` and the primitives within `aperture` of `cursor`; `None`
 /// when the drawing can't be searched.
-pub(crate) fn gather(
-    d: &Drawing,
-    space: &Space,
-    ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
-    cursor: Vec2,
-    aperture: f64,
-    osmode: u32,
-) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
-}
-
-fn gather_in(
+pub(crate) fn gather_in(
     d: &Drawing,
     space: &Space,
     ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
