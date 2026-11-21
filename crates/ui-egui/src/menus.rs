@@ -102,6 +102,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.toggle.ucsicon.origin", "UCS Icon at Origin", &["View", "UCS Icon", "Origin"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -154,6 +155,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
         return Some(result);
     }
     if let Some(r) = crate::xrefs::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::bedit::route(app, id, params) {
@@ -304,9 +308,16 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
         }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
+        // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
+        "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            // The icon is a setting of the drawing: with none open there is nothing to toggle.
+            if app.session.doc().is_err() {
+                return Some(Err("No drawing open.".into()));
+            }
+            let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
+            let mut on = app.session.ucsicon_bits() & bit != 0;
+            toggle(&mut on, params);
+            app.run("ucsicon", json!({ key: on }))
         }
         "ui.toggle.menubar" => {
             toggle(&mut app.ui.in_window_menu, params);
@@ -523,7 +534,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"
@@ -690,7 +700,9 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
+            let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
+            add(menu, label, id, *sc, enabled);
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
@@ -795,11 +807,18 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
     }
 }
 
-/// Activate a menu command. QuickCalc toggles transparently; other items clear pending
-/// command-line text and start their command interactively.
+/// Activate a menu command. QuickCalc toggles transparently, and Reference Manager closes its
+/// palette when it is open (typed XREF only opens it); other items clear pending command-line
+/// text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
     if id == "ui.toggle.quickcalc" {
         run_transparent(app, id);
+        return;
+    }
+    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+        if let Err(e) = crate::xrefs::close_palette(app) {
+            app.set_status(e);
+        }
         return;
     }
     app.cmd.buffer.clear();

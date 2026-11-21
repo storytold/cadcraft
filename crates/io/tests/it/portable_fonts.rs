@@ -35,6 +35,7 @@ fn style_files(dxf: &str) -> Vec<(String, String)> {
 
 #[test]
 fn styles_get_windows_fonts_and_reopen_with_their_own() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = drawing(true);
     let dxf = write_dxf(&d);
     let files = style_files(&dxf);
