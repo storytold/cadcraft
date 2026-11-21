@@ -1,26 +1,23 @@
 //! Legacy Vietnamese 8-bit encoding tables and transcoder (TCVN3, TCVN3H, VNI Windows).
 //!
 //! # Source Attribution & Standard References
-//! The character mapping tables in this module are based on published public domain conventions
-//! and national / industry standards:
+//! The character mapping tables in this module follow published national standards and de facto
+//! conventions, described from the public specifications below. No third-party implementation
+//! source is copied.
 //!
 //! 1. **TCVN3 (ABC) Encoding:**
 //!    - **TCVN 5712:1993**: *Information technology – 8-bit coded character set for Vietnamese*
 //!      (specifically the VN3 / TCVN3 variant commonly paired with ABC font pairs). Standardized
-//!      by the Ministry of Science, Technology and Environment of Vietnam (1993).
-//!    - Cross-verified with GNU C Library official charmap:
-//!      `glibc/localedata/charmaps/TCVN5712-1`
-//!    - Cross-verified with Unicode Consortium and ICU conversion mappings.
+//!      by the Directorate for Standards, Metrology and Quality (STAMEQ), Ministry of Science,
+//!      Technology and Environment of Vietnam (1993).
 //!
 //! 2. **VNI Windows Encoding (2-byte composite & single-byte):**
 //!    - De facto industry convention established by VNI Software Company (late 1980s–1990s)
 //!      for Vietnamese typography on Microsoft Windows and AutoCAD, pairing base ASCII vowels
 //!      with Latin-1 / extended accent codes.
-//!    - Cross-verified with open-source reference implementations:
-//!      - UniKey engine (`vnconv` / `vni.tab`) by Pham Kim Long.
-//!      - CPAN Vietnamese encoding tables (`Encode::VN::VNI`).
 //!
-//! All conversions deterministically emit standard precomposed Unicode NFC.
+//! 3. **Unicode Canonical Composition (UAX #15):**
+//!    - All conversions deterministically emit standard precomposed Unicode NFC.
 //!
 //! In Vietnamese AEC CAD workflows, legacy drawings frequently use 8-bit encodings:
 //! - **TCVN 5712 / TCVN3 (ABC)**: Paired with fonts starting with `.Vn` or known `vn` stems
