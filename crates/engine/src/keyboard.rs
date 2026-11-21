@@ -1,0 +1,186 @@
+//! Words typed on a Greek keyboard layout.
+//!
+//! With the Greek layout active, the keys that type LINE produce ΛΙΝΕ. Command names, aliases and
+//! prompt keywords are Latin, so a Greek speaker would have to switch layouts for every command.
+//! [`latin_keys`] reads a word as the Latin keys that produced it (the layout puts each Greek
+//! letter on the key of the Latin letter it sounds like): the command line then accepts ΛΙΝΕ and
+//! ΣΤΡΕΤΨΗ as LINE and STRETCH. Accents (the layout's dead key) are ignored.
+
+/// The Latin key a Greek letter is typed on (lower case, accents removed).
+fn key_of(c: char) -> Option<char> {
+    Some(match c {
+        'α' | 'ά' => 'a',
+        'β' => 'b',
+        'γ' => 'g',
+        'δ' => 'd',
+        'ε' | 'έ' => 'e',
+        'ζ' => 'z',
+        'η' | 'ή' => 'h',
+        'θ' => 'u',
+        'ι' | 'ί' | 'ϊ' | 'ΐ' => 'i',
+        'κ' => 'k',
+        'λ' => 'l',
+        'μ' => 'm',
+        'ν' => 'n',
+        'ξ' => 'j',
+        'ο' | 'ό' => 'o',
+        'π' => 'p',
+        'ρ' => 'r',
+        'σ' => 's',
+        // The W key types the final sigma.
+        'ς' => 'w',
+        'τ' => 't',
+        'υ' | 'ύ' | 'ϋ' | 'ΰ' => 'y',
+        'φ' => 'f',
+        'χ' => 'x',
+        'ψ' => 'c',
+        'ω' | 'ώ' => 'v',
+        // The Q key types the semicolon, which Greek text writes as ";" or U+037E.
+        ';' | '\u{37e}' => 'q',
+        _ => return None,
+    })
+}
+
+/// Whether `c` is a Greek letter (the basic and accented ranges the layout types).
+fn is_greek_letter(c: char) -> bool {
+    matches!(c, '\u{386}'..='\u{3ce}') && c != '\u{387}'
+}
+
+/// `word` read as the Latin keys of a Greek-layout keyboard, lower case: `Some` only when the word
+/// has a Greek letter and every character is a Greek letter the layout types, the semicolon on
+/// the Q key, or ASCII (itself, in lower case). A combining tonos or dialytika, the accent of
+/// decomposed text, is ignored like the accent of a precomposed letter, but only straight after
+/// the Greek letter it accents and once each: anywhere else the word is not Greek-layout typing.
+pub fn latin_keys(word: &str) -> Option<String> {
+    let mut greek = false;
+    // What the previous Greek letter already carries (tonos, dialytika); `None` when the previous
+    // character is not a Greek letter, which leaves a combining mark nothing to accent.
+    let mut marks: Option<(bool, bool)> = None;
+    let mut out = String::with_capacity(word.len());
+    for c in word.chars() {
+        if matches!(c, '\u{301}' | '\u{308}') {
+            let (tonos, dialytika) = marks.as_mut()?;
+            if std::mem::replace(if c == '\u{301}' { tonos } else { dialytika }, true) {
+                return None;
+            }
+            continue;
+        }
+        if c.is_ascii() {
+            // The Q key types the ASCII semicolon in the Greek layout; every other ASCII character is itself.
+            out.push(if c == ';' { 'q' } else { c.to_ascii_lowercase() });
+            marks = None;
+            continue;
+        }
+        let lower = c.to_lowercase().next().unwrap_or(c);
+        out.push(key_of(lower)?);
+        let letter = is_greek_letter(lower);
+        greek |= letter;
+        marks = letter.then_some((false, false));
+    }
+    greek.then_some(out)
+}
+
+/// `word` with its case, accents and final sigma folded away, when it is Greek-layout typing: every
+/// spelling of one Greek word gives the same string. It is the word's keys, with the final sigma
+/// read as the letter sigma instead of the W key.
+pub fn greek_fold(word: &str) -> Option<String> {
+    latin_keys(&word.replace('ς', "σ"))
+}
+
+/// Whether `a` and `b` are one Greek word, whatever their case, accents or final sigma.
+pub fn same_greek_word(a: &str, b: &str) -> bool {
+    same_greek_word_as(b).is_some_and(|same| same(a))
+}
+
+/// A test for "is the Greek word `word`, whatever the case, accents or final sigma", or `None`
+/// when `word` is not Greek-layout typing. `word` is folded here, once: looking a typed word up
+/// among many names costs its length once, not once for every name.
+pub fn same_greek_word_as(word: &str) -> Option<impl Fn(&str) -> bool> {
+    let fold = greek_fold(word)?;
+    Some(move |name: &str| greek_fold(name).as_deref() == Some(fold.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{latin_keys, same_greek_word};
+
+    /// One Greek word compares equal in any case, accent or final sigma; another word, or a Latin
+    /// one, does not.
+    #[test]
+    fn one_greek_word_is_the_same_in_any_case_accent_or_final_sigma() {
+        for (a, b) in [("ΣΟΛΙΔ", "σολιδ"), ("ΣΟΛΙΔ", "σολίδ"), ("ΛΑΣ", "λας"), ("ΛΑΣ", "λασ"), ("ΛΙ\u{301}ΝΕ", "λινε")]
+        {
+            assert!(same_greek_word(a, b), "{a} {b}");
+        }
+        for (a, b) in [("ΣΟΛΙΔ", "ΣΟΛΙ"), ("ΣΟΛΙΔ", "solid"), ("solid", "SOLID")] {
+            assert!(!same_greek_word(a, b), "{a} {b}");
+        }
+    }
+
+    /// A character the layout does not type is never taken for the Greek letter Unicode upper-cases
+    /// it to: the micro sign is not μ, the long s and the sharp s are not σ, an alpha with an iota
+    /// subscript is not αι, the theta symbol is not θ.
+    #[test]
+    fn a_character_the_layout_does_not_type_is_no_spelling_of_a_greek_letter() {
+        let pairs = [("\u{b5}", "μ"), ("Λ\u{17f}", "ΛΣ"), ("Λ\u{df}", "ΛΣΣ"), ("\u{1fb3}", "αι"), ("\u{3d1}", "θ")];
+        let same: Vec<_> = pairs.iter().filter(|(a, b)| same_greek_word(a, b) || same_greek_word(b, a)).collect();
+        assert!(same.is_empty(), "{same:?}");
+    }
+
+    /// Greek-layout typing reads as its Latin keys: plain, accented and decomposed letters, the Q
+    /// and W keys, ASCII prefixes.
+    #[test]
+    fn greek_layout_commands_read_as_their_latin_keys() {
+        assert_eq!(latin_keys("ΛΙΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("λινε").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΣΤΡΕΤΨΗ").as_deref(), Some("stretch"));
+        assert_eq!(latin_keys("ΜΙΡΡΟΡ").as_deref(), Some("mirror"));
+        assert_eq!(latin_keys("ΘΝΔΟ").as_deref(), Some("undo"));
+        // The Q key types ";", the W key the final sigma.
+        assert_eq!(latin_keys(";ΣΑΩΕ").as_deref(), Some("qsave"));
+        assert_eq!(latin_keys("ςΒΛΟΨΚ").as_deref(), Some("wblock"));
+        // Accented letters (the layout's dead key) read as the plain letter.
+        assert_eq!(latin_keys("ΛΊΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΆΡΡΑΥ").as_deref(), Some("array"));
+        // The same accents written as a combining mark after the letter (decomposed text).
+        assert_eq!(latin_keys("ΛΙ\u{301}ΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙΝΕ\u{301}").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙ\u{308}ΝΕ").as_deref(), Some("line"));
+        assert_eq!(latin_keys("ΛΙ\u{308}\u{301}ΝΕ").as_deref(), Some("line"), "dialytika and tonos on one letter");
+        // Prefixes and digits are kept.
+        assert_eq!(latin_keys("-ΛΑΥΕΡ").as_deref(), Some("-layer"));
+        assert_eq!(latin_keys("_ΛΙΝΕ").as_deref(), Some("_line"));
+    }
+
+    /// A word with no Greek letter, or with a character the layout does not type, is not read.
+    #[test]
+    fn words_that_are_not_greek_layout_typing_are_left_alone() {
+        assert_eq!(latin_keys("line"), None, "no Greek letter");
+        assert_eq!(latin_keys(""), None);
+        assert_eq!(latin_keys(";"), None, "a semicolon alone is not a word");
+        assert_eq!(latin_keys("ΛΙΝΕ Ж"), None, "a letter the layout does not type");
+        assert_eq!(latin_keys("ΛΙΝΕ 日本"), None);
+        assert_eq!(latin_keys("\u{387}"), None, "the ano teleia is punctuation, not a letter");
+    }
+
+    /// A combining tonos or dialytika counts only straight after a Greek letter, and once each.
+    #[test]
+    fn a_combining_mark_must_follow_the_greek_letter_it_accents() {
+        assert_eq!(latin_keys("\u{301}ΛΙΝΕ"), None, "no letter before the mark");
+        assert_eq!(latin_keys("\u{308}ΛΙΝΕ"), None);
+        assert_eq!(latin_keys("ΛΙΝΕ-\u{301}"), None, "after punctuation");
+        assert_eq!(latin_keys("a\u{301}ΛΙΝΕ"), None, "after a Latin letter");
+        assert_eq!(latin_keys("Λ\u{301}\u{301}ΙΝΕ"), None, "a second tonos on one letter");
+        assert_eq!(latin_keys("Λ\u{308}\u{308}ΙΝΕ"), None, "a second dialytika on one letter");
+    }
+
+    /// A 100 000-letter word and odd code points are read or refused; nothing panics.
+    #[test]
+    fn hostile_text_never_panics() {
+        let long = "Ω".repeat(100_000);
+        assert_eq!(latin_keys(&long).map(|s| s.len()), Some(100_000));
+        for s in ["\u{0}", "\u{301}", "ΛΙΝΕ\u{301}", "\u{10ffff}", "ς\u{3c2}\u{3a3}"] {
+            let _ = latin_keys(s);
+        }
+    }
+}
