@@ -1402,6 +1402,17 @@ mod tests {
         assert_eq!(h.name, "Intersection");
     }
 
+    /// Tab cycling sees every deferred snap within the aperture: on a circle with no base point,
+    /// its quadrant, then the deferred tangent and the deferred perpendicular at the same spot.
+    #[test]
+    fn osnap_all_ranks_every_candidate() {
+        let d = drawing();
+        let all = osnap_all(&d, &Space::Model, Vec2::new(22.1, 0.1), 0.5, mode::QUA | mode::TAN | mode::PER, None, true);
+        let kinds: Vec<(u32, bool)> = all.iter().map(|h| (h.mode, h.deferred.is_some())).collect();
+        assert_eq!(kinds, [(mode::QUA, false), (mode::TAN, true), (mode::PER, true)], "{all:?}");
+        assert!(osnap_all(&d, &Space::Model, Vec2::new(50.0, 50.0), 0.5, mode::QUA | mode::TAN | mode::PER, None, true).is_empty());
+    }
+
     #[test]
     fn center_quadrant_tangent() {
         let d = drawing();
