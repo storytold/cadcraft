@@ -1,7 +1,7 @@
 //! Grips of dynamic block references: `blocks.reference.grips` lists them, `blocks.reference.grip`
 //! drags one (one undo step), and [`Session::start_dyn_grip`] starts the drag the UI's click on a
 //! grip begins, with the reference re-evaluated under the cursor as its preview. Typing a number
-//! at a distance's grip sets the distance.
+//! at a distance's grip sets the distance, at a rotation grip the angle (degrees).
 
 use cadcraft_doc::color::Color;
 use cadcraft_doc::dynblock::{self, GripPart, GripShape};
@@ -30,7 +30,8 @@ pub(super) fn run_grip(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(Value::as_i64)
         .and_then(|n| i32::try_from(n).ok())
         .ok_or_else(|| bad(cmd, "`node` (a parameter's graph id) is required"))?;
-    let part = str_param(p, "part").and_then(GripPart::from_name).ok_or_else(|| bad(cmd, "`part` must be base, end or at"))?;
+    let part =
+        str_param(p, "part").and_then(GripPart::from_name).ok_or_else(|| bad(cmd, "`part` must be base, end, at, basex-endy or basey-endx"))?;
     let to = point_param(p, "to").ok_or_else(|| bad(cmd, "`to` [x, y] is required"))?;
     drag(s, h, node, part, to).map_err(|e| bad(cmd, e))?;
     let properties = dynblock::custom_properties(s.doc()?, h).map(|(_, p)| p).unwrap_or_default();
@@ -46,9 +47,23 @@ fn drag(s: &mut Session, h: Handle, node: i32, part: GripPart, to: Vec2) -> std:
         return Err("the reference is on a locked layer".into());
     }
     let mut d = s.doc().map_err(|e| e.to_string())?.clone();
-    dynblock::drag_grip(&mut d, h, node, part, to)?;
+    drag_in(s, &mut d, h, node, part, to)?;
     *s.doc_mut().map_err(|e| e.to_string())? = d;
     Ok(())
+}
+
+/// Drag grip (`node`, `part`) of reference `h` to `to` in drawing `d`; an alignment grip aligns
+/// the reference with the object at the cursor (within the aperture), as AutoCAD does.
+fn drag_in(s: &Session, d: &mut Drawing, h: Handle, node: i32, part: GripPart, to: Vec2) -> std::result::Result<(), String> {
+    let alignment = dynblock::reference(d, h)
+        .and_then(|r| dynblock::dynamic_block(d, &r.definition))
+        .is_some_and(|m| m.parameters.iter().any(|p| p.node == node && matches!(p.kind, dynblock::ParameterKind::Alignment { .. })));
+    if !alignment {
+        return dynblock::drag_grip(d, h, node, part, to);
+    }
+    let aperture = s.pixel_size() * s.settings.aperture.max(1.0);
+    let near = crate::snap::nearest_with_direction(d, &s.space(), to, aperture, h);
+    dynblock::align_grip(d, h, node, to, near)
 }
 
 /// The properties an object of a block draws with in reference `r`: on layer 0 it is on the
@@ -114,10 +129,15 @@ struct DynGripEdit {
     part: GripPart,
     /// Where the grip is (the rubber band's start).
     from: Vec2,
-    /// The property it changes, and whether it is a distance (a typed number sets it).
+    /// The property it changes, and the grip's shape (a typed number sets a distance or angle).
     property: String,
-    distance: bool,
+    shape: GripShape,
+    /// Where the grip can stop (a value list or increments): tick marks across its travel.
+    stops: Vec<(Vec2, Vec2)>,
 }
+
+/// Half a tick mark's length, in pixels.
+const TICK_PX: f64 = 6.0;
 
 impl Interactive for DynGripEdit {
     fn name(&self) -> &'static str {
@@ -129,19 +149,22 @@ impl Interactive for DynGripEdit {
     }
 
     fn prompt(&self, _s: &Session) -> Prompt {
-        let (msg, accept) = if self.distance {
-            ("** STRETCH ** Specify stretch point or distance", Accept::POINT_OR_NUMBER)
-        } else {
-            ("** STRETCH ** Specify stretch point", Accept::POINT)
+        let (msg, accept) = match self.shape {
+            GripShape::Linear => ("** STRETCH ** Specify stretch point or distance", Accept::POINT_OR_NUMBER),
+            GripShape::Rotation => ("** ROTATE ** Specify rotation point or angle", Accept::POINT_OR_NUMBER),
+            GripShape::Alignment => ("Specify point location", Accept::POINT),
+            _ => ("** STRETCH ** Specify stretch point", Accept::POINT),
         };
-        Prompt::new(msg, accept).kw(&["eXit"]).base(self.from)
+        let p = Prompt::new(msg, accept).kw(&["eXit"]).base(self.from);
+        // A rotation grip asks for an angle: Dynamic Input shows one angle box.
+        if self.shape == GripShape::Rotation { p.angle() } else { p }
     }
 
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let to = match i {
             Input::Point(p) => p,
             Input::Deferred(d) => d.at,
-            Input::Text(t) if self.distance => {
+            Input::Text(t) if matches!(self.shape, GripShape::Linear | GripShape::Rotation) => {
                 let mut d = s.doc()?.clone();
                 dynblock::set_property(&mut d, self.handle, &self.property, t.trim()).map_err(EngineError::Other)?;
                 *s.doc_mut()? = d;
@@ -155,9 +178,30 @@ impl Interactive for DynGripEdit {
         Ok(Step::Done)
     }
 
-    /// The rubber band from the grip.
-    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
-        vec![crate::cmd::helpers::line(self.from, c)]
+    /// The rubber band from the grip, and ticks at the stops of a value list or increments.
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        let half = TICK_PX * s.pixel_size();
+        let mut out: Vec<EntityKind> = self
+            .stops
+            .iter()
+            .map(|(at, way)| {
+                let n = way.perp() * half;
+                crate::cmd::helpers::line(*at - n, *at + n)
+            })
+            .collect();
+        out.push(crate::cmd::helpers::line(self.from, c));
+        out
+    }
+
+    /// A rotation grip's angle at the cursor, as Properties will show it.
+    fn live_value(&self, s: &Session, c: Vec2) -> Option<String> {
+        if self.shape != GripShape::Rotation {
+            return None;
+        }
+        let mut d = s.doc().ok()?.clone();
+        dynblock::drag_grip(&mut d, self.handle, self.node, self.part, c).ok()?;
+        let (_, props) = dynblock::custom_properties(&d, self.handle)?;
+        props.into_iter().find(|p| p.name.eq_ignore_ascii_case(&self.property)).map(|p| format!("{}°", p.value))
     }
 
     /// The reference re-evaluated at the cursor, drawn as it will look (its own colours, so
@@ -165,7 +209,7 @@ impl Interactive for DynGripEdit {
     fn preview_objects(&self, s: &Session, c: Vec2) -> Vec<Entity> {
         let Ok(d) = s.doc() else { return Vec::new() };
         let mut d = d.clone();
-        match dynblock::drag_grip(&mut d, self.handle, self.node, self.part, c) {
+        match drag_in(s, &mut d, self.handle, self.node, self.part, c) {
             Ok(()) => drawn(&d, self.handle),
             Err(_) => Vec::new(),
         }
@@ -174,8 +218,8 @@ impl Interactive for DynGripEdit {
 
 impl Session {
     /// Start dragging grip `part` of parameter `node` of dynamic block reference `handle` (the
-    /// UI's click on a dynamic grip). A list grip (visibility, lookup) has no drag: the UI offers
-    /// its choices and sets them with `blocks.reference.set`.
+    /// UI's click on a dynamic grip). A list grip (visibility, lookup) or a flip grip has no
+    /// drag: the UI offers the choices, or flips, with `blocks.reference.set`.
     pub fn start_dyn_grip(&mut self, handle: Handle, node: i32, part: GripPart) -> Result<()> {
         if self.running.is_some() {
             self.cancel();
@@ -184,17 +228,19 @@ impl Session {
             .into_iter()
             .find(|g| g.node == node && g.part == part)
             .ok_or_else(|| EngineError::Other("no such grip".into()))?;
-        if g.shape == GripShape::List {
-            return Err(EngineError::Other("a list grip is chosen from, not dragged".into()));
+        if matches!(g.shape, GripShape::List | GripShape::Flip) {
+            return Err(EngineError::Other("a list or flip grip is clicked, not dragged".into()));
         }
-        let edit = DynGripEdit { handle, node, part, from: g.at, property: g.property, distance: g.shape == GripShape::Linear };
+        let label = if g.shape == GripShape::Rotation { "** ROTATE **" } else { "** STRETCH **" };
+        let stops = dynblock::grip_stops(self.doc()?, handle, node, part);
+        let edit = DynGripEdit { handle, node, part, from: g.at, property: g.property, shape: g.shape, stops };
         let machine = crate::guard::Guarded::wrap(Box::new(edit));
         let st = self.state()?;
         let (before, selection_before) = (st.doc.clone(), st.selection.clone());
         self.running = Some(Running { id: "grip".into(), machine, before, selection_before });
         self.pending_window = None;
         self.point_mods.clear();
-        self.echo("** STRETCH **");
+        self.echo(label);
         Ok(())
     }
 }
