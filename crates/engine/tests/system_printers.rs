@@ -58,6 +58,7 @@ fn session() -> Session {
 fn system_printers_are_devices_and_plot_prints_on_them() {
     let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = session();
+    JOBS.lock().unwrap().clear();
     let r = s.execute("plottermanager", &json!({})).unwrap();
     let names: Vec<&str> = r["devices"].as_array().unwrap().iter().map(|d| d["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["CADCraft PDF", "CADCraft PNG", "CADCraft SVG", "Office_T120"]);
@@ -115,6 +116,7 @@ fn system_printers_are_devices_and_plot_prints_on_them() {
 fn plot_to_file_and_print_and_refresh_the_printers() {
     let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = session();
+    JOBS.lock().unwrap().clear();
     let dir = std::env::temp_dir().join(format!("cadcraft-plot-to-file-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("plan.pdf");
@@ -183,6 +185,8 @@ fn plot_to_file_creates_missing_folders_before_submitting() {
     let r = s.execute("plot", &json!({ "device": "Office_T120", "path": path })).unwrap();
     assert!(path.is_file());
     assert!(r.get("createdFolder").is_some(), "{r}");
-    assert_eq!(JOBS.lock().unwrap().len(), 1);
+    // Take the job: the tests share JOBS and run in any order.
+    assert!(JOBS.lock().unwrap().pop().is_some());
+    assert!(JOBS.lock().unwrap().is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
