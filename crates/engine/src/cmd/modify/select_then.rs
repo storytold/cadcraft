@@ -19,6 +19,18 @@ pub(super) enum Op {
     Join,
 }
 
+/// COPY's Array option: asking how many items, then where the second one goes (or, with Fit, the
+/// last one).
+#[derive(Clone, Copy, PartialEq)]
+enum CopyArray {
+    Off,
+    Count,
+    Items { n: u16, fit: bool },
+}
+
+/// The most items COPY's Array option makes, the original included, as in AutoCAD.
+const MAX_COPY_ITEMS: u16 = 32767;
+
 /// Select objects, then collect the points/values the operation needs.
 pub(super) struct SelectThen {
     op: Op,
@@ -36,6 +48,11 @@ pub(super) struct SelectThen {
     /// SCALE Reference: the reference length, once known.
     ref_len: Option<f64>,
     copy_mode: bool,
+    /// COPY: one copy and done (COPYMODE 1, until the Multiple option), else copies until Exit.
+    copy_single: bool,
+    /// COPY: the objects each placement made, so Undo takes back the last one.
+    copies: Vec<Vec<Handle>>,
+    copy_array: CopyArray,
     ask_erase: bool,
     /// JOIN of a single arc or elliptical arc: the prompt asks for arcs to join to it, or cLose.
     join_source: Option<Handle>,
@@ -54,6 +71,9 @@ impl SelectThen {
             ref_from: None,
             ref_len: None,
             copy_mode: false,
+            copy_single: false,
+            copies: Vec::new(),
+            copy_array: CopyArray::Off,
             ask_erase: false,
             join_source: None,
         }
@@ -81,6 +101,109 @@ impl SelectThen {
             }
             _ => Ok(Step::Continue),
         }
+    }
+
+    /// COPY's prompt once the base point is known, as AutoCAD 2024 asks it.
+    fn copy_prompt(&self, base: Option<Vec2>) -> Prompt {
+        match self.copy_array {
+            CopyArray::Count => Prompt::new("Enter number of items to array", Accept::NUMBER),
+            CopyArray::Items { fit: false, .. } => Prompt::new("Specify second point", Accept::POINT).kw(&["Fit"]).base_opt(base),
+            CopyArray::Items { fit: true, .. } => Prompt::new("Specify second point", Accept::POINT).kw(&["Array"]).base_opt(base),
+            CopyArray::Off if self.copies.is_empty() => {
+                Prompt::new("Specify second point", Accept::POINT).kw(&["Array"]).default("use first point as displacement").base_opt(base)
+            }
+            CopyArray::Off => Prompt::new("Specify second point", Accept::POINT).kw(&["Array", "Exit", "Undo"]).default("Exit").base_opt(base),
+        }
+    }
+
+    /// COPY once the base point is known (AutoCAD 2024, measured): a point places a copy; Enter
+    /// at the first prompt copies by the base point taken as a displacement, and after a copy
+    /// ends the command; Array asks for a number of items, the original included, then puts
+    /// them a second point apart (or, with Fit, spread up to it, Enter keeping them at the
+    /// base); Undo takes back the last placement. One placement ends a single-copy COPY.
+    fn copy_input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let Some(base) = self.pts.first().copied() else { return Ok(Step::Continue) };
+        let placed = match (self.copy_array, i) {
+            (CopyArray::Count, Input::Enter) => return self.copy_done(s),
+            (CopyArray::Count, i) => {
+                // A whole number as typed, from 2 to 32767 whatever the selection: AutoCAD 2024 takes
+                // +3 and 03 here, refuses 4.0, 1e1, 8/2, 1', 3", 50002 and a point, and doesn't
+                // apply MAXARRAY (with MAXARRAY 100000, four lines and 26000 items made 104000
+                // lines; measured).
+                let n = match i {
+                    Input::Text(t) => t.trim().parse::<u16>().ok().filter(|v| (2..=MAX_COPY_ITEMS).contains(v)),
+                    _ => None,
+                }
+                .ok_or_else(|| EngineError::Other(format!("Requires an integer between 2 and {MAX_COPY_ITEMS}.")))?;
+                // Not AutoCAD's: the copies (items after the first, times the objects) stay within
+                // ARRAY's own limit, whatever MAXARRAY says, so a large selection can't run out of
+                // memory.
+                let copies = u64::from(n - 1).saturating_mul(u64::try_from(self.objs.len()).unwrap_or(u64::MAX));
+                if copies > cadcraft_doc::MAX_ARRAY_ITEMS {
+                    return Err(EngineError::Other(format!(
+                        "The array would create {copies} objects; the limit is {}. Use fewer items or select fewer objects.",
+                        cadcraft_doc::MAX_ARRAY_ITEMS
+                    )));
+                }
+                self.copy_array = CopyArray::Items { n, fit: false };
+                return Ok(Step::Continue);
+            }
+            (CopyArray::Items { n, fit }, Input::Keyword(kw)) if kw == if fit { "Array" } else { "Fit" } => {
+                self.copy_array = CopyArray::Items { n, fit: !fit };
+                return Ok(Step::Continue);
+            }
+            (CopyArray::Items { n, fit }, i @ (Input::Point(_) | Input::Enter)) => {
+                let p = if let Input::Point(p) = i { p } else { base };
+                let step = if fit { (p - base) * (1.0 / f64::from(n - 1)) } else { p - base };
+                self.copy_array = CopyArray::Off;
+                let mut made = Vec::new();
+                for k in 1..n {
+                    match transform_entities(s, &self.objs, &Mat3::translate(step * f64::from(k)), true) {
+                        Ok(hs) => made.extend(hs),
+                        Err(e) => {
+                            // The items made so far are a placement Undo takes back.
+                            self.copies.push(made);
+                            return Err(e);
+                        }
+                    }
+                }
+                made
+            }
+            (CopyArray::Off, Input::Keyword(kw)) if kw == "Array" => {
+                self.copy_array = CopyArray::Count;
+                return Ok(Step::Continue);
+            }
+            (CopyArray::Off, Input::Keyword(kw)) if kw == "Undo" => {
+                if let Some(last) = self.copies.pop() {
+                    let d = s.doc_mut()?;
+                    for h in last {
+                        d.remove_entity(h);
+                    }
+                    if self.copies.is_empty() {
+                        s.echo("Command has been completely undone.");
+                    }
+                }
+                return Ok(Step::Continue);
+            }
+            (CopyArray::Off, Input::Keyword(kw)) if kw == "Exit" => return self.copy_done(s),
+            (CopyArray::Off, Input::Enter) if !self.copies.is_empty() => return self.copy_done(s),
+            (CopyArray::Off, Input::Enter) => {
+                transform_entities(s, &self.objs, &Mat3::translate(base), true)?;
+                return self.copy_done(s);
+            }
+            (CopyArray::Off, Input::Point(p)) => transform_entities(s, &self.objs, &Mat3::translate(p - base), true)?,
+            _ => return Ok(Step::Continue),
+        };
+        self.copies.push(placed);
+        if self.copy_single {
+            return self.copy_done(s);
+        }
+        Ok(Step::Continue)
+    }
+
+    fn copy_done(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        Ok(Step::Done)
     }
 
     /// JOIN the selected objects and report what they became.
@@ -326,7 +449,7 @@ impl Interactive for SelectThen {
         match (self.op, k) {
             (Op::Move | Op::Copy, 0) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]),
             (Op::Move, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(base),
-            (Op::Copy, _) => Prompt::new("Specify second point", Accept::POINT).kw(&["Array", "Exit", "Undo"]).base_opt(base),
+            (Op::Copy, _) => self.copy_prompt(base),
             (Op::Rotate | Op::Scale, 0) => Prompt::new("Specify base point", Accept::POINT),
             // ROTATE and SCALE offer the angle/factor used last time.
             (Op::Rotate, _) => {
@@ -385,10 +508,6 @@ impl Interactive for SelectThen {
                 self.reference = true;
                 Ok(Step::Continue)
             }
-            (Op::Copy, _, Input::Keyword(kw)) if kw == "Exit" => {
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
             (_, 0, Input::Point(p)) => {
                 self.pts.push(p);
                 Ok(Step::Continue)
@@ -405,15 +524,7 @@ impl Interactive for SelectThen {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Copy, _, Input::Point(p)) => {
-                let d = p - self.pts[0];
-                transform_entities(s, &self.objs, &Mat3::translate(d), true)?;
-                Ok(Step::Continue)
-            }
-            (Op::Copy, _, Input::Enter) => {
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
+            (Op::Copy, _, i) => self.copy_input(s, i),
             (Op::Rotate, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
                 let a = match inp {
                     Input::Point(p) => self.pts[0].angle_to(p),
@@ -533,11 +644,13 @@ impl Interactive for SelectThen {
 pub(super) struct DisplaceM {
     inner: SelectThen,
     displacement: bool,
+    /// COPY's mOde option: asking Single or Multiple.
+    ask_mode: bool,
 }
 
 impl DisplaceM {
     pub(super) fn new(op: Op) -> Self {
-        DisplaceM { inner: SelectThen::new(op), displacement: false }
+        DisplaceM { inner: SelectThen::new(op), displacement: false, ask_mode: false }
     }
     /// At "Specify base point": objects selected, no point yet.
     fn at_base(&self) -> bool {
@@ -550,14 +663,26 @@ impl Interactive for DisplaceM {
         self.inner.name()
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.inner.copy_single = self.inner.op == Op::Copy && s.settings.copymode;
         self.inner.begin(s)
     }
     fn prompt(&self, s: &Session) -> Prompt {
         if self.displacement {
             return Prompt::new("Specify displacement", Accept::POINT).default("0,0");
         }
+        if self.ask_mode {
+            let current = if s.settings.copymode { "Single" } else { "Multiple" };
+            return Prompt::new("Enter a copy mode option", crate::cmd::curves::KW).kw(&["Single", "Multiple"]).default(current);
+        }
         if self.at_base() {
-            return Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement");
+            // COPY: mOde sets COPYMODE; Multiple, offered while it is single, copies until Exit
+            // this once.
+            let kw: &[&str] = match self.inner.op {
+                Op::Copy if self.inner.copy_single => &["Displacement", "mOde", "Multiple"],
+                Op::Copy => &["Displacement", "mOde"],
+                _ => &["Displacement"],
+            };
+            return Prompt::new("Specify base point", Accept::POINT).kw(kw).default("Displacement");
         }
         self.inner.prompt(s)
     }
@@ -574,9 +699,33 @@ impl Interactive for DisplaceM {
             s.set_selection(Vec::new());
             return Ok(Step::Done);
         }
+        if self.ask_mode {
+            match &i {
+                Input::Keyword(k) if k == "Single" || k == "Multiple" => s.settings.copymode = k == "Single",
+                Input::Enter => {}
+                _ => return Ok(Step::Continue),
+            }
+            // The mode shown is the mode this COPY runs in, Enter keeping it.
+            self.inner.copy_single = s.settings.copymode;
+            self.ask_mode = false;
+            return Ok(Step::Continue);
+        }
         if self.at_base() && (matches!(&i, Input::Enter) || matches!(&i, Input::Keyword(k) if k == "Displacement")) {
             self.displacement = true;
             return Ok(Step::Continue);
+        }
+        if self.at_base() && self.inner.op == Op::Copy {
+            match &i {
+                Input::Keyword(k) if k == "mOde" => {
+                    self.ask_mode = true;
+                    return Ok(Step::Continue);
+                }
+                Input::Keyword(k) if k == "Multiple" => {
+                    self.inner.copy_single = false;
+                    return Ok(Step::Continue);
+                }
+                _ => {}
+            }
         }
         self.inner.input(s, i)
     }
