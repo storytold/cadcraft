@@ -101,6 +101,7 @@ fn text_styles() {
     check(cases::text_styles());
 }
 #[test]
+#[ignore = "needs the DWG bridge's annotation context conversion (storytold/craft-libs#2005) in the pinned craft-dwg: without it a text context reads back at the origin, a per-scale move"]
 fn annotation_scales() {
     check(cases::annotation_scales());
 }

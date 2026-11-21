@@ -69,8 +69,8 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
     // Annotative text and dimensions are drawn scaled to the current annotation scale: the box
     // follows what is drawn. Multiline text keeps its stored height (it is written back from it).
     let scaled = match d.anno_draw(e) {
-        cadcraft_doc::AnnoDraw::Scaled(f) if matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Dimension(_)) => {
-            Some(cadcraft_doc::anno_scaled(e, f))
+        cadcraft_doc::AnnoDraw::Scaled { factor, by } if matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Dimension(_)) => {
+            Some(cadcraft_doc::anno_placed(e, factor, by))
         }
         _ => None,
     };
