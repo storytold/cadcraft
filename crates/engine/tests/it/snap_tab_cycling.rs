@@ -71,3 +71,19 @@ fn every_endpoint_under_the_aperture_is_offered_not_one_per_mode() {
     let first = snap_candidates(d, &Space::Model, Vec2::new(0.03, 0.0), 0.125, mode::END, None, false).first().map(|h| h.point);
     assert_eq!(first, cadcraft_engine::snap::osnap(d, &Space::Model, Vec2::new(0.03, 0.0), 0.125, mode::END, None, false).map(|h| h.point));
 }
+
+/// A base point that is not a number gives no candidates, though the cursor is on an endpoint: the
+/// perpendicular and tangent points from it would be meaningless, as a viewport already treats it.
+#[test]
+fn a_non_finite_base_gives_no_candidates() {
+    let mut s = Session::new();
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let d = s.doc().unwrap();
+    let all = mode::END | mode::PER | mode::TAN | mode::NEA;
+    for base in [Vec2::new(f64::NAN, 1.0), Vec2::new(1.0, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NAN)] {
+        assert!(snap_candidates(d, &Space::Model, Vec2::new(10.01, 0.0), 0.5, all, Some(base), false).is_empty(), "{base:?}");
+        assert!(cadcraft_engine::snap::osnap_all(d, &Space::Model, Vec2::new(10.01, 0.0), 0.5, all, Some(base), true).is_empty(), "{base:?}");
+    }
+    // A finite base still offers them.
+    assert!(!snap_candidates(d, &Space::Model, Vec2::new(10.01, 0.0), 0.5, all, Some(Vec2::new(5.0, 5.0)), false).is_empty());
+}

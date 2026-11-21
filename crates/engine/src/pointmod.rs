@@ -145,7 +145,8 @@ pub fn snap_candidates_with_frozen(
     deferred: bool,
     frozen: &[String],
 ) -> Vec<SnapHit> {
-    if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
+    // A base that is not a number would give meaningless perpendiculars and tangents.
+    if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 || base.is_some_and(|b| !b.is_finite()) {
         return Vec::new();
     }
     let mut out: Vec<SnapHit> = crate::snap::osnap_with_frozen(d, space, cursor, aperture, osmode, base, deferred, frozen).into_iter().collect();

@@ -390,7 +390,7 @@ pub fn osnap_all_with_frozen(
     deferred: bool,
     frozen: &[String],
 ) -> Vec<SnapHit> {
-    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
+    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) || base.is_some_and(|b| !b.is_finite()) {
         return Vec::new();
     }
     let ix = crate::spatial::index(d, space);
