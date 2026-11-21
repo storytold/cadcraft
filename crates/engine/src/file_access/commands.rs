@@ -262,6 +262,7 @@ pub const NO_FILES: &[&str] = &[
     "attdisp.normal",
     "attdisp.on",
     "attdisp.off",
+    "refedit.levels",
     "refset",
     "bedit",
     "bsave",
@@ -514,9 +515,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     /// Words in a command's parameter doc that usually name a file. In these commands they don't:
-    /// `array` and `arraypath` follow a path of objects, and `blocks.reference.grips` reports a
-    /// direction.
-    const NOT_FILES: &[&str] = &["array", "arraypath", "blocks.reference.grips"];
+    /// `array` and `arraypath` follow a path of objects, `refedit.levels` reports paths of nested
+    /// references, and `blocks.reference.grips` reports a direction.
+    const NOT_FILES: &[&str] = &["array", "arraypath", "refedit.levels", "blocks.reference.grips"];
 
     /// The words of a command's documentation, lower case.
     fn words(doc: &str) -> BTreeSet<String> {
