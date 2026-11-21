@@ -4,7 +4,7 @@
 //!
 //! The DWG is written here with acadrust, giving the second 3D-polyline vertex the highest
 //! handle: exactly what an editing program produces when it inserts a vertex.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use acadrust::entities::{EntityType, Polyline3D, Vertex3DPolyline};
 use acadrust::types::{DxfVersion, Handle, Vector3};
@@ -36,6 +36,7 @@ fn dwg_with_out_of_order_vertex_handles(version: DxfVersion) -> Vec<u8> {
 /// order the reader produced them; panics if the drawing cannot be read or holds no 3D polyline,
 /// since either would mean the test is no longer exercising vertex order.
 fn polyline3d_points(dwg: &[u8]) -> Vec<Vec3> {
+    cadcraft_io::dwg_worker::allow_in_process();
     let drawing = cadcraft_io::read(dwg, "x.dwg").expect("read the DWG");
     let polyline = drawing.model.iter().find_map(|e| if let EntityKind::Polyline3d(p) = &e.kind { Some(p) } else { None });
     polyline.expect("one 3D polyline").points.clone()

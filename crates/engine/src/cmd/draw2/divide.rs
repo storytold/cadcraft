@@ -36,16 +36,18 @@ fn check_block(s: &Session, b: Option<&str>) -> Result<()> {
 pub(crate) fn divide_points(c: &Chain, n: usize) -> Vec<(Vec2, Vec2)> {
     let l = c.len();
     let range = if c.closed { 0..n } else { 1..n };
-    range.filter_map(|i| c.at_length(l * i as f64 / n as f64)).collect()
+    let ends = c.end_lengths();
+    range.filter_map(|i| c.at_length_in(&ends, l * i as f64 / n as f64)).collect()
 }
 
 pub(crate) fn measure_points(c: &Chain, step: f64) -> Vec<(Vec2, Vec2)> {
     let l = c.len();
+    let ends = c.end_lengths();
     let mut out = Vec::new();
     let mut k = 1usize;
     while (k as f64) * step < l - 1e-9 && out.len() < MAX_GEN {
         let d = k as f64 * step;
-        out.extend(c.at_length(d));
+        out.extend(c.at_length_in(&ends, d));
         k += 1;
     }
     out
