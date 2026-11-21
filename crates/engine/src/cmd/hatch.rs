@@ -1,4 +1,5 @@
 //! HATCH, GRADIENT, BOUNDARY, REGION: boundaries from pick points or selected closed objects.
+//! HATCHGENERATEBOUNDARY: polylines around existing hatches.
 
 mod patfile;
 pub(super) use edit::{set_pattern, takes_pattern};
@@ -36,6 +37,9 @@ pub fn specs() -> Vec<CommandSpec> {
             // Typed with nothing selected it asks for objects, as in AutoCAD, rather than converting none.
             .interactive(|_| Ok(Box::new(SelectRun::new("region", "REGION")))),
         CommandSpec::new("hatchedit", "Hatch Edit", edit::run_hatchedit).menu(&["Modify", "Object", "Hatch..."]).alias(&["he", "-hatchedit"]).params("{handles?, pattern?, scale?, angle?, gradient?: {name?, color1?, color2?, angle? (degrees), centered?} (makes or changes a gradient fill; `pattern` turns it back), associative?: bool (false unlinks; true links each loop to a closed object of the same shape, or to `boundary` objects), boundary?: [hex], addPoints?: [[x,y]], addBoundary?: [hex], removeLoops?: [zero-based index] (geometry edits require one hatch), style?, origin? | originMode?, separate?: true, recreate?: \"polyline\"|\"region\", associate?: bool (link to the recreated boundary)}").interactive(|s| Ok(Box::new(edit::HatchEditM::new(s)))),
+        CommandSpec::new("hatchgenerateboundary", "Generate Boundary", edit::run_hatchgenerateboundary)
+            .params("{handles?} (a closed polyline around each boundary loop of the hatches, which stay as they are) → handles")
+            .interactive(|_| Ok(Box::new(SelectRun::new("hatchgenerateboundary", "HATCHGENERATEBOUNDARY")))),
         CommandSpec::new("hatchpick", "Hatch Pick", pick::run_hatchpick)
             .params("{points?: [[x,y]] (internal points), handles?: [hex] (closed objects)} (typed: Points, Objects, oRigin or Hatch, then the picks): the Hatch and Gradient dialog's picks, kept in the session; changes nothing")
             .enabled(has_doc)
