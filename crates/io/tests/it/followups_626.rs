@@ -8,6 +8,7 @@ use cadcraft_geom::{Vec2, Vec3};
 use cadcraft_io::{SaveOptions, Version};
 
 fn save(d: &Drawing, name: &str, v: Version) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
     cadcraft_io::write_with(d, name, &SaveOptions { version: Some(v), binary: false }).unwrap()
 }
 
