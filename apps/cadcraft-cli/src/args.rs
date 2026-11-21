@@ -316,7 +316,10 @@ fn perf_target(p: PathBuf) -> PerfTarget {
     }
 }
 
-/// Open each DXF/DWG, save it as DXF and DWG, reopen and compare; writes report.md and report.json
+/// Check DXF and DWG files by comparing reopened drawings with the originals
+///
+/// Tests both DXF and DWG by default. Use --same-format to test only the input format.
+/// Writes report.md and report.json.
 ///
 /// FOLDER defaults to $CADCRAFT_CORPUS_DIR. With CADCRAFT_CORPUS_STRICT=1 it fails when a file
 /// doesn't open, save or reopen, or loses records on save.
@@ -325,7 +328,7 @@ pub(crate) struct RoundtripArgs {
     /// A drawing, or a folder of them
     #[arg(value_name = "FILE|FOLDER")]
     pub(crate) path: Option<PathBuf>,
-    /// Where the report goes (default: `report` beside the files)
+    /// Report directory (default: `report` inside the input folder, or beside the input file)
     #[arg(long, value_name = "DIR")]
     pub(crate) out: Option<PathBuf>,
     /// Keep the saved files, in `saved` under the report folder
