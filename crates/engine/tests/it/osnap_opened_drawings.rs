@@ -104,6 +104,8 @@ fn a_dxf_with_osmode_0_keeps_the_running_snaps() {
 
 #[test]
 fn default_snaps_work_in_a_drawing_opened_from_dwg() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let bytes = cadcraft_io::write(&drawing(), "snaps.dwg").unwrap();
     let d = cadcraft_io::read(&bytes, "snaps.dwg").unwrap();
     let mut s = Session::new();
