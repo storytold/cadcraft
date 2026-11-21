@@ -83,6 +83,27 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// Background mask (DXF 90/63/421/45); `None` when off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<MTextBackground>,
+}
+
+/// MTEXT background mask (DXF 90, 63/421, 45).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MTextBackground {
+    /// DXF group 90 bitmask: bit 1 = fill colour set, bit 2 = use drawing background colour.
+    pub mask: u8,
+    /// DXF group 63 (ACI) or 421 (true colour); `None` when using drawing background.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<super::Color>,
+    /// DXF group 45 border offset factor (default 1.5, valid 1.0..=5.0).
+    #[serde(default = "default_bg_scale")]
+    pub scale: f64,
+}
+
+fn default_bg_scale() -> f64 {
+    1.5
 }
 
 fn attach_tl() -> u8 {

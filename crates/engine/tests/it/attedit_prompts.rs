@@ -230,6 +230,7 @@ fn dash_attedit_edits_a_multiline_attributes_text() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     };
     set_t(&mut s, h, |a| a.multiline = Some(MultilineAttrib { mtext: mtext.clone(), read_as: "abc".into() }));
     let before = attrib_t(&s, h).text.insert;
@@ -263,6 +264,7 @@ fn dash_attedit_defaults_of_a_multiline_attribute_come_from_its_multiline_text()
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     };
     set_t(&mut s, h, |a| {
         a.text.height = 1.25;

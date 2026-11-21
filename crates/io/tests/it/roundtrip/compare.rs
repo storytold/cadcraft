@@ -231,7 +231,7 @@ fn text(expected: &Text, actual: &Text, context: &str) {
 }
 
 fn mtext(expected: &MText, actual: &MText, context: &str) {
-    let MText { insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns } = expected;
+    let MText { insert, height, width, attach, rotation, style, contents, line_spacing, line_spacing_exact, columns, background } = expected;
     equal(insert, &actual.insert, context, "mtext.insert");
     equal(height, &actual.height, context, "mtext.height");
     equal(width, &actual.width, context, "mtext.width");
@@ -242,6 +242,7 @@ fn mtext(expected: &MText, actual: &MText, context: &str) {
     equal(line_spacing, &actual.line_spacing, context, "mtext.line_spacing");
     equal(line_spacing_exact, &actual.line_spacing_exact, context, "mtext.line_spacing_exact");
     equal(columns, &actual.columns, context, "mtext.columns");
+    equal(background, &actual.background, context, "mtext.background");
 }
 
 fn attrib(expected: &Attrib, actual: &Attrib, context: &str) {

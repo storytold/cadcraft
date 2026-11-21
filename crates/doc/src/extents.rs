@@ -628,6 +628,7 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }
     }
 
@@ -694,6 +695,7 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         };
         let ml = crate::MLeader {
             leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],

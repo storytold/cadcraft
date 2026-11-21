@@ -48,6 +48,7 @@ pub(crate) fn line_box(t: &cadcraft_doc::Text) -> cadcraft_doc::MText {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        background: None,
     }
 }
 
@@ -95,6 +96,7 @@ pub(crate) fn editor_for(s: &Session, h: Handle) -> Option<crate::TextEditor> {
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: None,
             };
             Some(TextEditor { mtext, kind: EditorKind::Dimension { measured }, key, extents: None })
         }
