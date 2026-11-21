@@ -22,6 +22,16 @@ fn logged(s: &Session, text: &str) -> bool {
 const FIT: &str = "0,0 1,0.2 5,3 6,3.1 9,0";
 
 #[test]
+fn a_click_on_the_last_point_adds_no_fit_point() {
+    // AutoCAD 2024's SPLINE leaves a click on the point before out (measured with
+    // accoreconsole): no repeated fit point, so no kink.
+    let mut s = Session::new();
+    s.cmdline("spline 0,0 5,0 5,0 10,5").unwrap();
+    s.cmdline("").unwrap();
+    assert_eq!(last_spline(&s).fit, vec![Vec2::ZERO, Vec2::new(5.0, 0.0), Vec2::new(10.0, 5.0)]);
+}
+
+#[test]
 fn knots_option_sets_the_parametrisation_and_is_remembered() {
     let mut s = Session::new();
     s.cmdline(&format!("spline k u {FIT}")).unwrap();
@@ -130,7 +140,9 @@ fn object_option_converts_polylines() {
     assert_eq!(doc.model.iter().count(), 1, "converted in place");
     let EntityKind::Spline(sp) = last(&s) else { panic!("not converted") };
     assert_eq!(sp.fit.len(), n);
-    assert!(sp.eval(0.0).near(Vec2::ZERO, 1e-9) && sp.eval(1.0).near(Vec2::new(30.0, 10.0), 1e-9));
+    // Chord-length knots run over the length of the fit points, not 0..1.
+    let (lo, hi) = sp.domain();
+    assert!(sp.eval(lo).near(Vec2::ZERO, 1e-9) && sp.eval(hi).near(Vec2::new(30.0, 10.0), 1e-9));
 
     // JSON form: a closed polyline becomes a closed spline; arcs are refused.
     let sq = s.execute("pline", &json!({"vertices": [[0, 20], [10, 20], [10, 30], [0, 30]], "closed": true})).unwrap()["handle"].clone();

@@ -113,7 +113,11 @@ impl Interactive for SplineM {
         }
         match i {
             Input::Point(p) => {
-                self.pts.push(p);
+                // The same point again is not a further fit point (AutoCAD 2024 leaves it out),
+                // nor a kink.
+                if self.pts.last() != Some(&p) {
+                    self.pts.push(p);
+                }
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Undo" => {
