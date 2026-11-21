@@ -39,25 +39,40 @@ pub fn mirror(app: &CadApp, ctx: &egui::Context) {
     }
 }
 
-/// The commands the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
-/// own last copy (another CADCraft's) becomes the clipboard first.
-pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
+/// What a Cut/Copy/Paste clipboard event on the canvas asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShortcutAction {
+    Command(&'static str),
+    PasteTable(String),
+}
+
+/// The actions the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
+/// own last copy (another CADCraft's) becomes the clipboard first; non-DXF tab-separated table text
+/// starts `pastetable`.
+pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAction> {
     let (events, shift) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
         (ev, i.modifiers.shift)
     });
+    let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };
     let mut out = Vec::new();
     for e in events {
         match e {
-            egui::Event::Copy => out.push(if shift { "copybase" } else { "copyclip" }),
-            egui::Event::Cut => out.push("cutclip"),
+            egui::Event::Copy => out.push(ShortcutAction::Command(if shift { "copybase" } else { "copyclip" })),
+            egui::Event::Cut => out.push(ShortcutAction::Command("cutclip")),
             egui::Event::Paste(text) => {
                 let h = hash(&text);
-                if ctx.data(|d| d.get_temp::<u64>(text_id())) != Some(h) && clipboard::load_system_text(&mut app.session, &text) {
+                if ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h) {
+                    out.push(ShortcutAction::Command(paste_cmd()));
+                } else if clipboard::load_system_text(&mut app.session, &text) {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
+                    out.push(ShortcutAction::Command(paste_cmd()));
+                } else if !shift && cadcraft_engine::cmd::table::is_tsv_table(&text) {
+                    out.push(ShortcutAction::PasteTable(text));
+                } else {
+                    out.push(ShortcutAction::Command(paste_cmd()));
                 }
-                out.push(if shift { "pasteblock" } else { "pasteclip" });
             }
             _ => {}
         }

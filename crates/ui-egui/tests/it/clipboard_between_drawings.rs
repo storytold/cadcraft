@@ -86,4 +86,19 @@ fn copy_in_one_drawing_and_paste_in_another() {
     assert_eq!(d.model.len(), 2);
     assert!(d.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "DOT")));
     assert!(d.block("DOT").is_some());
+
+    // Smart Excel paste: non-DXF TSV clipboard starts `pastetable` and places a native TABLE.
+    h.event(Event::Paste("Item\tQty\nBolt\t10\nNut\t20\n".into()));
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("pastetable"));
+    h.state_mut().session.input(Input::Point(Vec2::new(200.0, 200.0))).unwrap();
+    h.run_steps(2);
+    let d = h.state().session.doc().unwrap();
+    assert_eq!(d.model.len(), 3);
+    assert!(
+        d.model
+            .iter()
+            .any(|e| matches!(&e.kind, EntityKind::Table(t) if t.cells.len() == 3 && t.col_widths.len() == 2 && t.cells[1][0].text == "Bolt")),
+        "expected 3x2 native Table from pasted TSV"
+    );
 }

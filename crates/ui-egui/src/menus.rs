@@ -961,10 +961,28 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    let mut fire: Vec<String> = Vec::new();
+    let mut pasted_table = false;
+    for action in crate::clipboard::shortcut_actions(app, ctx) {
+        match action {
+            crate::clipboard::ShortcutAction::Command(id) => {
+                let id = id.to_string();
+                if !fire.contains(&id) {
+                    fire.push(id);
+                }
+            }
+            crate::clipboard::ShortcutAction::PasteTable(tsv) => {
+                pasted_table = true;
+                app.cmd.buffer.clear();
+                if let Err(e) = app.session.start_paste_table(&tsv, None) {
+                    app.session.echo(e.to_string());
+                }
+            }
+        }
+    }
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
-            if i.consume_shortcut(s) && !fire.contains(id) {
+            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
                 fire.push(id.clone());
             }
         }
