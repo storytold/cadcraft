@@ -42,6 +42,19 @@ pub struct IoHooks {
 
 static IO: OnceLock<IoHooks> = OnceLock::new();
 
+/// IMPORTGIS's reader (installed by the app): the file's name, its bytes, a shapefile's `.dbf`
+/// and `.prj` when there are any, and the command's parameters, to a drawing of the features.
+pub type GisReader = fn(&str, &[u8], Option<&[u8]>, Option<&str>, &Value) -> std::result::Result<Drawing, String>;
+
+static GIS: OnceLock<GisReader> = OnceLock::new();
+
+pub fn set_gis_reader(f: GisReader) {
+    let _ = GIS.set(f);
+}
+pub fn gis_reader() -> Option<GisReader> {
+    GIS.get().copied()
+}
+
 pub fn set_io(h: IoHooks) {
     let _ = IO.set(h);
 }

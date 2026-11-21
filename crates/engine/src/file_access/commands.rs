@@ -30,6 +30,7 @@ pub const FILES: &[&str] = &[
     "image",
     "imageattach",
     "import",
+    "importgis",
     "insert",
     "layout",
     "layout.saveas",
