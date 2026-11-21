@@ -26,6 +26,7 @@ fn square(size: f64) -> Vec<PolyVertex> {
 
 #[test]
 fn line_extrusion_roundtrips_with_world_endpoints() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // A LINE's endpoints are world coordinates whatever its extrusion, which only directs its
     // thickness; a mirrored normal (0, 0, -1) must come back from DXF and DWG (#2241).
     let mut d = Drawing::new_metric();
