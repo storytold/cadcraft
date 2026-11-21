@@ -1376,6 +1376,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Text height", "height", height, &mut set, &mut bad, ids);
                 let width = shared("mtext.width", &|k| if let EntityKind::MText(t) = k { Some(lenx(t.width)) } else { None });
                 num(ui, "Defined width", "width", width, &mut set, &mut bad, ids);
+                let rotation = shared("mtext.rotation", &|k| if let EntityKind::MText(t) = k { Some(degx(t.rotation)) } else { None });
+                num(ui, "Rotation", "rotation", rotation, &mut set, &mut bad, ids);
             }
             EntityKind::LwPolyline(_) => {
                 // Only Length and Area need the vertices; the other rows read one field.
