@@ -344,6 +344,8 @@ fn an_xref_path_turned_into_a_link_during_the_edit_is_not_written() {
 /// as SAVE names them (`site.dxf.bak`, `site.bak`).
 #[test]
 fn xrefs_of_one_name_in_one_folder_keep_their_own_backups() {
+    // These files are our own: DWG is read and written in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     hooks();
     let dir = folder("two-backups");
     let (d, _) = site();
@@ -387,6 +389,8 @@ fn dxf_version(bytes: &[u8]) -> Option<String> {
 /// as 2004, AC1018). It is written back in the version, and form, it was read in.
 #[test]
 fn an_xref_is_written_back_in_the_version_it_was_read_in() {
+    // These files are our own: DWG is read and written in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     hooks();
     let dir = folder("versions");
     let (d, _) = site();
