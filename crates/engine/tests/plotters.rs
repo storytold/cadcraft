@@ -239,3 +239,10 @@ fn plotwindow_picks_both_corners_with_ortho_on() {
     let c = hover(&mut s, Vec2::new(10.0, 4.0));
     assert!(c.near(Vec2::new(10.0, 0.0), 1e-9), "ortho keeps the line horizontal: {c:?}");
 }
+
+/// A misspelled action reports refresh along with the other supported actions.
+#[test]
+fn unknown_plottermanager_action_reports_refresh() {
+    let error = Session::new().execute("plottermanager", &json!({ "action": "refersh" })).unwrap_err().to_string();
+    assert!(error.contains("refresh"), "{error}");
+}

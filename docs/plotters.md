@@ -23,6 +23,24 @@ They offer the standard sizes:
 ISO sheets have 5 mm margins. Inch sheets have quarter-inch (6.35 mm) margins. A page setup
 with the device `None` plots to PDF on the page setup's paper, as before.
 
+The computer's printers come next, listed in the background (a dialog never waits for them):
+
+- macOS and Linux: the CUPS destinations (`lpstat -e`), each with its PPD's papers and printable
+  areas. A queue without a PPD file the user can read (a driverless IPP printer, or a PPD only
+  root can read) takes its papers from `lpoptions -p NAME -l`, with the 4.23 mm margins IPP
+  printers commonly report. `lpstat -d` names the default printer. A plot is the PDF the PDF
+  plotter writes for the paper, sent unscaled with `lp` (`PageSize` for a PPD paper, `media`
+  otherwise). CUPS commands run in the C locale.
+- Windows: the spooler's printers with their drivers' papers and printable areas, printed
+  through craft-print at the plot's exact size.
+
+The default printer says "(default)" in the device lists. `plottermanager {action: "refresh"}`
+(the Plot dialog's Refresh printers) asks the system again instead of using a list up to 5 s
+old. `plot {device: <printer>, copies?, path?}` prints; with `path` ("Plot to file") the PDF is
+written there first, and nothing prints when it can't be. `plot {stamp: true | text}` stamps a
+line at the printable area's lower-left corner (`{drawing}`, `{layout}`, `{device}`, `{paper}`
+and `{scale}` are filled in; PDF and PNG plots, not SVG).
+
 User devices are files in our own format, kept in the `plotters` folder of the CADCraft
 settings directory:
 
