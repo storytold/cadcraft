@@ -255,9 +255,10 @@ const MAX_MATCHED_CLUSTER: usize = 32;
 /// takes that character first, then the other glyphs take the cluster's remaining characters in
 /// order, and characters left over (a ligature such as ฐ with sara u below) are shown by the
 /// glyph before them. Each character is shown once, and the glyphs show the characters in typed
-/// order wherever they can, so text read back in drawing order is the typed text: a split Thai
-/// sara am is drawn as nikhahit, then any tone mark, then sara aa, so in น้ำ the sara aa shows ำ
-/// and the nikhahit, moved before the tone mark, shows none and is drawn as an outline only.
+/// order wherever that leaves no fewer glyphs showing one, so text read back in drawing order is
+/// the typed text: a split Thai sara am is drawn as nikhahit, then any tone mark, then sara aa,
+/// so in น้ำ the sara aa shows ำ and the nikhahit, moved before the tone mark, shows none and is
+/// drawn as an outline only.
 fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Vec<char>> {
     let mut out: Vec<Vec<char>> = vec![Vec::new(); glyphs.len()];
     let mut i = 0;
@@ -268,7 +269,11 @@ fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Ve
         let chars = cs.get(cluster..to).unwrap_or_default();
         let ids = if chars.len() <= MAX_MATCHED_CLUSTER { face.glyph_ids(chars) } else { Vec::new() };
         let gids: Vec<u32> = glyphs.get(i..j).unwrap_or_default().iter().map(|g| g.gid).collect();
-        let shows = cluster_chars(chars, &ids, &gids, true).or_else(|| cluster_chars(chars, &ids, &gids, false)).unwrap_or_default();
+        let any = cluster_chars(chars, &ids, &gids, false).unwrap_or_default();
+        // Output that keeps one character per glyph (render, PDF) writes each glyph's first: typed
+        // order must not leave fewer of them than the plain assignment.
+        let firsts = |s: &[Vec<char>]| s.iter().filter(|c| !c.is_empty()).count();
+        let shows = cluster_chars(chars, &ids, &gids, true).filter(|t| firsts(t) >= firsts(&any)).unwrap_or(any);
         for (o, s) in out.iter_mut().skip(i).zip(shows) {
             *o = s;
         }
@@ -511,8 +516,8 @@ mod tests {
     #[test]
     fn reordered_glyphs_show_their_cluster_in_typed_order() {
         let (no, mai_tho, sara_am, nikhahit, sara_aa) = ('\u{0E19}', '\u{0E49}', '\u{0E33}', '\u{0E4D}', '\u{0E32}');
-        let (deva_ka, deva_i) = ('\u{0915}', '\u{093F}');
-        let face = mapped_face(&[(no, 1), (mai_tho, 2), (sara_am, 3), (nikhahit, 4), (sara_aa, 5), (deva_ka, 6), (deva_i, 7)]);
+        let (deva_ka, deva_i, sara_u) = ('\u{0915}', '\u{093F}', '\u{0E38}');
+        let face = mapped_face(&[(no, 1), (mai_tho, 2), (sara_am, 3), (nikhahit, 4), (sara_aa, 5), (deva_ka, 6), (deva_i, 7), (sara_u, 8)]);
         let with_gids = |gids: &[u32]| gids.iter().map(|gid| Glyph { gid: *gid, ..glyph(0) }).collect::<Vec<_>>();
         let cs = [no, mai_tho, sara_am];
         // What the shaper draws for น้ำ: no, nikhahit, mai tho, sara aa.
@@ -520,9 +525,15 @@ mod tests {
         assert_eq!(shows.iter().flatten().collect::<String>(), "น้ำ");
         assert_eq!(shows.get(2), Some(&vec![mai_tho]), "the tone mark's glyph shows the tone mark: {shows:?}");
         // A sara u drawn into the letter's glyph goes with it, before the tone mark.
-        let cs = [no, '\u{0E38}', mai_tho];
+        let cs = [no, sara_u, mai_tho];
         let shows = glyph_chars(&face, &cs, &with_gids(&[1, 2]), cs.len());
-        assert_eq!(shows, [vec![no, '\u{0E38}'], vec![mai_tho]]);
+        assert_eq!(shows, [vec![no, sara_u], vec![mai_tho]]);
+        // Typed with the tone mark before sara u but drawn after it: in typed order the tone mark
+        // would only follow no on its glyph, and output that writes a glyph's first character
+        // would lose it, so each glyph keeps its own character.
+        let cs = [no, mai_tho, sara_u];
+        let shows = glyph_chars(&face, &cs, &with_gids(&[1, 8, 2]), cs.len());
+        assert_eq!(shows, [vec![no], vec![sara_u], vec![mai_tho]]);
         // Devanagari ki: the vowel sign is drawn first.
         let cs = [deva_ka, deva_i];
         let shows = glyph_chars(&face, &cs, &with_gids(&[7, 6]), cs.len());
