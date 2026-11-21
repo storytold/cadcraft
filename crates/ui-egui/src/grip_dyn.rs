@@ -341,6 +341,46 @@ mod tests {
         }
     }
 
+    /// RECTANG's other corner asks for X and Y whatever DYNPIFORMAT says, as the reference
+    /// application does, so `40` Tab `30` Enter is a 40 by 30 rectangle, not 40 at 30 degrees.
+    #[test]
+    fn rectangle_corner_asks_for_x_and_y_in_either_format() {
+        for cartesian in [false, true] {
+            let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+            app.session.settings.dynpi_cartesian = cartesian;
+            let ctx = egui::Context::default();
+            crate::canvas::tests::painted_text(&mut app, &ctx, pos2(700.0, 450.0));
+            let at = app.canvas.xf.unwrap().to_screen(Vec2::new(10.0, 20.0)) + vec2(130.0, -70.0);
+            app.session.cmdline("rectang").unwrap();
+            app.session.input(Input::Point(Vec2::new(10.0, 20.0))).unwrap();
+            crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            crate::canvas::tests::painted_text(&mut app, &ctx, at);
+            let frame = crate::cmdline::dyn_frame(&app).unwrap();
+            assert_eq!(frame.default_format(), crate::dyninput::Format::Cartesian, "DYNPIFORMAT {cartesian}");
+
+            run_frame(&mut app, &ctx, vec![Event::Text("40".into())]);
+            // Tab reaches the command line as text (`cmdline::capture_tab`).
+            run_frame(&mut app, &ctx, vec![Event::Text("\t".into())]);
+            run_frame(&mut app, &ctx, vec![Event::Text("30".into())]);
+            run_frame(&mut app, &ctx, key(egui::Key::Enter));
+            assert!(app.session.running.is_none(), "DYNPIFORMAT {cartesian}");
+            let bounds = app.session.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+                EntityKind::LwPolyline(pl) => {
+                    let xs = pl.vertices.iter().map(|v| v.p.x);
+                    let ys = pl.vertices.iter().map(|v| v.p.y);
+                    Some((
+                        xs.clone().fold(f64::MAX, f64::min),
+                        ys.clone().fold(f64::MAX, f64::min),
+                        xs.fold(f64::MIN, f64::max),
+                        ys.fold(f64::MIN, f64::max),
+                    ))
+                }
+                _ => None,
+            });
+            assert_eq!(bounds, Some((10.0, 20.0, 50.0, 50.0)), "DYNPIFORMAT {cartesian}");
+        }
+    }
+
     /// The grip's length fields read the drawing's length units (LUNITS/LUPREC) (#841).
     #[test]
     fn length_fields_follow_the_drawing_units() {
