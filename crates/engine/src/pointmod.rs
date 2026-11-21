@@ -130,10 +130,28 @@ pub fn snap_name(m: u32) -> &'static str {
 /// one [`crate::snap::osnap`] picks first and the rest in its order (specific snaps nearest
 /// first, then deferred snaps, then Nearest), without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    snap_candidates_in_orbit(d, space, cadcraft_render::Orbit3d::default(), cursor, aperture, osmode, base, deferred)
+}
+
+/// The candidate snaps near the 2D view-plane `view_cursor` under `orbit` for Tab cycling:
+/// every object snap within the aperture, the one [`crate::snap::osnap_in_orbit`] picks first
+/// and the rest in its order (specific snaps nearest first, then deferred snaps, then Nearest),
+/// without repeats.
+#[allow(clippy::too_many_arguments)]
+pub fn snap_candidates_in_orbit(
+    d: &Drawing,
+    space: &Space,
+    orbit: cadcraft_render::Orbit3d,
+    view_cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    crate::snap::osnap_all(d, space, cursor, aperture, osmode, base, deferred)
+    crate::snap::osnap_all_in_orbit(d, space, orbit, view_cursor, aperture, osmode, base, deferred)
 }
 
 /// Strip the international (`_`) and transparent (`'`) prefixes a modifier may be typed with.
@@ -344,11 +362,13 @@ impl Session {
                     // Snap the point with this mode alone, within the aperture.
                     let prompt = self.current_prompt();
                     let space = self.space();
+                    let orbit = self.edit_orbit();
                     let aperture = self.pixel_size() * self.settings.aperture.max(1.0);
                     let hatch = if self.settings.osnaphatch { mode::HATCH } else { 0 };
                     let base = prompt.as_ref().and_then(|q| q.base);
                     let deferred = prompt.as_ref().is_some_and(|q| q.deferred);
-                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
+                    let view_p = if orbit.is_top() { p } else { orbit.project(p.to3(0.0)) };
+                    let hit = crate::snap::osnap_in_orbit(self.doc()?, &space, orbit, view_p, aperture, mode | hatch, base, deferred);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
                         Some(h) => p = h.point,
