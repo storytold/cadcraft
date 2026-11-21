@@ -169,3 +169,37 @@ fn a_solid_pattern_replaces_a_gradient() {
     let cadcraft_engine::doc::EntityKind::Hatch(hatch) = &e.kind else { panic!("hatch") };
     assert!(hatch.solid && hatch.gradient.is_none() && hatch.pattern_lines.is_empty(), "{hatch:?}");
 }
+
+fn scales_of(s: &mut Session, h: &str) -> Value {
+    row(&describe(s, &[h]), "Text", "annoScales")["value"].clone()
+}
+
+#[test]
+fn a_change_to_many_objects_scales_is_one_undo_step() {
+    let (mut s, a) = annotative_text();
+    let b = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "B", "height": 2.5 })).unwrap());
+    s.execute("properties.set", &json!({ "handles": [b], "annotative": true, "annoScales": ["1:10", "1:2"] })).unwrap();
+    // What the Annotation Object Scale dialog's OK runs: one OBJECTSCALE call for every object.
+    s.execute("objectscale", &json!({ "handles": [a, b], "add": ["1:4"], "delete": ["1:2"] })).unwrap();
+    assert_eq!(scales_of(&mut s, &a), json!(["1:10", "1:4"]));
+    assert_eq!(scales_of(&mut s, &b), json!(["1:10", "1:4"]));
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(scales_of(&mut s, &a), json!(["1:10", "1:2"]));
+    assert_eq!(scales_of(&mut s, &b), json!(["1:10", "1:2"]));
+    // The palette's `annoScales` on a selection, likewise.
+    s.execute("properties.set", &json!({ "handles": [a, b], "annoScales": ["1:4"] })).unwrap();
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(scales_of(&mut s, &a), json!(["1:10", "1:2"]));
+    assert_eq!(scales_of(&mut s, &b), json!(["1:10", "1:2"]));
+}
+
+#[test]
+fn the_current_scale_can_leave_an_object_that_keeps_another() {
+    // As Delete Current Scale (AIOBJECTSCALEREMOVE) does: the current annotation scale (1:10) can
+    // be taken from an object while it keeps another; an object's last scale can't go.
+    let (mut s, t) = annotative_text();
+    s.execute("properties.set", &json!({ "handles": [t], "annoScales": ["1:2"] })).unwrap();
+    assert_eq!(scales_of(&mut s, &t), json!(["1:2"]));
+    assert!(s.execute("properties.set", &json!({ "handles": [t], "annoScales": [] })).is_err());
+    assert_eq!(scales_of(&mut s, &t), json!(["1:2"]));
+}
