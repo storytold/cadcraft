@@ -175,13 +175,16 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
         draw_vp_mask(c, p, outline, xf_paper);
         stencil = crate::gpu::Stencil::Inside;
     }
-    let origin = crate::gpu::choose_origin(&c.list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
-    let key = {
+    let mesh_hash = |o: Vec2| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.builds, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay).hash(&mut h);
+        (c.builds, o.x.to_bits(), o.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay).hash(&mut h);
         h.finish()
     };
+    let view_height = f64::from(xf.rect.height()) / xf.scale.max(1e-300);
+    let reuse = c.mesh_key == Some(mesh_hash(c.mesh_origin)) && crate::gpu::origin_usable(c.mesh_origin, &c.list.bounds, xf.center, view_height);
+    let origin = if reuse { c.mesh_origin } else { crate::gpu::choose_origin(&c.list.bounds, xf.center, view_height) };
+    let key = mesh_hash(origin);
     if c.mesh_key != Some(key) {
         let mesh = crate::gpu::build_mesh(&c.list, origin, bg, lwdisplay);
         if let Ok(mut slot) = c.mesh_slot.lock() {
