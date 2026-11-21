@@ -1391,6 +1391,16 @@ mod proxy_objects_import_on_open_tests {
             _ => String::new(),
         };
         assert!(name.starts_with("PROXY_") && d.block(&name).is_some_and(|b| b.entities.len() == 1));
+        // Its grip sits on the picture, not at the drawing's origin.
+        let (at, b) = match &insert.kind {
+            EntityKind::Insert(i) => (i.insert, i.insert.xy()),
+            _ => (Default::default(), Default::default()),
+        };
+        let picture = d.model.iter().find(|e| e.handle == insert.handle).map(|e| cadcraft_doc::entity_bounds(d, e, 0)).unwrap_or_default();
+        assert!(
+            b.x >= picture.min.x - 1e-9 && b.x <= picture.max.x + 1e-9 && b.y >= picture.min.y - 1e-9 && b.y <= picture.max.y + 1e-9,
+            "insertion point {at:?} is inside the picture {picture:?}"
+        );
         // The reference moves as one object, and EXPLODE takes it apart.
         let h = insert.handle;
         s.execute("move", &json!({"handles": [h.hex()], "delta": [0, 10]})).unwrap();

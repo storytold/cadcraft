@@ -384,6 +384,14 @@ fn proxies_to_blocks(s: &mut Session, space: &cadcraft_doc::Space, hs: &[Handle]
         }
         let mut block = cadcraft_doc::Block::new(&name);
         block.description = format!("Picture of a {} object", u.dxf_type);
+        // The grip of a reference sits on its insertion point: put it (and the block's base
+        // point, so the picture does not move) at the middle of the picture, not at 0,0.
+        let mut bounds = cadcraft_geom::Bounds2::EMPTY;
+        for g in &u.graphics {
+            bounds = bounds.union(&cadcraft_doc::entity_bounds(d, g, 0));
+        }
+        let anchor = bounds.center();
+        block.base = v3(anchor);
         for g in &u.graphics {
             let mut ge = g.clone();
             ge.handle = d.new_handle();
@@ -394,7 +402,7 @@ fn proxies_to_blocks(s: &mut Session, space: &cadcraft_doc::Space, hs: &[Handle]
         let mut common = e.common.clone();
         common.xdata.clear();
         let handle = d.new_handle();
-        let insert = cadcraft_doc::Insert { block: name, ..Default::default() };
+        let insert = cadcraft_doc::Insert { block: name, insert: v3(anchor), ..Default::default() };
         if let Some(st) = d.space_mut(space) {
             st.push(Entity { handle, common, kind: EntityKind::Insert(insert) });
         }
