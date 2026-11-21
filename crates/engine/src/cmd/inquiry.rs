@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dist", "Distance", run_dist)
             .menu(&["Tools", "Inquiry", "Distance"])
             .alias(&["di"])
-            .params("{p1, p2}")
+            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (world), ucs: {angle, angleFromXY, dx, dy, dz} (in the frame typed points are read in: the current UCS, or the World UCS while the UCS is tilted; as the message), message}")
             .noundo()
             .transparent()
             .interactive(|_| Ok(Box::new(DistM::default()))),
@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
         CommandSpec::new("loops", "Implied Loops", loops::run).params(loops::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
-            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
+            .params("{contains?: text (any case; `query` is the same filter), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
             .noundo(),
         CommandSpec::new("countlist", "Count List", count::run_countlist)
             .params("{space?: all (default)|current|model|<layout>, nested?: bool} → per-block counts, as COUNT")
@@ -192,11 +192,21 @@ fn angle_from_xy(d: Vec3) -> f64 {
     d.z.atan2(d.xy().len())
 }
 
-fn dist_text(s: &Session, a: Vec3, b: Vec3) -> String {
+/// The delta from `a` to `b` along the axes of the current UCS (the World UCS while that is
+/// tilted): what DIST's report shows.
+fn dist_delta(s: &Session, a: Vec3, b: Vec3) -> Vec3 {
+    let u = s.input_ucs();
+    // The difference turned onto the axes: converting each point first would subtract a far
+    // origin and round a short distance away.
     let d = b - a;
+    Vec3::new(d.dot(u.x), d.dot(u.y), d.dot(u.z()))
+}
+
+/// DIST's report: the distance, the angles and the deltas `d`, measured in the current UCS.
+fn dist_text(s: &Session, dist: f64, d: Vec3) -> String {
     format!(
         "Distance = {},  Angle in XY Plane = {},  Angle from XY Plane = {}\nDelta X = {},  Delta Y = {},   Delta Z = {}",
-        fmt_d(s, (b - a).len()),
+        fmt_d(s, dist),
         fmt_a(s, d.xy().angle()),
         fmt_a(s, angle_from_xy(d)),
         fmt_d(s, d.x),
@@ -222,6 +232,8 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.distance = d.len();
     s.last_point = a.xy();
+    // Top level: the world values, as ID's x, y, z are; `ucs` has what the message shows.
+    let du = dist_delta(s, a, b);
     Ok(json!({
         "distance": d.len(),
         "angle": d.xy().angle().to_degrees(),
@@ -229,18 +241,28 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
         "dx": d.x,
         "dy": d.y,
         "dz": d.z,
-        "message": dist_text(s, a, b),
+        "ucs": {
+            "angle": du.xy().angle().to_degrees(),
+            "angleFromXY": angle_from_xy(du).to_degrees(),
+            "dx": du.x,
+            "dy": du.y,
+            "dz": du.z,
+        },
+        "message": dist_text(s, d.len(), du),
     }))
 }
 
+/// ID's report: the point in the current UCS.
 fn id_text(s: &Session, a: Vec3) -> String {
-    format!("X = {}     Y = {}     Z = {}", fmt_d(s, a.x), fmt_d(s, a.y), fmt_d(s, a.z))
+    let u = s.input_ucs().to_ucs3(a);
+    format!("X = {}     Y = {}     Z = {}", fmt_d(s, u.x), fmt_d(s, u.y), fmt_d(s, u.z))
 }
 
 fn run_id(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "id", p, "at")?;
     s.last_point = a.xy();
-    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "message": id_text(s, a) }))
+    let u = s.input_ucs().to_ucs3(a);
+    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "ucs": [u.x, u.y, u.z], "message": id_text(s, a) }))
 }
 
 /// The Z of what is drawn at `p`: the object a pick finds there, at that point, or the current
@@ -664,7 +686,12 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
             v.as_u64().map(|n| usize::try_from(n).unwrap_or(usize::MAX)).ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number, 0 or more")))
         })
     };
-    let contains = text("contains")?;
+    // `query` is what agents tend to call the filter; without this alias it was silently ignored
+    // and every text came back (#3011).
+    let contains = match text("contains")? {
+        Some(c) => Some(c),
+        None => text("query")?,
+    };
     let layer = text("layer")?;
     let window = given("window")
         .map(|w| {
@@ -900,7 +927,7 @@ impl Interactive for DistM {
                     s.last_point = first;
                     return Err(bad("dist", "the distance is too large"));
                 }
-                let t = dist_text(s, a, b);
+                let t = dist_text(s, (b - a).len(), dist_delta(s, a, b));
                 for l in t.lines() {
                     s.echo(l.to_string());
                 }

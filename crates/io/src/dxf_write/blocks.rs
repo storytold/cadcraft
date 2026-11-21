@@ -2,18 +2,26 @@ use super::{
     Block, Color, Common, Dimension, Drawing, Entity, EntityKind, EntityStore, Handle, HashMap, Line, MText, Solid, Table, Vec2, Vec3, dxf_ext,
 };
 
-/// What happens to the anonymous `*D` blocks read from a file (#495): a dimension that still
-/// names its block regenerates its geometry under that name, keeping the block's entity
-/// handles, and `*D` blocks nothing else references are not written again.
+/// What happens to the dimension blocks read from a file (#495): a dimension that still names
+/// its block is written with that block, under its name, and `*D` blocks nothing else
+/// references are not written again. The block a dimension names may have any name: other
+/// programs don't always use `*D` (#3299).
 pub(super) struct DimBlockPlan {
     /// Dimension (model or paper space) → the read block whose name and handles it reuses.
     pub(super) reuse: HashMap<Handle, std::sync::Arc<Block>>,
-    /// Upper-case names of `*D` blocks not written as ordinary blocks.
+    /// Upper-case names of blocks not written as ordinary blocks: `*D` blocks and the blocks
+    /// dimensions name, when nothing else uses them.
     pub(super) skip: std::collections::HashSet<String>,
 }
 
 fn is_dim_block(name: &str) -> bool {
     name.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("*D"))
+}
+
+/// The read block, not named `*D`, that a dimension block definition named `name` is written
+/// from (#3299): its record and block properties are written as read.
+pub(super) fn kept_named_dim_block<'a>(d: &'a Drawing, name: &str) -> Option<&'a Block> {
+    d.block(name).filter(|_| !is_dim_block(name)).map(|b| b.as_ref())
 }
 
 pub(super) fn dim_block_plan(d: &Drawing) -> DimBlockPlan {
@@ -35,12 +43,19 @@ pub(super) fn dim_block_plan(d: &Drawing) -> DimBlockPlan {
     for e in d.blocks.values().flat_map(|b| b.entities.iter()) {
         note(e, true, &mut used);
     }
-    let skip = d.blocks.keys().filter(|n| is_dim_block(n)).map(|n| n.to_ascii_uppercase()).filter(|n| !used.contains(n)).collect();
+    // Blocks the dimensions of model and paper space still name, whatever their names.
+    let named: std::collections::HashSet<String> = spaces
+        .iter()
+        .flat_map(|s| s.iter())
+        .filter_map(|e| if let EntityKind::Dimension(dm) = &e.kind { dm.block.as_ref().map(|n| n.to_ascii_uppercase()) } else { None })
+        .collect();
+    let skip =
+        d.blocks.keys().map(|n| n.to_ascii_uppercase()).filter(|n| is_dim_block(n) || named.contains(n)).filter(|n| !used.contains(n)).collect();
     let mut plan = DimBlockPlan { reuse: HashMap::new(), skip };
     let mut claimed = std::collections::HashSet::new();
     for e in spaces.iter().flat_map(|s| s.iter()) {
         let EntityKind::Dimension(dm) = &e.kind else { continue };
-        let Some(b) = dm.block.as_deref().filter(|n| is_dim_block(n)).and_then(|n| d.block(n)) else { continue };
+        let Some(b) = dm.block.as_deref().and_then(|n| d.block(n)) else { continue };
         let key = b.name.to_ascii_uppercase();
         if plan.skip.contains(&key) && claimed.insert(key) {
             plan.reuse.insert(e.handle, b.clone());
