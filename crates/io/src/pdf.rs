@@ -592,7 +592,17 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let mut list = list;
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     let media = sheet.size * k;
-    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
+    let printable = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
+    // Why: vector paths (`push_clip_path`), link annotations, and embedded text (`glyph`) must share
+    // one plot-area clip intersected with `window` so aspect-mismatched margins never leak strokes
+    // while dropping their labels.
+    let clip_pt = match window {
+        Some(w) => {
+            let win_pt = Bounds2::from_points(w.corners().map(|c| map.pt(c)));
+            Bounds2 { min: printable.min.max(win_pt.min), max: printable.max.min(win_pt.max) }
+        }
+        None => printable,
+    };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
     if o.layers {
@@ -878,7 +888,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 let text_font =
                     u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
                 match text_font {
-                    Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
+                    Some((text, font)) => glyph(s, font, text, &p.map, &p.clip_pt, m.rgb, m.t),
                     None => fill_tris(s, p, raw, m.rgb, m.t),
                 }
             }
@@ -992,10 +1002,23 @@ fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, ma
 
 /// Write one glyph as text in its embedded font: font size 1, placed by the glyph's matrix (one
 /// em along each axis). A glyph whose matrix is out of range or collapses is left out.
-fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, rgb: Rgb, transparency: u8) {
+fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, clip_pt: &Bounds2, rgb: Rgb, transparency: u8) {
     let k = map.s * map.k;
     let g = &t.glyph;
-    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(map.pt(g.origin))) else { return };
+    let pt = map.pt(g.origin);
+    // Why: cull against the shaped `PlotText::bounds` rather than `g.origin` so wide or rotated
+    // glyphs whose origin sits just outside `clip_pt` are kept whenever their ink enters the clip.
+    if t.bounds.is_empty() {
+        if !clip_pt.contains(pt) {
+            return;
+        }
+    } else {
+        let glyph_pt = Bounds2::from_points(t.bounds.corners().map(|c| map.pt(c)));
+        if !clip_pt.intersects(&glyph_pt) {
+            return;
+        }
+    }
+    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(pt)) else { return };
     let det = a * d - b * c;
     if !det.is_finite() || det == 0.0 {
         return;
