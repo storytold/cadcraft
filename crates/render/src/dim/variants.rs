@@ -1,4 +1,4 @@
-use super::text::{apply_override, inspected, linear_text};
+use super::text::{apply_override, inspected, linear_text, post};
 use super::{Arrowhead, DimConfig, DimGeometry, DimKind, Vec2, ext_line, readable};
 use crate::units::format_angle_with_separator;
 use cadcraft_geom::{Arc, ccw_sweep};
@@ -178,8 +178,9 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
     g.measurement = sweep;
     // DIMAZIN 1 / 2 suppress leading / trailing zeros (DIMZIN's bits 4 / 8).
     let azin = (st.angular_zero_suppression & 3) * 4;
-    let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
-    // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
+    // DIMPOST wraps the angle too, as AutoCAD 2026 does to its own 2-line and 3-point
+    // angular dimensions ("36.9° m" for a style with "<> m"; issue #1653, after #376).
+    let txt = post(&st.post, &format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator));
     g.mtext = inspected(apply_override(&txt, d), d);
     let mut pts = Vec::new();
     arc.tessellate(r * 1e-3, &mut pts);

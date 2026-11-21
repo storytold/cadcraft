@@ -821,6 +821,18 @@ pub struct PageSetup {
     /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_origin: Option<Vec2>,
+    /// The plot layout flags (DXF group 70 of AcDbPlotSettings) as the file had them. Saving keeps
+    /// the bits CADCraft doesn't model (plot paper space last, plot with plot styles, standard
+    /// scale and the rest) as read instead of forcing its defaults (#3227); `None` for page setups
+    /// made in CADCraft.
+    #[serde(skip)]
+    pub file_plot_flags: Option<i64>,
+    /// The standard scale the file chose (DXF group 75, such as 25 for 1:50) and the plot scale it
+    /// was read with. While the scale is unchanged, saving keeps that choice and the standard scale
+    /// flag instead of writing the scale as a custom one; `None` for a custom scale, scaled to
+    /// fit, or a page setup made in CADCraft.
+    #[serde(skip)]
+    pub file_standard_scale: Option<(i64, f64)>,
 }
 
 impl Default for PageSetup {
@@ -844,6 +856,8 @@ impl Default for PageSetup {
             paper_mm: None,
             file_paper: None,
             image_origin: None,
+            file_plot_flags: None,
+            file_standard_scale: None,
         }
     }
 }
