@@ -65,6 +65,7 @@ fn baseline(d: &Drawing, t: &Text) -> cadcraft_geom::Vec2 {
 
 #[test]
 fn all_attribute_value_paths_refresh_small_justified_export_changes() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for path in ["json", "interactive", "global-json", "global-interactive"] {
         let (mut s, a, b) = fixture();
         let before = attributes(s.doc().unwrap(), a);
@@ -147,6 +148,7 @@ fn equal_attribute_values_preserve_an_imported_font_baseline() {
 /// Recomputing a justified baseline must not replace its independent insertion elevation.
 #[test]
 fn value_edits_preserve_distinct_insertion_and_alignment_elevations_on_export() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let (mut s, a, _) = fixture();
     s.doc_mut()
         .unwrap()

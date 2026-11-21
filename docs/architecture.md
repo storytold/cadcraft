@@ -20,7 +20,7 @@ About 57,000 lines of Rust in 12 library crates, 3 apps and `xtask` (counted 202
 | L2 | `render` | 3,300 | Display lists (polylines, triangles, points tagged with entity handles): linetypes, hatches, gradients, text, block expansion, dimension geometry, paper-space clipping; CPU rasteriser (`tiny-skia`) for PNG, plot preview and tests |
 | L2 | `constraints` | 2,504 | Own parametric solver: damped Gauss–Newton / Levenberg–Marquardt (`lm.rs`), 12 geometric and the dimensional constraints, expressions and parameters, AutoConstrain inference |
 | L3 | `io` | 5,124 | DXF ⇄ document mapping (`dxf_read.rs`, `dxf_write.rs`, CADCraft xdata in `dxf_ext.rs`), PDF plotting, SVG and PNG export |
-| L3 | `dwg` | 149 | DWG through a DXF bridge: the `acadrust` crate (MPL-2.0, unmodified) converts DWG ⇄ DXF bytes; nothing else sees its types. Native only |
+| L3 | `craft-dwg` | shared | DWG through the shared byte bridge: `acadrust` (MPL-2.0, unmodified) converts DWG ⇄ DXF bytes; the app keeps process isolation and maps DXF into its document model. Native only |
 | L4 | `engine` | 25,090 | `Session`, the command registry (`cmd/*`), command-line parser and prompt machines, object snaps and polar/ortho (`snap.rs`), selection (`select.rs`), grips (`grips.rs`), associativity (`assoc.rs`), system variables, units, undo, R-tree spatial index (`spatial.rs`) |
 | L5 | `ui-egui` | 9,849 | The swappable egui front end: GPU canvas (`gpu.rs`, wgpu), menus and shortcuts (`menus.rs`), command line, palettes, Layer Properties Manager and other dialogs, ViewCube, icons drawn in code, themes, the interface string catalog (`i18n/`, English, Ukrainian and German), JSON control channel (`control.rs`) |
 | L5 | `mcp` | 559 | MCP server (JSON-RPC 2.0 over stdio) on a headless session or bridged to a running app |
@@ -64,7 +64,7 @@ SVG and plot preview reuse the same display list through the CPU rasteriser or v
 ## Files
 
 DXF is the native path: `dxf` parses tags, `io::dxf_read` maps them to the document, and
-`io::dxf_write` writes an R2000 (AC1015) DXF. DWG is converted to DXF in memory by `acadrust` and
+`io::dxf_write` writes an R2000 (AC1015) DXF. DWG is converted to DXF in memory by shared `craft-dwg` and
 read through the same path; saving DWG writes our DXF and converts it back. CADCraft-only data
 (constraints, associativity details, table flags) travels in xdata under our own application
 name. Detail and gaps: [file-format-parity.md](file-format-parity.md).

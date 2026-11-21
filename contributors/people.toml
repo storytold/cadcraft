@@ -106,6 +106,10 @@ sync_github_name = true
 [people.GULERTOLGA]
 sync_github_name = true
 
+[people.Obtrusive8276]
+display_name = "Nicopicks"
+sync_github_name = false
+
 [people.Tyler-Chiriboga]
 real_name = "Tyler Chiriboga"
 sync_github_name = true
@@ -118,3 +122,14 @@ sync_github_name = true
 
 [people.helenkwok]
 real_name = "Helen Kwok"
+
+[people.V1dalTheAbidal]
+sync_github_name = true
+
+[people.tyrel]
+real_name = "Tyrel Haveman"
+
+[people.Sladrian]
+real_name = "Sladrian Pedroso"
+display_name = "Sladrian Pedroso"
+sync_github_name = false

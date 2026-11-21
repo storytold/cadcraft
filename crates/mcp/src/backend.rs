@@ -1,10 +1,12 @@
 //! Where MCP tool calls end up: a control-channel method call.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 
 use cadcraft_engine::Session;
+use cadcraft_engine::file_access::{self, AutomationRoots};
 use serde_json::{Value, json};
 
 /// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
@@ -76,9 +78,17 @@ impl Remote {
     /// The per-session token for this port, read (and cached) from the owner-only token file. A
     /// missing file is not fatal here: the request is sent without a token and the server replies
     /// with an authentication error the user can act on.
+    ///
+    /// The desktop app listens only on `127.0.0.1:PORT`, so the token goes only to that exact
+    /// peer: a name that also resolves elsewhere (`localhost` → `::1`, where another local account
+    /// may listen on the same port) must not be handed the desktop's credential (CWE-522).
     fn token(&mut self) -> Option<&str> {
+        let port = port_of(&self.addr)?;
+        let peer = self.conn.as_ref().and_then(|(_, s)| s.peer_addr().ok());
+        if peer != Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))) {
+            return None;
+        }
         if self.token.is_none()
-            && let Some(port) = port_of(&self.addr)
             && let Ok(t) = crate::control_token::read(port)
         {
             self.token = Some(t);
@@ -207,6 +217,14 @@ fn is_read_only(method: &str) -> bool {
 
 impl Remote {
     /// Put the current token (if any) on `req`, replacing the one it carries.
+    /// Connect if needed, put the token for the peer actually connected to on `req`, and send it.
+    fn sign_and_send(&mut self, req: &mut Value) -> Result<String, (std::io::Error, bool)> {
+        if self.conn.is_none() {
+            self.reach().map_err(|e| (e, false))?;
+        }
+        self.set_token(req);
+        self.roundtrip(&req.to_string())
+    }
     fn set_token(&mut self, req: &mut Value) {
         let token = self.token().map(str::to_string);
         if let Some(obj) = req.as_object_mut() {
@@ -219,7 +237,7 @@ impl Remote {
     /// Send `req` and parse the reply, refreshing the token before a safe retry after a transport
     /// error. A mutation that may have reached the server is never resent automatically.
     fn exchange(&mut self, method: &str, req: &mut Value) -> Result<Value, String> {
-        let reply = match self.roundtrip(&req.to_string()) {
+        let reply = match self.sign_and_send(req) {
             Ok(r) => r,
             Err((e, sent)) => {
                 self.token = None;
@@ -232,8 +250,7 @@ impl Remote {
                     ));
                 }
                 // A restarted server may have rotated its token before dropping the old socket.
-                self.set_token(req);
-                self.roundtrip(&req.to_string()).map_err(|(e, _)| {
+                self.sign_and_send(req).map_err(|(e, _)| {
                     self.token = None;
                     self.conn = None;
                     format!("CADCraft at {}: {e}", self.addr)
@@ -256,14 +273,12 @@ impl Backend for Remote {
         let id = self.next_id;
         self.next_id += 1;
         let mut req = json!({"id": id, "method": method, "params": params});
-        self.set_token(&mut req);
         let mut v = self.exchange(method, &mut req)?;
         // The token is read before `--launch` opens the app, which then writes a new one (#2087); the
         // file can also be left over from an earlier session. Once, so a wrong token can't loop.
         if unauthorized(&v) && v.get("state").and_then(Value::as_str) == Some("not-run") {
             self.token = None;
             self.conn = None;
-            self.set_token(&mut req);
             v = self.exchange(method, &mut req)?;
         }
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -285,6 +300,7 @@ impl Backend for Remote {
     fn has_ui(&self) -> bool {
         true
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         format!("connected to CADCraft at {}", self.addr)
     }
@@ -308,13 +324,19 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
 ];
 
 /// An in-process headless session (no window).
+#[derive(Default)]
 pub struct Headless {
     pub session: Session,
+    /// The folders its methods may read and write (`--automation-read-root`,
+    /// `--automation-write-root`); `None`: anywhere.
+    roots: Option<Arc<AutomationRoots>>,
 }
 
-impl Default for Headless {
-    fn default() -> Self {
-        Headless { session: Session::new() }
+impl Headless {
+    /// Confine the files every method reads and writes to `roots` ([`file_access`]).
+    pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
+        self.roots = roots;
+        self
     }
 }
 
@@ -333,8 +355,9 @@ fn state(s: &Session) -> Value {
     })
 }
 
-impl Backend for Headless {
-    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+impl Headless {
+    /// The reply to one control method; the caller holds it to the roots.
+    fn answer(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         let s = &mut self.session;
         let str_p = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
         match method {
@@ -394,14 +417,14 @@ impl Backend for Headless {
             "engine.commands" => {
                 Ok(Value::Array(cadcraft_engine::command_specs().iter().map(|c| serde_json::to_value(c.info(s)).unwrap_or_default()).collect()))
             }
-            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| e.to_string()),
+            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", p).map_err(|e| e.to_string()),
             "ui.render" => {
                 let w = p.get("width").and_then(Value::as_f64).unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
-                let window = render_window(&p);
+                let window = render_window(p);
                 // `background` and `plot_style` (#803), read as the app reads them.
-                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, &p)?;
+                let look = cadcraft_engine::render_look::RenderLook::from_params(&st.doc, p)?;
                 let opts = cadcraft_render::Options {
                     view: window,
                     transparency: s.settings.transparency_display,
@@ -424,6 +447,7 @@ impl Backend for Headless {
                 let mut r =
                     json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h, "truncated": list.truncated});
                 if let Some(path) = str_p("path") {
+                    file_access::check_write(&path)?;
                     let file = std::path::Path::new(&path);
                     let folder = cadcraft_engine::atomic_write::missing_folder(file);
                     cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png).map_err(|e| format!("{path}: {e}"))?;
@@ -439,7 +463,7 @@ impl Backend for Headless {
             }
             "app.save" => {
                 let id = if p.get("path").is_some() { "saveas" } else { "qsave" };
-                s.execute(id, &p).map_err(|e| e.to_string())
+                s.execute(id, p).map_err(|e| e.to_string())
             }
             "ui.screenshot" => Err("no UI in headless mode; use render".into()),
             "control.methods" => Ok(HEADLESS_METHODS
@@ -450,9 +474,18 @@ impl Backend for Headless {
             other => Err(format!("unknown method `{other}`; `control.methods` lists them (docs/control-protocol.md)")),
         }
     }
+}
+
+impl Backend for Headless {
+    /// Run one control method inside the roots, if any.
+    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+        let roots = self.roots.clone();
+        file_access::confine(roots.as_ref(), || self.answer(method, &p))
+    }
     fn has_ui(&self) -> bool {
         false
     }
+    /// What this backend talks to, for messages.
     fn describe(&self) -> String {
         "headless CADCraft session".into()
     }
@@ -593,6 +626,24 @@ mod tests {
                 seen += 1;
             }
         })
+    }
+
+    /// A listener on another loopback address with the desktop's port (here `::1`) never receives
+    /// the desktop's token.
+    #[test]
+    fn token_is_not_sent_to_another_loopback_listener() {
+        let Ok(listener) = TcpListener::bind("[::1]:0") else { return };
+        let addr = listener.local_addr().unwrap();
+        crate::control_token::issue(addr.port()).unwrap();
+        let server = fake_app(listener, move |req, _| {
+            assert!(req.get("token").is_none(), "token leaked to {addr}");
+            json!({"ok": true, "result": "x"})
+        });
+        let mut remote = Remote::lazy(&addr.to_string(), false);
+        let got = remote.call("ping", json!({}));
+        crate::control_token::revoke(addr.port());
+        assert_eq!(got, Ok(json!("x")));
+        assert_eq!(server.join().unwrap(), 1);
     }
 
     /// `--launch` reads the token before it opens the app, so the first request carries the token

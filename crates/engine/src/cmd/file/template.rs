@@ -73,10 +73,13 @@ fn read_template(path: &str) -> Result<Drawing> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// The bytes of the template at `path`, once the automation roots allow reading it.
 fn read_bytes(path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| bad("new", format!("template {path}: {e}")))
+    crate::file_access::check_read(path).map_err(|e| bad("new", e))?;
+    crate::capped_read::read_capped(std::path::Path::new(path), super::MAX_DRAWING_BYTES).map_err(|e| bad("new", format!("template {path}: {e}")))
 }
 
+/// The bytes of the template at `path`, held to the automation roots.
 #[cfg(target_arch = "wasm32")]
 fn read_bytes(path: &str) -> Result<Vec<u8>> {
     Err(bad("new", format!("template {path}: paths are not available on the web")))
