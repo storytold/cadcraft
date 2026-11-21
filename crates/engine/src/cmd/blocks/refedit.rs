@@ -225,6 +225,10 @@ fn xref_file(s: &Session, name: &str) -> Result<(std::path::PathBuf, load::Stamp
     let path = b.xref_path.clone().unwrap_or_default();
     let host = s.state().ok().and_then(|st| st.path.clone());
     let file = load::find(&path, host.as_deref().map(std::path::Path::new), false).map_err(|_| bad("refedit", format!("{path}: file not found")))?;
+    // Under the automation roots: the file is read for the edit, and written by REFCLOSE Save, so
+    // an edit that couldn't be saved doesn't begin.
+    crate::file_access::check_read(&file).map_err(|e| bad("refedit", e))?;
+    crate::file_access::check_write(&file).map_err(|e| bad("refedit", format!("{e}; open it with XOPEN instead")))?;
     if open_in_another_tab(s, &file) {
         return Err(bad("refedit", format!("{} is open in another drawing tab: edit it there, or close it first", file.display())));
     }
@@ -648,6 +652,11 @@ fn commit_block(nd: &mut Drawing, r: &RefEdit) -> Result<usize> {
 fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let file = std::path::Path::new(&x.file);
     let real = std::path::Path::new(&x.real);
+    // Under the automation roots, the file written and its backup, before anything is read or
+    // written: roots put in force since the edit began hold too.
+    for target in [real.to_path_buf(), crate::cmd::file::backup_path(real)] {
+        crate::file_access::check_write(&target).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
+    }
     writable(file).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
     still_leads_to(file, real).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
     unchanged(file, x, load::stamp(file))?;

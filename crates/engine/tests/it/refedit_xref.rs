@@ -636,3 +636,42 @@ fn host_multileader_and_table_styles_come_along() {
     let ts = back.table_styles.iter().find(|t| t.name == "Schedule").expect("the table style is in the file");
     assert!((ts.text_height - 4.0).abs() < 1e-9);
 }
+
+/// Automation roots (#1472): an agent confined to its folders can't have REFCLOSE write an xref, or
+/// the xref's `.bak`, outside its write root, and can't start an edit in place of one it may not
+/// write. The refusals leave the xref, its backup and the host as they were.
+#[test]
+fn a_confined_session_does_not_write_an_xref_outside_its_write_root() {
+    use cadcraft_engine::file_access::{AutomationRoots, confine};
+    let (mut s, dir, _, insert) = attached("confined");
+    let file = dir.join("site.dxf");
+    let before = std::fs::read(&file).unwrap();
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    // The xref's folder may be read but not written.
+    let roots = AutomationRoots::new(Some(&dir), Some(&out)).unwrap();
+
+    // REFEDIT of an xref it couldn't save is refused before the edit begins.
+    let e = confine(roots.as_ref(), || s.execute("refedit", &json!({ "handle": insert }))).unwrap_err().to_string();
+    assert!(e.contains("outside") || e.contains("write"), "{e}");
+    assert!(s.doc().unwrap().refedit.is_none(), "no edit began");
+
+    // An edit begun without the roots isn't written once they are in force.
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    let e = confine(roots.as_ref(), || s.execute("refclose", &json!({ "option": "save" }))).unwrap_err().to_string();
+    assert!(e.contains("outside") || e.contains("write"), "{e}");
+    assert_eq!(std::fs::read(&file).unwrap(), before, "the xref is unchanged");
+    assert!(std::fs::symlink_metadata(dir.join("site.dxf.bak")).is_err(), "no backup was written");
+    assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
+    assert_eq!(s.doc().unwrap().block("site").unwrap().entities.len(), 2, "the host still shows the xref as it was");
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+
+    // Roots that don't reach the xref's folder: it isn't read for an edit either.
+    let elsewhere = dir.join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("out")).unwrap();
+    let roots = AutomationRoots::new(Some(&elsewhere), Some(&elsewhere.join("out"))).unwrap();
+    let e = confine(roots.as_ref(), || s.execute("refedit", &json!({ "handle": insert }))).unwrap_err().to_string();
+    assert!(s.doc().unwrap().refedit.is_none(), "no edit began: {e}");
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+}
