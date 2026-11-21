@@ -413,3 +413,37 @@ fn thai_text_reads_in_typed_order() {
     assert_eq!(read, "น้ำ", "{map:?}");
     assert_eq!(pdf_read::count(doc.content(), "Tj") + fills(&doc), 4, "no, nikhahit, mai tho and sara aa: {}", doc.content());
 }
+
+/// The text the page reads as, glyph by glyph in content order: a glyph's `/ActualText` when it
+/// has one, else its code through the font's `ToUnicode` map.
+fn read_text(doc: &Doc) -> String {
+    let map = pdf_read::to_unicode_map(doc.pages[0].fonts[0].to_unicode.as_deref().unwrap());
+    let mut out = String::new();
+    for text in doc.content().split("BT").skip(1) {
+        if let Some((_, rest)) = text.split_once("/ActualText<") {
+            let hex = rest.split('>').next().unwrap();
+            let units: Vec<u16> = hex.as_bytes().chunks(4).map(|u| u16::from_str_radix(std::str::from_utf8(u).unwrap(), 16).unwrap()).collect();
+            out.extend(char::decode_utf16(units.into_iter().skip_while(|u| *u == 0xFEFF)).map(Result::unwrap));
+            continue;
+        }
+        for s in pdf_read::shown(text.as_bytes()) {
+            for c in s.chunks(2).map(|c| u32::from(c[0]) << 8 | u32::from(c[1])) {
+                out.push_str(map.iter().find(|(k, _)| *k == c).map_or("?", |(_, s)| s.as_str()));
+            }
+        }
+    }
+    out
+}
+
+/// One glyph shows sara am in น้ำ and sara aa in นา: whichever comes second gets its own
+/// `/ActualText`, so both read right whichever comes first.
+#[test]
+fn a_glyph_shared_by_two_characters_reads_right_in_both() {
+    for words in [["นา", "น้ำ"], ["น้ำ", "นา"]] {
+        let mut d = drawing();
+        text(&mut d, &Space::Model, "Thai", (0.0, 50.0), words[0], (0.0, 1.0, 0.0));
+        text(&mut d, &Space::Model, "Thai", (0.0, 0.0), words[1], (0.0, 1.0, 0.0));
+        let doc = pdf(&d, &Space::Model, json!({}));
+        assert_eq!(read_text(&doc), words.concat(), "{}", doc.content());
+    }
+}
