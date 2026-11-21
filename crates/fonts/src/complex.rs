@@ -253,9 +253,11 @@ const MAX_MATCHED_CLUSTER: usize = 32;
 /// ([`crate::TextGlyph`]). The shaper reorders, splits and substitutes glyphs inside a cluster
 /// (a letter with its marks), so within each cluster a glyph that is a character's own glyph
 /// takes that character first, then the other glyphs take the cluster's remaining characters in
-/// order. Each character is shown once: a glyph left over (the second half of a split Thai sara
-/// am) shows none and is drawn as an outline only; characters left over (a ligature such as ฐ
-/// with sara u below) are all shown by the cluster's last glyph.
+/// order, and characters left over (a ligature such as ฐ with sara u below) are shown by the
+/// glyph before them. Each character is shown once, and the glyphs show the characters in typed
+/// order wherever they can, so text read back in drawing order is the typed text: a split Thai
+/// sara am is drawn as nikhahit, then any tone mark, then sara aa, so in น้ำ the sara aa shows ำ
+/// and the nikhahit, moved before the tone mark, shows none and is drawn as an outline only.
 fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Vec<char>> {
     let mut out: Vec<Vec<char>> = vec![Vec::new(); glyphs.len()];
     let mut i = 0;
@@ -264,27 +266,63 @@ fn glyph_chars(face: &Face, cs: &[char], glyphs: &[Glyph], end: usize) -> Vec<Ve
         // Clusters ascend in a left-to-right run: this one's characters end where the next starts.
         let to = glyphs.get(j).map_or(end, |g| g.cluster).clamp(cluster, end.max(cluster));
         let chars = cs.get(cluster..to).unwrap_or_default();
-        let mut free: Vec<Option<char>> = chars.iter().copied().map(Some).collect();
-        if chars.len() <= MAX_MATCHED_CLUSTER {
-            let ids = face.glyph_ids(chars);
-            for n in i..j {
-                let gid = glyphs.get(n).map(|g| g.gid);
-                let own = ids.iter().zip(&free).position(|(id, f)| f.is_some() && *id == gid);
-                if let (Some(p), Some(o)) = (own, out.get_mut(n)) {
-                    o.extend(free.get_mut(p).and_then(Option::take));
-                }
-            }
-        }
-        let mut rest = free.into_iter().flatten();
-        for o in out.iter_mut().take(j).skip(i).filter(|o| o.is_empty()) {
-            o.extend(rest.next());
-        }
-        if let Some(o) = j.checked_sub(1).and_then(|last| out.get_mut(last)) {
-            o.extend(rest);
+        let ids = if chars.len() <= MAX_MATCHED_CLUSTER { face.glyph_ids(chars) } else { Vec::new() };
+        let gids: Vec<u32> = glyphs.get(i..j).unwrap_or_default().iter().map(|g| g.gid).collect();
+        let shows = cluster_chars(chars, &ids, &gids, true).or_else(|| cluster_chars(chars, &ids, &gids, false)).unwrap_or_default();
+        for (o, s) in out.iter_mut().skip(i).zip(shows) {
+            *o = s;
         }
         i = j;
     }
     out
+}
+
+/// The characters each glyph `gids` of one cluster shows, of the cluster's characters `chars`
+/// with their own glyph ids `ids` (empty: none matched): a glyph that is a character's own glyph
+/// takes that character first, then the other glyphs take the remaining characters in order,
+/// and the cluster's last glyph takes those left over. `typed`: own glyphs are matched in typed
+/// order only and a character with no glyph of its own between them goes with the glyph before
+/// it, so the glyphs show the characters in typed order; `None` when a character comes before
+/// every glyph that shows one (a vowel sign drawn before its consonant).
+fn cluster_chars(chars: &[char], ids: &[Option<u32>], gids: &[u32], typed: bool) -> Option<Vec<Vec<char>>> {
+    let mut taken = vec![false; chars.len()];
+    let mut at: Vec<Vec<usize>> = vec![Vec::new(); gids.len()];
+    let mut from = 0;
+    for (a, gid) in at.iter_mut().zip(gids) {
+        let own = ids.iter().zip(&taken).enumerate().skip(from).find(|(_, (id, t))| !**t && **id == Some(*gid)).map(|(p, _)| p);
+        if let Some(p) = own {
+            a.push(p);
+            taken.get_mut(p).into_iter().for_each(|t| *t = true);
+            from = if typed { p + 1 } else { 0 };
+        }
+    }
+    // The characters before `next` are shown; `last` is the glyph that shows the latest one.
+    let (mut next, mut last): (usize, Option<usize>) = (0, None);
+    for k in 0..at.len() {
+        match at.get(k).and_then(|a| a.first()).copied() {
+            Some(p) if typed => {
+                if next < p {
+                    at.get_mut(last?)?.extend(next..p);
+                }
+                (next, last) = (p + 1, Some(k));
+            }
+            Some(_) => {}
+            None => {
+                while !typed && taken.get(next) == Some(&true) {
+                    next += 1;
+                }
+                if taken.get(next) == Some(&false) {
+                    at.get_mut(k)?.push(next);
+                    (next, last) = (next + 1, Some(k));
+                }
+            }
+        }
+    }
+    let rest: Vec<usize> = (next..chars.len()).filter(|p| taken.get(*p) == Some(&false)).collect();
+    if !rest.is_empty() {
+        at.last_mut()?.extend(rest);
+    }
+    Some(at.into_iter().map(|a| a.into_iter().filter_map(|p| chars.get(p).copied()).collect()).collect())
 }
 
 #[cfg(test)]
@@ -293,6 +331,12 @@ mod tests {
 
     /// A single empty glyph with a positive advance, without relying on installed fonts.
     fn empty_glyph_face() -> Face {
+        mapped_face(&[])
+    }
+
+    /// [`empty_glyph_face`] with a character map: each character to its glyph id (all ids draw
+    /// the one empty glyph).
+    fn mapped_face(map: &[(char, u32)]) -> Face {
         let mut head = vec![0_u8; 54];
         head[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
         head[18..20].copy_from_slice(&1000_u16.to_be_bytes());
@@ -301,7 +345,16 @@ mod tests {
         hhea[4..6].copy_from_slice(&800_i16.to_be_bytes());
         hhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
         hhea[34..36].copy_from_slice(&1_u16.to_be_bytes());
+        let mut cmap = Vec::from([0, 0, 0, 1, 0, 3, 0, 10, 0, 0, 0, 12, 0, 12, 0, 0]); // Format 12 at 12.
+        let len = u32::try_from(16 + 12 * map.len()).unwrap();
+        cmap.extend(len.to_be_bytes().into_iter().chain([0; 4]).chain(u32::try_from(map.len()).unwrap().to_be_bytes()));
+        let mut map = map.to_vec();
+        map.sort_unstable();
+        for (c, gid) in map {
+            cmap.extend([u32::from(c), u32::from(c), gid].into_iter().flat_map(u32::to_be_bytes));
+        }
         let tables = [
+            (*b"cmap", cmap),
             (*b"head", head),
             (*b"hhea", hhea),
             (*b"hmtx", vec![1, 244, 0, 0]),      // Advance 500, left side bearing 0.
@@ -309,7 +362,7 @@ mod tests {
         ];
         let mut bytes = vec![0_u8; 12 + tables.len() * 16];
         bytes[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
-        bytes[4..6].copy_from_slice(&4_u16.to_be_bytes());
+        bytes[4..6].copy_from_slice(&u16::try_from(tables.len()).unwrap().to_be_bytes());
         bytes[6..8].copy_from_slice(&64_u16.to_be_bytes());
         bytes[8..10].copy_from_slice(&2_u16.to_be_bytes());
         for (i, (tag, data)) in tables.into_iter().enumerate() {
@@ -448,6 +501,32 @@ mod tests {
         assert!(needed("ระดับดินเดิม") && needed("ขนาด 50x50 mm.") && needed("\u{0E4C}"));
         assert!(needed("abc سلام"));
         assert!(!needed("50x50 mm.") && !needed("Ünïcödé %%c25") && !needed(""));
+    }
+
+    /// The shaper splits sara am (ำ) into nikhahit and sara aa and draws the nikhahit before a
+    /// tone mark: in drawing order the glyphs still show the typed text, each character on a
+    /// glyph of its own, of its parts or before it (issue #2899). A glyph drawn before the
+    /// character it stands for (a vowel sign before its consonant) keeps its own character: no
+    /// character is moved onto another glyph to keep the order.
+    #[test]
+    fn reordered_glyphs_show_their_cluster_in_typed_order() {
+        let (no, mai_tho, sara_am, nikhahit, sara_aa) = ('\u{0E19}', '\u{0E49}', '\u{0E33}', '\u{0E4D}', '\u{0E32}');
+        let (deva_ka, deva_i) = ('\u{0915}', '\u{093F}');
+        let face = mapped_face(&[(no, 1), (mai_tho, 2), (sara_am, 3), (nikhahit, 4), (sara_aa, 5), (deva_ka, 6), (deva_i, 7)]);
+        let with_gids = |gids: &[u32]| gids.iter().map(|gid| Glyph { gid: *gid, ..glyph(0) }).collect::<Vec<_>>();
+        let cs = [no, mai_tho, sara_am];
+        // What the shaper draws for น้ำ: no, nikhahit, mai tho, sara aa.
+        let shows = glyph_chars(&face, &cs, &with_gids(&[1, 4, 2, 5]), cs.len());
+        assert_eq!(shows.iter().flatten().collect::<String>(), "น้ำ");
+        assert_eq!(shows.get(2), Some(&vec![mai_tho]), "the tone mark's glyph shows the tone mark: {shows:?}");
+        // A sara u drawn into the letter's glyph goes with it, before the tone mark.
+        let cs = [no, '\u{0E38}', mai_tho];
+        let shows = glyph_chars(&face, &cs, &with_gids(&[1, 2]), cs.len());
+        assert_eq!(shows, [vec![no, '\u{0E38}'], vec![mai_tho]]);
+        // Devanagari ki: the vowel sign is drawn first.
+        let cs = [deva_ka, deva_i];
+        let shows = glyph_chars(&face, &cs, &with_gids(&[7, 6]), cs.len());
+        assert_eq!(shows, [vec![deva_i], vec![deva_ka]]);
     }
 
     fn glyph(cluster: usize) -> Glyph {
