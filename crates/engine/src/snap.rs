@@ -390,7 +390,12 @@ pub fn osnap_all_with_frozen(
     deferred: bool,
     frozen: &[String],
 ) -> Vec<SnapHit> {
-    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) || base.is_some_and(|b| !b.is_finite()) {
+    if osmode == 0
+        || osmode & mode::OFF != 0
+        || !cursor.is_finite()
+        || !(aperture.is_finite() && aperture > 0.0)
+        || base.is_some_and(|b| !b.is_finite())
+    {
         return Vec::new();
     }
     let ix = crate::spatial::index(d, space);
@@ -444,7 +449,6 @@ fn collect_in(
     osmode: u32,
     frozen: &[String],
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-
     let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
@@ -816,7 +820,13 @@ struct FromBase {
 ///
 /// [`finish`] takes the object nearest the cursor; of several points on it (an arc's two
 /// antipodes, a circle's two tangents), the one nearest the cursor.
-fn from_base_on_objects(found: &[FromBase], near_prims: &[Prim], cursor: Vec2, aperture: f64, visible: impl Fn(Vec2) -> bool) -> Vec<(SnapHit, Rank, f64)> {
+fn from_base_on_objects(
+    found: &[FromBase],
+    near_prims: &[Prim],
+    cursor: Vec2,
+    aperture: f64,
+    visible: impl Fn(Vec2) -> bool,
+) -> Vec<(SnapHit, Rank, f64)> {
     let mut out = Vec::new();
     if found.is_empty() {
         return out;
