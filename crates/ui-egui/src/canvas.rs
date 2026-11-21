@@ -284,7 +284,7 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     ui.input(|i| {
         for event in &i.raw.events {
             if let egui::Event::MouseWheel { unit, .. } = event {
-                app.canvas.scroll_pans = cfg!(target_os = "macos") && *unit == egui::MouseWheelUnit::Point;
+                app.canvas.scroll_pans = cfg!(target_os = "macos") && *unit == egui::MouseWheelUnit::Point && !app.options.wheel_zoom;
             }
         }
     });

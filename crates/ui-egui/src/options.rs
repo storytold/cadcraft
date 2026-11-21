@@ -155,6 +155,8 @@ pub struct UiOptions {
     pub right_click_command: CommandClick,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
+    /// Mouse wheel always zooms, even on macOS where trackpad scroll would normally pan.
+    pub wheel_zoom: bool,
 }
 
 impl Default for UiOptions {
@@ -170,6 +172,7 @@ impl Default for UiOptions {
             right_click_edit: IdleClick::Menu,
             right_click_command: CommandClick::Menu,
             interface_scale: 1.0,
+            wheel_zoom: false,
         }
     }
 }
@@ -241,6 +244,7 @@ struct UiChanges {
     right_click_edit: Option<IdleClick>,
     right_click_command: Option<CommandClick>,
     interface_scale: Option<f32>,
+    wheel_zoom: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -283,6 +287,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "wheelZoom" => c.wheel_zoom = Some(v.as_bool().ok_or("wheelZoom must be true or false")?),
         "rightClickDuration" => {
             let (lo, hi) = (f64::from(*RIGHT_CLICK_DURATIONS.start()), f64::from(*RIGHT_CLICK_DURATIONS.end()));
             let n =
@@ -335,6 +340,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("ISAVEBAK".into(), json!(i32::from(cadcraft_engine::autosave::isavebak())));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    m.insert("wheelZoom".into(), json!(o.wheel_zoom));
     m.insert("rightClickDuration".into(), json!(o.right_click_hold_ms));
     m.insert("rightClickDefault".into(), json!(o.right_click_default.as_str()));
     m.insert("rightClickEdit".into(), json!(o.right_click_edit.as_str()));
@@ -415,6 +421,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    if let Some(b) = ui.wheel_zoom {
+        app.options.wheel_zoom = b;
+    }
     apply_right_click(&mut app.options, &ui);
     Ok(report(app))
 }
@@ -485,6 +494,7 @@ impl CadApp {
             "rightClickEdit": self.options.right_click_edit.as_str(),
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
+            "wheelZoom": self.options.wheel_zoom,
         })
         .to_string()
     }
@@ -517,6 +527,7 @@ impl CadApp {
             "rightClickEdit",
             "rightClickCommand",
             "interfaceScale",
+            "wheelZoom",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -544,6 +555,9 @@ impl CadApp {
         apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
+        }
+        if let Some(b) = c.wheel_zoom {
+            self.options.wheel_zoom = b;
         }
     }
 }

@@ -578,6 +578,12 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if right_click {
         right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
     }
+    ui.add_space(6.0);
+    let mut wheel_zoom = app.options.wheel_zoom;
+    if ui.checkbox(&mut wheel_zoom, crate::tl!("Mouse wheel zooms (instead of scrolling)")).changed() {
+        changes.insert("wheelZoom".into(), json!(wheel_zoom));
+    }
+    hint(ui, crate::tl!("By default on macOS, trackpad and Magic Mouse scrolling pans the drawing. Enable this to make the wheel always zoom."));
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
 }
 
