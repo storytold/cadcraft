@@ -38,6 +38,7 @@ fn dwg_active_layout(dwg: &[u8]) -> String {
 
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 fn dwg(d: &Drawing) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
     write_with(d, "case.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap()
 }
 
