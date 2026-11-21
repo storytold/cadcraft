@@ -775,3 +775,20 @@ fn dimension_associations_the_write_back_drops_are_reported() {
     assert_eq!(associative_dimensions(&back), 0, "{:?}", back.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
     assert_eq!(associative_dimensions(&read(&dir.join("dims.dxf.bak"))), 1, "the backup keeps them");
 }
+
+/// Review of #2355 (follow-up): a nested reference is offered only when the reference with
+/// everything above it can be opened. Each of two uniform scales of 0.0001 is fine alone, but
+/// together they flatten the inner block past what REFEDIT opens, so it isn't offered.
+#[test]
+fn a_nested_reference_too_small_with_its_parents_is_not_offered() {
+    let mut s = Session::new();
+    let c = hx(s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap());
+    s.execute("block", &json!({ "name": "Leaf", "base": [0, 0], "handles": [c], "keep": "delete" })).unwrap();
+    let tiny = hx(s.execute("insert", &json!({ "name": "Leaf", "at": [0, 0], "scale": 0.0001 })).unwrap());
+    let l = hx(s.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap());
+    s.execute("block", &json!({ "name": "Holder", "base": [0, 0], "handles": [tiny, l], "keep": "delete" })).unwrap();
+    let o = hx(s.execute("insert", &json!({ "name": "Holder", "at": [0, 0], "scale": 0.0001 })).unwrap());
+    let levels = s.execute("refedit.levels", &json!({ "handle": o })).unwrap();
+    let names: Vec<&str> = levels["levels"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Holder"], "{levels}");
+}

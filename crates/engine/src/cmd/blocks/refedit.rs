@@ -149,8 +149,10 @@ fn levels(d: &Drawing, ins: &cadcraft_doc::Insert, path: &[Handle]) -> Result<Ve
     Ok(out)
 }
 
-/// The references nested in block `name` (depth first): (path of handles, block name).
-fn nested(d: &Drawing, name: &str, path: &mut Vec<Handle>, out: &mut Vec<(Vec<Handle>, String)>) {
+/// The references nested in block `name` (depth first): (path of handles, block name). `m` is how
+/// the block shows in the drawing: a reference is checked with everything above it, as [`levels`]
+/// checks it.
+fn nested(d: &Drawing, name: &str, m: &Mat3, path: &mut Vec<Handle>, out: &mut Vec<(Vec<Handle>, String)>) {
     if path.len() + 1 >= cadcraft_doc::MAX_BLOCK_DEPTH || out.len() >= MAX_LEVELS {
         return;
     }
@@ -160,13 +162,14 @@ fn nested(d: &Drawing, name: &str, path: &mut Vec<Handle>, out: &mut Vec<(Vec<Ha
         // Generated geometry (dimensions, arrays) is not offered, nor a reference `levels` would
         // refuse (scaled differently in X and Y, flat): nothing below it can be edited either.
         let Some(c) = d.block(&i.block) else { continue };
-        let editable = editable_transform(&i.transform(c.base.xy()), i.scale.x, i.scale.y);
+        let cm = m.then_before(i.transform(c.base.xy()));
+        let editable = editable_transform(&cm, i.scale.x, i.scale.y);
         if i.block.starts_with('*') || c.array.is_some() || out.len() >= MAX_LEVELS || !editable {
             continue;
         }
         path.push(e.handle);
         out.push((path.clone(), i.block.clone()));
-        nested(d, &i.block, path, out);
+        nested(d, &i.block, &cm, path, out);
         path.pop();
     }
 }
@@ -175,7 +178,8 @@ fn nested(d: &Drawing, name: &str, path: &mut Vec<Handle>, out: &mut Vec<(Vec<Ha
 fn level_list(d: &Drawing, ih: Handle) -> Result<Vec<(Vec<Handle>, String)>> {
     let Some(EntityKind::Insert(ins)) = d.entity(ih).map(|e| &e.kind) else { return Err(bad("refedit", "select a block reference")) };
     let mut out = vec![(Vec::new(), ins.block.clone())];
-    nested(d, &ins.block, &mut Vec::new(), &mut out);
+    let m = d.block(&ins.block).map_or(Mat3::IDENTITY, |b| ins.transform(b.base.xy()));
+    nested(d, &ins.block, &m, &mut Vec::new(), &mut out);
     Ok(out)
 }
 
