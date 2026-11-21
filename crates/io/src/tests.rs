@@ -2683,6 +2683,84 @@ fn mirrored_2d_polyline_extrusion_flips_x_and_bulge() {
     assert_eq!(got, vec![(-1.0, 0.0, -1.0), (-3.0, 0.0, 0.0)]);
 }
 
+/// Objects whose normal is 0,0,-1, at OCS height 5 and most of them 2 thick, keep their world height
+/// and the side they extrude to through a save. They are written with no normal (along Z), so an
+/// elevation or a thickness written as read put a polyline or a hatch at Z +5 instead of -5, and
+/// extruded a circle, point, solid or text up instead of down (AutoCAD 2024 opening the saved file,
+/// measured). A line writes its normal, and keeps its thickness as read. The same objects facing up
+/// (no normal, and 0,0,1) keep +5 and +2: only a normal pointing down Z changes the sign.
+#[test]
+fn mirrored_objects_keep_their_world_height_and_thickness_side() {
+    let records = |normal: &str| {
+        format!(
+            "0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n5\n39\n2\n{normal}10\n0\n20\n0\n42\n0.5\n10\n-10\n20\n0\n\
+             0\nPOLYLINE\n8\n0\n66\n1\n70\n0\n10\n0\n20\n0\n30\n5\n{normal}0\nVERTEX\n8\n0\n10\n0\n20\n10\n0\nVERTEX\n8\n0\n10\n-10\n20\n10\n0\nSEQEND\n\
+             0\nCIRCLE\n8\n0\n10\n-10\n20\n5\n30\n5\n40\n5\n39\n2\n{normal}\
+             0\nARC\n8\n0\n10\n-30\n20\n5\n30\n5\n40\n5\n50\n180\n51\n270\n{normal}\
+             0\nPOINT\n8\n0\n10\n-40\n20\n0\n30\n5\n39\n2\n{normal}\
+             0\nSOLID\n8\n0\n10\n50\n20\n0\n30\n5\n11\n60\n21\n0\n31\n5\n12\n50\n22\n5\n32\n5\n13\n60\n23\n5\n33\n5\n39\n2\n{normal}\
+             0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n5\n{normal}2\nSOLID\n70\n1\n71\n0\n91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n\
+             10\n70\n20\n0\n10\n80\n20\n0\n10\n80\n20\n5\n10\n70\n20\n5\n97\n0\n75\n0\n76\n1\n98\n0\n\
+             0\nTEXT\n8\n0\n10\n-90\n20\n0\n30\n5\n40\n2\n1\nA\n39\n2\n{normal}\
+             0\nLINE\n8\n0\n39\n2\n10\n0\n20\n20\n30\n3\n11\n10\n21\n20\n31\n3\n{normal}"
+        )
+    };
+    let (down, up) = ("210\n0\n220\n0\n230\n-1\n", "210\n0\n220\n0\n230\n1\n");
+    let text = format!("0\nSECTION\n2\nENTITIES\n{}{}{}0\nENDSEC\n0\nEOF\n", records(down), records(""), records(up));
+    // Each object's kind, world height and thickness along world Z.
+    let place = |d: &Drawing| -> Vec<(&'static str, f64, f64)> {
+        d.model
+            .iter()
+            .map(|e| {
+                let n = e.common.extrusion.z.signum();
+                let (kind, z) = match &e.kind {
+                    EntityKind::LwPolyline(p) => ("polyline", n * p.elevation),
+                    EntityKind::Circle(c) => ("circle", c.center.z),
+                    EntityKind::Arc(a) => ("arc", a.center.z),
+                    EntityKind::Point(p) => ("point", p.p.z),
+                    EntityKind::Solid(s) => ("solid", s.corners[0].z),
+                    EntityKind::Hatch(h) => ("hatch", n * h.elevation),
+                    EntityKind::Text(t) => ("text", t.insert.z),
+                    EntityKind::Line(l) => ("line", l.a.z),
+                    _ => ("other", f64::NAN),
+                };
+                (kind, z, n * e.common.thickness)
+            })
+            .collect()
+    };
+    let d = read(text.as_bytes(), "m.dxf").unwrap();
+    let mut want = vec![
+        ("polyline", -5.0, -2.0),
+        ("polyline", -5.0, 0.0),
+        ("circle", -5.0, -2.0),
+        ("arc", -5.0, 0.0),
+        ("point", 5.0, -2.0),
+        ("solid", -5.0, -2.0),
+        ("hatch", -5.0, 0.0),
+        ("text", -5.0, -2.0),
+        ("line", 3.0, -2.0),
+    ];
+    let facing_up = [
+        ("polyline", 5.0, 2.0),
+        ("polyline", 5.0, 0.0),
+        ("circle", 5.0, 2.0),
+        ("arc", 5.0, 0.0),
+        ("point", 5.0, 2.0),
+        ("solid", 5.0, 2.0),
+        ("hatch", 5.0, 0.0),
+        ("text", 5.0, 2.0),
+        ("line", 3.0, 2.0),
+    ];
+    want.extend(facing_up);
+    want.extend(facing_up);
+    assert_eq!(place(&d), want, "as read");
+    let out = write(&d, "m.dxf").unwrap();
+    assert_eq!(place(&read(&out, "m.dxf").unwrap()), want, "after a save");
+    let pairs = dxf_pairs(std::str::from_utf8(&out).unwrap());
+    let lines: Vec<_> = dxf_records(&pairs, "LINE").into_iter().map(|l| (group(l, "39"), group(l, "230"))).collect();
+    assert_eq!(lines, [(Some("2.0"), Some("-1.0")), (Some("2.0"), None), (Some("2.0"), None)]);
+}
+
 #[test]
 fn mirrored_hatch_extrusion_flips_boundary() {
     // HATCH boundaries are OCS: the square (1,0)..(3,2) under extrusion (0,0,-1) lies at (-3,0)..(-1,2).
@@ -2725,6 +2803,20 @@ fn tilted_hatch_turns_its_gradient() {
     let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
     let g = h.gradient.expect("a gradient");
     assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
+}
+
+/// A tilted polyline with a thickness, its normal pointing partly down Z, still extrudes toward -Z
+/// once it is drawn as seen from above and saved with no normal.
+#[test]
+fn tilted_thick_polyline_keeps_its_extrusion_side() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n39\n5\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n10\n3\n20\n2\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let e = d.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z));
+    let back = roundtrip(&d);
+    let e = back.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z), "saved with no normal, it still extrudes toward -Z");
 }
 
 /// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
@@ -2839,6 +2931,57 @@ fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
     let plain = read(circle("").as_bytes(), "p.dxf").unwrap();
     let p = first(&plain, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
     assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
+}
+
+/// A 2D POLYLINE (heavy polyline) in a tilted plane is drawn as seen from above, like a
+/// LWPOLYLINE: before, its OCS points were taken for world coordinates. With extrusion
+/// (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and y = (0, √3/2, 1/2), and the elevation of 2
+/// moves the plane by twice the normal, (0, 1, -√3): the square (1,0)..(3,2) lies over
+/// (-3,1)..(-1,1+√3), its corners at a mean height of 1/2 - √3.
+#[test]
+fn tilted_2d_polyline_is_drawn_as_seen_from_above() {
+    let square = |n: &str| {
+        format!(
+            "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n2\n70\n1\n{n}\
+             0\nVERTEX\n8\n0\n10\n1\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n0\n0\nVERTEX\n8\n0\n10\n3\n20\n2\n\
+             0\nVERTEX\n8\n0\n10\n1\n20\n2\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let d = read(square("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let r3 = 3f64.sqrt();
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 1.0), (b.max.x, -1.0), (b.max.y, 1.0 + r3)] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::LwPolyline(p) = &e.kind else { panic!("not a polyline") };
+    assert!((p.elevation - (0.5 - r3)).abs() < 1e-9, "the mean height of its corners: {}", p.elevation);
+    // In plan and in the mirrored plane the polyline stays as it was: mirrored only in x.
+    let plain = read(square("").as_bytes(), "p.dxf").unwrap();
+    let b = plain.extents(&Space::Model);
+    assert!((b.min.x - 1.0).abs() < 1e-9 && (b.max.y - 2.0).abs() < 1e-9, "extents {b:?}");
+    let mirrored = read(square("210\n0\n220\n0\n230\n-1\n").as_bytes(), "p.dxf").unwrap();
+    let b = mirrored.extents(&Space::Model);
+    assert!((b.min.x + 3.0).abs() < 1e-9 && (b.max.x + 1.0).abs() < 1e-9, "extents {b:?}");
+    assert_eq!(mirrored.model.iter().next().unwrap().common.extrusion, Vec3::new(0.0, 0.0, -1.0));
+}
+
+/// A tilted 2D POLYLINE with an arc keeps its shape as seen from above: the half circle from
+/// (0,0) to (2,0) is flattened into its half ellipse, in plan x from -2 to 0 and reaching √3/2.
+#[test]
+fn tilted_2d_polyline_arc_is_flattened() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                0\nVERTEX\n8\n0\n10\n0\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n2\n20\n0\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let b = d.extents(&Space::Model);
+    // Bulge 1 turns counter-clockwise from (0,0) to (2,0), so the arc runs below its chord, down
+    // to OCS y -1: plan y -√3/2.
+    for (got, want) in [(b.min.x, -2.0), (b.max.x, 0.0), (b.min.y, -(3f64.sqrt()) / 2.0), (b.max.y, 0.0)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
 }
 
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
@@ -3552,6 +3695,44 @@ fn drawing_without_insunits_stays_unitless() {
     assert_eq!(insunits(&write_dxf(&Drawing::new_imperial())), Some("1".into()));
 }
 
+/// Constraint groups with hostile node counts, truncated nodes and a registry that doesn't match
+/// the nodes are left as they are; nothing panics or loops for long.
+#[test]
+fn hostile_constraint_groups_never_panic() {
+    use craft_dxf::Tag;
+    let group = |rest: &[(i32, &str)]| {
+        let mut t = vec![Tag::s(0, "ACDBASSOC2DCONSTRAINTGROUP"), Tag::s(100, "AcDbAssoc2dConstraintGroup"), Tag::s(360, "0"), Tag::s(90, "0")];
+        t.extend(rest.iter().map(|(c, v)| Tag::s(*c, *v)));
+        t
+    };
+    let many: Vec<(i32, &str)> = std::iter::repeat_n((90, "1"), 200_000).collect();
+    let cases: Vec<Vec<Tag>> = vec![
+        group(&[]),
+        group(&[(90, "3"), (90, "0"), (90, "99999999999"), (290, "0")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "-5")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "100000"), (1, "AcFixedConstraint"), (90, "1")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "1"), (1, "AcFixedConstraint"), (90, "1"), (90, "1"), (90, "4")]),
+        group(
+            &[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "1"), (1, "AcFixedConstraint"), (90, "1")]
+                .iter()
+                .copied()
+                .chain(many)
+                .collect::<Vec<_>>(),
+        ),
+        vec![Tag::s(0, "ACDBASSOC2DCONSTRAINTGROUP")],
+    ];
+    // Each group's content (code, value), unchanged after each mode: a rotation keeps the
+    // length, and a second mode could rotate it back.
+    let pairs = |t: &[Tag]| t.iter().map(|x| (x.code, x.str())).collect::<Vec<_>>();
+    for mut tags in cases {
+        let before = pairs(&tags);
+        for modern in [false, true] {
+            crate::dxf_raw::constraint_node_order(&mut tags, modern);
+            assert_eq!(pairs(&tags), before, "modern: {modern}");
+        }
+    }
+}
+
 #[test]
 fn pdf_clips_a_primitive_beyond_the_coordinate_range() {
     let mut d = Drawing::new_metric();
@@ -3709,6 +3890,144 @@ fn proxy_file() -> Vec<u8> {
         ],
     );
     pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+}
+
+/// #3229: a file with a proxy object in the 2010 layout (as the DWG bridge brings it from a 2010
+/// DWG), with its class and a dictionary entry.
+/// A 2010 DXF with one proxy object (dictionary entry WIDGETS) whose string stream is `strings`
+/// long (group 162).
+fn proxy_2010_file(strings: &str) -> Vec<u8> {
+    let text = String::from_utf8(write(&Drawing::new_metric(), "p.dxf").unwrap()).unwrap();
+    let mut pairs = dxf_pairs(&text);
+    let p = |c: &str, v: &str| (c.to_string(), v.to_string());
+    let classes = pairs.iter().position(|q| q.0 == "2" && q.1 == "CLASSES").unwrap() + 1;
+    pairs.splice(
+        classes..classes,
+        [p("0", "CLASS"), p("1", "WIDGETX"), p("2", "AcDbWidgetX"), p("3", "ObjectDBX Classes"), p("90", "4095"), p("280", "1"), p("281", "0")],
+    );
+    let objects = pairs.iter().position(|q| q.0 == "2" && q.1 == "OBJECTS").unwrap();
+    let nod = objects + 1;
+    let after = nod + pairs[nod..].iter().position(|q| q.0 == "281").unwrap() + 1;
+    pairs.splice(after..after, [p("3", "WIDGETS"), p("350", "AAA1")]);
+    let nod_handle = pairs[nod + 1].1.clone();
+    let proxy = [
+        p("0", "ACAD_PROXY_OBJECT"),
+        p("5", "AAA1"),
+        p("330", &nod_handle),
+        p("100", "AcDbProxyObject"),
+        p("90", "499"),
+        p("91", "500"),
+        p("95", "393245"),
+        p("70", "0"),
+        p("162", strings),
+        p("161", "303"),
+        p("310", "00FF"),
+        p("94", "0"),
+    ];
+    let end = objects + pairs[objects..].iter().position(|q| q.0 == "0" && q.1 == "ENDSEC").unwrap();
+    pairs.splice(end..end, proxy);
+    pairs.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes()
+}
+
+#[test]
+fn proxies_take_the_layout_of_the_version_written() {
+    let d = read(&proxy_2010_file("0"), "p.dxf").unwrap();
+    let own = |version: Version| {
+        let text = String::from_utf8(write_with(&d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        let pairs = dxf_pairs(&text);
+        let recs = dxf_records(&pairs, "ACAD_PROXY_OBJECT");
+        let r = recs.first().expect("the proxy is kept");
+        r.iter().skip_while(|q| q.1 != "AcDbProxyObject").skip(1).map(|q| q.0.clone()).collect::<Vec<_>>().join(" ")
+    };
+    // R2000: no 161/162 (ODA and BricsCAD refused the file), the data size is 93.
+    assert_eq!(own(Version::R2000), "90 91 95 70 93 310 94");
+    assert_eq!(own(Version::R2007), "90 91 95 70 96 93 310 94");
+    assert_eq!(own(Version::R2010), "90 91 95 70 162 161 310 94");
+    assert_eq!(own(Version::R2018), "90 91 71 97 70 162 161 310 94");
+}
+
+#[test]
+fn a_proxy_with_a_string_stream_is_left_out_before_2007() {
+    // Before 2007 a proxy's strings are part of its data: a separate stream has no form there.
+    // The proxy and its dictionary entry are left out rather than written with half its data.
+    let d = read(&proxy_2010_file("10"), "p.dxf").unwrap();
+    assert_eq!(cadcraft_doc::foreign::proxies_dropped_before_2007(&d), [("ACAD_PROXY_OBJECT".to_string(), 1)].into_iter().collect());
+    let pairs = |version: Version| {
+        let text = String::from_utf8(write_with(&d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        dxf_pairs(&text)
+    };
+    let entry = |p: &[(String, String)]| p.iter().any(|q| q.0 == "3" && q.1 == "WIDGETS");
+    for version in [Version::R2000, Version::R2004] {
+        let p = pairs(version);
+        assert!(dxf_records(&p, "ACAD_PROXY_OBJECT").is_empty(), "{version:?}");
+        assert!(!entry(&p), "{version:?}: the dictionary entry goes with it");
+    }
+    // From 2007 it is kept, with its string stream and its dictionary entry.
+    let p = pairs(Version::R2007);
+    let recs = dxf_records(&p, "ACAD_PROXY_OBJECT");
+    assert_eq!(recs.first().and_then(|r| group(r, "96")), Some("10"));
+    assert!(entry(&p));
+}
+
+/// #3229 review: the loss a DXF before 2007 reports is what the writer leaves out for the string
+/// stream alone. A proxy no version writes (its class number names no class) is not counted, and
+/// the objects a dropped proxy owns (its extension dictionary and the XRECORD in it) are.
+#[test]
+fn proxies_lost_counts_what_the_string_stream_takes_with_it() {
+    let lost = |d: &Drawing, v| crate::proxies_lost(d, v);
+    // The records of the file written at `version` (the file gives kept objects new handles).
+    let written = |d: &Drawing, version: Version| {
+        let text = String::from_utf8(write_with(d, "out.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap()).unwrap();
+        dxf_pairs(&text)
+    };
+    // Its class isn't written: every version leaves it out, so 2007 would not keep it either.
+    let text = String::from_utf8(proxy_2010_file("10")).unwrap();
+    assert_eq!(text.matches("\n91\n500\n").count(), 1, "the proxy's class number");
+    let orphan = read(text.replacen("\n91\n500\n", "\n91\n777\n", 1).as_bytes(), "p.dxf").unwrap();
+    assert!(!cadcraft_doc::foreign::proxies_dropped_before_2007(&orphan).is_empty(), "the proxy itself is counted");
+    assert!(dxf_records(&written(&orphan, Version::R2007), "ACAD_PROXY_OBJECT").is_empty(), "no version writes it");
+    assert_eq!(lost(&orphan, Version::R2000), std::collections::BTreeMap::new());
+    // With an extension dictionary holding an XRECORD: all three go before 2007.
+    let mut p = dxf_pairs(&text);
+    let at = p.iter().position(|q| q.0 == "5" && q.1 == "AAA1").unwrap() + 1;
+    let g = |c: &str, v: &str| (c.to_string(), v.to_string());
+    p.splice(at..at, [g("102", "{ACAD_XDICTIONARY"), g("360", "BBB1"), g("102", "}")]);
+    // The proxy is the last object: its owned objects go after it.
+    let objects_end = at + p[at..].iter().position(|q| q.0 == "0" && q.1 == "ENDSEC").unwrap();
+    p.splice(
+        objects_end..objects_end,
+        [
+            g("0", "DICTIONARY"),
+            g("5", "BBB1"),
+            g("330", "AAA1"),
+            g("100", "AcDbDictionary"),
+            g("280", "1"),
+            g("281", "1"),
+            g("3", "WIDGETDATA"),
+            g("350", "CCC1"),
+            g("0", "XRECORD"),
+            g("5", "CCC1"),
+            g("330", "BBB1"),
+            g("100", "AcDbXrecord"),
+            g("280", "1"),
+            g("1", "kept with the widget"),
+        ],
+    );
+    let bytes: Vec<u8> = p.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect::<String>().into_bytes();
+    let d = read(&bytes, "p.dxf").unwrap();
+    let held = |version| {
+        let p = written(&d, version);
+        let xrecord = dxf_records(&p, "XRECORD").iter().any(|r| group(r, "1") == Some("kept with the widget"));
+        let dictionary = p.iter().any(|q| q.0 == "3" && q.1 == "WIDGETDATA");
+        (dxf_records(&p, "ACAD_PROXY_OBJECT").len(), dictionary, xrecord)
+    };
+    assert_eq!(held(Version::R2007), (1, true, true), "2007 keeps all three");
+    assert_eq!(held(Version::R2000), (0, false, false), "R2000 keeps none");
+    let want: std::collections::BTreeMap<String, usize> =
+        [("ACAD_PROXY_OBJECT", 1), ("DICTIONARY", 1), ("XRECORD", 1)].into_iter().map(|(k, n)| (k.to_string(), n)).collect();
+    assert_eq!(lost(&d, Version::R2000), want);
+    assert_eq!(lost(&d, Version::R2004), want);
+    assert_eq!(lost(&d, Version::R2007), std::collections::BTreeMap::new());
 }
 
 #[test]
@@ -3870,20 +4189,40 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }
 
-/// A SOLID hatch keeps its angle (52), scale (41) and double flag (77) through a save: the writer
-/// wrote them for pattern fills only.
+/// A solid or gradient HATCH goes from its pattern type (76) straight to its seed points (98), as
+/// AutoCAD 2024 writes it, even one read with an angle, scale and double flag: AutoCAD 2024 refuses
+/// a file whose solid HATCH has any of 52, 41 or 77 there ("Error: expected group code 98", the
+/// whole drawing discarded; measured). A pattern fill keeps all three.
 #[test]
-fn solid_hatch_keeps_angle_scale_and_double_flag() {
+fn solid_and_gradient_hatches_have_no_pattern_groups() {
     let src = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n5\n40\n8\n0\n100\nAcDbHatch\n10\n0\n20\n0\n30\n0\n2\nSOLID\n70\n1\n71\n0\n\
 91\n1\n92\n2\n72\n0\n73\n1\n93\n4\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n97\n0\n\
 75\n0\n76\n1\n52\n30\n41\n2\n77\n0\n98\n0\n0\nENDSEC\n0\nEOF\n";
-    let out = write_dxf(&read_dxf(src.as_bytes()).unwrap());
+    let (mut d, _) = gradient_sample();
+    for e in read_dxf(src.as_bytes()).unwrap().model.iter() {
+        d.add(&Space::Model, e.common.clone(), e.kind.clone()).unwrap();
+    }
+    let mut pattern = hatches(&d)[0].clone();
+    (pattern.pattern, pattern.solid, pattern.gradient, pattern.angle, pattern.scale) = ("ANSI31".into(), false, None, 30f64.to_radians(), 2.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(pattern)).unwrap();
+    let out = write_dxf(&d);
     let pairs = dxf_pairs(&out);
-    let h = dxf_records(&pairs, "HATCH")[0];
+    let records = dxf_records(&pairs, "HATCH");
+    let (solid, pattern): (Vec<&[(String, String)]>, Vec<_>) = records.into_iter().partition(|h| group(h, "70") == Some("1"));
+    assert_eq!((solid.len(), pattern.len()), (4, 1), "three from the sample, one read");
+    for h in solid {
+        let after = h.iter().position(|p| p.0 == "76").and_then(|k| h.get(k + 1)).map(|p| p.0.as_str());
+        assert_eq!(after, Some("98"), "{h:?}");
+        for code in ["52", "41", "77", "78"] {
+            assert_eq!(group(h, code), None, "group {code}: {h:?}");
+        }
+    }
+    let h = pattern[0];
     let f = |code: &str| group(h, code).and_then(|v| v.parse::<f64>().ok());
     assert!(f("52").is_some_and(|a| (a - 30.0).abs() < 1e-9), "{h:?}");
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
+    assert!(group(h, "78").is_some(), "{h:?}");
 }
 
 /// A layer state of CADCraft's own record from before states had a mask, a current layer and a

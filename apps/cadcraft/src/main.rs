@@ -213,6 +213,8 @@ pub fn install_io() {
         let picked = if flags & 1 != 0 { d.save_file() } else { d.pick_file() };
         picked.map(|p| p.to_string_lossy().into_owned())
     });
+    // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
+    cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
 }
 
 /// Build host file-picker and on-demand control services for the desktop UI.
