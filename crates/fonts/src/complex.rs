@@ -477,6 +477,18 @@ mod tests {
         ttf::fallback_for('\u{0E01}').filter(|f| ['\u{0E14}', '\u{0E34}', '\u{0E4C}', '\u{0E33}', '\u{0E10}'].iter().all(|c| f.has_glyph(*c)))
     }
 
+    /// A Thai face's letters are measured in ems: ก has neither ascender nor descender, ไ rises
+    /// above it, and a space or an unmapped character has no height.
+    #[test]
+    fn thai_glyph_heights_are_measured_in_ems() {
+        let Some(face) = thai_face() else { return };
+        let ko = face.glyph_height('ก').unwrap_or_default();
+        assert!((0.2..1.0).contains(&ko), "ก is {ko} em");
+        assert!(face.glyph_height('ไ').is_some_and(|h| h > ko), "ไ is taller than ก");
+        assert_eq!(face.glyph_height(' '), None);
+        assert_eq!(face.glyph_height('\u{10fffd}'), None);
+    }
+
     /// Lowest point of the glyph that shows `c`.
     fn bottom_of(sh: &Shaped, c: char) -> Option<f64> {
         let t = sh.text.iter().find(|t| t.ch == c)?;

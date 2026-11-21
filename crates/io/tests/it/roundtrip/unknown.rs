@@ -69,6 +69,7 @@ fn dxf_owner(bytes: &[u8]) {
 }
 
 pub(super) fn check(path: &str, version: Version, binary: bool) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let original = drawing();
     let mut current = original.clone();
     for pass in 1..=2 {

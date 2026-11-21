@@ -327,12 +327,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
     {
-        for path in system_ui_candidates() {
+        for path in installed(system_ui_candidates()) {
             // A Vietnamese interface takes the first one with its letters.
-            if language == "vi" && vietnamese_font() != Some(std::path::Path::new(path)) {
+            if language == "vi" && vietnamese_font() != Some(path.as_path()) {
                 continue;
             }
-            if let Ok(bytes) = std::fs::read(path) {
+            if let Some(bytes) = read_capped(&path, MAX_UI_FONT_BYTES) {
                 fonts.font_data.insert("system-ui".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
                     f.insert(0, "system-ui".into());
@@ -420,16 +420,16 @@ fn system_ui_candidates() -> &'static [&'static str] {
     }
 }
 
-/// The first of `candidates` that is `installed` and, for the Vietnamese interface, has the
-/// Vietnamese letters: the system interface font [`install_fonts`] loads ahead of egui's faces.
+/// The first of the `installed` interface fonts (see [`installed`]: the candidates' own paths,
+/// then the same files found elsewhere) that, for the Vietnamese interface, has the Vietnamese
+/// letters: the system interface font [`install_fonts`] loads ahead of egui's faces.
 #[cfg(not(target_arch = "wasm32"))]
-fn ui_font_choice<'a>(
-    candidates: &[&'a str],
+fn ui_font_choice(
+    installed: impl IntoIterator<Item = std::path::PathBuf>,
     vietnamese: bool,
-    installed: impl Fn(&str) -> bool,
-    has_vietnamese: impl Fn(&str) -> bool,
-) -> Option<&'a str> {
-    candidates.iter().copied().find(|p| installed(p) && (!vietnamese || has_vietnamese(p)))
+    has_vietnamese: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    installed.into_iter().find(|p| !vietnamese || has_vietnamese(p))
 }
 
 /// Whether `face` has every letter Vietnamese adds to Latin: the tone-marked vowels of Latin
@@ -439,8 +439,8 @@ fn covers_vietnamese(face: &cadcraft_fonts::ttf::Face) -> bool {
     ('\u{1ea0}'..='\u{1ef9}').chain(['ơ', 'Ơ', 'ư', 'Ư', 'đ', 'Đ']).all(|c| face.has_glyph(c))
 }
 
-/// The system interface font the Vietnamese interface takes: the first of
-/// [`system_ui_candidates`] whose first face (the one egui uses) has every Vietnamese letter.
+/// The system interface font the Vietnamese interface takes: the first installed one of
+/// [`system_ui_candidates`] (where [`install_fonts`] looks, its usual path or elsewhere) whose first face (the one egui uses) has every Vietnamese letter.
 /// Segoe UI, Arial, SF, DejaVu Sans and Noto Sans do; egui's bundled faces stop at Latin
 /// Extended-A, so without one the interface stays English (as the web build does). Checked once.
 pub fn vietnamese_font() -> Option<&'static std::path::Path> {
@@ -449,12 +449,12 @@ pub fn vietnamese_font() -> Option<&'static std::path::Path> {
         static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
         FOUND
             .get_or_init(|| {
-                let has_vietnamese = |p: &str| {
-                    read_capped(std::path::Path::new(p), MAX_UI_FONT_BYTES)
+                let has_vietnamese = |p: &std::path::Path| {
+                    read_capped(p, MAX_UI_FONT_BYTES)
                         .and_then(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).into_iter().next())
                         .is_some_and(|face| covers_vietnamese(&face))
                 };
-                ui_font_choice(system_ui_candidates(), true, |p| std::path::Path::new(p).is_file(), has_vietnamese).map(std::path::PathBuf::from)
+                ui_font_choice(installed(system_ui_candidates()), true, has_vietnamese)
             })
             .as_deref()
     }
@@ -468,8 +468,8 @@ pub fn vietnamese_font() -> Option<&'static std::path::Path> {
 pub fn shows_vietnamese(language: &str) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let loaded = || ui_font_choice(system_ui_candidates(), false, |p| std::path::Path::new(p).is_file(), |_| true);
-        vietnamese_font().is_some_and(|v| language == "vi" || loaded().is_some_and(|p| std::path::Path::new(p) == v))
+        let loaded = || ui_font_choice(installed(system_ui_candidates()), false, |_| true);
+        vietnamese_font().is_some_and(|v| language == "vi" || loaded().is_some_and(|p| p == v))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -502,6 +502,20 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
 /// Largest interface font file read or embedded face copied (CJK collections are 15–60 MB).
 const MAX_UI_FONT_BYTES: u64 = 96 * 1024 * 1024;
 
+/// Whether `path` is a font file [`read_capped`] can take: it opens and holds 1 byte to
+/// [`MAX_UI_FONT_BYTES`]. The font finders keep the first candidate that passes, so an empty,
+/// oversized or unreadable one doesn't hide the readable ones after it.
+#[cfg(not(target_arch = "wasm32"))]
+fn openable(path: &std::path::Path) -> bool {
+    std::fs::File::open(path).and_then(|f| f.metadata()).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_UI_FONT_BYTES)
+}
+
+/// The first of `candidates` ([`installed`]) that is [`openable`].
+#[cfg(not(target_arch = "wasm32"))]
+fn first_font(candidates: &[&str]) -> Option<std::path::PathBuf> {
+    installed(candidates).find(|p| openable(p))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
     use std::io::Read as _;
@@ -514,6 +528,28 @@ fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut bytes).ok()?;
     (!bytes.is_empty() && bytes.len() as u64 <= max).then_some(bytes)
+}
+
+/// The files among `candidates` this system has: those at their absolute paths (where the OS or
+/// common packages put fonts), then the files with the same stems wherever the system keeps its
+/// fonts (NixOS, Guix and Flatpak keep them outside /usr/share/fonts; the fonts crate looks where
+/// fontconfig does, #674).
+#[cfg(not(target_arch = "wasm32"))]
+fn installed<'a>(candidates: &'a [&'a str]) -> impl Iterator<Item = std::path::PathBuf> + 'a {
+    // The usual places first: the font database is only asked when a caller needs more than they
+    // hold, because its first use walks every font directory on the machine.
+    let direct = candidates.iter().map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let by_stem =
+        candidates.iter().filter_map(|c| std::path::Path::new(c).file_stem()?.to_str()).filter_map(cadcraft_fonts::ttf::installed_font_path).filter(
+            move |p| {
+                !candidates.iter().any(|c| std::path::Path::new(c) == p) && !seen.contains(p) && {
+                    seen.push(p.clone());
+                    true
+                }
+            },
+        );
+    direct.chain(by_stem)
 }
 
 /// An installed font with Chinese characters, for the Chinese interface; fonts are never bundled
@@ -541,7 +577,7 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -584,7 +620,7 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/kacst/KacstOne.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -612,7 +648,7 @@ fn japanese_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_font(candidates)
             })
             .as_deref()
     }
@@ -709,10 +745,8 @@ pub fn korean_font() -> Option<&'static cadcraft_fonts::ttf::Face> {
                         "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
                     ]
                 };
-                for path in candidates {
-                    if let Some(face) =
-                        read_capped(std::path::Path::new(path), MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes)))
-                    {
+                for path in installed(candidates) {
+                    if let Some(face) = read_capped(&path, MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes))) {
                         return Some(face);
                     }
                 }
@@ -812,16 +846,35 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    /// An empty font file found first doesn't hide a readable one after it: the CJK, Arabic and
+    /// Japanese fonts are kept only when [`super::read_capped`] can take them.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_unreadable_first_candidate_does_not_hide_the_next() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-theme-fonts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (empty, good) = (dir.join("CadcraftEmptyTestFont.ttf"), dir.join("CadcraftGoodTestFont.ttf"));
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&good, b"not empty").unwrap();
+        let (e, g) = (empty.to_string_lossy().into_owned(), good.to_string_lossy().into_owned());
+        let found = super::first_font(&[e.as_str(), g.as_str()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(found, Some(good));
+    }
+
     /// The system interface font loaded: the first installed one, and for Vietnamese the first
-    /// installed one with its letters (a later one when the first lacks them).
+    /// installed one with its letters (a later one when the first lacks them), including one
+    /// found away from the candidates' own paths (a NixOS store path).
     #[test]
     fn the_vietnamese_interface_takes_the_first_installed_font_with_its_letters() {
-        let candidates = ["a.ttf", "b.ttf", "c.ttf", "d.ttf"];
-        let installed = |p: &str| p != "a.ttf";
-        let has_vietnamese = |p: &str| p == "c.ttf" || p == "d.ttf";
-        assert_eq!(super::ui_font_choice(&candidates, false, installed, has_vietnamese), Some("b.ttf"));
-        assert_eq!(super::ui_font_choice(&candidates, true, installed, has_vietnamese), Some("c.ttf"));
-        assert_eq!(super::ui_font_choice(&candidates, true, installed, |_| false), None);
+        use std::path::{Path, PathBuf};
+        let installed = || ["b.ttf", "c.ttf", "/nix/store/x/DejaVuSans.ttf"].map(PathBuf::from);
+        let has_vietnamese = |p: &Path| p != Path::new("b.ttf");
+        assert_eq!(super::ui_font_choice(installed(), false, has_vietnamese), Some(PathBuf::from("b.ttf")));
+        assert_eq!(super::ui_font_choice(installed(), true, has_vietnamese), Some(PathBuf::from("c.ttf")));
+        let only_found = |p: &Path| p.starts_with("/nix");
+        assert_eq!(super::ui_font_choice(installed(), true, only_found), Some(PathBuf::from("/nix/store/x/DejaVuSans.ttf")));
+        assert_eq!(super::ui_font_choice(installed(), true, |_| false), None);
     }
 
     use cadcraft_fonts::CraftFont;
