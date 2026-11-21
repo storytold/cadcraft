@@ -909,7 +909,7 @@ fn page_rows(
 /// Device and paper changes follow PAGESETUP's rules (`plotters::page_device`): a device brings
 /// its papers, orientation and printable areas.
 fn apply_page_change(page: &mut cadcraft_doc::PageSetup, key: &str, v: &Value) {
-    use cadcraft_engine::cmd::plotters::page_device;
+    use cadcraft_engine::cmd::plotters::page_device_now as page_device;
     match key {
         "device" => {
             let had_device = device_label(page) != "None";
@@ -1103,12 +1103,20 @@ fn sheet_summary(d: &cadcraft_doc::Drawing, name: &str) -> String {
     format!("{}: {} · {orientation} · {}", tab_label(name), page.paper, shown_label(style_label(&page)))
 }
 
+/// Preview only a sheet that OK will plot.
+fn preview_target(st: &PlotState) -> &str {
+    if st.sheets.len() > 1 && !st.sheets.contains(&st.target) { st.sheets.first().map(String::as_str).unwrap_or(&st.target) } else { &st.target }
+}
+
 /// The `plot` parameters for the dialog's settings (without the output path). `preview_dpi`
 /// asks for a PNG at that resolution instead of the device's output, on the same sheet.
 fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
+    if preview_dpi.is_some() && st.sheets.len() > 1 {
+        return json!({ "layout": preview_target(st), "device": "None", "output": "png", "resolution": preview_dpi });
+    }
     let page = &st.page;
     let mut p = json!({
-        "layout": st.target,
+        "layout": if preview_dpi.is_some() { preview_target(st) } else { &st.target },
         "landscape": page.landscape,
         "fit": page.scale_to_fit,
         "lineweights": page.lineweights,
@@ -1132,10 +1140,12 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
                 o.insert("paper".into(), json!(page.paper));
             }
             None if cadcraft_render::paper_size(&page.paper).is_some() => {
+                o.insert("margins".into(), json!(page.margins_mm));
                 o.insert("device".into(), json!("None"));
                 o.insert("paper".into(), json!(page.paper));
             }
             None => {
+                o.insert("margins".into(), json!(page.margins_mm));
                 o.insert("device".into(), json!("None"));
                 o.insert("width".into(), json!(page.width_mm));
                 o.insert("height".into(), json!(page.height_mm));
@@ -1612,7 +1622,14 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         return action;
     }
     if preview {
-        crate::exchange::preview_plot(app, ctx, plot_params(&st, Some(preview_dpi(&st.page))), plot_caption(&st));
+        let mut preview = st.clone();
+        if st.sheets.len() > 1 {
+            preview.target = preview_target(&st).to_string();
+            if let Ok(doc) = app.session.doc() {
+                preview.page = plot_page(doc, &preview.target);
+            }
+        }
+        crate::exchange::preview_plot(app, ctx, plot_params(&preview, Some(preview_dpi(&preview.page))), plot_caption(&preview));
         return action;
     }
     if ok {
@@ -1877,6 +1894,28 @@ mod plot_dialog_tests {
     fn state(target: &str) -> PlotState {
         let d = cadcraft_doc::Drawing::new_metric();
         PlotState::new(0, target.into(), plot_page(&d, target), [0.0, 0.0, 10.0, 10.0])
+    }
+
+    #[test]
+    fn no_device_output_and_preview_use_the_same_margins() {
+        let mut st = state("Layout1");
+        for paper in ["A4", "Custom paper"] {
+            st.page.paper = paper.into();
+            st.page.device = "None".into();
+            st.page.margins_mm = [1.0, 2.0, 3.0, 4.0];
+            assert_eq!(plot_params(&st, None)["margins"], plot_params(&st, Some(150.0))["margins"]);
+        }
+    }
+
+    #[test]
+    fn several_sheets_preview_only_a_selected_sheet_with_its_saved_setup() {
+        let mut st = state("Model");
+        st.sheets = vec!["Layout1".into(), "Layout2".into()];
+        let params = plot_params(&st, Some(150.0));
+        assert_eq!(params["layout"], "Layout1");
+        assert!(params.get("width").is_none() && params.get("margins").is_none(), "inherit that sheet's setup as the final multi-sheet plot does");
+        st.target = "Layout2".into();
+        assert_eq!(plot_params(&st, Some(150.0))["layout"], "Layout2");
     }
 
     /// Choosing a device gives the page one of its papers and printable areas, and the plot parameters name them.

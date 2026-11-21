@@ -418,3 +418,25 @@ fn pagesetup_for_several_layouts_is_all_or_nothing() {
     let after: Vec<String> = ["Layout1", "Layout2"].iter().map(|n| paper_of(&s, n)).collect();
     assert_eq!(before, after, "a refused change leaves every layout as it was");
 }
+
+#[test]
+fn pagesetup_validates_the_whole_selection_after_duplicates() {
+    let mut s = Session::new();
+    let mut names = vec![json!("Layout1"); MAX_PLOT_SHEETS + 1];
+    names.push(json!("Layout2"));
+    let r = s.execute("pagesetup", &json!({ "layouts": names, "paper": "A3" })).unwrap();
+    assert_eq!(r["layouts"].as_array().unwrap().len(), 2);
+    assert_eq!(paper_of(&s, "Layout1"), paper_of(&s, "Layout2"));
+    names.push(json!(17));
+    assert!(s.execute("pagesetup", &json!({ "layouts": names, "paper": "A4" })).is_err());
+}
+
+#[test]
+fn pagesetup_rolls_back_a_change_to_an_earlier_layout() {
+    let mut s = Session::new();
+    s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.plot_area = "window".into();
+    let before: Vec<_> = s.doc().unwrap().layouts.iter().map(|l| l.page.clone()).collect();
+    assert!(s.execute("pagesetup", &json!({ "layouts": ["Layout1", "Layout2"], "paper": "A3", "plotArea": "window" })).is_err());
+    let after: Vec<_> = s.doc().unwrap().layouts.iter().map(|l| l.page.clone()).collect();
+    assert_eq!(before, after);
+}

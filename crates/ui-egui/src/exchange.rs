@@ -153,6 +153,7 @@ impl Detail {
 #[derive(Clone)]
 struct Preview {
     generation: u32,
+    document: (u64, Option<(u64, u64)>),
     shown: Result<Shown, String>,
     view: PanZoom,
     detail: Option<Detail>,
@@ -235,12 +236,20 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let id = egui::Id::unique("cc_plot_preview");
     let generation = PREVIEW_GEN.load(Ordering::Relaxed);
     let now = ctx.input(|i| i.time);
-    let cached = ctx.data(|d| d.get_temp::<Preview>(id)).filter(|p| p.generation == generation);
+    let document = (app.session.doc_epoch, app.session.state().ok().map(|s| (s.uid, s.revision)));
+    let cached = ctx.data(|d| d.get_temp::<Preview>(id)).filter(|p| p.generation == generation && p.document == document);
     let mut pv = match cached {
         Some(p) => p,
-        None => {
-            Preview { generation, shown: render(app, ctx), view: PanZoom::default(), detail: None, changed: now, drawn: Rect::NOTHING, tried: None }
-        }
+        None => Preview {
+            generation,
+            document,
+            shown: render(app, ctx),
+            view: PanZoom::default(),
+            detail: None,
+            changed: now,
+            drawn: Rect::NOTHING,
+            tried: None,
+        },
     };
     let (mut close, mut print) = (false, false);
     // What to draw in detail after the window: the part and the sheet's width on screen.
@@ -319,6 +328,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     }
                 } else {
                     pv.detail = None;
+                    // Fit discarded the texture; the same zoom must be able to request it again.
+                    pv.tried = None;
                 }
             }
             Err(e) => {

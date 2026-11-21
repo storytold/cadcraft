@@ -462,6 +462,15 @@ fn unknown_device(cmd: &str, name: &str) -> EngineError {
 /// `landscape` is given. Returns whether the paper was set here (else `paper`, if any, is a
 /// standard size for the caller to look up).
 pub fn page_device(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
+    page_device_with(cmd, p, page, named_device)
+}
+
+/// Apply a dialog's device change from the cached list without waiting for drivers.
+pub fn page_device_now(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
+    page_device_with(cmd, p, page, find_device)
+}
+
+fn page_device_with(cmd: &str, p: &Value, page: &mut PageSetup, lookup: fn(&str) -> Option<PlotterConfig>) -> Result<bool> {
     let given = match p.get("device") {
         Some(v) => Some(v.as_str().ok_or_else(|| bad(cmd, "`device` must be a plotter name"))?.trim()),
         None => None,
@@ -471,7 +480,7 @@ pub fn page_device(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
             page.device = NO_DEVICE.into();
             return Ok(false);
         }
-        Some(n) => Some(named_device(n).ok_or_else(|| unknown_device(cmd, n))?),
+        Some(n) => Some(lookup(n).ok_or_else(|| unknown_device(cmd, n))?),
         None => find_device(&page.device),
     };
     let Some(dev) = dev else { return Ok(false) };
@@ -597,7 +606,7 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     };
     // A system printer gets the plotter's PDF, on the paper by its name on that printer
     // (EXPORTPDF still writes the PDF).
-    if dev.system && cmd == "plot" {
+    if dev.system && cmd == "plot" && output == PlotOutput::Pdf {
         o.insert("printer".into(), json!(dev.name));
         let on = paper.map(|pp| pp.name.clone()).or_else(|| layout.as_ref().map(|pg| pg.paper.clone())).unwrap_or_default();
         o.insert("printerPaper".into(), json!(on));

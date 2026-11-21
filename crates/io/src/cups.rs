@@ -228,7 +228,7 @@ pub fn printer_config(name: &str, ppd: &Ppd) -> PlotterConfig {
         .collect();
     let default_paper = ppd.papers.iter().find(|p| p.keyword == ppd.default_size).map(|p| p.name.clone()).unwrap_or_default();
     let description = if ppd.nick_name.is_empty() { "System printer".to_string() } else { ppd.nick_name.clone() };
-    PlotterConfig {
+    let mut config = PlotterConfig {
         name: name.to_string(),
         description,
         output: PlotOutput::Pdf,
@@ -239,7 +239,11 @@ pub fn printer_config(name: &str, ppd: &Ppd) -> PlotterConfig {
         system: true,
         system_default: false,
     }
-    .sanitized()
+    .sanitized();
+    // Queue names are routing identifiers, not display labels. Truncating a valid CUPS name
+    // can route a job to a different queue with the same prefix.
+    config.name = if valid_name(name) { name.to_string() } else { String::new() };
+    config
 }
 
 /// `lpstat -e`: one destination per line.
@@ -267,6 +271,16 @@ pub fn paper_option(keyword: &str, from_ppd: bool) -> String {
     if from_ppd { format!("PageSize={keyword}") } else { format!("media={keyword}") }
 }
 
+/// Resolve the requested sheet before spawning `lp`: an absent override would print on the
+/// queue's default paper instead of the paper the preview showed.
+#[cfg_attr(not(all(unix, not(target_arch = "wasm32"))), allow(dead_code))]
+fn required_paper(papers: Option<(Ppd, bool)>, paper: &str) -> Result<String, String> {
+    let (ppd, from_ppd) = papers.ok_or_else(|| "could not read the printer's paper capabilities".to_string())?;
+    let selected =
+        ppd.papers.iter().find(|p| p.name.eq_ignore_ascii_case(paper)).ok_or_else(|| format!("the printer no longer offers paper `{paper}`"))?;
+    Ok(paper_option(&selected.keyword, from_ppd))
+}
+
 /// The `lp` arguments for a job (the PDF goes to standard input); `paper` is a
 /// [`paper_option`].
 pub fn lp_args(printer: &str, paper: Option<&str>, copies: u32, title: &str) -> Vec<String> {
@@ -286,8 +300,8 @@ pub fn lp_args(printer: &str, paper: Option<&str>, copies: u32, title: &str) -> 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod system {
     use super::{
-        MAX_PPD, PlotterConfig, Ppd, lp_args, paper_option, parse_default_destination, parse_destinations, parse_lpoptions, parse_ppd,
-        parse_request_id, printer_config, valid_name,
+        MAX_PPD, PlotterConfig, Ppd, lp_args, parse_default_destination, parse_destinations, parse_lpoptions, parse_ppd, parse_request_id,
+        printer_config, valid_name,
     };
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -374,10 +388,9 @@ mod system {
         if !valid_name(printer) {
             return Err(format!("`{printer}` is not a printer name"));
         }
-        let option = papers(printer)
-            .and_then(|(p, from_ppd)| p.papers.into_iter().find(|x| x.name.eq_ignore_ascii_case(paper)).map(|x| paper_option(&x.keyword, from_ppd)));
+        let option = super::required_paper(papers(printer), paper)?;
         let mut child = Command::new("lp")
-            .args(lp_args(printer, option.as_deref(), copies, title))
+            .args(lp_args(printer, Some(&option), copies, title))
             .env("LC_ALL", "C")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -535,5 +548,22 @@ mod tests {
         assert_eq!(parse_default_destination("system default destination: Office_T120\n").as_deref(), Some("Office_T120"));
         assert_eq!(parse_default_destination("no system default destination\n"), None);
         assert_eq!(parse_default_destination("system default destination: bad/name\n"), None);
+    }
+    #[test]
+    fn native_queue_names_do_not_alias_after_one_hundred_characters() {
+        let name = "Q".repeat(100);
+        let other = format!("{name}X");
+        let ppd = parse_lpoptions("PageSize: *A4 A3");
+        assert_eq!(printer_config(&name, &ppd).name, name);
+        assert_eq!(printer_config(&other, &ppd).name, other);
+    }
+
+    #[test]
+    fn a_missing_selected_paper_is_not_replaced_by_the_queue_default() {
+        assert!(required_paper(None, "A3").is_err());
+        let papers = || parse_lpoptions("PageSize: *A4");
+        assert!(required_paper(Some((papers(), true)), "A3").is_err());
+        assert_eq!(required_paper(Some((papers(), true)), "A4").unwrap(), "PageSize=A4");
+        assert_eq!(required_paper(Some((papers(), false)), "A4").unwrap(), "media=A4");
     }
 }

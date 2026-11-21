@@ -43,9 +43,40 @@ pub fn margins_from_imageable(size: (u32, u32), origin: (u32, u32), extent: (u32
     Some([mm(origin.0), mm(bottom), mm(right), mm(origin.1)])
 }
 
+/// Whether two driver papers are the same sheet to craft-print, which picks the driver's paper
+/// by size (within a quarter millimetre), not by its option key.
+fn same_size(a: &WinPaper, b: &WinPaper) -> bool {
+    a.width.min(a.height).abs_diff(b.width.min(b.height)) <= 250 && a.width.max(a.height).abs_diff(b.width.max(b.height)) <= 250
+}
+
+/// Margins printable on every paper of `p`'s size: the widest on each side. craft-print may
+/// print on any driver option of that size (`A4` or `A4 Borderless`), so the preview uses the
+/// margins all of them can print.
+fn conservative_margins(papers: &[WinPaper], p: &WinPaper) -> Option<[f64; 4]> {
+    papers.iter().filter(|o| same_size(o, p)).fold(p.margins, |acc, o| match (acc, o.margins) {
+        (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]), a[3].max(b[3])]),
+        (None, b) => b,
+        (a, None) => a,
+    })
+}
+
+/// The paper that stands for its size in the list: the one with the widest margins (the plain
+/// sheet rather than its borderless variant), the first on a tie.
+fn represents_its_size(papers: &[WinPaper], p: &WinPaper) -> bool {
+    let total = |m: Option<[f64; 4]>| m.map_or(0.0, |m| m.iter().sum::<f64>());
+    let listed = |o: &WinPaper| o.width != 0 && o.height != 0 && !o.name.is_empty();
+    let chosen = papers.iter().filter(|o| listed(o) && same_size(o, p)).fold(None::<&WinPaper>, |best, o| match best {
+        Some(b) if total(b.margins) >= total(o.margins) => Some(b),
+        _ => Some(o),
+    });
+    chosen.is_some_and(|c| std::ptr::eq(c, p))
+}
+
 /// The device a printer becomes: a system printer (PDF in, printed by craft-print) with its
 /// driver's papers. Roll papers (no length), unnamed papers and repeated names are dropped; the
 /// default paper is the driver's default (`default_key`) when it is one of them, else the first.
+/// Papers of one size are listed once (see [`represents_its_size`]) with margins every one of
+/// them can print, so the preview never shows a borderless area the driver may not use.
 pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], default_key: Option<&str>) -> PlotterConfig {
     let mut device_papers: Vec<DevicePaper> = Vec::new();
     let mut default_paper = String::new();
@@ -56,21 +87,24 @@ pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], de
         if p.width == 0 || p.height == 0 || p.name.is_empty() || device_papers.iter().any(|d| d.name.eq_ignore_ascii_case(&p.name)) {
             continue;
         }
-        if default_paper.is_empty() && default_key.is_some_and(|k| k == p.key) {
+        if !represents_its_size(papers, p) {
+            continue;
+        }
+        if default_paper.is_empty() && default_key.is_some_and(|k| papers.iter().any(|o| o.key == k && same_size(o, p))) {
             default_paper = p.name.clone();
         }
         device_papers.push(DevicePaper {
             name: p.name.clone(),
             width: f64::from(p.width) / 1000.0,
             height: f64::from(p.height) / 1000.0,
-            margins: p.margins.unwrap_or([0.0; 4]),
+            margins: conservative_margins(papers, p).unwrap_or([0.0; 4]),
         });
     }
     if default_paper.is_empty() {
         default_paper = device_papers.first().map(|p| p.name.clone()).unwrap_or_default();
     }
     let description = if default_printer { "Windows printer (default)" } else { "Windows printer" };
-    PlotterConfig {
+    let mut config = PlotterConfig {
         name: name.to_string(),
         description: description.to_string(),
         output: PlotOutput::Pdf,
@@ -81,7 +115,10 @@ pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], de
         system: true,
         system_default: default_printer,
     }
-    .sanitized()
+    .sanitized();
+    // The spooler's identifier must survive display-data sanitization exactly.
+    config.name = if name.chars().count() <= 32_767 && !name.chars().any(char::is_control) { name.to_string() } else { String::new() };
+    config
 }
 
 #[cfg(windows)]
@@ -154,7 +191,7 @@ mod system {
         });
         let papers: Vec<WinPaper> = medias.iter().zip(margins).map(|(m, done)| done.unwrap_or_else(|| paper(device, m, false))).collect();
         let c = printer_config(device.name(), default_printer, &papers, default_paper_key(device).as_deref());
-        (!c.papers.is_empty()).then_some(c)
+        (!c.name.is_empty() && !c.papers.is_empty()).then_some(c)
     }
 
     /// The spooler's printers as devices (none when there is no spooler), each asked on a thread
@@ -178,6 +215,8 @@ mod system {
     /// Print `pdf` on `printer`. The paper is the PDF's own sheet size: craft-print chooses the
     /// driver's paper of that size, so `paper` only names it. Returns the spooler's reply.
     pub fn print(printer: &str, paper: &str, copies: u32, title: &str, pdf: &[u8]) -> Result<String, String> {
+        // craft-print picks the driver's paper of the PDF's size; the list offers one paper per
+        // size, with margins every option of that size can print (see `printer_config`).
         let _ = paper;
         let title: String = title.chars().filter(|c| !c.is_control()).take(100).collect();
         let job = craft_print::Job {
@@ -266,5 +305,26 @@ mod tests {
         let other = printer_config("Canon", false, &papers, Some("JapanHagaki"));
         assert_eq!(other.default_paper, "Letter");
         assert_eq!(other.description, "Windows printer");
+    }
+    /// craft-print picks a paper by its size, so a size with a borderless variant is listed once,
+    /// as the plain sheet, with margins both options can print; the spooler's name is kept whole.
+    #[test]
+    fn a_borderless_variant_shares_one_entry_with_printable_margins() {
+        let p = |key: &str, name: &str, margins| WinPaper { key: key.into(), name: name.into(), width: 210_000, height: 297_000, margins };
+        let papers = [
+            p("Borderless", "A4 Borderless", Some([0.0; 4])),
+            p("ISOA4", "A4", Some([5.0, 4.0, 5.0, 3.0])),
+            p("ISOA4Wide", "A4 (wide top)", Some([3.0, 4.0, 3.0, 6.0])),
+        ];
+        let name = format!("{}X", "Q".repeat(100));
+        let config = printer_config(&name, false, &papers, Some("Borderless"));
+        assert_eq!(config.name, name, "a long spooler name is not truncated into another printer's");
+        let names: Vec<&str> = config.papers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["A4"]);
+        assert_eq!(config.default_paper, "A4", "the driver's default variant maps to its size's entry");
+        assert_eq!(config.papers[0].margins, [5.0, 4.0, 5.0, 6.0]);
+        // A size without margins on any variant keeps none.
+        let config = printer_config("P", false, &[p("ISOA4", "A4", None)], None);
+        assert_eq!(config.papers[0].margins, [0.0; 4]);
     }
 }

@@ -254,6 +254,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                 po.window = Some(w);
                 po.fit = Some(true);
                 po.compress = o.compress;
+                po.stamp = o.stamp.clone();
                 Ok((Space::Model, po))
             })
             .collect::<Result<Vec<_>>>()?;

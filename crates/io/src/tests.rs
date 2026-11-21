@@ -3713,3 +3713,19 @@ fn solid_hatch_keeps_angle_scale_and_double_flag() {
     assert!(f("41").is_some_and(|s| (s - 2.0).abs() < 1e-12), "{h:?}");
     assert_eq!(group(h, "77"), Some("0"), "{h:?}");
 }
+
+#[test]
+fn window_pages_keep_the_plot_stamp_on_every_sheet() {
+    let d = sample();
+    let mut options = serde_json::json!({ "pages": [
+        { "window": [[0, 0], [10, 10]], "paper": "A4" },
+        { "window": [[10, 0], [20, 10]], "paper": "A3" }
+    ], "text": "geometry", "compress": false });
+    let plain = pdf_read::read(&crate::pdf::plot(&d, &Space::Model, &options).unwrap());
+    options["stamp"] = serde_json::json!("CADCRAFT STAMP");
+    let stamped = pdf_read::read(&crate::pdf::plot(&d, &Space::Model, &options).unwrap());
+    assert_eq!(stamped.pages.len(), 2);
+    for (before, after) in plain.pages.iter().zip(&stamped.pages) {
+        assert!(after.content_bytes.len() > before.content_bytes.len(), "each sheet must draw the stamp");
+    }
+}

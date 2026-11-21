@@ -651,11 +651,14 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Value::Array(a) => {
             let mut names = Vec::new();
-            for n in a.iter().take(MAX_PLOT_SHEETS + 1) {
+            for n in a {
                 let n = n.as_str().ok_or_else(|| bad(cmd, "`layouts` must be a list of layout names or \"all\""))?;
                 let n = layout_name(cmd, s.doc()?, n)?;
                 if !names.contains(&n) {
                     names.push(n);
+                    if names.len() > MAX_PLOT_SHEETS {
+                        return Err(bad(cmd, format!("at most {MAX_PLOT_SHEETS} layouts can be selected")));
+                    }
                 }
             }
             names
@@ -922,10 +925,12 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     if let Some(printer) = printer {
         // "Plot to file" too: the PDF is written first, so a file that can't be written stops
         // the plot before anything is printed (and a retry doesn't print it twice).
+        let mut folder = None;
         let saved: Option<&str> = match str_param(p, "path") {
             #[cfg(not(target_arch = "wasm32"))]
             Some(path) => {
-                crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+                folder = super::file::new_folder(path);
+                crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
                 Some(path)
             }
             _ => None,
@@ -938,6 +943,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         if let (Some(path), Some(o)) = (saved, r.as_object_mut()) {
             o.insert("path".into(), json!(path));
         }
+        super::file::report_new_folder(s, &mut r, folder);
         return Ok(r);
     }
     let format = opts.get("output").and_then(Value::as_str).map(str::to_ascii_lowercase).unwrap_or_else(|| "pdf".into());

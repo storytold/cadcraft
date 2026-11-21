@@ -109,7 +109,8 @@ fn system_printers_are_devices_and_plot_prints_on_them() {
 }
 
 /// Plot to file with a printer: the PDF is written first, then printed; a file that can't be
-/// written stops the plot before anything prints. REFRESH asks for the printers again.
+/// written stops the plot before anything prints (a missing folder is made, see
+/// `plot_to_file_creates_missing_folders_before_submitting`). REFRESH asks for the printers again.
 #[test]
 fn plot_to_file_and_print_and_refresh_the_printers() {
     let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -127,7 +128,8 @@ fn plot_to_file_and_print_and_refresh_the_printers() {
     // The file is the PDF that was printed.
     assert_eq!(serde_json::from_slice::<Value>(&written).unwrap(), opts);
 
-    let bad = dir.join("missing-folder").join("plan.pdf");
+    // A folder can't be made under a file: the PDF can't be written, so nothing is printed.
+    let bad = path.join("plan.pdf");
     let e = s.execute("plot", &json!({ "layout": "Model", "device": "Office_T120", "path": bad.to_string_lossy() })).unwrap_err();
     assert!(e.to_string().contains("plan.pdf"), "{e}");
     assert!(JOBS.lock().unwrap().is_empty(), "nothing printed when the file couldn't be written");
@@ -150,4 +152,37 @@ fn plot_to_file_and_print_and_refresh_the_printers() {
     assert_eq!(r["printers"], true);
     let list = s.execute("plottermanager", &json!({ "action": "list" })).unwrap();
     assert!(list["devices"].as_array().unwrap().iter().any(|d| d["name"] == "Office_T120"));
+}
+
+#[test]
+fn an_inferred_image_output_does_not_submit_to_a_layouts_printer() {
+    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = session();
+    JOBS.lock().unwrap().clear();
+    s.execute("pagesetup", &json!({ "layout": "Layout1", "device": "Office_T120" })).unwrap();
+    let dir = std::env::temp_dir().join(format!("cadcraft-image-no-print-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for output in ["png", "svg"] {
+        let path = dir.join(format!("plan.{output}"));
+        let r = s.execute("plot", &json!({ "layout": "Layout1", "path": path })).unwrap();
+        let options: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(options["output"], output);
+        assert!(r.get("job").is_none());
+        assert!(JOBS.lock().unwrap().is_empty());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn plot_to_file_creates_missing_folders_before_submitting() {
+    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = session();
+    JOBS.lock().unwrap().clear();
+    let dir = std::env::temp_dir().join(format!("cadcraft-new-plot-folder-{}", std::process::id()));
+    let path = dir.join("nested/plan.pdf");
+    let r = s.execute("plot", &json!({ "device": "Office_T120", "path": path })).unwrap();
+    assert!(path.is_file());
+    assert!(r.get("createdFolder").is_some(), "{r}");
+    assert_eq!(JOBS.lock().unwrap().len(), 1);
+    std::fs::remove_dir_all(dir).unwrap();
 }
