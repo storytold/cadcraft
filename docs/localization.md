@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), **ქართული** (Georgian), or **Tiếng Việt** (Vietnamese).
+**Українська**, **Português (Brasil)**, **Português (Portugal)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), **Bosanski** (Bosnian), **ქართული** (Georgian), **Tiếng Việt** (Vietnamese), or **Nederlands** (Dutch).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -22,7 +22,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka`, and `vi`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `pt-PT`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el`, `ka`, `vi`, and `nl`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage

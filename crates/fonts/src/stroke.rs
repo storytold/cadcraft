@@ -6,7 +6,7 @@
 //! `i` = 6 (cap height). Strokes are separated by spaces.
 
 pub(crate) const CAP: f64 = 6.0;
-pub(crate) const GAP: f64 = 1.6;
+pub(crate) const GAP: f64 = 1.2;
 
 // List bullet: a small crossed diamond at mid x-height.
 #[expect(clippy::too_many_lines, reason = "The stroke font is one static glyph table; splitting it would obscure the character-to-outline mapping.")]

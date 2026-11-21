@@ -818,6 +818,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-geom",
  "craft-image-codecs",
+ "image",
  "lyon_tessellation",
  "rayon",
  "serde_json",
@@ -828,6 +829,7 @@ dependencies = [
 name = "cadcraft-ui-egui"
 version = "0.21.0"
 dependencies = [
+ "arboard",
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-engine",
@@ -836,6 +838,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-render",
  "chrono",
+ "clipboard-win",
  "craft-image-codecs",
  "craft-ui",
  "craft-update",
