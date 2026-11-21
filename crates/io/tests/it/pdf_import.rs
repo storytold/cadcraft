@@ -346,7 +346,8 @@ fn a_form_that_draws_itself_twice_is_stopped() {
     let result = rx.recv_timeout(std::time::Duration::from_secs(20)).expect("the self-calling form was not stopped");
     // The page still reads, with the form's own line drawn and the nesting cut off.
     let lines = result.unwrap_or_else(|e| panic!("{e}"));
-    assert!((1..1000).contains(&lines), "{lines} lines");
+    // The top-level form plus 50_000 nested paints (`MAX_NESTED_PAINTS` in craft-libs' hayro-interpret).
+    assert!((1..=50_001).contains(&lines), "{lines} lines");
 }
 
 #[test]
