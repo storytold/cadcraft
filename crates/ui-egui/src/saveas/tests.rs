@@ -57,16 +57,16 @@ fn save_as_opens_the_dialog_with_the_default_format_and_the_drawings_own_version
 /// version, and the chosen extension is always the one written.
 #[test]
 fn choices_settle_and_become_saveas_parameters() {
-    let mut st = SaveAsState { file_type: FileType::Dwg, version: SaveVersion::R2004, binary: true };
+    let mut st = SaveAsState { drawing_uid: None, file_type: FileType::Dwg, version: SaveVersion::R2004, binary: true };
     st.settle();
     assert!(!st.binary, "binary is for DXF");
     assert_eq!(st.params("a.dwg"), json!({ "path": "a.dwg", "version": "2004" }));
     // Images and templates carry no version.
-    let st = SaveAsState { file_type: FileType::Pdf, version: SaveVersion::R2018, binary: true };
+    let st = SaveAsState { drawing_uid: None, file_type: FileType::Pdf, version: SaveVersion::R2018, binary: true };
     assert_eq!(st.params("a.pdf"), json!({ "path": "a.pdf" }));
     let st = SaveAsState { file_type: FileType::Dwt, ..st };
     assert_eq!(st.params("a.dwt"), json!({ "path": "a.dwt" }));
-    let st = SaveAsState { file_type: FileType::Dxf, version: SaveVersion::R2004, binary: true };
+    let st = SaveAsState { drawing_uid: None, file_type: FileType::Dxf, version: SaveVersion::R2004, binary: true };
     assert_eq!(st.params("a.dxf"), json!({ "path": "a.dxf", "version": "2004", "binary": true }));
     assert_eq!(st.suggested_name("Plan.dwg"), "Plan.dxf");
     assert_eq!(st.suggested_name(""), "Drawing.dxf");
@@ -92,7 +92,12 @@ fn an_existing_file_the_picker_did_not_confirm_is_not_replaced() {
     assert_eq!(destination(&picked, "dxf"), Ok(format!("{picked}.dxf")), "a new file");
     let (mut app, _) = app_with_picker(Some(picked.clone()));
     app.start("ui.saveas");
-    app.saveas = Some(SaveAsState { file_type: FileType::Pdf, version: SaveVersion::R2018, binary: false });
+    app.saveas = Some(SaveAsState {
+        drawing_uid: app.session.state().ok().map(|s| s.uid),
+        file_type: FileType::Pdf,
+        version: SaveVersion::R2018,
+        binary: false,
+    });
     assert_eq!(save(&mut app), Some(false));
     assert_eq!(std::fs::read(&other).unwrap(), b"keep");
     assert!(app.session.log.last().is_some_and(|l| l.contains("already exists")), "{:?}", app.session.log.last());
@@ -123,6 +128,21 @@ fn qsave_of_an_untitled_drawing_goes_straight_to_the_picker() {
     app.start("qsave");
     assert_eq!(*asked.borrow(), vec!["Drawing1.dxf".to_string()]);
     assert!(app.ui.dialog.is_none());
+}
+
+#[test]
+fn save_as_choices_are_not_applied_to_another_drawing() {
+    let (mut app, asked) = app_with_picker(None);
+    open(&mut app);
+    app.session.open_drawing(cadcraft_doc::Drawing::new_metric(), "other.dxf", None);
+    assert_eq!(save(&mut app), Some(false));
+    assert!(asked.borrow().is_empty(), "do not bind the picker to the other drawing");
+    let ctx = egui::Context::default();
+    let mut visible = true;
+    let mut output = ctx.run_ui(egui::RawInput::default(), |_| dialog(&mut app, &ctx, &mut visible));
+    output.textures_delta.clear();
+    assert!(!visible);
+    assert!(app.saveas.is_none());
 }
 
 /// The dialog draws for every file type and keeps the choice across frames.

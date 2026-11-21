@@ -97,3 +97,34 @@ fn default_save_format_applies_to_opened_drawings() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_deferred_qsave_keeps_the_format_the_picker_requested() {
+    use std::{cell::RefCell, rc::Rc};
+    type Done = Box<dyn FnOnce(Option<String>) + Send>;
+    set_io(IoHooks { read: |_, _| Ok(Drawing::new_metric()), write: |_, _| Ok(b"plain".to_vec()), plot: None });
+    set_write_as(with_options);
+    let answer: Rc<RefCell<Option<Done>>> = Rc::default();
+    let slot = answer.clone();
+    let services = Services {
+        pick_save: Some(Box::new(|_| None)),
+        start_pick: Some(Box::new(move |pick, done| {
+            assert_eq!(pick, cadcraft_ui_egui::Pick::Save("Drawing1.dxf".into()));
+            *slot.borrow_mut() = Some(done);
+        })),
+        ..Services::default()
+    };
+    let mut app = CadApp::new(Session::new(), services);
+    app.start("qsave");
+    app.run("ui.saveformat", json!({ "format": "dwg" })).unwrap();
+    let path = std::env::temp_dir().join(format!("cadcraft-deferred-format-{}.dxf", std::process::id()));
+    let wrong = path.with_extension("dxf.dwg");
+    std::fs::write(&wrong, b"keep").unwrap();
+    answer.borrow_mut().take().unwrap()(Some(path.to_string_lossy().into_owned()));
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    assert_eq!(app.session.state().unwrap().path.as_deref(), path.to_str());
+    assert_eq!(std::fs::read(&wrong).unwrap(), b"keep");
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(wrong).unwrap();
+}

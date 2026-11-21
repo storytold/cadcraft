@@ -457,11 +457,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         // yet, and the close prompt's Save, which must finish in this call.
         "ui.saveas.pick" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
+            let format = app.ui.save_format;
+            let name = format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
-            app.pick_then(Pick::Save(name), |app, p| {
+            app.pick_then(Pick::Save(name), move |app, p| {
                 // The default format is the format written, whatever extension the picker gave.
-                let p = crate::saveas::destination(&p, app.ui.save_format.as_str()).inspect_err(|e| app.session.echo(e.clone()))?;
+                let p = crate::saveas::destination(&p, format.as_str()).inspect_err(|e| app.session.echo(e.clone()))?;
                 app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
             })
             .unwrap_or(Ok(Value::Null))

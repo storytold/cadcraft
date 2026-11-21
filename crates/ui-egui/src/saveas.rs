@@ -64,6 +64,8 @@ impl FileType {
 /// The dialog's choices until Save.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveAsState {
+    /// The drawing these choices describe; a switch must not apply them to another drawing.
+    pub drawing_uid: Option<u64>,
     pub file_type: FileType,
     pub version: SaveVersion,
     pub binary: bool,
@@ -87,7 +89,12 @@ impl SaveAsState {
             (false, Some(v)) => v,
             _ => SaveVersion::parse(&app.ui.save_version).unwrap_or_default(),
         };
-        SaveAsState { file_type, version, binary: st.as_ref().is_some_and(|s| s.binary_dxf) && file_type == FileType::Dxf }
+        SaveAsState {
+            drawing_uid: st.as_ref().map(|s| s.uid),
+            file_type,
+            version,
+            binary: st.as_ref().is_some_and(|s| s.binary_dxf) && file_type == FileType::Dxf,
+        }
     }
 
     /// The `saveas` parameters for `path`.
@@ -149,6 +156,10 @@ pub(crate) fn destination(path: &str, ext: &str) -> Result<String, String> {
 /// or the save failed (the dialog stays); `None` without a picker (said on the command line).
 pub fn save(app: &mut CadApp) -> Option<bool> {
     let st = app.saveas.clone().unwrap_or_else(|| SaveAsState::for_app(app));
+    if st.drawing_uid != app.session.state().ok().map(|s| s.uid) {
+        app.session.echo("SAVEAS: the active drawing changed; reopen Save As for this drawing.");
+        return Some(false);
+    }
     let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
     if app.services.pick_save.is_none() {
         app.session
@@ -182,6 +193,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         app.saveas = Some(SaveAsState::for_app(app));
     }
     let Some(mut st) = app.saveas.clone() else { return };
+    if st.drawing_uid != app.session.state().ok().map(|s| s.uid) {
+        app.saveas = None;
+        *open = false;
+        return;
+    }
     let (mut save_clicked, mut cancel) = (false, false);
     egui::Window::new(crate::tl!("Save As"))
         .id(egui::Id::unique("saveas_dialog"))
