@@ -1,4 +1,4 @@
-use super::args::{R, arity, string};
+use super::args::{arity, string};
 use super::output::emit;
 use super::{Ctx, Flow, LispError, Value, charge_bytes};
 
@@ -26,7 +26,8 @@ pub(super) fn open(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> 
     };
     let mut f = LispFile { path: path.clone(), writing, append, lines: Default::default(), text: String::new() };
     if !writing {
-        match read_text_file(&path) {
+        let resolved = resolve_support_file(ctx.s, &path).unwrap_or_else(|| path.clone());
+        match read_text_file(&resolved) {
             Some(t) => {
                 // Each line has a String header and a separately allocated buffer. Charge a
                 // conservative 64 bytes per line for both, including the allocator's minimum
@@ -72,10 +73,73 @@ pub(super) fn write_line(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispE
     Ok(Flow::Value(Value::Str(s)))
 }
 
-pub(super) fn findfile(a: &[Value]) -> R {
-    arity(a, 1, 1)?;
+pub(super) fn findfile(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 1, 1)?;
     let p = string(&a[0])?;
-    Ok(if file_exists(&p) { Value::Str(p) } else { Value::Nil })
+    Ok(Flow::Value(resolve_support_file_or_dir(ctx.s, &p).map(|found| Value::str(&found)).unwrap_or_default()))
+}
+
+/// Resolve a regular file path against as-is, active drawing folder, `lisp_file_dir`, and their immediate subfolders.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resolve_support_file(s: &crate::Session, path: &str) -> Option<String> {
+    resolve_support_path(s, path, false)
+}
+
+/// Resolve a file or folder path against as-is, active drawing folder, `lisp_file_dir`, and their immediate subfolders.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resolve_support_file_or_dir(s: &crate::Session, path: &str) -> Option<String> {
+    resolve_support_path(s, path, true)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_support_path(s: &crate::Session, path: &str, allow_dirs: bool) -> Option<String> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    let p = std::path::Path::new(path);
+    if p.is_file() || (allow_dirs && p.is_dir()) {
+        return Some(path.to_string());
+    }
+    let mut base_dirs = Vec::new();
+    if let Ok(st) = s.state()
+        && let Some(fp) = &st.path
+        && let Some(parent) = std::path::Path::new(fp).parent()
+    {
+        base_dirs.push(parent.to_path_buf());
+    }
+    if let Some(dir) = &s.lisp_file_dir {
+        base_dirs.push(std::path::PathBuf::from(dir));
+    }
+    if let Some(dir) = s.lisp_support_dir() {
+        base_dirs.push(dir.to_path_buf());
+    }
+    for dir in &base_dirs {
+        let cand = dir.join(path);
+        if cand.is_file() || (allow_dirs && cand.is_dir()) {
+            return Some(cand.to_string_lossy().into_owned());
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let sub_cand = entry.path().join(path);
+                    if sub_cand.is_file() || (allow_dirs && sub_cand.is_dir()) {
+                        return Some(sub_cand.to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn resolve_support_file(_s: &crate::Session, _path: &str) -> Option<String> {
+    None
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn resolve_support_file_or_dir(_s: &crate::Session, _path: &str) -> Option<String> {
+    None
 }
 
 /// Read a regular text file up to 64 MiB, replacing invalid UTF-8 and returning `None` on read failure.
@@ -135,16 +199,17 @@ fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 /// A file or a folder: routines test whether a module is installed with `(findfile "module/.")`.
 /// Outside the automation roots the answer is no.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn file_exists(path: &str) -> bool {
     let p = std::path::Path::new(path);
     crate::file_access::check_read(p).is_ok() && (p.is_file() || p.is_dir())
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 fn file_exists(_path: &str) -> bool {
     false
 }
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

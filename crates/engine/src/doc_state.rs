@@ -41,6 +41,15 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// 3D Orbit orientation of model space (`Orbit3d::default()` = Top 2D plan view).
+    pub orbit: cadcraft_render::Orbit3d,
+    /// Whether this drawing is opened read-only (e.g. write-protected or locked by another user).
+    pub read_only: bool,
+    /// Details about the lock holder if the file was locked when opened.
+    pub lock_info: Option<String>,
+    pub lock_holder: Option<crate::drawing_lock::LockInfo>,
+    /// Active AutoCAD-compatible drawing lock guard (`.dwl` / `.dwl2`).
+    pub lock: Option<Arc<crate::drawing_lock::DrawingLockGuard>>,
     /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
     pub ucs_tilted_noted: bool,
     /// What the last erase removed, for OOPS.
@@ -74,6 +83,11 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            orbit: cadcraft_render::Orbit3d::default(),
+            read_only: false,
+            lock_info: None,
+            lock_holder: None,
+            lock: None,
             ucs_tilted_noted: false,
             erased: Default::default(),
             fonts_noted: String::new(),

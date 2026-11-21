@@ -44,10 +44,9 @@ fn typed_layout_options_prompt_for_names() {
     s.cmdline("LAYOUT ? Sheet*").unwrap();
     assert!(s.log[n..].iter().any(|l| l == "Layout: Sheet A (2)"), "{:?}", &s.log[n..]);
     assert!(!s.log[n..].iter().any(|l| l == "Layout: Layout1"));
-    let n = s.log.len();
     s.cmdline("LAYOUT T").unwrap();
-    assert!(s.current_prompt().is_none());
-    assert!(s.log[n..].iter().any(|l| l.contains("not available yet")), "{:?}", &s.log[n..]);
+    assert!(s.current_prompt().is_some_and(|p| p.message == "Enter template file name"));
+    s.input(cadcraft_engine::Input::Cancel).unwrap();
     assert_eq!(layouts(&s), ["Layout1", "Sheet A", "Sheet A (2)"]);
 
     // The whole command is one undo step.

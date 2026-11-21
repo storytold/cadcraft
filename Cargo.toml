@@ -84,9 +84,10 @@ web-time = "1.1"
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc", features = ["egui"] }
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false }
+raw-window-handle = "0.6"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 cognitive_complexity = "deny"

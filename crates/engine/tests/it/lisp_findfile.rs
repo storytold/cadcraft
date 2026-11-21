@@ -35,3 +35,9 @@ fn findfile_still_finds_a_file() {
     let file = dir.file("routine.lsp", "(princ)").replace('\\', "/");
     assert_eq!(findfile(&file), format!("\"{file}\""));
 }
+
+#[test]
+fn findfile_empty_path_returns_nil() {
+    assert_eq!(findfile(""), "nil");
+    assert_eq!(findfile("   "), "nil");
+}

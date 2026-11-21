@@ -45,7 +45,9 @@ pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
+pub mod xdedit;
 pub mod xrefs;
+pub mod lisp_ide;
 
 pub mod blocks_palette;
 
@@ -139,6 +141,9 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// Plugin files (`.lsp`, `.dll`) pinned to the Startup Suite so they load automatically
+    /// at startup and when switching/opening drawings.
+    pub startup_plugins: Vec<String>,
     /// The folder the Command Aliases dialog last imported a `.pgp` file from.
     pub last_pgp_dir: Option<String>,
 }
@@ -219,12 +224,13 @@ impl Default for UiState {
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            startup_plugins: Vec::new(),
             last_pgp_dir: None,
         }
     }
 }
 
-/// Host services (file pickers, clipboard) injected by the app so this crate stays portable.
+/// Host services (file pickers, clipboard, on-demand control server) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
@@ -242,6 +248,8 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    pub pick_image: Option<Box<dyn Fn() -> Option<String>>>,
+    pub start_control: Option<Box<dyn Fn() -> Receiver<ControlRequest>>>,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
 }
@@ -348,6 +356,7 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
+    pub lock_prompt: Option<closing::LockPrompt>,
     /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
     pub save_loss: Option<save_loss::Pending>,
     /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
@@ -370,6 +379,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    pub xdedit_dlg: Option<xdedit::XdEditState>,
+    pub lisp_ide: Option<lisp_ide::LispIdeState>,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -420,6 +431,7 @@ impl CadApp {
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
+            lock_prompt: None,
             save_loss: None,
             save_loss_accepted: None,
             autosave: None,
@@ -431,6 +443,8 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            xdedit_dlg: None,
+            lisp_ide: None,
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
@@ -582,13 +596,27 @@ impl CadApp {
         self.canvas.gpu_device = Some(rs.device.clone());
     }
 
+    /// Attach a running control-server request channel to the application.
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
     }
 
+    /// Ensure the loopback control server is running (starting it on demand via [`Services::start_control`])
+    /// so out-of-process `.NET` DLL plugins can communicate with the session.
+    pub fn ensure_control(&mut self) {
+        if self.control_rx.is_none()
+            && let Some(start) = self.services.start_control.take()
+        {
+            self.control_rx = Some(start());
+        }
+    }
+
     /// Run a command programmatically (or a UI command).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if id.eq_ignore_ascii_case("pasteclip") || id.eq_ignore_ascii_case("paste") {
+            crate::clipboard::sync_os_clipboard_for_paste(self);
+        }
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
@@ -612,7 +640,16 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if name.eq_ignore_ascii_case("pasteclip") || name.eq_ignore_ascii_case("paste") {
+            crate::clipboard::sync_os_clipboard_for_paste(self);
+        }
+        if !self.session.prompting() && !name.contains('.') {
+            self.cmd.push_history(&name.to_ascii_uppercase());
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
+            return;
+        }
+        if lisp_ide::try_run_dotnet_command(self, name) {
             return;
         }
         self.sync_bars();
@@ -634,6 +671,9 @@ impl CadApp {
         self.sync_bars();
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
+            if first.eq_ignore_ascii_case("pasteclip") || first.eq_ignore_ascii_case("paste") {
+                crate::clipboard::sync_os_clipboard_for_paste(self);
+            }
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
             let json_form = text.trim_start().get(first.len()..).is_some_and(|rest| rest.trim_start().starts_with('{'));
             // A name typed with the Greek keyboard layout active (ΨΛΟΣΕ for CLOSE) is the Latin name's
@@ -642,8 +682,16 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
-            if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
-                return None;
+            if !first.is_empty() && !json_form {
+                if !first.starts_with("ui.") {
+                    self.cmd.push_history(text);
+                }
+                if menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                    return None;
+                }
+                if lisp_ide::try_run_dotnet_command(self, first) {
+                    return None;
+                }
             }
         }
         let r = self.session.cmdline(text);
@@ -699,6 +747,9 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if !self.ui.startup_plugins.is_empty() {
+            prefs["startupPlugins"] = json!(self.ui.startup_plugins);
+        }
         if let Some(dir) = self.ui.last_pgp_dir.as_deref().filter(|d| !d.is_empty()) {
             prefs["lastPgpDir"] = json!(dir);
         }
@@ -737,6 +788,14 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(plugins) = v.get("startupPlugins").and_then(Value::as_array) {
+            self.ui.startup_plugins = plugins
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string)
+                .collect();
         }
         if let Some(dir) = v.get("lastPgpDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_pgp_dir = Some(dir.to_string());
@@ -777,12 +836,23 @@ impl CadApp {
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
     pub fn open_path(&mut self, path: &Path) {
-        // A LISP file (dropped on the window): loaded as APPLOAD loads it.
-        if is_lisp_file(path) {
-            match cadcraft_engine::lisp::builtins::read_text_file(path) {
-                Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
-                None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
+        let path_str = path.to_string_lossy();
+        // A .NET DLL / VB.NET / C# plugin file: load into the NETLOAD / VBAIDE Studio.
+        if lisp_ide::is_plugin_file(&path_str) {
+            if !path_str.trim().to_ascii_lowercase().ends_with(".dll") {
+                self.ui.dialog = Some("vbaide".into());
             }
+            lisp_ide::load_path_into_ide(self, &path_str);
+            return;
+        }
+        // A LISP file (dropped on the window or picked via Open): load via IDE so its `c:`
+        // commands appear on the command line, in Up/Down history, and in the floating menu.
+        if is_lisp_file(path) {
+            if cadcraft_engine::lisp::builtins::read_text_file(path).is_none() {
+                self.open_failed(format!("APPLOAD: can't read {}", path.display()));
+                return;
+            }
+            lisp_ide::load_path_into_ide(self, &path_str);
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -835,8 +905,22 @@ impl CadApp {
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
     /// menu runs this way too).
     fn load_lisp(&mut self, name: &str, text: &str) {
-        if let Err(e) = self.session.lisp_load(name, text, false) {
-            self.session.echo(e.to_string());
+        let cmds = lisp_ide::extract_c_commands(text);
+        match self.session.lisp_load(name, text, false) {
+            Ok(Some(Ok(_))) | Ok(None) => {
+                for cmd in &cmds {
+                    self.cmd.push_history(cmd);
+                }
+                if !cmds.is_empty() {
+                    self.session.echo(format!("Loaded {name} — Commands: {}", cmds.join(", ")));
+                }
+            }
+            Ok(Some(Err(e))) => {
+                self.session.echo(e);
+            }
+            Err(e) => {
+                self.session.echo(e.to_string());
+            }
         }
     }
 
@@ -880,7 +964,9 @@ impl CadApp {
     }
 
     fn opened(&mut self, r: Result<Value, String>) {
-        match r {
+        let lang = self.language();
+        i18n::with_language(lang, || {
+            match r {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
@@ -895,13 +981,39 @@ impl CadApp {
                 if let Some(w) = v.get("warnings").and_then(Value::as_array).and_then(|w| w.first()).and_then(Value::as_str) {
                     self.set_status(w.to_string());
                 }
+                if v.get("read_only").and_then(Value::as_bool) == Some(true) {
+                    let doc_idx = v.get("index").and_then(Value::as_u64).map(|i| i as usize).unwrap_or(self.session.active);
+                    let doc_state = self.session.docs.get(doc_idx);
+                    let title = doc_state.map(|d| d.title.clone()).unwrap_or_default();
+                    let doc_uid = doc_state.map(|d| d.uid).unwrap_or_default();
+                    let raw_info = v.get("lock_info").and_then(Value::as_str).unwrap_or("").to_string();
+                    let holder = v.get("lock_holder");
+                    let user = holder.and_then(|h| h.get("user")).and_then(Value::as_str).unwrap_or("").to_string();
+                    let machine = holder.and_then(|h| h.get("machine")).and_then(Value::as_str).unwrap_or("").to_string();
+                    let date_time = holder.and_then(|h| h.get("date_time")).and_then(Value::as_str).unwrap_or("").to_string();
+
+                    let prompt = closing::LockPrompt {
+                        doc_uid,
+                        title,
+                        user,
+                        machine,
+                        date_time,
+                        raw_info,
+                    };
+
+                    let echo_msg = crate::tf!("Drawing file is write-protected ({info}). Opened read-only.", info = prompt.description());
+                    self.session.echo(echo_msg);
+
+                    self.lock_prompt = Some(prompt);
+                }
                 // A dynamic block's own drawing: ask whether to open it in the Block Editor.
                 if self.session.state().is_ok_and(|st| cadcraft_engine::blockedit::has_authoring_elements(&st.doc)) {
                     self.ui.dialog = Some("authoring".into());
                 }
             }
         }
-    }
+    });
+}
 
     /// Put `path` first in File ▸ Open Recent and on the Start page.
     fn remember_recent(&mut self, path: String) {
@@ -981,7 +1093,7 @@ impl CadApp {
     /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
     /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || self.lock_prompt.is_some() || !self.recovery.items.is_empty()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
@@ -1103,6 +1215,7 @@ impl CadApp {
             ctx.set_zoom_factor(scale);
             self.shown_interface_scale = Some(scale);
         }
+        lisp_ide::ensure_startup_plugins_loaded(self);
         // Wait for the frame cap on a painted pass, where a wait cannot delay a hidden tick.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
@@ -1121,7 +1234,35 @@ impl CadApp {
             for file in dropped {
                 let path = file.path();
                 if !path.as_os_str().is_empty() {
-                    self.open_path(path);
+                    let p = path.to_string_lossy().to_string();
+                    let lower = p.to_ascii_lowercase();
+                    if lower.ends_with(".png")
+                        || lower.ends_with(".jpg")
+                        || lower.ends_with(".jpeg")
+                        || lower.ends_with(".bmp")
+                        || lower.ends_with(".webp")
+                        || lower.ends_with(".tif")
+                        || lower.ends_with(".tiff")
+                        || lower.ends_with(".gif")
+                    {
+                        let center = self.session.state().map(|s| s.view().center).unwrap_or(cadcraft_geom::Vec2::ZERO);
+                        match self.session.execute(
+                            "imageattach",
+                            &serde_json::json!({
+                                "path": p,
+                                "at": [center.x, center.y],
+                            }),
+                        ) {
+                            Ok(_) => {
+                                self.session.echo(format!("Attached image: {p}"));
+                            }
+                            Err(e) => {
+                                self.session.echo(e.to_string());
+                            }
+                        }
+                    } else {
+                        self.open_path(path);
+                    }
                 }
             }
         }
@@ -1163,6 +1304,7 @@ impl CadApp {
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
+        closing::lock_prompt(self, ui.ctx());
         save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());

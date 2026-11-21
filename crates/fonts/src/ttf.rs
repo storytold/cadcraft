@@ -598,7 +598,7 @@ pub fn available(name: &str) -> bool {
     let k = key(name);
     // The built-in stroke font is CADCraft's own stand-in for the basic stroke fonts.
     let stand_in = matches!(k.trim_end_matches(".shx"), "txt" | "simplex" | "romans");
-    k.is_empty() || stand_in || k == crate::BUILTIN_FONT.to_ascii_lowercase() || crate::shx::find(name).is_some() || find(name).is_some()
+    k.is_empty() || stand_in || k.eq_ignore_ascii_case(crate::BUILTIN_FONT) || crate::shx::find(name).is_some() || find(name).is_some()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -856,15 +856,49 @@ fn key(name: &str) -> String {
     n.trim_end_matches(".ttf").trim_end_matches(".otf").trim_end_matches(".ttc").trim_end_matches(".otc").to_string()
 }
 
-/// Names that mean a stroke font: never looked up as TrueType.
+/// Names that mean a stroke font: never looked up as TrueType (including Autodesk SHX-proxy TTF stems).
 fn is_stroke_name(k: &str) -> bool {
-    k.is_empty()
+    let base = k.trim_end_matches('_');
+    base.is_empty()
         || k.ends_with(".shx")
-        || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
-        || k == crate::BUILTIN_FONT.to_ascii_lowercase()
-        || k == "txt"
-        || k == "simplex"
-        || k == "romans"
+        || std::path::Path::new(base).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
+        || k.eq_ignore_ascii_case(crate::BUILTIN_FONT)
+        || matches!(
+            base,
+            "txt"
+                | "monotxt"
+                | "simplex"
+                | "romans"
+                | "romand"
+                | "romanc"
+                | "romant"
+                | "isocp"
+                | "isocp2"
+                | "isocp3"
+                | "isoct"
+                | "isoct2"
+                | "isoct3"
+                | "isocpeur"
+                | "isocpeui"
+                | "isocteur"
+                | "isocteui"
+                | "complex"
+                | "italic"
+                | "italicc"
+                | "italict"
+                | "scripts"
+                | "scriptc"
+                | "greekc"
+                | "greeks"
+                | "gothice"
+                | "gothicg"
+                | "gothici"
+                | "syastro"
+                | "symap"
+                | "symath"
+                | "symeteo"
+                | "symusic"
+        )
 }
 
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names
