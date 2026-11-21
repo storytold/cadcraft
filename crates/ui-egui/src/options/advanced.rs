@@ -14,6 +14,16 @@ pub(super) const ERROR: &str = "cc_options_advanced_error";
 const FILTER: &str = "cc_options_advanced_filter";
 const JSON_TEXT: &str = "cc_options_advanced_json";
 const JSON_OPEN: &str = "cc_options_advanced_json_open";
+const JSON_BASELINE: &str = "cc_options_advanced_json_baseline";
+
+/// The report the retained JSON edits, rather than a later live report. A drawing or style
+/// switch invalidates the draft so its document-specific values cannot reach another style.
+#[derive(Clone)]
+struct JsonBaseline {
+    origin: (Option<u64>, Option<String>),
+    report: Map<String, Value>,
+    interface: Map<String, Value>,
+}
 
 /// The compact text of a value for its edit field.
 fn compact(v: &Value) -> String {
@@ -175,7 +185,8 @@ pub(super) fn advanced(app: &CadApp, ui: &mut egui::Ui, edits: &mut Map<String, 
         });
     });
     ui.add_space(4.0);
-    json_editor(ui, &report, &interface, edits, ui_edits);
+    let origin = (app.session.state().ok().map(|s| s.uid), super::current_dim_style_name(app));
+    json_editor(ui, origin, &report, &interface, edits, ui_edits);
 }
 
 /// One setting's editor, named by its row's `label` for screen readers: a check box for a
@@ -220,6 +231,7 @@ fn row(ui: &mut egui::Ui, key: &str, label: egui::Id, value: &Value, edits: &mut
 /// through `options` (settings) or `ui_edits` (interface state); an unknown key changes nothing.
 fn json_editor(
     ui: &mut egui::Ui,
+    origin: (Option<u64>, Option<String>),
     report: &Map<String, Value>,
     interface: &Map<String, Value>,
     edits: &mut Map<String, Value>,
@@ -227,6 +239,15 @@ fn json_editor(
 ) {
     let open_id = egui::Id::unique(JSON_OPEN);
     let text_id = egui::Id::unique(JSON_TEXT);
+    let baseline_id = egui::Id::unique(JSON_BASELINE);
+    let baseline = ui.data(|d| d.get_temp::<JsonBaseline>(baseline_id));
+    if baseline.as_ref().is_some_and(|b| b.origin != origin) {
+        ui.data_mut(|d| d.remove::<String>(text_id));
+        set_error(ui, None);
+    }
+    let baseline =
+        baseline.filter(|b| b.origin == origin).unwrap_or_else(|| JsonBaseline { origin, report: report.clone(), interface: interface.clone() });
+    ui.data_mut(|d| d.insert_temp(baseline_id, baseline.clone()));
     let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     let r = egui::CollapsingHeader::new(crate::tl!("Edit as JSON")).id_salt("options_advanced_json").default_open(open).show(ui, |ui| {
         let pretty = || {
@@ -249,7 +270,7 @@ fn json_editor(
         ui.horizontal(|ui| {
             if ui.button(crate::tl!("Apply")).clicked() {
                 match serde_json::from_str::<Value>(&text) {
-                    Ok(Value::Object(new)) => match split_edits(report, interface, &new) {
+                    Ok(Value::Object(new)) => match split_edits(&baseline.report, &baseline.interface, &new) {
                         Ok((diff, ui_diff)) => {
                             set_error(ui, None);
                             edits.extend(diff);
@@ -265,7 +286,10 @@ fn json_editor(
                 }
             }
             if ui.button(crate::tl!("Reload")).clicked() {
-                ui.data_mut(|d| d.remove::<String>(text_id));
+                ui.data_mut(|d| {
+                    d.remove::<String>(text_id);
+                    d.remove::<JsonBaseline>(baseline_id);
+                });
                 set_error(ui, None);
             }
             if ui.button(crate::tl!("Copy as JSON")).clicked() {

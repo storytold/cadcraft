@@ -104,7 +104,7 @@ fn number(
     var: &str,
     dim: &mut Map<String, Value>,
 ) {
-    let id = egui::Id::unique(("cc_options_dim_number", var));
+    let id = ui.make_persistent_id(("cc_options_dim_number", var));
     let held = ui.data(|d| d.get_temp::<f64>(id));
     let mut x = held.unwrap_or(current);
     // Imported styles can contain valid values outside the drag range; merely showing them
@@ -119,7 +119,7 @@ fn number(
 
 /// A whole-number field; an edit goes into `dim` under `var` (see [`commit`]).
 fn whole(ui: &mut egui::Ui, label: egui::Id, current: i64, range: std::ops::RangeInclusive<i64>, var: &str, dim: &mut Map<String, Value>) {
-    let id = egui::Id::unique(("cc_options_dim_whole", var));
+    let id = ui.make_persistent_id(("cc_options_dim_whole", var));
     let held = ui.data(|d| d.get_temp::<i64>(id));
     let mut x = held.unwrap_or(current);
     let r = ui.add(egui::DragValue::new(&mut x).range(range).clamp_existing_to_range(false).update_while_editing(false)).labelled_by(label);
@@ -130,7 +130,7 @@ fn whole(ui: &mut egui::Ui, label: egui::Id, current: i64, range: std::ops::Rang
 
 /// A text field that commits when it loses focus; `Some(text)` on a change.
 fn text_field(ui: &mut egui::Ui, label: egui::Id, id: &str, current: &str, width: f32) -> Option<String> {
-    let id = egui::Id::unique(("cc_options_dim_text", id));
+    let id = ui.make_persistent_id(("cc_options_dim_text", id));
     let mut buf = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_string());
     let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(width)).labelled_by(label);
     if r.changed() {
@@ -162,6 +162,12 @@ pub(super) fn join_post(prefix: &str, suffix: &str) -> String {
 /// Dimensions tab: the current dimension style's number format, text and arrow sizes; edits go into
 /// `changes` as one `dimStyle` change.
 pub(super) fn dimensions(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    // An unfinished drag or text edit belongs to the drawing and style it started on.
+    let origin = (app.session.state().ok().map(|s| s.uid), super::current_dim_style_name(app));
+    ui.push_id(origin, |ui| dimensions_for_style(app, ui, changes));
+}
+
+fn dimensions_for_style(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     let t = Tokens::get();
     let style = super::current_dim_style(app);
     let mut dim = Map::new();

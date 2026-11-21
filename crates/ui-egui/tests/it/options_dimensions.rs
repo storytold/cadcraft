@@ -346,3 +346,96 @@ fn all_settings_apply_keeps_errors_from_either_kind_of_edit() {
         }
     }
 }
+
+/// A retained full JSON draft compares against the snapshot the user edited, even if a
+/// command changes the current style; switching drawing discards that draft entirely.
+#[test]
+fn a_json_draft_does_not_copy_stale_dimension_values() {
+    for switch_drawing in [false, true] {
+        let mut a = app();
+        a.ui.animations = cadcraft_ui_egui::animation::AnimationPref::Off;
+        a.ui.dialog = Some("options:advanced".into());
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::unique("cc_options_advanced_filter"), "no_matching_setting".to_string());
+            d.insert_temp(egui::Id::unique("cc_options_advanced_json_open"), true);
+        });
+        render(&mut a, &ctx);
+        let mut draft = a.run("options", json!({})).unwrap();
+        draft["PICKBOX"] = json!(11);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_advanced_json"), draft.to_string()));
+        if switch_drawing {
+            a.session.open_drawing(cadcraft_engine::doc::Drawing::new_metric(), "other.dxf", None);
+        }
+        // Change only the drawing's style, not the defaults or the retained JSON draft.
+        let name = cadcraft_ui_egui::options::current_dim_style_name(&a).unwrap();
+        a.session.execute("dimstyle", &json!({ "name": name, "DIMTXT": 17.0 })).unwrap();
+        let defaults = a.session.dim_defaults.clone();
+        let input = |events| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+            events,
+            ..Default::default()
+        };
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(input(events), |ui| a.ui(ui));
+            output.textures_delta.clear();
+            output.shapes
+        };
+        frame(Vec::new());
+        let shapes = frame(Vec::new());
+        let pos = *text_pos(&shapes, &|s| s == "Apply").first().unwrap() + egui::vec2(3.0, 6.0);
+        frame(vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            frame(vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }]);
+        }
+        assert_eq!(current(&mut a, "DIMTXT"), json!(17.0), "drawing switch: {switch_drawing}");
+        assert_eq!(a.session.dim_defaults, defaults);
+        if !switch_drawing {
+            assert_eq!(a.run("options", json!({})).unwrap()["PICKBOX"], json!(11.0));
+        }
+    }
+}
+
+#[test]
+fn a_pending_dimension_drag_does_not_edit_another_drawing() {
+    let mut a = app();
+    a.ui.dialog = Some("options:dimensions".into());
+    let ctx = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let frame = |a: &mut CadApp, events: Vec<egui::Event>| {
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        a.logic(&ctx);
+        let mut output = ctx.run_ui(input, |ui| a.ui(ui));
+        output.textures_delta.clear();
+        output.shapes
+    };
+    frame(&mut a, Vec::new());
+    let shapes = frame(&mut a, Vec::new());
+    // The precision field: the number painted on the label's row, right of it.
+    let label = text_pos(&shapes, &|t| t == "Precision (decimal places)");
+    let label = *label.first().expect("the precision row");
+    let before = current(&mut a, "DIMDEC");
+    let digits = before.to_string();
+    let field = text_pos(&shapes, &|t| t == digits).into_iter().find(|p| (p.y - label.y).abs() < 6.0 && p.x > label.x).expect("the precision field");
+    let start = field + egui::vec2(3.0, 6.0);
+    let undo_before = a.session.state().unwrap().undo.len();
+    let press = |pressed, pos| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame(&mut a, vec![egui::Event::PointerMoved(start)]);
+    frame(&mut a, vec![press(true, start)]);
+    // A drag over several frames, each of which changes the shown value.
+    for step in 1..=6 {
+        frame(&mut a, vec![egui::Event::PointerMoved(start - egui::vec2(step as f32 * 2.0, 0.0))]);
+    }
+    assert_eq!(a.session.state().unwrap().undo.len(), undo_before, "nothing is sent while the field is dragged");
+    a.session.open_drawing(cadcraft_engine::doc::Drawing::new_metric(), "other.dxf", None);
+    a.session.execute("dimstyle", &json!({ "name": "Standard", "current": true, "DIMDEC": 7 })).unwrap();
+    let before = current(&mut a, "DIMDEC");
+    let defaults = a.session.dim_defaults.clone();
+    let undo = a.session.state().unwrap().undo.len();
+    let end = start - egui::vec2(12.0, 0.0);
+    frame(&mut a, vec![press(false, end)]);
+    frame(&mut a, Vec::new());
+    assert_eq!(current(&mut a, "DIMDEC"), before);
+    assert_eq!(a.session.dim_defaults, defaults);
+    assert_eq!(a.session.state().unwrap().undo.len(), undo);
+}
