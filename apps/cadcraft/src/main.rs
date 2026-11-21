@@ -298,6 +298,7 @@ fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
         system_font_fallback: false,
         // A stencil buffer clips the contents of clipped layout viewports on the GPU.
         stencil_buffer: stencil,
+        multisampling: CANVAS_SAMPLES,
         ..Default::default()
     }
 }
@@ -309,6 +310,9 @@ const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
+
+/// The Linux OpenGL backend can present a black window with a multisampled stencil pass.
+const CANVAS_SAMPLES: u16 = if cfg!(target_os = "linux") { 1 } else { 4 };
 
 /// The stencil bits of the window's render pass: none when `CADCRAFT_STENCIL` is off. Some old
 /// drivers (Mesa on Intel HD 4000, old Intel drivers on Windows) accept a stencil pass without an
@@ -488,7 +492,7 @@ fn main() -> eframe::Result {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
             if let Some(rs) = &cc.wgpu_render_state {
-                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, stencil));
+                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, stencil), u32::from(CANVAS_SAMPLES));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());

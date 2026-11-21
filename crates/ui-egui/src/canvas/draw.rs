@@ -68,15 +68,27 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 /// [`dashed_rect`] for any closed outline (a selection window turned in a twisted view): each
 /// edge from one corner to the next, the last back to the first.
 pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    let edges = corners.iter().zip(corners.iter().cycle().skip(1)).map(|(&a, &b)| (a, b, 0.0));
+    dashed_edges(clip, edges, stroke, dash, gap)
+}
+
+/// Each visible edge starts a known distance along the original edge, in screen points.
+pub(super) fn dashed_edges(clip: Rect, edges: impl Iterator<Item = (Pos2, Pos2, f64)>, stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges = corners.iter().copied().zip(corners.iter().copied().cycle().skip(1));
-    for (a, b) in edges {
+    for (a, b, along) in edges {
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
-            dashes(&[pos(p), pos(q)], v(a).dist(p), stroke, dash, gap, &mut out);
+            let distance = along + v(a).dist(p);
+            let phase = distance.rem_euclid(f64::from(dash + gap));
+            // The clip may cut through a painted dash before the next full one.
+            if phase > 0.0 && phase < f64::from(dash) && q != p {
+                let end = p + (q - p) * ((f64::from(dash) - phase) / p.dist(q)).min(1.0);
+                out.push(Shape::line_segment([pos(p), pos(end)], stroke));
+            }
+            dashes(&[pos(p), pos(q)], distance, stroke, dash, gap, &mut out);
         }
     }
     out
@@ -84,12 +96,26 @@ pub(super) fn dashed_polygon(clip: Rect, corners: &[Pos2], stroke: Stroke, dash:
 
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
+    draw_list_faded(p, xf, list, bg, lwdisplay, &[], 1.0);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_list_faded(
+    p: &egui::Painter,
+    xf: &Xf,
+    list: &DisplayList,
+    bg: Rgb,
+    lwdisplay: bool,
+    faded: &[cadcraft_doc::Handle],
+    opacity: f32,
+) {
     let vis = xf.world_bounds();
-    super::images::draw(p, xf, list);
+    super::images::draw_faded(p, xf, list, faded, opacity);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
     for prim in &list.prims {
         let col = prim_color32(prim, bg);
+        let col = if faded.contains(&prim.handle) { col.gamma_multiply(opacity) } else { col };
         let pts = list.points(prim);
         match prim.kind {
             Kind::Polyline => {
@@ -220,13 +246,14 @@ pub(super) fn draw_drag_gpu(
     clipboard: (&[cadcraft_doc::Entity], u64),
     bg: Rgb,
     transparency: bool,
+    fade_pages: bool,
 ) {
     // Tessellate for a power-of-two zoom band so zooming mid-drag rebuilds only every 2x.
     let band = xf.scale.max(1e-300).log2().round() as i32;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, fade_pages, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -241,7 +268,12 @@ pub(super) fn draw_drag_gpu(
             cadcraft_render::build_entities(doc, drag.handles.iter().filter_map(|h| doc.entity(*h)).map(|e| e.as_ref()), &opts)
         };
         let origin = if list.bounds.is_empty() { Vec2::ZERO } else { list.bounds.center() };
-        let mesh = crate::gpu::build_mesh(&list, origin, bg, false);
+        let pages: Vec<_> = if fade_pages {
+            drag.handles.iter().copied().filter(|h| doc.entity(*h).is_some_and(|e| doc.imported_page_frame(e).is_some())).collect()
+        } else {
+            Vec::new()
+        };
+        let mesh = crate::gpu::build_mesh_faded(&list, origin, bg, false, &pages, 0.65);
         if let Ok(mut slot) = c.drag_slot.lock() {
             *slot = Some(mesh);
         }
@@ -275,15 +307,27 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
     h.finish()
 }
 
+/// Empty fades use exactly the key recorded by CanvasState::install, preserving
+/// meshes tessellated and uploaded by the background worker.
+pub(super) fn faded_mesh_key(base: u64, faded: &[cadcraft_doc::Handle]) -> u64 {
+    if faded.is_empty() {
+        return base;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    (base, faded).hash(&mut hash);
+    hash.finish()
+}
+
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
-pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
+pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool, faded: &[cadcraft_doc::Handle]) {
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
-    let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
+    let key = faded_mesh_key(list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay), faded);
     if c.mesh_key != Some(key) {
         let t0 = crate::now_ms();
-        let mesh = crate::gpu::build_mesh(list, origin, bg, lwdisplay);
+        let mesh = crate::gpu::build_mesh_faded(list, origin, bg, lwdisplay, faded, 0.15);
         if let Ok(mut slot) = c.mesh_slot.lock() {
             *slot = Some(mesh);
         }
@@ -292,7 +336,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_origin = origin;
         c.mesh_ms = crate::now_ms() - t0;
     }
-    super::images::draw(p, xf, list);
+    super::images::draw_faded(p, xf, list, faded, 0.15);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,

@@ -426,6 +426,33 @@ impl Drawing {
         }
     }
 
+    /// The paper rectangle of a page imported as a single block. Its first solid
+    /// is the page background, so picking and highlighting can use four corners.
+    pub fn imported_page_frame(&self, entity: &Entity) -> Option<[cadcraft_geom::Vec2; 5]> {
+        let EntityKind::Insert(insert) = &entity.kind else { return None };
+        if insert.rows != 1 || insert.cols != 1 || insert.clip.is_some() || !insert.attribs.is_empty() {
+            return None;
+        }
+        let block = self.block(&insert.block)?;
+        // The description is persisted with the block in DXF/DWG. A user-chosen
+        // name alone is never evidence that arbitrary block contents form a page.
+        if block.description != "Converted embedded document" {
+            return None;
+        }
+        let background = block.entities.iter().next()?;
+        if background.common.color != color::Color::True(color::Rgb(255, 255, 255)) {
+            return None;
+        }
+        let EntityKind::Solid(solid) = &background.kind else { return None };
+        let [a, b, c, d] = solid.corners.map(|p| p.xy());
+        if a.x != c.x || b.x != d.x || a.y != b.y || c.y != d.y || a.x == b.x || a.y == c.y {
+            return None;
+        }
+        let transform = insert.transform(block.base.xy());
+        let frame = [a, b, d, c, a].map(|p| transform.apply(p));
+        frame.iter().all(|p| p.is_finite()).then_some(frame)
+    }
+
     /// Find an entity in model space or any layout.
     pub fn entity(&self, h: Handle) -> Option<&std::sync::Arc<Entity>> {
         self.model.get(h).or_else(|| self.layouts.iter().find_map(|l| l.entities.get(h)))

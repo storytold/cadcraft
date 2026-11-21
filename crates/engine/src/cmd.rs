@@ -15,6 +15,7 @@ mod draw2;
 mod draworder;
 mod edit;
 mod exchange;
+pub(crate) use exchange::page_file_import;
 pub mod file;
 mod gripcmds;
 mod griphot;

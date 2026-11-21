@@ -14,6 +14,9 @@
 # To remove your names, delete your entry (or set fields empty) in a PR. The next
 # contributors.py run, and the next build, drop them.
 
+[people.yunusdede9-cyber]
+real_name = "Yunus Emre DEDE"
+
 [people.echelon]
 real_name = "Brandon Thomas"
 display_name = "Brandon Thomas"

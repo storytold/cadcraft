@@ -19,6 +19,7 @@ mod dyn_boxes;
 mod grid;
 mod grips;
 mod list;
+mod page_resize;
 mod pick;
 mod press;
 mod viewport;
@@ -27,7 +28,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_edges, dashed_polygon, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -157,6 +158,8 @@ pub struct CanvasState {
     /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
     /// scrolling then pans and pinch zooms. A notched mouse wheel clears it so the wheel zooms.
     scroll_pans: bool,
+    /// In-progress corner drag of an imported page.
+    page_resize: Option<page_resize::Drag>,
     /// Hot grips (object, grip index): the ones Shift+clicked while idle, then the ones the
     /// running GRIP edit works on (the engine's grip modes take them from there).
     pub hot_grips: Vec<(Handle, usize)>,
@@ -397,6 +400,41 @@ struct CanvasPaint<'a> {
     raw_world: Option<Vec2>,
 }
 
+/// Page imports carry many fill primitives. Show the paper frame for hover and
+/// selection so the highlight never walks or tessellates the contents.
+fn imported_page_lines(frame: &[Vec2; 5], clip: Option<&cadcraft_render::clip::PolyClip>) -> Vec<Vec<Vec2>> {
+    clip.map_or_else(|| vec![frame.to_vec()], |clip| clip.clip_polyline(frame))
+}
+
+fn draw_imported_page_frame(
+    painter: &egui::Painter,
+    xf: &Xf,
+    frame: [Vec2; 5],
+    color: Color32,
+    look: Look,
+    clip: Option<&cadcraft_render::clip::PolyClip>,
+) {
+    let stroke = Stroke::new(look.width, color);
+    if look.dashed {
+        if let Some(clip) = clip {
+            let edges = frame.array_windows::<2>().flat_map(|&[start, end]| {
+                clip.clip_polyline(&[start, end]).into_iter().filter_map(move |piece| {
+                    let (&a, &b) = (piece.first()?, piece.last()?);
+                    Some((xf.to_screen(a), xf.to_screen(b), start.dist(a) * xf.scale))
+                })
+            });
+            painter.extend(dashed_edges(painter.clip_rect(), edges, stroke, 6.0, 4.0));
+        } else {
+            let [a, b, c, d, _] = frame.map(|p| xf.to_screen(p));
+            painter.extend(dashed_polygon(painter.clip_rect(), &[a, b, c, d], stroke, 6.0, 4.0));
+        }
+    } else {
+        for line in imported_page_lines(&frame, clip) {
+            painter.add(egui::Shape::line(line.into_iter().map(|p| xf.to_screen(p)).collect(), stroke));
+        }
+    }
+}
+
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
     let app = &mut *frame.app;
     let painter = frame.painter;
@@ -411,6 +449,17 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     // The active viewport's contents, drawn apart from the layout's list, under its own objects.
     // `masked`: its outline is in the stencil buffer this frame.
     let mut masked = false;
+    let faded_pages: Vec<Handle> = if app.session.running.as_ref().is_some_and(|r| r.id == "move") {
+        app.canvas.cursor.and_then(|cursor| app.session.drag(cursor)).map_or_else(Vec::new, |(drag, _)| {
+            drag.handles
+                .into_iter()
+                .filter(|handle| app.session.doc().ok().is_some_and(|d| d.entity(*handle).is_some_and(|e| d.imported_page_frame(e).is_some())))
+                .collect()
+        })
+    } else {
+        Vec::new()
+    };
+
     if let Some(only) = app.session.display_only() {
         // A command that shows only some objects while it runs (DVIEW's preview set): those,
         // in the view being changed (inside the active viewport, clipped to it).
@@ -436,11 +485,50 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             masked = gpu && f.outline.is_some();
         }
         if app.canvas.gpu.is_some() {
-            draw_list_gpu(&mut app.canvas, painter, &xf_paper, bg, app.session.settings.lwdisplay);
+            draw_list_gpu(&mut app.canvas, painter, &xf_paper, bg, app.session.settings.lwdisplay, &faded_pages);
         } else if let Some(list) = &app.canvas.list {
-            draw_list(painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+            draw::draw_list_faded(painter, &xf_paper, list, bg, app.session.settings.lwdisplay, &faded_pages, 0.15);
         }
     }
+    let page_frame = |h| app.session.state().ok().and_then(|st| st.doc.entity(h).and_then(|e| st.doc.imported_page_frame(e)));
+    let mut hover = app.canvas.hover.filter(|h| !sel.contains(h));
+    let viewport_rect = active_vp.as_ref().map(|vp| {
+        active_clip.as_ref().map_or_else(
+            || {
+                Rect::from_two_pos(
+                    xf_paper.to_screen(Vec2::new(vp.center.x - vp.width / 2.0, vp.center.y + vp.height / 2.0)),
+                    xf_paper.to_screen(Vec2::new(vp.center.x + vp.width / 2.0, vp.center.y - vp.height / 2.0)),
+                )
+            },
+            |clip| {
+                let b = clip.bounds();
+                Rect::from_two_pos(xf_paper.to_screen(Vec2::new(b.min.x, b.max.y)), xf_paper.to_screen(Vec2::new(b.max.x, b.min.y)))
+            },
+        )
+    });
+    let page_painter = painter.with_clip_rect(viewport_rect.map_or(rect, |r| r.intersect(rect)));
+    let page_clip = active_vp.as_ref().zip(active_clip.as_ref()).and_then(|(vp, clip)| {
+        let polygon: Vec<_> = clip.polygon().iter().map(|p| vp.paper_to_model(*p)).collect();
+        cadcraft_render::clip::PolyClip::new(&polygon)
+    });
+    if let Some(frame) = hover.and_then(page_frame) {
+        draw_imported_page_frame(&page_painter, &xf, frame, t.hover, preview_look, page_clip.as_ref());
+        hover = None;
+    }
+    let remaining: Vec<Handle> = selection_look.map_or_else(Vec::new, |look| {
+        sel.iter()
+            .copied()
+            .filter(|&h| {
+                if let Some(frame) = page_frame(h) {
+                    draw_imported_page_frame(&page_painter, &xf, frame, t.selection, look, page_clip.as_ref());
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect()
+    });
+    let sel = remaining.as_slice();
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
         let r = Rect::from_two_pos(
@@ -466,9 +554,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             });
             let clipped = painter.with_clip_rect(bounds.intersect(rect));
             let c = &mut app.canvas;
-            if let Some(h) = c.hover
-                && !sel.contains(&h)
-            {
+            if let Some(h) = hover {
                 c.vp_hover.update(st, &[h], scale);
                 let list = &c.vp_hover.list;
                 draw_highlight(&clipped, &xf, list, &(0..list.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
@@ -492,10 +578,8 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
                 }
             }
         }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
-        if let Some(h) = *hover
-            && !sel.contains(&h)
-        {
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
+        if let Some(h) = hover {
             draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);
         }
         if let Some(look) = selection_look {
@@ -892,6 +976,19 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
+    let resize_clip = active_vp.as_ref().and_then(|vp| {
+        if app.session.selection().is_empty() {
+            return None;
+        }
+        let half = Vec2::new(vp.width, vp.height) * 0.5;
+        let a = vp.center.xy() - half;
+        let b = vp.center.xy() + half;
+        let rect = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
+        let outline = active_clip.as_ref().map_or(rect.as_slice(), |c| c.polygon());
+        cadcraft_render::clip::PolyClip::new(&outline.iter().map(|p| vp.paper_to_model(*p)).collect::<Vec<_>>())
+    });
+    let resizing_page = page_resize::input(app, ui, &xf, inside, on_menu, resize_clip.as_ref());
+    let pressed_primary = pressed_primary && !resizing_page;
     // Selection cycling's list closes when the prompt, the drawing or the view changes.
     let key: CycleKey = (
         app.session.running.as_ref().map(|r| r.id.clone()),
@@ -908,7 +1005,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     let idle_double = dbl_primary && app.session.running.is_none();
     let grip_clicks = !hatch_dialog && !idle_double;
-    let click_used = handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods, grip_clicks });
+    let click_used = resizing_page || handle_presses(app, ui, &PressContext { rect, xf, inside, middle_down, mods, grip_clicks });
 
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
 
@@ -997,24 +1094,27 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 
     update_hover(app, ui, inside, hover_pos, raw_world, scale);
 
-    paint_canvas(CanvasPaint {
-        app,
-        ui,
-        painter: &painter,
-        tokens: t,
-        full,
-        tiles: &tiles,
-        rect,
-        xf,
-        xf_paper,
-        view,
-        active_vp,
-        active_clip,
-        inside,
-        on_menu,
-        hover_pos,
-        raw_world,
-    });
+    paint_canvas(
+        CanvasPaint {
+            app,
+            ui,
+            painter: &painter,
+            tokens: t,
+            full,
+            tiles: &tiles,
+            rect,
+            xf,
+            xf_paper,
+            view,
+            active_vp,
+            active_clip,
+            inside,
+            on_menu,
+            hover_pos,
+            raw_world,
+        },
+        resize_clip.as_ref(),
+    );
 }
 
 /// Put the cursor at `raw` (world, `None` off the canvas): snaps, ortho and polar, a locked
@@ -1106,7 +1206,7 @@ fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egu
     !had_window && app.session.pending_window.is_some()
 }
 
-fn paint_canvas(frame: CanvasPaint<'_>) {
+fn paint_canvas(frame: CanvasPaint<'_>, resize_clip: Option<&cadcraft_render::clip::PolyClip>) {
     let CanvasPaint {
         app,
         ui,
@@ -1220,6 +1320,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             if let Some(e) = st.doc.entity(*h)
                 && st.shows(e)
             {
+                if st.doc.imported_page_frame(e).is_some() {
+                    continue;
+                }
                 let grips = e.kind.grips();
                 let count = grips.len();
                 for (gi, g) in grips.into_iter().enumerate() {
@@ -1246,6 +1349,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
     }
+    page_resize::draw(app, painter, &xf, resize_clip);
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
     let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
@@ -1256,7 +1360,17 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if let Ok(st) = app.session.state() {
             let serial = app.session.clipboard_source.as_ref().map_or(0, |c| c.serial);
             let transparency = app.session.settings.transparency_display;
-            draw_drag_gpu(&mut app.canvas, painter, &xf, &st.doc, &drag, (&app.session.clipboard, serial), bg, transparency);
+            draw_drag_gpu(
+                &mut app.canvas,
+                painter,
+                &xf,
+                &st.doc,
+                &drag,
+                (&app.session.clipboard, serial),
+                bg,
+                transparency,
+                app.session.running.as_ref().is_some_and(|r| r.id == "move"),
+            );
             let list = rebuilt_preview(&st.doc, extra.iter(), scale);
             draw_list(painter, &xf, &list, bg, false);
         }

@@ -30,7 +30,10 @@ impl Session {
         if let Some(why) = crate::file_access::commands::refusal(spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
-        (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        let opens_page = spec.id == "import" && self.state().is_err() && cmd::page_file_import(params);
+        if !opens_page {
+            (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        }
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
@@ -56,6 +59,9 @@ impl Session {
                 return Err(EngineError::Internal(id.into(), msg));
             }
         };
+        // A successful first page import created its destination during dispatch.
+        // The saved snapshot still holds that new drawing before the page was inserted.
+        let before = if opens_page && result.is_ok() { self.state().ok().map(|s| (s.saved.clone(), Vec::new(), s.uid)) } else { before };
         let violation = before.as_ref().and_then(|b| cmd::blocks::refedit::after_command(self, &b.0, spec.id));
         let result = match (violation, result) {
             (Some(m), Ok(_)) => Err(EngineError::Other(m)),

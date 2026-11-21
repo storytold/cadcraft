@@ -17,6 +17,7 @@ mod dxf_read;
 mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
+mod ole;
 pub mod pdf;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
@@ -25,6 +26,8 @@ pub mod raster;
 pub mod roundtrip;
 pub mod svg;
 mod svg_read;
+#[cfg(not(target_arch = "wasm32"))]
+mod word;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;
@@ -106,7 +109,20 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
     }
-    let d = match (Format::from_path(name), ext(name).as_str()) {
+    let extension = ext(name);
+    if matches!(extension.as_str(), "pdf" | "docx" | "olepreview") && Format::has_dxf_header(bytes) {
+        return dxf_read::read(bytes).map(|drawing| (drawing, None));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    match extension.as_str() {
+        "pdf" => return word::read_pdf(bytes).map(|drawing| (drawing, None)),
+        "docx" => return word::read(bytes).map(|drawing| (drawing, None)),
+        _ => {}
+    }
+    if extension == "olepreview" {
+        return ole::read(bytes).map(|d| (d, None));
+    }
+    let d = match (Format::from_path(name), extension.as_str()) {
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),
         (Some(Format::Dxf), _) => dxf_read::read(bytes),
         (_, e) if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),

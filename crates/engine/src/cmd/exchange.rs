@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cadcraft_color::Rgb;
-use cadcraft_doc::{Drawing, Entity, EntityKind, Space};
-use cadcraft_geom::{Bounds2, Mat3, Vec2};
+use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, Insert, Space, XrefStatus};
+use cadcraft_geom::{Bounds2, Mat3, Vec2, Vec3};
 use cadcraft_render::paper::{self, Sheet};
 use cadcraft_render::raster::{RasterOptions, View};
 use serde_json::{Value, json};
@@ -32,10 +32,14 @@ const MAX_SHEETS: usize = 256;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        CommandSpec::new("page.resize", "Resize Imported Page", run_page_resize)
+            .params("{handle, corner: 0..3, to: [x,y]} → {handle}: resize around the opposite corner, preserving aspect ratio"),
+        CommandSpec::new("oleconvert", "Convert Embedded Document to CAD", run_oleconvert)
+            .params("{handle?: OLE2FRAME handle, otherwise one selected object} → {handle, block, objects}: replace a cached Word presentation with a self-contained CAD block"),
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, or first page of DOCX/PDF), at?: [x,y] (default: center DOCX/PDF in the current view, 0,0 for DXF/DWG), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -135,6 +139,127 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- IMPORT ----------
 
+/// Resize around the opposite corner without expanding the page contents.
+fn run_page_resize(s: &mut Session, params: &Value) -> Result<Value> {
+    let handles = super::targets(s, params)?;
+    let [handle] = handles.as_slice() else {
+        return Err(bad("page.resize", "one imported page is required"));
+    };
+    let corner = params
+        .get("corner")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .filter(|n| *n < 4)
+        .ok_or_else(|| bad("page.resize", "corner must be 0..3"))?;
+    let to = super::point_req("page.resize", params, "to")?;
+    let drawing = s.doc()?;
+    let entity = drawing.entity(*handle).ok_or_else(|| bad("page.resize", "page not found"))?;
+    if drawing.space_of(*handle).as_ref() != Some(&s.space()) || drawing.layer(&entity.common.layer).is_some_and(|l| l.locked) {
+        return Err(bad("page.resize", "page is outside the editable space or its layer is locked"));
+    }
+    let frame = drawing.imported_page_frame(entity).ok_or_else(|| bad("page.resize", "object is not an imported page"))?;
+    let transform =
+        crate::grips::page_resize_transform(&frame, corner, to).ok_or_else(|| bad("page.resize", "move the corner away from its opposite corner"))?;
+    s.doc_mut()?.modify_entity(*handle, |e| e.kind.transform(&transform))?;
+    Ok(json!({"handle":handle.hex()}))
+}
+
+/// Convert one selected embedded document after validating its presentation.
+fn run_oleconvert(s: &mut Session, p: &Value) -> Result<Value> {
+    let handles = super::targets(s, p)?;
+    let [handle] = handles.as_slice() else {
+        return Err(bad("oleconvert", "select one embedded document"));
+    };
+    let space = s.space();
+    let drawing = s.doc()?;
+    let entity = drawing
+        .space(&space)
+        .and_then(|st| st.iter().find(|e| e.handle == *handle))
+        .ok_or_else(|| bad("oleconvert", "the object is not in the current space"))?;
+    if drawing.layer(&entity.common.layer).is_some_and(|l| l.locked) {
+        return Err(bad("oleconvert", "the object's layer is locked"));
+    }
+    let EntityKind::Unknown(unknown) = &entity.kind else {
+        return Err(bad("oleconvert", "the object is not an OLE frame"));
+    };
+    if !unknown.is_ole_frame() {
+        return Err(bad("oleconvert", "the object is not an OLE frame"));
+    }
+    let frame = cadcraft_doc::ole_frame(&unknown.tags).ok_or_else(|| bad("oleconvert", "invalid frame"))?;
+    let [top_left, _, bottom_right, _, _] = frame;
+    let width = bottom_right.x - top_left.x;
+    let height = top_left.y - bottom_right.y;
+    if !width.is_finite() || !height.is_finite() || width == 0.0 || height == 0.0 {
+        return Err(bad("oleconvert", "the OLE frame must have nonzero finite width and height"));
+    }
+    let mut data = Vec::new();
+    for tag in unknown.tags.iter().filter(|t| t.code == 310) {
+        if tag.value.len() % 2 != 0 || data.len().saturating_add(tag.value.len() / 2) > 32 << 20 {
+            return Err(bad("oleconvert", "invalid or oversized embedded data"));
+        }
+        for pair in tag.value.as_bytes().as_chunks::<2>().0 {
+            let hex = std::str::from_utf8(pair).map_err(|_| bad("oleconvert", "invalid hexadecimal data"))?;
+            data.push(u8::from_str_radix(hex, 16).map_err(|_| bad("oleconvert", "invalid hexadecimal data"))?);
+        }
+    }
+    let common = entity.common.clone();
+    let hooks = io().ok_or_else(|| bad("oleconvert", "file formats are not available"))?;
+    let src = (hooks.read)(&data, "embedded.olepreview").map_err(|e| bad("oleconvert", e))?;
+    let block_name = format!("OLE_{}", handle.hex());
+    let drawing = s.doc_mut()?;
+    let (inserted, block_name) = embed_page(
+        drawing,
+        &space,
+        &src,
+        common,
+        Insert { block: block_name, insert: Vec3::new(top_left.x, top_left.y, 0.0), scale: Vec3::new(width, height, 1.0), ..Insert::default() },
+    )?;
+    if let Some(store) = drawing.space_mut(&space) {
+        store.move_next_to(inserted, *handle, false);
+    }
+    drawing.remove_entity(*handle);
+    s.set_selection(vec![inserted]);
+    Ok(json!({"handle":inserted.hex(),"block":block_name,"objects":src.model.len()}))
+}
+
+fn embed_page(drawing: &mut Drawing, space: &Space, src: &Drawing, common: Common, mut insert: Insert) -> Result<(cadcraft_doc::Handle, String)> {
+    let mut block_name = insert.block.clone();
+    let mut suffix = 1;
+    while drawing.block(&block_name).is_some() {
+        block_name = format!("{}_{suffix}", insert.block);
+        suffix += 1;
+    }
+    let mut entities = cadcraft_doc::EntityStore::default();
+    for source in src.model.iter() {
+        let mut entity = (**source).clone();
+        entity.handle = drawing.new_handle();
+        entities.push(entity);
+    }
+    let block = Block {
+        name: block_name.clone(),
+        annotative: false,
+        base: Vec3::ZERO,
+        entities,
+        description: "Converted embedded document".into(),
+        xref_overlay: false,
+        xref_status: XrefStatus::NotLoaded,
+        anonymous: false,
+        xref_path: None,
+        explodable: true,
+        units: 0,
+        array: None,
+    };
+    drawing.blocks.insert(block_name.clone(), Arc::new(block));
+    insert.block = block_name.clone();
+    Ok((drawing.add(space, common, EntityKind::Insert(insert))?, block_name))
+}
+
+/// Parameter-aware exception to IMPORT's drawing-required gate: page files can
+/// create their destination after conversion succeeds. Other drawing imports cannot.
+pub(crate) fn page_file_import(p: &Value) -> bool {
+    str_param(p, "path").or_else(|| str_param(p, "name")).is_some_and(|name| matches!(extension(name).as_str(), "pdf" | "docx"))
+}
+
 fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
     let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
     let at = match p.get("at") {
@@ -155,8 +280,56 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
     };
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
+    let page = match extension(&name).as_str() {
+        "docx" | "pdf" if super::file::looks_like_drawing(&bytes) => None,
+        "docx" => Some(("WORD_ANTET", "Word page embedded as a CAD block.")),
+        "pdf" => Some(("PDF_ANTET", "PDF page embedded as a CAD block.")),
+        _ => None,
+    };
+    if let Some(page) = page {
+        return import_page(s, p, &src, at, scale, page);
+    }
     let file = std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     import_drawing(s, &src, at, scale, &file)
+}
+
+/// Embed the page as one selectable and movable block.
+fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: f64, (block, message): (&str, &str)) -> Result<Value> {
+    if s.state().is_err() {
+        s.new_drawing(true);
+    }
+    let space = s.space();
+    let doc = s.doc()?;
+    let mm_per_unit = match &space {
+        Space::Paper(name) => {
+            let layout = doc.layout(name).ok_or_else(|| bad("import", "layout is missing"))?;
+            cadcraft_render::paper::page_unit_mm(doc, &layout.page)
+        }
+        Space::Model => match doc.header.i64("INSUNITS", 0) {
+            1 => 25.4,
+            2 => 304.8,
+            5 => 10.0,
+            6 => 1000.0,
+            _ => 1.0,
+        },
+    };
+    let scale = scale / mm_per_unit;
+    let at = if params.get("at").is_none() {
+        let bounds = src.extents(&Space::Model);
+        s.state()?.view().center - bounds.center() * scale
+    } else {
+        at
+    };
+    let (inserted, block_name) = embed_page(
+        s.doc_mut()?,
+        &space,
+        src,
+        Common::default(),
+        Insert { block: block.into(), insert: Vec3::new(at.x, at.y, 0.0), scale: Vec3::new(scale, scale, 1.0), ..Insert::default() },
+    )?;
+    s.set_selection(vec![inserted]);
+    Ok(json!({"handle": inserted.hex(), "handles":[inserted.hex()], "imported": 1,
+        "layers":0,"styles":0,"blocks":1,"block":block_name,"message": message}))
 }
 
 /// Copy `src`'s model space into the current space (scaled about the origin, then moved to

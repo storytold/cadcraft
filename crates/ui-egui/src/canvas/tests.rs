@@ -43,7 +43,7 @@ fn dragged_objects_keep_their_transparency() {
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
     let mut alpha = |transparency: bool| {
-        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency);
+        draw_drag_gpu(&mut c, &painter, &xf, &d, &drag, (&[], 0), Rgb(0, 0, 0), transparency, false);
         let mesh = c.drag_slot.lock().unwrap().take().unwrap();
         // The first line vertex's colour alpha (after its 2 × f32 position).
         mesh.lines[11]
@@ -471,4 +471,75 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     assert!(!badge(&mut app, &ctx), "the badge stayed for a line the viewport no longer draws");
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
+}
+
+#[test]
+fn prebuilt_mesh_is_reused_until_fade_state_changes() {
+    let mut canvas = CanvasState::default();
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0));
+    let xf = Xf { rect, center: Vec2::ZERO, scale: 1.0, twist: 0.0 };
+    let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
+    let list = list(&[1]);
+    let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(rect.height()) / xf.scale);
+    let base = draw::list_mesh_key(&canvas.key, canvas.list_gen, origin, Rgb(0, 0, 0), false);
+    canvas.list = Some(list);
+    canvas.mesh_key = Some(base);
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[]);
+    assert!(canvas.mesh_slot.lock().unwrap().is_none(), "the pre-uploaded mesh must not be replaced on the UI thread");
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[Handle(1)]);
+    assert_ne!(canvas.mesh_key, Some(base));
+    assert!(canvas.mesh_slot.lock().unwrap().take().is_some());
+    draw_list_gpu(&mut canvas, &painter, &xf, Rgb(0, 0, 0), false, &[]);
+    assert_eq!(canvas.mesh_key, Some(base), "a faded mesh is not retained after MOVE");
+    assert!(canvas.mesh_slot.lock().unwrap().is_some());
+}
+
+#[test]
+fn page_frame_highlights_obey_a_concave_viewport_polygon() {
+    let polygon = [(0.0, 0.0), (20.0, 0.0), (20.0, 5.0), (5.0, 5.0), (5.0, 20.0), (0.0, 20.0)].map(|(x, y)| Vec2::new(x, y));
+    let clip = cadcraft_render::clip::PolyClip::new(&polygon).unwrap();
+    let frame = [Vec2::new(1.0, 1.0), Vec2::new(15.0, 1.0), Vec2::new(15.0, 15.0), Vec2::new(1.0, 15.0), Vec2::new(1.0, 1.0)];
+    let pieces = imported_page_lines(&frame, Some(&clip));
+    assert!(!pieces.is_empty());
+    for piece in pieces {
+        for edge in piece.windows(2) {
+            assert!(clip.contains((edge[0] + edge[1]) * 0.5), "no frame segment in the viewport notch");
+        }
+    }
+    assert_eq!(imported_page_lines(&frame, None), vec![frame.to_vec()]);
+}
+
+#[test]
+fn dashed_page_frame_does_not_close_clipped_open_runs() {
+    let polygon =
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (15.0, 20.0), (15.0, 5.0), (5.25, 5.0), (5.25, 20.0), (0.0, 20.0)].map(|(x, y)| Vec2::new(x, y));
+    let clip = cadcraft_render::clip::PolyClip::new(&polygon).unwrap();
+    let frame = [(1.0, 1.0), (19.0, 1.0), (19.0, 19.0), (1.0, 19.0), (1.0, 1.0)].map(|(x, y)| Vec2::new(x, y));
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0));
+    let xf = Xf { rect, center: Vec2::new(10.0, 10.0), scale: 10.0, twist: 0.0 };
+    let ctx = egui::Context::default();
+    let mut original = Vec::new();
+    for clipping in [None, Some(&clip)] {
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+            draw_imported_page_frame(ui.painter(), &xf, frame, Color32::WHITE, Look { width: 1.0, dashed: true }, clipping);
+        });
+        output.textures_delta.clear();
+        let mut edges = [false; 4];
+        for shape in output.shapes {
+            if let Shape::LineSegment { points: [a, b], .. } = shape.shape {
+                let p = xf.to_world(a + (b - a) * 0.5);
+                let on_edge = [(p.y - 1.0).abs(), (p.x - 19.0).abs(), (p.y - 19.0).abs(), (p.x - 1.0).abs()];
+                let edge =
+                    on_edge.iter().position(|distance| *distance < 1e-5).expect("dash must follow the paper, never an artificial closing chord");
+                edges[edge] = true;
+                if clipping.is_none() {
+                    original.push([a, b]);
+                } else if edge == 2 && p.x > 1.8 && p.x < 4.5 {
+                    assert!(original.iter().any(|[x, y]| a.distance(*x) < 1e-3 && b.distance(*y) < 1e-3), "clipped dash moved");
+                }
+                assert!(clipping.is_none_or(|clip| clip.contains(p)), "dash must remain inside the U-shaped viewport");
+            }
+        }
+        assert_eq!(edges, [true; 4], "all four original paper edges remain visible");
+    }
 }

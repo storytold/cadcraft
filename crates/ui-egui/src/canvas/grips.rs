@@ -90,7 +90,7 @@ pub(super) fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Han
     }
     for h in sel.iter().take(200) {
         let e = st.doc.entity(*h)?;
-        if !st.shows(e) || st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
+        if !st.shows(e) || st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) || st.doc.imported_page_frame(e).is_some() {
             continue;
         }
         let grips = e.kind.grips();

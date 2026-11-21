@@ -565,3 +565,34 @@ pub fn polyline_grip_count(p: &LwPolyline) -> usize {
 
 #[cfg(test)]
 mod tests;
+
+/// Resize an imported page from one corner, keeping the opposite corner fixed.
+/// Orthogonal projection onto the original diagonal preserves its aspect ratio.
+pub fn page_resize_transform(frame: &[Vec2; 5], corner: usize, to: Vec2) -> Option<Mat3> {
+    let moving = *frame.get(corner)?;
+    if corner >= 4 || !to.is_finite() {
+        return None;
+    }
+    let anchor = *frame.get((corner + 2) % 4)?;
+    let diagonal = moving - anchor;
+    let length_squared = diagonal.x * diagonal.x + diagonal.y * diagonal.y;
+    if !length_squared.is_finite() || length_squared < 1e-18 {
+        return None;
+    }
+    let delta = to - anchor;
+    let factor = (delta.x * diagonal.x + delta.y * diagonal.y) / length_squared;
+    // Projection of an exact boundary drag can round one ULP outside the range.
+    let (min, max) = (1e-6_f64, 1e6_f64);
+    if !(min.next_down()..=max.next_up()).contains(&factor) {
+        return None;
+    }
+    let factor = factor.clamp(min, max);
+    // A successful shrink must remain large enough for the same operation to
+    // accept it as a starting page on the next drag.
+    let transform = Mat3::scale_about(anchor, factor);
+    let resized = transform.apply(moving) - transform.apply(anchor);
+    if !resized.is_finite() || resized.x * resized.x + resized.y * resized.y < 1e-18 {
+        return None;
+    }
+    Some(transform)
+}
