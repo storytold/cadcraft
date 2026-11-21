@@ -178,8 +178,8 @@ fn choose_visibility(app: &mut CadApp, what: &str) {
 }
 
 /// The edit commands of the selected objects' type (when they are all of one type), with their
-/// labels: Edit Text for text, Block Editor and Edit Attributes for block references, Hatch Edit,
-/// Polyline Edit, Spline Edit…
+/// labels: Edit Text for text, Block Editor and Edit Attributes for block references, Hatch Edit
+/// and Generate Boundary for hatches, Polyline Edit, Spline Edit…
 fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
     let Ok(d) = app.session.doc() else { return Vec::new() };
     let sel = app.session.selection();
@@ -198,7 +198,7 @@ fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
             }
             v
         }
-        EntityKind::Hatch(_) => vec![("hatchedit", None)],
+        EntityKind::Hatch(_) => vec![("hatchedit", None), ("hatchgenerateboundary", None)],
         EntityKind::LwPolyline(_) | EntityKind::Polyline3d(_) => vec![("pedit", Some("Polyline Edit"))],
         EntityKind::Spline(_) => vec![("splinedit", Some("Spline Edit"))],
         EntityKind::Dimension(_) => vec![("dimtedit", None)],
