@@ -12,6 +12,7 @@ fn office() -> Drawing {
 
 #[test]
 fn dwt_is_written_as_dwg_and_read_back() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let bytes = write(&office(), "office.dwt").unwrap();
     assert!(bytes.starts_with(b"AC10"), "a template is DWG content");
     let back = read(&bytes, "office.dwt").unwrap();

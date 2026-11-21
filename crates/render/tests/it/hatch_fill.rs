@@ -211,3 +211,14 @@ fn brick_joints_are_drawn_once_half_a_brick_apart_course_to_course() {
         assert!(next.iter().all(|nx| (nx - x[0]).rem_euclid(500) == 250), "courses {course}/{}: {x:?} {next:?}", course + 1);
     }
 }
+
+/// A pattern with a huge number of tiny dashes makes a swatch of a few thousand runs, stopping
+/// there; and many scanlines over a many-edged boundary are charged to the hatch's work allowance.
+#[test]
+fn compact_patterns_stop_at_the_swatch_limits() {
+    let lines = vec![PatternLine { angle: 0.0, origin: (0.0, 0.0), delta: (0.0, 1.0), dashes: vec![1e-6, -1e-6] }];
+    let started = std::time::Instant::now();
+    let runs = cadcraft_render::pattern_swatch(&lines, 1.0);
+    assert!(!runs.is_empty() && runs.len() <= 4000, "{}", runs.len());
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}
