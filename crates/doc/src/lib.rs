@@ -39,7 +39,7 @@ pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
-pub use refedit::{RefEdit, WorkItem};
+pub use refedit::{RefEdit, WorkItem, XrefSource};
 pub use store::EntityStore;
 pub use tables::*;
 pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};

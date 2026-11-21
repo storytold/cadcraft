@@ -1189,6 +1189,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     app.canvas.draw_ms = crate::now_ms() - t0;
     compare::paint(app, ui.ctx(), painter, &xf_paper, rect);
     blockedit::paint(app, ui.ctx(), painter, &xf_paper, rect);
+    refedit::paint(app, ui.ctx(), rect);
     // Constraint bars and dynamic dimensional constraints (model space, or inside a viewport).
     if sheet.is_none() || active_vp.is_some() {
         let clip = match &active_vp {
@@ -1323,3 +1324,5 @@ mod compare;
 /// Background rebuilds of the display list for a new view.
 mod images;
 mod rebuild;
+/// The Edit Reference bar while a reference is edited in place (REFEDIT).
+mod refedit;
