@@ -88,6 +88,7 @@ fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
         // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
         // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        thickness_along_z(c);
         c.extrusion = Vec3::Z;
     } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
@@ -606,6 +607,7 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
         let mut elevation = t.p(10).z;
         if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
             (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            thickness_along_z(&mut c);
             c.extrusion = Vec3::Z;
         } else if c.extrusion.z < 0.0 {
             for v in &mut vertices {
@@ -725,4 +727,12 @@ fn helix(tags: &[Tag]) -> Helix {
         constrain: HelixConstrain::from_dxf(t.i(280).unwrap_or(2)),
     }
     .sanitized()
+}
+
+/// A polyline drawn as seen from above gets the normal +Z: its thickness keeps the side of Z it
+/// extruded toward, which the normal it is losing said.
+fn thickness_along_z(c: &mut Common) {
+    if c.extrusion.z < 0.0 {
+        c.thickness = -c.thickness;
+    }
 }

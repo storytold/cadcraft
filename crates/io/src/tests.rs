@@ -2805,6 +2805,20 @@ fn tilted_hatch_turns_its_gradient() {
     assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
 }
 
+/// A tilted polyline with a thickness, its normal pointing partly down Z, still extrudes toward -Z
+/// once it is drawn as seen from above and saved with no normal.
+#[test]
+fn tilted_thick_polyline_keeps_its_extrusion_side() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n39\n5\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n10\n3\n20\n2\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let e = d.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z));
+    let back = roundtrip(&d);
+    let e = back.model.iter().next().unwrap();
+    assert_eq!((e.common.thickness, e.common.extrusion), (-5.0, Vec3::Z), "saved with no normal, it still extrudes toward -Z");
+}
+
 /// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
 #[test]
 fn tilted_straight_lwpolyline_keeps_its_widths() {
