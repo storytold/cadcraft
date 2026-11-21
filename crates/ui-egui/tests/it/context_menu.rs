@@ -342,4 +342,45 @@ fn a_held_paste_is_cancelled_by_escape_and_runs_once() {
     // An ordinary Ctrl+V after that still pastes.
     frame(&mut app, paste(), 2.0);
     assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+    app.session.cancel();
+
+    // A Ctrl+V that comes before the late answer takes its place: the two together paste once.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, vec![], 0.6);
+    app.session.cancel();
+    frame(&mut app, paste(), 0.1);
+    assert_eq!(running(&app), None, "the Ctrl+V is the answer");
+    frame(&mut app, paste(), 0.1);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the answer is then the paste");
+    app.session.cancel();
+
+    // A slow answer (Wayland reads asynchronously) is still that request's, not a second paste.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, vec![], 0.6);
+    app.session.cancel();
+    frame(&mut app, paste(), 2.0);
+    assert_eq!(running(&app), None, "a late answer pastes nothing");
+
+    // The window answers within its delivery budget or never: after that a `Paste` is a Ctrl+V.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, vec![], 0.6);
+    app.session.cancel();
+    frame(&mut app, paste(), 10.0);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+    app.session.cancel();
+
+    // Typing another command, even one of the interface's own, drops a held paste.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    app.cmdline("quickcalc");
+    frame(&mut app, paste(), 0.1);
+    assert_eq!(running(&app), None);
+    app.start("pasteclip");
+    app.cmdline("quickcalc");
+    frame(&mut app, vec![], 5.0);
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app), None);
 }

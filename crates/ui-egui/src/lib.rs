@@ -652,15 +652,16 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }
             // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
             if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
-            }
-            if !first.is_empty() && !self.paste.running {
-                self.paste.cancel();
             }
         }
         let r = self.session.cmdline(text);

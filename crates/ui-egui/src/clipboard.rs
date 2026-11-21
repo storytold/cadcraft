@@ -56,8 +56,14 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
             egui::Event::Cut => out.push("cutclip"),
             egui::Event::Paste(text) => {
                 let held = app.paste.wait.take().map(|(p, _)| p);
-                if held.is_none() && now < app.paste.swallow_until {
-                    app.paste.swallow_until = 0.0;
+                // The oldest request still waiting for its answer gets this `Paste`; with no
+                // command held for it, it is a late answer and pastes nothing.
+                app.paste.sent.retain(|t| *t > now);
+                let answered = !app.paste.sent.is_empty();
+                if answered {
+                    app.paste.sent.remove(0);
+                }
+                if held.is_none() && answered {
                     continue;
                 }
                 let h = hash(&text);
@@ -82,9 +88,11 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
 /// image, and then no `Paste` ever arrives).
 const WAIT_SECS: f64 = 0.5;
 
-/// How long after a request was given up on or cancelled a `Paste` still counts as its answer. A
-/// real Ctrl+V inside this window is swallowed once; pressing it again pastes.
-const LATE_SECS: f64 = 1.0;
+/// How long the window may take to answer a `RequestPaste`. egui-winit reads the clipboard right
+/// away and answers in the next frame's input, except on Wayland, where the read is asynchronous
+/// with a 3 s delivery budget (`DELIVERY_BUDGET` in its `clipboard_bridge.rs`); an answer after
+/// that never comes. Plus a margin.
+const ANSWER_SECS: f64 = 3.5;
 
 /// Whether this build can ask the window for the system clipboard on demand. The web build gets
 /// a `Paste` only from the browser's own paste gesture, so it keeps pasting what the window holds.
@@ -106,19 +114,18 @@ pub struct Paste {
     wait: Option<(Pending, f64)>,
     /// A held command is being run now, and must not be held again.
     pub(crate) running: bool,
-    /// The window was asked for the clipboard and the command that asked is gone (escaped or
-    /// timed out): the next `Paste` answers that request. Becomes `swallow_until` next frame.
-    swallow: bool,
-    /// Until this time a `Paste` with no held command is the late answer to a gone request.
-    swallow_until: f64,
+    /// When each `RequestPaste` sent stops being answerable, oldest first. A `Paste` is the answer
+    /// to the oldest of them, so one that arrives after its command was escaped or gave up is
+    /// not taken for a paste of its own.
+    sent: Vec<f64>,
 }
 
 impl Paste {
     /// Drop a held paste (Escape, or another command started). A request already sent to the
-    /// window may still be answered, and that `Paste` must not paste.
+    /// window stays in `sent`, so its answer, if it comes, pastes nothing.
     pub fn cancel(&mut self) {
         self.request = None;
-        self.swallow |= self.wait.take().is_some();
+        self.wait = None;
     }
 }
 
@@ -167,15 +174,14 @@ pub fn run_read(app: &mut CadApp, id: &'static str) {
 /// one it never delivered. The text arrives as a `Paste` event ([`shortcut_commands`]).
 pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     let (now, pasted) = ctx.input(|i| (i.time, i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))));
-    if std::mem::take(&mut app.paste.swallow) {
-        app.paste.swallow_until = now + LATE_SECS;
-    }
+    app.paste.sent.retain(|t| *t > now);
     if let Some(p) = app.paste.request.take() {
         // A focused text field would take the `Paste` itself.
         if ctx.egui_wants_keyboard_input() {
             run_now(app, p);
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            app.paste.sent.push(now + ANSWER_SECS);
             ctx.request_repaint_after_secs(WAIT_SECS as f32);
             app.paste.wait = Some((p, now + WAIT_SECS));
         }
@@ -185,7 +191,6 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
         && app.paste.wait.as_ref().is_some_and(|(_, deadline)| now >= *deadline)
         && let Some((p, _)) = app.paste.wait.take()
     {
-        app.paste.swallow_until = now + LATE_SECS;
         run_now(app, p);
     }
 }
