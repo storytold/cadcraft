@@ -1,0 +1,29 @@
+{
+  "package": "jpeg-encoder",
+  "version": "0.6.1",
+  "source": "https://crates.io/crates/jpeg-encoder/0.6.1",
+  "registry_checksum": "b454d911ac55068f53495488d8ccd0646eaa540c033a28ee15b07838afafb01f",
+  "license": "(MIT OR Apache-2.0) AND IJG",
+  "files": {
+    "LICENSE-MIT": {
+      "source": "LICENSE-MIT",
+      "source_sha256": "4d022727ea392ebba2fe5e9a5f78c610a0eae506b491f3db29c78b6d430d6503",
+      "sha256": "4d022727ea392ebba2fe5e9a5f78c610a0eae506b491f3db29c78b6d430d6503"
+    },
+    "LICENSE-APACHE": {
+      "source": "LICENSE-APACHE",
+      "source_sha256": "85a884980abd6032fc6b5439ba918ab16db9ac9051b5cf18db9c27c587df07c0",
+      "sha256": "85a884980abd6032fc6b5439ba918ab16db9ac9051b5cf18db9c27c587df07c0"
+    },
+    "IJG-NOTICE.txt": {
+      "source": "src/fdct.rs",
+      "source_sha256": "0b59244bbd05b2593ded252ecf0d010a8a4c6ec1d4713b3caeb6fb724586e4d6",
+      "sha256": "432424ca69caaa82565c0491c11cdab311a2e7d39180970b8ba22017996bf678"
+    },
+    "SIMD-NOTICE.txt": {
+      "source": "src/avx2/fdct.rs",
+      "source_sha256": "bc362322f568f92c3699f4ca2922b261c12b7dd997120b01fd3cab58d9d2f9ab",
+      "sha256": "ee36eeaa9df1f7f09c7046f428ce4a848fcf518394e63d3e2125ec261949e8ba"
+    }
+  }
+}

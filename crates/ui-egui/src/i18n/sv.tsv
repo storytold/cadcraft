@@ -926,6 +926,7 @@
 	Set Current Text Style	Gör textstil aktuell
 	Set Layer Properties	Ange lageregenskaper
 	Set Properties	Ange egenskaper
+	Describe Properties	Beskriv egenskaper
 	Set Table Cell	Ange tabellcell
 	Set Variable	Ange variabel
 	Set View	Ange vy
@@ -1448,6 +1449,33 @@ menu	Modify	Ändra
 	Check for Updates…	Sök efter uppdateringar…
 	CADCraft is up to date.	CADCraft är uppdaterat.
 	Could not check for updates.	Det gick inte att söka efter uppdateringar.
+	Add a drawing file as a block library	Lägg till en ritningsfil som blockbibliotek
+	Add a folder of drawings or a drawing file to use its blocks.	Lägg till en mapp med ritningar eller en ritningsfil för att använda dess block.
+	Block Libraries	Blockbibliotek
+	Block Library	Blockbibliotek
+	Blocks Palette	Blockpalett
+	Click a block, then pick its insertion point.	Klicka på ett block och ange sedan dess infogningspunkt.
+	Current Drawing	Aktuell ritning
+	Details	Detaljer
+	Extra Large Icons	Extra stora ikoner
+	Folder or file	Mapp eller fil
+	Import Library Block	Importera biblioteksblock
+	Insert and Explode	Infoga och lös upp
+	Large Icons	Stora ikoner
+	Libraries	Bibliotek
+	Medium Icons	Medelstora ikoner
+	No block matches the filter.	Inget block matchar filtret.
+	This block is already in the drawing, so its definition is used.	Det här blocket finns redan i ritningen, så dess definition används.
+	Open Library...	Öppna bibliotek...
+	Read the library again	Läs in biblioteket igen
+	Reading the library...	Läser biblioteket...
+	Refresh	Uppdatera
+	Remove from the list	Ta bort från listan
+	Repeat Placement	Upprepa placering
+	Small Icons	Små ikoner
+	This drawing has no blocks.	Den här ritningen har inga block.
+	This library has no drawings or blocks.	Det här biblioteket har inga ritningar eller block.
+	Only the first {n} are shown.	Endast de första {n} visas.
 	Find All	Find All
 	Find what:	Find what:
 	Match case	Match case
@@ -1460,3 +1488,29 @@ menu	Modify	Ändra
 	Text to find	Text to find
 	Whole words	Whole words
 	Nothing found	Nothing found
+	Layouts	Layouter
+	Associate	Associera
+	Change	Ändra
+	Change Properties	Ändra egenskaper
+	Save Layout as Template	Spara layout som mall
+	Units	Enheter
+	Backup copy	Säkerhetskopia
+	Create backup copy with each save	Skapa en säkerhetskopia vid varje sparande
+	Font	Typsnitt
+	Save changes to block "{name}"?	Spara ändringar i blocket "{name}"?
+	Backup copies are off, so the current file will be replaced.	Säkerhetskopior är avstängda, så den aktuella filen kommer att ersättas.
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 och tidigare behåller dem. Använd Spara som för att behålla dem i ritningen.
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF behåller dem. Använd Spara som för att behålla dem i ritningen.
+	Save Anyway	Spara ändå
+	Save cancelled: {path} was not changed.	Sparandet avbröts: {path} ändrades inte.
+	Saving {name} will remove content	Om du sparar {name} tas innehåll bort
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	Den aktuella filen verkar inte vara hel, så {name} lämnas som den är och den aktuella filen kommer att ersättas.
+	The current file is kept as {name} until the next save.	Den aktuella filen sparas som {name} till nästa sparande.
+	This format can't keep these objects yet: {objects}.	Det här formatet kan ännu inte behålla följande objekt: {objects}.
+	{count} more types	{count} typer till
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	Ritningen har ändrats. Stäng fönstret och öppna det igen.
+
+# ArtCraft feature naming
+	Additional Tools	Ytterligare verktyg

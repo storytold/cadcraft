@@ -29,6 +29,7 @@ fn drawing(ltscale: f64, own: &str) -> Drawing {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, reference, EntityKind::Insert(ins)).unwrap();
     d

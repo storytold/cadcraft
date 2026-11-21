@@ -189,6 +189,7 @@ fn inserts_of_missing_or_empty_blocks_do_not_stretch_extents() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     };
     d.blocks.insert("Empty".into(), std::sync::Arc::new(Block::new("Empty")));
@@ -242,6 +243,7 @@ fn visible_attributes_of_a_missing_block_still_count() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
     };
@@ -285,6 +287,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     ));
     b.entities.push(Entity::new(Handle(2), line((0.0, 0.0), (1.0, 1.0))));
@@ -303,6 +306,7 @@ fn insert_bounds_with_cyclic_block_terminate() {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             }),
         )
         .unwrap();
@@ -420,6 +424,7 @@ fn plain_insert(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -708,4 +713,54 @@ fn space_names_its_tab() {
     assert!(p.is_paper());
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
+}
+
+#[test]
+fn new_handles_skip_the_files_object_handles() {
+    let mut d = Drawing::new_metric();
+    let next = d.handseed;
+    let f = std::sync::Arc::make_mut(&mut d.foreign);
+    f.handles.insert(Handle(next), ("LAYER".into(), "0".into()));
+    f.handles.insert(Handle(next + 1), ("NOD".into(), String::new()));
+    assert_eq!(d.new_handle(), Handle(next + 2));
+    assert_eq!(d.new_handle(), Handle(next + 3));
+}
+
+/// In the reserved band a new handle skips the file's kept object handles (#2514) and the handles
+/// objects hold in model space, a layout and a block definition, or that a file record reserved
+/// (#913); off the top of the range it goes on at the bottom of the band. HANDSEED reports the
+/// handle `new_handle` takes.
+#[test]
+fn new_handles_in_the_reserved_band_skip_every_held_handle_and_wrap() {
+    let mut d = Drawing::new_metric();
+    let top = u64::MAX;
+    d.model.push(Entity::new(Handle(top - 4), line((0.0, 0.0), (1.0, 0.0))));
+    let mut sheet = Layout::new("Sheet", 1);
+    sheet.entities.push(Entity::new(Handle(top - 3), line((0.0, 0.0), (1.0, 0.0))));
+    d.layouts.push(sheet);
+    let mut b = Block::new("B");
+    b.entities.push(Entity::new(Handle(top - 2), line((0.0, 0.0), (1.0, 0.0))));
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    std::sync::Arc::make_mut(&mut d.foreign).handles.insert(Handle(top - 1), ("LAYER".into(), "0".into()));
+    d.reserve_handle(Handle(top));
+    d.model.push(Entity::new(Handle(HANDLE_LIMIT), line((0.0, 0.0), (1.0, 0.0))));
+    d.handseed = top - 5;
+    assert_eq!(d.new_handle(), Handle(top - 5));
+    assert_eq!(d.next_handle(), Handle(HANDLE_LIMIT + 1), "a held handle was offered");
+    assert_eq!(d.new_handle(), Handle(HANDLE_LIMIT + 1));
+    assert_eq!(d.handseed, HANDLE_LIMIT + 2);
+    // Handle 0 means "no handle" in a file; a seed there moves on.
+    d.handseed = 0;
+    assert_eq!(d.new_handle(), Handle(1));
+}
+
+/// Several spellings of one DIM field apply once, the last in the map's order, and none is rejected.
+#[test]
+fn dim_style_spellings_of_one_field_apply_once() {
+    let mut st = DimStyle::default();
+    let m = serde_json::json!({ "textHeight": 2.5, "TEXTHEIGHT": 3.5, "DIMTXT": 4.5 });
+    let m = m.as_object().unwrap();
+    let want = m.values().next_back().and_then(serde_json::Value::as_f64).unwrap();
+    assert!(st.apply_fields(m).is_empty());
+    assert_eq!(st.text_height, want);
 }

@@ -73,6 +73,7 @@ impl Mat3 {
     pub fn det(&self) -> f64 {
         self.a * self.d - self.b * self.c
     }
+    #[expect(clippy::many_single_char_names, reason = "Matrix coefficients use the same a–f notation as Mat3 and the affine-transform formula.")]
     pub fn inverse(&self) -> Option<Mat3> {
         let det = self.det();
         if det.abs() < 1e-300 || !det.is_finite() {

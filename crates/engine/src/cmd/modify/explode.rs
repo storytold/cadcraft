@@ -55,6 +55,10 @@ fn explode_block_ref(d: &cadcraft_doc::Drawing, e: &Entity, ins: &cadcraft_doc::
     if let Some(items) = crate::cmd::array::explode_array(d, e) {
         return Some(items);
     }
+    // A MINSERT grid stays whole, as in AutoCAD 2024 (see `explode`).
+    if minserted(ins) {
+        return None;
+    }
     let blk = d.block(&ins.block)?;
     let m = ins.transform(blk.base.xy());
     let stretched = m.similarity_scale().is_none();
@@ -223,7 +227,22 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
 }
 
 pub(super) fn explode(s: &mut Session, hs: &[Handle]) -> Result<Vec<Handle>> {
+    // AutoCAD 2024 refuses a MINSERT grid: "The object is minserted." (Locked ones are left
+    // without a word, as `explode_with` leaves them.)
+    let d = s.doc()?;
+    let grids = hs
+        .iter()
+        .filter(|h| !crate::cmd::curves::is_locked(s, **h) && d.entity(**h).is_some_and(|e| matches!(&e.kind, EntityKind::Insert(i) if minserted(i))))
+        .count();
+    for _ in 0..grids {
+        s.echo("The object is minserted.");
+    }
     explode_with(s, hs, explode_kind)
+}
+
+/// A block reference with more than one row or column (MINSERT).
+fn minserted(i: &cadcraft_doc::Insert) -> bool {
+    i.rows > 1 || i.cols > 1
 }
 
 /// Replace each of `hs` (off locked layers) by the pieces `pieces` gives for it; objects it gives

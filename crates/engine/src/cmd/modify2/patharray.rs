@@ -34,15 +34,26 @@ pub(crate) fn arraypath(
         _ => (6, if c.closed { l / 6.0 } else { l / 5.0 }),
     };
     crate::cmd::array::check_size(s, n as u64, objs.len())?;
-    let Some((p0, t0)) = c.at_length(0.0) else { return Ok(Vec::new()) };
-    let mut out = Vec::new();
+    // Segment end lengths once: each sample is then a binary search, not a scan from the start.
+    let ends = c.end_lengths();
+    let Some((p0, t0)) = c.at_length_in(&ends, 0.0) else { return Ok(Vec::new()) };
+    let mut mats = Vec::new();
     for i in 1..n {
-        let Some((p, t)) = c.at_length(step * i as f64) else { continue };
+        let Some((p, t)) = c.at_length_in(&ends, step * i as f64) else { continue };
         let mut m = Mat3::translate(p - p0);
         if align {
             m = Mat3::rotate_about(p, t.angle() - t0.angle()).then_before(m);
         }
-        out.extend(crate::cmd::modify::transform_entities(s, &objs, &m, true)?);
+        mats.push(m);
+    }
+    // Every copy is checked before the first is made: a refusal part way would leave the copies
+    // already added in the drawing (a failed command is not rolled back).
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && crate::cmd::modify::holds_ole_frame(s, &objs, true)? {
+        return Err(crate::cmd::modify::ole_refusal());
+    }
+    let mut out = Vec::new();
+    for m in &mats {
+        out.extend(crate::cmd::modify::transform_entities(s, &objs, m, true)?);
     }
     Ok(out)
 }
