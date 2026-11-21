@@ -20,6 +20,8 @@ cadcraft-mcp = { workspace = true }
 eframe = { workspace = true, features = ["clipboard", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
+# The control request parser reads only its own keys (control_server.rs `Fields`).
+serde = { workspace = true }
 log = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
@@ -67,6 +69,9 @@ hidapi = { version = "2.6.7", default-features = false, features = ["windows-nat
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: Windows' Animation effects
 # setting (system_animations.rs). Already in Cargo.lock through wgpu's DirectX 12 backend.
 windows = { version = "0.62", features = ["UI_ViewManagement"] }
+# One CADCraft per sign-in: later launches hand their files over an AF_UNIX socket
+# (single_instance.rs). Already in Cargo.lock through zbus.
+uds_windows = "1.2.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }

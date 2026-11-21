@@ -165,14 +165,57 @@ fn viewport_scale_lock_and_layers() {
     }
 }
 
+/// #2836: picking a paper sets the layout's paper units from it. In a new drawing (imperial,
+/// MEASUREMENT 0) ISO A0 was 46.81 x 33.11 units, the inch equivalent; now it is 1189 x 841.
+/// An inch paper gives the layout back the drawing's units.
+#[test]
+fn pagesetup_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    assert_eq!(cadcraft_render::paper::paper_unit_mm(s.doc().unwrap()), 25.4, "a new drawing is imperial");
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A0", "landscape": true})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D in the drawing's inches");
+    // A custom size replaces the named paper in the same call and keeps the layout's units.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, None, "the layout still follows MEASUREMENT");
+    assert_eq!(size(&s), (20.0, 10.0, 25.4), "the custom size in the layout's inches");
+}
+
+/// #2836 through a device: the built-in devices list every standard size, so a paper picked in
+/// Page Setup with CADCraft PDF as the device comes from the device's list. It sets the layout's
+/// paper units as a paper picked with no device does.
+#[test]
+fn pagesetup_device_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "CADCraft PDF", "landscape": true})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A0 (841.00 x 1189.00 MM)"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.device, "CADCraft PDF");
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 from the device's list in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D from the device's list in the drawing's inches");
+    // An explicit choice in the same call wins over the paper's own units (#3249).
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "paperUnits": "mm"})).unwrap();
+    assert_eq!(size(&s), (914.4, 609.6, 1.0));
+}
+
 #[test]
 fn pagesetup_paper_table() {
     let mut s = Session::new();
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3", "landscape": true, "margins": [5, 5, 5, 5]})).unwrap();
     assert_eq!(r["page"]["widthMm"], 297.0);
     let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
-    // Imperial drawing: paper units are inches.
-    assert!((sheet.size.x - 420.0 / 25.4).abs() < 1e-9 && (sheet.size.y - 297.0 / 25.4).abs() < 1e-9);
+    // An imperial drawing, but a metric paper: the layout's paper units are millimetres (#2836).
+    assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9);
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "Z12"})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());
@@ -188,6 +231,57 @@ fn pagesetup_paper_table() {
     s.execute("pagesetup", &json!({"layout": "Layout2", "width": 500, "height": 300})).unwrap();
     let p = &s.doc().unwrap().layout("Layout2").unwrap().page;
     assert_eq!((p.width_mm, p.height_mm), (300.0, 500.0));
+}
+
+#[test]
+fn pagesetup_paper_units_make_an_inch_sheet_metric() {
+    // An ARCH D sheet in a drawing that measures in millimetres (#3249): the page setup's paper
+    // units decide the paper-space unit, so the sheet can be 914.4 x 609.6 mm.
+    let mut s = Session::new();
+    s.execute("units", &json!({"insunits": 4})).unwrap();
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 914.4).abs() < 1e-9 && (sheet.size.y - 609.6).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "Inches"})).unwrap();
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 36.0).abs() < 1e-9 && (sheet.size.y - 24.0).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "millimeters"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(true));
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "feet"})).is_err());
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": 4})).is_err());
+}
+
+#[test]
+fn pagesetup_paper_units_inches_overrides_metric_measurement() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "MEASUREMENT", "value": 1})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true})).unwrap();
+    // Without an explicit paperUnits choice, MEASUREMENT = 1 keeps the sheet in millimetres.
+    let metric = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((metric.size.x - 914.4).abs() < 1e-9 && (metric.size.y - 609.6).abs() < 1e-9, "{:?}", metric.size);
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "inches"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], false);
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(false));
+    let inch = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((inch.size.x - 36.0).abs() < 1e-9 && (inch.size.y - 24.0).abs() < 1e-9, "{:?}", inch.size);
+}
+
+/// The Plot dialog's Apply to Layout sends the layout's paper every time. Resubmitting the paper
+/// the layout already has keeps an explicit paper-units choice; a different paper still sets
+/// the units from that paper (#2836, #3249).
+#[test]
+fn pagesetup_same_paper_keeps_explicit_paper_units() {
+    let mut s = Session::new();
+    let units = |s: &Session| s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm;
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "lineweights": true})).unwrap();
+    assert_eq!(units(&s), Some(true), "millimetres on an inch paper survive resubmitting it");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "paperUnits": "inches"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A4 (210.00 x 297.00 MM)"})).unwrap();
+    assert_eq!(units(&s), Some(false), "inches on a metric paper survive resubmitting it by its full name");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3"})).unwrap();
+    assert_eq!(units(&s), Some(true), "a different paper still sets the units");
 }
 
 fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {

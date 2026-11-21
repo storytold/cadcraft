@@ -1,21 +1,23 @@
 # CADCraft roadmap
 
-**Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
+**Stage: pre-alpha** · next: alpha, when the six rows of the [alpha gate](docs/roadmap.md#alpha-gate) pass (five fail today; the gate was revised on 2026-11-19 and its hours are not re-estimated yet)
 
-> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit against main 41d9b5e95: language table, CI gate, open-PR count; previously: progress log: proxy objects keep their class through a save, #1812; previously minor: HATCHEDIT boundary add/remove progress) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-11-19 · **Last updated:** 2026-11-20 · **Change:** minor (Upcoming updated for what merged on 2026-11-19 and 2026-11-20; previously major: alpha gate revised from user reports: six rows, Windows first; Upcoming re-ranked into three priority tiers; previously minor: re-audit against main 41d9b5e95) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
 scriptable CLI, a web build, Linux and FreeBSD builds, and a free licence.
 
-**Why pre-alpha:** four of AutoCAD's five core workflows fail the [alpha gate](docs/roadmap.md#alpha-gate).
-Precise drafting still has approximate ellipse and spline intersections and a few stubbed prompt options
-(object snap tracking, TRIM/EXTEND/OFFSET options and typed snap overrides have landed); dynamic blocks can't be
-authored and xrefs can't be edited in place (the Block Editor, REFEDIT, dynamic block editing and XCLIP have landed);
-plots go only to PDF, PNG and SVG files (plot styles and the Plot dialog have landed); and a DWG saved by
-CADCraft drops what acadrust doesn't model and has never been checked in
-AutoCAD. Dimensioning passes. Ready for real work (≈ 38%) is also under the ~40% alpha bar. Beta
-is ≈ 600–930 h away.
+**Why pre-alpha:** five of the six rows of the [alpha gate](docs/roadmap.md#alpha-gate) fail. The gate
+was revised on 2026-11-19 from what people report: about 525 of the issues open or closed in the
+last 30 days come from people describing their own drawings, hardware or workflow, and the ones that
+name a platform name Windows most (135; Linux 57, macOS 36, web 14). They report an app that
+doesn't start on older graphics hardware, large or foreign DWG files that are refused, freeze or open
+wrong, clicks lost while the mouse moves, layouts in the wrong units, and a menu bar or panels that
+can't be brought back. Drafting, dimensioning and annotating a sheet nearly passes. Dynamic-block
+authoring, editing an xref in place and exact ellipse and spline geometry had almost no reports behind
+them and moved to the beta checklist. Ready for real work (≈ 38%, not re-scored since 2026-10-10) is
+also under the ~40% alpha bar. Beta is ≈ 600–930 h away.
 
 ## Headline numbers
 
@@ -25,7 +27,7 @@ is ≈ 600–930 h away.
 | Ready for real work | **≈ 38%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
 | Mainstream practitioner (2D drafter) | **≈ 28%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
 | Essentials user | **≈ 46%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
-| Remaining to alpha | **≈ 125–190 h** (the gate rows) | estimated |
+| Remaining to alpha | **≈ 125–190 h** (estimated 2026-10-10 for the previous gate; not re-estimated for the revised one) | estimated |
 | Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
 
@@ -105,17 +107,47 @@ Other languages shipped: Ukrainian (1,357 rows, the reference catalog, #36), Cze
 
 ## Upcoming
 
-Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md).
+Ranked in three tiers; a higher tier goes first whenever it has work. Within a tier, a fix that is
+already written and waiting in a pull request lands before new work starts, whoever wrote it. Detail
+and the beta checklist are in [docs/roadmap.md](docs/roadmap.md).
 
-1. Gate and land: CI runs `cargo xtask ci` on every PR since #1987 (fmt on main is fixed); land the 450 open PRs (2026-10-24) (15–25 h).
-2. Stop losing data on save (DXF done, #528; native MULTILEADER, #459, and the save version, #421, done; through DWG, acadrust still drops some content) (30–45 h).
-3. Real-file DWG/DXF corpus and a black-box check in AutoCAD (10–15 h + owner).
-4. ~~Precision input: object snap tracking, extension/parallel snaps, FROM/M2P/TK, snap overrides,
-   editable dynamic input.~~ Done (#379, #441, #60, #519; `snap/tracking.rs`, `pointmod.rs`, `dyninput.rs`).
-5. ~~Unstub prompt options in TRIM/EXTEND, OFFSET, ROTATE, PLINE, SPLINE, MTEXT, MLEADER.~~ Done (#397, #408, #547); the stubs left are in gaps F1.
-6. ~~Autosave, recovery, AUDIT, RECOVER.~~ Done on the desktop (#406, #416); the web build has no autosave (gaps F4).
-7. Exact ellipse/spline geometry and correct polyline offsets (30–50 h).
-8. Xrefs, block editor, groups, then dynamic blocks (80–120 h): xrefs (#525), groups (#417), the Block Editor (#824, #833, #885), REFEDIT (#818), XCLIP and XCLIPFRAME (#2354) and dynamic block references (#838–#883) landed; left: dynamic-block authoring, editing an xref in place.
+**1. Urgent: security fixes, leaks, crashes and lost work.**
+- The open findings of the security audit (#1919–#1935): check each against the input limits that
+  landed on 2026-11-11, close what is fixed and fix the rest. A crafted handle that makes new entities
+  overwrite existing ones (#1921) is fixed by #1276.
+- A saved file that crashes AutoCAD 2021 (#3303) and dimension text lost on save (#3299).
+- Crashes and hangs with a reproduction: the web build on a large DXF (#1603), a DWG with 3D content
+  (#2174), startup on older graphics hardware (#1724, #1631, #3222).
+
+**2. Parity with AutoCAD: the alpha gate rows, then the beta checklist (apart from its items named under tier 3).**
+- It starts on common hardware: an automatic fallback renderer (`CADCRAFT_STENCIL=0` is the manual
+  switch since #3336).
+- It opens the DWG and DXF files people already have: large files (#3102, #2633, #1088), layouts and
+  paper units (#1672, #2836), and a corpus of real files run in CI.
+- Saving loses nothing and other CAD programs open the result (#2904, #1687, #3234, #2632).
+- Input feels like AutoCAD for Windows: the fixes for clicks while the mouse moves, right-click and
+  Space as Enter, and double-click text editing landed (#3307, #3345); waiting for the reporters to
+  confirm, and table cells are left (#842).
+- The prompt options that still say "not available yet" (gaps F1).
+- Layouts print at scale on a system printer (#3216); the menu bar and panels can be restored since
+  #3308.
+- 661 pull requests are open (2026-11-20; 714 the day before). About 230 were mergeable, passed CI and were small; they are
+  reviewed and landed in this order, the longest-waiting authors first within a row.
+
+**3. Lower priority: affects fewer people and nothing breaks without it.**
+- Dynamic-block authoring, editing an xref in place, exact ellipse and spline geometry, correct
+  polyline offsets.
+- Prompt options that need 3D (DVIEW's camera options, -RENAME Material); 3D itself comes after 1.0,
+  but a file with 3D content must open safely (tier 1).
+- Menu breadth against AutoCAD for Mac as a headline number.
+
+Done on 2026-11-19 and 2026-11-20: the hostile-input fixes #1276, #2820, #2821 and #2765 (#3304, #3305), clicks while the mouse moves and right-click or Space as Enter (#3307), the interface reset (#3308), paper units (#3309), the UCS command (#3310), -ATTEDIT, -RENAME and -LAYER options (#3311), TRIM/EXTEND depth (#3312), dimension values kept on save (#3335), the stencil switch (#3336), a typed OPEN path (#3343) and double-click text editing (#3345).
+
+Done before that: precision input (#379, #441, #60, #519), prompt options in TRIM/EXTEND,
+OFFSET, ROTATE, PLINE, SPLINE, MTEXT and MLEADER (#397, #408, #547), autosave, recovery, AUDIT and
+RECOVER on the desktop (#406, #416), xrefs (#525), groups (#417), the Block Editor (#824, #833, #885),
+REFEDIT (#818), XCLIP (#2354), dynamic block references (#838–#883), and the Dimension Style Manager
+(#1460).
 
 ## Progress log
 
@@ -138,6 +170,8 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-20 | minor | Upcoming updated for the merges of 2026-11-19 and 2026-11-20 (security stacks, input, interface reset, paper units, UCS, prompt options, TRIM/EXTEND, text editing in place); pull-request count 714 → 661; percentages and hours not re-scored |
+| 2026-11-19 | major | Alpha gate revised from user reports (six rows, Windows first; block authoring, xref editing in place and exact curve geometry moved to beta); Upcoming re-ranked into three tiers: urgent (security, leaks, crashes, lost work), parity, lower priority; percentages and hours not re-scored |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: language table, CI gate and open-PR count re-checked against main 41d9b5e95 |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |

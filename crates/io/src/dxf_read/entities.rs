@@ -1,17 +1,17 @@
 use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
-use super::hatch::hatch;
+use super::hatch::{CurvePoints, hatch};
 use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
-    Vec3, Viewport, Wipeout, records,
+    Vec3, Viewport, Wipeout, record_slices,
 };
 use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
-    entity_with_table_budget(kind, tags, &mut 4_000_000)
+    entity_with_table_budget(kind, tags, &mut 4_000_000, &mut CurvePoints::default())
 }
 
 /// Parse one entity while charging materialized table cells to the caller's shared import budget.
@@ -88,6 +88,7 @@ fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
         // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
         // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        thickness_along_z(c);
         c.extrusion = Vec3::Z;
     } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
@@ -123,7 +124,12 @@ fn spline(t: &T) -> Spline {
     sp
 }
 
-pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {
+pub(super) fn entity_with_table_budget(
+    kind: &str,
+    tags: &[Tag],
+    table_cells_left: &mut usize,
+    curves: &mut CurvePoints,
+) -> Option<(Common, EntityKind)> {
     // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
     if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
         return None;
@@ -236,7 +242,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "MLINE" => EntityKind::MLine(crate::dxf_mline::read_entity(tags)),
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
-            let mut k = hatch(tags, &t)?;
+            let mut k = hatch(tags, &t, curves)?;
             if let EntityKind::Hatch(h) = &mut k
                 && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
             {
@@ -420,10 +426,10 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
 
 /// The plot style names of a file: the entries of the `ACAD_PLOTSTYLENAME` dictionary of the
 /// named object dictionary (the first object), by placeholder handle.
-pub(super) fn plot_style_names(secs: &[craft_dxf::Section]) -> HashMap<String, String> {
+pub(super) fn plot_style_names(secs: &[craft_dxf::SectionRef<'_>]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return out };
-    let recs = records(&objects.tags);
+    let recs = record_slices(objects.tags);
     let entries = |tags: &[Tag]| {
         let mut v: Vec<(String, String)> = Vec::new();
         let mut name: Option<String> = None;
@@ -510,6 +516,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
                 rx.table_style_fix.push((h, t.s(342).map(|sh| sh.trim().to_ascii_uppercase()).unwrap_or_default()));
             }
         }
+        // Keyed by the handle the entity was given, so an IMAGE whose repeated handle was
+        // reassigned still finds its own IMAGEDEF.
+        ("IMAGE", EntityKind::Image(_)) => {
+            if let Some(def) = tags.iter().find(|t| t.code == 340) {
+                rx.image_defs.insert(h, def.str().trim().to_ascii_uppercase());
+            }
+        }
         ("INSERT", EntityKind::Insert(ins)) => {
             rx.inserted.insert(ins.block.to_ascii_uppercase());
         }
@@ -543,7 +556,7 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
 /// can't be placed are counted in `skipped`.
 /// The entity of a POLYLINE, with its mesh faces (advancing `i` past its VERTEX records). `None`
 /// for a mesh without faces.
-pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
+pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
     let flags = t.i(70).unwrap_or(0);
     let mut pts: Vec<(Vec3, f64, f64, f64)> = Vec::new();
     // Polyface face records (VERTEX 70 bit 128 without 64): vertex indices 71–74.
@@ -565,7 +578,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
             break;
         }
     }
-    let c = common(t);
+    let mut c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
     let k = if flags & 64 != 0 {
         // Face records that name a missing vertex (or fewer than three) are dropped: they draw
@@ -587,13 +600,26 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
     } else if flags & 8 != 0 {
         EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
     } else {
-        // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
-        let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
+        // A 2D polyline's vertices are in its OCS, at the elevation of the POLYLINE's own point:
+        // in a tilted plane drawn as seen from above like LWPOLYLINE, else mirrored like it.
+        let closed = flags & 1 != 0;
+        let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
+        let mut elevation = t.p(10).z;
+        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+            (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            thickness_along_z(&mut c);
+            c.extrusion = Vec3::Z;
+        } else if c.extrusion.z < 0.0 {
+            for v in &mut vertices {
+                v.p.x = -v.p.x;
+                v.bulge = -v.bulge;
+            }
+        }
         EntityKind::LwPolyline(LwPolyline {
-            vertices: pts.iter().map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 }).collect(),
-            closed: flags & 1 != 0,
+            vertices,
+            closed,
             const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
-            elevation: t.p(10).z,
+            elevation,
             plinegen: flags & 128 != 0,
         })
     };
@@ -601,7 +627,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
 }
 
 /// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND.
-pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
+pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
     let mut attribs = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
         if k2 == "ATTRIB" {
@@ -701,4 +727,12 @@ fn helix(tags: &[Tag]) -> Helix {
         constrain: HelixConstrain::from_dxf(t.i(280).unwrap_or(2)),
     }
     .sanitized()
+}
+
+/// A polyline drawn as seen from above gets the normal +Z: its thickness keeps the side of Z it
+/// extruded toward, which the normal it is losing said.
+fn thickness_along_z(c: &mut Common) {
+    if c.extrusion.z < 0.0 {
+        c.thickness = -c.thickness;
+    }
 }
