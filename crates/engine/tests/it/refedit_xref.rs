@@ -679,3 +679,21 @@ fn a_confined_session_does_not_write_an_xref_outside_its_write_root() {
     assert!(s.doc().unwrap().refedit.is_none(), "no edit began: {e}");
     assert_eq!(std::fs::read(&file).unwrap(), before);
 }
+
+/// The write-back reports what a file can't keep as SAVE does (`lost_writing`), not only solids
+/// in a 2013 DXF: an R2000 DXF xref has no place for a proxy's separate strings (#3229), so the
+/// save names the proxy it leaves out, with the DXF's reason and the backup that keeps it.
+#[test]
+fn a_proxy_an_r2000_dxf_xref_cannot_keep_is_reported() {
+    hooks();
+    let dir = folder("proxy");
+    let dxf = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n20\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nACAD_PROXY_ENTITY\n5\n21\n100\nAcDbEntity\n8\n0\n100\nAcDbProxyEntity\n90\n498\n91\n500\n162\n8\n161\n16\n310\nAABB\n0\nENDSEC\n0\nEOF\n";
+    std::fs::write(dir.join("proxy.dxf"), dxf).unwrap();
+    let (mut s, insert) = host_with(&dir, "proxy.dxf", "proxy");
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(out["notSaved"], json!({ "ACAD_PROXY_ENTITY": 1 }), "{out}");
+    let warning = s.log.iter().find(|m| m.contains("Not saved in the DXF file")).expect("a warning on the command line");
+    assert!(warning.contains("before 2007") && warning.contains("1 ACAD_PROXY_ENTITY") && warning.contains("proxy.dxf.bak"), "{warning}");
+}
