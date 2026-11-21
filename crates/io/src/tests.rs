@@ -1923,6 +1923,7 @@ fn filter_sample(d: &mut Drawing) -> LayerFilters {
 
 #[test]
 fn layer_filters_roundtrip() {
+    crate::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     let filters = filter_sample(&mut d);
     d.layer_filters = filters.clone();
