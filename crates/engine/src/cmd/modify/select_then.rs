@@ -62,7 +62,7 @@ impl SelectThen {
         // Immediate operations once selection is done.
         match self.op {
             Op::Erase => {
-                let n = erase(s, &self.objs)?;
+                let n = erase(s, &self.objs, true)?;
                 let _ = n;
                 Ok(Step::Done)
             }
@@ -293,6 +293,12 @@ impl Interactive for SelectThen {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         self.sel = SelectPhase::begin(s);
+        // Parameters or actions picked in the Block Editor are a selection for MOVE and ERASE.
+        if !self.sel.done && matches!(self.op, Op::Move | Op::Erase) && !s.picked_elements().is_empty() {
+            // Selected objects come along only where PICKFIRST lets a selection count.
+            self.sel.picked = if s.settings.pickfirst { s.selection() } else { Vec::new() };
+            self.sel.done = true;
+        }
         if self.sel.done {
             self.objs = self.sel.picked.clone();
             return self.apply(s);
@@ -396,12 +402,14 @@ impl Interactive for SelectThen {
             (Op::Move, 1, Input::Point(p)) => {
                 let d = p - self.pts[0];
                 transform_entities(s, &self.objs, &Mat3::translate(d), false)?;
+                s.move_picked_elements(d)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
             (Op::Move, 1, Input::Enter) => {
                 let d = self.pts[0];
                 transform_entities(s, &self.objs, &Mat3::translate(d), false)?;
+                s.move_picked_elements(d)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
@@ -570,6 +578,9 @@ impl Interactive for DisplaceM {
             };
             if d != Vec2::ZERO {
                 transform_entities(s, &self.inner.objs, &Mat3::translate(d), self.inner.op == Op::Copy)?;
+                if self.inner.op == Op::Move {
+                    s.move_picked_elements(d)?;
+                }
             }
             s.set_selection(Vec::new());
             return Ok(Step::Done);
