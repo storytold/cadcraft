@@ -126,15 +126,17 @@ pub fn snap_name(m: u32) -> &'static str {
     mode::ALL.iter().find(|(b, _)| *b == m).map_or("None", |(_, n)| *n)
 }
 
-/// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
-/// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
+/// The candidate snaps near `cursor` for Tab cycling: every object snap within the aperture, the
+/// one [`crate::snap::osnap`] picks first and the rest in its order (specific snaps nearest
+/// first, then deferred snaps, then Nearest), without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
     snap_candidates_in_orbit(d, space, cadcraft_render::Orbit3d::default(), cursor, aperture, osmode, base, deferred)
 }
 
-/// The candidate snaps near the 2D view-plane `view_cursor` under `orbit` for Tab cycling: the
-/// snap [`crate::snap::osnap_in_orbit`] picks first, then the closest snap of each other mode in
-/// `osmode` (sorted by projected 2D distance to `view_cursor`), without repeats.
+/// The candidate snaps near the 2D view-plane `view_cursor` under `orbit` for Tab cycling:
+/// every object snap within the aperture, the one [`crate::snap::osnap_in_orbit`] picks first
+/// and the rest in its order (specific snaps nearest first, then deferred snaps, then Nearest),
+/// without repeats.
 #[allow(clippy::too_many_arguments)]
 pub fn snap_candidates_in_orbit(
     d: &Drawing,
@@ -149,17 +151,7 @@ pub fn snap_candidates_in_orbit(
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    let osnap = |m: u32| crate::snap::osnap_in_orbit_with_proj(d, space, orbit, view_cursor, aperture, m, base, deferred);
-    let extra = osmode & mode::HATCH;
-    let mut per_mode: Vec<(SnapHit, Vec2)> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
-    per_mode.sort_by(|a, b| a.1.dist(view_cursor).total_cmp(&b.1.dist(view_cursor)));
-    let mut out: Vec<SnapHit> = osnap(osmode).map(|(h, _)| h).into_iter().collect();
-    for (h, _) in per_mode {
-        if !out.iter().any(|o| o.mode == h.mode && o.point.near(h.point, aperture * 1e-6)) {
-            out.push(h);
-        }
-    }
-    out
+    crate::snap::osnap_all_in_orbit(d, space, orbit, view_cursor, aperture, osmode, base, deferred)
 }
 
 /// Strip the international (`_`) and transparent (`'`) prefixes a modifier may be typed with.

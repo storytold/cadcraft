@@ -95,6 +95,17 @@ impl Face {
             Some(s.chars().filter(|c| !c.is_control()).take(80).collect::<String>()).filter(|s| !s.trim().is_empty())
         })
     }
+    /// How tall the glyph of `c` is, from its lowest to its highest point, in ems: `None` when the
+    /// face doesn't map `c` or its glyph has no outline (a space, or one too big to keep).
+    pub fn glyph_height(&self, c: char) -> Option<f64> {
+        let g = glyph(self, c);
+        if !g.mapped {
+            return None;
+        }
+        let (low, high) = g.contours.iter().flatten().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), p| (low.min(p.y), high.max(p.y)));
+        let height = (high - low) / f64::from(UPEM);
+        (height.is_finite() && height > 0.0).then_some(height)
+    }
 
     /// The glyph ids the face's character map gives `chars` (`None` for an unmapped one).
     pub(crate) fn glyph_ids(&self, chars: &[char]) -> Vec<Option<u32>> {
