@@ -618,6 +618,10 @@ impl CadApp {
         if clipboard::defer(self, name, None) {
             return;
         }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -654,6 +658,9 @@ impl CadApp {
             // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
             if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
+            }
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
             }
         }
         let r = self.session.cmdline(text);

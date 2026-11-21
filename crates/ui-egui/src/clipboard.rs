@@ -43,6 +43,7 @@ pub fn mirror(app: &CadApp, ctx: &egui::Context) {
 /// The commands the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
 /// own last copy (another CADCraft's) becomes the clipboard first.
 pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
+    let now = ctx.input(|i| i.time);
     let (events, shift) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
@@ -54,12 +55,16 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
             egui::Event::Copy => out.push(if shift { "copybase" } else { "copyclip" }),
             egui::Event::Cut => out.push("cutclip"),
             egui::Event::Paste(text) => {
+                let held = app.paste.wait.take().map(|(p, _)| p);
+                if held.is_none() && now < app.paste.swallow_until {
+                    app.paste.swallow_until = 0.0;
+                    continue;
+                }
                 let h = hash(&text);
                 if ctx.data(|d| d.get_temp::<u64>(text_id())) != Some(h) && clipboard::load_system_text(&mut app.session, &text) {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
                 }
                 // A paste asked for from a menu or the command line is the command that was held.
-                let held = app.paste.wait.take().map(|(p, _)| p);
                 match held {
                     Some(p) if p.line.is_some() => run_now(app, p),
                     Some(p) => out.push(p.id),
@@ -76,6 +81,10 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
 /// clipboard before it pastes what this window already holds (the clipboard holds no text, or an
 /// image, and then no `Paste` ever arrives).
 const WAIT_SECS: f64 = 0.5;
+
+/// How long after a request was given up on or cancelled a `Paste` still counts as its answer. A
+/// real Ctrl+V inside this window is swallowed once; pressing it again pastes.
+const LATE_SECS: f64 = 1.0;
 
 /// Whether this build can ask the window for the system clipboard on demand. The web build gets
 /// a `Paste` only from the browser's own paste gesture, so it keeps pasting what the window holds.
@@ -96,7 +105,21 @@ pub struct Paste {
     /// Asked for the clipboard; its `Paste` event, or the time to give up.
     wait: Option<(Pending, f64)>,
     /// A held command is being run now, and must not be held again.
-    running: bool,
+    pub(crate) running: bool,
+    /// The window was asked for the clipboard and the command that asked is gone (escaped or
+    /// timed out): the next `Paste` answers that request. Becomes `swallow_until` next frame.
+    swallow: bool,
+    /// Until this time a `Paste` with no held command is the late answer to a gone request.
+    swallow_until: f64,
+}
+
+impl Paste {
+    /// Drop a held paste (Escape, or another command started). A request already sent to the
+    /// window may still be answered, and that `Paste` must not paste.
+    pub fn cancel(&mut self) {
+        self.request = None;
+        self.swallow |= self.wait.take().is_some();
+    }
 }
 
 pub(crate) fn paste_id(id: &str) -> Option<&'static str> {
@@ -115,6 +138,7 @@ pub fn offered(session: &Session, spec: &CommandSpec) -> bool {
 /// command runs right away: not a paste, a build that cannot ask, or already read.
 pub fn defer(app: &mut CadApp, id: &str, line: Option<&str>) -> bool {
     let Some(id) = paste_id(id).filter(|_| ON_DEMAND && !app.paste.running) else { return false };
+    app.paste.cancel();
     app.paste.request = Some(Pending { id, line: line.map(str::to_string) });
     true
 }
@@ -142,7 +166,10 @@ pub fn run_read(app: &mut CadApp, id: &'static str) {
 /// Once per frame: ask the window for the system clipboard for a newly held paste, and give up on
 /// one it never delivered. The text arrives as a `Paste` event ([`shortcut_commands`]).
 pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
-    let now = ctx.input(|i| i.time);
+    let (now, pasted) = ctx.input(|i| (i.time, i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))));
+    if std::mem::take(&mut app.paste.swallow) {
+        app.paste.swallow_until = now + LATE_SECS;
+    }
     if let Some(p) = app.paste.request.take() {
         // A focused text field would take the `Paste` itself.
         if ctx.egui_wants_keyboard_input() {
@@ -153,9 +180,12 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
             app.paste.wait = Some((p, now + WAIT_SECS));
         }
     }
-    if app.paste.wait.as_ref().is_some_and(|(_, deadline)| now >= *deadline)
+    // A `Paste` in this frame completes the held command ([`shortcut_commands`]), even past the deadline.
+    if !pasted
+        && app.paste.wait.as_ref().is_some_and(|(_, deadline)| now >= *deadline)
         && let Some((p, _)) = app.paste.wait.take()
     {
+        app.paste.swallow_until = now + LATE_SECS;
         run_now(app, p);
     }
 }

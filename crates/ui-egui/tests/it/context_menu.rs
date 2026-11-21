@@ -280,3 +280,66 @@ fn menu_and_typed_paste_ask_the_window_for_the_system_clipboard() {
     frame(&mut app, vec![], 1.0);
     assert_eq!(running(&app).as_deref(), Some("pasteblock"), "no text came: this window's clipboard is pasted");
 }
+
+/// A held paste is dropped by Escape, completes on a `Paste` that arrives on the frame its wait
+/// runs out, and a `Paste` answering a request already given up on does not paste again, while a
+/// later Ctrl+V does.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_held_paste_is_cancelled_by_escape_and_runs_once() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
+        now += dt;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        ctx.end_pass().textures_delta.clear();
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+    let paste = || vec![egui::Event::Paste("text from another program".into())];
+
+    // Escape while held: the answer and the timeout paste nothing.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    cadcraft_ui_egui::cmdline::escape(&mut app);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app), None, "an escaped paste does not run when the text arrives");
+    app.start("pasteclip");
+    frame(&mut app, vec![], 5.0);
+    cadcraft_ui_egui::cmdline::escape(&mut app);
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app), None, "an escaped paste does not run at the timeout");
+    app.start("pasteclip");
+    cadcraft_ui_egui::cmdline::escape(&mut app);
+    frame(&mut app, vec![], 5.0);
+    frame(&mut app, vec![], 5.0);
+    assert_eq!(running(&app), None, "an escaped paste is dropped before it asks");
+
+    // The text arrives on the frame the wait runs out: that completes the paste, once.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 5.0);
+    frame(&mut app, paste(), 0.6);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+    app.session.cancel();
+    frame(&mut app, vec![], 0.6);
+    assert_eq!(running(&app), None, "one request pastes once");
+
+    // The wait runs out first: this window's clipboard is pasted, and the late text is not a second paste.
+    frame(&mut app, vec![], 2.0);
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, vec![], 0.6);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+    app.session.cancel();
+    frame(&mut app, paste(), 0.1);
+    assert_eq!(running(&app), None, "the late answer does not paste again");
+
+    // An ordinary Ctrl+V after that still pastes.
+    frame(&mut app, paste(), 2.0);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+}
