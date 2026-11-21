@@ -18,6 +18,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 mod break_join;
 mod explode;
+mod extrim;
 mod fillet;
 mod offset;
 mod oops;
@@ -41,6 +42,7 @@ pub(crate) use trim::{CUT_ONCE, Edges, extend, json_pick_error, trim};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        extrim::spec(),
         CommandSpec::new("erase", "Erase", run_erase)
             .menu(&["Modify", "Erase"])
             .alias(&["e", "delete"])
