@@ -168,7 +168,7 @@ fn version_list() -> String {
 
 /// The `version` and `binary` parameters of a save: a version is a year (2018 or "2018"), "R2018"
 /// or an `$ACADVER` code ("AC1032").
-fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
+pub(super) fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
     let version = match p.get("version") {
         None | Some(Value::Null) => None,
         Some(v) => {
@@ -980,10 +980,10 @@ pub(crate) fn lost_writing(d: &Drawing, path: &str, version: Version) -> std::co
 }
 
 /// Report what the file `path`, just written from the active document (what EXPORT writes: the
-/// block while the Block Editor is open) at its own version, left out.
-pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+/// block while the Block Editor is open) at version `asked` (else its own), left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str, asked: Option<Version>) {
     let Ok(d) = s.doc() else { return };
-    let version = own_version(d, path);
+    let version = asked.unwrap_or_else(|| own_version(d, path));
     let lost = lost_writing(d, path, version);
     report_lost(s, r, path, version, &lost);
 }
