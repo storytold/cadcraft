@@ -785,6 +785,7 @@ const MAX_SYMBOLS: usize = 100_000;
 /// written with symbols missing.
 fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Vec<(Sym, String)>, cap: usize) -> Result<()> {
     let mut seen: HashSet<(Sym, String)> = HashSet::new();
+    let mut blocks: Vec<String> = Vec::new();
     while let Some((sym, name)) = wanted.pop() {
         if name.is_empty() || !seen.insert((sym, name.to_ascii_uppercase())) {
             continue;
@@ -792,9 +793,34 @@ fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Ve
         if seen.len() > cap {
             return Err(bad("refclose", format!("the edit uses more than {cap} symbols; the xref is not written (REFCLOSE Discard ends the edit)")));
         }
+        if sym == Sym::Block {
+            blocks.push(name.clone());
+        }
         bring_symbol(host, src, prefix, sym, &name, &mut wanted);
     }
+    // A block the written objects name that the drawing still lacks (an xref of the host, added
+    // with REFSET) would leave a reference to nothing in the file: refused, nothing written.
+    if let Some(name) = blocks.iter().find(|n| src.block(n).is_none()) {
+        return Err(bad(
+            "refclose",
+            format!(
+                "the edit uses block \"{name}\", which can't be written into the xref's drawing (an xref of this drawing, or a block it doesn't define); remove it from the working set (REFSET) or use REFCLOSE Discard"
+            ),
+        ));
+    }
     Ok(())
+}
+
+/// The blocks dimension style `t` of `host` draws its arrowheads with: the names `host` defines as
+/// blocks (a built-in arrowhead name is drawn in code, not a block), as the xref's drawing names
+/// them.
+fn arrow_blocks(host: &Drawing, t: &cadcraft_doc::DimStyle, prefix: &str) -> Vec<(Sym, String)> {
+    [&t.arrow_block, &t.arrow_block1, &t.arrow_block2, &t.leader_arrow_block]
+        .into_iter()
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty() && host.block(n).is_some())
+        .map(|n| (Sym::Block, if load::has_prefix(n, prefix) { n.get(prefix.len()..).unwrap_or(n).to_string() } else { n.to_string() }))
+        .collect()
 }
 
 /// Copy host symbol `name` of kind `sym` into `src` when `src` lacks it, queueing what it uses.
@@ -832,6 +858,7 @@ fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name:
                     && let Some(t) = host.dim_style(&name)
                 {
                     wanted.push((Sym::Style, t.text_style.clone()));
+                    wanted.extend(arrow_blocks(host, t, prefix));
                     src.dim_styles.push(t.clone());
                 }
             }

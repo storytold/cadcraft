@@ -697,3 +697,47 @@ fn a_proxy_an_r2000_dxf_xref_cannot_keep_is_reported() {
     let warning = s.log.iter().find(|m| m.contains("Not saved in the DXF file")).expect("a warning on the command line");
     assert!(warning.contains("before 2007") && warning.contains("1 ACAD_PROXY_ENTITY") && warning.contains("proxy.dxf.bak"), "{warning}");
 }
+
+/// Review of #2355: a reference to another xref of the host, added to the working set with
+/// REFSET, would be written into the xref's drawing naming a block that drawing doesn't define.
+/// The save is refused instead; the file, its backup and the edit stay as they were.
+#[test]
+fn a_reference_to_another_xref_of_the_host_is_not_written_into_the_xref() {
+    let (mut s, dir, _, insert) = attached("other-xref");
+    let (other, _) = site();
+    save(&other, &dir.join("other.dxf"));
+    let r = s.execute("xattach", &json!({ "path": "other.dxf", "at": [0, 100] })).unwrap();
+    let other_insert = r["handle"].as_str().unwrap().to_string();
+    let file = dir.join("site.dxf");
+    let before = std::fs::read(&file).unwrap();
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("refset", &json!({ "add": [other_insert] })).unwrap();
+    let e = s.execute("refclose", &json!({ "option": "save" })).unwrap_err().to_string();
+    assert!(e.contains("\"other\""), "{e}");
+    assert_eq!(std::fs::read(&file).unwrap(), before, "the xref is unchanged");
+    assert!(std::fs::symlink_metadata(dir.join("site.dxf.bak")).is_err(), "no backup was written");
+    assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+}
+
+/// A dimension drawn during the edit with a host dimension style whose arrowhead is a block of
+/// the host: the block comes along with the style, so the xref's drawing defines what it names.
+#[test]
+fn a_host_dimension_styles_arrow_block_comes_along() {
+    let (mut s, dir, _, insert) = attached("arrow-block");
+    {
+        let d = s.doc_mut().unwrap();
+        let mut pin = Block::new("Pin");
+        let h = d.new_handle();
+        pin.entities.push(Entity::new(h, EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 0.5 })));
+        d.blocks.insert("Pin".into(), Arc::new(pin));
+        d.dim_styles.push(cadcraft_engine::doc::DimStyle { name: "Pinned".into(), arrow_block: "Pin".into(), ..Default::default() });
+        d.header.set_str("DIMSTYLE", "Pinned");
+    }
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("dimlinear", &json!({ "p1": [100, 30], "p2": [110, 30], "at": [105, 40] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let back = read(&dir.join("site.dxf"));
+    assert_eq!(back.dim_style("Pinned").expect("the style comes along").arrow_block, "Pin");
+    assert!(back.block("Pin").is_some(), "and the block its arrowheads are");
+}
