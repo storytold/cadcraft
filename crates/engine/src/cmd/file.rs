@@ -721,12 +721,13 @@ fn adopt_source_group(out: &std::fs::File, src: &std::fs::Metadata) -> std::io::
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
 /// ([`looks_like_drawing`]) is not backed up, and the `.bak` already there is left alone.
+/// Returns whether the backup was written. Also used for an xref REFEDIT writes back.
 #[cfg(not(target_arch = "wasm32"))]
-fn backup(path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn backup(path: &std::path::Path) -> std::io::Result<bool> {
     let mut src = match std::fs::File::open(path) {
         Ok(f) if f.metadata()?.is_file() => f,
-        Ok(_) => return Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e),
     };
     let (head, tail, len) = ends(&mut src)?;
@@ -735,7 +736,7 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     // the roots (or to another computer) isn't looked at.
     if !backup_replaced(&head, &tail, len, std::fs::symlink_metadata(&bak).is_ok()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
-        return Ok(());
+        return Ok(false);
     }
     // The backup is no more readable than the drawing, nor than the .bak it replaces (a private
     // 0600 drawing or .bak stays private). The mode is set as the new file is created, so a
@@ -761,7 +762,8 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
         }
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
-    })
+    })?;
+    Ok(true)
 }
 
 /// Store the bytes, then mark the drawing saved under `path`. If storing fails the drawing keeps

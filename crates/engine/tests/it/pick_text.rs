@@ -104,6 +104,7 @@ fn a_dimension_drawn_from_its_block_is_picked_on_the_block_text() {
         explodable: true,
         units: 0,
         array: None,
+        xref_stamp: None,
     };
     d.blocks.insert("*D1".into(), std::sync::Arc::new(block));
     d.model.modify(dim, |e| {

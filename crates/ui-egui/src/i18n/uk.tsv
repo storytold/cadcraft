@@ -1394,6 +1394,12 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Edit Reference	Редагування посилання
+	Saving writes {file}	Збереження записує {file}
+	{n} in the working set	{n} у робочому наборі
+	Remove from Working Set	Вилучити з робочого набору
+	Save Changes	Зберегти зміни
+	Discard Changes	Скасувати зміни
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
 	Add a drawing file as a block library	Додати файл креслення як бібліотеку блоків
 	Add a folder of drawings or a drawing file to use its blocks.	Додайте теку з кресленнями або файл креслення, щоб використовувати його блоки.

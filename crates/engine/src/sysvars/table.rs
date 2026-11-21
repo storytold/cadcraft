@@ -81,6 +81,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     // XCLIP boundaries: 0 hidden, 1 shown and plotted, 2 shown but not plotted.
     ("XCLIPFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
+    // How much objects outside the working set fade while a reference is edited in place (REFEDIT).
+    ("XFADECTL", Kind::Int(0, 90), Def::Int(50)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.
