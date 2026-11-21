@@ -150,7 +150,7 @@ pub fn snap_candidates_with_frozen(
     }
     let mut out: Vec<SnapHit> = crate::snap::osnap_with_frozen(d, space, cursor, aperture, osmode, base, deferred, frozen).into_iter().collect();
     for h in crate::snap::osnap_all_with_frozen(d, space, cursor, aperture, osmode, base, deferred, frozen) {
-        if !out.iter().any(|o| o.mode == h.mode && o.point.near(h.point, aperture * 1e-6)) {
+        if !out.iter().any(|o| o.same(&h, aperture)) {
             out.push(h);
         }
     }

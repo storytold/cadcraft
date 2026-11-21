@@ -69,6 +69,17 @@ impl SnapHit {
         SnapHit { point, mode, name: name_of(mode), viewport: None, deferred: None }
     }
 
+    /// The same snap as `o`, for a Tab list without repeats: the same mode at the same point
+    /// (within a millionth of `aperture`), deferred or not alike, and from the same source (this
+    /// space, or one viewport). Overlapping viewports can show different model points at one paper
+    /// point; each stays a candidate, since DIST measures in the model units of the viewport picked.
+    pub(crate) fn same(&self, o: &SnapHit, aperture: f64) -> bool {
+        self.mode == o.mode
+            && self.deferred.is_some() == o.deferred.is_some()
+            && self.viewport.map(|v| v.viewport) == o.viewport.map(|v| v.viewport)
+            && self.point.near(o.point, aperture * 1e-6)
+    }
+
     /// The command input a pick at this snap gives: a deferred snap or a plain point.
     pub fn input(&self) -> crate::Input {
         match self.deferred {
@@ -411,7 +422,7 @@ pub fn osnap_all_with_frozen(
         if unique.len() >= MAX_CYCLE {
             break;
         }
-        if !unique.iter().any(|u| u.mode == h.mode && u.point.near(h.point, aperture * 1e-6)) {
+        if !unique.iter().any(|u| u.same(&h, aperture)) {
             unique.push(h);
         }
     }
