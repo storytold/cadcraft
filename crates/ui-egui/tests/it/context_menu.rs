@@ -383,4 +383,76 @@ fn a_held_paste_is_cancelled_by_escape_and_runs_once() {
     frame(&mut app, vec![], 5.0);
     frame(&mut app, vec![], 5.0);
     assert_eq!(running(&app), None);
+
+    // A stale answer, to a request whose command was escaped, does not complete a newer held
+    // command: that one keeps waiting and runs on its own answer, or at its own deadline.
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    cadcraft_ui_egui::cmdline::escape(&mut app);
+    app.start("pasteblock");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app), None, "the older request's answer is not the newer command's");
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app).as_deref(), Some("pasteblock"), "its own answer runs it");
+    app.session.cancel();
+    app.start("pasteclip");
+    frame(&mut app, vec![], 0.01);
+    cadcraft_ui_egui::cmdline::escape(&mut app);
+    app.start("pasteblock");
+    frame(&mut app, vec![], 0.01);
+    frame(&mut app, paste(), 0.01);
+    assert_eq!(running(&app), None);
+    frame(&mut app, vec![], 1.0);
+    assert_eq!(running(&app).as_deref(), Some("pasteblock"), "its own deadline runs it");
+}
+
+/// Where the window answers in the next frame or not at all, a request stops being answerable
+/// after that frame: the paste falls back at once and a later `Paste` is an ordinary Ctrl+V.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn without_late_answers_a_paste_after_the_next_frame_is_ordinary() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.set_clipboard_late_answers(false);
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        now += 0.01;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        ctx.end_pass().textures_delta.clear();
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+    let paste = || vec![egui::Event::Paste("text from another program".into())];
+
+    app.start("pasteclip");
+    frame(&mut app, vec![]);
+    assert_eq!(running(&app), None, "the answer may still come in the next frame");
+    frame(&mut app, vec![]);
+    assert_eq!(running(&app), None);
+    frame(&mut app, vec![]);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "no answer: pasted without waiting for the deadline");
+    app.session.cancel();
+    frame(&mut app, paste());
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "a Ctrl+V after that is not an answer");
+    app.session.cancel();
+
+    // An answer in the next frame completes the paste, once.
+    app.start("pasteclip");
+    frame(&mut app, vec![]);
+    frame(&mut app, paste());
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"));
+    app.session.cancel();
+    frame(&mut app, vec![]);
+    frame(&mut app, vec![]);
+    assert_eq!(running(&app), None);
+
+    // A Ctrl+V in the frame the request goes out is not its answer.
+    app.start("pasteblock");
+    frame(&mut app, paste());
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the Ctrl+V pastes");
 }

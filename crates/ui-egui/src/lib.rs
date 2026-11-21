@@ -764,6 +764,12 @@ impl CadApp {
         }
     }
 
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
+    }
+
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
     /// resets never turn it off then.
     pub fn set_system_cursor_default(&mut self, on: bool) {
