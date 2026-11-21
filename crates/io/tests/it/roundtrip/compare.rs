@@ -29,6 +29,7 @@ pub(super) fn model(expected: &Drawing, actual: &Drawing, context: &str) {
         let Block {
             name,
             annotative,
+            scale_uniformly,
             base,
             entities: contents,
             description,
@@ -42,6 +43,7 @@ pub(super) fn model(expected: &Drawing, actual: &Drawing, context: &str) {
         } = block.as_ref();
         equal(name, &back.name, &path, "name");
         equal(annotative, &back.annotative, &path, "annotative");
+        equal(scale_uniformly, &back.scale_uniformly, &path, "scale_uniformly");
         equal(base, &back.base, &path, "base");
         equal(description, &back.description, &path, "description");
         equal(xref_overlay, &back.xref_overlay, &path, "xref_overlay");
@@ -200,8 +202,21 @@ fn entity(expected: &Entity, actual: &Entity, context: &str) {
 
 fn common(expected: &Common, actual: &Common, context: &str) {
     // No `..`: adding a field requires deciding its preservation contract here.
-    let Common { layer, color, linetype, lineweight, ltscale, transparency, visible, thickness, extrusion, plot_style, anno_scales, xdata } =
-        expected;
+    let Common {
+        layer,
+        color,
+        linetype,
+        lineweight,
+        ltscale,
+        transparency,
+        visible,
+        thickness,
+        extrusion,
+        plot_style,
+        anno_scales,
+        anno_moves,
+        xdata,
+    } = expected;
     equal(layer, &actual.layer, context, "layer");
     equal(color, &actual.color, context, "color");
     equal(linetype, &actual.linetype, context, "linetype");
@@ -213,6 +228,7 @@ fn common(expected: &Common, actual: &Common, context: &str) {
     equal(extrusion, &actual.extrusion, context, "extrusion");
     equal(plot_style, &actual.plot_style, context, "plot_style");
     equal(anno_scales, &actual.anno_scales, context, "anno_scales");
+    equal(anno_moves, &actual.anno_moves, context, "anno_moves");
     equal(xdata, &actual.xdata, context, "xdata");
 }
 

@@ -128,7 +128,7 @@ impl GripEdit {
                 continue;
             }
             let Some(e) = st.doc.entity(h).filter(|e| st.shows(e)) else { continue };
-            let gs = e.kind.grips();
+            let gs = crate::grips::shown_grips(&st.doc, e, s.anno_view());
             // The nearest grip of this object within the tolerance.
             let best = gs
                 .iter()
@@ -459,7 +459,11 @@ impl Interactive for GripEdit {
         };
         let Ok(d) = s.doc() else { return Vec::new() };
         let mut out: Vec<EntityKind> = if self.mode == GripMode::Stretch {
-            super::gripcmds::stretched(s, &self.hot, &self.targets, c - base).into_iter().take(500).map(|(_, k)| k).collect()
+            super::gripcmds::stretched(s, &self.hot, &self.targets, c - base)
+                .into_iter()
+                .take(500)
+                .map(|(_, e)| d.anno_shown_in(&e, s.anno_view()))
+                .collect()
         } else {
             match self.matrix(c) {
                 Some(m) => self
