@@ -938,7 +938,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.press = None;
     }
     let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl;
-    let cycled = pressed_primary && !click_used && !middle_down && cycle_click(app, ui.ctx(), &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
+    let cycled =
+        pressed_primary && !click_used && !middle_down && cycle_click(app, ui.ctx(), &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
     // Clicks the presses above left alone: on grips, and during ZOOM Realtime.
     if inside
         && pressed_primary
