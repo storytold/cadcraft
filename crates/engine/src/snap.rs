@@ -246,7 +246,7 @@ pub(crate) fn osnap_with_neighborhood(
     };
     let views = viewport::near(d, space, cursor, aperture);
     if views.is_empty() {
-        return (best, near_prims);
+        return (best.map(|(h, _)| h), near_prims);
     }
     let model = Space::Model;
     let model_ix = crate::spatial::index(d, &model);
@@ -269,14 +269,30 @@ pub(crate) fn osnap_with_neighborhood(
             &view.viewport.frozen_layers,
             Some(view.model_clip),
         )
-        .and_then(|h| view.hit(h));
-        if let Some(hit) = hit
-            && best.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
+        // The rank was found in model units: paper units are model units times the scale.
+        .and_then(|(h, r)| Some((view.hit(h)?, Rank { score: r.score * view.scale, ..r })));
+        if let Some((hit, rank)) = hit
+            && best.as_ref().is_none_or(|(_, b)| rank.beats(b))
         {
-            best = Some(hit);
+            best = Some((hit, rank));
         }
     }
-    (best, near_prims)
+    (best.map(|(h, _)| h), near_prims)
+}
+
+/// How a hit ranks against the hits of another space (paper space, another viewport): first the
+/// order [`finish`] tries them in (snap points, then a center found from its curve, then
+/// deferred snaps and Nearest), then its score within that tier, in the units of the cursor.
+#[derive(Clone, Copy, Debug)]
+struct Rank {
+    tier: u8,
+    score: f64,
+}
+
+impl Rank {
+    fn beats(&self, other: &Rank) -> bool {
+        self.tier.cmp(&other.tier).then(self.score.total_cmp(&other.score)).is_lt()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -291,7 +307,7 @@ fn osnap_in(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
+) -> Option<(SnapHit, Rank)> {
     osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _)| hit)
 }
 
@@ -307,7 +323,7 @@ fn osnap_in_with_prims(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<(Option<SnapHit>, Vec<Prim>)> {
+) -> Option<(Option<(SnapHit, Rank)>, Vec<Prim>)> {
     let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
@@ -458,15 +474,16 @@ fn gather_in(
     Some((cands, near_prims))
 }
 
-/// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
+/// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps, with
+/// its [`Rank`].
 ///
-/// In order of preference:
-/// 1. the snap point within `aperture` of the cursor that scores best (see [`snap_score`]),
+/// In order of preference (the rank's tier):
+/// 0. the snap point within `aperture` of the cursor that scores best (see [`snap_score`]),
 ///    perpendicular and tangent points from the base point included;
-/// 2. with a base point, a perpendicular or tangent on an object that passes within `aperture`,
-///    wherever its point lies (see [`from_base_on_object`]);
-/// 3. a deferred perpendicular or tangent (no base point yet);
-/// 4. Nearest.
+/// 1. with a base point, a perpendicular or tangent on an object that passes within `aperture`,
+///    wherever its point lies (see [`from_base_on_object`]), or the center of a circle, arc or
+///    ellipse under the cursor (see [`curve_centers`]): the object nearest the cursor;
+/// 2. a deferred perpendicular or tangent (no base point yet), else Nearest.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     mut cands: Vec<(u32, Vec2)>,
@@ -477,9 +494,9 @@ fn finish(
     base: Option<Vec2>,
     deferred: bool,
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
+) -> Option<(SnapHit, Rank)> {
     // Perpendicular / tangent from the base point, each with the index in `near_prims` of the
-    // object it lies on, for step 2.
+    // object it lies on, for tier 1.
     let mut from_base: Vec<FromBase> = Vec::new();
     if let Some(bp) = base {
         for (prim, p) in near_prims.iter().enumerate() {
@@ -522,23 +539,37 @@ fn finish(
         cands.extend(from_base.iter().map(|f| (f.mode, f.point)));
     }
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
-        // Prefer more specific modes when nearly equidistant.
-        let da = snap_score(a.0, a.1, cursor, aperture);
-        let db = snap_score(b.0, b.1, cursor, aperture);
-        da.total_cmp(&db)
-    });
-    if let Some((m, p)) = best {
-        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
+    let hit = |point: Vec2, m: u32| SnapHit { point, mode: m, name: name_of(m), viewport: None, deferred: None };
+    // Prefer more specific modes when nearly equidistant.
+    let best = cands
+        .iter()
+        .filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture)
+        .map(|(m, p)| (snap_score(*m, *p, cursor, aperture), *m, *p))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((score, m, p)) = best {
+        return Some((hit(p, m), Rank { tier: 0, score }));
     }
-    if let Some(h) = from_base_on_object(&from_base, near_prims, cursor, aperture, visible) {
-        return Some(h);
+    // A perpendicular or tangent on the object under the cursor, or the center found from its
+    // curve, only when no snap point is in the aperture: the Midpoint or Quadrant under the cursor
+    // wins over the center of the same curve, as in AutoCAD. Of the two, the object nearer the
+    // cursor; on a tie (the same curve), the perpendicular or tangent.
+    let on_object = from_base_on_object(&from_base, near_prims, cursor, aperture, visible);
+    let center = curve_centers(near_prims, cursor, aperture, osmode)
+        .into_iter()
+        .filter(|(_, c)| visible(*c))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(score, c)| (hit(c, mode::CEN), Rank { tier: 1, score }));
+    match (on_object, center) {
+        (Some(o), Some(c)) => return Some(if c.1.beats(&o.1) { c } else { o }),
+        (Some(h), None) | (None, Some(h)) => return Some(h),
+        (None, None) => {}
     }
     if base.is_none()
         && deferred
         && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
     {
-        return Some(h);
+        let score = h.point.dist(cursor);
+        return Some((h, Rank { tier: 2, score }));
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
@@ -557,11 +588,36 @@ fn finish(
                 consider(c.closest(cursor));
             }
         }
-        if let Some((_, p)) = nb {
-            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
+        if let Some((score, p)) = nb {
+            return Some((SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None }, Rank { tier: 2, score }));
         }
     }
     None
+}
+
+/// Center, as in AutoCAD: with the cursor over a circle, an arc (also a polyline's) or an
+/// ellipse, the running Center snap finds its center however far away it is. Each center comes
+/// with how far the curve is from `cursor` (its score); [`finish`] tries them only when no snap
+/// point is in the aperture. Empty unless Center is among `osmode`.
+fn curve_centers(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32) -> Vec<(f64, Vec2)> {
+    let mut out = Vec::new();
+    if osmode & mode::CEN == 0 {
+        return out;
+    }
+    // The work limit counts the curves only, so straight segments before them can't hide them.
+    let curves = prims.iter().filter_map(|p| match p {
+        Prim::Circle(c) => Some((c.center, c.closest(cursor))),
+        Prim::Seg(s @ Segment::Arc { arc, .. }) => Some((arc.center, fix_circle(s).closest(cursor))),
+        Prim::Ellipse(e) => Some((e.center, e.closest(cursor))),
+        _ => None,
+    });
+    for (center, on) in curves.take(2000) {
+        let d = on.dist(cursor);
+        if center.is_finite() && d.is_finite() && d <= aperture {
+            out.push((d, center));
+        }
+    }
+    out
 }
 
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
@@ -586,7 +642,7 @@ struct FromBase {
 ///
 /// The object nearest the cursor wins; of several points on it (an arc's two antipodes, a
 /// circle's two tangents), the one nearest the cursor.
-fn from_base_on_object(found: &[FromBase], near_prims: &[Prim], cursor: Vec2, aperture: f64, visible: impl Fn(Vec2) -> bool) -> Option<SnapHit> {
+fn from_base_on_object(found: &[FromBase], near_prims: &[Prim], cursor: Vec2, aperture: f64, visible: impl Fn(Vec2) -> bool) -> Option<(SnapHit, Rank)> {
     if found.is_empty() {
         return None;
     }
@@ -609,7 +665,7 @@ fn from_base_on_object(found: &[FromBase], near_prims: &[Prim], cursor: Vec2, ap
             best = Some((to_object, to_point, f));
         }
     }
-    best.map(|(_, _, f)| SnapHit { point: f.point, mode: f.mode, name: name_of(f.mode), viewport: None, deferred: None })
+    best.map(|(o, _, f)| (SnapHit { point: f.point, mode: f.mode, name: name_of(f.mode), viewport: None, deferred: None }, Rank { tier: 1, score: o }))
 }
 
 /// The distance from `cursor` to the nearest point of `p`, measured as Nearest measures it.
