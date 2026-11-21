@@ -63,6 +63,7 @@ impl Session {
         let Some(spec) = find_command(&id) else {
             // A command defined in LISP: (defun c:NAME …).
             if !transparent && let Some(f) = self.lisp_command(&lower) {
+                self.commands_started = self.commands_started.wrapping_add(1);
                 if self.running.is_some() {
                     self.cancel();
                 }
@@ -78,6 +79,9 @@ impl Session {
             }
             return Err(EngineError::UnknownCommand(typed.to_string()));
         };
+        if let Some(why) = crate::file_access::commands::refusal(spec.id) {
+            return Err(EngineError::Disabled(spec.id.into(), why));
+        }
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
             if spec.interactive.is_none() {
@@ -96,8 +100,11 @@ impl Session {
             self.echo(format!("Command: {}", spec.id.to_ascii_uppercase()));
             return self.input(Input::Keyword("Undo".into()));
         }
-        if !nested && self.running.is_some() {
-            self.cancel();
+        if !nested {
+            self.commands_started = self.commands_started.wrapping_add(1);
+            if self.running.is_some() {
+                self.cancel();
+            }
         }
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
@@ -378,7 +385,14 @@ impl Session {
                 Ok(())
             }
             Ok(Step::Done) => {
+                let seed = run.before.handseed;
                 self.finish(run, false);
+                let added = self.doc().is_ok_and(|d| d.handseed != seed);
+                // A transparent command ending inside another (`'ZOOM` in an INSERT) is not that
+                // command ending: it shares its number.
+                if self.suspended.is_none() {
+                    self.last_finished = Some((self.commands_started, added));
+                }
                 self.resume_suspended();
                 Ok(())
             }
@@ -520,6 +534,11 @@ impl Session {
     /// ([`Interactive::editing_mtext`]).
     pub fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
+    }
+
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<crate::TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
     }
 
     pub fn current_prompt(&self) -> Option<Prompt> {
