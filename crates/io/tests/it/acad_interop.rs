@@ -9,6 +9,7 @@ use cadcraft_geom::Vec3;
 use cadcraft_io::{SaveOptions, Version, read, write_dxf, write_with};
 
 fn dwg_roundtrip(d: &Drawing) -> Drawing {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = write_with(d, "case.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
     read(&dwg, "case.dwg").unwrap()
 }
@@ -148,6 +149,7 @@ fn a_dimension_block_takes_the_style_colours() {
 
 #[test]
 fn a_rotated_linear_dimension_stores_its_projected_length() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = s25(
         DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 },
         Vec3::new(-5.0, 0.0, 0.0),
@@ -241,6 +243,7 @@ fn justified_text_made_here_writes_its_baseline_start_for_every_justification() 
 
 /// Group 42 of a dimension in the DXF AutoCAD reads from `d`'s DWG.
 fn stored_measurement(d: &Drawing) -> f64 {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = write_with(d, "case.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
     let dxf = String::from_utf8(craft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let t = tags(&dxf);
