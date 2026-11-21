@@ -54,6 +54,10 @@ fn install_io() {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+    // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
+    cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
 }
 
 /// `path` as text, for the engine and io calls that take a file name as a string.
@@ -74,6 +78,11 @@ pub fn command() -> clap::Command {
 /// Run the CLI on its arguments (without the program name). Returns the process exit code (0 ok,
 /// 1 failure, 2 usage). clap reads the arguments as they are: a value that is not valid Unicode
 /// is a usage error, never a panic as with `std::env::args()`.
+///
+/// Reading or writing DWG needs a conversion worker, which this function does not set up: the
+/// binary calls `cadcraft_io::dwg_worker::use_own_worker()` first. A caller that converts only its
+/// own, trusted files can call `cadcraft_io::dwg_worker::allow_in_process()` instead. With
+/// neither, a DWG file gets "no worker is configured" and exit code 1.
 pub fn run<I, T>(args: I, out: &mut dyn Write, err: &mut dyn Write) -> i32
 where
     I: IntoIterator<Item = T>,

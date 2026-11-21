@@ -120,6 +120,7 @@ fn record(p: &[(i32, String)], kind: &str, h: Handle) -> Vec<(i32, String)> {
 /// the fill along in AutoCAD (dynamic blocks).
 #[test]
 fn a_hatch_in_a_block_keeps_its_boundary_and_the_boundary_its_reactor() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     let mut b = Block::new("Tag");
     let outline = d.new_handle();
