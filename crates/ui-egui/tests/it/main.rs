@@ -30,6 +30,7 @@ mod native_windows;
 mod options_dialog;
 mod options_right_click;
 mod page_setup_paper_units;
+mod pagesetup_multi;
 mod parameters_rename;
 mod pickdrag;
 mod press_first_clicks;
