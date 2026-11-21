@@ -634,9 +634,9 @@ fn finish(
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
-        let nb = nearest_points(near_prims, cursor, aperture, clip).into_iter().min_by(|a, b| a.dist(cursor).total_cmp(&b.dist(cursor)));
-        if let Some(p) = nb {
-            return Some((SnapHit::plain(mode::NEA, p), Rank { tier: 3, score: p.dist(cursor) }));
+        let nb = near_prims.iter().filter_map(|p| nearest_point(p, cursor, aperture, &visible)).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((score, p)) = nb {
+            return Some((SnapHit::plain(mode::NEA, p), Rank { tier: 3, score }));
         }
     }
     None
@@ -682,28 +682,31 @@ fn finish_all(
         out.push((h, Rank { tier: 2, score }));
     }
     if osmode & mode::NEA != 0 {
-        out.extend(
-            nearest_points(near_prims, cursor, aperture, clip).into_iter().map(|p| (SnapHit::plain(mode::NEA, p), Rank { tier: 3, score: p.dist(cursor) })),
-        );
+        let near = near_prims.iter().filter_map(|p| nearest_point(p, cursor, aperture, &visible));
+        out.extend(near.map(|(score, p)| (SnapHit::plain(mode::NEA, p), Rank { tier: 3, score })));
     }
     out.sort_by(|a, b| a.1.cmp(&b.1));
     out
 }
 
-/// The point of each nearby primitive closest to `cursor`, within the aperture.
-fn nearest_points(near_prims: &[Prim], cursor: Vec2, aperture: f64, clip: Option<Bounds2>) -> Vec<Vec2> {
-    let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let mut out = Vec::new();
-    for p in near_prims {
-        let c = match p {
-            Prim::Circle(c) => Some(c.closest(cursor)),
-            _ => prim_segments(p).iter().map(|s| fix_circle(s).closest(cursor)).min_by(|a, b| a.dist(cursor).total_cmp(&b.dist(cursor))),
-        };
-        if let Some(c) = c.filter(|c| visible(*c) && c.dist(cursor) <= aperture) {
-            out.push(c);
+/// The point of `p` closest to `cursor` among its visible points within `aperture`, with its
+/// distance: each segment's closest point is checked before the closest is chosen, so a curve
+/// whose closest point is clipped away (outside a viewport) still offers the visible one.
+fn nearest_point(p: &Prim, cursor: Vec2, aperture: f64, visible: &impl Fn(Vec2) -> bool) -> Option<(f64, Vec2)> {
+    let mut nb: Option<(f64, Vec2)> = None;
+    let mut consider = |c: Vec2| {
+        let dd = c.dist(cursor);
+        if visible(c) && dd <= aperture && nb.is_none_or(|(bd, _)| dd < bd) {
+            nb = Some((dd, c));
         }
+    };
+    for s in prim_segments(p) {
+        consider(fix_circle(&s).closest(cursor));
     }
-    out
+    if let Prim::Circle(c) = p {
+        consider(c.closest(cursor));
+    }
+    nb
 }
 
 /// The perpendicular and tangent points from the base point `base` (none without one), each

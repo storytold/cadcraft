@@ -1,6 +1,6 @@
 //! DIST snaps to the model geometry displayed in paper-space viewports (#516).
 
-use cadcraft_engine::doc::{Block, Circle, Common, Drawing, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
+use cadcraft_engine::doc::{Block, Circle, Common, Drawing, Ellipse, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
 use cadcraft_engine::geom::{Vec2, Vec3};
 use cadcraft_engine::snap::{SnapCurve, SnapHit, mode, osnap};
 use cadcraft_engine::{Input, Session};
@@ -388,4 +388,23 @@ fn malformed_and_paper_space_viewports_are_not_snap_sources() {
         edit_viewport(&mut d, &paper, |vp| (vp.width, vp.height, vp.view_height, vp.id) = (width, height, view_height, id));
         assert!(osnap(&d, &paper, Vec2::new(95.1, 50.1), 0.5, mode::END, None, false).is_none());
     }
+}
+
+/// Nearest on a curve that leaves the viewport: the curve's closest point to the cursor is outside
+/// the viewport, another point of it within the aperture is inside, and Nearest snaps there.
+#[test]
+fn nearest_takes_the_visible_part_of_a_curve_crossing_the_viewport_edge() {
+    let (mut d, paper) = drawing();
+    // The viewport shows model y up to 20. A tall ellipse peaks at (15, 20.1), just outside.
+    let ellipse = Ellipse { center: Vec3::new(15.0, 0.0, 0.0), major: Vec3::new(0.0, 20.1, 0.0), ratio: 0.1, start: 0.0, end: std::f64::consts::TAU };
+    d.add(&Space::Model, Common::default(), EntityKind::Ellipse(ellipse)).unwrap();
+    // The viewport's border is on a layer that is off, so it offers no Nearest of its own.
+    d.layers.push(cadcraft_engine::doc::Layer { name: "Border".into(), on: false, ..Default::default() });
+    let vp = viewport(&d, &paper);
+    d.modify_entity(vp, |e| e.common.layer = "Border".into()).unwrap();
+    // Model (15, 19.99): 0.11 from the peak, about 0.2 from where the ellipse comes back inside.
+    let cursor = Vec2::new(102.5, 59.995);
+    let hit = osnap(&d, &paper, cursor, 0.5, mode::NEA, None, false).expect("a visible nearest point");
+    let model = hit.viewport.expect("seen through the viewport").point;
+    assert!(model.y <= 20.0 + 1e-9 && model.dist(Vec2::new(15.0, 19.99)) <= 1.0, "{hit:?}");
 }
