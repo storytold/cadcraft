@@ -396,6 +396,7 @@ fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -
             let wp =
                 if world { Vec2::new(x, y) } else { app.canvas.xf.map(|xf| xf.to_world(egui::pos2(x as f32, y as f32))).unwrap_or(Vec2::new(x, y)) };
             app.session.cursor = wp;
+            app.session.pointer = Some(wp);
             app.session.cursor_deferred = None;
             app.canvas.cursor = Some(wp);
             if action == "move" {

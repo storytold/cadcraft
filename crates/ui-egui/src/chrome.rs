@@ -36,9 +36,39 @@ const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
         (Icon::Layers, "ui.dialog.layers", "Layer Properties Manager", None),
         (Icon::Blocks, "ui.dialog.blocks", "Blocks", None),
     ],
-    &[(Icon::Measure, "dist", "Measure Distance", None), (Icon::List, "list", "List", None), (Icon::Area, "area", "Area", None)],
+    &[(Icon::Measure, MEASURE, "Measure", None), (Icon::List, "list", "List", None), (Icon::Area, "area", "Area", None)],
     &[(Icon::Help, "ui.dialog.about", "Help", None)],
 ];
+
+/// The Measure button: not a command, it drops down [`MEASURE_MENU`].
+const MEASURE: &str = "ui.measure";
+/// What the Measure button offers, as AutoCAD's Measure drop-down does: MEASUREGEOM's options.
+const MEASURE_MENU: &[(&str, &str)] = &[
+    ("measure.quick", "Quick"),
+    ("dist", "Distance"),
+    ("radius.measure", "Radius"),
+    ("angle.measure", "Angle"),
+    ("area", "Area"),
+    ("volume.measure", "Volume"),
+];
+
+/// The Measure drop-down's entries; the one chosen goes to `clicked`.
+fn measure_items(ui: &mut egui::Ui, clicked: &mut Option<&'static str>) {
+    for (command, label) in MEASURE_MENU {
+        let response = ui.button(crate::i18n::t(label));
+        crate::control::record_widget(ui, &response, label, "button", None);
+        if response.clicked() {
+            *clicked = Some(command);
+            ui.close();
+        }
+    }
+}
+
+/// The small arrow that marks a tool bar button with a drop-down, in the corner of `br`.
+fn paint_drop_arrow(painter: &egui::Painter, br: Rect, color: egui::Color32) {
+    let c = br.right_bottom() - vec2(4.0, 4.0);
+    painter.add(egui::Shape::convex_polygon(vec![c + vec2(-3.0, -2.0), c + vec2(3.0, -2.0), c + vec2(0.0, 1.5)], color, Stroke::NONE));
+}
 
 /// Height of the macOS integrated title row (#161). AppKit draws the traffic lights itself,
 /// centred in the standard 28 pt title-bar band at the top of the window; moving them would take
@@ -96,7 +126,10 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                         ui.horizontal(|ui| {
                             for group in TOOLBAR {
                                 for (icon, cmd, tip, _) in *group {
-                                    if icons::button(ui, *icon, size, tip, false).clicked() {
+                                    let response = icons::button(ui, *icon, size, tip, false);
+                                    if *cmd == MEASURE {
+                                        egui::Popup::menu(&response).show(|ui| measure_items(ui, &mut clicked));
+                                    } else if response.clicked() {
                                         clicked = Some(*cmd);
                                     }
                                 }
@@ -124,7 +157,11 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                         None => crate::i18n::t(label).to_string(),
                     };
                     icons::describe_control(ui, &resp, &tip, None, false);
-                    if resp.on_hover_text(tip).clicked() {
+                    let resp = resp.on_hover_text(tip);
+                    if *cmd == MEASURE {
+                        paint_drop_arrow(ui.painter(), br, t.text);
+                        egui::Popup::menu(&resp).show(|ui| measure_items(ui, &mut clicked));
+                    } else if resp.clicked() {
                         clicked = Some(*cmd);
                     }
                     x += size + 6.0;
@@ -148,6 +185,10 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                             ui.separator();
                         }
                         for (_, command, label, _) in *group {
+                            if *command == MEASURE {
+                                ui.menu_button(crate::i18n::t(label), |ui| measure_items(ui, &mut clicked));
+                                continue;
+                            }
                             let response = ui.button(crate::i18n::t(label));
                             crate::control::record_widget(ui, &response, label, "button", None);
                             if response.clicked() {
