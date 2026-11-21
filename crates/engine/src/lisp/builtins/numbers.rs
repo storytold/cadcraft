@@ -246,9 +246,13 @@ pub(super) fn lognot(a: &[Value]) -> R {
     Ok(Value::Int(!int(&a[0])?))
 }
 
-/// Numbers compare by value; strings by text.
+/// Numbers compare by value; strings by text. nil is below anything else and equal to itself, as
+/// AutoLISP orders it, so `(> var 0)` is nil for an unset `var` (#2984).
 fn compare(a: &Value, b: &Value) -> Result<std::cmp::Ordering, LispError> {
     match (a, b) {
+        (Value::Nil, Value::Nil) => Ok(Ordering::Equal),
+        (Value::Nil, _) => Ok(Ordering::Less),
+        (_, Value::Nil) => Ok(Ordering::Greater),
         (Value::Str(x), Value::Str(y)) => Ok(x.cmp(y)),
         _ => num(a)?.partial_cmp(&num(b)?).ok_or_else(|| LispError::new("bad argument value")),
     }
@@ -270,8 +274,8 @@ fn chain(a: &[Value], ok: fn(std::cmp::Ordering) -> bool) -> R {
 /// what it is, as `eq` does. AutoLISP answers `(= (type x) 'LIST)` -- the idiom for a type test,
 /// since `type` returns a symbol -- where coercing that symbol to a number failed the whole
 /// routine with "bad argument type" instead (#1597). A mismatch is `nil`, not an error, so
-/// `(= 1 "1")` and `(= '(1) '(1))` answer too. The ordering comparisons stay numbers and strings
-/// only, as AutoLISP has them.
+/// `(= 1 "1")` and `(= '(1) '(1))` answer too. The ordering comparisons stay numbers and strings,
+/// plus nil against anything, as AutoLISP has them.
 fn eq_chain(a: &[Value], want_equal: bool) -> R {
     arity(a, 1, usize::MAX)?;
     for w in a.windows(2) {
