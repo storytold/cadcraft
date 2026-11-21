@@ -8,8 +8,9 @@ use cadcraft_doc::{Drawing, EntityKind, Handle};
 use cadcraft_geom::{Bounds2, Line, Vec2, line_line};
 use serde_json::{Value, json};
 
+use super::curves::KW;
 use super::helpers::{line, lwpoly, rect_vertices};
-use super::modify::{Edges, extend, trim};
+use super::modify::{CUT_ONCE, Edges, extend, json_pick_error, trim};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -31,8 +32,10 @@ fn proj_mode(s: &Session) -> i64 {
 }
 
 /// Whether a trim error says the object meets no cutting edge (a Quick-mode trim then erases it).
+/// A closed polyline cut at one point meets one, and is left as it is.
 fn misses_edges(e: &EngineError) -> bool {
-    e.to_string().contains("intersect")
+    let m = e.to_string();
+    m.contains("intersect") && m != CUT_ONCE
 }
 
 /// Trim or extend `h` at `at`. A Quick-mode (`quick`) trim of an object no cutting edge crosses
@@ -59,7 +62,7 @@ fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bo
     let fb = Bounds2::from_points(pts.iter().copied());
     let tol = crate::select::window_tol(&fb);
     let mut work: Vec<(Handle, Vec<Vec2>)> = Vec::new();
-    for h in crate::select::select_fence(d, &space, pts) {
+    for h in crate::select::select_fence_in(d, &space, s.viewport_frozen(), pts) {
         let Some(e) = d.entity(h) else { continue };
         let polys = crate::select::hit_polylines(d, e, tol);
         let mut xs: Vec<Vec2> = Vec::new();
@@ -81,6 +84,11 @@ fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bo
     run_picks(s, work, extending, edges, quick, tol)
 }
 
+/// How far along a segment from its end a crossing window's pick is kept: past the 5e-7 within
+/// which a pick is on a polyline's own cut at that vertex. A cut this near the end is taken as at
+/// the end, the pick landing just past it.
+const OFF_VERTEX: f64 = 1e-6;
+
 /// Trim (or extend) every object a crossing window from `a` to `b` touches, picked at its point
 /// in the window nearest the first corner `a`.
 fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, quick: bool) -> Result<usize> {
@@ -96,14 +104,21 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
     ];
     let inside = |p: Vec2| bx.expand(tol).contains(p);
     let mut work: Vec<(Handle, Vec<Vec2>)> = Vec::new();
-    for h in crate::select::select_window(d, &space, bx, true) {
+    for h in crate::select::select_window_in(d, &space, s.viewport_frozen(), bx, true) {
         let Some(e) = d.entity(h) else { continue };
         let mut best: Option<Vec2> = None;
         for pl in crate::select::hit_polylines(d, e, tol) {
             for w in pl.windows(2) {
                 let (Some(p), Some(q)) = (w.first(), w.get(1)) else { continue };
                 let seg = Line::new(*p, *q);
-                let cands = [*p, *q, seg.closest(a)].into_iter().chain(sides.iter().filter_map(|sd| line_line(sd, &seg)));
+                // Kept off the segment's ends: a vertex, where two segments meet, is a cut of a
+                // polyline that is one of its own edges, and a pick on a cut trims nothing. No
+                // further than [`OFF_VERTEX`] (or `tol`, in a smaller window), so the pick stays
+                // before a cut near the end, whatever the window's size.
+                let e = (tol.min(OFF_VERTEX) / seg.len()).min(0.5);
+                let cands = [seg.at(e), seg.at(1.0 - e), seg.at(seg.param_of(a).clamp(e, 1.0 - e))]
+                    .into_iter()
+                    .chain(sides.iter().filter_map(|sd| line_line(sd, &seg)));
                 for c in cands.filter(|c| inside(*c)) {
                     if best.is_none_or(|b| c.dist(a) < b.dist(a)) {
                         best = Some(c);
@@ -173,7 +188,6 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
     let cmd = if extending { "extend" } else { "trim" };
     let only: Option<Vec<Handle>> =
         p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().and_then(Handle::parse_hex)).collect());
-    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)? };
     let quick = match p.get("mode") {
         None | Some(Value::Null) => false,
         Some(v) => match v.as_str().map(|m| m.trim().to_ascii_lowercase()).as_deref() {
@@ -182,6 +196,7 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
             _ => return Err(bad(cmd, "`mode` must be \"quick\" or \"standard\"")),
         },
     };
+    let edges = Edges { only: only.as_deref(), implied: edge_mode_param(cmd, p)? };
     let key = if extending { "extended" } else { "trimmed" };
     if p.get("fence").is_some_and(|v| !v.is_null()) {
         let pts = points_param(p, "fence")
@@ -197,8 +212,19 @@ fn run(s: &mut Session, p: &Value, extending: bool) -> Result<Value> {
         return Ok(json!({ key: n }));
     }
     let h = super::targets(s, p)?.first().copied().ok_or_else(|| bad(cmd, "`handle` is required"))?;
-    let pick = point_param(p, "pick").ok_or_else(|| bad(cmd, "`pick` ([x, y]) is required"))?;
-    let r = apply(s, h, pick, extending, edges, quick)?;
+    let pick = point_param(p, "pick").ok_or_else(|| {
+        bad(
+            cmd,
+            if extending {
+                "`pick` ([x, y]) is required: point toward the boundary to extend to, selecting the nearer end"
+            } else {
+                "`pick` ([x, y]) is required: select the portion of the object to trim away"
+            },
+        )
+    })?;
+    // Diagnose only an existing single-pick JSON failure. Successful calls, Quick-mode
+    // erasure, fence/crossing and the interactive command keep their existing behavior.
+    let r = apply(s, h, pick, extending, edges, quick).map_err(|e| json_pick_error(s, h, pick, edges, extending, e))?;
     if extending { Ok(Value::Null) } else { Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() })) }
 }
 
@@ -220,6 +246,8 @@ enum Stage {
     Edges(Vec<Handle>),
     /// Fence points so far.
     Fence(Vec<Vec2>),
+    /// Quick mode's two-point fence, started by a pick in empty space: its first point.
+    QuickFence(Vec2),
     /// A crossing window: its first corner once picked.
     Crossing(Option<Vec2>),
     Mode,
@@ -356,11 +384,12 @@ impl Interactive for TrimM {
                 None => Prompt::new("Specify first fence point", Accept::POINT),
                 Some(l) => Prompt::new("Specify next fence point", Accept::POINT).kw(&["Undo"]).base(*l),
             },
+            Stage::QuickFence(a) => Prompt::new("Specify next fence point", Accept::POINT).base(*a),
             Stage::Crossing(None) => Prompt::new("Specify first corner", Accept::POINT),
             Stage::Crossing(Some(_)) => Prompt::new("Specify opposite corner", Accept::POINT),
             Stage::Mode => {
                 let msg = if self.extend { "Enter an extend mode option" } else { "Enter a trim mode option" };
-                Prompt::new(msg, Accept::TEXT).kw(&["Quick", "Standard"]).default(if quick_mode(s) { "Quick" } else { "Standard" })
+                Prompt::new(msg, KW).kw(&["Quick", "Standard"]).default(if quick_mode(s) { "Quick" } else { "Standard" })
             }
             Stage::Project => {
                 let cur = match proj_mode(s) {
@@ -368,9 +397,9 @@ impl Interactive for TrimM {
                     2 => "View",
                     _ => "Ucs",
                 };
-                Prompt::new("Enter a projection option", Accept::TEXT).kw(&["None", "Ucs", "View"]).default(cur)
+                Prompt::new("Enter a projection option", KW).kw(&["None", "Ucs", "View"]).default(cur)
             }
-            Stage::Edge => Prompt::new("Enter an implied edge extension mode", Accept::TEXT).kw(&["Extend", "No extend"]).default(if edge_mode(s) {
+            Stage::Edge => Prompt::new("Enter an implied edge extension mode", KW).kw(&["Extend", "No extend"]).default(if edge_mode(s) {
                 "Extend"
             } else {
                 "No extend"
@@ -455,6 +484,16 @@ impl Interactive for TrimM {
                 }
                 Ok(Step::Continue)
             }
+            Stage::QuickFence(a) => {
+                self.stage = Stage::Pick;
+                if let Input::Point(b) = i {
+                    let r = self.step(s, |m, s| fence(s, &[a, b], extending, m.edges(quick, implied), quick).map(|_| ()));
+                    if let Err(e) = r {
+                        s.echo(e.to_string());
+                    }
+                }
+                Ok(Step::Continue)
+            }
             Stage::Crossing(first) => {
                 match (first, i) {
                     (None, Input::Point(p)) => self.stage = Stage::Crossing(Some(p)),
@@ -475,8 +514,9 @@ impl Interactive for TrimM {
                     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
                     let Some(h) = s.pick_object(&space, p, ap)? else {
-                        // A pick in empty space opens a crossing window there.
-                        self.stage = Stage::Crossing(Some(p));
+                        // A pick in empty space starts a two-point fence in Quick mode (as in
+                        // AutoCAD, #1594) and a crossing window in Standard mode.
+                        self.stage = if quick { Stage::QuickFence(p) } else { Stage::Crossing(Some(p)) };
                         return Ok(Step::Continue);
                     };
                     let r = self.step(s, |m, s| apply(s, h, p, extending, m.edges(quick, implied), quick).map(|_| ()));
@@ -525,6 +565,7 @@ impl Interactive for TrimM {
                 .windows(2)
                 .filter_map(|w| Some(line(*w.first()?, *w.get(1)?)))
                 .collect(),
+            Stage::QuickFence(a) => vec![line(*a, c)],
             Stage::Crossing(Some(a)) => vec![lwpoly(rect_vertices(*a, c), true)],
             _ => Vec::new(),
         }

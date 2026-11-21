@@ -43,6 +43,7 @@ fn a_layout_keeps_its_limits_and_image_origin_through_dxf() {
 
 #[test]
 fn a_layout_keeps_its_limits_and_image_origin_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = write_with(&drawing(), "t.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).expect("DWG");
     let back = read(&dwg, "t.dwg").expect("reopen");
     assert_kept(&back, "DWG");

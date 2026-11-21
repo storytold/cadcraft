@@ -195,6 +195,7 @@ fn image_without_definition_is_still_written() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn image_survives_dwg_save_and_reopen() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(foreign_dxf().as_bytes()).unwrap();
     let [img] = images(&d).try_into().unwrap();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
@@ -202,4 +203,46 @@ fn image_survives_dwg_save_and_reopen() {
     let [b] = images(&back).try_into().unwrap();
     // The DWG bridge keeps everything but the definition's resolution unit.
     assert_eq!(Image { resolution_units: img.resolution_units, ..b }, img);
+}
+
+#[test]
+fn images_repeating_a_handle_each_keep_their_own_definition() {
+    // Two IMAGE records share handle 31 and point at different IMAGEDEFs. The second is given a
+    // fresh handle on reading; each must still show its own file.
+    let image = |def: &str| -> String {
+        let groups: &[(i32, &str)] = &[
+            (0, "IMAGE"),
+            (5, "31"),
+            (100, "AcDbEntity"),
+            (8, "0"),
+            (100, "AcDbRasterImage"),
+            (10, "0"),
+            (20, "0"),
+            (13, "10"),
+            (23, "10"),
+            (340, def),
+        ];
+        groups.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect()
+    };
+    let imagedef = |h: &str, path: &str| format!("0\nIMAGEDEF\n5\n{h}\n100\nAcDbRasterImageDef\n1\n{path}\n");
+    let dxf = format!(
+        "0\nSECTION\n2\nENTITIES\n{}{}0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n{}{}0\nENDSEC\n0\nEOF\n",
+        image("40"),
+        image("43"),
+        imagedef("40", "first.png"),
+        imagedef("43", "second.png")
+    );
+    let d = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    let mut paths: Vec<(u64, String)> = d
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Image(i) => Some((e.handle.0, i.path.clone())),
+            _ => None,
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(paths.len(), 2, "{paths:?}");
+    assert_eq!(paths.first(), Some(&(0x31, "first.png".to_string())), "{paths:?}");
+    assert_eq!(paths.get(1).map(|p| p.1.as_str()), Some("second.png"), "{paths:?}");
 }
