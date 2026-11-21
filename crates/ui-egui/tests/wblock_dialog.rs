@@ -72,6 +72,7 @@ fn confirm_entire_drawing_writes_all_entities_and_preserves_insbase() {
     let (mut app, _h1, _h2) = app_with_two_entities();
     // Set a nonzero INSBASE on the source drawing — whole-drawing mode must preserve it.
     app.run("base", json!({ "at": [7.0, 3.0] })).unwrap();
+    app.start("wblock");
     let path = out_path("entire");
     app.wblock.source = wblock::Source::EntireDrawing;
     app.wblock.path = path.clone();
@@ -90,6 +91,7 @@ fn confirm_entire_drawing_writes_all_entities_and_preserves_insbase() {
 fn confirm_objects_with_base_point_translates_entity_coordinates() {
     setup_io();
     let (mut app, h1, _h2) = app_with_two_entities();
+    app.start("wblock");
     let path = out_path("objects");
     // h1 runs from (0,0) to (10,0). With base point (5,3) the written coords are (-5,-3)→(5,-3).
     app.wblock.source = wblock::Source::Objects;
@@ -114,4 +116,66 @@ fn confirm_objects_with_base_point_translates_entity_coordinates() {
     assert!(approx_eq(a[1].as_f64().unwrap(), -3.0), "line.a.y should be 0-3 = -3");
     assert!(approx_eq(b[0].as_f64().unwrap(), 5.0), "line.b.x should be 10-5 = 5");
     assert!(approx_eq(b[1].as_f64().unwrap(), -3.0), "line.b.y should be 0-3 = -3");
+}
+
+/// The dialog opened on `source` in drawing A, then drawing B shown with its file tab. B has
+/// objects with the same handles as A's and a block of the same name, so writing B in A's place
+/// would succeed without a word.
+fn open_on_a_then_switch_to_b(source: wblock::Source, label: &str) -> (CadApp, String) {
+    setup_io();
+    let (mut app, h1, _h2) = app_with_two_entities();
+    app.run("block", json!({ "name": "Part", "base": [0, 0], "handles": [h1.hex()], "keep": "retain" })).unwrap();
+    app.session.new_drawing(false);
+    let b1 = app.run("line", json!({ "points": [[100, 100], [110, 100]] })).unwrap()["handles"][0].clone();
+    app.run("line", json!({ "points": [[100, 105], [110, 105]] })).unwrap();
+    app.run("block", json!({ "name": "Part", "base": [100, 100], "handles": [b1], "keep": "retain" })).unwrap();
+    app.run("document.switch", json!({ "index": 0 })).unwrap();
+    app.session.set_selection(vec![h1]);
+    app.start("wblock");
+    assert_eq!(app.ui.dialog.as_deref(), Some("wblock"));
+    app.wblock.source = source;
+    app.wblock.block_name = "Part".into();
+    let path = out_path(label);
+    let _ = std::fs::remove_file(&path);
+    app.wblock.path = path.clone();
+    // What clicking drawing B's file tab runs.
+    app.run("document.switch", json!({ "index": 1 })).unwrap();
+    (app, path)
+}
+
+/// One frame of the whole interface.
+fn frame(app: &mut CadApp) {
+    let ctx = egui::Context::default();
+    let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
+    app.logic(&ctx);
+    let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+    output.textures_delta.clear();
+}
+
+fn switching_drawings_writes_nothing(source: wblock::Source, label: &str) {
+    let (mut app, path) = open_on_a_then_switch_to_b(source, label);
+    assert!(!wblock::confirm(&mut app), "OK must not write drawing B to A's destination");
+    assert!(app.wblock.error.is_some(), "the dialog says why");
+    assert!(!std::path::Path::new(&path).exists(), "nothing written");
+    frame(&mut app);
+    assert_eq!(app.ui.dialog, None, "the dialog closes once another drawing is shown");
+    // Back on A, OK can't write what the closed dialog held either.
+    app.run("document.switch", json!({ "index": 0 })).unwrap();
+    assert!(!wblock::confirm(&mut app));
+    assert!(!std::path::Path::new(&path).exists(), "still nothing written");
+}
+
+#[test]
+fn switching_drawings_stops_objects_being_written() {
+    switching_drawings_writes_nothing(wblock::Source::Objects, "switch-objects");
+}
+
+#[test]
+fn switching_drawings_stops_a_block_being_written() {
+    switching_drawings_writes_nothing(wblock::Source::Block, "switch-block");
+}
+
+#[test]
+fn switching_drawings_stops_the_entire_drawing_being_written() {
+    switching_drawings_writes_nothing(wblock::Source::EntireDrawing, "switch-entire");
 }

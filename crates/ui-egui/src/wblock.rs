@@ -43,6 +43,9 @@ pub struct State {
     pub picked_handles: Vec<String>,
     /// UID of the drawing that was active when the pick started; guards against cross-drawing picks.
     pick_uid: Option<u64>,
+    /// The drawing the dialog was opened on (`DocState::uid`). Its source, handles and destination
+    /// belong to that drawing: the dialog closes, and OK writes nothing, once another is active.
+    uid: Option<u64>,
 }
 
 impl State {
@@ -58,6 +61,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &serde_json::Value) -> Option<R
     }
     let has_selection = app.session.state().is_ok_and(|st| !st.shown_selection().is_empty());
     app.wblock.reset();
+    app.wblock.uid = app.session.state().ok().map(|s| s.uid);
     if has_selection {
         app.wblock.source = Source::Objects;
         // Pre-fill picked handles from current selection.
@@ -125,8 +129,23 @@ fn start_pick(app: &mut CadApp, mode: Pending) {
     }
 }
 
+/// Whether the drawing shown now is the one the dialog was opened on.
+fn on_its_drawing(app: &CadApp) -> bool {
+    app.wblock.uid.is_some() && app.session.state().ok().map(|s| s.uid) == app.wblock.uid
+}
+
 /// The Write Block window.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    // Opened by name (control channel) with no state: it belongs to the drawing shown now.
+    if app.wblock.uid.is_none() {
+        app.wblock.uid = app.session.state().ok().map(|s| s.uid);
+    }
+    // Another drawing than the one it was opened on (a file tab, OPEN, NEW): close.
+    if !on_its_drawing(app) {
+        app.wblock.reset();
+        *open = false;
+        return;
+    }
     let t = Tokens::get();
     let block_names: Vec<String> = app
         .session
@@ -293,6 +312,10 @@ fn browse(app: &mut CadApp, name: String) {
 }
 
 pub fn confirm(app: &mut CadApp) -> bool {
+    if !on_its_drawing(app) {
+        app.wblock.error = Some(crate::tl!("Write Block was opened on another drawing; open it again.").to_string());
+        return false;
+    }
     let path = app.wblock.path.trim().to_string();
     if path.is_empty() {
         app.wblock.error = Some(crate::tl!("A file path is required.").to_string());
