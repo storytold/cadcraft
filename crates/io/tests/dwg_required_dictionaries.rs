@@ -64,6 +64,7 @@ fn value<'a>(vars: &'a [(String, String)], name: &str) -> Option<&'a str> {
 /// require it see the drawing's contents; the added objects must not break CADCraft's own read.
 #[test]
 fn an_ac1018_dwg_gets_the_variable_dictionary_autocad_always_writes() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = rectangle();
     let dxf = write_with(&d, "rect.dxf", &SaveOptions { version: Some(Version::R2000), binary: false }).expect("write the DXF");
     let text = String::from_utf8_lossy(&dxf).to_ascii_lowercase();
@@ -118,6 +119,7 @@ fn impossible_header_values_fall_back_to_the_defaults() {
 /// without the dictionary, so no dictionary is injected and the existing output stays as it was.
 #[test]
 fn an_ac1032_dwg_stays_as_it_was() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // 2018 DWGs read fine in Aspire without the dictionary, so the latest format is unchanged.
     let d = rectangle();
     let dwg = write_with(&d, "rect.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).expect("write the DWG");

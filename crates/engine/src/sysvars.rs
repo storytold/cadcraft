@@ -166,6 +166,10 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
+        // The next handle the drawing gives out, in hex as `$HANDSEED` (the header keeps the
+        // value the file was read with, which new objects don't move): past the handles the
+        // file's own objects hold, as allocation skips them.
+        "HANDSEED" => json!(format!("{:X}", s.doc().ok()?.next_handle().0)),
         // The drawing's folder with a trailing separator ("" while it has no file); DWGTITLED is 1 once it has one.
         "DWGPREFIX" => json!(s.state().ok().and_then(|d| d.path.as_deref()).map(dwg_prefix).unwrap_or_default()),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
@@ -184,6 +188,19 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The current UCS of the space commands act on (paper space has its own per layout),
+        // set by the UCS command.
+        "UCSNAME" | "UCSORG" | "UCSXDIR" | "UCSYDIR" | "WORLDUCS" => {
+            let (u, name) = s.ucs_named();
+            let p = |v: cadcraft_geom::Vec3| json!([v.x, v.y, v.z]);
+            match n.as_str() {
+                "UCSNAME" => json!(name),
+                "UCSORG" => p(u.origin),
+                "UCSXDIR" => p(u.x),
+                "UCSYDIR" => p(u.y),
+                _ => json!(i32::from(u.is_world())),
+            }
+        }
         // The view twist (DVIEW TWist), in degrees counterclockwise.
         "VIEWTWIST" => json!(s.state().ok()?.view().twist.to_degrees()),
         "EXTMIN" | "EXTMAX" => {
@@ -254,6 +271,7 @@ const READ_ONLY: &[&str] = &[
     "TILEMODE",
     "PLATFORM",
     "DBMOD",
+    "HANDSEED",
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",
@@ -267,6 +285,11 @@ const READ_ONLY: &[&str] = &[
     "EXTMAX",
     "UNDOCTL",
     "UNDOMARKS",
+    "UCSNAME",
+    "UCSORG",
+    "UCSXDIR",
+    "UCSYDIR",
+    "WORLDUCS",
 ];
 
 pub fn is_read_only(name: &str) -> bool {
@@ -286,6 +309,7 @@ pub fn format_angle_list(angles: &[f64]) -> String {
     angles.iter().map(|a| format!("{}", (a.to_degrees() * 1e6).round() / 1e6)).collect::<Vec<_>>().join(";")
 }
 
+/// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
     if is_read_only(&n) {
@@ -382,6 +406,10 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "SAVETIME" => crate::autosave::set_savetime(
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),
+        // A folder autosave and recovery would use without any further check.
+        "SAVEFILEPATH" if crate::file_access::current().is_some() => {
+            return Err(EngineError::Other("SAVEFILEPATH cannot be changed under the automation roots".into()));
+        }
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
         "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
