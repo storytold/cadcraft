@@ -20,6 +20,7 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
     let show_prompt = app.session.settings.dynprompt;
     let options = show_prompt && !prompt.keywords.is_empty();
     if !fields
+        && crate::cmdline::shows_pointer_boxes(app)
         && let Some(f) = crate::cmdline::dyn_frame(app)
         && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
         && let Some(c) = app.canvas.cursor

@@ -253,14 +253,16 @@ fn run_grip_rotate(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_grip_scale(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let base = base_point(s, "grip.scale", p, &hs)?;
-    let m = match p.get("factor").and_then(Value::as_f64).filter(|a| a.is_finite()) {
-        Some(f) if f > 0.0 => Mat3::scale_about(base, f),
+    let f = match p.get("factor").and_then(Value::as_f64).filter(|a| a.is_finite()) {
+        Some(f) if f > 1e-12 => f,
         Some(_) => return Err(bad("grip.scale", "factor must be positive")),
         None => {
-            mode_matrix(GripMode::Scale, base, point_req("grip.scale", p, "to")?).ok_or_else(|| bad("grip.scale", "scale factor would be zero"))?
+            let f = base.dist(point_req("grip.scale", p, "to")?);
+            if f.is_finite() && f > 1e-12 { f } else { return Err(bad("grip.scale", "scale factor would be zero")) }
         }
     };
-    apply(s, &hs, &m, bool_or(p, "copy", false))
+    let r = super::modify::scale_entities(s, &hs, super::modify::at_elevation(s, base), f, bool_or(p, "copy", false))?;
+    Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
 fn run_grip_mirror(s: &mut Session, p: &Value) -> Result<Value> {
