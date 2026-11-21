@@ -344,7 +344,9 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `cadcraft-<ver>-windows-x64.msi` | `cadcraft-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `cadcraft-<ver>-windows-arm64.msi` | `cadcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `cadcraft-<ver>-windows-x86.msi` | `cadcraft-<ver>-windows-x86-portable.zip` |
+
+For 32-bit Windows, [CADCraft v0.18.0](https://github.com/storytold/cadcraft/releases/tag/v0.18.0)
+was the last release with both an x86 MSI and portable ZIP.
 
 Installers and executables are code-signed.
 
@@ -381,15 +383,19 @@ and web backend defaults are unchanged.
 | Flatpak | `cadcraft-<ver>-linux-x86_64.flatpak` | `cadcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `cadcraft-<ver>-linux-x86_64.deb` | `cadcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `cadcraft-<ver>-linux-x86_64.rpm` | `cadcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux | `cadcraft-<ver>-linux-x86_64.pkg.tar.zst` | `cadcraft-<ver>-linux-aarch64.pkg.tar.zst` | |
 | Tarball | `cadcraft-<ver>-linux-x86_64.tar.gz` | `cadcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
+RISC-V (riscv64) packages are `cadcraft-<ver>-linux-riscv64.deb`,
+`cadcraft-<ver>-linux-riscv64.rpm`, and `cadcraft-<ver>-linux-riscv64.tar.gz`. They are
+cross-compiled and need glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
 ### FreeBSD
 
 | Build | File |
 |---|---|
 | x86_64 | `cadcraft-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `cadcraft-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 
