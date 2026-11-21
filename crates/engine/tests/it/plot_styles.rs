@@ -62,7 +62,10 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
             &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5", "color": "#00ff00", "screening": 40, "lineweight": 0.35, "linetype": "HIDDEN", "end": "round"}}),
         )
         .unwrap();
-    let pen = r["styles"].as_array().unwrap().iter().find(|v| v["name"] == "Pen 5").unwrap().clone();
+    // `set` replies with the table's name and the edited style, not the table.
+    assert_eq!(r["name"], "office.stb");
+    let pen = r["style"].clone();
+    assert_eq!(pen["name"], "Pen 5");
     assert_eq!(
         (pen["color"].as_str(), pen["screening"].as_u64(), pen["lineweight"].as_u64(), pen["end"].as_str()),
         (Some("#00ff00"), Some(40), Some(35), Some("round"))
@@ -130,4 +133,69 @@ fn plot_style_save_is_atomic_and_keeps_permissions() {
     assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #3011: `set` on a colour-dependent table (255 styles) replies with what changed, not the table.
+#[test]
+fn stylesmanager_set_replies_with_the_change_not_the_whole_table() {
+    let mut s = Session::new();
+    let set = json!({"action": "set", "name": "monochrome.ctb", "style": {"name": "Color_13", "lineweight": 0.3}});
+    let r = s.execute("stylesmanager", &set).unwrap();
+    assert_eq!(r["name"], "monochrome.ctb", "{r}");
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some("Color_13"), Some(30)), "{r}");
+    // Only the change: no table summary, no other style.
+    let keys: Vec<&str> = r.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["name", "style"], "{r}");
+    assert!(r.to_string().len() < 1000, "the reply is short, not the 255-style table: {} bytes", r.to_string().len());
+    // The edit is in the drawing.
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "monochrome.ctb"})).unwrap();
+    let c13 = got["styles"].as_array().unwrap().iter().find(|v| v["name"] == "Color_13").unwrap();
+    assert_eq!(c13["lineweight"], 30);
+    // Removing a style of a named table names what went.
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "style": {"name": "Pen 5"}})).unwrap();
+    let r =
+        s.execute("stylesmanager", &json!({"action": "set", "name": "office.stb", "removeStyle": "Pen 5", "description": "Office pens"})).unwrap();
+    assert_eq!((r["removedStyle"].as_str(), r["description"].as_str()), (Some("Pen 5"), Some("Office pens")), "{r}");
+    assert!(r.get("style").is_none() && r.get("styles").is_none(), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    assert_eq!(got["styles"].as_array().map(Vec::len), Some(1), "{got}");
+}
+
+/// A style name over 255 characters is stored cut to 255: the reply names the stored style, and
+/// setting the same long name again edits that style instead of adding one.
+#[test]
+fn stylesmanager_set_with_a_long_style_name_replies_with_the_stored_style() {
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    let long = "P".repeat(300);
+    let stored = "P".repeat(255);
+    let set = |lw: f64| json!({"action": "set", "name": "office.stb", "style": {"name": long, "lineweight": lw}});
+    let r = s.execute("stylesmanager", &set(0.3)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(30)), "{r}");
+    let r = s.execute("stylesmanager", &set(0.5)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(50)), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    let styles = got["styles"].as_array().unwrap();
+    assert_eq!(styles.len(), 2, "Normal and the one long-named style: {got}");
+    assert_eq!(styles[1]["lineweight"], 50, "{got}");
+}
+
+/// A long name whose 255th character is a space is stored without it (`sanitized` trims the cut
+/// name), so the reply still has the style and setting the same name again edits it.
+#[test]
+fn stylesmanager_set_with_a_long_name_cut_at_a_space_edits_one_style() {
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    let long = format!("{} tail", "P".repeat(254));
+    let stored = "P".repeat(254);
+    let set = |lw: f64| json!({"action": "set", "name": "office.stb", "style": {"name": long, "lineweight": lw}});
+    let r = s.execute("stylesmanager", &set(0.3)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(30)), "{r}");
+    let r = s.execute("stylesmanager", &set(0.5)).unwrap();
+    assert_eq!((r["style"]["name"].as_str(), r["style"]["lineweight"].as_u64()), (Some(stored.as_str()), Some(50)), "{r}");
+    let got = s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap();
+    let styles = got["styles"].as_array().unwrap();
+    assert_eq!(styles.len(), 2, "Normal and the one long-named style: {got}");
+    assert_eq!(styles[1]["lineweight"], 50, "{got}");
 }

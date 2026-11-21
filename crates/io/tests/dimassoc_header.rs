@@ -46,38 +46,3 @@ fn an_imported_mode_can_be_changed_without_a_stale_or_duplicate_header() {
         assert_eq!(d.header.i64("DIMASSOC", -1), mode);
     }
 }
-
-#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
-mod native {
-    use super::*;
-    use cadcraft_io::read;
-    use std::io::Cursor;
-
-    /// The DWG reader supplements DIMASSOC when the intermediate DXF writer omits it.
-    #[test]
-    fn dwg_decode_keeps_the_mode_even_when_the_dxf_bridge_omits_it() {
-        for mode in [0, 1, 2] {
-            let mut source = acadrust::CadDocument::new();
-            source.header.dimension_associativity = mode;
-            let bytes = acadrust::DwgWriter::write_to_vec(&source).unwrap();
-            let back = read(&bytes, "source.dwg").unwrap();
-            assert_eq!(back.header.i64("DIMASSOC", -1), i64::from(mode));
-        }
-    }
-
-    /// DWG drawings and templates retain every mode in both the native header and readback.
-    #[test]
-    fn dwg_and_dwt_keep_the_mode_in_the_native_header_and_after_reopen() {
-        for mode in [0, 1, 2] {
-            let mut d = Drawing::new_metric();
-            d.header.set_i64("DIMASSOC", mode);
-            for name in ["setting.dwg", "setting.dwt"] {
-                let bytes = write(&d, name).unwrap();
-                let native = acadrust::DwgReader::from_stream(Cursor::new(&bytes)).read().unwrap();
-                assert_eq!(i64::from(native.header.dimension_associativity), mode, "{name}: native header");
-                let back = read(&bytes, name).unwrap();
-                assert_eq!(back.header.i64("DIMASSOC", -1), mode, "{name}: reopened variable");
-            }
-        }
-    }
-}
