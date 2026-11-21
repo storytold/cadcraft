@@ -49,19 +49,25 @@ pub struct CmdLine {
 pub const MAX_LINES: usize = 12;
 const LINE_H: f32 = 16.0;
 
-/// The Dynamic Input pointer-input frame for the prompt on screen, or `None` when the pointer
-/// value boxes are not live (Dynamic Input off, a selection window pending, not a point prompt, or
-/// a non-distance scalar-number prompt like SCALE's factor or ROTATE's angle).
+/// The Dynamic Input pointer-input frame for the prompt on screen, or `None` when Dynamic Input is
+/// off, a selection window is pending, or the prompt does not accept a point.
 pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     let st = &app.session.settings;
     if !st.dynmode || app.session.pending_window.is_some() {
         return None;
     }
-    // Why: keep Dynamic Input live for distance prompts (e.g. CIRCLE radius/diameter with `p.distance`);
-    // disable the two-box pointer frame only for scalar-number prompts like SCALE factor or ROTATE angle.
-    let p = app.session.current_prompt().filter(|p| cadcraft_engine::pointmod::accepts(p) && (!p.accept.number || p.distance))?;
+    let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
     let ucs = app.session.input_ucs();
     Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
+}
+
+/// Whether the two-box pointer input UI should be shown beside the cursor.
+///
+/// Why: non-distance scalar-number prompts (e.g. `SCALE` factor or `ROTATE` angle) still keep
+/// `dyn_frame` active so explicit split points like `10,0` complete relative to `base`, while
+/// hiding the two-box pointer UI and suppressing Tab separator insertion on plain numbers.
+pub fn shows_pointer_boxes(app: &CadApp) -> bool {
+    dyn_frame(app).is_some() && app.session.current_prompt().is_some_and(|p| !p.accept.number || p.distance)
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -97,7 +103,8 @@ fn tab(app: &mut CadApp) {
     // Over a snap marker with nothing typed, Tab cycles the candidate snaps.
     if app.cmd.buffer.is_empty() && app.canvas.snap.is_some() {
         app.canvas.snap_tab = true;
-    } else if let Some(f) = dyn_frame(app)
+    } else if shows_pointer_boxes(app)
+        && let Some(f) = dyn_frame(app)
         && let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f)
     {
         app.cmd.buffer.push(sep);
@@ -106,7 +113,10 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions_in(&app.session, &app.cmd.buffer).first() {
+    } else if !app.session.prompting()
+        && let Some(s) = suggestions_in(&app.session, &app.cmd.buffer).first()
+    {
+        // Why: never complete a command name (e.g. "3" -> "3DPOLY") while an active prompt is waiting for input.
         app.cmd.buffer = s.id.clone();
     }
 }

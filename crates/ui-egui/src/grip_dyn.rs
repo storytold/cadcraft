@@ -371,8 +371,8 @@ mod tests {
     }
 
     /// Prompts like SCALE factor (`Accept::POINT_OR_NUMBER` without `Prompt::distance`) must not
-    /// open the two-box pointer input (`dyn_frame`) so typing a factor + Tab/Enter stays a plain
-    /// numeric scale factor instead of becoming polar/Cartesian coordinates.
+    /// open the two-box pointer input (`shows_pointer_boxes`), and Tab must neither insert a
+    /// separator nor fall back to command-name completion (e.g. `"3"` -> `"3DPOLY"`).
     #[test]
     fn scale_factor_prompt_does_not_open_pointer_boxes() {
         let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
@@ -388,7 +388,13 @@ mod tests {
         }
         run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
         assert_eq!(app.session.current_prompt().unwrap().message, "Specify scale factor");
-        assert!(crate::cmdline::dyn_frame(&app).is_none());
+        assert!(crate::cmdline::dyn_frame(&app).is_some());
+        assert!(!crate::cmdline::shows_pointer_boxes(&app));
+
+        // Plain digit "3" + Tab must stay "3" (never complete to "3DPOLY" or insert "<").
+        run_frame(&mut app, &ctx, vec![Event::Text("3".into()), Event::Text("\t".into())]);
+        assert_eq!(app.cmd.buffer, "3");
+        app.cmd.buffer.clear();
 
         run_frame(&mut app, &ctx, vec![Event::Text("0.5".into())]);
         run_frame(&mut app, &ctx, vec![Event::Text("\t".into())]);
@@ -399,8 +405,34 @@ mod tests {
         assert!(b.near(Vec2::new(5.0, 0.0), 1e-9), "{b:?}");
     }
 
+    /// Even with pointer boxes hidden, explicit split points (e.g. `"5,0"`) on SCALE factor still
+    /// complete relative to the base point (`"@5,0"`) while scalar numbers (`"2.5"`) pass untouched.
+    #[test]
+    fn scale_factor_prompt_completes_split_point_relative_to_base() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        app.session.execute("line", &serde_json::json!({"points": [[10, 0], [11, 0]]})).unwrap();
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let at = app.canvas.rect.map_or(pos2(700.0, 450.0), |r| r.center() + vec2(120.0, -60.0));
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
+
+        for t in ["scale", "all", "", "10,0"] {
+            app.session.cmdline(t).unwrap();
+        }
+        run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
+        assert_eq!(app.session.current_prompt().unwrap().message, "Specify scale factor");
+
+        // Relative split point "5,0" from base (10, 0) becomes "@5,0" (distance 5 => end at x = 15).
+        run_frame(&mut app, &ctx, vec![Event::Text("5,0".into())]);
+        run_frame(&mut app, &ctx, key(egui::Key::Enter));
+        assert!(app.session.running.is_none());
+        let b = line_end(&app);
+        assert!(b.near(Vec2::new(15.0, 0.0), 1e-9), "expected @5,0 relative scale, got {b:?}");
+    }
+
     /// Distance prompts (`Accept::POINT_OR_NUMBER` with `Prompt::distance`, e.g. CIRCLE radius)
-    /// must keep `dyn_frame` active so Dynamic Input remains available when `grip_dyn` is not overriding.
+    /// must keep `dyn_frame` and `shows_pointer_boxes` active.
     #[test]
     fn distance_prompt_keeps_dyn_frame_active() {
         let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
@@ -410,5 +442,6 @@ mod tests {
         let prompt = app.session.current_prompt().unwrap();
         assert!(prompt.accept.number && prompt.distance);
         assert!(crate::cmdline::dyn_frame(&app).is_some(), "CIRCLE radius prompt must keep dyn_frame active");
+        assert!(crate::cmdline::shows_pointer_boxes(&app), "CIRCLE radius prompt must keep shows_pointer_boxes active");
     }
 }
