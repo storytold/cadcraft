@@ -20,6 +20,8 @@ cadcraft-mcp = { workspace = true }
 eframe = { workspace = true, features = ["clipboard", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
+# The control request parser reads only its own keys (control_server.rs `Fields`).
+serde = { workspace = true }
 log = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }

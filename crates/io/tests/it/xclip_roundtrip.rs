@@ -68,6 +68,7 @@ fn same(a: &[Option<ClipBoundary>], b: &[Option<ClipBoundary>]) {
 }
 
 fn save(d: &Drawing, name: &str, version: Version) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
     write_with(d, name, &SaveOptions { version: Some(version), ..Default::default() }).unwrap()
 }
 
