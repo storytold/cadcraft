@@ -312,6 +312,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -402,6 +404,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -612,6 +615,9 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -643,6 +649,10 @@ impl CadApp {
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }

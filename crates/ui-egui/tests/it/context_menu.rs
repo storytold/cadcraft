@@ -46,7 +46,7 @@ fn context_menu_offers_the_clipboard() {
         assert!(labels.iter().any(|x| x == l), "{l} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("Repeat")), "no command yet");
-    assert!(!enabled(&app, "pasteclip"), "nothing to paste");
+    assert!(enabled(&app, "pasteclip") && enabled(&app, "pasteblock"), "the system clipboard may hold objects from another window");
 
     app.cmdline("LINE 0,0 10,0");
     app.cmdline("");
@@ -236,4 +236,47 @@ fn quick_right_click_cancels_a_palette_placement_only() {
     right_click(&mut app);
     assert!(!app.session.prompting(), "the palette's placement ends: {}", app.session.prompt_text());
     assert!(app.cmd.buffer.is_empty(), "the half-typed point goes too: {}", app.cmd.buffer);
+}
+
+/// Edit > Paste, the context menu and a typed PASTECLIP (#3320) read the system clipboard first:
+/// they are offered with nothing copied here, ask the window for its text, and paste what this
+/// window holds when none arrives.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn menu_and_typed_paste_ask_the_window_for_the_system_clipboard() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let spec = cadcraft_engine::find_command("pasteclip").unwrap();
+    assert!(app.session.clipboard.is_empty());
+    assert!(cadcraft_ui_egui::clipboard::offered(&app.session, spec), "offered while the system clipboard may hold objects");
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
+        now += dt;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        let mut out = ctx.end_pass();
+        out.textures_delta.clear();
+        out.viewport_output.into_values().flat_map(|v| v.commands).any(|c| c == egui::ViewportCommand::RequestPaste)
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+
+    app.start("pasteclip");
+    assert_eq!(running(&app), None, "held until the system clipboard has been read");
+    assert!(frame(&mut app, vec![], 0.01), "the window is asked for the clipboard text");
+    assert_eq!(running(&app), None);
+    assert!(!frame(&mut app, vec![egui::Event::Paste("text from another program".into())], 0.01));
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the text arrived: paste runs");
+    app.session.cancel();
+
+    assert_eq!(app.cmdline("pasteblock"), None);
+    assert_eq!(running(&app), None);
+    assert!(frame(&mut app, vec![], 0.01));
+    assert!(!frame(&mut app, vec![], 0.1));
+    assert_eq!(running(&app), None, "still waiting for the window");
+    frame(&mut app, vec![], 1.0);
+    assert_eq!(running(&app).as_deref(), Some("pasteblock"), "no text came: this window's clipboard is pasted");
 }
