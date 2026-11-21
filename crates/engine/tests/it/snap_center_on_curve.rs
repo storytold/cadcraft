@@ -89,6 +89,7 @@ fn circles_inside_block_references_snap_to_their_centers() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap();
     // The circle lands at (115,100) with radius 6.
@@ -183,6 +184,7 @@ fn a_viewport_center_keeps_its_curve_distance_against_paper_space() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     };
     d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
     // A small paper-space circle whose curve passes 0.3 from the cursor and whose center is
