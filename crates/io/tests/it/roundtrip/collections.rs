@@ -9,8 +9,8 @@ use super::{
 };
 use cadcraft_color::Color;
 use cadcraft_doc::{
-    Common, Drawing, EntityKind, Group, HVal, Layer, LayerState, Layout, Line, Linetype, NamedView, Space, TextStyle, Ucs, Viewport, VportConfig,
-    VportTile,
+    Common, Drawing, EntityKind, FilterRule, Group, HVal, Layer, LayerFilter, LayerState, Layout, Line, Linetype, NamedView, Space, TextStyle, Ucs,
+    Viewport, VportConfig, VportTile,
 };
 use cadcraft_geom::{Vec2, Vec3};
 
@@ -191,6 +191,23 @@ pub(super) fn layer_states() -> Case {
 
 pub(super) fn assert_layer_states(a: &Drawing, b: &Drawing, context: &str) {
     assert_eq!(b.layer_states, a.layer_states, "{context}.layer_states");
+}
+
+pub(super) fn layer_filters() -> Case {
+    let mut drawing = cases::drawing();
+    drawing.layers.push(Layer::new("A-WALL"));
+    let filters = &mut drawing.layer_filters;
+    filters.filters.push(LayerFilter::property("Walls", vec![FilterRule { name: "A-WALL*".into(), on: Some(true), ..Default::default() }]));
+    filters.filters.push(LayerFilter::group("Picked", vec!["A-WALL".into(), "0".into()]));
+    let mut nested = LayerFilter::property("Picked walls", vec![FilterRule { name: "*WALL*".into(), ..Default::default() }]);
+    nested.parent = Some("Picked".into());
+    filters.filters.push(nested);
+    filters.current = Some("Walls".into());
+    Case { name: "drawing/layer-filters".into(), drawing }
+}
+
+pub(super) fn assert_layer_filters(a: &Drawing, b: &Drawing, context: &str) {
+    assert_eq!(b.layer_filters, a.layer_filters, "{context}.layer_filters");
 }
 
 pub(super) fn layouts() -> Case {

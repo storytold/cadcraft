@@ -1902,6 +1902,58 @@ fn layer_states_roundtrip_next_to_constraints() {
     assert!(!none.contains("CADCRAFT_LAYERSTATES") && !none.contains("ACAD_LAYERSTATES"));
 }
 
+fn filter_sample(d: &mut Drawing) -> LayerFilters {
+    for n in ["A-WALL", "A-WALL-EXT", "A-ANNO-TEXT", "Wände"] {
+        d.layers.push(Layer::new(n));
+    }
+    let mut filters = LayerFilters { current: Some("Exterior".into()), invert: true, apply_to_palette: true, ..Default::default() };
+    filters.filters.push(LayerFilter::property(
+        "Walls",
+        vec![
+            FilterRule { name: "A-WALL*".into(), frozen: Some(false), color: "1,red".into(), ..Default::default() },
+            FilterRule { name: "*ANNO*".into(), used: Some(true), lineweight: "0.25".into(), ..Default::default() },
+        ],
+    ));
+    let mut ext = LayerFilter::property("Exterior", vec![FilterRule { name: "*`-EXT".into(), ..Default::default() }]);
+    ext.parent = Some("Walls".into());
+    filters.filters.push(ext);
+    filters.filters.push(LayerFilter::group("Picked \\ \"quoted\"", vec!["A-WALL".into(), "Wände".into(), "0".into()]));
+    filters
+}
+
+#[test]
+fn layer_filters_roundtrip() {
+    crate::dwg_worker::allow_in_process();
+    let mut d = Drawing::new_imperial();
+    let filters = filter_sample(&mut d);
+    d.layer_filters = filters.clone();
+    let text = write_dxf(&d);
+    assert!(text.contains("CADCRAFT_LAYERFILTERS"));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.layer_filters, filters);
+    assert_eq!(roundtrip(&back).layer_filters, filters);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap().layer_filters, filters);
+    assert!(!write_dxf(&Drawing::new_imperial()).contains("CADCRAFT_LAYERFILTERS"));
+}
+
+#[test]
+fn hostile_layer_filter_records_are_ignored() {
+    assert!(crate::dxf_ext::parse_layer_filters("{").is_none());
+    assert!(crate::dxf_ext::parse_layer_filters(r#"{"version":2,"filters":{}}"#).is_none());
+    let many: Vec<String> = (0..=cadcraft_doc::layer_filter::MAX_RULES).map(|_| "{}".to_string()).collect();
+    let text = format!(r#"{{"version":1,"filters":{{"filters":[{{"name":"F","kind":"property","rules":[{}]}}]}}}}"#, many.join(","));
+    assert!(crate::dxf_ext::parse_layer_filters(&text).is_none());
+    let looped = r#"{"version":1,"filters":{"current":"A","filters":[
+        {"name":"A","parent":"B","kind":"group","layers":["0"]},
+        {"name":"B","parent":"A","kind":"property","rules":[{"name":"["}]}]}}"#;
+    let filters = crate::dxf_ext::parse_layer_filters(looped).unwrap();
+    let mut d = Drawing::new_imperial();
+    d.layer_filters = filters;
+    let back = roundtrip(&d);
+    assert!(back.layer_filters.shown(&back.layers, &|_| false).is_err());
+}
+
 fn table_sample() -> Table {
     let cell = |t: &str| TableCell { text: t.into(), ..Default::default() };
     let mut rows = vec![

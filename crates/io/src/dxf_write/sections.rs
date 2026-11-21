@@ -1094,6 +1094,9 @@ pub(super) fn tags_kept_for(
     if let Some(chunks) = dxf_ext::layer_state_chunks(&crate::dxf_layer_states::own(&d.layer_states)) {
         xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
     }
+    if let Some(chunks) = dxf_ext::layer_filter_chunks(&d.layer_filters) {
+        xrecords.push((dxf_ext::LAYER_FILTERS_KEY, w.h(), chunks));
+    }
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
         xrecords.push((dxf_ext::PLOT_STYLES_KEY, w.h(), chunks));
     }

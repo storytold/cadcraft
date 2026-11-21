@@ -411,9 +411,10 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
     // By name, as the Layer Properties Manager lists them, not in the order they were made (#2858).
-    let mut layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    let all: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    let cur_info = all.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
+    let mut layers = palette_layers(d, all);
     layers.sort_by_key(|l| crate::layers::natural_lower(&l.0));
-    let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
     ui.horizontal(|ui| {
@@ -518,6 +519,20 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     if let Some((n, k, v)) = toggle {
         let _ = app.run("layer.set", json!({ "name": n, k: v }));
     }
+}
+
+/// The layers the palette lists: those of the Layer Properties Manager's current filter when it
+/// is applied to the palette, else all.
+fn palette_layers<T>(d: &cadcraft_doc::Drawing, all: Vec<T>) -> Vec<T> {
+    let fs = &d.layer_filters;
+    if !fs.apply_to_palette || fs.current.is_none() {
+        return all;
+    }
+    let used = crate::layers::used_layers(d);
+    let in_use = |l: &cadcraft_doc::Layer| used.contains(&l.name.to_ascii_lowercase());
+    let Ok(idx) = fs.shown(&d.layers, &in_use) else { return all };
+    let keep: std::collections::HashSet<usize> = idx.into_iter().collect();
+    all.into_iter().enumerate().filter(|(i, _)| keep.contains(i)).map(|(_, l)| l).collect()
 }
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.

@@ -13,6 +13,7 @@ mod extents;
 mod format;
 mod gdt;
 mod header;
+pub mod layer_filter;
 pub mod library;
 mod plotstyle;
 mod plotter;
@@ -36,6 +37,7 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
+pub use layer_filter::{FilterKind, FilterRule, LayerFilter, LayerFilters};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
@@ -120,6 +122,8 @@ pub struct Drawing {
     pub vports: Vec<VportConfig>,
     pub ucss: Vec<Ucs>,
     pub layer_states: Vec<LayerState>,
+    /// The Layer Properties Manager's filters and the filter it shows.
+    pub layer_filters: LayerFilters,
     pub groups: Vec<Group>,
     /// Plot style tables kept with the drawing (STYLESMANAGER); they shadow built-in tables of
     /// the same name.
@@ -207,6 +211,7 @@ impl Drawing {
             vports: Vec::new(),
             ucss: Vec::new(),
             layer_states: Vec::new(),
+            layer_filters: LayerFilters::default(),
             groups: Vec::new(),
             plot_style_tables: Vec::new(),
             constraints: Vec::new(),
