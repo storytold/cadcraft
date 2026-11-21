@@ -1561,3 +1561,40 @@ fn additional_tools_keeps_compatible_command_ids() {
         assert!(!command.menu.contains(&"Express Tools"));
     }
 }
+
+/// Multi-column MTEXT layout exposes one text-area rect per column, excluding the gutter (#3319).
+#[test]
+fn mtext_layout_exposes_per_column_bounds() {
+    fn last_mtext(s: &Session) -> cadcraft_doc::MText {
+        match s.doc().unwrap().model.iter().last().map(|e| &e.kind) {
+            Some(EntityKind::MText(m)) => m.clone(),
+            k => panic!("no mtext: {k:?}"),
+        }
+    }
+
+    let mut s = Session::new();
+    let words = "word ".repeat(60);
+    s.execute(
+        "mtext",
+        &json!({"at": [0, 0], "text": words, "height": 1, "width": 10, "columns": {"type": "static", "count": 3, "gutter": 2, "height": 6}}),
+    )
+    .unwrap();
+    let t = last_mtext(&s);
+    let l = crate::render::layout_mtext_entity(s.doc().unwrap(), &t);
+    let cb = l.column_bounds();
+    assert_eq!(cb.len(), 3, "one rect per column: {cb:?}");
+    for b in cb {
+        assert!(!b.is_empty(), "column bounds are non-empty: {b:?}");
+        assert!(l.bounds.contains_box(b), "each column inside the whole bounds: {b:?} vs {:?}", l.bounds);
+    }
+    for pair in cb.windows(2) {
+        assert!(pair[0].max.x <= pair[1].min.x + 1e-9, "columns do not overlap, left to right: {cb:?}");
+    }
+
+    // A single-column MTEXT exposes exactly one bound, equal to its whole bounds.
+    s.execute("mtext", &json!({"at": [0, 0], "text": "one column", "height": 1, "width": 10})).unwrap();
+    let single_t = last_mtext(&s);
+    let single = crate::render::layout_mtext_entity(s.doc().unwrap(), &single_t);
+    assert_eq!(single.column_bounds().len(), 1);
+    assert_eq!(single.column_bounds()[0], single.bounds);
+}

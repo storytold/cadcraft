@@ -102,11 +102,30 @@ pub struct MTextLayout {
     /// Geometry by colour run (strokes plus fillable glyph outlines).
     pub pieces: Vec<MTextPiece>,
     pub bounds: Bounds2,
+    /// Text-area bounds of each column, in world coordinates, with the inter-column gutter
+    /// excluded. A single-column layout has one entry equal to [`Self::bounds`].
+    col_bounds: Vec<Bounds2>,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
     /// Whether the geometry stops short: the layout reached its allowance of retained points
     /// ([`Allowance`]) and the segments after that are not drawn.
     pub truncated: bool,
+}
+
+impl MTextLayout {
+    /// Text-area bounds of each column, in world coordinates, left to right, excluding the
+    /// gutter between columns. This lets a background mask cover each column separately
+    /// instead of filling the empty space between them (#3319). A single-column layout has
+    /// exactly one entry, equal to [`Self::bounds`].
+    pub fn column_bounds(&self) -> &[Bounds2] {
+        if self.col_bounds.is_empty() {
+            // A layout built without the column data (e.g. through `Default`) still reports a
+            // single area covering the whole text.
+            std::slice::from_ref(&self.bounds)
+        } else {
+            &self.col_bounds
+        }
+    }
 }
 
 /// The points all the segments of one layout may keep together, each counted for both copies the
@@ -731,6 +750,8 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     out.bounds = Bounds2::from_points(
         [Vec2::new(x0, top), Vec2::new(x0 + block_w, top), Vec2::new(x0 + block_w, top - block_h), Vec2::new(x0, top - block_h)].map(xf),
     );
+    // The plain path has a single column, whose text area is the whole block.
+    out.col_bounds = vec![out.bounds];
     out
 }
 

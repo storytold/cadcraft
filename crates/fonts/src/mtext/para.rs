@@ -700,6 +700,17 @@ pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextL
         [Vec2::new(box_x0, top), Vec2::new(box_x0 + total_w, top), Vec2::new(box_x0 + total_w, top - block_h), Vec2::new(box_x0, top - block_h)]
             .map(xf),
     );
+    // One text-area rect per column, excluding the gutters. Generated in physical slot order
+    // so they come back left to right even when the columns flow in reverse.
+    out.col_bounds = (0..n_cols)
+        .map(|slot| {
+            let col_x = box_x0 + slot as f64 * (col_w + gutter);
+            Bounds2::from_points(
+                [Vec2::new(col_x, top), Vec2::new(col_x + col_w, top), Vec2::new(col_x + col_w, top - block_h), Vec2::new(col_x, top - block_h)]
+                    .map(xf),
+            )
+        })
+        .collect();
     out
 }
 
