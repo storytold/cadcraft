@@ -125,6 +125,11 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// Points (polyline vertices and triangle corners) the whole build has charged so far, shared
+    /// by every part of it: the parts built in parallel, XCLIP parts and viewport contents.
+    points: &'a std::sync::atomic::AtomicUsize,
+    /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
+    max_points: usize,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -132,6 +137,16 @@ struct Builder<'a> {
 /// references in a hostile file would otherwise expand exponentially (`MAX_BLOCK_DEPTH` only
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
+
+/// Upper bound on the points (polyline vertices plus triangle corners) one display list holds.
+/// [`MAX_BLOCK_EXPANSION`] counts objects, not their size: two million copies of one finely
+/// tessellated circle, or of a block of hatches and filled text, would otherwise build billions
+/// of points and end the process when memory runs out. Past the limit the remaining objects are
+/// not drawn and [`DisplayList::truncated`] is set. At 16 bytes a point this is 1 GiB, sixteen
+/// times the [`cadcraft_geom::MAX_TESSELLATED_POINTS`] one polyline may sample; a large real
+/// drawing (a million objects with tens of thousands of texts, drawn at screen detail or in full
+/// for a plot) is expected to hold a few tens of millions.
+pub const MAX_DISPLAY_POINTS: usize = 64_000_000;
 
 impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
@@ -152,7 +167,7 @@ impl<'a> Builder<'a> {
         }
     }
     fn polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         self.note_pen(color);
@@ -162,14 +177,15 @@ impl<'a> Builder<'a> {
     /// A one-pixel line in `color` as the plot style prints it, without the style's lineweight
     /// or pen: the centre line drawn on screen over a thin wide polyline.
     fn hairline(&mut self, ctx: &Ctx, color: Ink, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         let (color, _) = self.styled(color, 0.0);
         self.push_polyline(ctx, color, 0.0, pts);
     }
+    /// Push a polyline already charged to the point budget by the caller.
     fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        let start = self.list.verts.len() as u32;
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.verts.len()), u32::try_from(pts.len())) else { return };
         for p in pts {
             let q = ctx.xf.apply(*p);
             self.list.bounds.add(q);
@@ -183,7 +199,7 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             kind: Kind::Polyline,
             start,
-            len: pts.len() as u32,
+            len,
         });
     }
     /// The pixels of image `i` over its rectangle, cut to its clip boundary.
@@ -209,6 +225,9 @@ impl<'a> Builder<'a> {
             return;
         }
         let (Ok(index), Ok(start)) = (u32::try_from(self.list.images.len()), u32::try_from(self.list.verts.len())) else { return };
+        if !self.charge(corners.len()) {
+            return;
+        }
         for q in corners {
             self.list.bounds.add(q);
             self.list.verts.push(q);
@@ -232,9 +251,12 @@ impl<'a> Builder<'a> {
         if tris.len() < 3 {
             return;
         }
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.tris.len()), u32::try_from(tris.len())) else { return };
+        if !self.charge(tris.len()) {
+            return;
+        }
         self.note_pen(color);
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.tris.len() as u32;
         for p in tris {
             let q = xf.apply(*p);
             self.list.bounds.add(q);
@@ -248,7 +270,7 @@ impl<'a> Builder<'a> {
             transparency: self.transparency,
             kind: Kind::Tris,
             start,
-            len: tris.len() as u32,
+            len,
         });
     }
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
@@ -295,10 +317,13 @@ impl<'a> Builder<'a> {
         }
     }
     fn point(&mut self, ctx: &Ctx, color: Ink, p: Vec2) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(1) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
         let q = ctx.xf.apply(p);
         self.list.bounds.add(q);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(q);
         self.list.prims.push(DPrim {
             handle: ctx.top,
@@ -312,8 +337,11 @@ impl<'a> Builder<'a> {
         });
     }
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(2) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(ctx.xf.apply(base));
         self.list.verts.push(ctx.xf.apply_vec(dir).normalized());
         self.list.prims.push(DPrim {
@@ -340,15 +368,35 @@ impl<'a> Builder<'a> {
             named: self.named,
             shared_budget: self.shared_budget,
             transparency: self.transparency,
+            points: self.points,
+            max_points: self.max_points,
         }
     }
-    /// Take one unit of the block-expansion budget; false once it is spent.
+    /// Take one unit of the block-expansion budget; false once it is spent, or once the build
+    /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        let ok = match self.shared_budget {
-            Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
-            None => self.list.expanded <= MAX_BLOCK_EXPANSION,
-        };
+        let ok = !self.points_spent()
+            && match self.shared_budget {
+                Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
+                None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+            };
+        if !ok {
+            self.list.truncated = true;
+        }
+        ok
+    }
+    /// Whether the build holds all the points it may: nothing more is drawn.
+    fn points_spent(&self) -> bool {
+        self.points.load(std::sync::atomic::Ordering::Relaxed) >= self.max_points
+    }
+    /// Charge `n` points to the build's [`MAX_DISPLAY_POINTS`] budget before they are pushed;
+    /// false (and the list marked truncated) when they don't fit, and nothing is pushed. Once the
+    /// budget is spent nothing more is added to the count, so it stays within the limit plus one
+    /// primitive per thread building in parallel.
+    fn charge(&mut self, n: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let ok = !self.points_spent() && self.points.fetch_add(n, Relaxed).saturating_add(n) <= self.max_points;
         if !ok {
             self.list.truncated = true;
         }
