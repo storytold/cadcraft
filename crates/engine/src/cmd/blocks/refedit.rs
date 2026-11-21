@@ -583,21 +583,44 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
         // `null` when the file didn't look like a whole drawing and the `.bak` there was kept.
         out["backup"] = json!(w.backup);
         // What the file couldn't keep, said as SAVE says it (nothing is dropped silently).
+        let kept = w.backup.as_ref().map(|b| format!(" The previous file, with them, is kept as {b}.")).unwrap_or_default();
+        let mut not_saved = w.lost.clone();
         if let Some(msg) = crate::cmd::file::lost_message(&x.file, w.version, &w.lost) {
-            let kept = w.backup.as_ref().map(|b| format!(" The previous file, with them, is kept as {b}.")).unwrap_or_default();
             s.echo(format!("{}: {msg}.{kept}", x.file));
-            out["notSaved"] = json!(w.lost);
+        }
+        if w.associations > 0 {
+            s.echo(format!(
+                "{}: Not saved in the file: the dimension associations of {} dimension(s), which tie them to the objects they measure (an xref edited in place doesn't keep them yet).{kept}",
+                x.file, w.associations
+            ));
+            not_saved.insert("dimension associations".into(), w.associations);
+        }
+        if !not_saved.is_empty() {
+            out["notSaved"] = json!(not_saved);
         }
     }
     Ok(out)
 }
 
-/// What writing an xref back did: the backup it kept, the version it was written at, and what the
-/// file couldn't keep ([`crate::cmd::file::lost_writing`]).
+/// What writing an xref back did: the backup it kept, the version it was written at, what the
+/// file couldn't keep ([`crate::cmd::file::lost_writing`]), and how many dimensions were written
+/// without their associations ([`associations_dropped`]).
 struct Written {
     backup: Option<String>,
     version: Version,
     lost: std::collections::BTreeMap<String, usize>,
+    associations: usize,
+}
+
+/// The dimensions of the part of `src` (the xref's drawing as read) that the write-back replaces
+/// which are attached to objects: loading the xref dropped those associations, so the file is
+/// written without them.
+fn associations_dropped(src: &Drawing, x: &XrefSource) -> usize {
+    let store = match &x.block {
+        None => Some(&src.model),
+        Some(n) => src.block(n).map(|b| &b.entities),
+    };
+    store.map_or(0, |st| st.iter().filter(|e| matches!(&e.kind, EntityKind::Dimension(dm) if !dm.assoc.is_empty())).count())
 }
 
 /// Replace the block's objects by the working set (and move the drawing objects added to it
@@ -664,7 +687,8 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let (mut src, read_as) = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
     // What is written over is what was just read, and that is the file the edit began with.
     unchanged(file, x, read_as)?;
-    put_edit(nd, r, x, &mut src)?;
+    let dropped = associations_dropped(&src, x);
+    let cleared = put_edit(nd, r, x, &mut src)?;
     // The xref is loaded again from the file: one it could no longer load is not written.
     let objects = load::object_count(&src);
     if objects > load::MAX_XREF_OBJECTS {
@@ -695,7 +719,7 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     // can't close it.)
     unchanged(file, x, load::stamp(file))?;
     let backup = replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))?;
-    Ok(Written { backup, version: as_version, lost })
+    Ok(Written { backup, version: as_version, lost, associations: dropped.saturating_add(cleared) })
 }
 
 /// Refuse when `now` (the xref's file as it is, or as just read) is not the file the edit began
@@ -711,14 +735,17 @@ fn unchanged(file: &std::path::Path, x: &XrefSource, now: Option<load::Stamp>) -
 }
 
 /// Put the edited block of `nd` (committed) into `src`, the xref's drawing as read: its objects
-/// with their source handles and names, and the host symbols they use.
-fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Result<()> {
+/// with their source handles and names, and the host symbols they use. A dimension attached to
+/// objects of the host (drawn during the edit) is written without those associations: the
+/// host's handles mean nothing in the xref's file. Returns how many were.
+fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Result<usize> {
     let file = std::path::Path::new(&x.file);
     let blk = nd.block(&r.block).ok_or_else(|| bad("refclose", format!("block \"{}\" is gone", r.block)))?;
     let prefix = format!("{}|", x.xref);
     let map: HashMap<Handle, Handle> = x.sources.iter().copied().collect();
     let mut store = EntityStore::new();
     let mut wanted: Vec<(Sym, String)> = Vec::new();
+    let mut cleared = 0usize;
     for e in blk.entities.iter() {
         let mut e = (**e).clone();
         e.handle = match map.get(&e.handle) {
@@ -726,6 +753,12 @@ fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Res
             None => src.new_handle(),
         };
         rename_into_source(&mut e, &prefix, &mut wanted);
+        if let EntityKind::Dimension(dm) = &mut e.kind
+            && !dm.assoc.is_empty()
+        {
+            dm.assoc.clear();
+            cleared = cleared.saturating_add(1);
+        }
         store.push(e);
     }
     bring_symbols(nd, src, &prefix, wanted, MAX_SYMBOLS)?;
@@ -743,7 +776,7 @@ fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Res
             }
         }
     }
-    Ok(())
+    Ok(cleared)
 }
 
 /// Refuse a save when `file` no longer leads to `real` (the file the edit began with), or `real`

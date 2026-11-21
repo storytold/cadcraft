@@ -741,3 +741,37 @@ fn a_host_dimension_styles_arrow_block_comes_along() {
     assert_eq!(back.dim_style("Pinned").expect("the style comes along").arrow_block, "Pin");
     assert!(back.block("Pin").is_some(), "and the block its arrowheads are");
 }
+
+/// Whether `d`'s model holds a dimension attached to the objects it measures.
+fn associative_dimensions(d: &Drawing) -> usize {
+    d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Dimension(dm) if !dm.assoc.is_empty())).count()
+}
+
+/// Review of #2355: loading an xref drops its dimensions' associations, so the write-back leaves
+/// them out of the file. Until that is kept, the save says so, as for anything else the file
+/// can't keep, and names the backup that still has them. A dimension drawn during the edit
+/// attaches to the host's copies, whose handles mean nothing in the xref's file: it is written
+/// without them, and counted too.
+#[test]
+fn dimension_associations_the_write_back_drops_are_reported() {
+    hooks();
+    let dir = folder("assoc");
+    let mut src = Session::new();
+    src.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    src.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 5] })).unwrap();
+    let file = dir.join("dims.dxf");
+    src.execute("saveas", &json!({ "path": file.to_string_lossy() })).unwrap();
+    assert_eq!(associative_dimensions(&read(&file)), 1, "the file has an associative dimension");
+
+    let (mut s, insert) = host_with(&dir, "dims.dxf", "dims");
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    // On the copy of the line, at (100, 0)..(110, 0) in the host.
+    s.execute("dimlinear", &json!({ "p1": [100, 0], "p2": [110, 0], "at": [105, -5] })).unwrap();
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(out["notSaved"]["dimension associations"], 2, "{out}");
+    let warning = s.log.iter().find(|m| m.contains("dimension associations")).expect("a warning on the command line");
+    assert!(warning.contains("dims.dxf.bak"), "{warning}");
+    let back = read(&file);
+    assert_eq!(associative_dimensions(&back), 0, "{:?}", back.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+    assert_eq!(associative_dimensions(&read(&dir.join("dims.dxf.bak"))), 1, "the backup keeps them");
+}
