@@ -31,6 +31,7 @@ mod exhausted_handseed;
 mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
+mod hatch_loop_flags;
 mod hatch_pattern_def;
 mod helix_roundtrip;
 mod layer_states_acad;

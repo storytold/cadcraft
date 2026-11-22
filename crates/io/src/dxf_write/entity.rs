@@ -627,7 +627,7 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         w.i(71, i64::from(h.associative));
         w.i(91, h.loops.len() as i64);
         for l in &h.loops {
-            w.i(92, 2 | if l.outer { 1 } else { 0 });
+            w.i(92, 2 | i64::from(l.outer) | (l.boundary_flags.unwrap_or(0) & (4 | 8 | 16)));
             let has_bulge = l.vertices.iter().any(|v| v.bulge != 0.0);
             w.i(72, i64::from(has_bulge));
             w.i(73, 1);
