@@ -85,10 +85,13 @@ fn parse_object(o: &ForeignObject) -> Option<Parsed<'_>> {
     if o.tags.iter().filter(|t| t.code == 6).any(|t| !KNOWN_KEYS.contains(&t.value.trim())) {
         return None;
     }
-    // The value record (group 7) says whether there is a value: type 4 or 2 (flag 93 = 4), not 3.
-    // Before AutoCAD 2007 a value has no flags, and one without a value has type 0.
-    let has_value = o.tags.iter().position(|t| t.code == 7).and_then(|i| o.tags.get(i + 1..)).is_some_and(|after| match after.first() {
-        Some(t) if t.code == 90 => t.value.trim() != "0",
+    // Before AutoCAD 2007 a value has no flags. When the bridge writes it as a newer DWG, it
+    // retains the value type (90) but emits zero for the previously absent flags (93).
+    let has_value = o.tags.iter().position(|t| t.code == 7).and_then(|i| o.tags.get(i + 1..)).is_some_and(|after| match after {
+        [kind, ..] if kind.code == 90 => kind.value.trim() != "0",
+        [flags, kind, ..] if flags.code == 93 && flags.value.trim() == "0" && kind.code == 90 => {
+            kind.value.trim().parse::<u32>().is_ok_and(|kind| kind != 0)
+        }
         _ => after.iter().find(|t| t.code == 93).is_some_and(|t| t.value.trim() == "4"),
     });
     let value = o.tags.iter().rev().find(|t| t.code == 301).map(|t| t.value.as_str()).filter(|_| has_value);
