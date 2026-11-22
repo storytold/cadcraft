@@ -440,12 +440,18 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     let d = context.drawing;
     let layout_dict = context.dictionary;
     let h = data.handle;
-    let name = data.name;
-    let tab = data.tab;
-    let brh = data.block_record;
-    let flags = data.flags;
     let page = data.page;
     let view = data.view;
+    w.s(0, "LAYOUT");
+    w.s(5, h);
+    w.s(330, layout_dict.to_string());
+    w.s(100, "AcDbPlotSettings");
+    write_plot_settings(w, d, page);
+    write_layout_data(w, d, data, view);
+}
+
+fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
+    let start = w.t.len();
     // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
     // per 143 drawing units).
     let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
@@ -457,13 +463,10 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
         "display" => 0,
         "extents" => 1,
         "limits" => 2,
+        "view" => 3,
         "window" => 4,
         _ => 5,
     };
-    w.s(0, "LAYOUT");
-    w.s(5, h);
-    w.s(330, layout_dict.to_string());
-    w.s(100, "AcDbPlotSettings");
     w.s(1, "");
     let device = page.device.trim();
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
@@ -500,6 +503,39 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
     w.f(148, origin.x);
     w.f(149, origin.y);
+    if let Some(kept) = &page.file_plot_settings {
+        let current = w.t.split_off(start);
+        write_plot_settings(w, d, &kept.page);
+        let baseline = w.t.split_off(start);
+        let changed = |code| {
+            (matches!(code, 142 | 143 | 147) && page.scale != kept.page.scale)
+                || (code == 72 && page.paper_mm != kept.page.paper_mm)
+                || current.iter().find(|tag| tag.code == code) != baseline.iter().find(|tag| tag.code == code)
+        };
+        for tag in &kept.tags {
+            if changed(tag.code) || (tag.code == 73 && !(0..=3).contains(&tag.i64())) {
+                if tag.code == 70
+                    && let Some((now, before)) = current.iter().find(|tag| tag.code == 70).zip(baseline.iter().find(|tag| tag.code == 70))
+                {
+                    let mask = now.i64() ^ before.i64();
+                    w.i(70, (tag.i64() & !mask) | (now.i64() & mask));
+                    continue;
+                }
+                w.t.extend(current.iter().filter(|new| new.code == tag.code).cloned());
+            } else {
+                w.t.push(tag.clone());
+            }
+        }
+        w.t.extend(current.iter().filter(|tag| changed(tag.code) && !kept.tags.iter().any(|old| old.code == tag.code)).cloned());
+    }
+}
+
+fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Option<(Vec2, f64)>) {
+    let name = data.name;
+    let tab = data.tab;
+    let flags = data.flags;
+    let brh = data.block_record;
+    let page = data.page;
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
@@ -598,8 +634,8 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
         w.s(3, &l.name);
         w.s(350, layout_handles.get(i).cloned().unwrap_or_default());
     }
-    // Model space has no page setup of its own: write what PLOT does for it, the drawing extents
-    // fitted to the paper (plot type 1, scaled to fit). The default page's "layout" area is
+    // A new drawing has no saved Model page setup: write the drawing extents fitted to the
+    // paper (plot type 1, scaled to fit), as PLOT does. The default page's "layout" area is
     // plot type 5, "Layout information" (DXF Reference, PLOTSETTINGS group 74), which means
     // nothing for model space: another program's Plot dialog then shows no plot area or scale.
     let model_page = PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..PageSetup::default() };
@@ -612,7 +648,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
             tab: 0,
             block_record: ms_br,
             flags: 1,
-            page: &model_page,
+            page: d.model_page.as_ref().unwrap_or(&model_page),
             view: None,
             ucs: None,
             limits: None,

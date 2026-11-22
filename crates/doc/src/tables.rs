@@ -782,6 +782,10 @@ impl Block {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PageSetup {
+    /// Original plot subclass and the modeled values it was read with.
+    /// Only edits that clone the page retain these original fields; the JSON form does not carry them.
+    #[serde(skip)]
+    pub file_plot_settings: Option<Box<FilePlotSettings>>,
     pub device: String,
     pub paper: String,
     /// Paper size in millimetres (portrait width/height before rotation).
@@ -789,7 +793,7 @@ pub struct PageSetup {
     pub height_mm: f64,
     pub margins_mm: [f64; 4],
     pub landscape: bool,
-    /// "layout" | "extents" | "display" | "window" | "limits".
+    /// "layout" | "extents" | "display" | "window" | "limits" | "view".
     pub plot_area: String,
     /// Plot window corners `[x1, y1, x2, y2]` (DXF plot layout groups 48, 49, 140, 141); used when `plot_area` is "window".
     pub plot_window: [f64; 4],
@@ -838,6 +842,7 @@ pub struct PageSetup {
 impl Default for PageSetup {
     fn default() -> Self {
         PageSetup {
+            file_plot_settings: None,
             device: "None".into(),
             paper: "ANSI A (8.50 x 11.00 Inches)".into(),
             width_mm: 215.9,
@@ -860,6 +865,15 @@ impl Default for PageSetup {
             file_standard_scale: None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilePlotSettings {
+    /// Groups after AcDbPlotSettings and before AcDbLayout, including unmodeled fields.
+    /// See the Autodesk DXF Reference, LAYOUT and PLOTSETTINGS.
+    pub tags: Vec<craft_dxf::Tag>,
+    /// The interpreted page with no nested file settings, for detecting edits on save.
+    pub page: PageSetup,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
