@@ -66,6 +66,14 @@ fn start(h: &mut Harness<'_, CadApp>, id: &str) {
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some(id));
 }
 
+/// Start TRIM in Standard mode with every object a cutting edge, at "Select object to trim". In
+/// Quick mode a pick in empty space starts a fence (#1594); Standard mode keeps the crossing.
+fn start_trim(h: &mut Harness<'_, CadApp>) {
+    h.state_mut().run("setvar", json!({"name": "TRIMEXTENDMODE", "value": 0})).unwrap();
+    start(h, "trim");
+    input(h, Input::Enter);
+}
+
 fn input(h: &mut Harness<'_, CadApp>, i: Input) {
     h.state_mut().session.input(i).unwrap();
     h.run_steps(2);
@@ -119,7 +127,9 @@ fn a_stretch_window_closes_by_drag_or_by_two_clicks_on_the_move() {
 fn trimmed_by_typed_crossing() -> Vec<(Vec2, Vec2)> {
     let mut s = session();
     s.viewport_px = (1600.0, 1000.0);
+    s.execute("setvar", &json!({"name": "TRIMEXTENDMODE", "value": 0})).unwrap();
     s.start("trim").unwrap();
+    s.input(Input::Enter).unwrap();
     s.input(Input::Point(Vec2::new(55.0, 25.0))).unwrap();
     s.input(Input::Point(Vec2::new(45.0, 15.0))).unwrap();
     s.input(Input::Enter).unwrap();
@@ -129,7 +139,7 @@ fn trimmed_by_typed_crossing() -> Vec<(Vec2, Vec2)> {
 #[test]
 fn trims_crossing_closes_where_a_drag_lets_go() {
     let mut h = harness();
-    start(&mut h, "trim");
+    start_trim(&mut h);
     sweep(&mut h, Vec2::new(55.0, 25.0), Vec2::new(45.0, 15.0), 30);
     assert!(h.state().session.selection_window().is_none(), "the drag closed TRIM's crossing");
     input(&mut h, Input::Enter);
@@ -142,7 +152,7 @@ fn trims_crossing_closes_where_a_drag_lets_go() {
 fn with_pickdrag_off_a_drag_leaves_trims_crossing_open() {
     let mut h = harness();
     h.state_mut().run("options", json!({"PICKDRAG": 0})).unwrap();
-    start(&mut h, "trim");
+    start_trim(&mut h);
     sweep(&mut h, Vec2::new(55.0, 25.0), Vec2::new(45.0, 15.0), 30);
     let w = h.state().session.selection_window().expect("two clicks only: the window waits");
     assert!(w.corner.dist(Vec2::new(55.0, 25.0)) < 0.5, "{w:?}");
@@ -163,7 +173,7 @@ fn with_pickdrag_1_the_release_always_closes_the_window() {
     assert!(h.state().session.selection_window().is_none());
     assert_eq!(h.state().session.selection().len(), 1, "the crossing took the horizontal line");
     h.state_mut().session.cancel();
-    start(&mut h, "trim");
+    start_trim(&mut h);
     sweep(&mut h, Vec2::new(55.0, 25.0), Vec2::new(45.0, 15.0), 2);
     assert!(h.state().session.selection_window().is_none());
     input(&mut h, Input::Enter);

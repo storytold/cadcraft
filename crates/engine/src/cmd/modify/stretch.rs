@@ -3,14 +3,17 @@ use super::{
     Accept, Entity, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, Session, Step, Value, Vec2, bad, json, line, points_param,
 };
 
-/// Add to `hs` the visible multilines in `space` with a control vertex inside `area`. A crossing
-/// selection tests the drawn element lines, which sit away from the control vertices by the
-/// multiline's scale, so a small area around a vertex alone would miss them.
-fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space, area: &crate::select::SelectArea, hs: &mut Vec<Handle>) {
-    let Some(store) = d.space(space) else { return };
+/// Add to `hs` the multilines in the edit space that a selection can take there (visible, and
+/// inside an MSPACE viewport not on a layer frozen in it) with a control vertex inside `area`. A
+/// crossing selection tests the drawn element lines, which sit away from the control vertices by
+/// the multiline's scale, so a small area around a vertex alone would miss them.
+fn add_mline_vertex_hits(s: &Session, area: &crate::select::SelectArea, hs: &mut Vec<Handle>) {
+    let Ok(d) = s.doc() else { return };
+    let Some(store) = d.space(&s.space()) else { return };
+    let frozen = s.viewport_frozen();
     for e in store.iter() {
         if let EntityKind::MLine(m) = &e.kind
-            && d.is_visible(e)
+            && crate::select::selectable(d, e, frozen)
             && !hs.contains(&e.handle)
             && m.vertices.iter().any(|v| area.contains(v.p.xy()))
         {
@@ -76,19 +79,19 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // A fence marks no area: the objects it crosses move whole.
     if let Some(fence) = listed("fence", 2)? {
-        let hs = crate::select::select_fence(s.doc()?, &space, &fence);
+        let hs = crate::select::select_fence_in(s.doc()?, &space, s.viewport_frozen(), &fence);
         let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
         return Ok(json!({ "stretched": moved.len() }));
     }
     let (mut hs, area) = if let Some(poly) = listed("polygon", 3)? {
-        (crate::select::select_polygon(s.doc()?, &space, &poly, true), crate::select::SelectArea::Polygon(poly))
+        (crate::select::select_polygon_in(s.doc()?, &space, s.viewport_frozen(), &poly, true), crate::select::SelectArea::Polygon(poly))
     } else {
         let w = points_param(p, "window").ok_or_else(|| bad("stretch", "`window` [[x,y],[x,y]], `polygon` or `fence` is required"))?;
         let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return Err(bad("stretch", "window needs 2 corners")) };
         let bx = cadcraft_geom::Bounds2::new(*a, *b);
-        (crate::select::select_window(s.doc()?, &space, bx, true), crate::select::SelectArea::Box(bx))
+        (crate::select::select_window_in(s.doc()?, &space, s.viewport_frozen(), bx, true), crate::select::SelectArea::Box(bx))
     };
-    add_mline_vertex_hits(s.doc()?, &space, &area, &mut hs);
+    add_mline_vertex_hits(s, &area, &mut hs);
     hs.retain(|h| !crate::cmd::curves::is_locked(s, *h));
     let doc = s.doc_mut()?;
     let areas = [area];
@@ -158,7 +161,7 @@ impl StretchM {
                 if let (Some(a), false) = (area, self.removing) {
                     // A crossing tests a multiline's drawn lines; a control vertex inside counts too.
                     if a.crossing {
-                        add_mline_vertex_hits(s.doc()?, &s.space(), &a.area, &mut hs);
+                        add_mline_vertex_hits(s, &a.area, &mut hs);
                     }
                     self.windows.push(a.area);
                 }
@@ -203,6 +206,7 @@ impl Interactive for StretchM {
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
     }
+    /// Returns the active interactive prompt for the current `STRETCH` phase.
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.phase {
             StretchPhase::Select => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::SELECT),

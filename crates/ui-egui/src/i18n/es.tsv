@@ -139,11 +139,13 @@
 	Clip Viewport	Delimitar ventana gráfica
 	Clipboard	Portapapeles
 	Close	Cerrar
+	Close {panel}	Cerrar {panel}
 	Close All	Cerrar todo
 	Close All Other Drawings	Cerrar todos los demás dibujos
 	Close Array Editing	Cerrar la edición de matriz
 	Close Comparison	Cerrar comparación
 	Export Comparison	Exportar comparación
+	Close panel	Cerrar panel
 	Closed	Cerrada
 	Coincident	Coincidente
 	Collapse Palettes	Contraer paletas
@@ -372,6 +374,7 @@
 	From	Desde
 	From Template...	Desde plantilla...
 	General	General
+	Generate Boundary	Generar contorno
 	Geometric Center	Centro geométrico
 	Geometric Constraint	Restricción geométrica
 	Geometric Constraints	Restricciones geométricas
@@ -542,6 +545,7 @@
 	Measure	Medir
 	Measure Distance	Medir distancia
 	Measure Geometry	Medir geometría
+	Menu Bar	Barra de menús
 	Merge Cells	Combinar celdas
 	Merged PRs	PR integradas
 	Mid Between 2 Points	Punto medio entre 2 puntos
@@ -933,6 +937,7 @@
 	Set Current Text Style	Establecer estilo de texto actual
 	Set Layer Properties	Establecer propiedades de capa
 	Set Properties	Establecer propiedades
+	Describe Properties	Describir propiedades
 	Set Table Cell	Establecer celda de tabla
 	Set Variable	Establecer variable
 	Set View	Establecer vista
@@ -1255,6 +1260,33 @@
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
 	Could not check for updates.	No se pudo buscar actualizaciones.
+	Add a drawing file as a block library	Añadir un archivo de dibujo como biblioteca de bloques
+	Add a folder of drawings or a drawing file to use its blocks.	Añada una carpeta de dibujos o un archivo de dibujo para usar sus bloques.
+	Block Libraries	Bibliotecas de bloques
+	Block Library	Biblioteca de bloques
+	Blocks Palette	Paleta de bloques
+	Click a block, then pick its insertion point.	Haga clic en un bloque y luego indique su punto de inserción.
+	Current Drawing	Dibujo actual
+	Details	Detalles
+	Extra Large Icons	Iconos extragrandes
+	Folder or file	Carpeta o archivo
+	Import Library Block	Importar bloque de biblioteca
+	Insert and Explode	Insertar y descomponer
+	Large Icons	Iconos grandes
+	Libraries	Bibliotecas
+	Medium Icons	Iconos medianos
+	No block matches the filter.	Ningún bloque coincide con el filtro.
+	This block is already in the drawing, so its definition is used.	Este bloque ya está en el dibujo, así que se usa su definición.
+	Open Library...	Abrir biblioteca...
+	Read the library again	Volver a leer la biblioteca
+	Reading the library...	Leyendo la biblioteca...
+	Refresh	Actualizar
+	Remove from the list	Quitar de la lista
+	Repeat Placement	Repetir colocación
+	Small Icons	Iconos pequeños
+	This drawing has no blocks.	Este dibujo no tiene bloques.
+	This library has no drawings or blocks.	Esta biblioteca no tiene dibujos ni bloques.
+	Only the first {n} are shown.	Solo se muestran los primeros {n}.
 	Find All	Find All
 	Find what:	Find what:
 	Match case	Match case
@@ -1270,3 +1302,6 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	El dibujo cambió. Cierre la ventana y ábrala de nuevo.
+
+# ArtCraft feature naming
+	Additional Tools	Herramientas adicionales

@@ -9,6 +9,10 @@
 //!
 //! The timer starts on leaving the tolerance, not on the press: pressing, holding still and then
 //! moving and letting go quickly is still a click, as in AutoCAD.
+//!
+//! A press on a grip with no command running ([`Press::on_grip`]) is the exception: the grip is
+//! clicked when the button comes up within [`TOLERANCE`] of the press, however long it was held
+//! (#2813), and a drag from it does nothing.
 
 use egui::{Modifiers, Pos2};
 
@@ -26,11 +30,32 @@ pub(crate) struct Press {
     left_at: Option<f64>,
     /// The press opened a selection window (set its first corner).
     pub(crate) opened_window: bool,
+    /// The press went down on a grip with no command running, with these modifiers: it is a click
+    /// on the grip if the button comes up near it ([`Self::grip_click`]).
+    on_grip: Option<Modifiers>,
 }
 
 impl Press {
     pub(crate) fn new(origin: Pos2, opened_window: bool) -> Self {
-        Self { origin, left_at: None, opened_window }
+        Self { origin, left_at: None, opened_window, on_grip: None }
+    }
+
+    /// A press on a grip with no command running, acted on when the button comes up.
+    pub(crate) fn on_grip(origin: Pos2, modifiers: Modifiers) -> Self {
+        Self { origin, left_at: None, opened_window: false, on_grip: Some(modifiers) }
+    }
+
+    /// For a press on a grip ([`Self::on_grip`]) whose button came up at `pos`: `Some` (where it
+    /// went down, the modifiers then) when that is a click on the grip, within [`TOLERANCE`] of the
+    /// press however long the button was held; `None` for a drag from it or a press elsewhere.
+    pub(crate) fn grip_click(&self, pos: Pos2) -> Option<(Pos2, Modifiers)> {
+        let modifiers = self.on_grip?;
+        (pos.distance(self.origin) <= TOLERANCE).then_some((self.origin, modifiers))
+    }
+
+    /// Whether the press went down on a grip ([`Self::on_grip`]).
+    pub(crate) fn is_on_grip(&self) -> bool {
+        self.on_grip.is_some()
     }
 
     /// The pointer is at `pos` at time `now`.
@@ -102,6 +127,17 @@ mod tests {
         p.moved(pos2(110.0, 100.0), 1.0);
         p.moved(pos2(200.0, 150.0), 1.1);
         assert!(p.released_as_drag(pos2(250.0, 160.0), 1.0 + DRAG_DELAY));
+    }
+
+    #[test]
+    fn a_grip_press_is_a_click_where_it_went_down_only_when_let_go_near_it() {
+        let p = Press::on_grip(pos2(100.0, 100.0), Modifiers::SHIFT);
+        assert!(p.is_on_grip());
+        assert_eq!(p.grip_click(pos2(103.0, 104.0)), Some((pos2(100.0, 100.0), Modifiers::SHIFT)));
+        assert_eq!(p.grip_click(pos2(120.0, 100.0)), None, "a drag from the grip is no click");
+        let elsewhere = Press::new(pos2(100.0, 100.0), false);
+        assert!(!elsewhere.is_on_grip());
+        assert_eq!(elsewhere.grip_click(pos2(100.0, 100.0)), None);
     }
 
     #[test]

@@ -18,6 +18,14 @@ fn session() -> Session {
     s
 }
 
+/// Start TRIM in Standard mode with every object a cutting edge, at "Select object to trim". In
+/// Quick mode a pick in empty space starts a fence (#1594); Standard mode keeps the crossing.
+fn start_trim(s: &mut Session) {
+    s.execute("setvar", &json!({"name": "TRIMEXTENDMODE", "value": 0})).unwrap();
+    s.start("trim").unwrap();
+    s.input(Input::Enter).unwrap();
+}
+
 fn line(s: &mut Session, a: [f64; 2], b: [f64; 2]) -> Handle {
     let h = s.execute("line", &json!({ "points": [a, b] })).unwrap()["handles"][0].as_str().unwrap().to_string();
     Handle::parse_hex(&h).unwrap()
@@ -123,7 +131,7 @@ fn trims_crossing_window_is_a_selection_window() {
     let mut s = session();
     line(&mut s, [0.0, 0.0], [20.0, 0.0]);
     line(&mut s, [10.0, -5.0], [10.0, 5.0]);
-    s.start("trim").unwrap();
+    start_trim(&mut s);
     // A click on empty space at "Select object to trim" opens TRIM's crossing window.
     point(&mut s, 15.0, 2.0);
     let w = s.selection_window().expect("TRIM's crossing waits for its opposite corner");
@@ -202,7 +210,7 @@ fn the_selection_windows_crossing_follows_the_screen_in_a_twisted_view() {
     assert_eq!(s.selection(), vec![a], "the crossing takes the line it only partly covers");
     assert!(s.take_pick_area().is_none(), "the stretch took the area");
     s.cancel();
-    s.start("trim").unwrap();
+    start_trim(&mut s);
     point(&mut s, 300.0, 50.0);
     let w = s.selection_window().expect("TRIM's crossing waits for its corner");
     assert!(s.selection_window_crossing(&w, Vec2::new(250.0, 40.0)), "TRIM's crossing is one whichever way it goes");

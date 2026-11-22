@@ -91,6 +91,7 @@ fn check(text: &str, label: &str) {
 
 #[test]
 fn an_object_held_by_a_kept_one_is_kept() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = read_dxf(source().as_bytes()).expect("read");
     for generation in 1..=2 {
         let text = write_dxf(&d);
@@ -108,6 +109,7 @@ fn an_object_held_by_a_kept_one_is_kept() {
 /// Mutual hard owners must not erase the live path through a retained dictionary entry.
 #[test]
 fn cyclic_hard_owners_with_a_live_holder_stay_kept() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let groups = [
         (0, "SECTION"),
         (2, "OBJECTS"),
@@ -173,16 +175,16 @@ fn cyclic_hard_owners_with_a_live_holder_stay_kept() {
         let bytes = write(&drawing, name).unwrap();
         drawing = read(&bytes, name).unwrap();
         let text = write_dxf(&drawing);
-        let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
-        let objects = cadcraft_dxf::sections(&tags).into_iter().find(|s| s.name == "OBJECTS").unwrap();
-        let records = cadcraft_dxf::records(&objects.tags);
+        let tags = craft_dxf::parse(text.as_bytes()).unwrap();
+        let objects = craft_dxf::sections(&tags).into_iter().find(|s| s.name == "OBJECTS").unwrap();
+        let records = craft_dxf::records(&objects.tags);
         let record = |label: &str| records.iter().find(|(_, tags)| tags.iter().any(|t| t.code == 1 && t.str() == label)).unwrap().1.clone();
         let first = record("first");
         let second = record("second");
         let holder = record("holder");
         let child = record("child");
         assert!(!records.iter().any(|(_, tags)| tags.iter().any(|t| t.code == 1 && t.str() == "stray")), "{name}");
-        let handle = |tags: &[cadcraft_dxf::Tag]| tags.iter().find(|t| t.code == 5).unwrap().str();
+        let handle = |tags: &[craft_dxf::Tag]| tags.iter().find(|t| t.code == 5).unwrap().str();
         assert!(first.iter().any(|t| t.code == 360 && t.str() == handle(&second)), "{name}");
         assert!(second.iter().any(|t| t.code == 360 && t.str() == handle(&first)), "{name}");
         assert!(first.iter().any(|t| t.code == 360 && t.str() == handle(&child)), "{name}");
