@@ -317,8 +317,11 @@ pub(super) struct HoverPart {
 }
 
 impl HoverPart {
+    /// What a running command will change wherever the cursor is (TRIM's Fence and Crossing,
+    /// [`cadcraft_engine::Session::highlight_all`]) comes first; otherwise the part of the object
+    /// under the cursor ([`cadcraft_engine::Session::highlight`]).
     pub(super) fn update(&mut self, session: &cadcraft_engine::Session, hover: Option<Handle>, cursor: Option<Vec2>, scale: f64) {
-        let (Some(h), Some(c), Ok(st)) = (hover, cursor, session.state()) else {
+        let (Some(c), Ok(st)) = (cursor, session.state()) else {
             self.key = None;
             self.list = None;
             return;
@@ -327,14 +330,15 @@ impl HoverPart {
             use std::hash::{Hash, Hasher};
             let mut hs = std::collections::hash_map::DefaultHasher::new();
             let doc = (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize);
-            (h, c.x.to_bits(), c.y.to_bits(), scale.to_bits(), doc, session.prompt_text(), super::list::font_generation()).hash(&mut hs);
+            (hover, c.x.to_bits(), c.y.to_bits(), scale.to_bits(), doc, session.prompt_text(), super::list::font_generation()).hash(&mut hs);
             hs.finish()
         };
         if self.key == Some(key) {
             return;
         }
         self.key = Some(key);
-        self.list = session.highlight(h, c).map(|ents| super::list::rebuilt_preview(&st.doc, ents.iter(), scale));
+        let ents = session.highlight_all(c).or_else(|| hover.and_then(|h| session.highlight(h, c)));
+        self.list = ents.map(|ents| super::list::rebuilt_preview(&st.doc, ents.iter(), scale));
         self.list_gen = self.list_gen.wrapping_add(1);
     }
 }

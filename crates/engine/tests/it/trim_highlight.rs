@@ -174,3 +174,104 @@ fn the_edges_are_gathered_again_once_the_drawing_changes() {
     assert_eq!(ends(&s, l, [12.0, 0.0]), Some(vec![seg([10.0, 0.0], [15.0, 0.0])]), "it still meets the line at its end");
     assert_eq!(ends(&s, l, [-3.0, 0.0]), Some(vec![seg([-5.0, 0.0], [0.0, 0.0])]));
 }
+
+/// The highlight while a fence or a crossing window is drawn, as outlines.
+fn highlight_all(s: &Session, at: [f64; 2]) -> Option<Vec<Vec<Vec2>>> {
+    let ents = s.highlight_all(Vec2::new(at[0], at[1]))?;
+    Some(outline(s, &ents))
+}
+
+/// The total length of every object's outline.
+fn drawn(s: &Session) -> f64 {
+    length(&outline(s, &s.doc().unwrap().model.iter().map(|e| (**e).clone()).collect::<Vec<_>>()))
+}
+
+#[test]
+fn a_fence_highlights_every_piece_it_will_remove() {
+    let (mut s, _) = ladder();
+    let upper = line(&mut s, [-5.0, 2.0], [15.0, 2.0]);
+    s.start("trim").unwrap();
+    s.input(Input::Keyword("Fence".into())).unwrap();
+    assert!(s.highlight_all(Vec2::new(5.0, 3.0)).is_none(), "nothing before the fence's first point");
+    s.input(Input::Point(Vec2::new(5.0, -3.0))).unwrap();
+    let before = s.state().unwrap().doc.clone();
+    let shown = highlight_all(&s, [5.0, 3.0]).unwrap();
+    let mut spans: Vec<[[i64; 2]; 2]> = shown
+        .iter()
+        .map(|pl| {
+            let r = |p: Vec2| [(p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64];
+            let (a, b) = (r(pl[0]), r(*pl.last().unwrap()));
+            if a <= b { [a, b] } else { [b, a] }
+        })
+        .collect();
+    spans.sort();
+    assert_eq!(spans, vec![seg([0.0, 0.0], [10.0, 0.0]), seg([0.0, 2.0], [10.0, 2.0])], "both lines between the edges");
+    assert!(std::sync::Arc::ptr_eq(&before, &s.state().unwrap().doc), "the drawing is left alone");
+    // Short of the upper line, only the lower one.
+    assert_eq!(highlight_all(&s, [5.0, 1.0]).unwrap().len(), 1);
+    assert!(s.highlight(upper, Vec2::new(5.0, 2.0)).is_none(), "no single-object highlight while fencing");
+}
+
+#[test]
+fn a_fence_removes_exactly_what_it_highlighted() {
+    // A grid of lines and a circle, with a fence through several of them: some of what it trims
+    // is an edge of what it trims next, so the preview must follow the run trim by trim.
+    let mut s = Session::new();
+    for x in [0.0, 10.0, 20.0] {
+        line(&mut s, [x, -10.0], [x, 10.0]);
+    }
+    for y in [0.0, 5.0] {
+        line(&mut s, [-5.0, y], [25.0, y]);
+    }
+    s.execute("circle", &json!({ "center": [10, 2.5], "radius": 4 })).unwrap();
+    s.zoom_extents().unwrap();
+    let fence = [[3.0, -4.0], [12.0, 3.0], [17.0, 8.0]];
+    s.start("trim").unwrap();
+    s.input(Input::Keyword("Fence".into())).unwrap();
+    for p in &fence[..2] {
+        s.input(Input::Point(Vec2::new(p[0], p[1]))).unwrap();
+    }
+    let shown = length(&highlight_all(&s, fence[2]).unwrap());
+    let before = drawn(&s);
+    s.input(Input::Point(Vec2::new(fence[2][0], fence[2][1]))).unwrap();
+    s.input(Input::Enter).unwrap();
+    let removed = before - drawn(&s);
+    assert!(removed > 1.0, "the fence trimmed something");
+    assert!((shown - removed).abs() < 1e-3 * before, "highlighted {shown}, removed {removed}");
+}
+
+#[test]
+fn a_quick_fence_and_a_crossing_window_are_previewed_too() {
+    // Quick mode: a pick in empty space starts a two-point fence.
+    let (mut s, _) = ladder();
+    s.start("trim").unwrap();
+    s.input(Input::Point(Vec2::new(5.0, -3.0))).unwrap();
+    let shown = highlight_all(&s, [5.0, 3.0]).expect("the two-point fence is previewed");
+    assert!((length(&shown) - 10.0).abs() < 1e-6, "{}", length(&shown));
+    s.cancel();
+    // A crossing window round the middle of the line.
+    s.start("trim").unwrap();
+    s.input(Input::Keyword("Crossing".into())).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, -1.0))).unwrap();
+    let shown = highlight_all(&s, [6.0, 1.0]).expect("the window is previewed");
+    assert!((length(&shown) - 10.0).abs() < 1e-6, "{}", length(&shown));
+}
+
+#[test]
+fn an_extend_fence_highlights_the_stretches_it_adds() {
+    let mut s = Session::new();
+    line(&mut s, [10.0, -5.0], [10.0, 5.0]);
+    line(&mut s, [0.0, 0.0], [4.0, 0.0]);
+    line(&mut s, [0.0, 2.0], [6.0, 2.0]);
+    s.zoom_extents().unwrap();
+    s.start("extend").unwrap();
+    s.input(Input::Keyword("Fence".into())).unwrap();
+    s.input(Input::Point(Vec2::new(4.0, -1.0))).unwrap();
+    let shown = length(&highlight_all(&s, [4.0, 3.0]).unwrap());
+    assert!((shown - (6.0 + 4.0)).abs() < 1e-6, "both lines run on to x = 10: {shown}");
+    // And the fence extends them by just that.
+    let before = drawn(&s);
+    s.input(Input::Point(Vec2::new(4.0, 3.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!((drawn(&s) - before - shown).abs() < 1e-6);
+}

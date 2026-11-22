@@ -101,6 +101,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn highlight_all(&self, s: &Session, cursor: Vec2) -> Option<Vec<(cadcraft_doc::Handle, EntityKind)>> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.highlight_all(s, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
     fn drag(&self, s: &Session, cursor: Vec2) -> Option<crate::prompt::Drag> {
         if self.broken.get().is_some() {
             return None;

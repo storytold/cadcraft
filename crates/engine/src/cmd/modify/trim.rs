@@ -19,27 +19,50 @@ pub(crate) struct Edges<'a> {
 
 /// All primitives of the cutting edges (excluding `exclude`).
 pub(crate) fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segment>> {
+    edge_segments_over(s, edges, exclude, &Overlay::new())
+}
+
+/// Objects as a run of trims would have left them, without changing the drawing: for each object
+/// of the drawing it names, the pieces in its place, each with its handle (the first keeps the
+/// object's, as [`replace_with_pieces`] does; none: the object is gone). TRIM's Fence and
+/// Crossing preview works a whole run out this way.
+pub(crate) type Overlay = std::collections::HashMap<Handle, Vec<(Handle, EntityKind)>>;
+
+/// [`edge_segments`] with the objects `overlay` names in their pieces' place.
+pub(crate) fn edge_segments_over(s: &Session, edges: Edges, exclude: Handle, overlay: &Overlay) -> Result<Vec<Segment>> {
     let d = s.doc()?;
     let space = s.space();
     let store = d.space(&space).ok_or(EngineError::NoDocument)?;
     let mut out = Vec::new();
-    for e in store.iter() {
-        if e.handle == exclude || !d.is_visible(e) {
-            continue;
-        }
-        if let Some(es) = edges.only
-            && !es.contains(&e.handle)
-        {
-            continue;
-        }
+    let mut add = |kind: &EntityKind| {
         if edges.implied
-            && let Some(segs) = implied_edge(&e.kind)
+            && let Some(segs) = implied_edge(kind)
         {
             out.extend(segs);
+            return;
+        }
+        for p in kind.prims() {
+            out.extend(prim_to_segments(&p));
+        }
+    };
+    // An object is an edge when it is one of `edges.only` (all of them: `None`). A trim leaves
+    // its first piece under the object's handle and the others under new ones, so only the first
+    // stays one of the picked edges, as in a run of trims on the drawing itself.
+    let is_edge = |h: &Handle| edges.only.is_none_or(|es| es.contains(h));
+    for e in store.iter() {
+        if !d.is_visible(e) {
             continue;
         }
-        for p in e.kind.prims() {
-            out.extend(prim_to_segments(&p));
+        match overlay.get(&e.handle) {
+            Some(pieces) => {
+                for (h, k) in pieces {
+                    if *h != exclude && is_edge(h) {
+                        add(k);
+                    }
+                }
+            }
+            None if e.handle != exclude && is_edge(&e.handle) => add(&e.kind),
+            None => {}
         }
     }
     Ok(out)
@@ -160,7 +183,13 @@ pub(crate) fn trimmed(s: &Session, h: Handle, pick: Vec2, edges: Edges, cut: &[S
     // A polyline that is one of the edges (picked, or with every object in either mode) cuts
     // itself too.
     let itself = edges.only.is_none_or(|o| o.contains(&h));
-    let pieces: Vec<EntityKind> = match &e.kind {
+    trim_kind(&e.kind, pick, itself, cut)
+}
+
+/// [`trimmed`] for an object of shape `kind` (not on a locked layer); `itself`: it is one of the
+/// cutting edges, so a polyline cuts itself too.
+pub(crate) fn trim_kind(kind: &EntityKind, pick: Vec2, itself: bool, cut: &[Segment]) -> Result<Option<Vec<EntityKind>>> {
+    let pieces: Vec<EntityKind> = match kind {
         EntityKind::Line(l) => {
             let ln = Line::new(l.a.xy(), l.b.xy());
             let mut ts: Vec<f64> = cut
@@ -589,7 +618,12 @@ pub(crate) fn extended(s: &Session, h: Handle, pick: Vec2, cut: &[Segment]) -> R
     }
     let d = s.doc()?;
     let e = d.entity(h).ok_or_else(|| EngineError::Other("no such object".into()))?;
-    let new_kind = match &e.kind {
+    extend_kind(&e.kind, pick, cut)
+}
+
+/// [`extended`] for an object of shape `kind` (not on a locked layer).
+pub(crate) fn extend_kind(kind: &EntityKind, pick: Vec2, cut: &[Segment]) -> Result<EntityKind> {
+    let new_kind = match kind {
         EntityKind::Line(l) => {
             let (a, b) = (l.a.xy(), l.b.xy());
             let from_b = pick.dist(b) < pick.dist(a);

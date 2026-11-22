@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 
 use super::curves::KW;
 use super::helpers::{line, lwpoly, rect_vertices};
-use super::modify::{CUT_ONCE, Edges, edge_segments, extend, extended, json_pick_error, trim, trimmed};
+use super::modify::{
+    CUT_ONCE, Edges, Overlay, edge_segments, edge_segments_over, extend, extend_kind, extended, json_pick_error, trim, trim_kind, trimmed,
+};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -58,6 +60,13 @@ fn apply(s: &mut Session, h: Handle, at: Vec2, extending: bool, edges: Edges, qu
 /// Trim (or extend) every object the fence `pts` crosses, at each crossing (extend: at the first).
 /// Returns how many trims or extends were made.
 fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bool) -> Result<usize> {
+    let (work, tol) = fence_work(s, pts)?;
+    run_picks(s, work, extending, edges, quick, tol)
+}
+
+/// What a fence through `pts` trims or extends: each object it crosses with its crossings, in
+/// fence order, and the tolerance they were found to.
+fn fence_work(s: &Session, pts: &[Vec2]) -> Result<(Vec<(Handle, Vec<Vec2>)>, f64)> {
     let space = s.space();
     let d = s.doc()?;
     let fb = Bounds2::from_points(pts.iter().copied());
@@ -82,7 +91,7 @@ fn fence(s: &mut Session, pts: &[Vec2], extending: bool, edges: Edges, quick: bo
         }
         work.push((h, xs));
     }
-    run_picks(s, work, extending, edges, quick, tol)
+    Ok((work, tol))
 }
 
 /// How far along a segment from its end a crossing window's pick is kept: past the 5e-7 within
@@ -93,6 +102,13 @@ const OFF_VERTEX: f64 = 1e-6;
 /// Trim (or extend) every object a crossing window from `a` to `b` touches, picked at its point
 /// in the window nearest the first corner `a`.
 fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, quick: bool) -> Result<usize> {
+    let (work, tol) = crossing_work(s, a, b)?;
+    run_picks(s, work, extending, edges, quick, tol)
+}
+
+/// What a crossing window from `a` to `b` trims or extends: each object it touches with its pick
+/// point, and the tolerance they were found to.
+fn crossing_work(s: &Session, a: Vec2, b: Vec2) -> Result<(Vec<(Handle, Vec<Vec2>)>, f64)> {
     let space = s.space();
     let d = s.doc()?;
     let bx = Bounds2::new(a, b);
@@ -131,7 +147,82 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
             work.push((h, vec![p]));
         }
     }
-    run_picks(s, work, extending, edges, quick, tol)
+    Ok((work, tol))
+}
+
+/// What [`run_picks`] would change, worked out without changing the drawing: for each trim, the
+/// piece it removes (a whole object Quick mode erases), and for each extend the stretch it adds,
+/// with the handle of the object it belongs to. Each object is trimmed at its picks in turn, as
+/// `run_picks` does, against edges that include what the run has already made of other objects
+/// ([`Overlay`]), so the preview of a fence or a crossing window is what it will do. `px`: the
+/// tolerance the changes are drawn to.
+fn picks_preview(
+    s: &Session,
+    work: &[(Handle, Vec<Vec2>)],
+    extending: bool,
+    edges: Edges,
+    quick: bool,
+    tol: f64,
+    px: f64,
+) -> Vec<(Handle, EntityKind)> {
+    let Ok(d) = s.doc() else { return Vec::new() };
+    let mut overlay = Overlay::new();
+    let mut out = Vec::new();
+    // Handles for the pieces a trim makes, apart from any in the drawing.
+    let mut next = u64::MAX;
+    let mut fresh = || {
+        next -= 1;
+        Handle(next)
+    };
+    for (h, picks) in work {
+        let Some(orig) = d.entity(*h) else { continue };
+        if crate::cmd::curves::is_locked(s, *h) {
+            continue;
+        }
+        let entity = |handle: Handle, kind: &EntityKind| Entity { handle, common: orig.common.clone(), kind: kind.clone() };
+        let mut live: Vec<(Handle, EntityKind)> = vec![(*h, orig.kind.clone())];
+        for x in picks {
+            let target = live
+                .iter()
+                .enumerate()
+                .map(|(i, (ph, k))| (i, crate::select::entity_distance(d, &entity(*ph, k), *x, tol)))
+                .filter(|(_, dist)| *dist <= 3.0 * tol)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(i, _)| i);
+            let Some(i) = target else { continue };
+            let Some((ph, piece)) = live.get(i).cloned() else { continue };
+            overlay.insert(*h, live.clone());
+            let Ok(cut) = edge_segments_over(s, edges, ph, &overlay) else { continue };
+            if extending {
+                if let Ok(grown) = extend_kind(&piece, *x, &cut) {
+                    out.extend(uncovered(d, &entity(ph, &grown), std::slice::from_ref(&piece), px).into_iter().map(|k| (*h, k)));
+                    if let Some(slot) = live.get_mut(i) {
+                        slot.1 = grown;
+                    }
+                }
+                break;
+            }
+            let itself = edges.only.is_none_or(|o| o.contains(&ph));
+            match trim_kind(&piece, *x, itself, &cut) {
+                Ok(Some(kept)) => {
+                    out.extend(uncovered(d, &entity(ph, &piece), &kept, px).into_iter().map(|k| (*h, k)));
+                    live.remove(i);
+                    let mut kept = kept.into_iter();
+                    if let Some(first) = kept.next() {
+                        live.insert(i, (ph, first));
+                    }
+                    live.extend(kept.map(|k| (fresh(), k)));
+                }
+                Err(err) if quick && misses_edges(&err) => {
+                    out.push((*h, piece));
+                    live.remove(i);
+                }
+                Ok(None) | Err(_) => {}
+            }
+        }
+        overlay.insert(*h, live);
+    }
+    out
 }
 
 /// Trim (or extend) each object at its pick points. A trim leaves the object in pieces, so later
@@ -606,6 +697,21 @@ impl Interactive for TrimM {
             return None;
         }
         self.change(s, h, cursor)
+    }
+    fn highlight_all(&self, s: &Session, cursor: Vec2) -> Option<Vec<(Handle, EntityKind)>> {
+        let (quick, implied) = (quick_mode(s), edge_mode(s));
+        let found = match &self.stage {
+            Stage::Fence(pts) if !pts.is_empty() => {
+                let pts: Vec<Vec2> = pts.iter().copied().chain(std::iter::once(cursor)).collect();
+                fence_work(s, &pts)
+            }
+            Stage::QuickFence(a) => fence_work(s, &[*a, cursor]),
+            Stage::Crossing(Some(a)) => crossing_work(s, *a, cursor),
+            _ => return None,
+        };
+        let (work, tol) = found.ok()?;
+        let px = (s.pixel_size() / 2.0).max(1e-9);
+        Some(picks_preview(s, &work, self.extend, self.edges(quick, implied), quick, tol, px))
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
         match &self.stage {
