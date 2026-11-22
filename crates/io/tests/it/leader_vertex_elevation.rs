@@ -59,6 +59,7 @@ fn dxf_preserves_leader_vertex_elevations() -> TestResult {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_preserves_leader_vertex_elevations() -> TestResult {
+    cadcraft_io::dwg_worker::allow_in_process();
     check_round_trips("leader.dwg", false)
 }
 

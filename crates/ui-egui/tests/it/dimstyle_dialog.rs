@@ -96,6 +96,31 @@ fn modify_edits_the_style() {
 }
 
 #[test]
+fn modify_keeps_closed_filled_per_end_arrowheads() {
+    let mut h = manager(|app| {
+        app.run("dimstyle", json!({ "name": "Standard", "DIMBLK": "_DOT" })).unwrap();
+    });
+    click(&mut h, "Modify...");
+    click(&mut h, "Symbols and Arrows");
+    for label in ["Arrow 1", "Arrow 2"] {
+        h.get(by().label(label).role(egui::accesskit::Role::ComboBox)).click();
+        h.run_steps(3);
+        click(&mut h, "Closed filled");
+    }
+    click(&mut h, "OK");
+    let style = h.state().session.doc().unwrap().dim_style("Standard").unwrap();
+    assert_eq!(style.arrow_block, "_DOT");
+    assert_eq!(style.arrow_block1, "_CLOSEDFILLED");
+    assert_eq!(style.arrow_block2, "_CLOSEDFILLED");
+
+    click(&mut h, "Modify...");
+    click(&mut h, "Symbols and Arrows");
+    for label in ["Arrow 1", "Arrow 2"] {
+        h.get(by().label(label).role(egui::accesskit::Role::ComboBox).value("Closed filled"));
+    }
+}
+
+#[test]
 fn cancel_leaves_the_style_alone() {
     let mut h = manager(|_| {});
     click(&mut h, "Modify...");

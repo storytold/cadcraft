@@ -13,6 +13,7 @@ use std::io::Cursor;
 
 #[test]
 fn writer_populates_native_geometry_without_our_reader() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let source = cases::common_case("native-writer", Common::default());
     for version in Version::ALL {
         let bytes = write_with(&source.drawing, "memory.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
@@ -37,6 +38,7 @@ fn writer_populates_native_geometry_without_our_reader() {
 #[test]
 #[ignore = "Confirmed native DWG mismatch: a pi/2 linetype rotation is stored as pi/2 degrees; DXF unit interpretation needs investigation"]
 fn complex_linetype_rotation_is_correct_in_native_objects() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // Both document APIs specify radians. Do not infer correctness from a DXF round trip:
     // reader and writer can share a unit error. Public DXF references disagree about LTYPE
     // group 50, so this asserts the end-to-end native angle, not a guessed DXF encoding.
@@ -61,6 +63,7 @@ fn complex_linetype_rotation_is_correct_in_native_objects() {
 
 #[test]
 fn reader_accepts_native_fixtures_without_our_writer() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for version in [DxfVersion::AC1015, DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
         let mut native = CadDocument::with_version(version);
         let handles = [
