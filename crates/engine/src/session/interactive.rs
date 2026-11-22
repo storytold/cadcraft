@@ -608,6 +608,15 @@ impl Session {
         out
     }
 
+    /// What the rollover highlight shows of the object `h` under the cursor, with its properties,
+    /// when the running command highlights only a part of it ([`Interactive::highlight`]: TRIM
+    /// the piece a click there removes, EXTEND what it adds). `None`: the whole object.
+    pub fn highlight(&self, h: Handle, cursor: Vec2) -> Option<Vec<Entity>> {
+        let kinds = self.running.as_ref()?.machine.highlight(self, h, cursor)?;
+        let common = self.doc().ok()?.entity(h)?.common.clone();
+        Some(kinds.into_iter().map(|k| Entity { handle: h, common: common.clone(), kind: k }).collect())
+    }
+
     /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
     /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
     /// `None`: the drawing.

@@ -38,7 +38,7 @@ use list::{preview_options, prims_of};
 use pick::{edit_text_at, hatch_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
-use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
+use viewport::{HoverPart, VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
 use widgets::{draw_tiles, draw_ucs_icon, draw_viewcube, tile_rects, tile_xf, viewport_label};
 
 /// World ↔ screen transform for the canvas rect.
@@ -137,6 +137,9 @@ pub struct CanvasState {
     /// The selection and hover highlights inside the active MSPACE viewport (see [`VpHighlight`]).
     vp_sel: VpHighlight,
     vp_hover: VpHighlight,
+    /// The part of the hovered object a running command highlights instead of all of it (see
+    /// [`HoverPart`]).
+    hover_part: HoverPart,
     /// Model space seen through the active MSPACE viewport (see [`VpContent`]).
     vp: VpContent,
     /// What a running command shows in place of the drawing (see [`OnlyList`]).
@@ -408,6 +411,8 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     let active_vp = &frame.active_vp;
     let active_clip = &frame.active_clip;
     let scale = frame.xf.scale;
+    let (hover, cursor) = (app.canvas.hover, app.canvas.cursor);
+    app.canvas.hover_part.update(&app.session, hover, cursor, scale);
     // The active viewport's contents, drawn apart from the layout's list, under its own objects.
     // `masked`: its outline is in the stencil buffer this frame.
     let mut masked = false;
@@ -466,7 +471,9 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             });
             let clipped = painter.with_clip_rect(bounds.intersect(rect));
             let c = &mut app.canvas;
-            if let Some(h) = c.hover
+            if let Some(part) = &c.hover_part.list {
+                draw_highlight(&clipped, &xf, part, &(0..part.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
+            } else if let Some(h) = c.hover
                 && !sel.contains(&h)
             {
                 c.vp_hover.update(st, &[h], scale);
@@ -492,8 +499,12 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
                 }
             }
         }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
-        if let Some(h) = *hover
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, hover_part, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } =
+        &mut app.canvas
+    {
+        if let Some(part) = &hover_part.list {
+            draw_highlight(painter, &xf, part, &(0..part.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
+        } else if let Some(h) = *hover
             && !sel.contains(&h)
         {
             draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);

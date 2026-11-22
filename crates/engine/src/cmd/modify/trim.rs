@@ -18,7 +18,7 @@ pub(crate) struct Edges<'a> {
 }
 
 /// All primitives of the cutting edges (excluding `exclude`).
-fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segment>> {
+pub(crate) fn edge_segments(s: &Session, edges: Edges, exclude: Handle) -> Result<Vec<Segment>> {
     let d = s.doc()?;
     let space = s.space();
     let store = d.space(&space).ok_or(EngineError::NoDocument)?;
@@ -137,15 +137,26 @@ pub(crate) fn json_pick_error(s: &Session, h: Handle, pick: Vec2, edges: Edges, 
     EngineError::Other(message.into())
 }
 
-/// Trim `h` at the piece containing `pick`. Returns the handles that replace it.
 /// Trim `h` at the piece containing `pick`. Returns what it became: its pieces, `h` first
 /// ([`replace_with_pieces`]).
 pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Result<Vec<Handle>> {
+    let cut = edge_segments(s, edges, h)?;
+    match trimmed(s, h, pick, edges, &cut)? {
+        Some(pieces) => replace_with_pieces(s, h, pieces),
+        None => Ok(vec![h]),
+    }
+}
+
+/// What a trim of `h` at `pick` against `cut` (its cutting edges, [`edge_segments`]) leaves of
+/// it, without changing the drawing: the pieces that stay, in [`replace_with_pieces`]'s order
+/// (none: the object goes). `None`: the pick is on one of a polyline's own cuts, which trims
+/// nothing. TRIM's preview and the trim itself both come from here, so they can't disagree.
+pub(crate) fn trimmed(s: &Session, h: Handle, pick: Vec2, edges: Edges, cut: &[Segment]) -> Result<Option<Vec<EntityKind>>> {
     if crate::cmd::curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
-    let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
-    let cut = edge_segments(s, edges, h)?;
+    let d = s.doc()?;
+    let e = d.entity(h).ok_or_else(|| EngineError::Other("no such object".into()))?;
     // A polyline that is one of the edges (picked, or with every object in either mode) cuts
     // itself too.
     let itself = edges.only.is_none_or(|o| o.contains(&h));
@@ -229,13 +240,13 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             }
             keep.into_iter().collect()
         }
-        EntityKind::LwPolyline(p) => match trim_polyline(p, &cut, pick, itself)? {
+        EntityKind::LwPolyline(p) => match trim_polyline(p, cut, pick, itself)? {
             Some(pieces) => pieces,
-            None => return Ok(vec![h]),
+            None => return Ok(None),
         },
-        k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
+        k => crate::cmd::modify2::trim_other(k, cut, pick)?,
     };
-    replace_with_pieces(s, h, pieces)
+    Ok(Some(pieces))
 }
 
 /// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
@@ -564,11 +575,20 @@ fn extend_arc_segment(ga: &Arc, end: Vec2, sweep: f64, cut: &[Segment]) -> Optio
 
 /// Extend the end of `h` nearest `pick` to the nearest boundary edge.
 pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Result<()> {
+    let cut = edge_segments(s, edges, h)?;
+    let new_kind = extended(s, h, pick, &cut)?;
+    s.doc_mut()?.modify_entity(h, |e| e.kind = new_kind)?;
+    Ok(())
+}
+
+/// The object `h` as an extend at `pick` to `cut` (its boundary edges, [`edge_segments`]) leaves
+/// it, without changing the drawing. EXTEND's preview and the extend itself both come from here.
+pub(crate) fn extended(s: &Session, h: Handle, pick: Vec2, cut: &[Segment]) -> Result<EntityKind> {
     if crate::cmd::curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
-    let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
-    let cut = edge_segments(s, edges, h)?;
+    let d = s.doc()?;
+    let e = d.entity(h).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let new_kind = match &e.kind {
         EntityKind::Line(l) => {
             let (a, b) = (l.a.xy(), l.b.xy());
@@ -617,7 +637,7 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             let none = || EngineError::Other("Object does not intersect an edge.".into());
             if let Some((ga, _)) = cadcraft_geom::bulge_to_arc(prev, end, bulge) {
                 // An arc end segment runs on round its circle, as an arc does.
-                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), &cut).ok_or_else(none)?;
+                let (np, b) = extend_arc_segment(&ga, end, 4.0 * bulge.atan(), cut).ok_or_else(none)?;
                 if let Some(v) = vs.get_mut(i_end) {
                     v.p = np;
                 }
@@ -640,8 +660,7 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             // Width, elevation and linetype generation stay as they were.
             EntityKind::LwPolyline(cadcraft_doc::LwPolyline { vertices: vs, ..p.clone() })
         }
-        k => crate::cmd::modify2::extend_other(k, &cut, pick)?,
+        k => crate::cmd::modify2::extend_other(k, cut, pick)?,
     };
-    s.doc_mut()?.modify_entity(h, |e| e.kind = new_kind)?;
-    Ok(())
+    Ok(new_kind)
 }

@@ -2,15 +2,16 @@
 //! (TRIMEXTENDMODE), cutting/boundary edges, Fence, Crossing, Project (PROJMODE), Edge (EDGEMODE),
 //! eRase and Undo. The geometry of one trim or extend is in modify.rs.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
-use cadcraft_doc::{Drawing, EntityKind, Handle};
-use cadcraft_geom::{Bounds2, Line, Vec2, line_line};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Handle};
+use cadcraft_geom::{Bounds2, Line, Segment, Vec2, line_line};
 use serde_json::{Value, json};
 
 use super::curves::KW;
 use super::helpers::{line, lwpoly, rect_vertices};
-use super::modify::{CUT_ONCE, Edges, extend, json_pick_error, trim};
+use super::modify::{CUT_ONCE, Edges, edge_segments, extend, extended, json_pick_error, trim, trimmed};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -264,11 +265,54 @@ pub(crate) struct TrimM {
     stage: Stage,
     /// The drawing before each trim, extend or erase, for Undo.
     undo: Vec<Arc<Drawing>>,
+    /// The edges of the object under the cursor, for the rollover highlight ([`CutCache`]).
+    cut: RefCell<Option<CutCache>>,
+}
+
+/// The cutting or boundary edges of the object under the cursor, kept while the drawing, the
+/// object and the modes stay the same. The rollover highlight works a trim out at every cursor
+/// move, and in Quick mode the edges are every object in the drawing: gathering them once keeps
+/// moving the cursor along one object cheap.
+struct CutCache {
+    doc: usize,
+    h: Handle,
+    quick: bool,
+    implied: bool,
+    cut: Vec<Segment>,
 }
 
 impl TrimM {
     pub(crate) fn new(extend: bool) -> Self {
-        TrimM { extend, edges: None, stage: Stage::Pick, undo: Vec::new() }
+        TrimM { extend, edges: None, stage: Stage::Pick, undo: Vec::new(), cut: RefCell::new(None) }
+    }
+    /// What a click on `h` at `cursor` changes: the piece a trim removes (the whole object when a
+    /// Quick-mode trim erases it), or the stretch an extend adds. `None` when the click would
+    /// change nothing or can't be worked out; the rollover highlight then shows the whole object.
+    fn change(&self, s: &Session, h: Handle, cursor: Vec2) -> Option<Vec<EntityKind>> {
+        let (quick, implied) = (quick_mode(s), edge_mode(s));
+        let doc = Arc::as_ptr(&s.state().ok()?.doc) as usize;
+        let mut cache = self.cut.borrow_mut();
+        if !cache.as_ref().is_some_and(|c| c.doc == doc && c.h == h && c.quick == quick && c.implied == implied) {
+            let cut = edge_segments(s, self.edges(quick, implied), h).ok()?;
+            *cache = Some(CutCache { doc, h, quick, implied, cut });
+        }
+        let cut = &cache.as_ref()?.cut;
+        let d = s.doc().ok()?;
+        let e = d.entity(h)?;
+        // Half a pixel: finer than the eye can tell apart, coarse enough to stay quick.
+        let tol = (s.pixel_size() / 2.0).max(1e-9);
+        let part = if self.extend {
+            let grown = Entity { kind: extended(s, h, cursor, cut).ok()?, ..(**e).clone() };
+            uncovered(d, &grown, std::slice::from_ref(&e.kind), tol)
+        } else {
+            match trimmed(s, h, cursor, self.edges(quick, implied), cut) {
+                Ok(Some(kept)) => uncovered(d, e, &kept, tol),
+                Ok(None) => return None,
+                Err(err) if quick && misses_edges(&err) => vec![e.kind.clone()],
+                Err(_) => return None,
+            }
+        };
+        (!part.is_empty()).then_some(part)
     }
     fn edges(&self, quick: bool, implied: bool) -> Edges<'_> {
         Edges { only: self.edges.as_deref(), implied: !quick && implied }
@@ -407,6 +451,8 @@ impl Interactive for TrimM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // The edges may change (picked again, Undo): gather them afresh for the highlight.
+        self.cut.take();
         let quick = quick_mode(s);
         let implied = edge_mode(s);
         let extending = self.extend;
@@ -555,6 +601,12 @@ impl Interactive for TrimM {
             },
         }
     }
+    fn highlight(&self, s: &Session, h: Handle, cursor: Vec2) -> Option<Vec<EntityKind>> {
+        if self.stage != Stage::Pick {
+            return None;
+        }
+        self.change(s, h, cursor)
+    }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
         match &self.stage {
             Stage::Fence(pts) if !pts.is_empty() => pts
@@ -570,4 +622,79 @@ impl Interactive for TrimM {
             _ => Vec::new(),
         }
     }
+}
+
+/// The stretches of `e`'s outline that none of `others` runs along, as polylines flattened to
+/// `tol`: what a trim takes away (the object less the pieces it keeps), or what an extend adds
+/// (the object as extended less the object as it was). Each segment of the outline is first split
+/// where one of `others` ends on it, so a stretch is either all on them or all off them.
+fn uncovered(d: &Drawing, e: &Entity, others: &[EntityKind], tol: f64) -> Vec<EntityKind> {
+    // Two flattenings of one curve, each within `tol` of it, lie within twice that of each other.
+    let near = 3.0 * tol;
+    let theirs: Vec<Vec<Vec2>> =
+        chains(others.iter().flat_map(|k| crate::select::hit_polylines(d, &Entity { kind: k.clone(), ..e.clone() }, tol)).collect());
+    let ends: Vec<Vec2> = theirs.iter().flat_map(|pl| [pl.first().copied(), pl.last().copied()]).flatten().collect();
+    // On them: near one of them, and not only near one of their ends (a point just past where a
+    // piece ends is near that end, yet off the piece).
+    let on_theirs = |p: Vec2| {
+        theirs.iter().any(|pl| {
+            let (Some(&first), Some(&last)) = (pl.first(), pl.last()) else { return false };
+            pl.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?))).any(|l| {
+                let c = l.closest(p);
+                c.dist(p) <= near && !(c.near(first, 1e-12 * (1.0 + c.len())) || c.near(last, 1e-12 * (1.0 + c.len())))
+            })
+        })
+    };
+    let mut out = Vec::new();
+    let mut run: Vec<Vec2> = Vec::new();
+    let mut flush = |run: &mut Vec<Vec2>| {
+        if run.len() >= 2 {
+            out.push(lwpoly(std::mem::take(run).into_iter().map(cadcraft_geom::PolyVertex::new).collect(), false));
+        }
+        run.clear();
+    };
+    for pl in chains(crate::select::hit_polylines(d, e, tol)) {
+        for w in pl.windows(2) {
+            let (Some(&a), Some(&b)) = (w.first(), w.get(1)) else { continue };
+            let ab = Line::new(a, b);
+            let len = ab.len();
+            if len <= 0.0 {
+                continue;
+            }
+            let mut ts: Vec<f64> = ends.iter().filter(|p| ab.closest(**p).dist(**p) <= near).map(|p| ab.param_of(*p).clamp(0.0, 1.0)).collect();
+            ts.extend([0.0, 1.0]);
+            ts.sort_by(f64::total_cmp);
+            ts.dedup_by(|x, y| (*x - *y).abs() * len <= 1e-9 * (1.0 + a.len()));
+            for t in ts.windows(2) {
+                let (Some(&t0), Some(&t1)) = (t.first(), t.get(1)) else { continue };
+                let (p, q) = (ab.at(t0), ab.at(t1));
+                if on_theirs(ab.at((t0 + t1) / 2.0)) {
+                    flush(&mut run);
+                } else {
+                    if run.last().is_none_or(|l| !l.near(p, 1e-12 * (1.0 + p.len()))) {
+                        flush(&mut run);
+                        run.push(p);
+                    }
+                    run.push(q);
+                }
+            }
+        }
+        flush(&mut run);
+    }
+    out
+}
+
+/// `pls` with each one that starts where the one before it ends joined onto it: a curve's
+/// flattening may come as many short pieces, one after the other.
+fn chains(pls: Vec<Vec<Vec2>>) -> Vec<Vec<Vec2>> {
+    let mut out: Vec<Vec<Vec2>> = Vec::new();
+    for pl in pls {
+        match (out.last_mut(), pl.first()) {
+            (Some(last), Some(&first)) if last.last().is_some_and(|l| l.near(first, 1e-12 * (1.0 + first.len()))) => {
+                last.extend(pl.into_iter().skip(1));
+            }
+            _ => out.push(pl),
+        }
+    }
+    out
 }

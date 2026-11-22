@@ -472,3 +472,31 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     app.session.execute("vplayer", &serde_json::json!({ "handles": [b], "thaw": ["Hidden"] })).unwrap();
     assert!(badge(&mut app, &ctx), "thawed in the viewport: two lines are under the cursor again");
 }
+
+/// #1118: with the cursor on an object at TRIM's "Select object to trim" prompt, the rollover
+/// highlight shows only the piece a click there removes, worked out once while the cursor rests.
+#[test]
+fn trim_highlights_the_piece_a_click_removes_once_per_cursor_position() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    for points in [[[0, -5], [0, 5]], [[10, -5], [10, 5]], [[-5, 0], [15, 0]]] {
+        app.run("line", serde_json::json!({ "points": points })).unwrap();
+    }
+    app.session.zoom_extents().unwrap();
+    let ctx = egui::Context::default();
+    painted_text(&mut app, &ctx, pos2(700.0, 450.0));
+    app.session.cmdline("trim").unwrap();
+    let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
+    painted_text(&mut app, &ctx, at);
+    let part = app.canvas.hover_part.list.as_ref().expect("a part of the line is highlighted");
+    let (lo, hi) = (part.bounds.min.x, part.bounds.max.x);
+    assert!((lo - 0.0).abs() < 1e-6 && (hi - 10.0).abs() < 1e-6, "the piece between the edges: {lo}..{hi}");
+    let computed = app.canvas.hover_part.list_gen;
+    for _ in 0..3 {
+        painted_text(&mut app, &ctx, at);
+    }
+    assert_eq!(app.canvas.hover_part.list_gen, computed, "frames with the cursor at rest compute nothing");
+    // Without a command the whole object is highlighted, as before.
+    app.session.cancel();
+    painted_text(&mut app, &ctx, at);
+    assert!(app.canvas.hover_part.list.is_none());
+}

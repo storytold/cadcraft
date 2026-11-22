@@ -326,6 +326,12 @@ pub trait Interactive: Send {
     fn preview_objects(&self, _s: &Session, _cursor: Vec2) -> Vec<cadcraft_doc::Entity> {
         Vec::new()
     }
+    /// What the rollover highlight shows of the object `h` under the cursor, when it is not the
+    /// whole object (TRIM: the piece a click there removes; EXTEND: what it adds). `None`: the
+    /// whole object, as for any other command.
+    fn highlight(&self, _s: &Session, _h: cadcraft_doc::Handle, _cursor: Vec2) -> Option<Vec<EntityKind>> {
+        None
+    }
     /// The preview as existing objects under one transform, when it is that (MOVE, COPY,
     /// ROTATE, SCALE). The UI then draws them from geometry uploaded once instead of rebuilding
     /// the transformed copies every frame; `None` falls back to [`Interactive::preview`].
