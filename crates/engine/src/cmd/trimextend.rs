@@ -634,15 +634,28 @@ fn uncovered(d: &Drawing, e: &Entity, others: &[EntityKind], tol: f64) -> Vec<En
     let theirs: Vec<Vec<Vec2>> =
         chains(others.iter().flat_map(|k| crate::select::hit_polylines(d, &Entity { kind: k.clone(), ..e.clone() }, tol)).collect());
     let ends: Vec<Vec2> = theirs.iter().flat_map(|pl| [pl.first().copied(), pl.last().copied()]).flatten().collect();
-    // On them: near one of them, and not only near one of their ends (a point just past where a
-    // piece ends is near that end, yet off the piece).
-    let on_theirs = |p: Vec2| {
-        theirs.iter().any(|pl| {
-            let (Some(&first), Some(&last)) = (pl.first(), pl.last()) else { return false };
-            pl.windows(2).filter_map(|w| Some(Line::new(*w.first()?, *w.get(1)?))).any(|l| {
-                let c = l.closest(p);
-                c.dist(p) <= near && !(c.near(first, 1e-12 * (1.0 + c.len())) || c.near(last, 1e-12 * (1.0 + c.len())))
+    // Their segments, each with its box and the ends of the piece it belongs to, worked out once:
+    // the test below runs for every stretch of the outline.
+    let spans: Vec<(Line, Bounds2, Vec2, Vec2)> = theirs
+        .iter()
+        .flat_map(|pl| {
+            let ends = (pl.first().copied(), pl.last().copied());
+            pl.windows(2).filter_map(move |w| {
+                let (a, b) = (*w.first()?, *w.get(1)?);
+                Some((Line::new(a, b), Bounds2::from_points([a, b]), ends.0?, ends.1?))
             })
+        })
+        .collect();
+    // On them: near one of them, and not only near one of their ends (a point just past where a
+    // piece ends is near that end, yet off the piece). A segment whose box is farther than `near`
+    // from the point can't be that near it, so it is passed over without working out its distance.
+    let on_theirs = |p: Vec2| {
+        spans.iter().any(|(l, b, first, last)| {
+            if p.x < b.min.x - near || p.x > b.max.x + near || p.y < b.min.y - near || p.y > b.max.y + near {
+                return false;
+            }
+            let c = l.closest(p);
+            c.dist(p) <= near && !(c.near(*first, 1e-12 * (1.0 + c.len())) || c.near(*last, 1e-12 * (1.0 + c.len())))
         })
     };
     let mut out = Vec::new();
