@@ -21,7 +21,7 @@ jobs:
     # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
     with:
-      os: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && '["artcraft-k8s-trusted"]' || '["ubuntu-24.04"]' }}
+      os: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && '["artcraft-k8s-main"]' || '["ubuntu-24.04"]' }}
       # Same craft-fonts commit as release.yml.
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       timeout-minutes: 90
