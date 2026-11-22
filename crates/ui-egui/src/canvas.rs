@@ -400,6 +400,16 @@ struct CanvasPaint<'a> {
     raw_world: Option<Vec2>,
 }
 
+/// The part of the hovered object a click changes ([`HoverPart`]: the piece TRIM removes, the
+/// stretch EXTEND adds): a wide, see-through band in the hover colour under the usual rollover
+/// highlight. The rollover look alone (a thin dashed line over the object itself) is hard to see
+/// on part of an object, and this is what the user is about to change.
+fn draw_hover_part(p: &egui::Painter, xf: &Xf, part: &DisplayList, color: Color32, look: Look) {
+    let all: Vec<usize> = (0..part.prims.len()).collect();
+    draw_highlight(p, xf, part, &all, color.gamma_multiply(0.45), Look { width: 6.0, dashed: false });
+    draw_highlight(p, xf, part, &all, color, look);
+}
+
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
     let app = &mut *frame.app;
     let painter = frame.painter;
@@ -472,7 +482,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             let clipped = painter.with_clip_rect(bounds.intersect(rect));
             let c = &mut app.canvas;
             if let Some(part) = &c.hover_part.list {
-                draw_highlight(&clipped, &xf, part, &(0..part.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
+                draw_hover_part(&clipped, &xf, part, t.hover, preview_look);
             } else if let Some(h) = c.hover
                 && !sel.contains(&h)
             {
@@ -503,7 +513,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
         &mut app.canvas
     {
         if let Some(part) = &hover_part.list {
-            draw_highlight(painter, &xf, part, &(0..part.prims.len()).collect::<Vec<_>>(), t.hover, preview_look);
+            draw_hover_part(painter, &xf, part, t.hover, preview_look);
         } else if let Some(h) = *hover
             && !sel.contains(&h)
         {
