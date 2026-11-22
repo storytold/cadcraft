@@ -72,6 +72,7 @@ fn edit(drawing: Drawing, handle: Handle, points: &[Vec2], explicit: bool, index
 }
 
 fn check(format: &str, interactive: bool) {
+    cadcraft_io::dwg_worker::allow_in_process();
     for explicit in [false, true] {
         for reversed in [false, true] {
             let (drawing, handle, points) = fixture(explicit, reversed);
@@ -166,6 +167,7 @@ fn polyline_closedness_is_not_inferred_from_coincident_endpoints() {
 
 #[test]
 fn coincident_endpoints_remain_separately_editable_after_save() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let original = [Vec2::ZERO, Vec2::new(8.0, 0.0), Vec2::new(8.0, 6.0), Vec2::new(0.0, 6.0)];
     for explicit in [false, true] {
         for interactive in [false, true] {
