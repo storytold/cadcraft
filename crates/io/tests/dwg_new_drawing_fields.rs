@@ -11,7 +11,7 @@
 //! Non-ASCII field text is not covered: the bridge writes it as `\U+XXXX` escapes, which the
 //! acadrust used here decodes for every version; acadrust#213 / CADCraft #2851 track a newer one
 //! that does not.
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 
 use std::io::Cursor;
 
@@ -67,13 +67,18 @@ fn contents(d: &Drawing) -> Vec<String> {
     v.into_iter().map(|(_, c)| c).collect()
 }
 
+fn save_dwg(d: &Drawing, name: &str, version: Version) -> Vec<u8> {
+    cadcraft_io::dwg_worker::allow_in_process();
+    write_with(d, name, &SaveOptions { version: Some(version), binary: false }).unwrap()
+}
+
 /// The new drawing with 5 fields (and the 3 `_text` fields above them) saved as DWG 2018 keeps
 /// every field's value and format, and reopens with the same field codes.
 #[test]
 fn a_new_drawing_keeps_its_fields_in_a_dwg() {
     let d = new_drawing();
     assert_eq!(d.foreign.version, None, "a new drawing has no kept version");
-    let dwg = write_with(&d, "new.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    let dwg = save_dwg(&d, "new.dwg", Version::R2018);
     let fields = fields_of(dwg.clone());
     assert_eq!(fields.len(), 8, "3 `_text` fields and 5 field codes");
     let by_code = |code: &str| fields.iter().filter(|f| f.code == code).collect::<Vec<_>>();
@@ -102,10 +107,9 @@ fn a_new_drawing_keeps_its_fields_in_a_dwg() {
 fn a_new_drawing_and_its_dxf_save_alike() {
     let d = new_drawing();
     let via_dxf = read(&cadcraft_io::write(&d, "x.dxf").unwrap(), "x.dxf").unwrap();
-    let opts = SaveOptions { version: Some(Version::R2018), binary: false };
     let key = |f: &Field| (f.evaluator_id.clone(), f.code.clone(), f.value.format.clone(), f.value_string.clone());
-    let a: Vec<_> = fields_of(write_with(&d, "a.dwg", &opts).unwrap()).iter().map(key).collect();
-    let b: Vec<_> = fields_of(write_with(&via_dxf, "b.dwg", &opts).unwrap()).iter().map(key).collect();
+    let a: Vec<_> = fields_of(save_dwg(&d, "a.dwg", Version::R2018)).iter().map(key).collect();
+    let b: Vec<_> = fields_of(save_dwg(&via_dxf, "b.dwg", Version::R2018)).iter().map(key).collect();
     assert_eq!(a, b);
 }
 
@@ -113,7 +117,7 @@ fn a_new_drawing_and_its_dxf_save_alike() {
 #[test]
 fn a_drawing_without_fields_saves_as_before() {
     let d = Drawing::new_metric();
-    let dwg = write_with(&d, "plain.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    let dwg = save_dwg(&d, "plain.dwg", Version::R2018);
     assert!(fields_of(dwg).is_empty());
 }
 
@@ -131,7 +135,7 @@ fn fields_added_to_an_r2000_drawing_with_retained_objects_survive() {
     assert_eq!(imported.foreign.version.as_deref(), Some("AC1015"));
     assert!(imported.foreign.objects.iter().any(|o| o.kind == "XRECORD"), "the XRECORD is kept");
     let d = with_fields(imported);
-    let dwg = write_with(&d, "old.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    let dwg = save_dwg(&d, "old.dwg", Version::R2018);
     let fields = fields_of(dwg.clone());
     assert_eq!(fields.len(), 8, "3 `_text` fields and 5 field codes");
     let dates: Vec<_> = fields.iter().filter(|f| f.code == "\\AcVar Date \\f \"dd/MM/yyyy\"").collect();
@@ -152,7 +156,7 @@ fn fields_added_to_an_r2000_drawing_with_retained_objects_survive() {
 // reads the same.
 
 fn r2018(d: &Drawing, name: &str) -> Vec<u8> {
-    write_with(d, name, &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap()
+    save_dwg(d, name, Version::R2018)
 }
 
 fn acad(dwg: Vec<u8>) -> acadrust::CadDocument {
@@ -177,8 +181,7 @@ fn field_keys(dwg: Vec<u8>) -> Vec<FieldKey> {
 /// also when a new field text is added.
 #[test]
 fn kept_r2004_field_objects_keep_formats_and_values() {
-    let opts = SaveOptions { version: Some(Version::R2004), binary: false };
-    let r2004 = write_with(&new_drawing(), "old.dwg", &opts).unwrap();
+    let r2004 = save_dwg(&new_drawing(), "old.dwg", Version::R2004);
     let before = field_keys(r2004.clone());
     assert_eq!(before.len(), 8);
     assert!(before.iter().any(|k| k.2 == "dd/MM/yyyy") && before.iter().any(|k| k.2 == "%lu2"), "{before:#?}");
@@ -188,7 +191,7 @@ fn kept_r2004_field_objects_keep_formats_and_values() {
     assert_eq!(kept.len(), 8, "the FIELD objects are kept");
     assert!(kept.iter().all(|o| o.tags.iter().any(|t| t.code == 4) && !o.tags.iter().any(|t| t.code == 304)), "pre-2007 layout");
 
-    let same = field_keys(write_with(&imported, "same.dwg", &opts).unwrap());
+    let same = field_keys(save_dwg(&imported, "same.dwg", Version::R2004));
     assert_eq!(same, before, "re-saved as DWG 2004");
     let mut d = imported;
     let t = MText {
@@ -204,7 +207,7 @@ fn kept_r2004_field_objects_keep_formats_and_values() {
         columns: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
-    let more = field_keys(write_with(&d, "more.dwg", &opts).unwrap());
+    let more = field_keys(save_dwg(&d, "more.dwg", Version::R2004));
     for k in &before {
         assert!(more.contains(k), "kept field {k:?} changed: {more:#?}");
     }
@@ -335,7 +338,7 @@ fn fields_added_to_an_r2000_drawing_keep_formats_in_dwg_2004_and_2018() {
     let d = with_fields(read(R2000_WITH_XRECORD.as_bytes(), "old.dxf").unwrap());
     assert_eq!(d.foreign.version.as_deref(), Some("AC1015"));
     for v in [Version::R2004, Version::R2018] {
-        let dwg = write_with(&d, "old.dwg", &SaveOptions { version: Some(v), binary: false }).unwrap();
+        let dwg = save_dwg(&d, "old.dwg", v);
         assert_field_formats(&field_keys(dwg.clone()), &format!("{v:?}"));
         let back = read(&dwg, "old.dwg").unwrap();
         assert_eq!(contents(&back), [DATE, TWO, EXPR], "{v:?}");
@@ -348,12 +351,11 @@ fn fields_added_to_an_r2000_drawing_keep_formats_in_dwg_2004_and_2018() {
 /// pre-2007 groups, the format in group 4 and the values without flags) and saves the same again.
 #[test]
 fn a_dwg_2004_with_fields_reopens_with_them_and_saves_the_same() {
-    let opts = SaveOptions { version: Some(Version::R2004), binary: false };
-    let first = write_with(&with_fields(read(R2000_WITH_XRECORD.as_bytes(), "old.dxf").unwrap()), "a.dwg", &opts).unwrap();
+    let first = save_dwg(&with_fields(read(R2000_WITH_XRECORD.as_bytes(), "old.dxf").unwrap()), "a.dwg", Version::R2004);
     let back = read(&first, "a.dwg").unwrap();
     assert_eq!(back.foreign.version.as_deref(), Some("AC1018"));
     assert_eq!(contents(&back), [DATE, TWO, EXPR], "the field codes and values are read back");
-    let second = write_with(&back, "b.dwg", &opts).unwrap();
+    let second = save_dwg(&back, "b.dwg", Version::R2004);
     assert_eq!(field_keys(second.clone()), field_keys(first));
     assert_eq!(contents(&read(&second, "b.dwg").unwrap()), [DATE, TWO, EXPR]);
 }
@@ -362,7 +364,7 @@ fn a_dwg_2004_with_fields_reopens_with_them_and_saves_the_same() {
 /// 2007 groups (as when it was read as 2010), so a DWG 2018 keeps the formats.
 #[test]
 fn fields_added_to_a_2007_drawing_keep_formats_in_dwg_2018() {
-    let r2007 = write_with(&Drawing::new_metric(), "old.dwg", &SaveOptions { version: Some(Version::R2007), binary: false }).unwrap();
+    let r2007 = save_dwg(&Drawing::new_metric(), "old.dwg", Version::R2007);
     let d = with_fields(read(&r2007, "old.dwg").unwrap());
     assert_eq!(d.foreign.version.as_deref(), Some("AC1021"));
     let dwg = r2018(&d, "new.dwg");
