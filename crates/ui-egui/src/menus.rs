@@ -73,7 +73,7 @@ pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
-const RECENT_CLEAR: &str = "ui.recent.clear";
+pub const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
