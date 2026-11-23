@@ -48,9 +48,11 @@ impl Session {
     }
 
     /// Start a command by name or alias as if typed at the command line. A script's commands are
-    /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are.
+    /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are, and so
+    /// is a command started by a token a LISP routine feeds through [`Session::typed`]: `(command
+    /// "LINE" "0,0" "'-INSERT" …)` replaces LINE with an INSERT the routine started.
     pub fn start(&mut self, name: &str) -> Result<()> {
-        let origin = if self.in_script { Origin::Program } else { Origin::Person };
+        let origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
         self.start_from(name, origin)
     }
 

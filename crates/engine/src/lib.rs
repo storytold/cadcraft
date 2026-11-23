@@ -111,6 +111,11 @@ pub struct Session {
     pub last_finished: Option<(u64, bool)>,
     /// A script is running ([`Session::script`]); a SCRIPT command inside it is refused.
     in_script: bool,
+    /// The LISP evaluator is running ([`Session::lisp_drive`]): what a routine feeds the command
+    /// line — the command it starts, or a `'command` token it types into a running one — is the
+    /// program's input, so [`Session::start`] records [`Origin::Program`] for it. Saved and
+    /// restored around each slice of a routine, so nesting keeps the outer answer.
+    program_input: bool,
     /// The command suspended while a transparent command (`'ZOOM`, `'PAN`…) prompts inside it;
     /// it resumes when that command ends. One level, as in AutoCAD.
     pub suspended: Option<Running>,
@@ -208,6 +213,7 @@ impl Session {
             command_origin: Origin::Person,
             last_finished: None,
             in_script: false,
+            program_input: false,
             suspended: None,
             log: Vec::new(),
             last_command: None,

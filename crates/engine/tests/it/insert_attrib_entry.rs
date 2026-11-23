@@ -260,6 +260,56 @@ fn a_lisp_insert_never_asks_in_the_dialog() {
     s.cancel();
 }
 
+/// A routine that types a command into a running LINE: `(command "LINE" "0,0" spelling …)`.
+/// `extra` answers MINSERT's grid, and the arguments after it answer the attribute prompts.
+fn lisp_token_replaces_line(spelling: &str, extra: &str) -> Session {
+    let mut s = session(None, Some(true));
+    let code = format!("(command \"LINE\" \"0,0\" \"{spelling}\" \"T\" \"0,50\" 1 1 0{extra})");
+    let r = s.execute("lisp", &json!({ "code": code })).unwrap();
+    assert!(r.get("error").is_none(), "{spelling}: {r}");
+    s
+}
+
+/// Answer the attribute prompts the routine's INSERT left waiting, as the person at the
+/// command line would.
+fn answer_the_routines_insert(s: &mut Session) {
+    s.input(Input::Text("a".into())).unwrap();
+    s.input(Input::Text("c".into())).unwrap();
+    s.input(Input::Text("a".into())).unwrap(); // A's Verify
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(s), pairs(&[("A", "a"), ("B", "two"), ("C", "c")]));
+}
+
+#[test]
+fn a_lisp_insert_token_replacing_a_command_never_asks_in_the_dialog() {
+    // The token reaches the typed-input path while LINE runs, not the idle start: the INSERT
+    // that replaces LINE is still the routine's, so ATTDIA 1 opens no dialog nobody can click.
+    let mut s = lisp_token_replaces_line("'-INSERT", "");
+    assert_eq!(s.prompt_text(), "INSERT First <1>:", "asked at the command line");
+    assert!(s.attribute_entry().is_none(), "a LISP token never opens the dialog");
+    // The command keeps answering at the command line after the routine ended.
+    answer_the_routines_insert(&mut s);
+}
+
+#[test]
+fn a_lisp_minsert_token_replacing_a_command_never_asks_in_the_dialog() {
+    let mut s = lisp_token_replaces_line("'MINSERT", " 1 1");
+    assert_eq!(s.prompt_text(), "MINSERT First <1>:", "asked at the command line");
+    assert!(s.attribute_entry().is_none(), "a LISP token never opens the dialog");
+    answer_the_routines_insert(&mut s);
+}
+
+#[test]
+fn a_person_typing_a_transparent_insert_still_asks_in_the_dialog() {
+    // The tokens the routine feeds above, typed by a person: the INSERT that replaces LINE is
+    // theirs, so ATTDIA 1 asks in the dialog.
+    let mut s = session(None, Some(true));
+    s.cmdline("LINE 0,0 '-INSERT T 0,50 1 1 0").unwrap();
+    assert!(s.running.is_some(), "{}", s.prompt_text());
+    assert!(s.attribute_entry().is_some(), "a typed transparent INSERT asks in the dialog");
+    s.cancel();
+}
+
 #[test]
 fn an_entry_belongs_to_the_drawing_and_command_that_asked() {
     let mut s = session(None, Some(true));

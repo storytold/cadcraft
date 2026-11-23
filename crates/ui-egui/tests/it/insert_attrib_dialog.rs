@@ -301,6 +301,40 @@ fn a_lisp_insert_never_opens_the_dialog() {
     assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
 }
 
+/// A routine that types a command into a running LINE, as a person's tokens would arrive.
+fn lisp_token_replaces_line(spelling: &str, extra: &str) -> CadApp {
+    let mut a = app();
+    let code = format!("(command \"LINE\" \"0,0\" \"{spelling}\" \"T\" \"50,0\" 1 1 0{extra})");
+    a.run("lisp", json!({ "code": code })).unwrap();
+    a
+}
+
+#[test]
+fn a_lisp_insert_token_replacing_a_command_never_opens_the_dialog() {
+    // The token reaches the typed-input path while LINE runs, not the idle start: the INSERT
+    // that replaces LINE is still the routine's, so ATTDIA 1 opens no dialog.
+    let h = harness(lisp_token_replaces_line("'-INSERT", ""));
+    assert!(h.query_by_label("Edit Attributes").is_none(), "a LISP token never opens the dialog");
+    assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
+}
+
+#[test]
+fn a_lisp_minsert_token_replacing_a_command_never_opens_the_dialog() {
+    let h = harness(lisp_token_replaces_line("'MINSERT", " 1 1"));
+    assert!(h.query_by_label("Edit Attributes").is_none(), "a LISP token never opens the dialog");
+    assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
+}
+
+#[test]
+fn a_person_typing_a_transparent_insert_still_opens_the_dialog() {
+    // What the routine feeds above, typed by a person at the command line.
+    let mut a = app();
+    a.cmdline("LINE 0,0 '-INSERT T 50,0 1 1 0");
+    let h = harness(a);
+    h.get_by_label("Edit Attributes");
+    assert!(h.state().session.attribute_entry().is_some());
+}
+
 #[test]
 fn a_typed_or_menu_insert_still_opens_the_dialog() {
     // Typed at the command line.
