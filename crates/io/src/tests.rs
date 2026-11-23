@@ -2309,6 +2309,102 @@ fn two_point_text_save_keeps_degenerate_and_unrelated_values() {
 }
 
 #[test]
+fn two_point_imported_degenerate_geometry_keeps_edited_height() {
+    for missing in [false, true] {
+        let mut d = imported_two_point_text_sample();
+        let handle = d.model.handles()[0];
+        d.model.modify(handle, |entity| {
+            if let EntityKind::Text(t) = &mut entity.kind {
+                t.insert = Vec3::ZERO;
+                t.align_pt = if missing { None } else { Some(Vec3::ZERO) };
+                t.height = 2.0;
+            }
+        });
+        let snapshot = &mut std::sync::Arc::make_mut(&mut d.foreign).text_fits.get_mut(&handle).unwrap()[0].0;
+        snapshot.insert = Vec3::ZERO;
+        snapshot.align_pt = if missing { None } else { Some(Vec3::ZERO) };
+        snapshot.height = 2.0;
+        let mut d = read(&write(&d, "edge.dxf").unwrap(), "edge.dxf").unwrap();
+        let handle = d.model.handles()[0];
+        let imported = first(&d, |kind| if let EntityKind::Text(t) = kind { Some(t.clone()) } else { None });
+        assert_eq!(imported.align_pt, if missing { None } else { Some(Vec3::ZERO) });
+        d.model.modify(handle, |entity| {
+            if let EntityKind::Text(t) = &mut entity.kind { t.height = 4.0; }
+        });
+        let saved = read(&write(&d, "edge.dxf").unwrap(), "edge.dxf").unwrap();
+        let text = first(&saved, |kind| if let EntityKind::Text(t) = kind { Some(t.clone()) } else { None });
+        assert!((text.height - 4.0).abs() < 1e-10, "missing: {missing}");
+    }
+}
+
+#[test]
+fn two_point_imported_empty_attdef_keeps_dimensions_when_points_move() {
+    let mut d = imported_two_point_text_sample();
+    let block = std::sync::Arc::make_mut(d.blocks.get_mut("Labels").unwrap());
+    let handle = block.entities.handles()[0];
+    block.entities.modify(handle, |entity| {
+        if let EntityKind::AttDef(a) = &mut entity.kind {
+            a.text.value.clear();
+            a.text.insert = Vec3::ZERO;
+            a.text.align_pt = Some(Vec3::new(10.0, 0.0, 0.0));
+            a.text.height = 2.0;
+            a.text.width_factor = 0.8;
+        }
+    });
+    let snapshot = &mut std::sync::Arc::make_mut(&mut d.foreign).text_fits.get_mut(&handle).unwrap()[0].0;
+    snapshot.value.clear();
+    snapshot.insert = Vec3::ZERO;
+    snapshot.align_pt = Some(Vec3::new(10.0, 0.0, 0.0));
+    snapshot.height = 2.0;
+    snapshot.width_factor = 0.8;
+    let mut d = read(&write(&d, "empty.dxf").unwrap(), "empty.dxf").unwrap();
+    let block = std::sync::Arc::make_mut(d.blocks.get_mut("Labels").unwrap());
+    let handle = block.entities.handles()[0];
+    block.entities.modify(handle, |entity| {
+        if let EntityKind::AttDef(a) = &mut entity.kind {
+            a.text.align_pt = Some(Vec3::new(0.0, 20.0, 0.0));
+        }
+    });
+    let saved = read(&write(&d, "empty.dxf").unwrap(), "empty.dxf").unwrap();
+    let entity = saved.block("Labels").unwrap().entities.iter().next().unwrap();
+    let EntityKind::AttDef(a) = &entity.kind else { panic!("expected ATTDEF") };
+    assert!((a.text.height - 2.0).abs() < 1e-10);
+    assert!((a.text.width_factor - 0.8).abs() < 1e-10);
+    assert!((a.text.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-10);
+}
+
+#[test]
+fn two_point_changed_style_definition_recomputes_measurements() {
+    let mut d = imported_two_point_text_sample();
+    d.text_styles.iter_mut().find(|style| style.name.eq_ignore_ascii_case("Standard")).unwrap().backwards = true;
+    for name in two_point_formats() {
+        let saved = read(&write(&d, name).unwrap(), name).unwrap();
+        for (before, after) in two_point_texts(&d).into_iter().zip(two_point_texts(&saved)) {
+            let expected = cadcraft_render::fitted_text_entity(&d, before, &before.value);
+            assert!((after.height - expected.height).abs() < 1e-9, "{name}");
+            assert!((after.width_factor - expected.width_factor).abs() < 1e-9, "{name}");
+        }
+    }
+}
+
+#[test]
+fn two_point_changed_justification_recomputes_measurements() {
+    for horizontal in [true, false] {
+        let mut d = imported_two_point_text_sample();
+        edit_two_point_texts(&mut d, |t| {
+            if horizontal {
+                t.halign = if t.halign == HAlign::Fit { HAlign::Aligned } else { HAlign::Fit };
+            } else {
+                t.valign = VAlign::Middle;
+            }
+        });
+        for name in two_point_formats() {
+            check_two_point_save(&d, name, true, true);
+        }
+    }
+}
+
+#[test]
 fn two_point_dwg_source_preserves_imported_measurements() {
     let imported = imported_two_point_text_sample();
     crate::dwg_worker::allow_in_process();

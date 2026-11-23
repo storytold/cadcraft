@@ -261,18 +261,18 @@ fn relative_match(a: f64, b: f64) -> bool {
 // A fitted dimension depends on the point distance, independently of position and direction.
 fn imported_fit_scale(original: &Text, current: &Text) -> Option<f64> {
     let (Some(first), Some(second)) = (original.align_pt, current.align_pt) else {
-        return (original.align_pt == current.align_pt).then_some(1.0);
+        return None;
     };
     let before = original.insert.xy().dist(first.xy());
     let after = current.insert.xy().dist(second.xy());
+    if !before.is_finite() || !after.is_finite() || before <= 0.0 || after <= 0.0 {
+        return None;
+    }
     if relative_match(before, after) {
         return Some(1.0);
     }
-    if before > 1e-12 && after > 1e-12 && before.is_finite() && after.is_finite() {
-        let scale = after / before;
-        return (scale.is_finite() && scale > 0.0).then_some(scale);
-    }
-    None
+    let scale = after / before;
+    (scale.is_finite() && scale > 0.0).then_some(scale)
 }
 
 /// `attdef_prompt` is `Some` for an ATTDEF (its prompt, which may be empty) and `None` for an ATTRIB.
@@ -300,7 +300,7 @@ pub(super) fn text_tags(
             && original.width_factor == t.width_factor
             && (t.halign != HAlign::Fit || relative_match(t.height, original.height * scale))
         {
-            if t.halign == HAlign::Aligned {
+            if t.halign == HAlign::Aligned && !t.value.is_empty() {
                 resolved.height = original.height * scale;
             }
             if let Some(second) = t.align_pt {
