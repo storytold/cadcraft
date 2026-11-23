@@ -232,7 +232,7 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
     let outer = found.outer;
     let ob = Bounds2::from_points(outer.iter().copied());
     let sources = handles_of(&owners, &found.outer_sources);
-    let mut loops = vec![HatchLoop { vertices: outer.iter().map(|q| PolyVertex::new(*q)).collect(), outer: true, sources }];
+    let mut loops = vec![HatchLoop { vertices: outer.iter().map(|q| PolyVertex::new(*q)).collect(), outer: true, boundary_flags: None, sources }];
     // Islands: closed objects entirely inside the outer loop that don't contain the pick point.
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
@@ -248,7 +248,7 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
                 let inside = pts.iter().all(|q| point_in_polygon(&outer, *q) || outer.iter().any(|o| o.near(*q, tol * 10.0)));
                 let same_as_outer = (cadcraft_geom::shoelace(&pts).abs() - cadcraft_geom::shoelace(&outer).abs()).abs() < tol.max(1e-6) * 1000.0;
                 if inside && !same_as_outer && !point_in_polygon(&pts, p) {
-                    loops.push(HatchLoop { vertices: vs, outer: false, sources: vec![e.handle] });
+                    loops.push(HatchLoop { vertices: vs, outer: false, boundary_flags: None, sources: vec![e.handle] });
                 }
             }
         }
@@ -260,7 +260,12 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
             && island.sources.iter().all(|&i| owners.get(i).and_then(|h| d.entity(*h)).is_some_and(|e| island_curve(d, e)));
         if open_curves {
             let sources = handles_of(&owners, &island.sources);
-            loops.push(HatchLoop { vertices: island.outline.into_iter().map(PolyVertex::new).collect(), outer: false, sources });
+            loops.push(HatchLoop {
+                vertices: island.outline.into_iter().map(PolyVertex::new).collect(),
+                outer: false,
+                boundary_flags: None,
+                sources,
+            });
         }
     }
     Ok(loops)
@@ -271,7 +276,7 @@ pub(crate) fn loops_from_handles(s: &Session, hs: &[Handle]) -> Result<Vec<Hatch
     let mut loops = Vec::new();
     for h in hs {
         if let Some(vs) = d.entity(*h).and_then(|e| closed_loop(d, e)) {
-            loops.push(HatchLoop { vertices: vs, outer: loops.is_empty(), sources: vec![*h] });
+            loops.push(HatchLoop { vertices: vs, outer: loops.is_empty(), boundary_flags: None, sources: vec![*h] });
         }
     }
     if loops.is_empty() {

@@ -212,6 +212,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     // Every record is placed now, and an object holding a reserved handle keeps it from new
     // objects by itself. Kept, the set would be copied with every undo step of the drawing.
     d.reserved_handles.clear();
+    remember_text_fits(&mut d);
     Ok(d)
 }
 
@@ -242,6 +243,23 @@ fn number_unknown_viewport_ids(d: &mut Drawing, sheet_dropped: &std::collections
             l.entities.replace(e);
         }
     }
+}
+
+/// Capture after all tables and entity fixups, including files whose tables follow entities.
+fn remember_text_fits(d: &mut Drawing) {
+    let mut fits = std::collections::BTreeMap::new();
+    for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter())) {
+        let texts: Vec<&Text> = match &e.kind {
+            EntityKind::Text(t) => vec![t],
+            EntityKind::AttDef(a) => vec![&a.text],
+            EntityKind::Insert(i) => i.attribs.iter().map(|a| &a.text).collect(),
+            _ => continue,
+        };
+        if texts.iter().any(|t| matches!(t.halign, HAlign::Aligned | HAlign::Fit)) {
+            fits.insert(e.handle, texts.into_iter().map(|t| (t.clone(), d.text_style(&t.style).cloned().unwrap_or_default())).collect());
+        }
+    }
+    std::sync::Arc::make_mut(&mut d.foreign).text_fits = fits;
 }
 
 /// An entity from the groups of a DXF record of type `kind` (without its `0` group), as the
