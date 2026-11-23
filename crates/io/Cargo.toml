@@ -1,6 +1,6 @@
 [package]
 name = "cadcraft-io"
-description = "CADCraft file formats: DXF read/write mapping, SVG, PNG and PDF export"
+description = "CADCraft file formats: DXF read/write mapping, SVG and PLT import, SVG, PNG and PDF export"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,6 +15,9 @@ cadcraft-doc = { workspace = true }
 craft-dxf = { workspace = true }
 craft-dwg = { workspace = true }
 craft-svg = { workspace = true }
+craft-plotter = { workspace = true }
+# Path elements of the shapes craft-plotter reads.
+kurbo = "0.13"
 craft-image-codecs = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-fonts = { workspace = true }

@@ -32,6 +32,8 @@ craft-mcp = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782
 craft-jsonrpc = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 # SVG/SVGZ import and export geometry (craft-libs#778).
 craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
+# HP-GL/2 (PLT) import.
+craft-plotter = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 # Which paths stored in a drawing (xrefs, data links) may be opened.
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 # PDF writing (krilla) for plots, and reading them back in tests. The root patches below pin

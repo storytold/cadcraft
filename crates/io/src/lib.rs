@@ -1,4 +1,4 @@
-//! CADCraft file formats: DXF/DWG read, SVG and SVGZ import, SVG/PNG/PDF export (plotting).
+//! CADCraft file formats: DXF/DWG read, SVG, SVGZ and HP-GL (PLT) import, SVG/PNG/PDF export (plotting).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -25,6 +25,8 @@ pub mod raster;
 pub mod roundtrip;
 pub mod svg;
 mod svg_read;
+/// HP-GL and HP-GL/2 plot files (PLT) as model-space geometry.
+mod plt_read;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;
@@ -90,7 +92,7 @@ fn ext(name: impl AsRef<Path>) -> String {
 }
 
 /// Read a drawing; the format comes from the content (DXF ASCII/binary, DWG) or the name
-/// (SVG and gzip-compressed SVGZ).
+/// (SVG and gzip-compressed SVGZ, HP-GL plot files).
 pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
     read_source(bytes, name.as_ref()).map(|(d, _)| d)
 }
@@ -108,6 +110,7 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
     }
     let d = match (Format::from_path(name), ext(name).as_str()) {
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),
+        (Some(Format::Plt), _) => plt_read::read(bytes),
         (Some(Format::Dxf), _) => dxf_read::read(bytes),
         (_, e) if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),
         (_, e) => Err(IoError::Unsupported(e.to_string())),

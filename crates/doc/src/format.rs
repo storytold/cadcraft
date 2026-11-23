@@ -10,13 +10,15 @@ pub enum Format {
     Svg,
     /// Gzip-compressed SVG.
     Svgz,
+    /// An HP-GL or HP-GL/2 plot file; read only.
+    Plt,
     Png,
     Pdf,
 }
 
 impl Format {
     /// The formats a drawing can be read from by name. DXF and DWG are also recognised by content.
-    pub const READ: &'static [Format] = &[Format::Dxf, Format::Dwg, Format::Svg, Format::Svgz];
+    pub const READ: &'static [Format] = &[Format::Dxf, Format::Dwg, Format::Svg, Format::Svgz, Format::Plt];
     /// The formats a drawing can be written to.
     pub const WRITE: &'static [Format] = &[Format::Dxf, Format::Dwg, Format::Dwt, Format::Svg, Format::Png, Format::Pdf];
 
@@ -30,6 +32,7 @@ impl Format {
             "dwt" => Format::Dwt,
             "svg" => Format::Svg,
             "svgz" => Format::Svgz,
+            "plt" | "hpgl" | "hgl" => Format::Plt,
             "png" => Format::Png,
             "pdf" => Format::Pdf,
             _ => return None,
@@ -44,6 +47,7 @@ impl Format {
             Format::Dwt => "dwt",
             Format::Svg => "svg",
             Format::Svgz => "svgz",
+            Format::Plt => "plt",
             Format::Png => "png",
             Format::Pdf => "pdf",
         }
@@ -76,7 +80,7 @@ mod tests {
 
     #[test]
     fn from_path_by_extension() {
-        for f in [Format::Dxf, Format::Dwg, Format::Dwt, Format::Svg, Format::Svgz, Format::Png, Format::Pdf] {
+        for f in [Format::Dxf, Format::Dwg, Format::Dwt, Format::Svg, Format::Svgz, Format::Plt, Format::Png, Format::Pdf] {
             assert_eq!(Format::from_path(format!("a/b.{}", f.extension())), Some(f));
             assert_eq!(Format::from_path(format!("B.{}", f.extension().to_ascii_uppercase())), Some(f));
         }
@@ -95,6 +99,8 @@ mod tests {
         assert!(Format::WRITE.iter().filter(|f| f.is_image()).count() == 3 && !Format::Svgz.is_image());
         assert!(Format::Dwt.drops_unknown() && Format::Dwg.drops_unknown() && !Format::Dxf.drops_unknown());
         assert!(Format::Dwt.is_drawing() && !Format::Pdf.is_drawing());
-        assert_eq!(Format::list(Format::READ), "dxf, dwg, svg, svgz");
+        assert!(Format::READ.contains(&Format::Plt) && !Format::WRITE.contains(&Format::Plt) && !Format::Plt.is_image());
+        assert_eq!(Format::from_path("a.HPGL"), Some(Format::Plt));
+        assert_eq!(Format::list(Format::READ), "dxf, dwg, svg, svgz, plt");
     }
 }
