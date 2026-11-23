@@ -84,8 +84,8 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 
 ## Languages
 
-AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus eighteen catalogs
-(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian, Turkish, Bosnian, Georgian and Vietnamese). Detail: [localization-parity.md](docs/localization-parity.md).
+AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus nineteen catalogs
+(Ukrainian, Brazilian Portuguese, German, Spanish, Czech, Russian, French, Simplified Chinese, Italian, Korean, Swedish, Arabic, Greek, Hungarian, Turkish, Bosnian, Georgian, Vietnamese and Norwegian). Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Status | UI translated |
 |---|---|---:|
