@@ -139,11 +139,13 @@
 	Clip Viewport	Delimitar ventana gráfica
 	Clipboard	Portapapeles
 	Close	Cerrar
+	Close {panel}	Cerrar {panel}
 	Close All	Cerrar todo
 	Close All Other Drawings	Cerrar todos los demás dibujos
 	Close Array Editing	Cerrar la edición de matriz
 	Close Comparison	Cerrar comparación
 	Export Comparison	Exportar comparación
+	Close panel	Cerrar panel
 	Closed	Cerrada
 	Coincident	Coincidente
 	Collapse Palettes	Contraer paletas
@@ -372,6 +374,7 @@
 	From	Desde
 	From Template...	Desde plantilla...
 	General	General
+	Generate Boundary	Generar contorno
 	Geometric Center	Centro geométrico
 	Geometric Constraint	Restricción geométrica
 	Geometric Constraints	Restricciones geométricas
@@ -542,6 +545,7 @@
 	Measure	Medir
 	Measure Distance	Medir distancia
 	Measure Geometry	Medir geometría
+	Menu Bar	Barra de menús
 	Merge Cells	Combinar celdas
 	Merged PRs	PR integradas
 	Mid Between 2 Points	Punto medio entre 2 puntos
@@ -933,6 +937,7 @@
 	Set Current Text Style	Establecer estilo de texto actual
 	Set Layer Properties	Establecer propiedades de capa
 	Set Properties	Establecer propiedades
+	Describe Properties	Describir propiedades
 	Set Table Cell	Establecer celda de tabla
 	Set Variable	Establecer variable
 	Set View	Establecer vista

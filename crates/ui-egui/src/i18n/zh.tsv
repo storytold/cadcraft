@@ -177,7 +177,9 @@
 	Dim style	标注样式
 	Dimension	标注
 	Dimension Space	标注间距
+	Dimension Style	标注样式
 	Dimension Style Override	标注样式替代
+	Dimension Style Overrides	标注样式替代
 	Dimension Style...	标注样式...
 	Dimension Text Edit	编辑标注文字
 	Dimension style	标注样式
@@ -294,6 +296,7 @@
 	Freeze/Thaw in the current viewport	在当前视口中冻结/解冻
 	From	自
 	General	常规
+	Generate Boundary	生成边界
 	Geometric Center	几何中心
 	Geometric Constraint	几何约束
 	Geometric Constraints	几何约束
@@ -617,6 +620,7 @@
 	Region/Mass Properties	面域/质量特性
 	Relative	相对
 	Remove Leader	删除引线
+	Remove Style Overrides	删除样式替代
 	Remove the viewport override	移除视口替代
 	Rename Dimension Style	重命名标注样式
 	Rename Layer	重命名图层
@@ -642,6 +646,7 @@
 	Save (⌘S)	保存 (⌘S)
 	Save As	另存为
 	Save As...	另存为...
+	Save as New Style...	另存为新样式...
 	Save Layer State	保存图层状态
 	Save State	保存状态
 	Scale	缩放
@@ -727,6 +732,7 @@
 	Set Current Text Style	设置当前文字样式
 	Set Layer Properties	设置图层特性
 	Set Properties	设置特性
+	Describe Properties	描述特性
 	Set Table Cell	设置表格单元格
 	Set Variable	设置变量
 	Set View	设置视图
@@ -923,6 +929,7 @@
 	Time	时间
 	To get started, create or open a drawing.	若要开始，请创建或打开一个图形。
 	Tool Bar	工具栏
+	Menu Bar	菜单栏
 	Tool Sets	工具集
 	Tools	工具
 	Torus	圆环体
@@ -1498,6 +1505,13 @@ menu	Dimension	标注
 menu	Draw	绘图
 menu	Modify	修改
 menu	View	视图
+	3 Point	三点
+	New UCS	新建 UCS
+	Origin	原点
+	UCS	UCS
+	UCS Icon at Origin	原点处的 UCS 图标
+	World	世界
+	Z	Z
 	Clip Xref	剪裁外部参照
 	Xref	外部参照
 	Xref Clip Frame	外部参照剪裁边框
