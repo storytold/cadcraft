@@ -889,6 +889,8 @@ fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name:
                     && src.linetype(&name).is_none()
                     && let Some(t) = host.linetype(&name)
                 {
+                    // The text styles its text elements are drawn in.
+                    wanted.extend(t.pattern.iter().filter_map(|e| e.style.clone()).map(|s| (Sym::Style, s)));
                     src.linetypes.push(t.clone());
                 }
             }

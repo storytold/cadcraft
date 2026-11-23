@@ -862,3 +862,28 @@ fn a_dangling_reference_the_xref_file_already_had_is_saved_as_it_was() {
     assert_eq!((i.block.as_str(), i.insert), ("Ghost", Vec3::new(3.0, 3.0, 0.0)), "as it was");
     assert!(back.block("Ghost").is_none(), "and nothing is made up for it");
 }
+
+/// Review of #3352: a host linetype copied into the xref's drawing came without the text style its
+/// text elements name, so the file named a style it doesn't define. The style comes along.
+#[test]
+fn a_host_linetype_brings_the_text_styles_its_dashes_use() {
+    use cadcraft_engine::doc::{DashElement, Linetype, TextStyle};
+    let (mut s, dir, _, insert) = attached("ltype-style");
+    {
+        let d = s.doc_mut().unwrap();
+        d.text_styles.push(TextStyle { name: "Marks".into(), ..TextStyle::default() });
+        let mut text = DashElement::dash(0.0);
+        text.text = Some("G".into());
+        text.style = Some("Marks".into());
+        let pattern = vec![DashElement::dash(5.0), DashElement::dash(-1.0), text, DashElement::dash(-1.0)];
+        d.linetypes.push(Linetype { name: "Gas".into(), description: "Gas ---- G ----".into(), pattern });
+    }
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    let l = Handle::parse_hex(&hx(s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap())).unwrap();
+    s.doc_mut().unwrap().modify_entity(l, |e| e.common.linetype = "Gas".into()).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let back = read(&dir.join("site.dxf"));
+    let gas = back.linetype("Gas").expect("the linetype is in the file");
+    assert!(gas.pattern.iter().any(|e| e.style.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("Marks"))), "{gas:?}");
+    assert!(back.text_style("Marks").is_some(), "and the text style it uses");
+}
