@@ -150,6 +150,10 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         cadcraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.cad.guarded_ui(ui);
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &mut self.native_menu {
+            m.sync_close_accelerator(&self.cad);
+        }
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).

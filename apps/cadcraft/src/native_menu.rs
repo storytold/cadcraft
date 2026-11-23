@@ -27,6 +27,7 @@ pub struct NativeMenu {
     recent: Vec<String>,
     counter: usize,
     events: mpsc::Receiver<MenuEvent>,
+    close_accelerator: Option<Accelerator>,
 }
 
 /// Accelerator for "Cmd+Shift+S" (modifier-less shortcuts stay in the app so typing works).
@@ -35,6 +36,14 @@ fn accel(sc: &str) -> Option<Accelerator> {
         return None;
     }
     Accelerator::from_str(&sc.replace("Cmd", "CMD").replace("Alt", "ALT").replace("Shift", "SHIFT").replace("Ctrl", "CTRL")).ok()
+}
+
+fn close_accelerator(app: &CadApp, dialog_open: bool) -> Option<Accelerator> {
+    if dialog_open {
+        return None;
+    }
+    let key = cadcraft_ui_egui::keys::shown(&app.ui.shortcuts, "close", cadcraft_ui_egui::keys::default_key("close"))?;
+    accel(&key)
 }
 
 impl NativeMenu {
@@ -95,6 +104,27 @@ impl NativeMenu {
             recent: app.ui.recent_files.clone(),
             counter,
             events,
+            close_accelerator: close_accelerator(app, false),
+        }
+    }
+
+    /// An AppKit key equivalent wins before egui sees it. While a dialog is open, let egui
+    /// handle the shortcut and keep the explicitly chosen File › Close command available.
+    pub fn sync_close_accelerator(&mut self, app: &CadApp) {
+        let accelerator = close_accelerator(app, app.ui.dialog.is_some());
+        if accelerator == self.close_accelerator {
+            return;
+        }
+        let Some((_, file)) = self.submenus.iter().find(|(name, _)| name == "File") else { return };
+        let Some((_, _, item)) = self.items.values_mut().find(|(cmd, _, _)| cmd == "close") else { return };
+        let Some(index) = file.items().iter().position(|entry| entry.id() == item.id()) else { return };
+        // On macOS muda's set_accelerator(None) leaves an existing key equivalent in place.
+        // Replace only this entry, keeping its ID, position, title and enabled state.
+        let replacement = MenuItem::with_id(item.id().clone(), item.text(), item.is_enabled(), accelerator);
+        if file.insert(&replacement, index).is_ok() {
+            file.remove_at(index + 1);
+            *item = replacement;
+            self.close_accelerator = accelerator;
         }
     }
 
@@ -130,6 +160,7 @@ impl NativeMenu {
                 ctx.request_repaint();
             }
         }
+        self.sync_close_accelerator(app);
         self.refresh_recent(app);
         let language = app.language();
         if self.language != language {
@@ -199,7 +230,19 @@ fn build(
 
 #[cfg(test)]
 mod tests {
-    use super::refresh_due;
+    use super::{accel, close_accelerator, refresh_due};
+    use cadcraft_engine::Session;
+    use cadcraft_ui_egui::{CadApp, Services};
+
+    #[test]
+    fn dialog_suspends_the_native_close_shortcut_and_keeps_its_binding() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        assert_eq!(close_accelerator(&app, false), accel("Cmd+W"));
+        assert_eq!(close_accelerator(&app, true), None);
+        cadcraft_ui_egui::keys::assign(&mut app.ui.shortcuts, "close", "Cmd+Shift+W").unwrap();
+        assert_eq!(close_accelerator(&app, true), None);
+        assert_eq!(close_accelerator(&app, false), accel("Cmd+Shift+W"));
+    }
 
     /// `refresh_due` treats `NEG_INFINITY` as due at any finite time and `0.0` as due once 300 ms have elapsed; `install` initializes a fresh menu with `last_refresh = NEG_INFINITY`.
     #[test]
