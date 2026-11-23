@@ -73,6 +73,12 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
+        // Bit 32 marks a loop that isn't closed (ObjectARX `kNotClosed`), such as edges that
+        // don't meet. It encloses nothing; joined into one polygon it would fill whatever lies
+        // between its edges.
+        if flags & 32 != 0 {
+            continue;
+        }
         loops.push(HatchLoop { vertices: verts, outer, sources });
     }
     curves.left = curves.left.saturating_sub(start_left.saturating_sub(budget.left));
