@@ -887,3 +887,60 @@ fn a_host_linetype_brings_the_text_styles_its_dashes_use() {
     assert!(gas.pattern.iter().any(|e| e.style.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("Marks"))), "{gas:?}");
     assert!(back.text_style("Marks").is_some(), "and the text style it uses");
 }
+
+/// The xref valve.dxf (a site plan, plus a block Valve: a line) attached as "plant" to a new host
+/// in `dir`, with `valve` (given the file as read) as the host's own block Valve and a reference
+/// to it at (120, 30). Returns the session, the xref's reference and the host's Valve reference.
+fn host_with_its_own_valve(dir: &Path, valve: impl FnOnce(&Drawing) -> Block) -> (Session, String, String) {
+    let (mut d, _) = site();
+    let mut b = Block::new("Valve");
+    let h = d.new_handle();
+    b.entities.push(Entity::new(h, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(2.0, 0.0, 0.0) })));
+    d.blocks.insert("Valve".into(), Arc::new(b));
+    save(&d, &dir.join("valve.dxf"));
+    let (mut s, ins) = host_with(dir, "valve.dxf", "plant");
+    let own = valve(&read(&dir.join("valve.dxf")));
+    s.doc_mut().unwrap().blocks.insert("Valve".into(), Arc::new(own));
+    let v = s.execute("insert", &json!({ "name": "Valve", "at": [120, 30] })).unwrap();
+    (s, ins, hx(v))
+}
+
+/// Review of #3352: the host and the xref's drawing both define a block Valve, differently. A
+/// reference to the host's Valve added with REFSET was written under that name, so in the file it
+/// showed the file's Valve. The save is refused, naming the block; nothing is written.
+#[test]
+fn a_host_block_that_differs_from_the_xrefs_block_of_that_name_is_not_written() {
+    hooks();
+    let dir = folder("valve-differs");
+    let (mut s, ins, v) = host_with_its_own_valve(&dir, |_| {
+        let mut b = Block::new("Valve");
+        b.entities.push(Entity::new(Handle(0x500), EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 1.0 })));
+        b
+    });
+    let file = dir.join("valve.dxf");
+    let before = std::fs::read(&file).unwrap();
+    s.execute("refedit", &json!({ "handle": ins })).unwrap();
+    s.execute("refset", &json!({ "add": [v] })).unwrap();
+    let e = s.execute("refclose", &json!({ "option": "save" })).unwrap_err().to_string();
+    assert!(e.contains("\"Valve\""), "{e}");
+    assert_eq!(std::fs::read(&file).unwrap(), before, "the xref is unchanged");
+    assert!(s.doc().unwrap().refedit.is_some(), "the edit stays open");
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+}
+
+/// Review of #3352: a host block defined exactly as the xref's block of that name is the same
+/// block: a reference to it is written, naming the file's own definition.
+#[test]
+fn a_host_block_identical_to_the_xrefs_block_of_that_name_is_written() {
+    hooks();
+    let dir = folder("valve-same");
+    let (mut s, ins, v) = host_with_its_own_valve(&dir, |file| (**file.block("Valve").unwrap()).clone());
+    s.execute("refedit", &json!({ "handle": ins })).unwrap();
+    s.execute("refset", &json!({ "add": [v] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let back = read(&dir.join("valve.dxf"));
+    assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == "Valve")), "the reference is written");
+    let valve = back.block("Valve").unwrap();
+    assert_eq!(valve.entities.len(), 1);
+    assert!(matches!(valve.entities.iter().next().unwrap().kind, EntityKind::Line(_)), "the file's Valve is unchanged");
+}

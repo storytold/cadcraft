@@ -840,7 +840,7 @@ fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Ve
         if sym == Sym::Block {
             blocks.push(name.clone());
         }
-        bring_symbol(host, src, prefix, sym, &name, &mut wanted);
+        bring_symbol(host, src, prefix, sym, &name, &mut wanted)?;
     }
     // A block the written objects name that the drawing still lacks (an xref of the host, added
     // with REFSET) would leave a reference to nothing in the file: refused, nothing written. Only
@@ -869,8 +869,26 @@ fn arrow_blocks(host: &Drawing, t: &cadcraft_doc::DimStyle, prefix: &str) -> Vec
         .collect()
 }
 
+/// Whether block `h` of the host defines what block `s` of the xref's drawing does: the same base
+/// point and the same objects in the same order, each compared whole (attribute definitions
+/// included) but for its own handle, with the symbols it uses named as the xref's drawing names
+/// them. The names its objects use are put in `uses`. One pass over the two definitions, copying
+/// one object at a time; it stops at the first difference.
+fn same_definition(h: &Block, s: &Block, prefix: &str, uses: &mut Vec<(Sym, String)>) -> bool {
+    h.base == s.base
+        && h.entities.len() == s.entities.len()
+        && h.entities.iter().zip(s.entities.iter()).all(|(a, b)| {
+            let mut a = (**a).clone();
+            a.handle = b.handle;
+            rename_into_source(&mut a, prefix, uses);
+            a == **b
+        })
+}
+
 /// Copy host symbol `name` of kind `sym` into `src` when `src` lacks it, queueing what it uses.
-fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name: &str, wanted: &mut Vec<(Sym, String)>) {
+/// Refused when `src` defines a block `name` differently from the host: the objects written would
+/// show the file's block, not the one they showed in the host.
+fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name: &str, wanted: &mut Vec<(Sym, String)>) -> Result<()> {
     let name = name.to_string();
     {
         match sym {
@@ -911,10 +929,20 @@ fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name:
                 }
             }
             Sym::Block => {
-                if src.block(&name).is_none()
-                    && let Some(b) = host.block(&name)
-                    && b.xref_path.is_none()
-                {
+                let Some(b) = host.block(&name).filter(|b| b.xref_path.is_none()) else { return Ok(()) };
+                if let Some(have) = src.block(&name) {
+                    // The same block (its objects may name blocks that differ in turn): kept.
+                    let mut uses = Vec::new();
+                    if !same_definition(b, have, prefix, &mut uses) {
+                        return Err(bad(
+                            "refclose",
+                            format!(
+                                "the edit uses block \"{name}\" of this drawing, and the xref's drawing defines a different block of that name; remove its references from the working set (REFSET) or use REFCLOSE Discard"
+                            ),
+                        ));
+                    }
+                    wanted.extend(uses);
+                } else {
                     let mut nb = (**b).clone();
                     let mut store = EntityStore::new();
                     for e in b.entities.iter() {
@@ -943,6 +971,7 @@ fn bring_symbol(host: &Drawing, src: &mut Drawing, prefix: &str, sym: Sym, name:
             }
         }
     }
+    Ok(())
 }
 
 /// Replace the xref's file (`file` as the xref names it, `real` the file it leads to) by `bytes`,
