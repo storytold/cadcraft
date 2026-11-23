@@ -293,11 +293,17 @@ fn case_insensitive(p: &Path) -> Result<Option<PathBuf>, ()> {
     Ok(out.is_file().then_some(out))
 }
 
+/// The first bytes of a file [`read`] keeps with the drawing (enough for a DWG's version and the
+/// binary DXF sentinel).
+const HEAD_BYTES: usize = 4096;
+
 /// Read a drawing file through the host's io hooks, counting its bytes against the load's total.
 /// Also returns the [`Stamp`] of the bytes read: taken from the opened file, so it describes them
 /// even when the path is pointed at another file meanwhile; `None` when the file changed while it
 /// was read (or the system can't tell its time), so an edit in place refuses until it is reloaded.
-fn read(file: &Path, cx: &mut Ctx) -> Result<(Drawing, Option<Stamp>), String> {
+/// And the first [`HEAD_BYTES`] of those bytes, so what is told from them (a DWG's version, a
+/// binary DXF) describes the same read.
+fn read(file: &Path, cx: &mut Ctx) -> Result<(Drawing, Option<Stamp>, Vec<u8>), String> {
     let hooks = super::super::super::file::io().ok_or("file formats are not available in this build")?;
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -328,7 +334,8 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<(Drawing, Option<Stamp>), String> {
         cx.bytes = cx.bytes.saturating_add(n);
         let after = f.metadata().ok().as_ref().and_then(stamp_of);
         let read_as = before.filter(|b| Some(*b) == after);
-        Ok(((hooks.read)(&bytes, &file.to_string_lossy())?, read_as))
+        let head = bytes.get(..HEAD_BYTES).unwrap_or(&bytes).to_vec();
+        Ok(((hooks.read)(&bytes, &file.to_string_lossy())?, read_as, head))
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -357,9 +364,9 @@ pub(crate) fn stamp(_file: &Path) -> Option<Stamp> {
     None
 }
 
-/// Read the drawing file `file` (with the size limits of xref loading), with the [`Stamp`] of the
-/// bytes read (see [`read`]).
-pub(crate) fn read_file(file: &Path) -> Result<(Drawing, Option<Stamp>), String> {
+/// Read the drawing file `file` (with the size limits of xref loading), with the [`Stamp`] and the
+/// first bytes of the bytes read (see [`read`]).
+pub(crate) fn read_file(file: &Path) -> Result<(Drawing, Option<Stamp>, Vec<u8>), String> {
     read(file, &mut Ctx::new(None))
 }
 
@@ -468,7 +475,7 @@ fn fetch(
         return Err(unresolved("too many referenced files"));
     }
     cx.files += 1;
-    let (mut x, read_as) = read(&file, cx).map_err(|e| (XrefStatus::Unresolved, format!("{}: {e}", file.to_string_lossy())))?;
+    let (mut x, read_as, _) = read(&file, cx).map_err(|e| (XrefStatus::Unresolved, format!("{}: {e}", file.to_string_lossy())))?;
     cx.chain.push(canon);
     let nested: Vec<String> =
         x.blocks.values().filter(|b| b.xref_path.is_some() && !b.xref_overlay && !b.name.contains('|')).map(|b| b.name.clone()).collect();

@@ -296,13 +296,11 @@ fn source_handles(blk: &Block, src: &Drawing, inner: Option<&str>) -> Result<Vec
 }
 
 /// The version (`$ACADVER` code) and form (binary DXF or not) of the xref's file `file`, read as
-/// `src`, so it is written back as it was: a DWG's version is its first bytes, a DXF's the
-/// `$ACADVER` it was read with. Refused when CADCraft can't write that version (an R12 DXF,
-/// AC1009): saving would change it, and the xref is often someone else's file.
-fn file_form(file: &std::path::Path, src: &Drawing) -> Result<(Option<String>, bool)> {
-    use std::io::Read;
-    let mut head = Vec::new();
-    std::fs::File::open(file).and_then(|f| f.take(4096).read_to_end(&mut head)).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+/// `src` from bytes beginning with `head` (one read: the file is not opened again), so it is
+/// written back as it was: a DWG's version is its first bytes, a DXF's the `$ACADVER` it was read
+/// with. Refused when CADCraft can't write that version (an R12 DXF, AC1009): saving would change
+/// it, and the xref is often someone else's file.
+fn file_form(file: &std::path::Path, src: &Drawing, head: &[u8]) -> Result<(Option<String>, bool)> {
     let dwg = head
         .get(..6)
         .filter(|t| t.starts_with(b"AC") && t.get(2..).is_some_and(|d| d.iter().all(u8::is_ascii_digit)))
@@ -320,7 +318,7 @@ fn file_form(file: &std::path::Path, src: &Drawing) -> Result<(Option<String>, b
             ),
         ));
     }
-    let binary = craft_dxf::is_binary(&head);
+    let binary = craft_dxf::is_binary(head);
     if (version.is_some() || binary) && crate::cmd::file::write_as().is_none() {
         return Err(bad("refedit", "saving an xref in its own version is not available in this build; open it with XOPEN instead"));
     }
@@ -371,15 +369,15 @@ fn run_refedit(s: &mut Session, p: &Value) -> Result<Value> {
     let xref = match xref_of(d, &blk.name) {
         Some((x, inner)) => {
             let (file, baseline) = xref_file(s, &x)?;
-            let (src, read_as) = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
-            // The handles, version and stamp all come from this one read, which must be of the
-            // file this drawing loaded.
+            let (src, read_as, head) = load::read_file(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
+            // The handles, version, form and stamp all come from this one read, which must be of
+            // the file this drawing loaded.
             if read_as != Some(baseline) {
                 return Err(bad("refedit", format!("{} changed since xref \"{x}\" was loaded; reload it first", file.display())));
             }
             let sources = source_handles(&blk, &src, inner.as_deref())?;
             let real = std::fs::canonicalize(&file).map_err(|e| bad("refedit", format!("{}: {e}", file.display())))?;
-            let (version, binary) = file_form(&file, &src)?;
+            let (version, binary) = file_form(&file, &src, &head)?;
             Some(XrefSource {
                 xref: x,
                 file: file.to_string_lossy().into_owned(),
@@ -697,7 +695,7 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     still_leads_to(file, real).map_err(|e| bad("refclose", format!("{e}; the edit stays open (REFCLOSE Discard ends it)")))?;
     unchanged(file, x, load::stamp(file))?;
     let hooks = crate::cmd::file::io().ok_or_else(|| bad("refclose", "file formats are not available in this build"))?;
-    let (mut src, read_as) = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
+    let (mut src, read_as, _) = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
     // What is written over is what was just read, and that is the file the edit began with.
     unchanged(file, x, read_as)?;
     let dropped = associations_dropped(&src, x);
