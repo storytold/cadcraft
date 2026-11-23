@@ -108,6 +108,9 @@ impl Session {
             return Ok(Some(label));
         }
         let st = self.state_mut()?;
+        if let Some(why) = st.undo.last().and_then(|snap| cmd::blocks::refedit::undo_barrier(&st.doc, &snap.doc)) {
+            return Err(EngineError::Other(why));
+        }
         let Some(snap) = st.undo.pop() else { return Ok(None) };
         let cur = st.swap_in(snap);
         let label = cur.label.clone();

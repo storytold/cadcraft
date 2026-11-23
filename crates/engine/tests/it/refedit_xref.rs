@@ -1003,3 +1003,32 @@ fn an_xref_file_dated_before_1970_can_be_edited_in_place() {
     s.execute("refclose", &json!({ "option": "save" })).unwrap();
     assert_eq!(read(&file).model.len(), 3, "the edit is written");
 }
+
+/// Review of #3352: UNDO after a saved REFCLOSE brought the edit back, with the file's stamp from
+/// before the save, so it could never be saved again. The save is an undo barrier: UNDO says the
+/// edit was saved to its file and leaves the drawing as saved. A discarded edit still comes back.
+#[test]
+fn undo_after_a_saved_xref_edit_does_not_bring_the_edit_back() {
+    let (mut s, dir, _, insert) = attached("undo-saved");
+    let file = dir.join("site.dxf");
+    s.execute("line", &json!({ "points": [[0, 50], [10, 50]] })).unwrap();
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    s.execute("refclose", &json!({ "option": "discard" })).unwrap();
+    s.execute("undo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().refedit.is_some(), "a discarded edit comes back with UNDO");
+
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let saved = std::fs::read(&file).unwrap();
+    let e = s.execute("undo", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("saved to") && e.contains("site.dxf"), "{e}");
+    let d = s.doc().unwrap();
+    assert!(d.refedit.is_none(), "the edit doesn't come back");
+    assert_eq!(d.block("site").unwrap().entities.len(), 3, "the host shows the xref as saved");
+    assert_eq!(std::fs::read(&file).unwrap(), saved, "the file is as saved");
+    // The xref can be edited and saved again.
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 30], [110, 30]] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(read(&file).model.len(), 4);
+}

@@ -21,7 +21,8 @@
 //! the file it wrote.
 //!
 //! The state is [`Drawing::refedit`]: it travels with undo, is never written to a file (files
-//! are written from [`Drawing::committed`]) and ends with the drawing it belongs to.
+//! are written from [`Drawing::committed`]) and ends with the drawing it belongs to. UNDO stops
+//! at a REFCLOSE Save that wrote an xref's file ([`undo_barrier`]).
 //!
 //! Not yet: annotative scale contexts, attribute synchronisation and xrefs nested in xrefs (open
 //! those with XOPEN).
@@ -1064,6 +1065,18 @@ pub(crate) fn after_command(s: &mut Session, before: &Arc<Drawing>, id: &str) ->
         r.items.extend(new.into_iter().map(|copy| WorkItem { copy, source: None }));
     }
     None
+}
+
+/// Why UNDO stops before bringing back `snap` while the drawing is `cur`: `snap` holds an edit of
+/// an xref in place whose file REFCLOSE Save has written since (`cur` shows the xref loaded again
+/// from the file as written, so its stamp is no longer the one the edit began with). Brought back,
+/// that edit could never be saved (its file changed since it began) and the drawing would show the
+/// xref as it was before the save. A discarded edit leaves the xref's stamp as it was: it comes
+/// back with UNDO as any other step.
+pub(crate) fn undo_barrier(cur: &Drawing, snap: &Drawing) -> Option<String> {
+    let x = snap.refedit.as_ref()?.xref.as_ref()?;
+    let now = cur.block(&x.xref).and_then(|b| b.xref_stamp);
+    (now != x.stamp).then(|| format!("The reference edit was saved to {}, so it can't be undone; the drawing stays as saved.", x.file))
 }
 
 /// Whether `h` may not be edited because a reference is being edited and it is not in the working set.
