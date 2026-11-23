@@ -422,6 +422,30 @@ fn hostile_dxf_does_not_panic() {
     }
 }
 
+// Regression test for #1336: the LAYER table of a DXF had no record cap, so a hostile file could
+// grow the layer list without bound (its VIEW/UCS/VPORT peers stop at one million records).
+#[test]
+fn dxf_layer_table_stops_at_the_record_cap() {
+    use std::fmt::Write as _;
+    let records = 1_000_100;
+    let mut text = String::from("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n");
+    for i in 0..records {
+        let _ = write!(text, "0\nLAYER\n2\nL{i}\n");
+    }
+    text.push_str("0\nENDTAB\n0\nENDSEC\n0\nEOF\n");
+    let d = read(text.as_bytes(), "layers.dxf").unwrap();
+    // The exact total, not a range: the layer list stops at 1,000,000 layers, the drawing's own
+    // default layers counted among them, so a cap that truncates early or late fails as loudly as
+    // none at all. The count is a literal on purpose -- if the constant changes, this test must fail
+    // rather than follow it.
+    assert_eq!(
+        d.layers.len(),
+        1_000_000,
+        "the LAYER table must stop at exactly 1,000,000 layers in total, defaults included, reading {records} records, but kept {}",
+        d.layers.len()
+    );
+}
+
 #[test]
 fn svg_and_png_export() {
     let d = sample();
