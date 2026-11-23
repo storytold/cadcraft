@@ -1,8 +1,8 @@
 use crate::DisplayOnly;
 
 use super::{
-    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
-    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, Origin, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value,
+    Vec2, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
 
 impl Session {
@@ -41,8 +41,27 @@ impl Session {
         blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
-    /// Start a command by name or alias as if typed at the command line.
+    /// Who started the command running now ([`Origin`]): fixed when it started, so a scripted or
+    /// LISP-started command keeps its origin while it prompts.
+    pub fn command_origin(&self) -> Origin {
+        self.command_origin
+    }
+
+    /// Start a command by name or alias as if typed at the command line. A script's commands are
+    /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are.
     pub fn start(&mut self, name: &str) -> Result<()> {
+        let origin = if self.in_script { Origin::Program } else { Origin::Person };
+        self.start_from(name, origin)
+    }
+
+    /// Start a command as a program does: an AutoLISP `(command …)` cannot answer a dialog, so
+    /// none opens for what it starts, even after the routine ends.
+    pub fn start_programmatic(&mut self, name: &str) -> Result<()> {
+        self.start_from(name, Origin::Program)
+    }
+
+    /// [`Session::start`] with the command's origin recorded for its whole life.
+    fn start_from(&mut self, name: &str, origin: Origin) -> Result<()> {
         self.last_polar = None;
         self.pick_hint = None;
         let name = name.trim();
@@ -74,7 +93,7 @@ impl Session {
             // A bare system variable name (ORTHOMODE, GRIDMODE…) acts as SETVAR on that variable.
             let var = lower.to_ascii_uppercase();
             if !name.starts_with(['_', '.', '-']) && sysvars::get(self, &var).is_some() {
-                self.start(if transparent { "'setvar" } else { "setvar" })?;
+                self.start_from(if transparent { "'setvar" } else { "setvar" }, origin)?;
                 return self.input(Input::Text(var));
             }
             return Err(EngineError::UnknownCommand(typed.to_string()));
@@ -102,6 +121,7 @@ impl Session {
         }
         if !nested {
             self.commands_started = self.commands_started.wrapping_add(1);
+            self.command_origin = origin;
             if self.running.is_some() {
                 self.cancel();
             }

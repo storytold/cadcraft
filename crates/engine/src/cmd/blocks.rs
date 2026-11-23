@@ -15,7 +15,7 @@ use super::machines::{SelOutcome, SelectPhase, number};
 use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
 
 use super::has_doc;
-use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Origin, Prompt, Result, Session, Step};
 
 mod attdef;
 mod attedit;
@@ -43,14 +43,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
-            .interactive(|s| Ok(Box::new(InsertM { scripted: s.script_running(), ..InsertM::default() }))),
+            .interactive(|s| Ok(Box::new(InsertM { person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
             .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
-            .interactive(|s| Ok(Box::new(InsertM { minsert: true, scripted: s.script_running(), ..InsertM::default() }))),
+            .interactive(|s| Ok(Box::new(InsertM { minsert: true, person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -776,11 +776,13 @@ struct InsertM {
     /// How many of `attdefs` have their value: counted here, not by `values`, whose key is the
     /// tag, so two definitions with one tag are still each asked once.
     asked: usize,
-    /// ATTDIA 1: the values are asked for in the Edit Attributes dialog.
+    /// ATTDIA 1 and a person started the command: the values are asked for in the Edit
+    /// Attributes dialog. A script, LISP routine or JSON call that opened INSERT has nobody to
+    /// answer a dialog, so it asks at the command line, even after the program is done.
     dialog: bool,
-    /// A script started this command ([`Session::script_running`]), fixed for its whole life: a
-    /// script never opens the dialog, even when it ends with INSERT still waiting.
-    scripted: bool,
+    /// A person started this command ([`Session::command_origin`]), fixed for its whole life:
+    /// only then may ATTDIA 1 open the dialog.
+    person: bool,
     values: serde_json::Map<String, Value>,
     /// Verify attributes asked again so far.
     verified: usize,
@@ -871,8 +873,8 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        // A script cannot click the dialog: it asks at the command line, as ATTDIA 0 does.
-        self.dialog = s.settings.attdia && !self.scripted;
+        // A program cannot click the dialog: it asks at the command line, as ATTDIA 0 does.
+        self.dialog = s.settings.attdia && self.person;
         self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {

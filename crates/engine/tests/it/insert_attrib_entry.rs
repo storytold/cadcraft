@@ -234,6 +234,33 @@ fn a_script_never_asks_in_the_dialog() {
 }
 
 #[test]
+fn a_lisp_insert_never_asks_in_the_dialog() {
+    // (command "-INSERT" …) runs INSERT outside Session::script: the routine cannot click a
+    // dialog, and it finishes before the first attribute answer.
+    let mut s = session(None, Some(true));
+    let r = s.execute("lisp", &json!({ "code": "(command \"-INSERT\" \"T\" \"0,50\" 1 1 0)" })).unwrap();
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(s.prompt_text(), "INSERT First <1>:", "INSERT waits at the command line");
+    assert!(s.attribute_entry().is_none(), "a LISP-started INSERT never opens the dialog");
+    // The command keeps answering at the command line after the routine ended.
+    s.input(Input::Text("a".into())).unwrap();
+    s.input(Input::Text("c".into())).unwrap();
+    s.input(Input::Text("a".into())).unwrap(); // A's Verify
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), pairs(&[("A", "a"), ("B", "two"), ("C", "c")]));
+    // A typed INSERT with ATTDIA 1 asks in the dialog again.
+    insert_up_to_the_attributes(&mut s);
+    assert!(s.attribute_entry().is_some(), "a typed INSERT asks in the dialog");
+    s.cancel();
+
+    // A LISP expression typed at the command line is the same program: no dialog.
+    s.cmdline("(command \"-INSERT\" \"T\" \"0,60\" 1 1 0)").unwrap();
+    assert_eq!(s.prompt_text(), "INSERT First <1>:");
+    assert!(s.attribute_entry().is_none(), "a typed (command …) never opens the dialog");
+    s.cancel();
+}
+
+#[test]
 fn an_entry_belongs_to_the_drawing_and_command_that_asked() {
     let mut s = session(None, Some(true));
     insert_up_to_the_attributes(&mut s);

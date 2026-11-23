@@ -1,8 +1,8 @@
 //! Edit Attributes (ATTDIA 1): a typed INSERT asks for its attribute values in one dialog. OK
 //! gives them to INSERT (a Verify one is not asked again), Enter in a field is OK, Cancel inserts
-//! nothing, and with ATTDIA 0, a JSON call or a script there is no dialog. The dialog belongs to
-//! the command that asked for it: a confirmation meant for the dialog a command replaced never
-//! finishes the replacement.
+//! nothing, and with ATTDIA 0, a JSON call, a script or a LISP routine there is no dialog. The
+//! dialog belongs to the command that asked for it: a confirmation meant for the dialog a command
+//! replaced never finishes the replacement.
 
 use cadcraft_engine::Input;
 use cadcraft_engine::Session;
@@ -287,6 +287,17 @@ fn a_script_never_opens_the_dialog() {
     a.session.script("-INSERT T 50,0 1 1 0\n").unwrap();
     let h = harness(a);
     assert!(h.query_by_label("Edit Attributes").is_none(), "a script never opens the dialog");
+    assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
+}
+
+#[test]
+fn a_lisp_insert_never_opens_the_dialog() {
+    let mut a = app();
+    // (command "-INSERT" …) through the programmatic route: a routine cannot click a dialog,
+    // and it ends before the first attribute answer.
+    a.run("lisp", json!({ "code": "(command \"-INSERT\" \"T\" \"0,0\" 1 1 0)" })).unwrap();
+    let h = harness(a);
+    assert!(h.query_by_label("Edit Attributes").is_none(), "a LISP-started INSERT never opens the dialog");
     assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
 }
 

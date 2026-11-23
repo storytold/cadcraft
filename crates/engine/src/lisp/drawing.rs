@@ -91,7 +91,7 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             }
             Value::Str(s) => {
                 let r = if ctx.s.running.is_none() {
-                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start(s) }
+                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start_programmatic(s) }
                 } else if s.is_empty() {
                     ctx.s.input(Input::Enter)
                 } else {
@@ -813,7 +813,7 @@ fn interactive_ssget(ctx: &mut Ctx<'_>, filter: Option<Value>) -> Result<Flow, L
     if ctx.s.running.is_some() {
         return Ok(Flow::Value(Value::Nil));
     }
-    if let Err(e) = ctx.s.start("select") {
+    if let Err(e) = ctx.s.start_programmatic("select") {
         return Err(LispError::new(e.to_string()));
     }
     let f = super::eval::lookup(ctx.env, &super::value::Sym::new("SSGET"));
