@@ -903,6 +903,44 @@ pub fn object_records(d: &Drawing) -> Vec<ObjectRecord> {
         .collect()
 }
 
+/// The `dependentOnObject` handle (first group 330 inside the `AcDbAssocDependency` subclass) of
+/// a kept associative dependency, when it is non-null.
+fn assoc_dependency_target(o: &ForeignObject) -> Option<String> {
+    let mut in_dep = false;
+    for r in &o.tags {
+        if r.code == 100 {
+            if in_dep {
+                break;
+            }
+            in_dep = r.value.trim().eq_ignore_ascii_case("AcDbAssocDependency");
+        } else if in_dep && r.code == 330 {
+            let v = norm(&r.value);
+            return (!v.is_empty() && v != "0").then_some(v);
+        }
+    }
+    None
+}
+
+/// If `tags[at]` is the dependency-count group (90) of an `AcDbAssocAction` subclass (`100
+/// AcDbAssocAction`, `90` version, `90` status, `330` network, `360` body, `90` index, `90`
+/// max_dep_idx, `90` count, followed by `count` group-360 dependency handles), returns `count`.
+fn assoc_action_dep_count(tags: &[RawTag], at: usize) -> Option<usize> {
+    const HEADER: [i32; 7] = [100, 90, 90, 330, 360, 90, 90];
+    if at < HEADER.len() || tags.get(at)?.code != 90 {
+        return None;
+    }
+    let start = at - HEADER.len();
+    if !tags[start].value.trim().eq_ignore_ascii_case("AcDbAssocAction") {
+        return None;
+    }
+    if !HEADER.iter().enumerate().all(|(k, &c)| tags[start + k].code == c) {
+        return None;
+    }
+    let count = usize::try_from(tags[at].value.trim().parse::<i64>().ok()?).ok()?;
+    let deps = tags.get(at + 1..at + 1 + count)?;
+    deps.iter().all(|t| t.code == 360).then_some(count)
+}
+
 /// Remaps the kept data's handles onto a written file.
 struct Map<'a> {
     f: &'a Foreign,
@@ -995,6 +1033,13 @@ impl Map<'_> {
                     out.push(tag(r));
                     out.push(Tag::s(code, h));
                 }
+                continue;
+            }
+            if let Some(count) = assoc_action_dep_count(&o.tags, i - 1) {
+                let live: Vec<String> = o.tags[i..i + count].iter().filter_map(|n| self.get(&n.value)).filter(|h| h != "0").collect();
+                out.push(Tag::i(90, i64::try_from(live.len()).unwrap_or(i64::MAX)));
+                out.extend(live.into_iter().map(|h| Tag::s(360, h)));
+                i += count;
                 continue;
             }
             if r.code == 5 {
@@ -1166,7 +1211,7 @@ pub(crate) fn finish(
             (o.handle.hex(), head(&t).owner)
         })
         .collect();
-    let alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
+    let mut alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
         // Keep established live paths available to descendants during this pass as well.
         let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
@@ -1207,6 +1252,49 @@ pub(crate) fn finish(
         }
         alive_memo
     });
+    // Drop kept AcDbAssocDependency objects whose dependentOnObject is no longer written, along
+    // with any kept objects owned only by them (e.g. a dependency body). Leaving an active
+    // dependency with its group 330 remapped to "0" breaks the associative reactor invariant.
+    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
+    for _ in 0..MAX_DEPTH {
+        let mut changed = false;
+        for o in &f.objects {
+            let h = o.handle.hex();
+            if alive_memo.get(&h) != Some(&true) {
+                continue;
+            }
+            let dead_target = assoc_dependency_target(o).is_some_and(|t| {
+                if objs.contains_key(&t) {
+                    alive_memo.get(&t) != Some(&true)
+                } else if let Some(role) = handle(&t).and_then(|th| f.targets.get(&th)) {
+                    !roles.contains_key(role)
+                } else {
+                    !entities.contains(&t)
+                }
+            });
+            if dead_target {
+                alive_memo.insert(h, false);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+        let mut cascade = true;
+        while cascade {
+            cascade = false;
+            for o in &f.objects {
+                let h = o.handle.hex();
+                if alive_memo.get(&h) != Some(&true) {
+                    continue;
+                }
+                if own.get(&h).and_then(|v| v.as_deref()).is_some_and(|owner| objs.contains_key(owner) && alive_memo.get(owner) != Some(&true)) {
+                    alive_memo.insert(h, false);
+                    cascade = true;
+                }
+            }
+        }
+    }
     // New handles for the written kept objects, above every written handle and the seed.
     let mut fresh = Fresh::new(tags);
     // The entities of unmodeled types join the records only below, so their handles are not in
@@ -1224,7 +1312,6 @@ pub(crate) fn finish(
         }
     }
     let merged_into: HashMap<String, &ForeignObject> = merged.iter().filter_map(|(kept, own)| Some((own.clone(), *objs.get(kept)?))).collect();
-    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
     let mut block = String::new();
