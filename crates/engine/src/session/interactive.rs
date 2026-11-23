@@ -259,6 +259,8 @@ impl Session {
             }
         }
         let space = self.space();
+        // ERASE and EXPLODE take proxies too (see `select::ProxyPicking`).
+        let _proxies = select::ProxyPicking::allow(self.running.as_ref().is_some_and(|r| matches!(r.id.as_str(), "erase" | "explode")));
         match input {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;

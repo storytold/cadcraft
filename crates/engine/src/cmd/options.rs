@@ -53,6 +53,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "PICKDRAG",
     "MAXARRAY",
     "MEASUREINIT",
+    "PROXYOBJECTSIMPORT",
 ];
 
 /// The most profile entries [`restore`] reads (a saved profile is untrusted input).
@@ -145,6 +146,7 @@ pub fn reset(s: &mut Session) {
     st.pickadd = d.pickadd;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
+    st.proxy_objects_import = d.proxy_objects_import;
 }
 
 fn run_options(s: &mut Session, p: &Value) -> Result<Value> {

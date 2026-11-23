@@ -222,6 +222,29 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
         EntityKind::Region(r) => Some(segment_entities(e, r.segments())),
         EntityKind::Dimension(dm) => Some(explode_dimension(d, e, dm)),
         EntityKind::Tolerance(t) => Some(crate::cmd::tolerance::explode(d, e, t)),
+        // A proxy explodes into the picture its file carries, as ordinary objects (the link to the
+        // application's own object is gone). Layer 0 and ByBlock in that picture are the proxy's.
+        EntityKind::Unknown(u) if !u.graphics.is_empty() => Some(
+            u.graphics
+                .iter()
+                .map(|g| {
+                    let mut ne = g.clone();
+                    if ne.common.layer == "0" {
+                        ne.common.layer = e.common.layer.clone();
+                    }
+                    if ne.common.color == cadcraft_color::Color::ByBlock {
+                        ne.common.color = e.common.color;
+                    }
+                    if ne.common.linetype.eq_ignore_ascii_case("ByBlock") {
+                        ne.common.linetype = e.common.linetype.clone();
+                    }
+                    if ne.common.lineweight == cadcraft_doc::Lineweight::ByBlock {
+                        ne.common.lineweight = e.common.lineweight;
+                    }
+                    ne
+                })
+                .collect(),
+        ),
         _ => None,
     }
 }
@@ -253,6 +276,16 @@ pub(crate) fn explode_with(
     pieces: impl Fn(&cadcraft_doc::Drawing, &Entity) -> Option<Vec<Entity>>,
 ) -> Result<Vec<Handle>> {
     let space = s.space();
+    explode_in(s, &space, hs, pieces)
+}
+
+/// [`explode_with`] for objects of `space`, which need not be the one being edited.
+fn explode_in(
+    s: &mut Session,
+    space: &cadcraft_doc::Space,
+    hs: &[Handle],
+    pieces: impl Fn(&cadcraft_doc::Drawing, &Entity) -> Option<Vec<Entity>>,
+) -> Result<Vec<Handle>> {
     let mut out = Vec::new();
     for h in hs {
         if crate::cmd::curves::is_locked(s, *h) {
@@ -271,7 +304,7 @@ pub(crate) fn explode_with(
             }
             p.handle = d.new_handle();
             out.push(p.handle);
-            if let Some(st) = d.space_mut(&space) {
+            if let Some(st) = d.space_mut(space) {
                 st.push(p);
             }
         }
@@ -281,7 +314,99 @@ pub(crate) fn explode_with(
 }
 
 pub(super) fn run_explode(s: &mut Session, p: &Value) -> Result<Value> {
+    // `proxies`: every proxy of the drawing, with no objects to name.
+    if p.get("proxies").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(json!({ "exploded": explode_proxies(s, ProxyAs::Objects)? }));
+    }
     let hs = targets(s, p)?;
     let r = explode(s, &hs)?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
+}
+
+/// What a proxy (a custom object's picture) becomes in [`explode_proxies`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProxyAs {
+    /// The picture's ordinary objects, as EXPLODE makes them.
+    Objects,
+    /// One block reference to a block of the picture's objects, `PROXY_<handle>`: the symbol moves
+    /// and copies as one object, and EXPLODE takes it apart when needed.
+    Blocks,
+}
+
+/// Every proxy of the drawing that draws something (a custom object's picture), in model space and
+/// in each layout, made into `how`. Returns how many there were; those on a locked layer are left
+/// as they are.
+pub(crate) fn explode_proxies(s: &mut Session, how: ProxyAs) -> Result<usize> {
+    let d = s.doc()?;
+    let spaces: Vec<cadcraft_doc::Space> =
+        std::iter::once(cadcraft_doc::Space::Model).chain(d.layouts.iter().map(|l| cadcraft_doc::Space::Paper(l.name.clone()))).collect();
+    let mut done = 0;
+    for space in spaces {
+        let hs: Vec<Handle> = s
+            .doc()?
+            .space(&space)
+            .map(|st| st.iter().filter(|e| matches!(&e.kind, EntityKind::Unknown(u) if !u.graphics.is_empty())).map(|e| e.handle).collect())
+            .unwrap_or_default();
+        if hs.is_empty() {
+            continue;
+        }
+        match how {
+            ProxyAs::Objects => {
+                explode_in(s, &space, &hs, explode_kind)?;
+            }
+            ProxyAs::Blocks => proxies_to_blocks(s, &space, &hs)?,
+        }
+        // A locked proxy stays: count what went.
+        done += hs.iter().filter(|h| s.doc().is_ok_and(|d| d.entity(**h).is_none())).count();
+    }
+    Ok(done)
+}
+
+/// Replace each proxy of `hs` (off locked layers) by a reference to a new block of its picture.
+/// Layer 0 and ByBlock in the picture take the reference's layer and properties, which is what
+/// they mean in a proxy.
+fn proxies_to_blocks(s: &mut Session, space: &cadcraft_doc::Space, hs: &[Handle]) -> Result<()> {
+    for h in hs {
+        if crate::cmd::curves::is_locked(s, *h) {
+            continue;
+        }
+        let Some(e) = s.doc()?.entity(*h).map(|e| (**e).clone()) else { continue };
+        let EntityKind::Unknown(u) = &e.kind else { continue };
+        if u.graphics.is_empty() {
+            continue;
+        }
+        let d = s.doc_mut()?;
+        let mut name = format!("PROXY_{}", h.hex());
+        let mut n = 1;
+        while d.blocks.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
+            n += 1;
+            name = format!("PROXY_{}_{n}", h.hex());
+        }
+        let mut block = cadcraft_doc::Block::new(&name);
+        block.description = format!("Picture of a {} object", u.dxf_type);
+        // The grip of a reference sits on its insertion point: put it (and the block's base
+        // point, so the picture does not move) at the middle of the picture, not at 0,0.
+        let mut bounds = cadcraft_geom::Bounds2::EMPTY;
+        for g in &u.graphics {
+            bounds = bounds.union(&cadcraft_doc::entity_bounds(d, g, 0));
+        }
+        let anchor = bounds.center();
+        block.base = v3(anchor);
+        for g in &u.graphics {
+            let mut ge = g.clone();
+            ge.handle = d.new_handle();
+            block.entities.push(ge);
+        }
+        d.blocks.insert(name.clone(), std::sync::Arc::new(block));
+        d.remove_entity(*h);
+        let mut common = e.common.clone();
+        common.xdata.clear();
+        let handle = d.new_handle();
+        let insert = cadcraft_doc::Insert { block: name, insert: v3(anchor), ..Default::default() };
+        if let Some(st) = d.space_mut(space) {
+            st.push(Entity { handle, common, kind: EntityKind::Insert(insert) });
+        }
+    }
+    s.set_selection(Vec::new());
+    Ok(())
 }
