@@ -197,7 +197,7 @@ fn follow(before: &Drawing, after: &Drawing, handle: Handle, h: &Hatch, checked:
         match refill(from, after, l) {
             Refill::Loop(vertices) => {
                 let sources = l.sources.iter().copied().filter(|s| exists(after, *s)).take(MAX_SOURCES).collect();
-                loops.push(HatchLoop { vertices, outer: l.outer, sources });
+                loops.push(HatchLoop { vertices, outer: l.outer, boundary_flags: l.boundary_flags, sources });
             }
             // An erased island: the hatch fills its area.
             Refill::Erased if !l.outer => {}
