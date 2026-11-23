@@ -110,8 +110,8 @@ pub fn mtext_literal(s: &str) -> String {
     out
 }
 
-/// Properties set on one attribute of a block reference (an ATTRIB's layer, colour, linetype and
-/// lineweight), overriding those of its definition.
+/// Properties set on one attribute of a block reference (an ATTRIB's layer, colour, linetype,
+/// lineweight and visibility), overriding those of its definition.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AttribProps {
@@ -123,6 +123,12 @@ pub struct AttribProps {
     pub linetype: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lineweight: Option<Lineweight>,
+    /// The attribute's own object visibility (an ATTRIB's group 60) where it differs from its
+    /// definition's: a title block can hide its definitions inside the block and still show the
+    /// references' attributes. Unset, the attribute shows or hides with its definition, as a
+    /// dynamic block's visibility state hides it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
 }
 
 impl AttribProps {
@@ -137,6 +143,7 @@ impl AttribProps {
             color: self.color.unwrap_or(base.color),
             linetype: self.linetype.clone().unwrap_or_else(|| base.linetype.clone()),
             lineweight: self.lineweight.unwrap_or(base.lineweight),
+            visible: self.visible.unwrap_or(base.visible),
             ..base.clone()
         }
     }
