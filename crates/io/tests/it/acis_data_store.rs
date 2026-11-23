@@ -90,6 +90,7 @@ fn dxf_keeps_the_data_store_and_drops_records_of_deleted_entities() {
 
 #[test]
 fn dwg_keeps_the_solids_geometry() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
     // The DWG read back (as the bridge's DXF) binds the same bytes to both solids.
@@ -134,6 +135,7 @@ fn sat_text_solids_are_left_out_of_dxf_2013_and_later() {
 /// out the contents of xref blocks, which the DXF doesn't hold anyway (#2334).
 #[test]
 fn sat_text_solids_stay_in_dwg_2018_and_xref_contents_are_not_counted() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
         0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n\
         0\nLINE\n5\n2D\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
@@ -202,6 +204,7 @@ fn a_data_store_record_stores_only_its_first_entity() {
 /// note has to say (#2334).
 #[test]
 fn a_dwg_keeps_a_sat_text_region_only_before_2013() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let sat = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
         0\nREGION\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbModelerGeometry\n70\n1\n1\n400 1 1 0\n3\nEnd-of-ACIS-data\n0\nENDSEC\n0\nEOF\n";
     let d = cadcraft_io::read_dxf(sat.as_bytes()).unwrap();
@@ -216,4 +219,26 @@ fn a_dwg_keeps_a_sat_text_region_only_before_2013() {
     };
     assert!(holds_sat(cadcraft_io::Version::R2010), "2010 keeps the SAT text");
     assert!(!holds_sat(cadcraft_io::Version::R2018), "2018 comes back without it");
+}
+
+/// The other way round: a solid whose geometry is only in the data store (a 2013+ file) has no
+/// SAT text to write to a DXF of 2010 or earlier, which has no data store. Writing it would leave
+/// an empty 2013-style record (290/2 groups) other programs reject, so it is left out and counted
+/// there, and kept in 2013 and later (#2334).
+#[test]
+fn data_store_solids_are_left_out_of_dxf_2010_and_earlier() {
+    let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
+    let text = |v: cadcraft_io::Version| {
+        let out = cadcraft_io::write_with(&d, "x.dxf", &cadcraft_io::SaveOptions { version: Some(v), binary: false }).unwrap();
+        String::from_utf8(out).unwrap().replace("\r\n", "\n")
+    };
+    let solids = |t: &str| t.matches("\n0\n3DSOLID\n").count() + t.matches("\n  0\n3DSOLID\n").count();
+    assert_eq!(cadcraft_doc::foreign::acis_dropped(&d, false), [("3DSOLID".to_string(), 2)].into());
+    assert!(cadcraft_doc::foreign::acis_dropped(&d, true).is_empty());
+    for v in [cadcraft_io::Version::R2000, cadcraft_io::Version::R2010] {
+        let t = text(v);
+        assert_eq!(solids(&t), 0, "{v:?} leaves them out");
+        assert!(!t.contains("AcDbModelerGeometry"), "{v:?} writes no empty modeler record");
+    }
+    assert_eq!(solids(&text(cadcraft_io::Version::R2018)), 2, "2018 keeps them");
 }
