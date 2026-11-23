@@ -1,8 +1,9 @@
 //! Edit Attributes: INSERT asks for its attribute values in one dialog when ATTDIA is 1
 //! ([`cadcraft_engine::Session::attribute_entry`]). OK answers INSERT's prompts in turn, Cancel
 //! cancels the command; values typed at the command line still work, and the dialog goes away
-//! after the first one. The draft belongs to the drawing and command that asked for it, so an
-//! INSERT started after a cancel starts again from its own defaults.
+//! after the first one. The draft, the window and its fields belong to the drawing and command
+//! that asked for them, so an INSERT started after a cancel starts again from its own defaults
+//! and takes no confirmation meant for the dialog it replaced.
 
 use egui::{RichText, vec2};
 
@@ -20,10 +21,28 @@ struct State {
     values: Vec<String>,
     /// The first field has had the keyboard focus once.
     focused: bool,
+    /// When this owner's dialog appeared ([`egui::InputState::time`]): it takes no answer before
+    /// it has been drawn once, so a click or key meant for the dialog it replaced cannot confirm
+    /// values nobody has seen.
+    shown_at: f64,
+}
+
+impl State {
+    /// Whether this draft is the one `entry` asks for.
+    fn owns(&self, entry: &cadcraft_engine::AttribEntry) -> bool {
+        self.drawing == entry.drawing && self.command == entry.command && self.block == entry.block && self.values.len() == entry.rows.len()
+    }
 }
 
 fn state_id() -> egui::Id {
     egui::Id::unique("attentry_state")
+}
+
+/// The dialog's window id, with the drawing and command it belongs to: the window and every
+/// widget in it are new for a replacement command, so a press on the old dialog's OK never ends
+/// on the new one, and no focus, keyboard or scroll state carries over.
+fn window_id(entry: &cadcraft_engine::AttribEntry) -> egui::Id {
+    egui::Id::unique(("Edit Attributes", entry.drawing, entry.command))
 }
 
 enum Done {
@@ -39,25 +58,32 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         return;
     };
     let t = Tokens::get();
-    let mut st = ctx
-        .data_mut(|d| d.get_temp::<State>(state_id()))
-        .filter(|s| {
-            // A command replaced between frames (cancel and a new INSERT, another drawing): its own
-            // values, and an OK meant for the old dialog can only submit these.
-            s.drawing == entry.drawing && s.command == entry.command && s.block == entry.block && s.values.len() == entry.rows.len()
-        })
-        .unwrap_or_else(|| State {
-            drawing: entry.drawing,
-            command: entry.command,
-            block: entry.block.clone(),
-            values: entry.rows.iter().map(|r| r.default.clone()).collect(),
-            focused: false,
-        });
+    let now = ctx.input(|i| i.time);
+    let mut st = match ctx.data_mut(|d| d.get_temp::<State>(state_id())).filter(|s| s.owns(&entry)) {
+        Some(st) => st,
+        None => {
+            // A command (or drawing) replaced the dialog between frames. Nothing queued for the old
+            // one — a click or key waiting in the app's synthetic input — is the replacement's: its
+            // dialog has not been drawn yet, and its own defaults are what OK submits.
+            app.synthetic.clear();
+            State {
+                drawing: entry.drawing,
+                command: entry.command,
+                block: entry.block.clone(),
+                values: entry.rows.iter().map(|r| r.default.clone()).collect(),
+                focused: false,
+                shown_at: now,
+            }
+        }
+    };
+    // No answer before the dialog has been drawn for this owner: whatever was confirmed was
+    // confirmed at the dialog this one replaced.
+    let fresh = st.shown_at == now;
     let mut done = Done::No;
     let st_focused = st.focused;
     st.focused = true;
     egui::Window::new(crate::tl!("Edit Attributes"))
-        .id(egui::Id::unique("Edit Attributes"))
+        .id(window_id(&entry))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
@@ -72,7 +98,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                     for (i, (row, value)) in entry.rows.iter().zip(st.values.iter_mut()).enumerate() {
                         let shown = if row.prompt.is_empty() { row.tag.as_str() } else { row.prompt.as_str() };
                         let label = ui.label(shown).on_hover_text(crate::tf!("Tag: {tag}", tag = row.tag));
-                        let field = egui::TextEdit::singleline(value).id(egui::Id::unique(("attentry_value", i))).desired_width(220.0);
+                        let field = egui::TextEdit::singleline(value)
+                            .id(egui::Id::unique(("attentry_value", entry.drawing, entry.command, i)))
+                            .desired_width(220.0);
                         let resp = ui.add(field).labelled_by(label.id);
                         if i == 0 && !st_focused {
                             resp.request_focus();
@@ -98,6 +126,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         });
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         done = Done::Cancel;
+    }
+    if fresh {
+        done = Done::No;
     }
     match done {
         Done::No => {
