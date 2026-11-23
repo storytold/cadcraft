@@ -1,4 +1,6 @@
 mod animation_effects;
+mod bconstruction_grips;
+mod bconstruction_ui;
 mod block_description_palette;
 mod chrome_geometry;
 mod clipboard_between_drawings;
