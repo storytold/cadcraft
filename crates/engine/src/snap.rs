@@ -797,6 +797,7 @@ fn curve_centers(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32) -> Ve
     out
 }
 
+/// Prefer more specific modes when nearly equidistant.
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
     point.dist(cursor) - if mode == mode::INT || mode == mode::END { aperture * 0.15 } else { 0.0 }
 }
@@ -1464,11 +1465,18 @@ mod tests {
         assert_eq!(h.name, "Intersection");
     }
 
-    /// Tab cycling sees every deferred snap within the aperture: on a circle with no base point,
-    /// its quadrant, then the deferred tangent and the deferred perpendicular at the same spot.
+    /// Tab cycling sees every snap within the aperture: snap points nearest first (Intersection
+    /// favoured), then Nearest on each object, and no snap twice; the first is what `osnap` picks.
+    /// On a circle with no base point, its quadrant, then the deferred tangent and the deferred
+    /// perpendicular at the same spot.
     #[test]
     fn osnap_all_ranks_every_candidate() {
         let d = drawing();
+        let (cursor, modes) = (Vec2::new(5.2, 0.2), mode::END | mode::MID | mode::INT | mode::NEA);
+        let all = osnap_all(&d, &Space::Model, cursor, 0.5, modes, None, false);
+        // Both lines' midpoints are the intersection point: one Midpoint. Each line has its Nearest.
+        assert_eq!(all.iter().map(|h| h.mode).collect::<Vec<_>>(), [mode::INT, mode::MID, mode::NEA, mode::NEA], "{all:?}");
+        assert_eq!(all.first().map(|h| h.point), osnap(&d, &Space::Model, cursor, 0.5, modes, None, false).map(|h| h.point));
         let all = osnap_all(&d, &Space::Model, Vec2::new(22.1, 0.1), 0.5, mode::QUA | mode::TAN | mode::PER, None, true);
         let kinds: Vec<(u32, bool)> = all.iter().map(|h| (h.mode, h.deferred.is_some())).collect();
         assert_eq!(kinds, [(mode::QUA, false), (mode::TAN, true), (mode::PER, true)], "{all:?}");

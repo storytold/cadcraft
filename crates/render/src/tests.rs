@@ -3,6 +3,11 @@ use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
 use cadcraft_geom::{PolyVertex, Vec3};
 
+// The synthetic TrueType file both this suite and the PDF writer's build: the fonts layer's
+// test-only helper, inlined rather than published or depended on.
+#[path = "../../fonts/tests/support/sfnt.rs"]
+mod sfnt;
+
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) }))
@@ -277,6 +282,44 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+// ---------- a fixture TrueType font: no font file, no installed font ----------
+
+/// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
+fn ring(rx: f64, ry: f64, points: usize, clockwise: bool) -> Vec<(i16, i16)> {
+    let dir = if clockwise { -1.0 } else { 1.0 };
+    (0..points)
+        .map(|i| {
+            (
+                (500.0 + rx * (dir * std::f64::consts::TAU * i as f64 / points as f64).cos()) as i16,
+                (350.0 + ry * (dir * std::f64::consts::TAU * i as f64 / points as f64).sin()) as i16,
+            )
+        })
+        .collect()
+}
+
+/// A TrueType font whose only glyph, "O", is a 128-point ring: the flattened outline a real font's
+/// curve gives, at the same scale, with plenty of detail to simplify. It is built in code so the
+/// level-of-detail test needs no installed font and no font file in the repository (#651).
+fn fixture_font() -> &'static str {
+    const NAME: &str = "cadcraft-render-lod.ttf";
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| cadcraft_fonts::ttf::register(NAME, fixture_font_bytes()));
+    NAME
+}
+
+fn fixture_font_bytes() -> Vec<u8> {
+    sfnt::bytes(&sfnt::Sfnt {
+        // Glyph 1 is "O": a 128-point ring, its counter a second, oppositely wound contour.
+        glyphs: &[sfnt::notdef(), sfnt::glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)])],
+        cmap: &[(0x4F, 0x4F, 1 - 0x4F)], // "O" → glyph 1
+        advance: 1000,                   // one em wide
+        lsb: 0,
+        metrics: 2,                 // hmtx matches the two metrics hhea declares
+        fs_type: 0,                 // any use
+        ink_box: [0, 0, 1000, 700], // the ring's box; the 700-unit cap height is the unit scale
+    })
+}
+
 #[test]
 fn truetype_text_is_filled_or_outlined() {
     let Some(font) = system_font() else { return };
@@ -296,6 +339,31 @@ fn truetype_text_is_filled_or_outlined() {
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().all(|p| p.kind == Kind::Polyline), "TEXTFILL=0 outlines");
     assert!(l.prims.len() >= 3, "O has two contours, H one");
+}
+
+// Regression test for #651: filled TrueType text was triangulated at full outline detail at every
+// zoom, so a page of small text on screen produced millions of triangles and froze the canvas.
+#[test]
+fn small_filled_text_on_screen_is_simplified_but_plots_keep_full_detail() {
+    let d = text_doc(fixture_font(), "OOOO");
+    let tris = |l: &DisplayList| l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p).len() / 3).sum::<usize>();
+    let plot = build_plot(&d, &Space::Model, &Options::default());
+    let full = tris(&plot);
+    assert!(full > 100, "a plot keeps every point of the 128-point rings: {full} triangles");
+    // One pixel is a tenth of the cap height: the rings are simplified to a few points, the shapes
+    // stay.
+    let reduced = build(&d, &Space::Model, &screen(0.1, None));
+    assert!(tris(&reduced) < full / 2, "{} triangles at 10 px per cap height, {full} in a plot", tris(&reduced));
+    assert!(tris(&reduced) > 0 && reduced.bounds.width() > plot.bounds.width() * 0.9, "{:?} vs {:?}", reduced.bounds, plot.bounds);
+    // An em under two pixels is drawn as the ink's box: two triangles a glyph, same extent.
+    let tiny = build(&d, &Space::Model, &screen(2.0, None));
+    assert_eq!(tris(&tiny), 2 * 4, "one box per glyph");
+    assert!(
+        tiny.bounds.width() > plot.bounds.width() * 0.9 && tiny.bounds.height() > plot.bounds.height() * 0.9,
+        "{:?} vs {:?}",
+        tiny.bounds,
+        plot.bounds
+    );
 }
 
 #[test]
