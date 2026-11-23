@@ -342,6 +342,8 @@ fn assert_local_save(app: &CadApp, path: &str, value: &Value) -> Result<(), Stri
 #[test]
 #[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn provider_connected_explicit_dwg_save_as_uses_the_real_local_format_and_writer() -> Result<(), String> {
+    // The DWG writer and reader only handle this fixture's own synthetic drawing.
+    cadcraft_io::dwg_worker::allow_in_process();
     let directory = TempDir::new("provider-explicit-local-dwg");
     let path = directory.path_str("Explicit local drawing.dwg");
     let (services, picked) = picker(None);
@@ -357,6 +359,25 @@ fn provider_connected_explicit_dwg_save_as_uses_the_real_local_format_and_writer
     assert_eq!(app.ui.recent_files, before.recents);
     assert_eq!(app.session.state().map_err(|error| error.to_string())?.uid, before.document.uid);
     Ok(())
+}
+
+#[test]
+fn provider_save_as_preserves_explicit_format_validation_and_the_local_dwg_picker() -> Result<(), String> {
+    let (services, picked) = picker(None);
+    let mut app = app_with_real_formats(services)?;
+    connect(&mut app)?;
+    let before = before(&app)?;
+
+    assert!(app.run("ui.saveas", json!({"format":"unknown"})).is_err());
+    assert!(app.run("ui.saveas", json!({"format":42})).is_err());
+    assert!(picked.borrow().is_empty());
+
+    app.run("ui.saveas", json!({"format":"dwg"}))?;
+    assert_eq!(*picked.borrow(), vec![format!("{}.dwg", before.document.title)]);
+    assert!(writes().is_empty());
+    assert!(app.file_providers.take_events().is_empty());
+    assert_eq!(app.file_providers.snapshot(), before.provider);
+    assert_document_unchanged(&app, &before)
 }
 
 #[test]

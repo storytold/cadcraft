@@ -747,6 +747,15 @@ fn script_runs_commands() {
 }
 
 #[test]
+fn scripts_allow_one_leading_utf8_bom() {
+    for text in ["\u{feff}LINE 0,0 10,10\n\n", "\u{feff}; first comment\r\nLINE 0,0 10,10\r\n\r\n"] {
+        let mut s = Session::new();
+        s.script(text).unwrap();
+        assert_eq!(kinds(&s), vec!["Line"]);
+    }
+}
+
+#[test]
 fn script_splits_line_at_keyword_prompt() {
     let mut s = Session::new();
     s.script("POLYGON 6 200,20 I 15").unwrap();
@@ -1549,5 +1558,15 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
             assert!(r.is_err(), "SETVAR {name} {text} was accepted");
             assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
         }
+    }
+}
+
+#[test]
+fn additional_tools_keeps_compatible_command_ids() {
+    assert_eq!(crate::cmd::resolve_alias("-blockreplace"), "blockreplace");
+    for id in ["blockreplace", "burst", "breakline", "mocoro", "txt2mtxt"] {
+        let command = crate::cmd::find_command(id).expect("existing command id");
+        assert!(command.menu.contains(&"Additional Tools"), "{id}: {:?}", command.menu);
+        assert!(!command.menu.contains(&"Express Tools"));
     }
 }

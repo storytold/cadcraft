@@ -52,7 +52,8 @@ The WASM adapter checks string/array lengths before copying host input and accep
 
 ## Save and Save As
 
-Every interactive Save or Save As while enabled captures a native project and emits saveDialog.
+With the provider enabled, interactive Save and Save As capture a native DXF and emit saveDialog.
+A Save As requested with `format: "dwg"` opens the ordinary local file picker.
 The event carries requestId, documentId, revision, intent and suggested filename. The host presents
 its own choice of **provider / device / cancel**, then calls resolveSaveDialog. The editor owns the
 captured state while the choice is open, so changing tabs or editing cannot silently change the target.

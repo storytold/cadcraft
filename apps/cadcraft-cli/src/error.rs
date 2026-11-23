@@ -27,6 +27,9 @@ pub(crate) enum CliError {
     NotUnicode(std::path::PathBuf),
     #[error("cannot connect to {addr}: {source}")]
     McpConnect { addr: String, source: std::io::Error },
+    /// An `--automation-*-root` that cannot be opened (missing, a file, a link that escapes).
+    #[error("{0}")]
+    AutomationRoots(String),
 }
 
 pub(crate) type Result<T = (), E = CliError> = std::result::Result<T, E>;

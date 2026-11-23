@@ -93,6 +93,27 @@ fn programmatic_saves_never_ask() {
     cleanup(&path);
 }
 
+/// Save As from a DWG warning suggests DXF, which the warning says keeps the objects. The user's
+/// default format stays what File ▸ Save As suggests.
+#[test]
+fn save_as_from_the_dwg_warning_suggests_dxf_and_leaves_the_default() {
+    let (mut app, path) = opened("suggest", &["MLINE"]);
+    let suggested = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = suggested.clone();
+    app.services.pick_save = Some(Box::new(move |name: &str| {
+        seen.lock().unwrap().push(name.to_string());
+        None
+    }));
+    app.run("ui.saveformat", json!({ "format": "dwg" })).unwrap();
+    menus::activate(&mut app, "qsave");
+    app.answer_save_loss(Choice::SaveAs);
+    app.run("ui.saveas", json!(null)).unwrap();
+    assert_eq!(suggested.lock().unwrap().as_slice(), ["Plan.dxf", "Plan.dwg"]);
+    assert_eq!(app.ui.save_format, cadcraft_ui_egui::SaveFormat::Dwg);
+    assert_eq!(std::fs::read(&path).unwrap(), ORIGINAL, "cancelling the dialog writes nothing");
+    cleanup(&path);
+}
+
 /// Type names come from the file: however many, however long, the warning stays readable.
 #[test]
 fn a_hostile_list_of_types_is_capped() {

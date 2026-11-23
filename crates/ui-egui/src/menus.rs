@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 
-use crate::CadApp;
+use crate::{CadApp, Pick};
 
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
@@ -73,7 +73,7 @@ pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
-const RECENT_CLEAR: &str = "ui.recent.clear";
+pub const RECENT_CLEAR: &str = "ui.recent.clear";
 /// Open a resource from the registered provider through the ordinary application command route.
 pub const PROVIDER_RECENT_OPEN: &str = "ui.provider.open";
 
@@ -105,6 +105,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.toggle.ucsicon.origin", "UCS Icon at Origin", &["View", "UCS Icon", "Origin"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -159,6 +160,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::bedit::route(app, id, params) {
         return Some(r);
     }
@@ -207,7 +211,11 @@ fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, S
 fn run_provider_file_command(app: &mut CadApp, id: &str, params: &Value, no_path: bool) -> Option<Result<Value, String>> {
     let result = match id {
         PROVIDER_RECENT_OPEN => crate::file_provider_app::open_recent(app, params),
-        "ui.saveas" | "saveas" if no_path && app.file_providers.enabled() => crate::file_provider_app::save(app, true),
+        "ui.saveas" | "saveas" if no_path && app.file_providers.enabled() => match suggested_save_format(params, crate::SaveFormat::Dxf) {
+            Ok(crate::SaveFormat::Dxf) => crate::file_provider_app::save(app, true),
+            Ok(crate::SaveFormat::Dwg) => return None,
+            Err(error) => Err(error),
+        },
         _ => return None,
     };
     Some(result)
@@ -316,9 +324,16 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
         }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
+        // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
+        "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            // The icon is a setting of the drawing: with none open there is nothing to toggle.
+            if app.session.doc().is_err() {
+                return Some(Err("No drawing open.".into()));
+            }
+            let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
+            let mut on = app.session.ucsicon_bits() & bit != 0;
+            toggle(&mut on, params);
+            app.run("ucsicon", json!({ key: on }))
         }
         "ui.toggle.menubar" => {
             toggle(&mut app.ui.in_window_menu, params);
@@ -430,13 +445,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         return Some(Ok(Value::Null));
     }
     let r = match id {
-        "ui.open" | "open" if no_path => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f());
-            if let Some(p) = picked {
+        "ui.open" | "open" if no_path => app
+            .pick_then_open(Pick::Open, |app, p| {
                 app.open_path(std::path::Path::new(&p));
-            }
-            Ok(Value::Null)
-        }
+                Ok(Value::Null)
+            })
+            .unwrap_or(Ok(Value::Null)),
         // APPLOAD typed or chosen from a menu: the `.lsp` file picker, starting where the last
         // one came from. JSON calls carry `path` and never open one. A picked file is loaded as a
         // typed name is, through the interactive command, so a routine it starts that asks for a
@@ -448,57 +462,60 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 app.set_status(hint);
                 return Some(Ok(Value::Null));
             }
-            let pick = app.services.pick_lisp.as_ref()?;
             let dir = app.ui.last_lisp_dir.clone().unwrap_or_default();
-            let Some(path) = pick(&dir) else { return Some(Ok(Value::Null)) };
-            if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
-                app.ui.last_lisp_dir = Some(dir.to_string());
-            }
-            if let Err(e) = app.session.start("appload") {
-                return Some(Err(e.to_string()));
-            }
-            app.cmdline(&path);
-            Ok(Value::Null)
+            let was_prompting = app.session.prompting();
+            return app.pick_then(Pick::Lisp(dir), move |app, path| {
+                if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
+                    app.ui.last_lisp_dir = Some(dir.to_string());
+                }
+                app.start_after_pick("appload", was_prompting)?;
+                app.cmdline(&path);
+                Ok(Value::Null)
+            });
         }
         // Pick a template (.dwt or .dxf) and start a new drawing from it.
-        "ui.newtemplate" => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                return Some(app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
-        }
+        "ui.newtemplate" => app
+            .pick_then_open(Pick::Open, |app, p| app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()))
+            .unwrap_or(Ok(Value::Null)),
         // RECOVER from the menu or typed: pick the file. Without a picker the engine asks for the
         // file name on the command line.
-        "recover" if no_path && app.services.pick_open.is_some() => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
+        "recover" if no_path && app.services.pick_open.is_some() => app
+            .pick_then_open(Pick::Open, |app, p| {
                 let r = app.run("recover", json!({ "path": p }));
                 app.opened(r);
-            }
-            Ok(Value::Null)
-        }
+                Ok(Value::Null)
+            })
+            .unwrap_or(Ok(Value::Null)),
         "ui.saveas" | "saveas" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
-            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
-                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
+            // `format` ("dxf" or "dwg") is only this dialog's suggestion. Without it, Save As uses
+            // the user's default format, and neither call changes that default.
+            let format = match suggested_save_format(params, app.ui.save_format) {
+                Ok(format) => format,
+                Err(e) => return Some(Err(e)),
+            };
+            let name = format.suggested_name(title.as_deref());
+            // Bound to this drawing: the answer saves it, not whichever drawing is active then.
+            app.pick_then(Pick::Save(name), |app, p| {
+                app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
+            })
+            .unwrap_or(Ok(Value::Null))
         }
         "qsave" if no_path => return user_qsave(app),
         // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
         // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
         // params, never get here and never open a dialog.
         "exportpdf" if params.is_null() && app.session.state().is_ok() => {
-            let pick = app.services.pick_save.as_ref()?;
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
             let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
-            let Some(path) = pick(&format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
-            let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
-            app.session.echo(match &r {
-                Ok(_) => format!("Plotted to {path}"),
-                Err(e) => e.clone(),
+            return app.pick_then(Pick::Save(format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))), |app, path| {
+                let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
+                app.session.echo(match &r {
+                    Ok(_) => format!("Plotted to {path}"),
+                    Err(e) => e.clone(),
+                });
+                r
             });
-            r
         }
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
@@ -552,7 +569,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"
@@ -625,6 +641,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         _ => return None,
     };
     Some(r)
+}
+
+/// The format a Save dialog suggests: `format` when the call names `dxf` or `dwg`, otherwise the
+/// user's default. Naming one does not change the default.
+fn suggested_save_format(params: &Value, default: crate::SaveFormat) -> Result<crate::SaveFormat, String> {
+    let Some(v) = params.get("format").filter(|v| !v.is_null()) else { return Ok(default) };
+    let Some(name) = v.as_str() else { return Err("save format must be \"dxf\" or \"dwg\"".into()) };
+    crate::SaveFormat::parse(name).ok_or_else(|| {
+        let shown: String = name.chars().take(40).collect();
+        format!("unknown save format \"{shown}\" (dxf or dwg)")
+    })
 }
 
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved
@@ -719,7 +746,9 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
+            let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
+            add(menu, label, id, *sc, enabled);
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
@@ -832,11 +861,18 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
     }
 }
 
-/// Activate a menu command. QuickCalc toggles transparently; other items clear pending
-/// command-line text and start their command interactively.
+/// Activate a menu command. QuickCalc toggles transparently, and Reference Manager closes its
+/// palette when it is open (typed XREF only opens it); other items clear pending command-line
+/// text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
     if id == "ui.toggle.quickcalc" {
         run_transparent(app, id);
+        return;
+    }
+    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+        if let Err(e) = crate::xrefs::close_palette(app) {
+            app.set_status(e);
+        }
         return;
     }
     app.cmd.buffer.clear();
