@@ -8,6 +8,7 @@ mod control_cmdline;
 mod control_cmdline_key;
 mod control_methods;
 mod dialog_dispatch;
+mod dimcon_inline_edit;
 mod dimension_menu;
 mod dimstyle_dialog;
 mod docking_workflows;
