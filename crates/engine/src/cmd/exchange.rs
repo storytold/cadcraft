@@ -22,6 +22,8 @@ use super::{CommandSpec, bad, point_value, str_param};
 
 use crate::{EngineError, Result, Session};
 
+mod gis;
+
 /// Formats EXPORT writes (the io layer picks the writer from the extension).
 pub const EXPORT_FORMATS: &[&str] = &["dxf", "dwg", "svg", "png", "pdf"];
 /// Default and largest plot preview width, in pixels.
@@ -31,11 +33,11 @@ const MAX_PREVIEW_PX: u64 = 4096;
 const MAX_SHEETS: usize = 256;
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut v = vec![
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG; .shp and .geojson go to IMPORTGIS), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -69,7 +71,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["3do", "orbit"])
             .params("not available yet")
             .noundo(),
-    ]
+    ];
+    v.extend(gis::specs());
+    v
 }
 
 fn extension(path: &str) -> String {
@@ -135,21 +139,29 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- IMPORT ----------
 
-fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
-    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
+/// Where an imported file goes: `at` (default the origin) and `scale` (default 1).
+fn placement(cmd: &str, p: &Value) -> Result<(Vec2, f64)> {
     let at = match p.get("at") {
-        Some(v) => point_value(v).ok_or_else(|| bad("import", "`at` must be a point [x, y]"))?,
+        Some(v) => point_value(v).ok_or_else(|| bad(cmd, "`at` must be a point [x, y]"))?,
         None => Vec2::ZERO,
     };
     let scale = match p.get("scale") {
-        Some(v) => v
-            .as_f64()
-            .filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs()))
-            .ok_or_else(|| bad("import", "`scale` must be a non-zero number"))?,
+        Some(v) => {
+            v.as_f64().filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs())).ok_or_else(|| bad(cmd, "`scale` must be a non-zero number"))?
+        }
         None => 1.0,
     };
+    Ok((at, scale))
+}
+
+fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
+    if str_param(p, "path").or_else(|| str_param(p, "name")).is_some_and(gis::is_gis_name) {
+        return gis::run(s, p);
+    }
+    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
+    let (at, scale) = placement("import", p)?;
     let (bytes, name) = if let Some(path) = str_param(p, "path") {
-        (read_file(path)?, path.to_string())
+        (read_file("import", path)?, path.to_string())
     } else {
         let data = str_param(p, "data").ok_or_else(|| bad("import", "`path` or `data` (base64) is required"))?;
         (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
@@ -203,15 +215,15 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
 }
 
 /// The bytes of the file to import, held to the automation roots.
-fn read_file(_path: &str) -> Result<Vec<u8>> {
+fn read_file(cmd: &str, _path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        crate::file_access::check_read(_path).map_err(|e| bad("import", e))?;
+        crate::file_access::check_read(_path).map_err(|e| bad(cmd, e))?;
         crate::capped_read::read_capped(std::path::Path::new(_path), crate::cmd::file::MAX_DRAWING_BYTES)
-            .map_err(|e| bad("import", format!("{_path}: {e}")))
+            .map_err(|e| bad(cmd, format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
-    Err(bad("import", "paths are not available on the web; pass `data`"))
+    Err(bad(cmd, "paths are not available on the web; pass `data`"))
 }
 
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that

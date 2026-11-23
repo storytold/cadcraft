@@ -36,3 +36,24 @@ fn open_bytes_opens_the_named_drawing_and_reports_failures() {
     assert_eq!(app.session.log.last().map(String::as_str), Some("Open: huge.dwg is 512.0 MB, larger than the 256 MB CADCraft opens in the browser"));
     assert_eq!(app.session.docs.len(), 1);
 }
+
+#[test]
+fn open_bytes_routes_gis_files_to_importgis() {
+    cadcraft_engine::cmd::file::set_gis_reader(cadcraft_io::gis::import);
+    let mut app = CadApp::new(Session::empty(), Services::default());
+    app.ui.start_tab = true;
+    let gj = br#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"id":"A"},"geometry":{"type":"Point","coordinates":[8.5,47.0]}}]}"#;
+    app.open_bytes("site.geojson", gj);
+    assert_eq!(app.session.docs.len(), 1, "{:?}", app.session.log.last());
+    assert!(!app.ui.start_tab && app.canvas.zoom_pending);
+    assert!(app.session.doc().unwrap().space(&cadcraft_engine::doc::Space::Model).unwrap().iter().count() == 1);
+
+    app.open_bytes("export.json", gj);
+    assert!(
+        app.session.doc().unwrap().space(&cadcraft_engine::doc::Space::Model).unwrap().iter().count() == 2,
+        "a .json holding GeoJSON imports too"
+    );
+
+    app.open_bytes("bad.geojson", b"{}");
+    assert!(app.status.as_ref().is_some_and(|(s, _)| !s.is_empty()));
+}

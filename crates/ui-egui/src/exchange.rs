@@ -1,4 +1,4 @@
-//! EXPORT, IMPORT, PUBLISH and PREVIEW from a menu, the tool bar or the command line: the first
+//! EXPORT, IMPORT, IMPORTGIS, PUBLISH and PREVIEW from a menu, the tool bar or the command line: the first
 //! three ask for a file, PREVIEW shows the plot in a window. Calls with parameters (scripts, the
 //! control channel, MCP) never get here and never open a dialog: they run the engine commands.
 
@@ -26,6 +26,9 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => app
             .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
+        "importgis" | "mapimport" | "geoimport" => app
+            .pick_then(Pick::Open, |app, path| app.run("importgis", json!({ "path": path })))
+            .unwrap_or_else(|| no_picker(app, "IMPORTGIS", r#"importgis {"path": "parcels.shp"}"#)),
         "publish" => app
             .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
