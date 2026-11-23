@@ -2,10 +2,11 @@
 //! the spot where it went down, however fast the mouse is moving. Where the pointer goes while the
 //! button is held only decides whether the press also becomes a drag:
 //!
-//! - holding still, or staying within [`TOLERANCE`] of the press, never makes a drag;
+//! - holding still, or staying within the press tolerance, never makes a drag;
 //! - once the pointer leaves the tolerance a timer starts; a button still down [`DRAG_DELAY`]
 //!   later is a drag (a selection window the press opened closes where the button comes up);
-//! - a button that comes up sooner was a click (the window waits for the next press).
+//! - returning within the selection-window tolerance resets the timer; a button that comes up
+//!   there or before the delay was a click (the window waits for the next press).
 //!
 //! The timer starts on leaving the tolerance, not on the press: pressing, holding still and then
 //! moving and letting go quickly is still a click, as in AutoCAD.
@@ -18,15 +19,16 @@ use egui::{Modifiers, Pos2};
 
 /// How far (points) the pointer may wander from the press before the timer starts.
 pub(crate) const TOLERANCE: f32 = 6.0;
-/// How long (seconds) the button must stay down after the pointer left [`TOLERANCE`] for the
-/// press to be a drag.
+/// Extra room to click the first corner of a window without committing it by accident.
+const WINDOW_TOLERANCE: f32 = 12.0;
+/// How long (seconds) the button must stay down outside the tolerance for the press to be a drag.
 pub(crate) const DRAG_DELAY: f64 = 0.25;
 
 /// A primary-button press being held.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Press {
     origin: Pos2,
-    /// When the pointer first went further than [`TOLERANCE`] from `origin` (seconds).
+    /// When the pointer went outside the press tolerance (seconds).
     left_at: Option<f64>,
     /// The press opened a selection window (set its first corner).
     pub(crate) opened_window: bool,
@@ -60,8 +62,11 @@ impl Press {
 
     /// The pointer is at `pos` at time `now`.
     pub(crate) fn moved(&mut self, pos: Pos2, now: f64) {
-        if self.left_at.is_none() && pos.distance(self.origin) > TOLERANCE {
-            self.left_at = Some(now);
+        let tolerance = if self.opened_window { WINDOW_TOLERANCE } else { TOLERANCE };
+        if pos.distance(self.origin) > tolerance {
+            self.left_at.get_or_insert(now);
+        } else if self.opened_window {
+            self.left_at = None;
         }
     }
 
@@ -109,7 +114,7 @@ mod tests {
     #[test]
     fn letting_go_soon_after_leaving_the_tolerance_is_a_click() {
         let mut p = Press::new(pos2(100.0, 100.0), true);
-        p.moved(pos2(112.0, 100.0), 1.0);
+        p.moved(pos2(115.0, 100.0), 1.0);
         assert!(!p.released_as_drag(pos2(130.0, 100.0), 1.0 + DRAG_DELAY / 2.0));
     }
 
@@ -124,7 +129,7 @@ mod tests {
     #[test]
     fn a_button_still_down_after_the_delay_is_a_drag() {
         let mut p = Press::new(pos2(100.0, 100.0), true);
-        p.moved(pos2(110.0, 100.0), 1.0);
+        p.moved(pos2(115.0, 100.0), 1.0);
         p.moved(pos2(200.0, 150.0), 1.1);
         assert!(p.released_as_drag(pos2(250.0, 160.0), 1.0 + DRAG_DELAY));
     }
