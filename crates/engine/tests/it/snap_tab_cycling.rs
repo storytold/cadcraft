@@ -87,3 +87,16 @@ fn a_non_finite_base_gives_no_candidates() {
     // A finite base still offers them.
     assert!(!snap_candidates(d, &Space::Model, Vec2::new(10.01, 0.0), 0.5, all, Some(Vec2::new(5.0, 5.0)), false).is_empty());
 }
+
+#[test]
+fn deferred_snaps_of_two_curves_at_one_point_are_both_offered() {
+    // Two circles touching at the origin: each offers its own deferred tangent there, and the
+    // line drawn from it depends on which circle it is.
+    let mut s = Session::new();
+    s.script("CIRCLE 0,1 1\nCIRCLE 0,-2 2\n").unwrap();
+    let d = s.doc().unwrap();
+    let all = cadcraft_engine::snap::osnap_all(d, &Space::Model, Vec2::new(0.0, 0.1), 0.5, mode::TAN, None, true);
+    let curves: Vec<_> = all.iter().filter_map(|h| h.deferred.map(|f| f.curve)).collect();
+    assert_eq!(curves.len(), 2, "{all:?}");
+    assert_ne!(curves.first(), curves.get(1), "{all:?}");
+}

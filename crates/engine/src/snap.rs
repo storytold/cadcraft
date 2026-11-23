@@ -70,12 +70,15 @@ impl SnapHit {
     }
 
     /// The same snap as `o`, for a Tab list without repeats: the same mode at the same point
-    /// (within a millionth of `aperture`), deferred or not alike, and from the same source (this
-    /// space, or one viewport). Overlapping viewports can show different model points at one paper
-    /// point; each stays a candidate, since DIST measures in the model units of the viewport picked.
+    /// (within a millionth of `aperture`), deferred or not alike (and if deferred, on the same
+    /// curve), and from the same source (this space, or one viewport). Overlapping viewports can
+    /// show different model points at one paper point; each stays a candidate, since DIST
+    /// measures in the model units of the viewport picked.
     pub(crate) fn same(&self, o: &SnapHit, aperture: f64) -> bool {
         self.mode == o.mode
-            && self.deferred.is_some() == o.deferred.is_some()
+            // Deferred snaps on different curves at one provisional point stay apart: the line
+            // drawn from each depends on its curve.
+            && self.deferred.map(|d| d.curve) == o.deferred.map(|d| d.curve)
             && self.viewport.map(|v| v.viewport) == o.viewport.map(|v| v.viewport)
             && self.point.near(o.point, aperture * 1e-6)
     }
