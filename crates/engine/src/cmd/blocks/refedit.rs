@@ -843,7 +843,9 @@ fn bring_symbols(host: &Drawing, src: &mut Drawing, prefix: &str, mut wanted: Ve
         bring_symbol(host, src, prefix, sym, &name, &mut wanted);
     }
     // A block the written objects name that the drawing still lacks (an xref of the host, added
-    // with REFSET) would leave a reference to nothing in the file: refused, nothing written.
+    // with REFSET) would leave a reference to nothing in the file: refused, nothing written. Only
+    // names the edit brings in are checked: a reference the file already had (named `xref|name`
+    // in the host) is written as it was, even to a block the file doesn't define.
     if let Some(name) = blocks.iter().find(|n| src.block(n).is_none()) {
         return Err(bad(
             "refclose",

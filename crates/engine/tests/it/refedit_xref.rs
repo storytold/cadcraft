@@ -837,3 +837,28 @@ fn an_associative_dimension_erased_during_the_edit_is_not_reported() {
     assert!(!s.log.iter().any(|m| m.contains("dimension associations")), "{:?}", s.log);
     assert!(!read(&file).model.iter().any(|e| matches!(e.kind, EntityKind::Dimension(_))), "the dimension is gone from the file");
 }
+
+/// Review of #3352: the write-back refuses a block name the edit brings in that the xref's drawing
+/// doesn't define. A reference the file already had to a block it doesn't define is not the edit's
+/// doing: the save goes ahead and keeps it as it was.
+#[test]
+fn a_dangling_reference_the_xref_file_already_had_is_saved_as_it_was() {
+    hooks();
+    let dir = folder("dangling");
+    let (mut d, _) = site();
+    let h = d.new_handle();
+    d.model.push(Entity::new(h, EntityKind::Insert(insert("Ghost", Vec3::new(3.0, 3.0, 0.0)))));
+    let file = dir.join("ghost.dxf");
+    save(&d, &file);
+    let before = read(&file);
+    assert!(before.block("Ghost").is_none() && before.entity(h).is_some(), "the file names a block it doesn't define");
+    let (mut s, ins) = host_with(&dir, "ghost.dxf", "ghost");
+    s.execute("refedit", &json!({ "handle": ins })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    let back = read(&file);
+    assert_eq!(back.model.len(), before.model.len() + 1, "the edit is written");
+    let EntityKind::Insert(i) = &back.entity(h).expect("the reference is kept").kind else { panic!() };
+    assert_eq!((i.block.as_str(), i.insert), ("Ghost", Vec3::new(3.0, 3.0, 0.0)), "as it was");
+    assert!(back.block("Ghost").is_none(), "and nothing is made up for it");
+}
