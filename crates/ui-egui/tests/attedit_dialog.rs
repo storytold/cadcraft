@@ -54,6 +54,48 @@ fn painted(app: &mut CadApp, ctx: &egui::Context) -> String {
     text
 }
 
+/// The application in an egui harness at a size that shows the Properties palette.
+fn palette(app: CadApp) -> egui_kittest::Harness<'static, CadApp> {
+    egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    )
+}
+
+/// Focus the attribute field showing `shown` and key `text` into it, leaving it uncommitted.
+fn type_pending(harness: &mut egui_kittest::Harness<'_, CadApp>, shown: &str, text: &str) {
+    use egui_kittest::kittest::Queryable;
+    let field =
+        harness.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some(shown)).expect("the attribute's field");
+    field.focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.event(egui::Event::Text(text.into()));
+    harness.run();
+}
+
+/// The texts the text fields show, the command line's included.
+fn fields(harness: &egui_kittest::Harness<'_, CadApp>) -> Vec<String> {
+    use egui_kittest::kittest::Queryable;
+    let mut vs: Vec<String> = harness.get_all_by_role(egui::accesskit::Role::TextInput).filter_map(|n| n.value()).collect();
+    vs.sort();
+    vs
+}
+
+/// Whether the palette's fields show every one of `values`, and no `gone`.
+fn shows(harness: &egui_kittest::Harness<'_, CadApp>, values: &[&str], gone: &str) -> bool {
+    let now = fields(harness);
+    values.iter().all(|v| now.iter().any(|f| f == v)) && !now.iter().any(|f| f == gone)
+}
+
+/// A dropped pending value is reported on the command line, as a rejected Properties value is.
+fn told_the_value_was_not_applied(harness: &egui_kittest::Harness<'_, CadApp>) -> bool {
+    harness.state().session.log.iter().any(|l| l.contains("the value was not applied"))
+}
+
 #[test]
 fn edit_attributes_on_a_selected_reference_opens_the_dialog() {
     let (mut app, h) = app_with_reference();
@@ -157,23 +199,10 @@ fn the_properties_palette_lists_the_attributes() {
 /// A value typed into a Properties attribute field reaches the drawing, as one undo step.
 #[test]
 fn a_properties_value_is_set_and_undone_as_one_step() {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
     let (app, h) = app_with_reference();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = palette(app);
     harness.run();
-    let field = harness.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some("n")).expect("the NOTE field");
-    field.focus();
-    harness.run();
-    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-    harness.event(egui::Event::Text("EG".into()));
-    harness.run();
+    type_pending(&mut harness, "n", "EG");
     harness.key_press(egui::Key::Enter);
     harness.run();
     assert_eq!(value(harness.state(), h, "NOTE"), "EG");
@@ -237,23 +266,10 @@ fn a_stale_dialog_does_not_overwrite_another_attribute() {
 /// after another (with the same handle and tags) is chosen, it must not be applied there.
 #[test]
 fn a_pending_properties_value_does_not_follow_a_drawing_switch() {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
     let (app, h) = app_with_reference();
-    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = palette(app);
     harness.run();
-    let field = harness.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some("n")).expect("the NOTE field");
-    field.focus();
-    harness.run();
-    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-    harness.event(egui::Event::Text("EG".into()));
-    harness.run();
+    type_pending(&mut harness, "n", "EG");
 
     harness.state_mut().session.new_drawing(false);
     assert_eq!(add_reference(harness.state_mut()), h);
@@ -261,4 +277,61 @@ fn a_pending_properties_value_does_not_follow_a_drawing_switch() {
     harness.key_press(egui::Key::Enter);
     harness.run();
     assert_eq!(value(harness.state(), h, "NOTE"), "n", "the other drawing's reference is untouched");
+}
+
+/// A row is a place, not a name: a reorder under text typed into a Properties field must not
+/// give that text to whichever attribute now has the place.
+#[test]
+fn a_pending_properties_value_does_not_follow_a_reorder() {
+    let (app, h) = app_with_reference();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "n", "EG");
+    harness.state_mut().run("battman", json!({ "name": "Tag", "action": "order", "order": ["NOTE", "NO"] })).unwrap();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!((value(harness.state(), h, "NO"), value(harness.state(), h, "NOTE")), ("7".into(), "n".into()), "nothing was written");
+    assert!(shows(&harness, &["7", "n"], "EG"), "the fields show the drawing's values again: {:?}", fields(&harness));
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+}
+
+/// Text waiting in a Properties field does not overwrite a value edited from elsewhere.
+#[test]
+fn a_pending_properties_value_does_not_overwrite_an_edit_from_elsewhere() {
+    let (app, h) = app_with_reference();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "n", "EG");
+    harness.state_mut().run("attedit", json!({ "handle": h.hex(), "at": { "1": "other" } })).unwrap();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NOTE"), "other", "the value edited from elsewhere stands");
+    assert!(shows(&harness, &["7", "other"], "EG"), "the field shows the value edited from elsewhere: {:?}", fields(&harness));
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+}
+
+/// Undo can put an older attribute, with its older value, where the typed-into one was: the
+/// pending text must not go to it.
+#[test]
+fn a_pending_properties_value_does_not_follow_an_undo() {
+    let (app, h) = app_with_reference();
+    let mut harness = palette(app);
+    harness.state_mut().run("battman", json!({ "name": "Tag", "action": "order", "order": ["NOTE", "NO"] })).unwrap();
+    harness.run();
+    // The first row is NOTE now, and its text is left uncommitted.
+    type_pending(&mut harness, "n", "EG");
+    harness.state_mut().run("undo", json!({})).unwrap();
+    // Undo leaves nothing selected; the reference is selected again before the next frame, so the
+    // field with the pending text is drawn (and keeps its keyboard focus) over the older attributes.
+    harness.state_mut().session.set_selection(vec![h]);
+    let rows: Vec<_> = cadcraft_engine::attributes(harness.state().session.doc().unwrap(), h).into_iter().map(|a| (a.tag, a.value)).collect();
+    assert_eq!(rows, [("NO".to_string(), "7".to_string()), ("NOTE".to_string(), "n".to_string())], "the undo put the order back");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!((value(harness.state(), h, "NO"), value(harness.state(), h, "NOTE")), ("7".into(), "n".into()), "nothing was written");
+    assert!(shows(&harness, &["7", "n"], "EG"), "the fields show the drawing's values again: {:?}", fields(&harness));
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
 }

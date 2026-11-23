@@ -581,6 +581,45 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
     out
 }
 
+/// Text waiting in an attribute's Properties field, kept with the attribute it was typed into: a
+/// reorder, an edit from elsewhere, or an undo can put another attribute in that place.
+#[derive(Clone)]
+struct PendingAttr {
+    tag: String,
+    value: String,
+    text: String,
+}
+
+/// [`edit_field`] for the value of attribute `a`, which the drawing has where this row is. The
+/// field is a place in the reference (`at` by index, which keeps attributes sharing a tag apart),
+/// so the pending text stays bound to the tag and value it was typed into: when the place holds
+/// another attribute, the text is dropped (and `stale` set) rather than written to it.
+fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> Option<String> {
+    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
+    let changed = pending.as_ref().is_some_and(|p| p.tag != a.tag || p.value != a.value);
+    let mut buf = match pending {
+        Some(p) if !changed => p.text,
+        Some(p) => {
+            // Report it only when text the drawing does not have was waiting: merely focusing a
+            // field loses nothing.
+            *stale |= p.text != p.value;
+            ui.data_mut(|d| d.remove::<PendingAttr>(id));
+            a.value.clone()
+        }
+        None => a.value.clone(),
+    };
+    let w = ui.available_width() - 10.0;
+    let te = id.with("te");
+    let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
+    // Keyboard focus from memory, as in `edit_field`.
+    if ui.memory(|m| m.has_focus(te)) {
+        ui.data_mut(|d| d.insert_temp(id, PendingAttr { tag: a.tag.clone(), value: a.value.clone(), text: buf.clone() }));
+    } else {
+        ui.data_mut(|d| d.remove::<PendingAttr>(id));
+    }
+    (resp.lost_focus() && buf != a.value).then_some(buf)
+}
+
 /// A committed numeric field read as the command line reads numbers (`36`, `3'`, `3'-6 1/2"`,
 /// `6 1/2`). Text it can't read goes to `bad`, to be reported rather than dropped.
 fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
@@ -590,6 +629,15 @@ fn number(typed: Option<String>, bad: &mut Option<String>) -> Option<f64> {
         *bad = Some(typed);
     }
     v
+}
+
+/// Text typed into an attribute's field and still waiting there when the attributes changed is
+/// dropped, not given to whichever attribute is in that place now; say so, as a rejected value
+/// says so.
+fn report_stale_attribute(app: &mut CadApp, stale: bool) {
+    if stale {
+        app.session.echo(crate::tl!("The attributes changed: the value was not applied."));
+    }
 }
 
 /// Reports a numeric field the user typed that isn't a number; the field shows its value again.
@@ -998,6 +1046,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
     let mut att_set: Option<Value> = None;
+    // A Properties attribute field whose place holds another attribute than the one its pending
+    // text was typed into.
+    let mut att_stale = false;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1244,7 +1295,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                                 } else {
                                     crate::tl!("Constant")
                                 });
-                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", uid, e.handle, i)), a.value.clone()) {
+                            } else if let Some(v) = attr_field(ui, ui.scope_id().with(("attval", uid, e.handle, i)), a, &mut att_stale) {
                                 // By place: another attribute may share the tag.
                                 att_set = Some(json!({ "handle": e.handle.hex(), "at": { i.to_string(): v } }));
                             }
@@ -1498,6 +1549,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         app.session.echo(crate::tf!("{property}: that value can't be used here.", property = crate::i18n::t(e.label)));
     }
     report_bad(app, bad);
+    report_stale_attribute(app, att_stale);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
     }
