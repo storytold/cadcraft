@@ -1132,7 +1132,7 @@
 	Text Objects Only	Только текстовые объекты
 	Dimension Objects Only	Только размеры
 	Leaders Only	Только выноски
-	All Annotation Objects	Все аннотационные объекты
+	All Annotation Objects	Все аннотативные объекты
 	Send Hatches to Back	Штриховки на задний план
 	Isolate Objects	Изолировать объекты
 	Hide Objects	Скрыть объекты
@@ -1273,8 +1273,8 @@
 	Bulleted list	Маркированный список
 	Changed: {n}	Изменено: {n}
 	Clear History	Очистить журнал
-	Clip	Обрезать
-	Clip Viewport	Обрезать видовой экран
+	Clip	Подрезать
+	Clip Viewport	Подрезать видовой экран
 	Close All Other Drawings	Закрыть все другие чертёжи
 	Close Comparison	Закрыть сравнение
 	Collapse Palettes	Свернуть палитры
@@ -1316,7 +1316,7 @@
 	Collect Multileaders	Собрать мультивыноски
 	Edit Multileader	Редактировать мультивыноску
 	Infer Constraints	Выводить ограничения
-	Insert tab	Вкладка Вставка
+	Insert tab	Вставить табуляцию
 	Insert Table Formula	Вставить формулу таблицы
 	Inspection	Контроль
 	Jogged	С изломом
@@ -1415,7 +1415,7 @@
 	When no command is active	Когда команда не активна
 	Window selection color:	Цвет рамки выбора:
 	Xrefs	Внешние ссылки
-	objects	объекты
+	objects	объектов
 	Spline Edit	Редактировать сплайн
 	To	До
 	Table Breaks	Разрывы таблицы
@@ -2002,7 +2002,7 @@ menu	Dimension	Размеры
 	Xref Clip Frame	Рамка подрезки xref
 	Your changes will be lost if you don't save them.	Если не сохранить, изменения будут потеряны.
 	built-in	встроенный
-	milliseconds	миллисекунды
+	milliseconds	мс
 	overrides built-in	переопределяет встроенный
 	{alias} is already defined; select it and use Edit.	{alias} уже определён; выберите его и используйте «Изменить».
 	{command} is an unknown command.	{command} — неизвестная команда.
@@ -2235,7 +2235,7 @@ menu	Dimension	Размеры
 	Deg/Min/Sec	Град/мин/сек
 	Grads	Грады
 	Surveyor's Units	Топографические единицы
-	Unitless	Безразмерные
+	Unitless	Без единиц
 	Inches	Дюймы
 	Feet	Футы
 	Miles	Мили
