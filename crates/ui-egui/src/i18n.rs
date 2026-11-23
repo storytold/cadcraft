@@ -333,8 +333,24 @@ fn parse(source: &str) -> (Catalog<'_>, Vec<String>) {
     (entries, errors)
 }
 
+fn merge_ordinary_zh<'a>(catalog: &mut Catalog<'a>, supplemental: &'a str) {
+    for ((context, key), value) in parse(supplemental).0 {
+        if context.is_empty() {
+            catalog.entry((context, key)).or_insert(value);
+        }
+    }
+}
+
 fn catalog(language: &str) -> Option<&'static Catalog<'static>> {
-    LANGUAGES.iter().find(|l| l.code == language && !l.source.is_empty()).map(|l| l.catalog.get_or_init(|| parse(l.source).0))
+    LANGUAGES.iter().find(|l| l.code == language && !l.source.is_empty()).map(|l| {
+        l.catalog.get_or_init(|| {
+            let mut entries = parse(l.source).0;
+            if l.code == "zh" {
+                merge_ordinary_zh(&mut entries, include_str!("i18n/zh_shared.tsv"));
+            }
+            entries
+        })
+    })
 }
 
 pub fn tr<'a>(language: &str, source: &'a str) -> &'a str {

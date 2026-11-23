@@ -1,4 +1,4 @@
-//! Bake the contributor credits into the binary as static Rust tables. Nothing is read at run time.
+//! Bake the contributor credits and validate the shared Chinese overlay at build time.
 //!
 //! - contributors/contributors.json: commit stats per GitHub username, with a mark for whose people.toml
 //!   entry is verified.
@@ -11,7 +11,11 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
+const SHARED_ZH: &str = "src/i18n/zh_shared.tsv";
+const SHARED_ZH_KEY: &str = "Construction Geometry";
+
 fn main() {
+    verify_shared_zh();
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contributors");
     let json = read(&dir.join("contributors.json"), "the About window shows no contributors", |t| {
         serde_json::from_str::<Value>(t).map_err(|e| e.to_string())
@@ -23,6 +27,51 @@ fn main() {
     if let Err(e) = std::fs::write(&out, generate(&json, &people)) {
         println!("cargo::warning=writing {}: {e}", out.display());
     }
+}
+
+// Local/offline builds use the checked-in projection. Hosted and release builds with
+// craft-i18n.rev also check it against their canonical craft-i18n checkout.
+fn verify_shared_zh() {
+    println!("cargo::rerun-if-env-changed=CRAFT_I18N_DIR");
+    println!("cargo::rerun-if-env-changed=CRAFT_I18N_REQUIRED");
+    println!("cargo::rerun-if-changed={SHARED_ZH}");
+    let result = projected_row(include_str!("src/i18n/zh_shared.tsv")).and_then(verify_checkout);
+    if let Err(e) = result {
+        println!("cargo::error=shared Simplified Chinese catalog: {e}");
+    }
+}
+
+fn projected_row(projection: &str) -> Result<&str, String> {
+    let mut rows = projection.lines().filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let Some(row) = rows.next() else {
+        return Err(format!("missing projected key {SHARED_ZH_KEY:?}"));
+    };
+    let valid = row.strip_prefix('\t').and_then(|rest| rest.split_once('\t')).is_some_and(|(key, value)| {
+        key == SHARED_ZH_KEY && !value.trim().is_empty() && !value.contains(['\t', '\\', '\r'])
+    });
+    if rows.next().is_some() || !valid {
+        return Err(format!("expected exactly one ordinary literal row for {SHARED_ZH_KEY:?}"));
+    }
+    Ok(row)
+}
+
+fn verify_checkout(projected: &str) -> Result<(), String> {
+    let required = std::env::var("CRAFT_I18N_REQUIRED").is_ok_and(|v| v.trim() == "1");
+    let Some(dir) = std::env::var_os("CRAFT_I18N_DIR").filter(|dir| !dir.is_empty()) else {
+        return if required { Err("CRAFT_I18N_REQUIRED=1 but CRAFT_I18N_DIR is unset".to_string()) } else { Ok(()) };
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_absolute() {
+        return Err("CRAFT_I18N_DIR must be an absolute path".to_string());
+    }
+    let catalog = dir.join("locales/zh-hans/cadcraft.tsv");
+    println!("cargo::rerun-if-changed={}", catalog.display());
+    let source = std::fs::read_to_string(&catalog).map_err(|e| format!("reading {}: {e}", catalog.display()))?;
+    let mut rows = source.lines().filter(|row| row.strip_prefix('\t').is_some_and(|rest| rest.split('\t').next() == Some(SHARED_ZH_KEY)));
+    if rows.next() != Some(projected) || rows.next().is_some() {
+        return Err(format!("projected key {SHARED_ZH_KEY:?} is missing, duplicated or differs from the checked-out source"));
+    }
+    Ok(())
 }
 
 fn read<T>(path: &std::path::Path, fallback: &str, parse: impl Fn(&str) -> Result<T, String>) -> Option<T> {

@@ -40,6 +40,35 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
+#[test]
+fn chinese_supplement_fills_only_missing_ordinary_labels() {
+    let (mut entries, _) = parse("\tExisting label\tlocal\nmenu\tExisting label\tlocal menu\n");
+    merge_ordinary_zh(&mut entries, "\tExisting label\tshared\n\tMissing label\tshared\nmenu\tIgnored label\tshared menu\n");
+    assert_eq!(entries.get(&("", "Existing label")).copied(), Some("local"));
+    assert_eq!(entries.get(&("menu", "Existing label")).copied(), Some("local menu"));
+    assert_eq!(entries.get(&("", "Missing label")).copied(), Some("shared"));
+    assert!(!entries.contains_key(&("menu", "Ignored label")));
+}
+
+#[test]
+fn installed_chinese_supplement_serves_ordinary_and_menu_lookups() {
+    const KEY: &str = "Construction Geometry";
+    let (projection, errors) = parse(include_str!("zh_shared.tsv"));
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(projection.len(), 1);
+    let translated = projection[&("", KEY)];
+    assert_ne!(translated, KEY);
+    assert_eq!(tr("zh", KEY), translated);
+    assert_eq!(tr_menu("zh", KEY), translated);
+    with_language("zh", || {
+        assert_eq!(t(KEY), translated);
+        assert_eq!(menu(KEY), translated);
+        assert_eq!(t("Construction Line"), "构造线");
+        assert_eq!(t("a future untranslated label"), "a future untranslated label");
+    });
+    assert_eq!(tr("en", KEY), KEY);
+}
+
 /// A prompt with options is translated without its own "or": the command line adds the
 /// translated " or [" before the options ("Select polyline or [Multiple]").
 #[test]
