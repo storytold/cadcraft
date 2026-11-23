@@ -1,0 +1,433 @@
+# CADCraft Hebrew interface catalog — original translations from CADCraft English source.
+# License: MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+# UTF-8: context<TAB>English source<TAB>Hebrew translation.
+# Partial AI-assisted draft; native speaker and RTL layout reviews are pending.
+# No proprietary localization table or font assets copied; command IDs and drawing data unchanged.
+	About CADCraft	אודות CADCraft
+	Angle	זווית
+	Apply	החל
+	Auto (system language)	אוטומטי (שפת המערכת)
+	Block Attribute Manager...	מנהל מאפייני בלוקים...
+	Block Editor	עורך בלוקים
+	Blocks	בלוקים
+	Cancel	ביטול
+	Chamfer	קיטום פינות
+	Circle	מעגל
+	Close	סגור
+	Close All Other Drawings	סגור את כל השרטוטים האחרים
+	Command Aliases	כינויים לפקודות
+	Command History	היסטוריית פקודות
+	Continue	המשך
+	Copy	העתק
+	Copy Full File Path	העתק את נתיב הקובץ המלא
+	Copy Nested Objects	העתק אובייקטים מקוננים
+	Copy with Base Point	העתק עם נקודת בסיס
+	Create backup copy with each save	צור עותק גיבוי בכל שמירה
+	Current layer	שכבה נוכחית
+	Cut	גזור
+	Default	ברירת מחדל
+	Delete	מחק
+	Dimension	מידות
+	Dimension Break	קטיעת קו מידה
+	Dimension Edit	עריכת מידות
+	Dimension Style Override	דריסת סגנון מידות
+	Distance	מרחק
+	Draw	שרטוט
+	Drawing Recovery Manager...	מנהל שחזור שרטוטים...
+	Drawing Template (DWT)	תבנית שרטוט (DWT)
+	Edit	עריכה
+	Erase	מחק
+	Export	ייצוא
+	Export to PDF...	ייצוא ל־PDF...
+	Export...	ייצוא...
+	Extend	הארכה
+	File	קובץ
+	Fillet	עיגול פינות
+	Freeze in new viewports	הקפא בחלונות תצוגה חדשים
+	Freeze/Thaw in the current viewport	הקפא/בטל הקפאה בחלון התצוגה הנוכחי
+	Grid snap	הצמדה לרשת
+	Grid spacing	מרווחי הרשת
+	Grip Edit	עריכה באמצעות נקודות אחיזה
+	Grip Mirror	שיקוף באמצעות נקודות אחיזה
+	Grip Option	אפשרויות נקודת אחיזה
+	Grip Rotate	סיבוב באמצעות נקודות אחיזה
+	Grip Scale	שינוי קנה מידה באמצעות נקודות אחיזה
+	Grip size	גודל נקודות האחיזה
+	Grip Stretch	מתיחה באמצעות נקודות אחיזה
+	Group Edit	עריכת קבוצה
+	Group Options	אפשרויות קבוצה
+	Group Selection	בחירת קבוצה
+	Hatch	מילוי בתבנית
+	Hatch Edit	עריכת מילוי בתבנית
+	Hatch Patterns	תבניות מילוי
+	Hatch...	מילוי בתבנית...
+	Help	עזרה
+	Hide All Constraint Bars	הסתר את כל סרגלי האילוצים
+	Hide All Dynamic Dimensions	הסתר את כל המידות הדינמיות
+	ID Point	זיהוי נקודה
+	Import	ייבוא
+	Index color: {index}	צבע אינדקס: {index}
+	Infer Constraints	הסק אילוצים
+	Insert	הוספה
+	Insert Block	הוסף בלוק
+	Insert Column	הוסף עמודה
+	Insert Row	הוסף שורה
+	Insert tab	הוסף תו טאב
+	Insert Table Formula	הוסף נוסחה לטבלה
+	Insert this block	הוסף בלוק זה
+	Insertion X	קואורדינטת X של נקודת ההכנסה
+	Insertion Y	קואורדינטת Y של נקודת ההכנסה
+	Insertion Z	קואורדינטת Z של נקודת ההכנסה
+	Inspect Constraints	בדוק אילוצים
+	Inspect Drawing	בדוק שרטוט
+	Interface Language	שפת הממשק
+	Isolate Layer	בודד שכבה
+	Isolate Objects	בודד אובייקטים
+	Isometric Drafting	שרטוט איזומטרי
+	Isometric Plane	מישור איזומטרי
+	Isometric snap	הצמדה איזומטרית
+	Jogged Linear	מידה קווית עם קיטוע
+	Language	שפה
+	Layer	שכבה
+	Layer contains objects (double-click to make current)	השכבה מכילה אובייקטים (לחיצה כפולה להגדרתה כשכבה הנוכחית)
+	Layer Delete	מחיקת שכבה
+	Layer is empty (double-click to make current)	השכבה ריקה (לחיצה כפולה להגדרתה כשכבה הנוכחית)
+	Layer Match	התאמת שכבה
+	Layer Merge	מיזוג שכבות
+	Layer Off	כיבוי שכבה
+	Layer Properties	מאפייני שכבה
+	Layer Properties Manager	מנהל מאפייני שכבות
+	Layer Properties Manager — current viewport	מנהל מאפייני שכבות — חלון התצוגה הנוכחי
+	Layer State	מצב שכבה
+	Layer States Manager...	מנהל מצבי שכבות...
+	Layer Tools	כלי שכבות
+	Layers	שכבות
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	שכבות מוצגות: {shown} מתוך {total}.   שכבה נוכחית: {layer}
+	Layers Palette	חלונית שכבות
+	Layout	פריסה
+	Layout list	רשימת פריסות
+	Layout paper	נייר הפריסה
+	Leader	קו מוביל
+	Leaders Only	קווים מובילים בלבד
+	Left	שמאל
+	Length	אורך
+	Length X	אורך בציר X
+	Length Y	אורך בציר Y
+	Lengthen	הארכה
+	Line	קו
+	Linear	קווי
+	Lines of Command History	שורות בהיסטוריית הפקודות
+	Linetype	סוג קו
+	Linetype scale	קנה מידה של סוג הקו
+	Linetype Scale	קנה מידה של סוג הקו
+	Linetype...	סוג קו...
+	Lineweight	עובי קו
+	Lineweight...	עובי קו...
+	List Blocks	הצג רשימת בלוקים
+	List Dimension Styles	הצג רשימת סגנונות מידות
+	List Groups	הצג רשימת קבוצות
+	List Layer States	הצג רשימת מצבי שכבות
+	List Layouts	הצג רשימת פריסות
+	List System Variables	הצג רשימת משתני מערכת
+	List Text Styles	הצג רשימת סגנונות טקסט
+	Load all	טען הכול
+	Load...	טעינה...
+	Loaded linetypes	סוגי קווים שנטענו
+	Lock	נעילה
+	Lock Layer	נעל שכבה
+	Lock viewport	נעל חלון תצוגה
+	Lock/Unlock	נעילה/ביטול נעילה
+	Loft	יצירת גוף באמצעות חתכי מעבר
+	Make Current	הגדר כנוכחי
+	Make Object's Layer Current	הגדר את שכבת האובייקט כשכבה הנוכחית
+	Match Layer	התאמת שכבה
+	Match Properties	התאמת מאפיינים
+	Measure	מדידה
+	Measure Distance	מדידת מרחק
+	Measure Geometry	מדידת גאומטריה
+	Merge Cells	מיזוג תאים
+	Mid Between 2 Points	אמצע בין שתי נקודות
+	Midpoint	נקודת אמצע
+	Mirror	שיקוף
+	Model	מודל
+	Model background	רקע המודל
+	Model Space (in viewport)	מרחב המודל (בחלון התצוגה)
+	Modify	שינוי
+	Move	הזז
+	New	חדש
+	New from Template...	חדש מתבנית...
+	No	לא
+	No saved layer states	אין מצבי שכבות שמורים
+	Object	אובייקט
+	Object snap aperture	תחום קליטת הצמדה לאובייקט
+	Object snap marker size	גודל סמן הצמדה לאובייקט
+	Object Snap Tracking Settings	הגדרות מעקב הצמדה לאובייקט
+	Offset	היסט
+	OK	אישור
+	Open	פתח
+	Open and Save	פתיחה ושמירה
+	Open...	פתח...
+	Options	אפשרויות
+	Pan	הסטת תצוגה
+	Paste	הדבק
+	Paste to Original Coordinates	הדבק בקואורדינטות המקוריות
+	Plot Preview	תצוגה מקדימה של הדפסה
+	Plot style table	טבלת סגנונות הדפסה
+	Polar angle measurement	מדידת זווית קוטבית
+	Polyline	קו רב־מקטעי
+	Print	הדפס
+	Print...	הדפסה...
+	Properties	מאפיינים
+	Rectangle	מלבן
+	Redo	בצע שוב
+	Replace	החלף
+	Rotate	סובב
+	Save	שמור
+	Save As	שמירה בשם
+	Save As...	שמירה בשם...
+	Save new drawings as	שמור שרטוטים חדשים בתור
+	Scale	שינוי קנה מידה
+	Select All	בחר הכול
+	Select objects first, then choose a command	בחר תחילה אובייקטים, ואז בחר פקודה
+	Show command prompting near the crosshairs	הצג הנחיות לפקודה ליד סמן הכוונת
+	Snap	הצמדה
+	Snap, grid, polar tracking and Dynamic Input:	הצמדה, רשת, מעקב קוטבי וקלט דינמי:
+	Text	טקסט
+	Tools	כלים
+	Trim	חיתוך
+	Undo	בטל פעולה
+	Units Conversion	המרת יחידות
+	View	תצוגה
+	Window	חלון
+	Yes	כן
+	Zoom In	הגדל תצוגה
+	Zoom Out	הקטן תצוגה
+
+# Continued source-verified Hebrew UI labels, 2026-11-16; English IDs unchanged.
+	All Used Layers	כל השכבות שבשימוש
+	ByLayer	לפי שכבה
+	Change to Current Layer	העבר לשכבה הנוכחית
+	Clear Command History	נקה את היסטוריית הפקודות
+	Command Line	שורת הפקודה
+	Copy Layout	העתק פריסה
+	Copy Selection	העתק בחירה
+	Delete Layer	מחק שכבה
+	Delete Layout	מחק פריסה
+	Deselect All	בטל את כל הבחירות
+	Find All	חפש הכול
+	Find and Replace	חיפוש והחלפה
+	Find...	חיפוש...
+	Freeze Layer	הקפא שכבה
+	New Drawing	שרטוט חדש
+	New Drawing...	שרטוט חדש...
+	New Layer	שכבה חדשה
+	New Layout	פריסה חדשה
+	No selection	אין בחירה
+	Open Sample Drawing	פתח שרטוט לדוגמה
+	Previous Layer	השכבה הקודמת
+	Quick Select	בחירה מהירה
+	Quick Select...	בחירה מהירה...
+	Recent Commands	פקודות אחרונות
+	Rename Layer	שנה את שם השכבה
+	Rename Layout	שנה את שם הפריסה
+	Restore Layer State	שחזר מצב שכבות
+	Save Layer State	שמור מצב שכבות
+	Search for layer	חפש שכבה
+	Select	בחר
+	Select Objects	בחר אובייקטים
+	Select Similar	בחר אובייקטים דומים
+	Selection	בחירה
+	Settings...	הגדרות...
+	Switch Layout	עבור לפריסה
+	Thaw Layer	בטל הקפאת שכבה
+	Turn On Layer	הפעל שכבה
+	Type a command	הקלד פקודה
+
+# Night localization: independent English-source translations for CAD viewport, editing and drafting controls, 2026-11-16.
+	Add Current Scale	הוסף קנה מידה נוכחי
+	All Annotation Objects	כל אובייקטי ההערות
+	All Scales	כל קני המידה
+	Annotation Visibility	תצוגת הערות
+	Annotation scale	קנה מידה להערות
+	Block Reference	הפניה לבלוק
+	Break At Point	פצל בנקודה
+	Bring Above Objects	העבר מעל לאובייקטים
+	ByBlock	לפי בלוק
+	Clip Viewport	חתוך חלון תצוגה
+	Compare Drawings...	השווה שרטוטים...
+	Constraint Bars	סרגלי אילוצים
+	Constraint Settings	הגדרות אילוצים
+	Create Block	צור בלוק
+	Current selection	הבחירה הנוכחית
+	Delete Constraints	מחק אילוצים
+	Delete Duplicate Objects	מחק אובייקטים כפולים
+	Dimension Style...	סגנון מידות...
+	Dimension Text Edit	עריכת טקסט מידה
+	Dimensional Constraints	אילוצי מידות
+	Drafting Settings...	הגדרות שרטוט...
+	Draw Order	סדר ציור
+	Drawing Limits	גבולות השרטוט
+	Edit Array	ערוך מערך
+	Edit Attributes...	ערוך מאפיינים...
+	Edit Table Cell	ערוך תא בטבלה
+	End Object Isolation	סיים בידוד אובייקטים
+	Enter block name	הזן שם בלוק
+	Entire drawing	השרטוט כולו
+	Geometric Constraints	אילוצים גאומטריים
+	Grid Display	הצג רשת
+	1 Viewport	חלון תצוגה אחד
+	2 Viewports	2 חלונות תצוגה
+	3 Viewports	3 חלונות תצוגה
+	4 Viewports	4 חלונות תצוגה
+
+# DAY-04: UI labels translated from official CADCraft English source keys (16 Nov 2026).
+	Bold	מודגש
+	Boundary	גבול
+	Boundary...	גבול...
+	Bring to Front	הבא לחזית
+	CADCraft Help	עזרה של CADCraft
+	Center Line	קו מרכז
+	Center Mark	סימון מרכז
+	Change Space	שנה מרחב
+	Clear	נקה
+	Clipboard	לוח
+	Close All	סגור הכול
+	Color Index	אינדקס צבעים
+	Color...	צבע...
+	Command Reference	מדריך פקודות
+	Construction Line	קו עזר
+	Contents	תוכן
+	Count	ספירה
+	Default Save Format	פורמט שמירה כברירת מחדל
+	Delete Column	מחק עמודה
+	Delete Row	מחק שורה
+	Description	תיאור
+	Diameter	קוטר
+	Display name	שם תצוגה
+	Drawing Utilities	כלי עזר לשרטוט
+	Dynamic Input	קלט דינמי
+	Edit Text...	עריכת טקסט...
+	Ellipse	אליפסה
+	Endpoint	נקודת קצה
+	Enter new text	הזן טקסט חדש
+	Explode	פרק
+	Format	עיצוב
+	General	כללי
+	Geometry	גאומטריה
+	Gradient...	מעבר צבע...
+	Grid (F7)	רשת (F7)
+	Grid On (F7)	הפעל רשת (F7)
+	Hide Palettes	הסתר לוחות
+	Home	בית
+	Horizontal	אופקי
+	Interface Theme	ערכת נושא לממשק
+# DAY-04: AI-assisted original Hebrew drafts from official CADCraft English source; review pending.
+	3 Points	3 נקודות
+	3D Polyline	פוליליין תלת-ממדי
+	Add Vertex	הוסף קודקוד
+	Align	יישור
+	Align Text	יישור טקסט
+	Aligned	מיושר
+	Arc	קשת
+	Arc Length	אורך קשת
+	Area	שטח
+	Array	מערך
+	Block	בלוק
+	Block Description...	תיאור בלוק...
+	Bring Annotations to Front	העבר ביאורים לחזית
+	Color	צבע
+	Current Scale Only	קנה המידה הנוכחי בלבד
+	Cut with Base Point	גזור עם נקודת בסיס
+	Delete Dimension Style	מחק סגנון מידות
+	Dimension style	סגנון מידות
+	Disassociate Dimensions	בטל שיוך מידות
+	Drafting Settings	הגדרות שרטוט
+	Dynamic Dimensions	מידות דינמיות
+	End angle	זווית סיום
+	Enter next point	הזן את הנקודה הבאה
+	Enter scale factor	הזן מקדם קנה מידה
+	Extrude	שיחול
+	Geometric Constraint	אילוץ גאומטרי
+	Group	קבץ
+	Hide Objects	הסתר אובייקטים
+	Import...	ייבוא...
+	Multiline Text	טקסט מרובה שורות
+	Object Snap	הצמדה לאובייקטים
+	Object Snap (F3)	הצמדה לאובייקטים (F3)
+	Object Snap On (F3)	הצמדה לאובייקטים מופעלת (F3)
+	Paper Space	מרחב נייר
+	Paste as Block	הדבק כבלוק
+# Night L04: source-verified missing GUI / safety / save-workflow messages
+	Degrees of freedom: {n}	דרגות חופש: {n}
+	Version {version}	גרסה {version}
+	{alias} is already defined; select it and use Edit.	הכינוי {alias} כבר מוגדר; יש לבחור בו ולהשתמש בעריכה.
+	{command} is an unknown command.	הפקודה {command} אינה מוכרת.
+	{contributors} · {commits}	תורמים: {contributors} · שינויים בקוד: {commits}
+	{count} more types	עוד {count} סוגים
+	{kind} (constraint {id})	{kind} (אילוץ {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	אילוץ {kind} {name} = {expression} (לחיצה כפולה לעריכה)
+	{n} more warnings; see the command line.	עוד {n} אזהרות; יש לעיין בשורת הפקודה.
+	Alias file: {file}	קובץ כינויים: {file}
+	Boundaries picked: {n}	גבולות שנבחרו: {n}
+	Changed: {n}	שונו: {n}
+	contains authoring elements. Open in Block Editor?	מכיל רכיבי עריכה. לפתוח בעורך הבלוקים?
+	Current: {color}	נוכחי: {color}
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	ייבוא הקובץ יחליף {n} כינויים קיימים ושינויים שטרם הוחלו.
+	Layout {name}: {table}	פריסה {name}: {table}
+	More than {n} aliases.	יותר מ-{n} כינויים.
+	None	ללא
+	Not a number or distance: {text}	הערך אינו מספר או מרחק תקין: {text}
+	Only in {name}: {n}	רק ב-{name}: {n}
+	Only in this drawing: {n}	רק בשרטוט זה: {n}
+	Origin: {x}, {y}	נקודת מוצא: {x}, {y}
+	Polar: {distance} < {angle}°	קוטבי: {distance} < {angle}°
+	References: {n}	הפניות: {n}
+	Repeat {command}	חזרה על {command}
+	Replaces the shortcut of {commands}	מחליף את קיצור הדרך של {commands}
+	Save cancelled: {path} was not changed.	השמירה בוטלה: הקובץ {path} לא השתנה.
+	Save changes to {name}?	לשמור את השינויים ב-{name}?
+	Save changes to block "{name}"?	לשמור את השינויים בבלוק "{name}"?
+	Saving {name} will remove content	שמירת {name} תסיר תוכן
+	Scale List...	רשימת קני מידה...
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	הקובץ הנוכחי אינו שלם. {name} יישאר ללא שינוי, והקובץ הנוכחי יוחלף.
+	The current file is kept as {name} until the next save.	הקובץ הנוכחי נשמר בשם {name} עד לשמירה הבאה.
+	This drawing	שרטוט זה
+	This format can't keep these objects yet: {objects}.	הפורמט אינו תומך עדיין בשמירת האובייקטים הבאים: {objects}.
+	Type something to find	יש להקליד טקסט לחיפוש
+	Viewport {id}	חלון תצוגה {id}
+# Night L04 tick7: original source-linked Native save, backup, preferences and update controls
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	קובצי DXF מגרסת 2010 ומטה שומרים אותם. השתמש בשמירה בשם כדי לשמר אותם בשרטוט.
+	DXF keeps them. Use Save As to keep them in the drawing.	פורמט DXF שומר אותם. השתמש בשמירה בשם כדי לשמר אותם בשרטוט.
+	Backup copies are off, so the current file will be replaced.	יצירת עותקי גיבוי כבויה, ולכן הקובץ הנוכחי יוחלף.
+	Save Anyway	שמור בכל זאת
+	Your changes will be lost if you don't save them.	אם לא תשמור את השינויים, הם יאבדו.
+	Don't Save	אל תשמור
+	Changes apply at once and are kept for next time.	השינויים חלים מייד ונשמרים להפעלה הבאה.
+	Use System Setting	השתמש בהגדרת המערכת
+	Light	בהיר
+	Dark	כהה
+	Animation effects	אפקטי הנפשה
+	Interface scale	קנה מידה של הממשק
+	Crosshair size	גודל הכוונת
+	Command line history	היסטוריית שורת הפקודה
+	Keep the system cursor visible over the drawing area	השאר את סמן המערכת גלוי מעל אזור השרטוט
+	Screen magnifiers, screen readers and recorders follow the system cursor.	תוכנות הגדלת מסך, קוראי מסך ותוכנות הקלטה עוקבים אחר סמן המערכת.
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	הפקודה חדש והשרטוט הראשון בהפעלה משתמשים ביחידות אלה, אלא אם הוגדרה תבנית ברירת מחדל (QNEWTEMPLATE).
+	A drawing opened from a file keeps that file's format.	שרטוט שנפתח מקובץ שומר על פורמט הקובץ.
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	שרטוטים שטרם נשמרו לקובץ יישמרו בגרסת ברירת המחדל. ערך של 0 דקות משבית שמירה אוטומטית.
+	DXF	DXF
+	DWG	DWG
+	Default save version	גרסת ברירת המחדל לשמירה
+	Units of new drawings	יחידות בשרטוטים חדשים
+	Imperial (inches)	אימפריאליות (אינצ׳ים)
+	Metric (millimetres)	מטריות (מילימטרים)
+	Automatic save every	שמירה אוטומטית בכל
+	min	דקות
+	Backup copy	עותק גיבוי
+	Automatic save file location	מיקום קובץ השמירה האוטומטית
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft שומר את ההעדפות, מצבי ההצמדה לאובייקטים והגדרות השרטוט בחשבון המשתמש ומשחזר אותם בהפעלה.
+	Reset to Defaults	אפס לברירות המחדל
+	Copy as JSON	העתק כ־JSON
+	Reset keeps the interface language.	האיפוס משאיר את שפת הממשק ללא שינוי.
+	CADCraft is up to date.	CADCraft מעודכן.
+	Could not check for updates.	לא ניתן היה לבדוק אם קיימים עדכונים.
