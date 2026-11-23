@@ -813,3 +813,27 @@ fn an_outer_reference_refedit_cannot_open_offers_no_nested_level() {
     let names: Vec<&str> = levels["levels"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Holder", "Leaf"], "{levels}");
 }
+
+/// Review of #3352: an associative dimension of the xref erased during the edit was still
+/// reported as written without its associations. Only dimensions that are written count.
+#[test]
+fn an_associative_dimension_erased_during_the_edit_is_not_reported() {
+    hooks();
+    let dir = folder("assoc-erased");
+    let mut src = Session::new();
+    src.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    src.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 5] })).unwrap();
+    let file = dir.join("dims.dxf");
+    src.execute("saveas", &json!({ "path": file.to_string_lossy() })).unwrap();
+    assert_eq!(associative_dimensions(&read(&file)), 1, "the file has an associative dimension");
+
+    let (mut s, insert) = host_with(&dir, "dims.dxf", "dims");
+    let r = s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    let d = s.doc().unwrap();
+    let dim = working(&r).into_iter().find(|h| matches!(d.entity(Handle::parse_hex(h).unwrap()).unwrap().kind, EntityKind::Dimension(_))).unwrap();
+    s.execute("erase", &json!({ "handles": [dim] })).unwrap();
+    let out = s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert!(out.get("notSaved").is_none(), "{out}");
+    assert!(!s.log.iter().any(|m| m.contains("dimension associations")), "{:?}", s.log);
+    assert!(!read(&file).model.iter().any(|e| matches!(e.kind, EntityKind::Dimension(_))), "the dimension is gone from the file");
+}

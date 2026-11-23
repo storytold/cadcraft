@@ -615,23 +615,12 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
 
 /// What writing an xref back did: the backup it kept, the version it was written at, what the
 /// file couldn't keep ([`crate::cmd::file::lost_writing`]), and how many dimensions were written
-/// without their associations ([`associations_dropped`]).
+/// without their associations ([`put_edit`]).
 struct Written {
     backup: Option<String>,
     version: Version,
     lost: std::collections::BTreeMap<String, usize>,
     associations: usize,
-}
-
-/// The dimensions of the part of `src` (the xref's drawing as read) that the write-back replaces
-/// which are attached to objects: loading the xref dropped those associations, so the file is
-/// written without them.
-fn associations_dropped(src: &Drawing, x: &XrefSource) -> usize {
-    let store = match &x.block {
-        None => Some(&src.model),
-        Some(n) => src.block(n).map(|b| &b.entities),
-    };
-    store.map_or(0, |st| st.iter().filter(|e| matches!(&e.kind, EntityKind::Dimension(dm) if !dm.assoc.is_empty())).count())
 }
 
 /// Replace the block's objects by the working set (and move the drawing objects added to it
@@ -698,8 +687,7 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     let (mut src, read_as, _) = load::read_file(file).map_err(|e| bad("refclose", format!("{}: {e}", file.display())))?;
     // What is written over is what was just read, and that is the file the edit began with.
     unchanged(file, x, read_as)?;
-    let dropped = associations_dropped(&src, x);
-    let cleared = put_edit(nd, r, x, &mut src)?;
+    let dropped = put_edit(nd, r, x, &mut src)?;
     // The xref is loaded again from the file: one it could no longer load is not written.
     let objects = load::object_count(&src);
     if objects > load::MAX_XREF_OBJECTS {
@@ -730,7 +718,7 @@ fn write_back(nd: &Drawing, r: &RefEdit, x: &XrefSource) -> Result<Written> {
     // can't close it.)
     unchanged(file, x, load::stamp(file))?;
     let backup = replace_file(file, real, &bytes).map_err(|e| bad("refclose", e))?;
-    Ok(Written { backup, version: as_version, lost, associations: dropped.saturating_add(cleared) })
+    Ok(Written { backup, version: as_version, lost, associations: dropped })
 }
 
 /// Refuse when `now` (the xref's file as it is, or as just read) is not the file the edit began
@@ -746,9 +734,11 @@ fn unchanged(file: &std::path::Path, x: &XrefSource, now: Option<load::Stamp>) -
 }
 
 /// Put the edited block of `nd` (committed) into `src`, the xref's drawing as read: its objects
-/// with their source handles and names, and the host symbols they use. A dimension attached to
-/// objects of the host (drawn during the edit) is written without those associations: the
-/// host's handles mean nothing in the xref's file. Returns how many were.
+/// with their source handles and names, and the host symbols they use. Returns how many of the
+/// dimensions written lose associations: those of the file's own dimensions (loading the xref
+/// dropped them; a dimension erased during the edit isn't written, so it doesn't count) and those
+/// of a dimension attached to objects of the host (drawn during the edit), whose handles mean
+/// nothing in the xref's file.
 fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Result<usize> {
     let file = std::path::Path::new(&x.file);
     let blk = nd.block(&r.block).ok_or_else(|| bad("refclose", format!("block \"{}\" is gone", r.block)))?;
@@ -756,19 +746,29 @@ fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Res
     let map: HashMap<Handle, Handle> = x.sources.iter().copied().collect();
     let mut store = EntityStore::new();
     let mut wanted: Vec<(Sym, String)> = Vec::new();
-    let mut cleared = 0usize;
+    // The file's own dimensions attached to objects, in the part the edit replaces.
+    let replaced = match &x.block {
+        None => Some(&src.model),
+        Some(n) => src.block(n).map(|b| &b.entities),
+    };
+    let associative: HashSet<Handle> = replaced
+        .map(|st| st.iter().filter(|e| matches!(&e.kind, EntityKind::Dimension(dm) if !dm.assoc.is_empty())).map(|e| e.handle).collect())
+        .unwrap_or_default();
+    let mut dropped = 0usize;
     for e in blk.entities.iter() {
         let mut e = (**e).clone();
-        e.handle = match map.get(&e.handle) {
-            Some(h) => *h,
-            None => src.new_handle(),
-        };
+        let source = map.get(&e.handle).copied();
+        e.handle = source.unwrap_or_else(|| src.new_handle());
         rename_into_source(&mut e, &prefix, &mut wanted);
-        if let EntityKind::Dimension(dm) = &mut e.kind
-            && !dm.assoc.is_empty()
-        {
-            dm.assoc.clear();
-            cleared = cleared.saturating_add(1);
+        let host_assoc = match &mut e.kind {
+            EntityKind::Dimension(dm) if !dm.assoc.is_empty() => {
+                dm.assoc.clear();
+                true
+            }
+            _ => false,
+        };
+        if host_assoc || source.is_some_and(|h| associative.contains(&h)) {
+            dropped = dropped.saturating_add(1);
         }
         store.push(e);
     }
@@ -787,7 +787,7 @@ fn put_edit(nd: &Drawing, r: &RefEdit, x: &XrefSource, src: &mut Drawing) -> Res
             }
         }
     }
-    Ok(cleared)
+    Ok(dropped)
 }
 
 /// Refuse a save when `file` no longer leads to `real` (the file the edit began with), or `real`
