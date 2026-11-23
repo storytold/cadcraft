@@ -1086,12 +1086,12 @@ pub(crate) fn render_settings_versions(tags: &mut [Tag], source: Option<Version>
 pub(crate) fn finish(
     tags: &mut Vec<Tag>,
     d: &Drawing,
+    f: &Foreign,
     reactors: &HashMap<Handle, Vec<String>>,
     modern: bool,
     target_modern: bool,
     strings: bool,
 ) -> HashSet<Handle> {
-    let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {

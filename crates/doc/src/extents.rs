@@ -296,10 +296,33 @@ fn blank(s: &str) -> bool {
     s.replace("\\~", " ").chars().all(char::is_whitespace)
 }
 
+/// The paragraphs of MTEXT contents: split at `\P`, but not at an escaped backslash before a
+/// `P` (`\\P`, as in a field value `C:\Plans` shown in the text).
+fn paragraphs(s: &str) -> Vec<&str> {
+    let b = s.as_bytes();
+    let (mut out, mut start, mut i) = (Vec::new(), 0, 0);
+    while i < b.len() {
+        if b[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        if b.get(i + 1) == Some(&b'P') {
+            out.push(&s[start..i]);
+            start = i + 2;
+        }
+        // A backslash escapes the next character.
+        i += 2;
+    }
+    out.push(s.get(start..).unwrap_or(""));
+    out
+}
+
 /// Approximate box of an MTEXT, from its attachment point, width and line count.
 fn mtext_box(t: &crate::MText) -> Bounds2 {
-    let lines = t.contents.split("\\P").count().max(1);
-    let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
+    let shown = crate::fields::display_mtext(&t.contents);
+    let paragraphs = paragraphs(&shown);
+    let lines = paragraphs.len().max(1);
+    let longest = paragraphs.iter().map(|l| l.chars().count()).max().unwrap_or(1);
     let estimate = t.height * 0.8 * longest as f64;
     // The wrap width only narrows the box: a garbage width must not stretch the drawing extents (#2465).
     let mut w = if t.width > 0.0 { t.width.min(estimate) } else { estimate };
@@ -380,14 +403,14 @@ fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blo
 fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
-        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
+        EntityKind::Text(t) if blank(&crate::fields::display(&t.value)) => Bounds2::EMPTY,
+        EntityKind::MText(t) if blank(&crate::fields::display_mtext(&t.contents)) => Bounds2::EMPTY,
         // Text that matches the layout's orientation is drawn upright (#2498).
         EntityKind::Text(t) if e.common.matches_layout_orientation() => {
-            text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
+            text_box(&crate::Text { rotation: 0.0, ..t.clone() }, crate::fields::display(&t.value).chars().count())
         }
         EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_box(&crate::MText { rotation: 0.0, ..t.clone() }),
-        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+        EntityKind::Text(t) => text_box(t, crate::fields::display(&t.value).chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
         EntityKind::MText(t) => mtext_box(t),
         EntityKind::Insert(ins) => {
@@ -435,7 +458,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
                     b = b.union(&match a.multiline_text() {
                         Some(m) => mtext_box(&m),
-                        None => text_box(&a.text, a.text.value.chars().count()),
+                        None => text_box(&a.text, crate::fields::display(&a.text.value).chars().count()),
                     });
                 }
             }
@@ -629,6 +652,19 @@ mod tests {
             line_spacing_exact: false,
             columns: None,
         }
+    }
+
+    /// A field value with a backslash before a `P` (a Windows path) is shown escaped (`\\P`),
+    /// which is no paragraph break: the box has one line, as for the same text without fields.
+    #[test]
+    fn a_field_value_with_a_backslash_p_is_one_line() {
+        let code = crate::fields::with_value("\\AcVar Filename", "C:\\Plans\\Pump.dwg");
+        let field = bounds(EntityKind::MText(mtext(&format!("%<{code}>%"), 0.0)));
+        let plain = bounds(EntityKind::MText(mtext("C:\\\\Plans\\\\Pump.dwg", 0.0)));
+        assert!((field.max.y - field.min.y - 2.5 * 1.66).abs() < 1e-9, "{field:?}");
+        assert_eq!(field, plain);
+        let two = bounds(EntityKind::MText(mtext("C:\\Plans", 0.0)));
+        assert!((two.max.y - two.min.y - 2.0 * 2.5 * 1.66).abs() < 1e-9, "an unescaped \\P still breaks: {two:?}");
     }
 
     /// A garbage wrap width only narrows an MTEXT's box, never widens it: a huge group 41 must not

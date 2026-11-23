@@ -10,6 +10,7 @@ mod dxf_raw;
 /// XCLIP boundaries as SPATIAL_FILTER objects.
 mod dxf_clip;
 mod dxf_ext;
+mod dxf_field;
 mod dxf_image;
 mod dxf_layer_states;
 mod dxf_mleader;
@@ -163,9 +164,21 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// there is one. The objects CADCraft keeps without modelling them are still in the groups of the
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
+///
+/// A drawing with field texts and no kept version (a new one, or one from a DXF without
+/// `$ACADVER`) gets FIELD objects in the groups of AutoCAD 2010 ([`dxf_field::OBJECT_VERSION`]),
+/// and the bridge reads the drawing as that: read as R2000, acadrust drops a FIELD's flags, cached
+/// value and format (#551). A drawing with a kept version is always read as that, also with field
+/// texts, which then get FIELD objects in that version's groups: acadrust reads some kept objects
+/// (FIELD objects, MTEXT background and hatch gradient round-trip data) by version.
+///
+/// The bridge's text is ASCII with `\U+XXXX` escapes, which this acadrust decodes for every
+/// version; a newer one that does not (acadrust#213, CADCraft #2851) would leave the escapes in
+/// non-ASCII field text.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
-    let bridge = dxf_write::dwg_bridge(d, version);
-    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
+    let kept = dxf_field::bridge_version(d, version);
+    let bridge = dxf_write::dwg_bridge(d, version, kept);
+    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), kept).map_err(dwg_error)
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
