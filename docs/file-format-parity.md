@@ -111,7 +111,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | DWT templates | open, save | NEW/QNEW from `.dwt` and `.dxf` templates, SAVEAS `.dwt` (#552); LAYOUT SAveas writes one layout and the named objects it uses as a `.dwt` (`layout.saveas`) | 0–1 |
 | DWS standards | open, save, CHECKSTANDARDS | no | 6–10 |
 | PDF output (PLOT, EXPORTPDF) | multi-sheet, layers, searchable text, hyperlinks | vector PDF with lineweights, real text in embedded TrueType subsets, layers (OCG), several sheets per file and hyperlinks (#567, #571); object transparency as PDF alpha when "Plot transparency" is on (the option isn't saved in DXF/DWG: no public plot layout flag) | 1–2 |
-| PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | vector PDF page import as editable lines, polylines, solid fills and text; page, scale and placement controls, CLI conversion and explicit loss reports ([guide](pdf-import.md)). PDF underlays and raster tracing remain unavailable | partial |
+| PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | no | 15–25 |
 | Raster images attach (PNG, JPEG, TIFF, BMP …) | yes | **partial** (#956): IMAGEATTACH (JSON form) reads PNG, JPEG, BMP and TIFF; drawn on screen and in PNG output with rotation, clip boundary and fade; reloaded on open, a missing file stays a crossed-out frame. Not yet: PDF and SVG output of the picture, prompts and dialog, detach/reload/unload, IMAGECLIP, IMAGEADJUST, images stored in the drawing | 14–22 |
 | PNG / JPEG / BMP / TIFF export | PNGOUT, JPGOUT, BMPOUT, TIFOUT | PNG; SVG too (AutoCAD doesn't export SVG) | 1–2 |
 | DWF/DWFx export, DWF underlay | yes | no | 10–15 |
