@@ -62,6 +62,11 @@ winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 # Waits for the answer of a file dialog shown as a sheet (src/sheet.rs). MIT OR Apache-2.0, already
 # in Cargo.lock through eframe.
 pollster = "1"
+# Finder double-click, Open With, Dock drops and `open -a CADCraft plan.dxf` arrive as a
+# kAEOpenDocuments Apple event, which winit 0.30 doesn't handle (#158). Keep the Objective-C
+# handler behind a safe API, without relaxing the workspace's unsafe-code lint.
+# Pinned exactly: review the implementation before bumping.
+fmv-macos-events = "=0.1.0"
 
 # Rust HID backends: no proprietary SDK or C HID library.
 [target.'cfg(target_os = "windows")'.dependencies]

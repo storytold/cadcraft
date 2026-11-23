@@ -106,6 +106,7 @@ mod mocoro;
 mod modify_curves;
 mod mtext_columns;
 mod mtext_options;
+mod mtext_ortho;
 mod multiline_attributes;
 mod named_viewports;
 mod named_views;
