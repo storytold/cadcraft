@@ -299,8 +299,7 @@ pub(crate) fn osnap_with_neighborhood(
         if !model_cursor.is_finite() || !(model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
             continue;
         }
-        let Some((cands, prims)) = collect_in(d, &model, &model_ix, model_cursor, model_aperture, osmode, &view.viewport.frozen_layers)
-        else {
+        let Some((cands, prims)) = collect_in(d, &model, &model_ix, model_cursor, model_aperture, osmode, &view.viewport.frozen_layers) else {
             continue;
         };
         let clip = Some(view.model_clip);
@@ -311,9 +310,8 @@ pub(crate) fn osnap_with_neighborhood(
         // viewport when it is twisted: a snap inside it can still fall off the viewport. Then the
         // best of the others that is on it, as Tab ranks them.
         let hit = first.and_then(|f| {
-            project(f).or_else(|| {
-                finish_all(cands, &prims, model_cursor, model_aperture, osmode, model_base, deferred, clip).into_iter().find_map(project)
-            })
+            project(f)
+                .or_else(|| finish_all(cands, &prims, model_cursor, model_aperture, osmode, model_base, deferred, clip).into_iter().find_map(project))
         });
         if let Some((hit, rank)) = hit
             && best.as_ref().is_none_or(|(_, b)| rank.beats(b))
