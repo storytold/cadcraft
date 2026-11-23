@@ -70,6 +70,9 @@ fn elliptical_arc_perpendicular_and_tangent_from_a_base_point() {
     let (q, m) = along_quarter(&s, mode::TAN, Some(base)).expect("a tangent point on the arc");
     assert_eq!(m, mode::TAN);
     assert!(on_quarter(q) && Vec2::new(q.x / 16.0, q.y / 4.0).dot(q - base).abs() < 1e-9, "{q:?}");
+    // The same tangent at a prompt that resolves deferred snaps (CIRCLE's 3P points, #1512).
+    let h = snap::osnap(s.doc().unwrap(), &Space::Model, q, 0.3, mode::TAN, Some(base), true).expect("tangent at a deferred prompt");
+    assert!(h.mode == mode::TAN && h.deferred.is_none() && h.point.near(q, 1e-9), "{h:?}");
     // Perpendicular from (10,10): the line from the base runs along the normal.
     let base = Vec2::new(10.0, 10.0);
     let (q, m) = along_quarter(&s, mode::PER, Some(base)).expect("a perpendicular foot on the arc");
@@ -118,4 +121,29 @@ fn spline_midpoint_perpendicular_and_tangent() {
     let i = (0..=10_000).map(|i| lo + (hi - lo) * i as f64 / 10_000.0).min_by(|a, b| sp.eval(*a).dist(q).total_cmp(&sp.eval(*b).dist(q))).unwrap();
     let d = (sp.eval(i + 1e-6) - sp.eval(i - 1e-6)).normalized();
     assert!(d.cross((q - base).normalized()).abs() < 1e-3, "the line from the base runs along the curve at {q:?}");
+}
+
+#[test]
+fn perpendicular_from_an_arcs_center_stays_on_the_arc() {
+    // From the center of an arc every point is perpendicular: the one under the cursor, never a
+    // point of its circle outside the sweep.
+    let mut s = Session::new();
+    s.execute("arc", &serde_json::json!({"center": [0, 0], "radius": 10, "start": 90, "end": 180})).unwrap();
+    let hit = snap::osnap(s.doc().unwrap(), &Space::Model, Vec2::new(-6.0, 8.0), 0.3, mode::PER, Some(Vec2::ZERO), false);
+    let (p, m) = hit.map(|h| (h.point, h.mode)).expect("a perpendicular on the arc");
+    assert_eq!(m, mode::PER);
+    assert!(p.near(Vec2::new(-6.0, 8.0), 1e-9), "{p:?}");
+}
+
+#[test]
+fn perpendicular_to_a_ray_needs_the_cursor_on_the_ray() {
+    // A ray along +X from the origin: behind its start the cursor is over nothing.
+    let mut s = Session::new();
+    s.execute("ray", &serde_json::json!({"base": [0, 0], "through": [10, 0]})).unwrap();
+    let d = s.doc().unwrap();
+    let base = Some(Vec2::new(5.0, 3.0));
+    assert_eq!(snap::osnap(d, &Space::Model, Vec2::new(-2.0, 0.0), 0.5, mode::PER, base, false), None);
+    // Over the ray, the foot is found.
+    let hit = snap::osnap(d, &Space::Model, Vec2::new(2.0, 0.0), 0.5, mode::PER, base, false).expect("the foot on the ray");
+    assert!(hit.point.near(Vec2::new(5.0, 0.0), 1e-9), "{hit:?}");
 }

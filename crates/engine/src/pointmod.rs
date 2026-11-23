@@ -126,14 +126,36 @@ pub fn snap_name(m: u32) -> &'static str {
     mode::ALL.iter().find(|(b, _)| *b == m).map_or("None", |(_, n)| *n)
 }
 
-/// The candidate snaps near `cursor` for Tab cycling: every object snap within the aperture, the
-/// one [`crate::snap::osnap`] picks first and the rest in its order (specific snaps nearest
-/// first, then deferred snaps, then Nearest), without repeats.
+/// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
+/// first, then every other snap of the modes in `osmode` under the aperture (each endpoint of
+/// each object, each intersection …; [`crate::snap::osnap_all`]), best first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
-    if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
+    snap_candidates_with_frozen(d, space, cursor, aperture, osmode, base, deferred, &[])
+}
+
+/// [`snap_candidates`] skipping entities (and block leaves) on `frozen` layers in `space`.
+#[allow(clippy::too_many_arguments)]
+pub fn snap_candidates_with_frozen(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+    frozen: &[String],
+) -> Vec<SnapHit> {
+    // A base that is not a number would give meaningless perpendiculars and tangents.
+    if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 || base.is_some_and(|b| !b.is_finite()) {
         return Vec::new();
     }
-    crate::snap::osnap_all(d, space, cursor, aperture, osmode, base, deferred)
+    let mut out: Vec<SnapHit> = crate::snap::osnap_with_frozen(d, space, cursor, aperture, osmode, base, deferred, frozen).into_iter().collect();
+    for h in crate::snap::osnap_all_with_frozen(d, space, cursor, aperture, osmode, base, deferred, frozen) {
+        if !out.iter().any(|o| o.same(&h, aperture)) {
+            out.push(h);
+        }
+    }
+    out
 }
 
 /// Strip the international (`_`) and transparent (`'`) prefixes a modifier may be typed with.
@@ -343,12 +365,15 @@ impl Session {
                 Frame::Snap { mode } => {
                     // Snap the point with this mode alone, within the aperture.
                     let prompt = self.current_prompt();
-                    let space = self.space();
+                    let (doc, space, frozen) = {
+                        let st = self.state()?;
+                        (st.doc.clone(), st.edit_space(), st.viewport_frozen().to_vec())
+                    };
                     let aperture = self.pixel_size() * self.settings.aperture.max(1.0);
                     let hatch = if self.settings.osnaphatch { mode::HATCH } else { 0 };
                     let base = prompt.as_ref().and_then(|q| q.base);
                     let deferred = prompt.as_ref().is_some_and(|q| q.deferred);
-                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
+                    let hit = crate::snap::osnap_with_frozen(&doc, &space, p, aperture, mode | hatch, base, deferred, &frozen);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
                         Some(h) => p = h.point,

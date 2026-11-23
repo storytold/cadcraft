@@ -1,7 +1,8 @@
 //! DIST snaps to the model geometry displayed in paper-space viewports (#516).
 
-use cadcraft_engine::doc::{Block, Circle, Common, Drawing, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
+use cadcraft_engine::doc::{Block, Circle, Common, Drawing, Ellipse, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
 use cadcraft_engine::geom::{Vec2, Vec3};
+use cadcraft_engine::pointmod::snap_candidates;
 use cadcraft_engine::snap::{SnapCurve, SnapHit, mode, osnap, osnap_all};
 use cadcraft_engine::{Input, Session};
 use serde_json::json;
@@ -278,22 +279,22 @@ fn clipped_endpoints_do_not_hide_a_visible_candidate() {
     assert!(osnap(&d, &paper, Vec2::new(110.11, 51.0), 0.2, mode::END, None, false).is_none());
 }
 
-/// Across spaces a click keeps the snap it had before Tab cycling: a viewport's best snap
-/// replaces paper space's only when it scores closer. Tab still reaches the other one.
+/// Across spaces a click takes the viewport's Endpoint over a paper-space Nearest that scores
+/// closer, as within one space a snap point beats Nearest. Tab starts at the click's snap and
+/// still reaches the paper-space Nearest.
 #[test]
-fn a_closer_paper_space_nearest_keeps_the_click_over_a_viewport_endpoint() {
+fn a_viewport_endpoint_beats_a_closer_paper_space_nearest() {
     let (mut d, paper) = drawing();
     // A paper-space line 0.3 left of the model endpoint (0, 0), which the viewport shows at (95, 50).
     d.add(&paper, Common::default(), EntityKind::Line(Line { a: Vec3::new(94.7, 48.0, 0.0), b: Vec3::new(94.7, 52.0, 0.0) })).unwrap();
     let (cursor, modes) = (Vec2::new(94.8, 50.0), mode::END | mode::NEA);
     let hit = osnap(&d, &paper, cursor, 0.5, modes, None, false).unwrap();
-    assert_eq!((hit.mode, hit.viewport), (mode::NEA, None), "{hit:?}");
-    assert!(hit.point.near(Vec2::new(94.7, 50.0), 1e-9), "{hit:?}");
-    let all = osnap_all(&d, &paper, cursor, 0.5, modes, None, false);
+    assert!(hit.mode == mode::END && hit.viewport.is_some() && hit.point.near(Vec2::new(95.0, 50.0), 1e-9), "{hit:?}");
+    let all = snap_candidates(&d, &paper, cursor, 0.5, modes, None, false);
     assert_eq!(all.first(), Some(&hit), "Tab starts at the click's snap");
     assert!(
-        all.iter().any(|h| h.mode == mode::END && h.viewport.is_some() && h.point.near(Vec2::new(95.0, 50.0), 1e-9)),
-        "Tab reaches the viewport's endpoint: {all:?}"
+        all.iter().any(|h| h.mode == mode::NEA && h.viewport.is_none() && h.point.near(Vec2::new(94.7, 50.0), 1e-9)),
+        "Tab reaches the paper-space Nearest: {all:?}"
     );
 }
 
@@ -428,4 +429,51 @@ fn malformed_and_paper_space_viewports_are_not_snap_sources() {
         edit_viewport(&mut d, &paper, |vp| (vp.width, vp.height, vp.view_height, vp.id) = (width, height, view_height, id));
         assert!(osnap(&d, &paper, Vec2::new(95.1, 50.1), 0.5, mode::END, None, false).is_none());
     }
+}
+
+/// Nearest on a curve that leaves the viewport: the curve's closest point to the cursor is outside
+/// the viewport, another point of it within the aperture is inside, and Nearest snaps there.
+#[test]
+fn nearest_takes_the_visible_part_of_a_curve_crossing_the_viewport_edge() {
+    let (mut d, paper) = drawing();
+    // The viewport shows model y up to 20. A tall ellipse peaks at (15, 20.1), just outside.
+    let ellipse = Ellipse { center: Vec3::new(15.0, 0.0, 0.0), major: Vec3::new(0.0, 20.1, 0.0), ratio: 0.1, start: 0.0, end: std::f64::consts::TAU };
+    d.add(&Space::Model, Common::default(), EntityKind::Ellipse(ellipse)).unwrap();
+    // The viewport's border is on a layer that is off, so it offers no Nearest of its own.
+    d.layers.push(cadcraft_engine::doc::Layer { name: "Border".into(), on: false, ..Default::default() });
+    let vp = viewport(&d, &paper);
+    d.modify_entity(vp, |e| e.common.layer = "Border".into()).unwrap();
+    // Model (15, 19.99): 0.11 from the peak, about 0.2 from where the ellipse comes back inside.
+    let cursor = Vec2::new(102.5, 59.995);
+    let hit = osnap(&d, &paper, cursor, 0.5, mode::NEA, None, false).expect("a visible nearest point");
+    let model = hit.viewport.expect("seen through the viewport").point;
+    assert!(model.y <= 20.0 + 1e-9 && model.dist(Vec2::new(15.0, 19.99)) <= 1.0, "{hit:?}");
+}
+
+#[test]
+fn a_twisted_viewport_offers_the_visible_perpendicular_when_a_nearer_one_is_off_the_sheet() {
+    // A viewport twisted 45°, 20 square at 0,0 on the sheet, scale 1. Through it, a line along
+    // y = 0 under the cursor and one along x = 9.3 (sheet coordinates). From the base 12,3 the
+    // foot on the first, 12,0, is inside the turned model box but off the viewport; the foot on
+    // the second, 9.3,3, is on it.
+    let mut d = Drawing::new_imperial();
+    let paper = Space::Paper("Layout1".into());
+    let vp = Viewport {
+        center: Vec3::ZERO,
+        width: 20.0,
+        height: 20.0,
+        view_center: Vec2::ZERO,
+        view_height: 20.0,
+        id: 2,
+        twist: std::f64::consts::FRAC_PI_4,
+        ..Viewport::default()
+    };
+    for (a, b) in [(Vec2::new(-9.0, 0.0), Vec2::new(30.0, 0.0)), (Vec2::new(9.3, -9.0), Vec2::new(9.3, 9.0))] {
+        let (a, b) = (vp.paper_to_model(a), vp.paper_to_model(b));
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) })).unwrap();
+    }
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let hit = osnap(&d, &paper, Vec2::new(9.0, 0.0), 0.5, mode::PER, Some(Vec2::new(12.0, 3.0)), false).expect("the visible foot");
+    assert_eq!(hit.mode, mode::PER);
+    assert!(hit.point.near(Vec2::new(9.3, 3.0), 1e-9), "{hit:?}");
 }
