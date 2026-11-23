@@ -335,3 +335,100 @@ fn a_pending_properties_value_does_not_follow_an_undo() {
     assert!(shows(&harness, &["7", "n"], "EG"), "the fields show the drawing's values again: {:?}", fields(&harness));
     assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
 }
+
+/// A block "Twin" with two editable `T=v` attribute definitions at different places, and one
+/// reference to it (selected): the two attributes share a tag and a value, so only where their
+/// texts are drawn tells them apart.
+fn app_with_twins() -> (CadApp, Handle) {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let mut hs = vec![app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone()];
+    hs.push(app.run("attdef", json!({ "tag": "T", "default": "v", "at": [0, 1] })).unwrap()["handle"].clone());
+    hs.push(app.run("attdef", json!({ "tag": "T", "default": "v", "at": [0, 2] })).unwrap()["handle"].clone());
+    app.run("block", json!({ "name": "Twin", "base": [0, 0], "handles": hs, "keep": "delete" })).unwrap();
+    let r = app.run("insert", json!({ "name": "Twin", "at": [100, 0] })).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    app.session.set_selection(vec![h]);
+    (app, h)
+}
+
+/// Every attribute's value by where its text is drawn, top to bottom.
+fn values_by_place(app: &CadApp, h: Handle) -> Vec<(f64, String)> {
+    match app.session.doc().unwrap().entity(h).map(|e| &e.kind) {
+        Some(EntityKind::Insert(i)) => {
+            let mut v: Vec<(f64, String)> = i.attribs.iter().map(|a| (a.text.insert.y, a.text.value.clone())).collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Two attributes with one tag and one value are two attributes: a reorder under text typed into
+/// the first's Properties field must not give that text to the other one.
+#[test]
+fn equal_tag_and_value_attributes_are_told_apart_by_place() {
+    let (app, h) = app_with_twins();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "v", "EG");
+    harness.state_mut().run("battman", json!({ "name": "Twin", "action": "down", "tag": "T" })).unwrap();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(values_by_place(harness.state(), h), [(1.0, "v".to_string()), (2.0, "v".to_string())], "neither attribute changed");
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+}
+
+/// The Enhanced Attribute Editor draws the same line: a reorder that leaves every tag and value
+/// in place, but moves the attributes, is a stale dialog too.
+#[test]
+fn a_stale_dialog_tells_equal_tag_and_value_attributes_apart_by_place() {
+    let (mut app, h) = app_with_twins();
+    menus::activate(&mut app, "attedit");
+    assert_eq!(app.attedit.rows.len(), 2);
+    app.attedit.rows[0].typed = "EG".into();
+    app.run("battman", json!({ "name": "Twin", "action": "down", "tag": "T" })).unwrap();
+    assert!(!attedit::apply(&mut app), "the dialog refuses the stale row");
+    assert_eq!(values_by_place(&app, h), [(1.0, "v".to_string()), (2.0, "v".to_string())], "nothing was written");
+    let error = app.attedit.error.clone().unwrap_or_default();
+    assert!(error.contains("The attributes changed"), "the dialog says so: {error}");
+}
+
+/// Input queued for the frame that finds the row has another attribute belongs to the attribute
+/// the field had: neither its text nor its Enter may reach the one now in that place, and nothing
+/// may be kept for a later Enter either.
+#[test]
+fn input_in_the_frame_a_pending_value_goes_stale_reaches_no_attribute() {
+    let (app, h) = app_with_reference();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "n", "EG");
+    harness.state_mut().run("battman", json!({ "name": "Tag", "action": "order", "order": ["NOTE", "NO"] })).unwrap();
+    // A text event and Enter, in the one frame that finds NOTE's field holding NO.
+    harness.input_mut().events.push(egui::Event::Text("ZZ".into()));
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Enter,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+        repeat: false,
+        physical_key: None,
+    });
+    harness.run();
+    assert_eq!((value(harness.state(), h, "NO"), value(harness.state(), h, "NOTE")), ("7".into(), "n".into()), "nothing was written");
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+    // No pending buffer is left under the attribute now in that place: a later Enter writes nothing.
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!((value(harness.state(), h, "NO"), value(harness.state(), h, "NOTE")), ("7".into(), "n".into()), "nothing was kept for a later Enter");
+    assert!(shows(&harness, &["7", "n"], "7ZZ"), "the fields show the drawing's values: {:?}", fields(&harness));
+    // Normal editing resumes on the row, with the attribute it now holds.
+    type_pending(&mut harness, "7", "ok");
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(
+        (value(harness.state(), h, "NO"), value(harness.state(), h, "NOTE")),
+        ("ok".into(), "n".into()),
+        "a later edit reaches the right attribute"
+    );
+}

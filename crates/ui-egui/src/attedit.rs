@@ -5,6 +5,7 @@
 //! JSON calls never open the dialog.
 
 use cadcraft_engine::doc::{Drawing, EntityKind, Handle};
+use cadcraft_geom::Vec3;
 use egui::{RichText, vec2};
 use serde_json::{Map, Value, json};
 
@@ -17,10 +18,26 @@ pub struct Row {
     pub tag: String,
     pub prompt: String,
     pub value: String,
+    /// Where the attribute's text is inserted (see `cadcraft_engine::AttributeRow`): what tells
+    /// two attributes sharing a tag and a value apart.
+    pub at: Vec3,
     pub editable: bool,
     pub invisible: bool,
     pub multiline: bool,
     pub typed: String,
+}
+
+impl Row {
+    /// Whether `a` is still the attribute this row was loaded from, as the row shows it.
+    fn is(&self, a: &cadcraft_engine::AttributeRow) -> bool {
+        self.tag == a.tag
+            && self.prompt == a.prompt
+            && self.value == a.value
+            && self.at == a.at
+            && self.editable == a.editable
+            && self.invisible == a.invisible
+            && self.multiline == a.multiline
+    }
 }
 
 /// The dialog's state while it is open.
@@ -73,6 +90,7 @@ fn load(app: &mut CadApp, h: Handle) {
             tag: a.tag,
             prompt: a.prompt,
             value: a.value,
+            at: a.at,
             editable: a.editable,
             invisible: a.invisible,
             multiline: a.multiline,
@@ -126,12 +144,13 @@ fn changed(rows: &[Row]) -> Map<String, Value> {
     rows.iter().enumerate().filter(|(_, r)| r.editable && r.typed != r.value).map(|(i, r)| (i.to_string(), Value::String(r.typed.clone()))).collect()
 }
 
-/// True while the reference's attributes are still the ones the dialog listed (tag and value, in
-/// the same places).
+/// True while the reference's attributes are still the ones the dialog listed: every property a
+/// row shows, its place included (two attributes can share a tag and a value, and a reorder of the
+/// block's definitions swaps those).
 fn rows_unchanged(app: &CadApp, h: Handle) -> bool {
     let Ok(st) = app.session.state() else { return false };
     let now = cadcraft_engine::attributes(&st.doc, h);
-    now.len() == app.attedit.rows.len() && now.iter().zip(&app.attedit.rows).all(|(a, r)| a.tag == r.tag && a.value == r.value)
+    now.len() == app.attedit.rows.len() && now.iter().zip(&app.attedit.rows).all(|(a, r)| r.is(a))
 }
 
 /// Apply: run `attedit` with the changed values; true when it went through (or nothing changed).
@@ -253,7 +272,16 @@ mod tests {
     use super::*;
 
     fn row(tag: &str, value: &str, typed: &str, editable: bool) -> Row {
-        Row { tag: tag.into(), prompt: String::new(), value: value.into(), editable, invisible: false, multiline: false, typed: typed.into() }
+        Row {
+            tag: tag.into(),
+            prompt: String::new(),
+            value: value.into(),
+            at: Vec3::default(),
+            editable,
+            invisible: false,
+            multiline: false,
+            typed: typed.into(),
+        }
     }
 
     #[test]

@@ -582,38 +582,45 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
 }
 
 /// Text waiting in an attribute's Properties field, kept with the attribute it was typed into: a
-/// reorder, an edit from elsewhere, or an undo can put another attribute in that place.
+/// reorder, an edit from elsewhere, or an undo can put another attribute in that place. The whole
+/// row is kept, not just its tag and value: two attributes can share those and differ only in
+/// where they are drawn, and a reorder of the block's definitions swaps those.
 #[derive(Clone)]
 struct PendingAttr {
-    tag: String,
-    value: String,
+    row: cadcraft_engine::AttributeRow,
     text: String,
 }
 
 /// [`edit_field`] for the value of attribute `a`, which the drawing has where this row is. The
-/// field is a place in the reference (`at` by index, which keeps attributes sharing a tag apart),
-/// so the pending text stays bound to the tag and value it was typed into: when the place holds
-/// another attribute, the text is dropped (and `stale` set) rather than written to it.
+/// field is a place in the reference (addressed by index, which keeps attributes sharing a tag
+/// apart), so the pending text stays bound to the attribute it was typed into: when the place
+/// holds another one, the text is dropped (and `stale` set) rather than written to it.
 fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> Option<String> {
     let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
-    let changed = pending.as_ref().is_some_and(|p| p.tag != a.tag || p.value != a.value);
-    let mut buf = match pending {
-        Some(p) if !changed => p.text,
-        Some(p) => {
-            // Report it only when text the drawing does not have was waiting: merely focusing a
-            // field loses nothing.
-            *stale |= p.text != p.value;
-            ui.data_mut(|d| d.remove::<PendingAttr>(id));
-            a.value.clone()
+    if pending.as_ref().is_some_and(|p| p.row != *a) {
+        // Report it only when text the drawing does not have was waiting: merely focusing a field
+        // loses nothing.
+        if let Some(p) = &pending {
+            *stale |= p.text != p.row.value;
         }
-        None => a.value.clone(),
-    };
+        ui.data_mut(|d| d.remove::<PendingAttr>(id));
+        let te = id.with("te");
+        // The field had another attribute when this frame's input was queued, so take none of it:
+        // neither a commit nor a new pending buffer may reach the one here now. The field shows
+        // the drawing's value, inert for this frame, and editing resumes on the next one.
+        ui.memory_mut(|m| m.surrender_focus(te));
+        let mut buf = a.value.clone();
+        let w = ui.available_width() - 10.0;
+        ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()).interactive(false));
+        return None;
+    }
+    let mut buf = pending.map_or_else(|| a.value.clone(), |p| p.text);
     let w = ui.available_width() - 10.0;
     let te = id.with("te");
     let resp = ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()));
     // Keyboard focus from memory, as in `edit_field`.
     if ui.memory(|m| m.has_focus(te)) {
-        ui.data_mut(|d| d.insert_temp(id, PendingAttr { tag: a.tag.clone(), value: a.value.clone(), text: buf.clone() }));
+        ui.data_mut(|d| d.insert_temp(id, PendingAttr { row: a.clone(), text: buf.clone() }));
     } else {
         ui.data_mut(|d| d.remove::<PendingAttr>(id));
     }

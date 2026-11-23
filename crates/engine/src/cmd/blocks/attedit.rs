@@ -123,6 +123,9 @@ pub struct AttributeRow {
     /// The definition's prompt (the tag when it has none).
     pub prompt: String,
     pub value: String,
+    /// Where the attribute's text is inserted: two attributes can share a tag and a value, and a
+    /// reorder of the block's definitions moves them, so this is what tells them apart.
+    pub at: Vec3,
     /// Not constant: the value can be changed.
     pub editable: bool,
     pub invisible: bool,
@@ -149,6 +152,7 @@ pub fn attributes(d: &cadcraft_doc::Drawing, h: Handle) -> Vec<AttributeRow> {
             tag: a.tag.clone(),
             prompt: if a.prompt.is_empty() { def_prompt(&a.tag).unwrap_or_else(|| a.tag.clone()) } else { a.prompt.clone() },
             value: a.text.value.clone(),
+            at: a.text.insert,
             editable: !a.constant,
             invisible: a.invisible,
             multiline: a.multiline.is_some(),
