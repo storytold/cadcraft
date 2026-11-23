@@ -737,6 +737,11 @@ fn polish_plural_forms() {
 /// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
 #[test]
 fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    // The words themselves: a pair that merely differs also differs when a row is missing and both
+    // fall back to English, and Point and Dimension already differed before.
+    for (key, word) in [("Stretch", "تمطيط"), ("Trim", "تشذيب"), ("Point", "نقطة")] {
+        assert_eq!(tr("ar", key), word, "{key}");
+    }
     for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
         assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
     }
