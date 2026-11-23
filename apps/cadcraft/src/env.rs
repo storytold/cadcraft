@@ -11,6 +11,7 @@ use cadcraft_ui_egui::switch::Switch;
 const CONFIG_DIR: &str = "CADCRAFT_CONFIG_DIR";
 const LOCALE: &str = "CADCRAFT_LOCALE";
 const VSYNC: &str = "CADCRAFT_VSYNC";
+const STENCIL: &str = "CADCRAFT_STENCIL";
 const WAYLAND: &str = "CADCRAFT_WAYLAND";
 const NO_NATIVE_MENU: &str = "CADCRAFT_NO_NATIVE_MENU";
 const SYSTEM_CURSOR: &str = "CADCRAFT_SYSTEM_CURSOR";
@@ -22,6 +23,7 @@ pub(crate) const VARS: &[(&str, &str)] = &[
     (CONFIG_DIR, "the settings folder (logs, autosave, workspace, plotters); empty means no settings folder"),
     (LOCALE, "the interface language, instead of the system's"),
     (VSYNC, "1 presents with vsync, 0 without it (default: without on Linux and BSD)"),
+    (STENCIL, "0 opens the window without a stencil buffer, for drivers that show a black window; clipped layout viewports then draw unclipped"),
     (WAYLAND, "1 keeps the native Wayland backend instead of XWayland; 0 or unset is off"),
     (NO_NATIVE_MENU, "macOS: 1 keeps the menus inside the window; 0 or unset is off"),
     (SYSTEM_CURSOR, "1 uses the system cursor instead of the drawn crosshair; 0 or unset is off"),
@@ -33,8 +35,10 @@ pub(crate) const VARS: &[(&str, &str)] = &[
 /// `CADCRAFT_CONFIG_DIR`.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Env {
+    /// Portable eframe storage file, kept with the other settings instead of the user profile.
+    pub(crate) portable_storage_file: Option<PathBuf>,
     /// The settings folder (logs, autosave, workspace, plotters): `CADCRAFT_CONFIG_DIR`; else, when
-    /// that is unset, the platform's (`cadcraft_engine::settings_dir::platform`). `None`: no
+    /// that is unset, the portable directory or the platform's (`cadcraft_engine::settings_dir::platform`). `None`: no
     /// folder, because the variable is empty or blank (the way to run without one) or the
     /// platform has none.
     pub(crate) config_dir: Option<PathBuf>,
@@ -42,6 +46,9 @@ pub(crate) struct Env {
     pub(crate) locale: Option<String>,
     /// Present with vsync (default: off on Linux and BSD, on elsewhere).
     pub(crate) vsync: Switch,
+    /// Off: the window has no stencil buffer (default: on). Some old drivers (Mesa on Intel HD
+    /// 4000, old Intel drivers on Windows) accept a stencil pass and then present a black window.
+    pub(crate) stencil: Switch,
     /// Keep the native Wayland backend instead of XWayland.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     pub(crate) wayland: Switch,
@@ -58,7 +65,26 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn read() -> Env {
-        Env::from_vars(|k| std::env::var_os(k))
+        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from));
+        Self::from_vars_and_exe(|k| std::env::var_os(k), exe_dir.as_deref())
+    }
+
+    fn from_vars_and_exe(var: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&std::path::Path>) -> Env {
+        let mut vars = Env::from_vars(&var);
+        // An explicit override (including blank, which disables settings) takes precedence.
+        if var(CONFIG_DIR).is_none()
+            && let Some(exe) = exe_dir
+        {
+            match crate::portable::directory_in(exe) {
+                Ok(Some(data)) => {
+                    vars.config_dir = Some(data.clone());
+                    vars.portable_storage_file = Some(data.join("app.ron"));
+                }
+                Ok(None) => {}
+                Err(error) => log::warn!("portable settings cannot be written ({error}); using the user profile"),
+            }
+        }
+        vars
     }
 
     /// [`Env::read`] with `var` looking a variable up.
@@ -66,6 +92,7 @@ impl Env {
         let text = |k: &str| var(k).and_then(|v| v.into_string().ok()).filter(|v| !v.trim().is_empty());
         let switch = |k: &str| Switch::parse(k, var(k).map(|v| v.to_string_lossy().into_owned()).as_deref());
         Env {
+            portable_storage_file: None,
             config_dir: match var(CONFIG_DIR) {
                 Some(dir) if dir.to_str().is_some_and(|d| d.trim().is_empty()) => None,
                 Some(dir) => Some(PathBuf::from(dir)),
@@ -73,6 +100,7 @@ impl Env {
             },
             locale: text(LOCALE),
             vsync: switch(VSYNC),
+            stencil: switch(STENCIL),
             wayland: switch(WAYLAND),
             no_native_menu: switch(NO_NATIVE_MENU),
             system_cursor: switch(SYSTEM_CURSOR),
@@ -95,6 +123,37 @@ pub(crate) fn help() -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn portable_eframe_storage_is_a_file_inside_the_settings_directory() {
+        let exe = std::env::temp_dir().join(format!("cadcraft-env-portable-{}", std::process::id()));
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join("portable.txt"), "").unwrap();
+        let vars = Env::from_vars_and_exe(env(&[("APPDATA", "/profile")]), Some(&exe));
+        assert_eq!(vars.config_dir, Some(exe.join("CADCraftData")));
+        let storage_file = vars.portable_storage_file.unwrap();
+        assert_eq!(storage_file, exe.join("CADCraftData").join("app.ron"));
+        assert_eq!(storage_file.parent(), vars.config_dir.as_deref());
+        std::fs::write(&storage_file, r#"{"window":"saved window state"}"#).unwrap();
+        let restarted = Env::from_vars_and_exe(env(&[("APPDATA", "/profile")]), Some(&exe));
+        assert_eq!(restarted.portable_storage_file.as_ref(), Some(&storage_file));
+        assert_eq!(std::fs::read_to_string(restarted.portable_storage_file.unwrap()).unwrap(), r#"{"window":"saved window state"}"#);
+        std::fs::remove_dir_all(exe).unwrap();
+    }
+
+    #[test]
+    fn explicit_override_skips_portable_probe() {
+        let exe = std::env::temp_dir().join(format!("cadcraft-env-override-{}", std::process::id()));
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join("portable.txt"), "").unwrap();
+        for value in ["/custom", "", "  "] {
+            let vars = Env::from_vars_and_exe(env(&[(CONFIG_DIR, value)]), Some(&exe));
+            assert_eq!(vars.config_dir, (!value.trim().is_empty()).then(|| PathBuf::from(value)));
+            assert_eq!(vars.portable_storage_file, None);
+            assert!(!exe.join("CADCraftData").exists());
+        }
+        std::fs::remove_dir_all(exe).unwrap();
+    }
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
@@ -129,6 +188,7 @@ mod tests {
             ("APPDATA", "C:\\a"),
             (LOCALE, "cs-CZ"),
             (VSYNC, " On "),
+            (STENCIL, "No"),
             (WAYLAND, "0"),
             (NO_NATIVE_MENU, "yes"),
             (SYSTEM_CURSOR, "maybe"),
@@ -139,9 +199,11 @@ mod tests {
         assert_eq!(
             read,
             Env {
+                portable_storage_file: None,
                 config_dir: Some(PathBuf::from("/private/cc")),
                 locale: Some("cs-CZ".into()),
                 vsync: Switch::On,
+                stencil: Switch::Off,
                 wayland: Switch::Off,
                 no_native_menu: Switch::On,
                 system_cursor: Switch::Default,
@@ -153,7 +215,7 @@ mod tests {
         let read = Env::from_vars(env(&blank));
         assert_eq!(read.config_dir, None, "an empty variable means no directory, not the working directory");
         assert_eq!((read.locale, read.font_alt, read.font_fallback), (None, None, None));
-        assert_eq!([read.vsync, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 4]);
+        assert_eq!([read.vsync, read.stencil, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 5]);
     }
 
     #[test]

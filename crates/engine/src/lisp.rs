@@ -5,10 +5,14 @@
 //! (`getpoint`, `pause`) and carry on later, so the interface keeps drawing while a routine
 //! waits. Each drawing has its own symbols, as in AutoCAD. A run is one undo step.
 
+/// A block-definition entity and its successor in the block, by handle.
+pub type BlockSlots = HashMap<Handle, (Arc<cadcraft_doc::Entity>, Option<Handle>)>;
+
 pub mod builtins;
 mod drawing;
 pub mod eval;
 pub mod input;
+mod objects;
 pub mod read;
 mod startup;
 pub mod value;
@@ -54,13 +58,20 @@ pub struct Env {
     pub next_file: u32,
     /// Entities `entdel` deleted (it brings them back when called again), with their space.
     pub deleted: HashMap<Handle, (cadcraft_doc::Space, Arc<cadcraft_doc::Entity>)>,
-    /// Every entity's handle in creation order, for the drawing it was taken from (`entnext`).
-    pub order: Option<(usize, Arc<Vec<Handle>>)>,
+    /// Every entity's handle in creation order (`entlast`, `entnext`), with clones of the spaces
+    /// it was taken from (model space, then each layout): it is reused only while the drawing's
+    /// spaces still share every chunk with them ([`cadcraft_doc::EntityStore::same_as`]).
+    pub order: Option<(Vec<cadcraft_doc::EntityStore>, Arc<Vec<Handle>>)>,
+    /// Each block-definition entity with its successor in its block (None for the last), for the drawing
+    /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
+    pub block_next: Option<(usize, Arc<BlockSlots>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
     /// entities made meanwhile go into it, numbered when it ends.
     pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
+    /// Entity names of non-graphic objects (dictionaries, table records, layouts).
+    pub(crate) objects: objects::Names,
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
@@ -77,8 +88,10 @@ impl Default for Env {
             next_file: 1,
             deleted: HashMap::new(),
             order: None,
+            block_next: None,
             tblnext: HashMap::new(),
             pending_block: None,
+            objects: objects::Names::default(),
             printed_at: None,
         };
         builtins::install(&mut e);
@@ -126,6 +139,9 @@ pub struct LispState {
     /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
     /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
     pub(crate) callback_used: u64,
+    /// Work synchronous callbacks did inside the running step, already counted in `callback_used`:
+    /// the step is charged it without charging the enclosing callback a second time.
+    pub(crate) callback_work: u64,
     /// The `callback_used` value the callback running now (and so every one it calls) must not
     /// pass: the lowest of its own and its callers' allowances.
     pub(crate) callback_ceiling: Option<u64>,
@@ -207,8 +223,19 @@ impl Session {
         self.lisp.envs.remove(&uid).unwrap_or_default()
     }
 
+    /// Put a drawing's environment back, unless the drawing was closed meanwhile (a routine
+    /// cancelled by CLOSE ends after its drawing went away).
     fn lisp_env_put(&mut self, uid: u64, env: Env) {
-        self.lisp.envs.insert(uid, env);
+        if uid == 0 || self.docs.iter().any(|d| d.uid == uid) {
+            self.lisp.envs.insert(uid, env);
+        }
+    }
+
+    /// Drop the environments of drawings no longer open: one holds clones of its drawing's
+    /// entity stores ([`Env::order`]), which would otherwise outlive the drawing.
+    pub(crate) fn lisp_forget_closed(&mut self) {
+        let docs = &self.docs;
+        self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
     }
 
     /// A routine is running (possibly waiting for input).
@@ -359,6 +386,14 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // The work the slice did, which one step can take far past the slice. After a panic
+            // `used` is still the previous slice's; the run ends with the error anyway.
+            run.steps = run.steps.saturating_add(run.machine.used);
+            if run.blocking && run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_)) {
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -371,13 +406,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }
@@ -451,7 +480,7 @@ impl Session {
         let steps = std::mem::take(&mut self.lisp.steps);
         let mut env = self.lisp.envs.remove(&run.uid).unwrap_or_default();
         self.lisp_flush(&mut env, true);
-        self.lisp.envs.insert(run.uid, env);
+        self.lisp_env_put(run.uid, env);
         if let (Ok(v), true) = (&result, run.print) {
             let text = value::to_text(v, true);
             if !builtins::is_null_symbol(v) {
@@ -534,7 +563,7 @@ impl Session {
     /// A routine waits for the user's answer to a `get…` function: its prompt.
     pub(crate) fn lisp_prompt(&self) -> Option<Prompt> {
         match self.lisp.run.as_ref()?.waiting.as_ref()? {
-            Need::Get(req) => Some(req.prompt()),
+            Need::Get(req) => Some(req.prompt(&self.input_ucs())),
             _ => None,
         }
     }
@@ -545,10 +574,15 @@ impl Session {
         let Need::Get(req) = self.lisp.run.as_ref()?.waiting.as_ref()? else { return None };
         let line =
             |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) });
-        let Some(b) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        // The base is a UCS point (as the routine gave it); the preview is drawn in world space.
+        let ucs = self.input_ucs();
+        let Some(bu) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        let b = ucs.to_wcs(bu);
         Some(match req.kind {
             input::GetKind::Corner => {
-                let (c1, c2) = (cadcraft_geom::Vec2::new(cursor.x, b.y), cadcraft_geom::Vec2::new(b.x, cursor.y));
+                // The rectangle runs along the UCS axes, as the corner it returns is measured.
+                let cu = ucs.to_ucs(cursor);
+                let (c1, c2) = (ucs.to_wcs(cadcraft_geom::Vec2::new(cu.x, bu.y)), ucs.to_wcs(cadcraft_geom::Vec2::new(bu.x, cu.y)));
                 vec![line(b, c1), line(c1, cursor), line(cursor, c2), line(c2, b)]
             }
             input::GetKind::Point | input::GetKind::Dist | input::GetKind::Angle { .. } => vec![line(b, cursor)],
@@ -727,6 +761,8 @@ fn file_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ucs_tests;
 
 #[cfg(test)]
 mod block_tests;

@@ -12,6 +12,7 @@ use cadcraft_io::{SaveOptions, Version, read, write_with};
 
 #[test]
 fn entities_of_a_second_layout_are_owned_by_its_block() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     let order = d.layouts.iter().map(|l| l.tab_order).max().unwrap_or(0) + 1;
     d.layouts.push(Layout::new("SHEET_A", order));

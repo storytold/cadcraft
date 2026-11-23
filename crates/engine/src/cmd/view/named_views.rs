@@ -138,7 +138,7 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
     let layer_state = snapshot.then(|| {
         let state = snapshot_name(name);
         d.layer_states.retain(|l| !l.name.eq_ignore_ascii_case(&state));
-        d.layer_states.push(LayerState { name: state.clone(), layers: d.layers.clone() });
+        d.layer_states.push(LayerState::new(state.clone(), d.layers.clone(), ""));
         state
     });
     if let Some(old) = &replaced {

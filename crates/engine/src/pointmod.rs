@@ -61,6 +61,13 @@ impl Axes {
     pub fn combine(self, first: Vec2, second: Vec2) -> Vec2 {
         Vec2::new(if self.x { first.x } else { second.x }, if self.y { first.y } else { second.y })
     }
+
+    /// [`Axes::combine`] with the coordinates read in the UCS `ucs`, where the user typed and saw
+    /// the points: `.X` takes the first point's X along the UCS X axis, not the world's.
+    pub fn combine_in(self, ucs: &crate::ucs::UcsFrame, first: Vec2, second: Vec2) -> Vec2 {
+        let r = ucs.to_wcs(self.combine(ucs.to_ucs(first), ucs.to_ucs(second)));
+        if r.is_finite() { r } else { self.combine(first, second) }
+    }
 }
 
 /// A pending point modifier.
@@ -119,23 +126,14 @@ pub fn snap_name(m: u32) -> &'static str {
     mode::ALL.iter().find(|(b, _)| *b == m).map_or("None", |(_, n)| *n)
 }
 
-/// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
-/// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
+/// The candidate snaps near `cursor` for Tab cycling: every object snap within the aperture, the
+/// one [`crate::snap::osnap`] picks first and the rest in its order (specific snaps nearest
+/// first, then deferred snaps, then Nearest), without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
-    let extra = osmode & mode::HATCH;
-    let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
-    per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
-    let mut out: Vec<SnapHit> = osnap(osmode).into_iter().collect();
-    for h in per_mode {
-        if !out.iter().any(|o| o.mode == h.mode && o.point.near(h.point, aperture * 1e-6)) {
-            out.push(h);
-        }
-    }
-    out
+    crate::snap::osnap_all(d, space, cursor, aperture, osmode, base, deferred)
 }
 
 /// Strip the international (`_`) and transparent (`'`) prefixes a modifier may be typed with.
@@ -236,16 +234,19 @@ impl Session {
         // A distance at "Next point" of TK: straight across or up from the last tracking point,
         // the way the cursor lies from it.
         if let Some(Frame::Track { last: Some(l) }) = self.point_mods.last().copied()
-            && crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_none()
+            && self.parse_typed_point(t, self.last_point).is_none()
             && let Some(d) = crate::units::parse_distance(t)
         {
-            let dir = (crate::snap::ortho(l, self.cursor) - l).normalized();
-            let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+            let ucs = self.drafting_settings().ucs_angle;
+            let dir = (crate::snap::ortho_at(l, self.cursor, ucs) - l).normalized();
+            // With the cursor on the tracking point itself: along the UCS X axis, which the point
+            // tracking then keeps (world X would be cut short in a turned UCS).
+            let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::from_angle(ucs) } else { dir };
             return Some(self.modifier_point(l + dir * d));
         }
         if let Some(Frame::Angle { base, dir }) = self.point_mods.last().copied() {
             // Typed coordinates are explicit: they win over the override.
-            if crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_some() {
+            if self.parse_typed_point(t, self.last_point).is_some() {
                 self.point_mods.pop();
                 return None;
             }
@@ -328,7 +329,7 @@ impl Session {
                 }
                 Frame::Track { last } => {
                     // Each point after the first goes straight across or up from the last one.
-                    let q = last.map_or(p, |l| crate::snap::ortho(l, p));
+                    let q = last.map_or(p, |l| crate::snap::ortho_at(l, p, self.drafting_settings().ucs_angle));
                     self.point_mods.push(Frame::Track { last: Some(q) });
                     self.last_point = q;
                     return Ok(());
@@ -336,7 +337,7 @@ impl Session {
                 // The offset point is already measured from the base (`@` reads the last point).
                 Frame::From { base: Some(_) } => {}
                 Frame::Mid { first: Some(f) } => p = (f + p) * 0.5,
-                Frame::Filter { keep, first: Some(f) } => p = keep.combine(f, p),
+                Frame::Filter { keep, first: Some(f) } => p = keep.combine_in(&self.input_ucs(), f, p),
                 Frame::Angle { base, dir } => p = base + dir * (p - base).dot(dir),
                 Frame::Snap { mode: 0 } => {}
                 Frame::Snap { mode } => {
