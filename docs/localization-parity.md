@@ -23,7 +23,7 @@ shaping and right-to-left text through TrueType, vertical SHX text styles.
 - **A display-time string catalog** (`crates/ui-egui/src/i18n/`, landed with #36): a TSV per
   language (context, English source, translation, `@plural` rows), Edit → Interface Language with
   Auto (system language), live switching, a saved choice, and tests for coverage, placeholders
-  and plurals ([localization.md](localization.md)). The nineteen non-English catalogs have between 1,026
+  and plurals ([localization.md](localization.md)). The twenty non-English catalogs have between 1,026
   (Russian) and 1,471 rows (Swedish; Ukrainian, the reference, has 1,414), counted 2026-11-07 on main 486d558a7 (rows without comment lines, `@plural` rows included),
   covering menus, command labels, tool groups and tooltips, the Start page, tabs, status
   controls, object snaps, drafting prompts, property labels and dialogs. Engine diagnostics,
