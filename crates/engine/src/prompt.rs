@@ -400,6 +400,11 @@ pub enum EditorKind {
 pub struct AttribEntry {
     pub block: String,
     pub rows: Vec<AttribAsk>,
+    /// The drawing the command runs in ([`crate::DocState::uid`]) and its number in
+    /// [`Session::commands_started`], stamped by [`Session::attribute_entry`]: a dialog draft
+    /// belongs to one command, so a command started afterwards never takes it.
+    pub drawing: u64,
+    pub command: u64,
 }
 
 /// One attribute an INSERT asks for: its tag, prompt and default value; the value of a Verify
@@ -413,6 +418,12 @@ pub struct AttribAsk {
 }
 
 impl AttribEntry {
+    /// An entry as the command builds it, before [`Session::attribute_entry`] stamps the drawing
+    /// and command number it belongs to.
+    pub(crate) fn idle(block: String, rows: Vec<AttribAsk>) -> Self {
+        AttribEntry { block, rows, drawing: 0, command: 0 }
+    }
+
     /// The answers that give the attributes `values` (one per row, in order; a missing one is
     /// the default) when typed in turn: every value, then each Verify attribute's again, as
     /// INSERT asks them once the dialog has shown the values.

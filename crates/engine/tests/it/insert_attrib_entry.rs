@@ -215,6 +215,29 @@ fn hostile_values_never_panic() {
 }
 
 #[test]
+fn an_entry_belongs_to_the_drawing_and_command_that_asked() {
+    let mut s = session(None, Some(true));
+    insert_up_to_the_attributes(&mut s);
+    let first = s.attribute_entry().expect("asks");
+    assert_eq!(first.drawing, s.state().unwrap().uid);
+    assert_eq!(first.command, s.commands_started);
+    // Asked again in a later frame: the same owner.
+    assert_eq!(s.attribute_entry().map(|e| (e.drawing, e.command)), Some((first.drawing, first.command)));
+    // Cancelled and started again: a new number, so the old dialog's draft is not taken.
+    s.cancel();
+    insert_up_to_the_attributes(&mut s);
+    let second = s.attribute_entry().expect("asks again");
+    assert_eq!(second.block, "T");
+    assert_ne!((second.drawing, second.command), (first.drawing, first.command));
+    // Another drawing's INSERT is another owner too.
+    let mut other = session(None, Some(true));
+    insert_up_to_the_attributes(&mut other);
+    let third = other.attribute_entry().expect("asks there");
+    assert_eq!(third.drawing, other.state().unwrap().uid);
+    assert_ne!(third.drawing, first.drawing);
+}
+
+#[test]
 fn two_definitions_with_one_tag_are_both_asked_once() {
     // INSERT counted its answers by tag: the second X was asked for ever.
     let mut d = cadcraft_engine::doc::Drawing::new_imperial();

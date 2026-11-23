@@ -1,16 +1,21 @@
 //! Edit Attributes: INSERT asks for its attribute values in one dialog when ATTDIA is 1
 //! ([`cadcraft_engine::Session::attribute_entry`]). OK answers INSERT's prompts in turn, Cancel
 //! cancels the command; values typed at the command line still work, and the dialog goes away
-//! after the first one.
+//! after the first one. The draft belongs to the drawing and command that asked for it, so an
+//! INSERT started after a cancel starts again from its own defaults.
 
 use egui::{RichText, vec2};
 
 use crate::CadApp;
 use crate::theme::Tokens;
 
-/// The values being edited, for the block they were made for.
-#[derive(Clone, Default)]
+/// The values being edited, for the drawing and command that asked for them.
+#[derive(Clone)]
 struct State {
+    /// The drawing and the command instance ([`cadcraft_engine::AttribEntry`]): a draft made for
+    /// one command is never used by another, even for the same block.
+    drawing: u64,
+    command: u64,
     block: String,
     values: Vec<String>,
     /// The first field has had the keyboard focus once.
@@ -36,8 +41,18 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let mut st = ctx
         .data_mut(|d| d.get_temp::<State>(state_id()))
-        .filter(|s| s.block == entry.block && s.values.len() == entry.rows.len())
-        .unwrap_or_else(|| State { block: entry.block.clone(), values: entry.rows.iter().map(|r| r.default.clone()).collect(), focused: false });
+        .filter(|s| {
+            // A command replaced between frames (cancel and a new INSERT, another drawing): its own
+            // values, and an OK meant for the old dialog can only submit these.
+            s.drawing == entry.drawing && s.command == entry.command && s.block == entry.block && s.values.len() == entry.rows.len()
+        })
+        .unwrap_or_else(|| State {
+            drawing: entry.drawing,
+            command: entry.command,
+            block: entry.block.clone(),
+            values: entry.rows.iter().map(|r| r.default.clone()).collect(),
+            focused: false,
+        });
     let mut done = Done::No;
     let st_focused = st.focused;
     st.focused = true;

@@ -118,6 +118,32 @@ fn cancel_inserts_nothing() {
 }
 
 #[test]
+fn a_new_insert_does_not_inherit_a_cancelled_draft() {
+    let mut a = app();
+    insert(&mut a);
+    let mut h = harness(a);
+    replace(&mut h, "101", "205");
+    replace(&mut h, "1", "3");
+    let first = h.state().session.attribute_entry().expect("the old dialog's rows");
+    // The command channel cancels, and a second INSERT of the same block reaches its attribute
+    // prompts before another frame: the draft the old dialog left is still in egui's data.
+    h.state_mut().session.cancel();
+    insert(h.state_mut());
+    let second = h.state().session.attribute_entry().expect("the replacement's rows");
+    assert_ne!((second.drawing, second.command), (first.drawing, first.command), "another command asks");
+    assert_eq!(second.drawing, h.state().session.state().unwrap().uid);
+    h.run_steps(2);
+    assert_eq!(h.get_by_label("Room").value().as_deref(), Some("101"), "the replacement's own default");
+    assert_eq!(h.get_by_label("Floor").value().as_deref(), Some("1"), "the replacement's own default");
+    // The confirmation left over from the old dialog submits what this one shows.
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    let app = h.state();
+    assert!(app.session.running.is_none(), "{}", app.session.prompt_text());
+    assert_eq!(values(app), Some(vec![("A".into(), "101".into()), ("B".into(), "1".into())]));
+}
+
+#[test]
 fn no_dialog_with_attdia_0_or_from_json() {
     let mut a = app();
     a.run("setvar", json!({ "name": "ATTDIA", "value": 0 })).unwrap();

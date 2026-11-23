@@ -1234,7 +1234,7 @@ impl Interactive for InsertM {
             .iter()
             .map(|(tag, prompt, default, verify)| AttribAsk { tag: tag.clone(), prompt: prompt.clone(), default: default.clone(), verify: *verify })
             .collect();
-        Some(AttribEntry { block: self.name.clone().unwrap_or_default(), rows })
+        Some(AttribEntry::idle(self.name.clone().unwrap_or_default(), rows))
     }
 }
 

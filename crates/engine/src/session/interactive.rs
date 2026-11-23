@@ -542,9 +542,14 @@ impl Session {
     }
 
     /// The attribute values the running command asks for in the Edit Attributes dialog
-    /// ([`Interactive::attribute_entry`]).
+    /// ([`Interactive::attribute_entry`]), stamped with the drawing it runs in and its number in
+    /// [`Session::commands_started`]: a dialog draft kept for a cancelled command never belongs
+    /// to the one started after it, even for the same block.
     pub fn attribute_entry(&self) -> Option<crate::AttribEntry> {
-        self.running.as_ref().and_then(|r| r.machine.attribute_entry())
+        let mut entry = self.running.as_ref().and_then(|r| r.machine.attribute_entry())?;
+        entry.drawing = self.docs.get(self.active).map_or(0, |d| d.uid);
+        entry.command = self.commands_started;
+        Some(entry)
     }
 
     pub fn current_prompt(&self) -> Option<Prompt> {
