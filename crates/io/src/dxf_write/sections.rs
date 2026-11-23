@@ -509,7 +509,15 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
         let baseline = w.t.split_off(start);
         let changed = |code| {
             (matches!(code, 142 | 143 | 147) && page.scale != kept.page.scale)
-                || (code == 72 && page.paper_mm != kept.page.paper_mm)
+                || (code == 72
+                    && (page.paper_mm != kept.page.paper_mm
+                        || (page.paper_mm.is_none()
+                            && kept
+                                .tags
+                                .iter()
+                                .find(|tag| tag.code == 72)
+                                .zip(current.iter().find(|tag| tag.code == 72))
+                                .is_some_and(|(old, now)| old.i64() != now.i64()))))
                 || current.iter().find(|tag| tag.code == code) != baseline.iter().find(|tag| tag.code == code)
         };
         for tag in &kept.tags {

@@ -182,3 +182,24 @@ fn changing_only_paper_or_device_keeps_other_plot_settings() {
         }
     }
 }
+
+#[test]
+fn inherited_paper_units_follow_measurement_when_saved_again() {
+    for (initial, changed, expected_unit) in [(1, 0, 25.4), (0, 1, 1.0)] {
+        let mut drawing = Drawing::new_imperial();
+        drawing.header.set_i64("MEASUREMENT", initial);
+        let original = write_dxf(&drawing);
+        let original_plots = plots(&original);
+        assert!(original_plots.values().all(|tags| tags[&72] == initial.to_string()));
+        let mut loaded = read(original.as_bytes(), "original.dxf").unwrap();
+        assert!(loaded.layouts.iter().all(|layout| layout.page.paper_mm.is_none()));
+        loaded.header.set_i64("MEASUREMENT", changed);
+        let saved = write_dxf(&loaded);
+        assert!(plots(&saved).values().all(|tags| tags[&72] == changed.to_string()), "saved plot units must follow MEASUREMENT");
+        let reopened = read(saved.as_bytes(), "saved.dxf").unwrap();
+        for layout in &reopened.layouts {
+            assert_eq!(layout.page.paper_mm, None);
+            assert_eq!(cadcraft_render::paper::page_unit_mm(&reopened, &layout.page), expected_unit);
+        }
+    }
+}
