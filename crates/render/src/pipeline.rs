@@ -98,6 +98,7 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         depth: 0,
         top,
         frozen,
+        selecting: false,
         vp_colors,
         lt_factor: 1.0,
         block_pstyle: None,
@@ -233,9 +234,11 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
 
 /// [`build_entities`] as a selection through a layout viewport that freezes the layers in
 /// `frozen` sees them: what is on one of those layers is left out, as the viewport does not draw
-/// it, the parts of a block reference too. Picking through the viewport tests objects against
-/// this, so a part the viewport does not draw is not hit, and the highlight of an object seen
-/// through the viewport is built from it.
+/// it, the parts of a block reference too. Only a point on the layer Defpoints that is a part of
+/// a block is kept, as the definition points of a dimension are in its block: a selection counts
+/// it whatever the viewport freezes ([`cadcraft_doc::point_on_defpoints`]). Picking through the
+/// viewport tests objects against this, so a part the viewport does not draw is not hit, and the
+/// highlight of an object seen through the viewport is built from it.
 pub fn build_entities_in_viewport<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options, frozen: &[String]) -> DisplayList {
     let ents: Vec<&Entity> = ents.into_iter().collect();
     // Only previews holding points need the model extents for relative point sizes.
@@ -259,7 +262,7 @@ pub fn build_entities_in_viewport<'a, I: IntoIterator<Item = &'a Entity>>(d: &Dr
         max_points: MAX_DISPLAY_POINTS,
     };
     for e in ents {
-        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, frozen, &[]), e);
+        entity(&mut b, &Ctx { selecting: true, ..top_ctx(d, Mat3::IDENTITY, e.handle, frozen, &[]) }, e);
     }
     b.list
 }

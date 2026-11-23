@@ -13,8 +13,8 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
 
 /// [`hit_polylines`] through the layout viewport `view`: the parts of a block reference on the
 /// layers frozen in that viewport are not drawn there, so they are not hit, and the box around
-/// the reference is the box around the parts that are drawn ([`bounds_in`]). A clipped
-/// reference's box stays, as [`ViewportBounds`] says.
+/// the reference is the box around the parts that are drawn ([`bounds_in`]). A dimension's
+/// definition points and a clipped reference's box stay, as [`ViewportBounds`] says.
 fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::Text(_)
@@ -41,6 +41,7 @@ fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a
                     view.frozen(),
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
+                let c = outline_in(d, e, view, b).corners();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
             }
             v
@@ -91,6 +92,27 @@ fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a
             out
         }
     }
+}
+
+/// The rectangle a selection through the layout viewport `view` hits `e` along, where `b` is the
+/// box of what that viewport draws of it ([`bounds_in`]): `b`, and for a dimension drawn from a
+/// block also the room of the text in that block that the viewport leaves out
+/// ([`ViewportBounds::leaves_out`]). Without the text the box ends at the dimension line, so a
+/// side of the rectangle would run through the place of the text, and a crossing window there,
+/// which touched nothing while the rectangle held the text, would take the dimension by that
+/// side. A window still needs only what the viewport draws inside it ([`in_window_in`]).
+fn outline_in(d: &Drawing, e: &Entity, view: &ViewportBounds<'_>, b: Bounds2) -> Bounds2 {
+    let EntityKind::Dimension(dm) = &e.kind else { return b };
+    let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) else { return b };
+    let at = dm.insertion_point.xy();
+    let mut out = b;
+    for part in blk.entities.iter().filter(|part| matches!(part.kind, EntityKind::Text(_) | EntityKind::MText(_)) && view.leaves_out(part)) {
+        let t = entity_bounds(d, part, 0);
+        if !t.is_empty() {
+            out = out.union(&Bounds2::from_points([t.min + at, t.max + at]));
+        }
+    }
+    out
 }
 
 fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {

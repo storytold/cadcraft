@@ -265,13 +265,24 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
     Bounds2::from_points(local.map(|p| origin + p.rotate(t.rotation)))
 }
 
+/// Whether `e` is a point on the layer Defpoints (the name in any case), as the block of a
+/// dimension holds the dimension's definition points. The reference app selects a dimension and a
+/// block reference by such a point of its block whatever a viewport freezes, the layer Defpoints
+/// too, where a line on that layer follows the viewport. So a selection through a viewport counts
+/// such a part of a block ([`ViewportBounds`]); the viewport itself does not draw it.
+pub fn point_on_defpoints(e: &Entity) -> bool {
+    matches!(e.kind, EntityKind::Point(_)) && e.common.layer.eq_ignore_ascii_case("Defpoints")
+}
+
 /// Whether an entity inside a block definition shows: its own invisible flag and its layer count,
 /// as when drawing. Dimensional constraints of dynamic blocks (layer `*ADSK_CONSTRAINTS`) and the
 /// entities a visibility state hides are invisible this way, and they sit far from the block's
 /// geometry in real drawings. Layer "0" takes the insert's layer, which the caller has checked.
 /// `off_counts`: a layer turned off counts too, as in the drawing's extents ([`extent_bounds`]).
-/// `frozen`: the layers frozen in the layout viewport measured through ([`ViewportBounds`]).
+/// `frozen`: the layers frozen in the layout viewport measured through ([`ViewportBounds`]); a
+/// point on the layer Defpoints counts whatever that viewport freezes ([`point_on_defpoints`]).
 fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool, frozen: &[String]) -> bool {
+    let frozen: &[String] = if point_on_defpoints(e) { &[] } else { frozen };
     // Attribute definitions are not drawn in an insert (its attribs are, see below).
     !matches!(e.kind, EntityKind::AttDef(_)) && e.common.visible && layer_counts(d, &e.common.layer, off_counts, frozen)
 }
@@ -410,9 +421,10 @@ pub fn extent_bounds_cached<'a>(d: &'a Drawing, e: &Entity, cache: &mut BlockBou
 /// layers frozen in that viewport left out, as the viewport leaves them out when it draws. It
 /// keeps the block bounds it has measured, as a [`BlockBoundsCache`] does, so use one only while
 /// the drawing it measured is unchanged. The layers belong to it, so the bounds measured through
-/// one viewport never answer for another. One thing a selection counts whatever the viewport
-/// draws stays in: a clipped reference (XCLIP) is selected by its boundary, so it keeps the box
-/// the drawing gives it.
+/// one viewport never answer for another. Two things a selection counts whatever the viewport
+/// draws stay in: a clipped reference (XCLIP) is selected by its boundary, so it keeps the box the
+/// drawing gives it, and a dimension by its definition points, which its block holds as points on
+/// the layer Defpoints, so such a point counts in any block ([`point_on_defpoints`]).
 pub struct ViewportBounds<'a> {
     /// The layers frozen in the viewport.
     frozen: &'a [String],
@@ -1062,6 +1074,83 @@ mod tests {
             assert_eq!((shared.min, shared.max), (fresh.min, fresh.max));
             let (unfrozen, drawn) = (plain.entity_bounds(&d, e), entity_bounds(&d, e, 0));
             assert_eq!((unfrozen.min, unfrozen.max), (drawn.min, drawn.max));
+        }
+    }
+
+    /// With the layer Defpoints frozen in the viewport, a point on that layer that is a part of a
+    /// block still counts: in the block of a reference, one block deeper, in the block of a
+    /// dimension, as its definition points are held, and in that of a dimension that is itself a
+    /// part of a block. Here the point lies far above all the rest. A line on Defpoints, a point
+    /// on another frozen layer and a line on one are left out. One [`ViewportBounds`] gives each of
+    /// them the box a fresh one gives it.
+    #[test]
+    fn a_viewport_keeps_the_points_on_defpoints_in_a_block() {
+        let line = |handle: u64, y: f64, layer: &str| {
+            let kind = EntityKind::Line(crate::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) });
+            let mut e = Entity::new(crate::Handle(handle), kind);
+            e.common.layer = layer.into();
+            e
+        };
+        let point = |handle: u64, y: f64, layer: &str| {
+            let mut e = Entity::new(crate::Handle(handle), EntityKind::Point(crate::Point { p: Vec3::new(5.0, y, 0.0), angle: 0.0 }));
+            e.common.layer = layer.into();
+            e
+        };
+        let ins = |block: &str| Entity::new(crate::Handle(9), EntityKind::Insert(crate::Insert { block: block.into(), ..crate::Insert::default() }));
+        let dimension = |block: &str| {
+            let kind = EntityKind::Dimension(crate::Dimension {
+                kind: crate::DimKind::Aligned,
+                defpt: Vec3::new(5.0, 1.0, 0.0),
+                text_mid: Vec3::ZERO,
+                p13: Vec3::ZERO,
+                p14: Vec3::new(10.0, 0.0, 0.0),
+                p15: Vec3::ZERO,
+                p16: Vec3::ZERO,
+                text: String::new(),
+                style: "Standard".into(),
+                measurement: 0.0,
+                text_rotation: 0.0,
+                user_text_pos: false,
+                block: Some(block.into()),
+                insertion_point: Vec3::ZERO,
+                overrides: Default::default(),
+                assoc: Vec::new(),
+                marks: Default::default(),
+            });
+            Entity::new(crate::Handle(8), kind)
+        };
+        let mut d = Drawing::new_metric();
+        d.ensure_layer("Hidden");
+        d.ensure_layer("Defpoints");
+        let mut add = |name: &str, parts: Vec<Entity>| {
+            let mut block = crate::Block::new(name);
+            for part in parts {
+                block.entities.push(part);
+            }
+            d.blocks.insert(name.into(), std::sync::Arc::new(block));
+        };
+        // P: a line along y = 0 on layer 0, a point on Defpoints at y = 200, a line on Defpoints
+        // along y = 250 and a line on "Hidden" along y = 300. NP holds a reference to P, DP a
+        // dimension that draws P. H is P with the point on "Hidden".
+        add("P", vec![line(1, 0.0, "0"), point(2, 200.0, "Defpoints"), line(3, 250.0, "Defpoints"), line(4, 300.0, "Hidden")]);
+        add("NP", vec![ins("P")]);
+        add("DP", vec![dimension("P")]);
+        add("H", vec![line(1, 0.0, "0"), point(2, 200.0, "Hidden")]);
+        let ys = |b: Bounds2| (b.min.y, b.max.y);
+        assert_eq!(ys(entity_bounds(&d, &ins("P"), 0)), (0.0, 300.0));
+        let frozen = ["HIDDEN".to_string(), "defpoints".to_string()];
+        let mut view = ViewportBounds::new(&frozen);
+        assert_eq!(ys(view.entity_bounds(&d, &ins("P"))), (0.0, 200.0), "the point on Defpoints in a reference's block, not the lines");
+        assert_eq!(ys(view.entity_bounds(&d, &ins("NP"))), (0.0, 200.0), "the same one block deeper");
+        assert_eq!(view.entity_bounds(&d, &dimension("P")).max.y, 200.0, "a dimension's definition point");
+        assert_eq!(view.entity_bounds(&d, &ins("DP")).max.y, 200.0, "the same for a dimension in a block");
+        assert_eq!(ys(view.entity_bounds(&d, &ins("H"))), (0.0, 0.0), "a point on another frozen layer");
+        // Where the viewport freezes only the other layer, the line on Defpoints counts too.
+        let hidden = ["Hidden".to_string()];
+        assert_eq!(ys(ViewportBounds::new(&hidden).entity_bounds(&d, &ins("P"))), (0.0, 250.0));
+        for e in [ins("P"), ins("NP"), dimension("P"), ins("DP"), ins("H")] {
+            let (shared, fresh) = (view.entity_bounds(&d, &e), ViewportBounds::new(&frozen).entity_bounds(&d, &e));
+            assert_eq!((shared.min, shared.max), (fresh.min, fresh.max));
         }
     }
 

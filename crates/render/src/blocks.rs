@@ -30,6 +30,7 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
         depth: ctx.depth + 1,
         top: ctx.top,
         frozen: ctx.frozen,
+        selecting: ctx.selecting,
         vp_colors: ctx.vp_colors,
         // The reference's own linetype scale (group 48) multiplies that of the objects inside,
         // as LTSCALE does for the drawing (tests/block_ltscale.rs).

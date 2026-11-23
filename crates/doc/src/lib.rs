@@ -31,7 +31,7 @@ pub use constraint::*;
 pub use entity::*;
 pub use extents::{
     BlockBoundsCache, MAX_BLOCK_DEPTH, ViewportBounds, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame,
-    ole_frame_accepts, ole_frame_transform,
+    ole_frame_accepts, ole_frame_transform, point_on_defpoints,
 };
 pub use format::Format;
 pub use gdt::*;

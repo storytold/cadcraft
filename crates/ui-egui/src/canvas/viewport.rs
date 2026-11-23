@@ -274,7 +274,9 @@ pub(super) fn viewport_highlight_tolerance(scale: f64) -> f64 {
 /// the hover are kept apart, so moving the cursor over objects doesn't tessellate the selection
 /// again; each is rebuilt only when the drawing, the objects, the zoom band or the layers frozen
 /// in the viewport change. An object on one of those layers is not drawn in the viewport, so it
-/// is not highlighted there either, and neither are the parts of a block reference on them
+/// is not highlighted there either, and neither are the parts of a block reference on them. The
+/// highlight is built as a selection through the viewport sees the objects, so a point on the
+/// layer Defpoints in a block stays in it, as the definition points of a dimension are
 /// ([`cadcraft_render::build_entities_in_viewport`]).
 #[derive(Default)]
 pub(super) struct VpHighlight {
