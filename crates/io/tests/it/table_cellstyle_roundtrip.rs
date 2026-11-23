@@ -17,9 +17,7 @@ fn modern_table_cell_values_have_reference_groups() {
         if merged {
             cells[0][0].text = "Title".into();
             cells[0][0].merged = Some((1, cols as u32));
-            for cell in &mut cells[0][1..] {
-                cell.text.clear();
-            }
+            cells[0][1].text = "CoveredText".repeat(30);
         }
         let table = Table { col_widths: vec![2.0; cols], row_heights: vec![0.5; rows], cells, title: merged, ..Table::default() };
         d.add(&Space::Model, Common::default(), EntityKind::Table(table.clone())).unwrap();
@@ -35,7 +33,14 @@ fn modern_table_cell_values_have_reference_groups() {
             let start = pairs.iter().position(|p| *p == ("0", "ACAD_TABLE")).unwrap();
             let end = start + 1 + pairs[start + 1..].iter().position(|p| p.0 == "0").unwrap();
             let values: Vec<_> = pairs[start..end].iter().filter(|p| p.0 == "302").map(|p| p.1).collect();
-            let expected: Vec<_> = table.cells.iter().flatten().map(|cell| cell.text.as_str()).collect();
+            let expected: Vec<_> = table
+                .cells
+                .iter()
+                .enumerate()
+                .flat_map(|(row, cells)| {
+                    cells.iter().enumerate().map(move |(col, cell)| if merged && row == 0 && col > 0 { "" } else { cell.text.as_str() })
+                })
+                .collect();
             assert_eq!(values, expected);
             assert_eq!(pairs[start..end].iter().filter(|p| **p == ("301", "CELL_VALUE")).count(), rows * cols);
             assert_eq!(pairs[start..end].iter().filter(|p| **p == ("304", "ACVALUE_END")).count(), rows * cols);
@@ -107,7 +112,33 @@ fn modern_table_cell_values_have_reference_groups() {
                     ]
                 );
             }
-            assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells, table.cells);
+            let mut expected_cells = table.cells.clone();
+            if merged {
+                for cell in &mut expected_cells[0][1..] {
+                    cell.text.clear();
+                }
+            }
+            assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells, expected_cells);
+        }
+        if merged {
+            let bytes = cadcraft_io::write_with(&d, "t.dxf", &SaveOptions { version: Some(Version::R2004), binary: false }).unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            let lines: Vec<_> = text.lines().map(str::trim).collect();
+            let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])).collect();
+            let start = pairs.iter().position(|pair| *pair == ("0", "ACAD_TABLE")).unwrap();
+            let end = start + 1 + pairs[start + 1..].iter().position(|pair| pair.0 == "0").unwrap();
+            let mut values = Vec::new();
+            let mut value = String::new();
+            let cell_start = start + pairs[start..end].iter().position(|pair| *pair == ("171", "1")).unwrap();
+            for &(code, chunk) in &pairs[cell_start..end] {
+                if code == "2" || code == "1" {
+                    value.push_str(chunk);
+                    if code == "1" {
+                        values.push(std::mem::take(&mut value));
+                    }
+                }
+            }
+            assert_eq!(values, table.cells.iter().flatten().map(|cell| cell.text.clone()).collect::<Vec<_>>());
         }
     }
 }
