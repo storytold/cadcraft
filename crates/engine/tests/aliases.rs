@@ -281,3 +281,40 @@ fn hostile_alias_files_never_panic() {
     assert!(s.execute("reinit", &json!({ "file": "/no/such/file.pgp" })).is_err());
     s.execute("aliasedit", &json!({ "clear": true })).unwrap();
 }
+
+/// CADCraft's Polish command names come as an alias set the user adds on request (ALIASEDIT
+/// `{preset: "pl"}`): typed in any case, with or without Polish letters, added to the user's own
+/// aliases, and gone again with them. Nothing changes until they are added.
+#[test]
+fn the_polish_alias_set_is_added_on_request() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut s = Session::new();
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("okrąg"), "okrąg", "no Polish names before the set is added");
+    assert_eq!(resolve_alias("o"), "offset");
+
+    s.execute("aliasedit", &json!({ "set": { "zzmine": "line" } })).unwrap();
+    let r = s.execute("aliasedit", &json!({ "preset": "pl" })).unwrap();
+    assert!(r["loaded"].as_u64().unwrap() >= 30);
+    assert_eq!(r["aliases"]["zzmine"], "line", "the user's own aliases stay");
+    for (typed, id) in [
+        ("OKRĄG", "circle"),
+        ("okrąg", "circle"),
+        ("OKRAG", "circle"),
+        ("Łuk", "arc"),
+        ("Ł", "arc"),
+        ("o", "circle"),
+        ("KRESKUJ", "hatch"),
+        ("wtekst", "mtext"),
+    ] {
+        assert_eq!(resolve_alias(typed), id, "{typed}");
+    }
+    s.cmdline("OKRĄG 0,0 3").unwrap();
+    assert_eq!(s.doc().unwrap().model.iter().count(), 1, "typed at the command line like any alias");
+    s.execute("aliasedit", &json!({ "remove": ["ŁUK"] })).unwrap();
+    assert_eq!(resolve_alias("łuk"), "łuk", "removed in any case");
+    assert!(s.execute("aliasedit", &json!({ "preset": "xx" })).is_err());
+
+    s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    assert_eq!(resolve_alias("o"), "offset");
+}

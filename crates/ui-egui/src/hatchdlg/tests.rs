@@ -303,6 +303,21 @@ fn a_failed_ok_keeps_the_dialog_open_with_the_error() {
     assert_eq!(app.session.doc().unwrap().model.len(), n, "drawing unchanged");
 }
 
+/// A user alias of HATCH (here from the Polish alias set) opens the dialog as HATCH does.
+#[test]
+fn a_user_alias_of_hatch_opens_the_dialog() {
+    let _aliases = crate::aliasdlg::lock_alias_store();
+    let (mut app, _) = app_with_rect();
+    app.session.execute("aliasedit", &json!({ "preset": "pl" })).unwrap();
+    for typed in ["KRESKUJ", "kr", "GRA"] {
+        app.ui.dialog = None;
+        app.cmdline(typed);
+        assert_eq!(app.ui.dialog.as_deref(), Some("hatch"), "{typed}");
+        assert!(app.session.running.is_none(), "{typed}");
+    }
+    app.session.execute("aliasedit", &json!({ "clear": true })).unwrap();
+}
+
 #[test]
 fn typed_and_menu_hatch_open_the_dialog_but_dash_and_json_do_not() {
     let (mut app, _) = app_with_rect();

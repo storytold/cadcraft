@@ -5,7 +5,8 @@
 //! drawing; command names themselves always win. Lines that define external commands
 //! (programs the file would have the application start) are never run: they are skipped with a
 //! note. CADCraft ships no alias file; the aliases built into the command catalog stay the
-//! defaults.
+//! defaults. It does ship alias sets for interface languages (`aliases/pl.pgp`), which a user adds
+//! to their own aliases on request and never by default.
 //!
 //! The aliases are user settings, never part of a drawing: [`alias_profile`] gives them (and the
 //! file REINIT reads) to the host's user profile, and [`restore_aliases`] brings them back on the
@@ -57,6 +58,22 @@ fn store() -> MutexGuard<'static, Aliases> {
 /// The command a user alias stands for (`name` in lower case).
 pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
+}
+
+/// The command a user alias stands for, `name` typed in any case (`KR` or `kr`); `None` when it is
+/// no user alias. The interface resolves a typed alias with this before its own command routes,
+/// so a user alias of HATCH opens the Hatch dialog as HATCH does.
+pub fn user_alias_command(name: &str) -> Option<String> {
+    user_alias(&name.trim().to_lowercase())
+}
+
+/// Alias sets CADCraft ships for interface languages, in the `.pgp` format: the language's command
+/// names, which a user adds to their own aliases (ALIASEDIT `{preset}`) and can edit or remove.
+const PRESETS: &[(&str, &str)] = &[("pl", include_str!("aliases/pl.pgp"))];
+
+/// The aliases of the shipped set for language `code` (alias → command id), if there is one.
+pub fn language_aliases(code: &str) -> Option<BTreeMap<String, String>> {
+    PRESETS.iter().find(|(c, _)| *c == code).map(|(_, text)| parse(text).0)
 }
 
 /// The user alias that is the Greek word `word` in another case or accent.
@@ -120,7 +137,8 @@ pub fn alias_name(a: &str) -> std::result::Result<String, String> {
     if a.is_empty() || a.chars().count() > MAX_ALIAS_CHARS || a.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\'' || c == '{') {
         return Err(format!("`{a}` can't be an alias"));
     }
-    let l = a.to_ascii_lowercase();
+    // Full lower case, so an alias with Polish (or other non-ASCII) letters matches in any case: ŁUK, łuk.
+    let l = a.to_lowercase();
     if find_command(&l).is_some() {
         return Err(format!("{a} is a command name; it stays the command"));
     }
@@ -192,8 +210,9 @@ fn load(text: &str, path: Option<String>) -> (usize, Vec<String>) {
     (st.map.len(), warnings)
 }
 
-/// ALIASEDIT `{file? | text?, set?: {alias: command}, remove?: [alias], clear?: bool}`: load an
-/// alias file (replacing the user aliases), clear them, or add and remove single aliases.
+/// ALIASEDIT `{file? | text?, preset?, set?: {alias: command}, remove?: [alias], clear?: bool}`: load
+/// an alias file (replacing the user aliases), clear them, add a shipped language set, or add and
+/// remove single aliases.
 fn run_aliasedit(_s: &mut Session, p: &Value) -> Result<Value> {
     let mut warnings = Vec::new();
     let mut added = 0;
@@ -205,6 +224,21 @@ fn run_aliasedit(_s: &mut Session, p: &Value) -> Result<Value> {
     if let Some((text, source)) = support_text("aliasedit", p, "file", "text")? {
         let path = p.get("file").and_then(Value::as_str).map(|_| source);
         (added, warnings) = load(&text, path);
+    }
+    match p.get("preset") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(code)) => {
+            let set = language_aliases(code).ok_or_else(|| bad("aliasedit", format!("no alias set for language `{code}`")))?;
+            let mut st = store();
+            for (name, id) in set {
+                if !st.map.contains_key(&name) && st.map.len() >= MAX_ALIASES {
+                    return Err(bad("aliasedit", format!("more than {MAX_ALIASES} aliases")));
+                }
+                st.map.insert(name, id);
+                added += 1;
+            }
+        }
+        Some(_) => return Err(bad("aliasedit", "`preset` is a language code such as \"pl\"")),
     }
     match p.get("set") {
         None | Some(Value::Null) => {}
@@ -229,7 +263,7 @@ fn run_aliasedit(_s: &mut Session, p: &Value) -> Result<Value> {
             let mut st = store();
             for v in a {
                 if let Some(n) = v.as_str() {
-                    st.map.remove(&n.trim().to_ascii_lowercase());
+                    st.map.remove(&n.trim().to_lowercase());
                 }
             }
         }
@@ -260,7 +294,7 @@ pub(crate) fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("aliasedit", "Command Aliases", run_aliasedit)
             .menu(&["Tools", "Customize", "Edit Command Aliases (PGP)..."])
-            .params("{file?: path to a .pgp alias file | text?: its contents, set?: {alias: command}, remove?: [alias], clear?: bool} → {aliases, file, loaded, warnings}")
+            .params("{file?: path to a .pgp alias file | text?: its contents, preset?: language code (\"pl\": CADCraft's Polish command names, added to yours), set?: {alias: command}, remove?: [alias], clear?: bool} → {aliases, file, loaded, warnings}")
             .enabled(always)
             .noundo(),
         CommandSpec::new("reinit", "Reinitialize", run_reinit).params("{file? | text?} (default: the alias file loaded last)").enabled(always).noundo(),
@@ -281,6 +315,22 @@ mod tests {
     }
 
     /// An alias file path the profile couldn't restore isn't saved in it.
+    /// Every shipped language set is a clean `.pgp` file: no skipped line, every target a command.
+    #[test]
+    fn shipped_language_sets_parse_cleanly() {
+        for (code, text) in super::PRESETS {
+            let (set, warnings) = super::parse(text);
+            assert!(warnings.is_empty(), "{code}: {warnings:?}");
+            assert!(set.len() >= 30, "{code}: {} aliases", set.len());
+        }
+        let pl = super::language_aliases("pl").unwrap();
+        assert_eq!(pl.get("okrąg").map(String::as_str), Some("circle"));
+        assert_eq!(pl.get("okrag").map(String::as_str), Some("circle"));
+        assert_eq!(pl.get("ł").map(String::as_str), Some("arc"));
+        assert_eq!(pl.get("kr").map(String::as_str), Some("hatch"));
+        assert!(super::language_aliases("xx").is_none());
+    }
+
     #[test]
     fn only_paths_the_profile_restores_are_saved() {
         assert!(super::keepable_path("C:\\support\\mine.pgp"));

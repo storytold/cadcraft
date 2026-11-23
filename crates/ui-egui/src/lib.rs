@@ -646,6 +646,8 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A user alias routes as its command does: an alias of HATCH opens the Hatch dialog.
+            let name = cadcraft_engine::cmd::file::user_alias_command(first).unwrap_or(name);
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }

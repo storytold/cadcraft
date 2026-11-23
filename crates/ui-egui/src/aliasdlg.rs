@@ -42,6 +42,14 @@ pub struct AliasDlgState {
     pub confirm_import: bool,
 }
 
+/// Adds a shipped language alias set to the edited user aliases (OK or Apply sends them).
+pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) {
+    for (alias, command) in set {
+        st.user.insert(alias.clone(), command.clone());
+    }
+    st.error = None;
+}
+
 /// Whether Import… asks first: the file would replace the user's aliases or the edits not applied yet.
 pub fn import_replaces_something(st: &AliasDlgState) -> bool {
     !st.user.is_empty() || !st.applied.is_empty()
@@ -238,6 +246,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let (mut ok, mut cancel, mut apply_clicked, mut import_clicked) = (false, false, false, false);
     // Without a native file picker (the web) Import… can't open one; ALIASEDIT's `text` form loads a file there.
     let can_pick = app.services.pick_pgp.is_some();
+    // The command names CADCraft ships for the interface language, if any (Polish: OKRĄG, ŁUK…).
+    let language_set = cadcraft_engine::cmd::file::language_aliases(app.language());
     let Some(st) = app.alias_dlg.as_mut() else { return };
     let id = egui::Id::unique("aliasedit_dialog");
     if std::mem::take(&mut st.raise) {
@@ -308,6 +318,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 && let Some(s) = &sel
             {
                 st.user.remove(s);
+            }
+            if let Some(set) = &language_set
+                && ui
+                    .button(crate::tl!("Add command aliases in this language"))
+                    .on_hover_text(crate::tl!("Adds CADCraft's command names in the interface language to your aliases. Some override built-in aliases; OK or Apply keeps them."))
+                    .clicked()
+            {
+                add_language_set(st, set);
             }
             let import = ui
                 .add_enabled(can_pick, egui::Button::new(crate::tl!("Import…")))
