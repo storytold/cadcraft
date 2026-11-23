@@ -536,6 +536,11 @@ impl Session {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
     }
 
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<crate::TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
+    }
+
     pub fn current_prompt(&self) -> Option<Prompt> {
         if let Some(p) = self.lisp_prompt() {
             return Some(p);

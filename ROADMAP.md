@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, when the six rows of the [alpha gate](docs/roadmap.md#alpha-gate) pass (five fail today; the gate was revised on 2026-11-19 and its hours are not re-estimated yet)
 
-> **Last reviewed:** 2026-11-19 · **Last updated:** 2026-11-19 · **Change:** major (alpha gate revised from user reports: six rows, Windows first; Upcoming re-ranked into three priority tiers; previously minor: re-audit against main 41d9b5e95) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-11-19 · **Last updated:** 2026-11-20 · **Change:** minor (Upcoming updated for what merged on 2026-11-19 and 2026-11-20; previously major: alpha gate revised from user reports: six rows, Windows first; Upcoming re-ranked into three priority tiers; previously minor: re-audit against main 41d9b5e95) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -115,21 +115,23 @@ and the beta checklist are in [docs/roadmap.md](docs/roadmap.md).
 - The open findings of the security audit (#1919–#1935): check each against the input limits that
   landed on 2026-11-11, close what is fixed and fix the rest. A crafted handle that makes new entities
   overwrite existing ones (#1921) is fixed by #1276.
-- Hostile-input fixes waiting in pull requests (#2820, #2821, #2765).
+- A saved file that crashes AutoCAD 2021 (#3303) and dimension text lost on save (#3299).
 - Crashes and hangs with a reproduction: the web build on a large DXF (#1603), a DWG with 3D content
   (#2174), startup on older graphics hardware (#1724, #1631, #3222).
 
 **2. Parity with AutoCAD: the alpha gate rows, then the beta checklist (apart from its items named under tier 3).**
-- It starts on common hardware (#1596, then an automatic fallback renderer).
+- It starts on common hardware: an automatic fallback renderer (`CADCRAFT_STENCIL=0` is the manual
+  switch since #3336).
 - It opens the DWG and DXF files people already have: large files (#3102, #2633, #1088), layouts and
   paper units (#1672, #2836), and a corpus of real files run in CI.
 - Saving loses nothing and other CAD programs open the result (#2904, #1687, #3234, #2632).
-- Input feels like AutoCAD for Windows: clicks while the mouse moves (#1001, #2092), right-click and
-  Space as Enter (#1387), double-click to edit text (#842).
-- The prompt options that still say "not available yet", and TRIM/EXTEND depth.
-- Layouts print at scale on a system printer, and the menu bar and panels can always be restored
-  (#3216, #1240).
-- 714 pull requests are open (2026-11-19). About 230 are mergeable, pass CI and are small; they are
+- Input feels like AutoCAD for Windows: the fixes for clicks while the mouse moves, right-click and
+  Space as Enter, and double-click text editing landed (#3307, #3345); waiting for the reporters to
+  confirm, and table cells are left (#842).
+- The prompt options that still say "not available yet" (gaps F1).
+- Layouts print at scale on a system printer (#3216); the menu bar and panels can be restored since
+  #3308.
+- 661 pull requests are open (2026-11-20; 714 the day before). About 230 were mergeable, passed CI and were small; they are
   reviewed and landed in this order, the longest-waiting authors first within a row.
 
 **3. Lower priority: affects fewer people and nothing breaks without it.**
@@ -139,7 +141,9 @@ and the beta checklist are in [docs/roadmap.md](docs/roadmap.md).
   but a file with 3D content must open safely (tier 1).
 - Menu breadth against AutoCAD for Mac as a headline number.
 
-Done since the last ranking: precision input (#379, #441, #60, #519), prompt options in TRIM/EXTEND,
+Done on 2026-11-19 and 2026-11-20: the hostile-input fixes #1276, #2820, #2821 and #2765 (#3304, #3305), clicks while the mouse moves and right-click or Space as Enter (#3307), the interface reset (#3308), paper units (#3309), the UCS command (#3310), -ATTEDIT, -RENAME and -LAYER options (#3311), TRIM/EXTEND depth (#3312), dimension values kept on save (#3335), the stencil switch (#3336), a typed OPEN path (#3343) and double-click text editing (#3345).
+
+Done before that: precision input (#379, #441, #60, #519), prompt options in TRIM/EXTEND,
 OFFSET, ROTATE, PLINE, SPLINE, MTEXT and MLEADER (#397, #408, #547), autosave, recovery, AUDIT and
 RECOVER on the desktop (#406, #416), xrefs (#525), groups (#417), the Block Editor (#824, #833, #885),
 REFEDIT (#818), XCLIP (#2354), dynamic block references (#838–#883), and the Dimension Style Manager
@@ -166,6 +170,7 @@ REFEDIT (#818), XCLIP (#2354), dynamic block references (#838–#883), and the D
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-20 | minor | Upcoming updated for the merges of 2026-11-19 and 2026-11-20 (security stacks, input, interface reset, paper units, UCS, prompt options, TRIM/EXTEND, text editing in place); pull-request count 714 → 661; percentages and hours not re-scored |
 | 2026-11-19 | major | Alpha gate revised from user reports (six rows, Windows first; block authoring, xref editing in place and exact curve geometry moved to beta); Upcoming re-ranked into three tiers: urgent (security, leaks, crashes, lost work), parity, lower priority; percentages and hours not re-scored |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: language table, CI gate and open-PR count re-checked against main 41d9b5e95 |
 | 2026-10-21 | trivial | Progress log: proxy objects keep their class through a save (#1812) |

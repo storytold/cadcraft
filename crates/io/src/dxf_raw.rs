@@ -16,9 +16,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
+use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number, proxy_has_string_stream};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use craft_dxf::{SectionRef, Tag};
+use craft_dxf::{SectionRef, Tag, Version};
 
 /// Named object dictionary entries CADCraft writes itself from its model (plus every key that
 /// starts with `CADCRAFT`): they are read into the model, not kept raw. A change that starts
@@ -457,6 +457,10 @@ pub(crate) fn read(secs: &[SectionRef<'_>], d: &mut Drawing) {
     if !f.is_empty() {
         f.version = file_version(secs);
     }
+    // Added after the version: registered applications alone are no kept objects whose groups
+    // the DWG writer must read as the file's version, and nearly every file has some (ACAD).
+    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
+    f.appids = appids.take(MAX_OBJECTS).collect();
     // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
     f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
     if !f.is_empty() || !f.handles.is_empty() {
@@ -684,6 +688,102 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
     out.push(Tag::s(0, "ENDSEC"));
     let at = tags.iter().rposition(|t| t.code == 0 && t.str() == "EOF").unwrap_or(tags.len());
     tags.splice(at..at, out);
+}
+
+/// Most constraint nodes, and connections per node, looked at in one constraint group.
+const MAX_CONSTRAINT_NODES: usize = 100_000;
+
+/// Put the status of every node of the kept 2D constraint groups (`ACDBASSOC2DCONSTRAINTGROUP`)
+/// where a reader of the version the text is read as expects it: AutoCAD 2013 and later
+/// (`modern`) write it after the node's connections, earlier versions right after its id. The
+/// groups are kept as read, so a 2013+ drawing written in an older version's form had them in the
+/// wrong order, and its reader took every node's status from somewhere else: AutoCAD refused the
+/// DWG the bridge made from it ("Error Decrypting Data"). A group whose nodes can't all be found
+/// is left as it is.
+pub(crate) fn constraint_node_order(tags: &mut [Tag], modern: bool) {
+    let mut i = 0;
+    while i < tags.len() {
+        let end = tags.iter().skip(i + 1).position(|t| t.code == 0).map_or(tags.len(), |k| i + 1 + k);
+        if tags.get(i).is_some_and(|t| t.code == 0 && t.str().trim().eq_ignore_ascii_case("ACDBASSOC2DCONSTRAINTGROUP"))
+            && let Some(rec) = tags.get_mut(i + 1..end)
+        {
+            constraint_group_order(rec, modern);
+        }
+        i = end;
+    }
+}
+
+/// [`constraint_node_order`] for one group's groups after its type.
+fn constraint_group_order(rec: &mut [Tag], modern: bool) {
+    let Some(start) = rec.iter().position(|t| t.code == 100 && t.str().trim().eq_ignore_ascii_case("AcDbAssoc2dConstraintGroup")) else {
+        return;
+    };
+    let end = rec.iter().skip(start + 1).position(|t| t.code == 100 || t.code >= 1000).map_or(rec.len(), |k| start + 1 + k);
+    let Some(sec) = rec.get_mut(start + 1..end) else { return };
+    let Some(nodes) = constraint_nodes(sec) else { return };
+    for (at, len, old) in nodes {
+        // Old order: id, status, count, connections; modern: id, count, connections, status.
+        if let Some(head) = sec.get_mut(at + 1..at + len) {
+            match (old, modern) {
+                (true, true) => head.rotate_left(1),
+                (false, false) => head.rotate_right(1),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Where each non-root node of a constraint group section starts: (index of its id, length of its
+/// id, status and connections, whether its status comes right after the id). `None` unless every
+/// node the group lists is found.
+fn constraint_nodes(sec: &[Tag]) -> Option<Vec<(usize, usize, bool)>> {
+    let int = |p: usize, code: i32| sec.get(p).filter(|t| t.code == code).and_then(|t| t.str().trim().parse::<i64>().ok());
+    let count = |p: usize| int(p, 90).and_then(|n| usize::try_from(n).ok()).filter(|n| *n <= MAX_CONSTRAINT_NODES);
+    // Version, flag and work plane, then the dependency and the actions.
+    let mut p = sec.iter().position(|t| t.code == 360)? + 1;
+    p += count(p)? + 1;
+    // The next node id, then the root node: id, connections, status (290).
+    int(p, 90)?;
+    int(p + 1, 90)?;
+    p += count(p + 2)? + 3;
+    int(p, 290)?;
+    p += 1;
+    // The registry: class name and id of each node.
+    let n = count(p)?;
+    p += 1;
+    let mut ids = Vec::with_capacity(n);
+    for _ in 0..n {
+        sec.get(p).filter(|t| t.code == 1)?;
+        ids.push(int(p + 1, 90)?);
+        p += 2;
+    }
+    let known: HashSet<i64> = ids.iter().copied().collect();
+    // Groups looked at while searching for headers, capped so a hostile group can't take long.
+    let budget = std::cell::Cell::new(MAX_CONSTRAINT_NODES.saturating_mul(100));
+    // A node header at `q`: its length and whether it is in the old order. Connections are ids of
+    // nodes (or of the root, 0), which keeps a node's data from passing for the next header.
+    let header = |q: usize, id: i64| -> Option<(usize, bool)> {
+        int(q, 90).filter(|v| *v == id)?;
+        let old = sec.get(q + 1)?.code == 70;
+        let c = q + 1 + usize::from(old);
+        let n = count(c).filter(|n| *n <= known.len())?;
+        budget.set(budget.get().checked_sub(n + 1)?);
+        for k in 0..n {
+            int(c + 1 + k, 90).filter(|v| *v == 0 || known.contains(v))?;
+        }
+        if !old {
+            int(c + 1 + n, 70)?;
+        }
+        Some((n + 3, old))
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let at = (p..sec.len()).find(|q| header(*q, id).is_some())?;
+        let (len, old) = header(at, id)?;
+        out.push((at, len, old));
+        p = at + len;
+    }
+    Some(out)
 }
 
 /// Drop a dictionary's modelled entries (key and handle) from its groups.
@@ -941,13 +1041,61 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
     all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_))).map(|e| e.handle.hex()).collect()
 }
 
+/// Render settings (`RENDERSETTINGS`, `MENTALRAYRENDERSETTINGS`, `RAPIDRTRENDERSETTINGS`) store
+/// their `AcDbRenderSettings` class version (the first group 90 after that marker) in the form of
+/// the file's version: a 2013+ file stores it one higher, and a 2013 file stores a rapid RT one
+/// one lower, as acadrust reads and writes them (`write_render_settings_dxf` in acadrust 0.6.6's
+/// `io/dxf/writer/section_writer.rs`, and its DWG class-object reader and writer; the test
+/// `render_settings_class_version_matches_what_acadrust_writes` fails if the two drift apart). A
+/// kept object carries the form of the file it was read from ([`Foreign::version`], not the
+/// drawing's `$ACADVER`, which SAVEAS changes); written into a file read as another version, it
+/// takes that version's form. The DWG bridge's R2000 text is read as the version the kept objects
+/// came from (craft-dwg's `encode_kept_noted`), so there they stay as read (#907, #2471).
+///
+/// Only that first group 90 is converted, on purpose: the group 90 that starts a kind's own
+/// subclass (`AcDbMentalRayRenderSettings`, `AcDbRapidRTRenderSettings`) is that kind's version,
+/// stored the same in every file version, and is left as read.
+pub(crate) fn render_settings_versions(tags: &mut [Tag], source: Option<Version>, declared: Version) {
+    let Some(source) = source.filter(|s| *s != declared) else { return };
+    let shift = |rapid: bool, v: Version| if rapid { -i64::from(v == Version::R2013) } else { i64::from(v >= Version::R2013) };
+    let (mut kind, mut in_base) = (String::new(), false);
+    for t in tags.iter_mut() {
+        match t.code {
+            0 => {
+                kind = up(&t.str());
+                in_base = false;
+            }
+            100 if matches!(kind.as_str(), "RENDERSETTINGS" | "MENTALRAYRENDERSETTINGS" | "RAPIDRTRENDERSETTINGS") => {
+                in_base = t.str().trim().eq_ignore_ascii_case("AcDbRenderSettings");
+            }
+            90 if in_base => {
+                let rapid = kind == "RAPIDRTRENDERSETTINGS";
+                let logical = t.i64().saturating_sub(shift(rapid, source));
+                *t = Tag::i(90, logical.saturating_add(shift(rapid, declared)));
+                in_base = false;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
+/// `strings`: whether the file has a form for a proxy's separate string stream (a DXF of 2007 or
+/// later, or the DWG bridge); without one such a proxy is left out (#3229). Returns the foreign
+/// objects written, by their handles in the drawing (the file gives them new ones).
+pub(crate) fn finish(
+    tags: &mut Vec<Tag>,
+    d: &Drawing,
+    reactors: &HashMap<Handle, Vec<String>>,
+    modern: bool,
+    target_modern: bool,
+    strings: bool,
+) -> HashSet<Handle> {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {
-        return;
+        return HashSet::new();
     }
     let recs = written_records(tags);
     let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
@@ -970,14 +1118,21 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
     }
     let renumber = |old| proxy_class_number(f, &numbers, old);
+    // A proxy is dropped when its class isn't written, or when its strings have no place here.
+    let no_room = |t: &[(i32, &str)]| !strings && proxy_has_string_stream(t.iter().copied());
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
+    let mut planned = plan_unknown(d, &recs, tags, &roles, modern, target_modern);
     for list in planned.values_mut() {
         list.retain_mut(|(_, t)| {
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
                 return true;
             }
-            let Some(n) = renumber(class_number(t.iter().map(|x| (x.code, x.str())))) else { return false };
+            let groups: Vec<(i32, String)> = t.iter().map(|x| (x.code, x.str())).collect();
+            let groups: Vec<(i32, &str)> = groups.iter().map(|(c, v)| (*c, v.as_str())).collect();
+            if no_room(&groups) {
+                return false;
+            }
+            let Some(n) = renumber(class_number(groups.iter().copied())) else { return false };
             set_class_number(t, n);
             true
         });
@@ -1015,8 +1170,11 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         // Keep established live paths available to descendants during this pass as well.
         let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
-        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
-        {
+        let dropped = |o: &ForeignObject| {
+            let groups: Vec<(i32, &str)> = o.tags.iter().map(|r| (r.code, r.value.as_str())).collect();
+            no_room(&groups) || renumber(class_number(groups.iter().copied())).is_none()
+        };
+        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && dropped(o)) {
             alive_memo.insert(o.handle.hex(), false);
         }
         for o in &f.objects {
@@ -1113,7 +1271,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             join_entries(&map, b, kept, &mut out);
         }
     }
-    add_appids(&mut out);
+    add_appids(&mut out, &f.appids);
     let top = max_handle(&out).saturating_add(1);
     if let Some(t) = seed_index(&out).and_then(|i| out.get_mut(i))
         && Handle::parse_hex(&t.str()).is_none_or(|h| h.0 < top)
@@ -1121,6 +1279,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+    map.alive.keys().filter_map(|h| handle(h)).collect()
 }
 
 /// Kept extension dictionaries of written records: those that go on a record without its own,
@@ -1202,6 +1361,7 @@ fn plan_unknown(
     tags: &[Tag],
     roles: &HashMap<ForeignKey, String>,
     modern: bool,
+    target_modern: bool,
 ) -> HashMap<usize, Vec<(String, Vec<Tag>)>> {
     let stored = d.foreign.data_store_entities();
     let mut out: HashMap<usize, Vec<(String, Vec<Tag>)>> = HashMap::new();
@@ -1241,7 +1401,9 @@ fn plan_unknown(
         for e in store.iter() {
             match &e.kind {
                 EntityKind::Unknown(u) => {
-                    if modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored) {
+                    if (modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored))
+                        || (!target_modern && cadcraft_doc::foreign::acis_left_out(u, e.handle, &stored, false))
+                    {
                         continue;
                     }
                     let t = unknown_entity(u, e, &owner, paper);
@@ -1435,9 +1597,13 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
     }
 }
 
-/// APPID records for every application with xdata in the file, added to the APPID table.
-fn add_appids(out: &mut Vec<Tag>) {
-    let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+/// APPID records for every application with xdata in the file and every one the file read had
+/// (`kept`), added to the APPID table.
+fn add_appids(out: &mut Vec<Tag>, kept: &[String]) {
+    let mut used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+    for name in kept.iter().filter(|n| !n.is_empty()) {
+        used.entry(up(name)).or_insert_with(|| name.clone());
+    }
     let recs = written_records(out);
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
