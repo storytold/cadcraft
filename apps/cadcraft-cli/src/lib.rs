@@ -58,6 +58,7 @@ fn install_io() {
     cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
     // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
     cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
 /// `path` as text, for the engine and io calls that take a file name as a string.

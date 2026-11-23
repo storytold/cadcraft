@@ -19,7 +19,9 @@ Generated-in-code assets are original and have no file to list:
 - the standard linetype and hatch-pattern libraries (`crates/doc/src/library.rs`; industry-common
   names, our own dash/spacing values);
 - the colour index palette, generated from its structure (`crates/color/src/lib.rs`);
-- the sample drawings (`crates/engine/src/sample.rs`).
+- the sample drawings (`crates/engine/src/sample.rs`);
+- the synthetic two-hexagon hatch logo (`crates/io/tests/it/hatch_loop_flags.rs`, `logo`):
+  original contributor geometry, generated in code from invented points, under MIT OR Apache-2.0.
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
