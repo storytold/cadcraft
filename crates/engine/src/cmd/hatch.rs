@@ -12,7 +12,7 @@ use cadcraft_geom::{Bounds2, PolyVertex, Polyline, Vec2, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::helpers::lwpoly;
-use super::machines::SelectRun;
+use super::machines::{SelOutcome, SelectPhase, SelectRun};
 use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_param, str_param, targets};
 
 use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
         CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true)))),
-        CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM { region: false }))),
+        CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly", "-boundary"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM::default()))),
         CommandSpec::new("region", "Region", run_region)
             .menu(&["Draw", "Region"])
             .alias(&["reg"])
@@ -54,15 +54,18 @@ pub(super) fn outline_tol(ext: Bounds2) -> f64 {
 }
 
 /// Tessellated outlines of every visible curve in the space (hatch boundary candidates), each
-/// with the handle of the object it came from.
-fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>>, Vec<Handle>) {
+/// with the handle of the object it came from. When `only` is `Some`, only those handles are used.
+fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>, only: Option<&[Handle]>) -> (Vec<Vec<Vec2>>, Vec<Handle>) {
     let Some(store) = d.space(space) else { return (Vec::new(), Vec::new()) };
     let ext = d.extents(space);
     let tol = outline_tol(ext);
     let mut out = Vec::new();
     let mut owners = Vec::new();
     for e in store.iter() {
-        if !d.is_visible(e) || matches!(e.kind, EntityKind::Hatch(_) | EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_)) {
+        if !d.is_visible(e)
+            || only.is_some_and(|hs| !hs.contains(&e.handle))
+            || matches!(e.kind, EntityKind::Hatch(_) | EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_))
+        {
             continue;
         }
         if let Some(n) = near
@@ -220,11 +223,15 @@ pub(crate) fn island_style(t: &str) -> Option<u8> {
 
 /// Boundary loops (outer + islands) around an internal point.
 pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
+    loops_at_in(s, p, None, true)
+}
+
+fn loops_at_in(s: &Session, p: Vec2, only: Option<&[Handle]>, islands: bool) -> Result<Vec<HatchLoop>> {
     let d = s.doc()?;
     let space = s.space();
     let ext = d.extents(&space);
     let tol = ((ext.width() + ext.height()) * 1e-9).max(1e-9);
-    let (polys, owners) = outlines(d, &space, None);
+    let (polys, owners) = outlines(d, &space, None, only);
     // A line that ends on a flattened curve (an ellipse) can stop short of its chords.
     let polys = cadcraft_geom::region::snap_ends(&polys, outline_tol(ext), tol);
     let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d))
@@ -233,18 +240,35 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
     let ob = Bounds2::from_points(outer.iter().copied());
     let sources = handles_of(&owners, &found.outer_sources);
     let mut loops = vec![HatchLoop { vertices: outer.iter().map(|q| PolyVertex::new(*q)).collect(), outer: true, sources }];
+    if !islands {
+        return Ok(loops);
+    }
     // Islands: closed objects entirely inside the outer loop that don't contain the pick point.
+    // A region's own loops are candidates too, so a boundary set holding a region keeps its holes
+    // (its outer loop is the traced boundary itself, and is dropped as the same loop).
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
-            if !d.is_visible(e) {
+            if !d.is_visible(e) || only.is_some_and(|hs| !hs.contains(&e.handle)) {
                 continue;
             }
-            let eb = entity_bounds(d, e, 0);
-            if !ob.contains_box(&eb) {
-                continue;
-            }
-            if let Some(vs) = closed_loop(d, e) {
-                let pts = Polyline { vertices: vs.clone(), closed: true }.tessellate(tol.max(eb.width() * 1e-3));
+            let candidates: Vec<Vec<PolyVertex>> = match &e.kind {
+                // A region's loops are tested one by one: its own outer loop is the traced
+                // boundary itself, and its other loops can reach past a boundary traced in one
+                // of its faces. The entity-wide box is the shortcut for single-loop objects.
+                EntityKind::Region(r) => r.loops.iter().map(|l| l.vertices.clone()).collect(),
+                _ => {
+                    if !ob.contains_box(&entity_bounds(d, e, 0)) {
+                        continue;
+                    }
+                    closed_loop(d, e).into_iter().collect()
+                }
+            };
+            for vs in candidates {
+                let lb = Bounds2::from_points(vs.iter().map(|v| v.p));
+                if !ob.contains_box(&lb) {
+                    continue;
+                }
+                let pts = Polyline { vertices: vs.clone(), closed: true }.tessellate(tol.max(lb.width() * 1e-3));
                 let inside = pts.iter().all(|q| point_in_polygon(&outer, *q) || outer.iter().any(|o| o.near(*q, tol * 10.0)));
                 let same_as_outer = (cadcraft_geom::shoelace(&pts).abs() - cadcraft_geom::shoelace(&outer).abs()).abs() < tol.max(1e-6) * 1000.0;
                 if inside && !same_as_outer && !point_in_polygon(&pts, p) {
@@ -490,7 +514,25 @@ fn run_gradient(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn boundary_at(s: &mut Session, q: Vec2) -> Result<Vec<Handle>> {
-    let loops = loops_at(s, q)?;
+    boundary_at_with(s, q, None, true, false)
+}
+
+fn boundary_at_with(s: &mut Session, q: Vec2, only: Option<&[Handle]>, islands: bool, region: bool) -> Result<Vec<Handle>> {
+    let mut loops = loops_at_in(s, q, only, islands)?;
+    // A region and the objects it was made from can supply the same loop (its hole), so the
+    // candidate pass collects it twice: make one boundary, and one hole in a region.
+    dedup_loops(&mut loops);
+    if region {
+        // The island pass only knows the depth of the loop it traced: a loop inside an island
+        // (a square in a square in a square) is an outer loop again. Nest by depth, and make no
+        // region at all rather than one whose area is wrong.
+        let mut r = cadcraft_doc::Region { loops };
+        if !r.renest() {
+            return Err(EngineError::Other("The boundary has too many nested loops to make a region.".into()));
+        }
+        let h = s.add_entity(EntityKind::Region(r))?;
+        return Ok(vec![h]);
+    }
     let mut out = Vec::new();
     for l in loops {
         out.push(s.add_entity(lwpoly(l.vertices, true))?);
@@ -811,8 +853,28 @@ impl Interactive for HatchM {
     }
 }
 
+/// What a -BOUNDARY / BOUNDARY Advanced options sub-prompt asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoundaryAsk {
+    Advanced,
+    BoundarySet,
+    SelectSet,
+    Island,
+    ObjectType,
+}
+
 struct BoundaryM {
     region: bool,
+    islands: bool,
+    boundary_set: Option<Vec<Handle>>,
+    asking: Option<BoundaryAsk>,
+    sel: SelectPhase,
+}
+
+impl Default for BoundaryM {
+    fn default() -> Self {
+        BoundaryM { region: false, islands: true, boundary_set: None, asking: None, sel: SelectPhase::default() }
+    }
 }
 
 impl Interactive for BoundaryM {
@@ -820,19 +882,122 @@ impl Interactive for BoundaryM {
         if self.region { "REGION" } else { "BOUNDARY" }
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        Prompt::new("Pick internal point", Accept::POINT)
+        match self.asking {
+            None => Prompt::new("Pick internal point", Accept::POINT).kw(&["Advanced options"]),
+            Some(BoundaryAsk::Advanced) => Prompt::new("Enter an option", Accept::TEXT).kw(&["Boundary set", "Island detection", "Object type"]),
+            Some(BoundaryAsk::BoundarySet) => {
+                let cur = if self.boundary_set.is_some() { "Current" } else { "Everything" };
+                Prompt::new("Specify candidate set for boundary", Accept::TEXT).kw(&["New", "Everything"]).default(cur)
+            }
+            Some(BoundaryAsk::SelectSet) => self.sel.prompt(),
+            Some(BoundaryAsk::Island) => {
+                Prompt::new("Do you want island detection?", Accept::TEXT).kw(&["Yes", "No"]).default(if self.islands { "Yes" } else { "No" })
+            }
+            Some(BoundaryAsk::ObjectType) => Prompt::new("Enter type of boundary object", Accept::TEXT)
+                .kw(&["Region", "Polyline"])
+                .default(if self.region { "Region" } else { "Polyline" }),
+        }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match i {
-            Input::Point(p) => {
-                match boundary_at(s, p) {
-                    Ok(hs) => s.echo(format!("BOUNDARY created {} polyline(s)", hs.len())),
-                    Err(e) => s.echo(e.to_string()),
+        match self.asking {
+            None => match i {
+                Input::Point(p) => {
+                    match boundary_at_with(s, p, self.boundary_set.as_deref(), self.islands, self.region) {
+                        Ok(hs) => {
+                            let what = if self.region { "region" } else { "polyline" };
+                            s.echo(format!("BOUNDARY created {} {what}(s)", hs.len()));
+                        }
+                        Err(e) => s.echo(e.to_string()),
+                    }
+                    Ok(Step::Continue)
                 }
-                Ok(Step::Continue)
-            }
-            Input::Enter => Ok(Step::Done),
-            _ => Ok(Step::Continue),
+                Input::Keyword(k) if k == "Advanced options" => {
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Enter => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            Some(BoundaryAsk::Advanced) => match i {
+                Input::Keyword(k) => {
+                    match k.as_str() {
+                        "Boundary set" => self.asking = Some(BoundaryAsk::BoundarySet),
+                        "Island detection" => self.asking = Some(BoundaryAsk::Island),
+                        "Object type" => self.asking = Some(BoundaryAsk::ObjectType),
+                        _ => {}
+                    }
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.asking = None;
+                    Ok(Step::Continue)
+                }
+                _ => Ok(Step::Continue),
+            },
+            Some(BoundaryAsk::BoundarySet) => match i {
+                Input::Keyword(k) if k == "New" => {
+                    self.sel = SelectPhase::default();
+                    self.asking = Some(BoundaryAsk::SelectSet);
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Everything" => {
+                    self.boundary_set = None;
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                _ => Ok(Step::Continue),
+            },
+            Some(BoundaryAsk::SelectSet) => match self.sel.feed(s, &i)? {
+                SelOutcome::More => Ok(Step::Continue),
+                SelOutcome::Done(hs) => {
+                    self.boundary_set = Some(hs);
+                    s.set_selection(Vec::new());
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                SelOutcome::Empty => {
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+            },
+            Some(BoundaryAsk::Island) => match i {
+                Input::Keyword(k) if k == "Yes" => {
+                    self.islands = true;
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "No" => {
+                    self.islands = false;
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                _ => Ok(Step::Continue),
+            },
+            Some(BoundaryAsk::ObjectType) => match i {
+                Input::Keyword(k) if k == "Region" => {
+                    self.region = true;
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Polyline" => {
+                    self.region = false;
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.asking = Some(BoundaryAsk::Advanced);
+                    Ok(Step::Continue)
+                }
+                _ => Ok(Step::Continue),
+            },
         }
     }
 }
@@ -1043,5 +1208,122 @@ mod tests {
         s.execute("gradient", &json!({ "points": [[2, 2], [8, 8]], "color1": "1", "color2": "3" })).unwrap();
         let (_, hg) = only_hatch(&s);
         assert_eq!(hg.loops.len(), 1, "gradient with repeated picks in same region must deduplicate loops");
+    }
+
+    #[test]
+    fn dash_boundary_advanced_options() {
+        // Repro from #2996: Advanced options -> Boundary set -> New takes selection,
+        // Enter returns to Advanced, Enter returns to point prompt, internal point creates boundary.
+        let mut s = Session::new();
+        s.cmdline("(command \"_.rectang\" (list 0 0) (list 10 10))").unwrap();
+        s.cmdline("(command \"_.rectang\" (list 20 0) (list 30 10))").unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_B\" \"_N\" (ssget \"_L\") \"\" \"\" (list 25 5) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), 3, "boundary polyline should be created");
+
+        // Boundary set excludes the first rectangle, so picking inside it makes nothing;
+        // switching back to Everything includes it again.
+        let mut s = Session::new();
+        s.cmdline("(command \"_.rectang\" (list 0 0) (list 10 10))").unwrap();
+        s.cmdline("(command \"_.rectang\" (list 20 0) (list 30 10))").unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_B\" \"_N\" (ssget \"_L\") \"\" \"\" (list 5 5) \"_A\" \"_B\" \"_E\" \"\" (list 5 5) \"\")")
+            .unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), 3, "only the Everything pick should create a boundary");
+
+        // Island detection: No creates only outer loop, Yes creates outer + island.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("circle", &json!({ "center": [10, 10], "radius": 3 })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_I\" \"_N\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), 3, "island detection No creates 1 outer polyline");
+
+        // Object type: Region creates an EntityKind::Region.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 5 5) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let d = s.doc().unwrap();
+        assert_eq!(d.model.len(), 2);
+        assert!(matches!(d.model.iter().last().map(|e| &e.kind), Some(EntityKind::Region(_))));
+    }
+
+    #[test]
+    fn boundary_region_nests_nested_loops() {
+        // Three nested squares: the innermost is an outer loop again (depth 2), so the region's
+        // area is 400 - 144 + 16 = 272, not 400 - 144 - 16 = 240.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [4, 4], "p2": [16, 16] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let d = s.doc().unwrap();
+        let r = d.model.iter().find_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).unwrap();
+        assert_eq!(r.loops.iter().map(|l| l.outer).collect::<Vec<_>>(), [true, false, true]);
+        assert!((r.area() - 272.0).abs() < 1e-9, "area {}", r.area());
+    }
+
+    #[test]
+    fn boundary_set_holding_only_a_region_keeps_its_holes() {
+        // A region with a hole: a boundary traced inside it must have the hole loop too.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let before = s.doc().unwrap().model.len();
+        let loops = {
+            let d = s.doc().unwrap();
+            let r = d.model.iter().find_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).unwrap();
+            r.loops.len()
+        };
+        assert_eq!(loops, 2, "the region is a square with a square hole");
+        // Boundary set -> New: only the region (the last object) is a candidate.
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_B\" \"_N\" (ssget \"_L\") \"\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), before + 2, "the region's hole is a boundary too");
+    }
+
+    #[test]
+    fn boundary_over_a_region_and_its_objects_makes_one_hole() {
+        // A region with a hole, with the objects it was made from still in the drawing: both
+        // supply the same hole, so a second boundary has one hole loop, not two.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        let before = s.doc().unwrap().model.len();
+        // Polyline output: the outer loop and one hole.
+        s.cmdline("(command \"_.-boundary\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().model.len(), before + 2, "one outer polyline and one hole polyline");
+        // Region output: the hole is stored once, so the area is 400 - 16.
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let d = s.doc().unwrap();
+        let r = d.model.iter().filter_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).last().unwrap();
+        assert_eq!(r.loops.len(), 2, "the outer loop and one hole");
+        assert!((r.area() - 384.0).abs() < 1e-9, "area {}", r.area());
+    }
+
+    #[test]
+    fn boundary_inside_a_nested_region_keeps_its_inner_island() {
+        // The three-square region from boundary_region_nests_nested_loops, then a boundary traced
+        // inside its middle loop with only the region as the boundary set. The region's bounds
+        // reach past the traced boundary, but its innermost loop is still an island: 144 - 16.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [20, 20] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [4, 4], "p2": [16, 16] })).unwrap();
+        s.execute("rectang", &json!({ "p1": [8, 8], "p2": [12, 12] })).unwrap();
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_O\" \"_R\" \"\" (list 2 2) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        s.cmdline("(command \"_.-boundary\" \"_A\" \"_B\" \"_N\" (ssget \"_L\") \"\" \"_O\" \"_R\" \"\" (list 5 5) \"\")").unwrap();
+        assert!(s.running.is_none(), "prompt: {}", s.prompt_text());
+        let d = s.doc().unwrap();
+        let r = d.model.iter().filter_map(|e| if let EntityKind::Region(r) = &e.kind { Some(r) } else { None }).last().unwrap();
+        assert_eq!(r.loops.len(), 2, "the traced outer loop and the innermost square as its island");
+        assert!((r.area() - 128.0).abs() < 1e-9, "area {}", r.area());
     }
 }
