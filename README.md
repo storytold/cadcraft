@@ -118,7 +118,7 @@ numbers):
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski) and Georgian (ქართული), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -184,6 +184,34 @@ in the text style or set `FONTFALLBACK` (`CADCRAFT_FONTFALLBACK="Vazirmatn"`). F
 inside a word (an MTEXT colour change in the middle of a Persian word) break the joining at that
 point.
 
+### Portable Windows ZIP
+
+The Windows portable ZIP includes `portable.txt` beside `cadcraft.exe`. With that
+marker present, the desktop app's settings, logs, autosaves, workspace data,
+plotter files, and eframe preferences/window state stay in `CADCraftData` beside
+the executable. eframe saves its preferences and window state in `CADCraftData/app.ron`.
+Keep that directory when replacing the binaries. The MSI does not include the
+marker and continues to use the normal user profile.
+
+`CADCRAFT_CONFIG_DIR` takes precedence over the marker, including an empty or
+blank value that disables the settings folder. If `CADCraftData` cannot be
+created or written, CADCraft warns and uses the normal profile. Existing profile
+settings are not automatically copied into the portable directory.
+
+Before switching an existing Windows installation to portable mode, close CADCraft,
+back up `%APPDATA%\CADCraft`, and copy the settings you want to retain into
+`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings. The
+preferences and window state are kept apart, in `%APPDATA%\ai.storyteller.cadcraft\data\app.ron`:
+copy that file to `CADCraftData\app.ron` to keep them.
+Updating a portable ZIP, including through the updater, can restore `portable.txt`;
+set `CADCRAFT_CONFIG_DIR` to your existing profile folder to keep using it across updates.
+
+`cadcraft-cli.exe` does not detect the marker. To share the desktop app's portable
+settings, pass `--config-dir` with the full path to `CADCraftData`, or set
+`CADCRAFT_CONFIG_DIR` to that path. The marker is also recognized on other desktop
+platforms, but is intended for a standalone writable installation, not inside a
+signed macOS application bundle.
+
 ### Logs
 
 The desktop app writes its `log` records to standard error and to `logs/cadcraft.log` in the
@@ -196,7 +224,7 @@ crashed survives the next start. The file stops growing at 16 MiB. `--version` w
 
 | Variable | Effect |
 |---|---|
-| `CADCRAFT_CONFIG_DIR` | Use this directory instead of the platform settings directory (the log goes to its `logs/`) |
+| `CADCRAFT_CONFIG_DIR` | Use this directory instead of the platform settings directory (the log goes to its `logs/`); empty means no settings folder (no log file, autosave, workspace or plotters) |
 | `RUST_LOG` | Log levels for standard error and the log file. Default: `info` for CADCraft's own crates, `warn` for everything else. env_logger-style directives replace that, e.g. `RUST_LOG=debug`, `RUST_LOG=warn,cadcraft_io=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`cadcraft*=debug`). `cadcraft_engine=debug` also logs every command-line message. |
 
 The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser console instead.
@@ -208,6 +236,8 @@ The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser 
 cadcraft-cli mcp
 # …or bridged to the running app (start it with --control 7979):
 cadcraft-cli mcp --connect 127.0.0.1:7979
+# …or headless, with the agent confined to a work folder:
+cadcraft-cli mcp --automation-read-root ~/work --automation-write-root ~/work/out
 
 # One-shot headless runs:
 cadcraft-cli run --sample --script 'CIRCLE 22,3 1\n' --save out.dxf --export out.png
@@ -230,6 +260,11 @@ How image exports (PNG 2400×1600, SVG, PDF) are framed: `convert` fits the mode
 rectangle, centred and scaled without distortion; `--view extents` or `--view current` forces
 either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
 
+When reading a file leaves something out (records a DXF reader can't place, object records of a
+damaged DWG), `info` reports it (`skipped`, `readNotes`), `convert` warns on stderr and `run`
+prints the DWG notes with its log; the exit code stays 0. MCP `open` replies with the notes as
+`warnings`.
+
 MCP tools include `command_line` (type at the prompt), `execute` (any command with JSON),
 `inspect_drawing`, `query_entities`, `render` (returns a PNG) and, when connected to the app,
 `screenshot` and `ui_click`. The desktop app's JSON control channel is documented in
@@ -237,6 +272,9 @@ MCP tools include `command_line` (type at the prompt), `execute` (any command wi
 
 To run LISP routines, scripts and alias files, or to drive CADCraft from your own programs, see
 [docs/customization.md](docs/customization.md).
+
+`cadcraft-cli --help` documents every subcommand and flag; exit codes, streams, environment
+variables and its RFC-0012 conventions are in [docs/cli.md](docs/cli.md).
 
 ## Architecture
 
@@ -311,6 +349,7 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 Installers and executables are code-signed.
 
 The installer adds CADCraft to the Start menu and asks whether to add a desktop shortcut too (unticked by default). For a silent install with the desktop shortcut: `msiexec /i cadcraft-<ver>-windows-x64.msi /qn DESKTOPSHORTCUT=1`.
+A silent install is per-user by default; add `ALLUSERS=1`, from an elevated terminal or deployment tool, for an all-users install.
 
 **If the app doesn't open on Windows:** the desktop app initializes only DirectX 12 by default.
 Letting wgpu also create an OpenGL instance can crash some graphics drivers (AMD's
@@ -373,7 +412,15 @@ stand on its own.
 | <img src="https://raw.githubusercontent.com/storytold/pdfcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.pdfcraft.png" alt="" width="32" height="32"> | **PdfCraft** | Reading, organizing and protecting PDFs | [GitHub](https://github.com/storytold/pdfcraft) | [Website](https://getartcraft.com/apps/pdfcraft) |
 | <img src="https://raw.githubusercontent.com/storytold/effectcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png" alt="" width="32" height="32"> | **EffectCraft** | Motion graphics and visual effects | [GitHub](https://github.com/storytold/effectcraft) | [Website](https://getartcraft.com/apps/effectcraft) |
 | <img src="https://raw.githubusercontent.com/storytold/designcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.designcraft.png" alt="" width="32" height="32"> | **DesignCraft** | Page layout and publishing | [GitHub](https://github.com/storytold/designcraft) | [Website](https://getartcraft.com/apps/designcraft) |
-| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/cadcraft-64.png" alt="" width="32" height="32"> | **CADCraft** | **Computer-aided design and drafting · you are here** | [GitHub](https://github.com/storytold/cadcraft) | [Website](https://getartcraft.com/apps/cadcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/figcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.figcraft.png" alt="" width="32" height="32"> | **FigCraft** | Interface design and prototyping | [GitHub](https://github.com/storytold/figcraft) | [Website](https://getartcraft.com/apps/figcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/wordcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.wordcraft.png" alt="" width="32" height="32"> | **WordCraft** | Word processing and documents | [GitHub](https://github.com/storytold/wordcraft) | [Website](https://getartcraft.com/apps/wordcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/soundcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.soundcraft.png" alt="" width="32" height="32"> | **SoundCraft** | Audio recording and editing | [GitHub](https://github.com/storytold/soundcraft) | [Website](https://getartcraft.com/apps/soundcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/deckcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.deckcraft.png" alt="" width="32" height="32"> | **DeckCraft** | Presentations and slide decks | [GitHub](https://github.com/storytold/deckcraft) | [Website](https://getartcraft.com/apps/deckcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/cadcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png" alt="" width="32" height="32"> | **CADCraft** | Computer-aided design | [GitHub](https://github.com/storytold/cadcraft) | [Website](https://getartcraft.com/apps/cadcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/gridcraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.gridcraft.png" alt="" width="32" height="32"> | **GridCraft** | Spreadsheets and data | [GitHub](https://github.com/storytold/gridcraft) | [Website](https://getartcraft.com/apps/gridcraft) |
+| <img src="https://raw.githubusercontent.com/storytold/texturecraft/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.texturecraft.png" alt="" width="32" height="32"> | **TextureCraft** | 3D texture painting | [GitHub](https://github.com/storytold/texturecraft) | [Website](https://getartcraft.com/apps/texturecraft) |
+| <img src="https://raw.githubusercontent.com/storytold/craft-anything/main/assets/app-icon/hicolor/64x64/apps/ai.storyteller.craft-anything.png" alt="" width="32" height="32"> | **Craft Anything** | See how any software works, then build your own | [GitHub](https://github.com/storytold/craft-anything) | [Website](https://getartcraft.com/apps/craft-anything) |
+| <img src="https://raw.githubusercontent.com/tangency-labs/solidcraft/main/assets/icons/app/linux/exports/hicolor/64x64/apps/io.tangencylabs.solidcraft.png" alt="" width="32" height="32"> | **SolidCraft** | Parametric 3D CAD by Tangency Labs (community app) | [GitHub](https://github.com/tangency-labs/solidcraft) | |
 
 And [**ArtCraft**](https://getartcraft.com/) itself, our AI image and video studio for artists who want real control.
 

@@ -22,6 +22,7 @@ pub(super) fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2,
         overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
+        insertion_point: Vec3::ZERO,
     })
 }
 
@@ -34,8 +35,15 @@ fn auto_rotation(p1: Vec2, p2: Vec2, at: Vec2) -> f64 {
     if outside_x && !outside_y { std::f64::consts::FRAC_PI_2 } else { 0.0 }
 }
 
-pub(super) fn linear_kind(p1: Vec2, p2: Vec2, at: Vec2, rotation: Option<f64>, aligned: bool) -> DimKind {
-    if aligned { DimKind::Aligned } else { DimKind::Linear { rotation: rotation.unwrap_or_else(|| auto_rotation(p1, p2, at)) } }
+/// A linear or aligned dimension's kind; without a rotation, horizontal or vertical along axes turned
+/// `ucs` radians (the current UCS's at the command line; the world's for JSON).
+pub(super) fn linear_kind(p1: Vec2, p2: Vec2, at: Vec2, rotation: Option<f64>, aligned: bool, ucs: f64) -> DimKind {
+    if aligned {
+        return DimKind::Aligned;
+    }
+    let ucs = if ucs.is_finite() { ucs } else { 0.0 };
+    let auto = || auto_rotation(p1.rotate(-ucs), p2.rotate(-ucs), at.rotate(-ucs)) + ucs;
+    DimKind::Linear { rotation: rotation.unwrap_or_else(auto) }
 }
 
 /// Add a dimension. With DIMASSOC on, definition points that sit on object endpoints,
@@ -47,6 +55,19 @@ pub(super) fn add_dim(s: &mut Session, k: EntityKind) -> Result<Handle> {
         && assoc_enabled(s)
     {
         dm.assoc = crate::assoc::reassociate(s.doc()?, &s.space(), dm);
+    }
+    // The measurement is what the DXF/DWG writer computes from the geometry (group 42); filling it
+    // in now means queries show it before the drawing is saved and reopened (#2421).
+    if let EntityKind::Dimension(dm) = &mut k
+        && let Ok(d) = s.doc()
+    {
+        let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
+        let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
+        dm.measurement = g.measurement;
+        // The text position the writer puts in group 11 when the user has not placed the text.
+        if !dm.user_text_pos {
+            dm.text_mid = g.text_pos.to3(0.0);
+        }
     }
     let h = s.add_entity(k)?;
     s.last_dim = Some(h);
@@ -94,7 +115,7 @@ pub(super) fn hex_param(p: &Value, key: &str) -> Option<Handle> {
 
 pub(super) fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-    crate::select::pick(s.doc().ok()?, &s.space(), p, ap)
+    s.pick_object(&s.space(), p, ap).ok().flatten()
 }
 
 /// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.

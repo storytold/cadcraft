@@ -19,6 +19,7 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    Blocks,
 }
 
 impl Panel {
@@ -31,6 +32,7 @@ impl Panel {
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
+            Self::Blocks => "blocks",
         }
     }
     fn label(self) -> &'static str {
@@ -41,6 +43,7 @@ impl Panel {
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
+            Self::Blocks => "Blocks",
         }
     }
     /// The icon a palette shows in a column collapsed to icons.
@@ -53,10 +56,11 @@ impl Panel {
             Self::Layers => Some(Icon::Layers),
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
+            Self::Blocks => Some(Icon::Blocks),
         }
     }
     /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Blocks];
 }
 
 /// The drawing view never moves, floats, closes or takes tabs; palettes dock beside it.
@@ -149,6 +153,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
         Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::Blocks => &[(Panel::QuickCalc, true), (Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -311,6 +316,10 @@ pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<V
 }
 
 /// Validate and repair the stored workspace, sync it with the app, and render the dock panels; a failed restore falls back to the default layout with a status message.
+/// Draw the docked workspace: restore or fall back from the persisted layout, render every
+/// panel body plus the header close buttons, and apply the resulting actions through
+/// [`command`]. Bodies may dispatch commands, so the canonical workspace is published before
+/// rendering while the layout snapshot stays immutable.
 pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let mut workspace = app.ui.docking.clone();
@@ -343,16 +352,42 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     if let Some(panel) = app.raise_panel.take() {
         area = area.raise_panel(panel);
     }
-    let mut output = area.show_content(ui, &workspace.layout, &style, &mut Panels { app });
+    let (mut output, header_close) = {
+        let mut panels = Panels { app, close: None };
+        let output = area.show_content(ui, &workspace.layout, &style, &mut panels);
+        (output, panels.close)
+    };
+    // Accordion title bars are rendered by the shared surface without a header callback, so
+    // place the same close button over their title bar, left of the stock collapse control.
+    let mut close = header_close;
+    for panel in stack_panels(&workspace.layout) {
+        if !permissions(&panel).closable {
+            continue;
+        }
+        let Some(title) = ui.ctx().read_response(egui::Id::unique("cadcraft-docking").with(("tab", panel))) else { continue };
+        if !title.rect.is_positive() {
+            continue;
+        }
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(title.rect.right() - 18.0 - CLOSE_BUTTON * 0.5 - 4.0, title.rect.center().y),
+            egui::vec2(CLOSE_BUTTON, CLOSE_BUTTON),
+        );
+        if close_button(ui, panel, rect) {
+            close = Some(panel);
+        }
+    }
+    if let Some(panel) = close {
+        output.actions.push(Action::Close { panel });
+    }
     // Keys typed in a floating panel's own OS window run the main window's shortcuts and
     // command line; files dropped on one open like files dropped on the main window.
     app.forward_native_input(ui.ctx(), std::mem::take(&mut output.forwarded_events), output.forwarded_modifiers);
     #[cfg(not(target_arch = "wasm32"))]
     for files in std::mem::take(&mut output.window_files) {
         for file in files.dropped {
-            let path = file.path().to_string_lossy().to_string();
-            if !path.is_empty() {
-                app.open_path(&path);
+            let path = file.path();
+            if !path.as_os_str().is_empty() {
+                app.open_path(path);
             }
         }
     }
@@ -388,9 +423,55 @@ pub fn native_input_blocked(app: &crate::CadApp, ctx: &egui::Context) -> bool {
 /// The panels' contents, names, size limits and icons for the dock area.
 pub struct Panels<'a> {
     pub app: &'a mut crate::CadApp,
+    /// The panel whose header close button was clicked this frame.
+    pub close: Option<Panel>,
+}
+
+/// Size of a panel header's close button, in points.
+const CLOSE_BUTTON: f32 = 16.0;
+
+/// The accessible name of a header's close button. One translated template carries both the
+/// verb and the panel name, so a catalog translates the whole name instead of leaving an
+/// English verb in front of a translated panel label.
+fn close_label(panel: Panel) -> String {
+    crate::tf!("Close {panel}", panel = crate::i18n::t(panel.label()))
+}
+
+/// A visible close button for a panel header. It runs the same action as the tab context
+/// menu's "Close panel"; the accessible name includes the panel so the headers stay distinct.
+fn close_button(ui: &mut egui::Ui, panel: Panel, rect: egui::Rect) -> bool {
+    let t = crate::theme::Tokens::get();
+    let response = ui.interact(rect, egui::Id::unique("cadcraft-docking").with(("close", panel.id())), egui::Sense::click());
+    let label = close_label(panel);
+    crate::icons::describe_control(ui, &response, &label, None, false);
+    if response.hovered() {
+        ui.painter().rect_filled(rect.expand(2.0), 2.0, t.control_hover.gamma_multiply(0.6));
+    }
+    crate::icons::paint(ui.painter(), rect, crate::icons::Icon::Close, false);
+    response.on_hover_text(crate::tl!("Close panel")).clicked()
+}
+
+/// Panels whose title bar is an accordion entry rather than a tab group header.
+fn stack_panels(layout: &Layout<Panel>) -> Vec<Panel> {
+    let mut panels = Vec::new();
+    let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => {
+                nodes.push(first);
+                nodes.push(second);
+            }
+            Node::Stack { entries } => panels.extend(entries.iter().map(|entry| entry.panel)),
+            // Tab groups draw their own header; nothing else stacks an accordion entry.
+            _ => {}
+        }
+    }
+    panels
 }
 
 impl DockContent<Panel> for Panels<'_> {
+    /// Render `panel`'s existing view; Layers, Properties and External References scroll
+    /// independently, and the drawing canvas paints its own background before the view.
     fn body(&mut self, ui: &mut egui::Ui, panel: &Panel) {
         let app = &mut *self.app;
         match panel {
@@ -414,6 +495,12 @@ impl DockContent<Panel> for Panels<'_> {
             Panel::ExternalRefs => {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
+            Panel::Blocks => {
+                egui::ScrollArea::vertical()
+                    .id_salt("dock-blocks")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| crate::blocks_palette::section(app, ui));
+            }
         }
     }
     fn logical_label(&self, panel: &Panel) -> String {
@@ -434,6 +521,23 @@ impl DockContent<Panel> for Panels<'_> {
         crate::icons::paint(painter, rect, icon, false);
         true
     }
+    /// Reserve header space for the close button only when `active` may be closed, so the
+    /// drawing view's title gets no empty gap.
+    fn group_header_width(&self, _panels: &[Panel], active: &Panel, _floating: bool, _strip_width: f32) -> f32 {
+        if permissions(active).closable { CLOSE_BUTTON + 8.0 } else { 0.0 }
+    }
+    /// Draw the close button at the right edge of a tab-group header and remember the panel
+    /// to close once the docking surface has returned, so layout changes stay outside rendering.
+    fn group_header(&mut self, ui: &mut egui::Ui, _panels: &[Panel], active: &Panel, _floating: bool) {
+        let header = ui.max_rect();
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(header.right() - CLOSE_BUTTON * 0.5 - 4.0, header.center().y),
+            egui::vec2(CLOSE_BUTTON, CLOSE_BUTTON),
+        );
+        if close_button(ui, *active, rect) {
+            self.close = Some(*active);
+        }
+    }
 }
 
 fn panel_limits(panel: &Panel) -> PanelLimits {
@@ -442,6 +546,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
+        Panel::Blocks => (egui::vec2(240.0, 260.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

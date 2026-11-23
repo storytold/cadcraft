@@ -22,25 +22,24 @@ Verify with inspect_drawing / query_entities and look with render.";
 
 pub struct Server {
     backend: Box<dyn Backend>,
-    initialized: bool,
-}
-
-fn response(id: Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
-}
-fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message.into()}})
+    session: craft_mcp::Session,
 }
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false }
+        Self {
+            backend,
+            session: craft_mcp::Session::new("cadcraft", env!("CARGO_PKG_VERSION"), craft_mcp::Policy::Compatible)
+                .with_capabilities(json!({"tools": {"listChanged": false}, "resources": {"listChanged": false}}))
+                .unwrap_or_else(|_| craft_mcp::Session::new("cadcraft", env!("CARGO_PKG_VERSION"), craft_mcp::Policy::Compatible))
+                .with_legacy_initialize(SUPPORTED, json!({"name": "cadcraft", "title": "CADCraft", "version": env!("CARGO_PKG_VERSION")})),
+        }
     }
     pub fn backend(&mut self) -> &mut dyn Backend {
         self.backend.as_mut()
     }
     pub fn is_initialized(&self) -> bool {
-        self.initialized
+        self.session.is_initialized()
     }
 
     /// Serve newline-delimited JSON-RPC until `input` closes (logs to stderr only).
@@ -62,53 +61,43 @@ impl Server {
             return None;
         }
         let reply = match serde_json::from_str::<Value>(line) {
-            // JSON-RPC 2.0: an empty batch is one Invalid Request, not silence.
-            Ok(Value::Array(batch)) if batch.is_empty() => Some(error(Value::Null, INVALID_REQUEST, "empty batch")),
-            Ok(Value::Array(batch)) => {
-                let replies: Vec<Value> = batch.into_iter().filter_map(|m| self.handle(m)).collect();
-                (!replies.is_empty()).then_some(Value::Array(replies))
-            }
-            Ok(msg) => self.handle(msg),
-            Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
+            Ok(msg) => self.handle_message(&msg),
+            Err(e) => Some(craft_jsonrpc::error_response(Value::Null, craft_jsonrpc::RpcError::new(PARSE_ERROR, format!("parse error: {e}")))),
         };
         reply.map(|r| r.to_string())
     }
 
     pub fn handle(&mut self, msg: Value) -> Option<Value> {
-        let Value::Object(o) = &msg else { return Some(error(Value::Null, INVALID_REQUEST, "message must be an object")) };
-        let id = o.get("id").cloned();
-        let Some(method) = o.get("method").and_then(Value::as_str) else {
-            if o.contains_key("result") || o.contains_key("error") {
-                return None;
-            }
-            return Some(error(id.unwrap_or(Value::Null), INVALID_REQUEST, "missing `method`"));
-        };
-        let params = o.get("params").cloned().unwrap_or(Value::Null);
-        let Some(id) = id else {
-            if method == "notifications/initialized" {
-                self.initialized = true;
-            }
-            return None;
-        };
-        Some(match self.request(method, &params) {
-            Ok(r) => response(id, r),
-            Err((code, m)) => error(id, code, m),
-        })
+        // `handle` historically routes only one envelope; batches belong to `handle_line`.
+        if msg.is_array() {
+            return Some(craft_jsonrpc::error_response(Value::Null, craft_jsonrpc::RpcError::new(INVALID_REQUEST, "message must be an object")));
+        }
+        self.handle_message(&msg)
+    }
+
+    fn handle_message(&mut self, msg: &Value) -> Option<Value> {
+        let server = std::cell::RefCell::new(self);
+        craft_jsonrpc::process_legacy(
+            msg,
+            |request| {
+                let mut server = server.borrow_mut();
+                if request.method == "initialize" {
+                    let instructions = format!("{INSTRUCTIONS} Backend: {}.", server.backend.describe());
+                    server.session.set_instructions(instructions);
+                }
+                if let Some(result) = server.session.request(request, msg.is_array()) {
+                    return result;
+                }
+                server
+                    .request(request.method, request.params.unwrap_or(&Value::Null))
+                    .map_err(|(code, message)| craft_jsonrpc::RpcError::new(code, message))
+            },
+            |request| server.borrow_mut().session.notification(request),
+        )
     }
 
     fn request(&mut self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
-            "initialize" => {
-                let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION);
-                let version = if SUPPORTED.contains(&asked) { asked } else { PROTOCOL_VERSION };
-                Ok(json!({
-                    "protocolVersion": version,
-                    "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
-                    "serverInfo": {"name": "cadcraft", "title": "CADCraft", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
-                }))
-            }
-            "ping" => Ok(json!({})),
             "tools/list" => Ok(tool_definitions(self.backend.has_ui())),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;

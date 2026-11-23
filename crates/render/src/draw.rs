@@ -21,6 +21,11 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
         return;
     }
+    // Once the build holds all the points it may, nothing more is drawn (or computed).
+    if b.points_spent() {
+        b.list.truncated = true;
+        return;
+    }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
     // draws (block contents set their own).
     let (saved, saved_transparency) = (b.named, b.transparency);
@@ -43,6 +48,16 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// Set the transparency `e` draws with: its own (with transparency display on), at least its
+/// locked layer's `fade` on screen, which shows even when transparency display is off. Returns
+/// its own, without the fade: what a block's ByBlock children inherit.
+fn shown_transparency(b: &mut Builder, ctx: &Ctx, e: &Entity, layer_transparency: u8, fade: u8) -> u8 {
+    let fade = if b.opts.on_screen { fade } else { 0 };
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
+    own
+}
+
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -62,13 +77,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             cadcraft_doc::AnnoDraw::Plain => {}
         }
     }
-    let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
+    let (rgb, lw, lt, ltscale, visible, layer_transparency, fade) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
     }
-    if b.opts.transparency {
-        b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
-    }
+    let own = shown_transparency(b, ctx, e, layer_transparency, fade);
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
@@ -77,7 +90,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
     // Stroke a polyline with the entity's linetype.
-    let stroke = |b: &mut Builder, pts: &[Vec2]| match &lt {
+    let stroke = |b: &mut Builder, pts: &[Vec2]| match lt.as_ref().filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {
@@ -89,7 +102,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text embedded in the linetype (shapes need SHX files and are not drawn).
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
             if b.opts.text {
                 for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
                     b.shaped(ctx, rgb, lw, &sh);
@@ -103,6 +116,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
+            let upright;
+            let t = if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                upright = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
+                &upright
+            } else {
+                t
+            };
             let (sh, _) = place_text_entity(ctx.d, t, &t.value);
             b.shaped(ctx, rgb, lw, &sh);
         }
@@ -114,10 +134,14 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            mtext(b, ctx, t, rgb, lw);
+            if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
+            } else {
+                mtext(b, ctx, t, rgb, lw);
+            }
         }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
-        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb, own),
+        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, (lt.as_ref(), ltscale), own),
         EntityKind::Hatch(h) => hatch::draw(b, ctx, e, h, rgb, lw, tol),
         EntityKind::MLine(m) => mline::draw(b, ctx, e, m, rgb, lw, tol),
         EntityKind::LwPolyline(p) if p.const_width > 0.0 || p.vertices.iter().any(|v| v.start_width > 0.0 || v.end_width > 0.0) => {
@@ -129,7 +153,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 // the list serves a whole band of zooms. Plots and exports draw the band alone, and
                 // a transparent band gets none (its alpha would add up along the centre).
                 let hairline = !b.plotting && b.opts.min_dash > 0.0 && b.transparency == 0;
-                match &lt {
+                match lt.as_ref().filter(|_| b.opts.linetypes) {
                     // Dashed: each dash a filled piece of the band; dots a line across it.
                     Some(lt) => {
                         let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
@@ -162,7 +186,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         }
         EntityKind::LwPolyline(p) => {
             let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            if p.plinegen || lt.is_none() {
+            if !b.opts.linetypes || p.plinegen || lt.is_none() {
                 stroke(b, &pl.tessellate(tol));
             } else {
                 for s in pl.segments() {
@@ -182,14 +206,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         EntityKind::Wipeout(w) => draw_wipeout(b, ctx, w, rgb, lw),
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
-        }
+        EntityKind::Image(i) => draw_image(b, ctx, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {
@@ -210,7 +227,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.tris(ctx, rgb, &g.tris);
             }
         }
-        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw),
+        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw, own),
         EntityKind::Point(p) => {
             // Relative sizes follow the view: undo the block / viewport scale.
             let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
@@ -221,6 +238,12 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
             for l in &fig.lines {
                 b.polyline(ctx, rgb, lw, l);
+            }
+        }
+        // An OLE object's content is not drawn; its frame, from its two corner points, is.
+        EntityKind::Unknown(u) if u.is_ole_frame() => {
+            if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
+                b.polyline(ctx, rgb, lw, &q);
             }
         }
         kind => {
@@ -254,7 +277,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
-fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
+/// `own`: the leader's transparency without its locked-layer fade, for its block content.
+fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32, own: u8) {
     // Straight or spline leader lines; block content draws like a block reference.
     for pts in m.leader_paths() {
         b.polyline(ctx, rgb, lw, &pts);
@@ -274,7 +298,24 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
         }
-        insert(b, ctx, e, ins, rgb);
+        insert(b, ctx, e, ins, rgb, own);
+    }
+}
+
+fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
+    let o = i.insert.xy();
+    let u = i.u.xy() * i.size.x;
+    let v = i.v.xy() * i.size.y;
+    // Display flag 1: show the image. Without pixels (file not found, not loaded yet, hidden)
+    // the rectangle is crossed out.
+    let raster = if i.display & 1 != 0 { ctx.d.rasters.get(&i.path) } else { None };
+    if let Some(r) = raster {
+        b.image(ctx, rgb, i, r);
+    }
+    b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+    if raster.is_none() {
+        b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+        b.polyline(ctx, rgb, lw, &[o + u, o + v]);
     }
 }
 
@@ -294,19 +335,29 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
         _ => true,
     };
     if frame {
-        let mut pts = w.boundary.clone();
-        if let Some(f) = pts.first().copied() {
-            pts.push(f);
-        }
-        b.polyline(ctx, rgb, lw, &pts);
+        b.polyline(ctx, rgb, lw, &w.closed_boundary());
     }
 }
 
-fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimension, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64) {
+/// `stroke`: the linetype and its scale; `own`: the dimension's transparency without its
+/// locked-layer fade, which its block's ByBlock children inherit.
+fn draw_dimension(
+    b: &mut Builder,
+    ctx: &Ctx,
+    e: &Entity,
+    dm: &cadcraft_doc::Dimension,
+    lw: f32,
+    stroke: (Option<&cadcraft_doc::Linetype>, f64),
+    own: u8,
+) {
+    let (lt, ltscale) = stroke;
     if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
         && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
     {
-        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
+        // the insertion point, so the block draws translated by it (#2634).
+        let off = dm.insertion_point.xy();
+        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
@@ -326,6 +377,10 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
                 .take(MAX_FILL_TEXTS)
                 .filter(|be| !covered(be))
                 .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .map(|mut corners| {
+                    corners.iter_mut().for_each(|c| *c += off);
+                    corners
+                })
                 .collect()
         };
         let mut fill_pending = !boxes.is_empty();
@@ -348,7 +403,7 @@ fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dim
 
 /// Draw a polyline with a linetype (None: continuous).
 pub(crate) fn stroke_with(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64, pts: &[Vec2]) {
-    match lt {
+    match lt.filter(|_| b.opts.linetypes) {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
             for dash in linetype::apply(pts, lt, ltscale, min) {

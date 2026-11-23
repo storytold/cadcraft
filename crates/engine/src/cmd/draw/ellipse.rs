@@ -34,19 +34,24 @@ pub(super) struct EllipseM {
     /// The `Parameter` option: arc start/end values are ellipse parameters, not true angles.
     param: bool,
     start: Option<f64>,
+    /// The `Included angle` option: the next value is the arc's angle from its start angle.
+    included: bool,
     /// The Isocircle option (isometric snap style) in progress.
     iso: Option<crate::cmd::settings::iso::IsoCircle>,
 }
 
 impl EllipseM {
     fn axis(&self) -> Option<(Vec2, Vec2)> {
-        // (center, major vector)
+        // (center, major vector): towards the first axis endpoint, as AutoCAD stores it.
         match (self.center_mode, self.pts.as_slice()) {
             (true, [c, e, ..]) => Some((*c, *e - *c)),
-            (false, [a, b, ..]) => Some((a.mid(*b), *b - a.mid(*b))),
+            (false, [a, b, ..]) => Some((a.mid(*b), *a - a.mid(*b))),
             _ => None,
         }
     }
+    /// The other half axis reaches as far as `other` is from the center (AutoCAD measures the
+    /// picked point's distance from the center, not from the first axis). Longer than the
+    /// first half axis, it becomes the major axis: the first axis turned 90° counterclockwise.
     fn build(&self, other: Vec2) -> Option<Ellipse> {
         let (c, m) = self.axis()?;
         let ml = m.len();
@@ -54,7 +59,7 @@ impl EllipseM {
             return None;
         }
         let u = m / ml;
-        let minor = ((other - c).dot(u.perp())).abs();
+        let minor = (other - c).len();
         let (major, ratio) = if minor > ml { (u.perp() * minor, ml / minor) } else { (m, minor / ml) };
         (ratio > 1e-9).then_some(Ellipse::full(c, major, ratio.min(1.0)))
     }
@@ -88,13 +93,16 @@ impl Interactive for EllipseM {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         if let Some(e) = &self.ellipse {
-            let msg = match (self.start.is_none(), self.param) {
-                (true, false) => "Specify start angle",
-                (false, false) => "Specify end angle",
-                (true, true) => "Specify start parameter",
-                (false, true) => "Specify end parameter",
+            if self.included {
+                return Prompt::new("Specify included angle for arc", Accept::POINT_OR_NUMBER).default("180").base(e.center);
+            }
+            let (msg, kw): (&str, &[&str]) = match (self.start.is_none(), self.param) {
+                (true, false) => ("Specify start angle", &["Parameter"]),
+                (false, false) => ("Specify end angle", &["Parameter", "Included angle"]),
+                (true, true) => ("Specify start parameter", &["Angle"]),
+                (false, true) => ("Specify end parameter", &["Angle"]),
             };
-            return Prompt::new(msg, Accept::POINT_OR_NUMBER).kw(if self.param { &["Angle"] } else { &["Parameter"] }).base(e.center);
+            return Prompt::new(msg, Accept::POINT_OR_NUMBER).kw(kw).base(e.center);
         }
         if let Some(iso) = &self.iso {
             return iso.prompt();
@@ -112,11 +120,32 @@ impl Interactive for EllipseM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(e) = self.ellipse {
             let ge = Ellipse { start: 0.0, end: cadcraft_geom::TAU, ..e };
+            if self.included {
+                let incl = match i {
+                    Input::Point(p) => (p - e.center).angle(),
+                    Input::Text(t) => s.angle_settings().amount(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?,
+                    Input::Enter => std::f64::consts::PI,
+                    _ => return Ok(Step::Continue),
+                };
+                // A true angle added to the start angle (AutoCAD: start 214.659°, included
+                // 232.716° ends the arc at 87.375° from the major axis).
+                let st = self.start.unwrap_or(0.0);
+                let end = ge.param_of(e.center + Vec2::from_angle((ge.at_param(st) - e.center).angle() + incl));
+                s.add_entity(EntityKind::Ellipse(cadcraft_doc::Ellipse {
+                    center: v3(e.center),
+                    major: v3(e.major),
+                    ratio: e.ratio,
+                    start: st,
+                    end,
+                }))?;
+                return Ok(Step::Done);
+            }
             let ang = match i {
                 Input::Keyword(k) => {
                     match k.as_str() {
                         "Parameter" => self.param = true,
                         "Angle" => self.param = false,
+                        "Included angle" if self.start.is_some() && !self.param => self.included = true,
                         _ => {}
                     }
                     return Ok(Step::Continue);

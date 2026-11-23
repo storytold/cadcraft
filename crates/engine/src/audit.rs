@@ -234,9 +234,10 @@ fn tables(d: &mut Drawing, out: &mut Vec<Issue>) {
         missing("table style", "Standard", out);
         d.table_styles.insert(0, TableStyle::default());
     }
-    let linetypes: Vec<String> = d.linetypes.iter().map(|l| l.name.clone()).collect();
+    // Name sets built once: both tables come from the drawing, so a scan per reference is quadratic.
+    let linetypes: HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     for l in &mut d.layers {
-        if !linetypes.iter().any(|n| n.eq_ignore_ascii_case(&l.linetype)) {
+        if !linetypes.contains(&l.linetype.to_ascii_lowercase()) {
             out.push(issue(
                 "missingLinetype",
                 "tables",
@@ -247,8 +248,8 @@ fn tables(d: &mut Drawing, out: &mut Vec<Issue>) {
             l.linetype = "Continuous".into();
         }
     }
-    let styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
-    let known = |n: &str| styles.iter().any(|s| s.eq_ignore_ascii_case(n));
+    let styles: HashSet<String> = d.text_styles.iter().map(|s| s.name.to_ascii_lowercase()).collect();
+    let known = |n: &str| styles.contains(&n.to_ascii_lowercase());
     for s in &mut d.dim_styles {
         if !known(&s.text_style) {
             out.push(issue(
@@ -318,8 +319,14 @@ fn all_handles(d: &Drawing) -> HashSet<Handle> {
 }
 
 /// The next handle is above every handle in use, so new objects never take an existing one.
+///
+/// A handle at or above [`cadcraft_doc::HANDLE_LIMIT`] is the file's own and is deliberately not
+/// followed: the seed never moves past it, and new objects take free handles in the band above
+/// the limit. Reporting it would repeat the same repair on every audit, so it is not an issue.
+/// Such a handle is left out of the maximum too, or the largest handle would hide every ordinary
+/// one behind it and the seed would never be repaired past them.
 fn handseed(d: &mut Drawing, out: &mut Vec<Issue>) {
-    let Some(max) = each_entity(d).map(|e| e.handle).max() else { return };
+    let Some(max) = each_entity(d).map(|e| e.handle).filter(|h| h.0 < cadcraft_doc::HANDLE_LIMIT).max() else { return };
     if max.0 >= d.handseed {
         out.push(issue(
             "handseed",
@@ -460,17 +467,13 @@ fn references(d: &mut Drawing, out: &mut Vec<Issue>) {
                         m.style = "Standard".into();
                     }
                 }
-                EntityKind::Table(t) => {
-                    if !has_name(&d.table_styles, &t.style, |s| &s.name) {
-                        note("table style", &t.style);
-                        t.style = "Standard".into();
-                    }
+                EntityKind::Table(t) if !has_name(&d.table_styles, &t.style, |s| &s.name) => {
+                    note("table style", &t.style);
+                    t.style = "Standard".into();
                 }
-                EntityKind::Leader(l) => {
-                    if !ok_dim(d, &l.style) {
-                        note("dimension style", &l.style);
-                        l.style = "Standard".into();
-                    }
+                EntityKind::Leader(l) if !ok_dim(d, &l.style) => {
+                    note("dimension style", &l.style);
+                    l.style = "Standard".into();
                 }
                 EntityKind::Dimension(dim) => {
                     if !ok_dim(d, &dim.style) {

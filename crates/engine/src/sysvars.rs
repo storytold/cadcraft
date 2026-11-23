@@ -8,6 +8,7 @@ mod table;
 
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
+    "ATTREQ",
     "OSMODE",
     "OSNAPHATCH",
     "ANNOAUTOSCALE",
@@ -66,10 +67,14 @@ const SESSION_VARS: &[&str] = &[
     "ZOOMFACTOR",
     "MEASUREINIT",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "FONTALT",
     "FONTFALLBACK",
     "SAVETIME",
     "SAVEFILEPATH",
+    "ISAVEBAK",
 ];
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -143,6 +148,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
+        "AREA" => json!(s.area),
+        "PERIMETER" => json!(s.perimeter),
+        "DISTANCE" => json!(s.distance),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
@@ -154,9 +162,14 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Autosave (profile settings too).
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
+        "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
+        // The next handle the drawing gives out, in hex as `$HANDSEED` (the header keeps the
+        // value the file was read with, which new objects don't move): past the handles the
+        // file's own objects hold, as allocation skips them.
+        "HANDSEED" => json!(format!("{:X}", s.doc().ok()?.next_handle().0)),
         // The drawing's folder with a trailing separator ("" while it has no file); DWGTITLED is 1 once it has one.
         "DWGPREFIX" => json!(s.state().ok().and_then(|d| d.path.as_deref()).map(dwg_prefix).unwrap_or_default()),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
@@ -175,6 +188,21 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The current UCS of the space commands act on (paper space has its own per layout),
+        // set by the UCS command.
+        "UCSNAME" | "UCSORG" | "UCSXDIR" | "UCSYDIR" | "WORLDUCS" => {
+            let (u, name) = s.ucs_named();
+            let p = |v: cadcraft_geom::Vec3| json!([v.x, v.y, v.z]);
+            match n.as_str() {
+                "UCSNAME" => json!(name),
+                "UCSORG" => p(u.origin),
+                "UCSXDIR" => p(u.x),
+                "UCSYDIR" => p(u.y),
+                _ => json!(i32::from(u.is_world())),
+            }
+        }
+        // The view twist (DVIEW TWist), in degrees counterclockwise.
+        "VIEWTWIST" => json!(s.state().ok()?.view().twist.to_degrees()),
         "EXTMIN" | "EXTMAX" => {
             let d = s.doc().ok()?;
             let e = d.extents(&s.space());
@@ -243,15 +271,25 @@ const READ_ONLY: &[&str] = &[
     "TILEMODE",
     "PLATFORM",
     "DBMOD",
+    "HANDSEED",
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
     "VIEWCTR",
     "VIEWSIZE",
+    "VIEWTWIST",
     "EXTMIN",
     "EXTMAX",
     "UNDOCTL",
     "UNDOMARKS",
+    "UCSNAME",
+    "UCSORG",
+    "UCSXDIR",
+    "UCSYDIR",
+    "WORLDUCS",
 ];
 
 pub fn is_read_only(name: &str) -> bool {
@@ -271,6 +309,7 @@ pub fn format_angle_list(angles: &[f64]) -> String {
     angles.iter().map(|a| format!("{}", (a.to_degrees() * 1e6).round() / 1e6)).collect::<Vec<_>>().join(";")
 }
 
+/// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
     if is_read_only(&n) {
@@ -279,7 +318,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
     let st = &mut s.settings;
     match n.as_str() {
-        "OSMODE" => st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(bad)? as u32 & 0x7fff,
+        "OSMODE" => {
+            st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x <= 0x7fff).ok_or_else(bad)? as u32
+        }
         // The `color` command's input: ByLayer, ByBlock, a name, an index or a true colour.
         "CECOLOR" => crate::cmd::set_current_color_value(s, v).ok_or_else(bad)?,
         "OSNAPHATCH" => st.osnaphatch = as_bool(v).ok_or_else(bad)?,
@@ -365,7 +406,12 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "SAVETIME" => crate::autosave::set_savetime(
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),
+        // A folder autosave and recovery would use without any further check.
+        "SAVEFILEPATH" if crate::file_access::current().is_some() => {
+            return Err(EngineError::Other("SAVEFILEPATH cannot be changed under the automation roots".into()));
+        }
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
+        "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
         "ANGBASE" => {
             let a = match v {
@@ -374,6 +420,15 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             };
             let a = a.filter(|a| a.is_finite()).ok_or_else(bad)?;
             s.doc_mut()?.header.set_f64("ANGBASE", cadcraft_geom::norm_angle(a));
+        }
+        // Whole numbers inside the range UNITS clamps to.
+        "LUNITS" | "LUPREC" | "AUNITS" | "AUPREC" => {
+            let (_, lo, hi) = crate::cmd::UNIT_RANGES.iter().find(|(k, ..)| k.eq_ignore_ascii_case(&n)).copied().ok_or_else(bad)?;
+            let i = as_i(v)
+                .or_else(|| as_f64(v).filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64))
+                .filter(|i| (lo..=hi).contains(i))
+                .ok_or_else(bad)?;
+            s.doc_mut()?.header.set_i64(&n, i);
         }
         "CONSTRAINTINFER" => s.doc_mut()?.parametric.settings.infer = as_bool(v).ok_or_else(bad)?,
         _ => {
@@ -386,6 +441,13 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 let mut st = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
                 if !st.apply_fields(&serde_json::Map::from_iter([((*field).to_string(), v.clone())])).is_empty() {
                     return Err(bad());
+                }
+                // A real style field (DIMJOGANG, DIMSCALE...) is a real variable, even set to a
+                // whole number first, so a later fraction still fits. It takes the value the style
+                // took.
+                if let Some(f) = serde_json::to_value(&st).ok().and_then(|j| j.get(*field).filter(|f| f.is_f64()).and_then(|f| f.as_f64())) {
+                    d.header.set_f64(&n, f);
+                    return Ok(());
                 }
             }
             let val = match v {
@@ -405,7 +467,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             // Keep the header type stable for known numeric vars.
             match d.header.get(&n) {
                 Some(cadcraft_doc::HVal::Real(_)) => {
-                    d.header.set_f64(&n, val.as_f64().ok_or_else(bad)?);
+                    d.header.set_f64(&n, val.as_f64().filter(|f| f.is_finite()).ok_or_else(bad)?);
                     return Ok(());
                 }
                 Some(cadcraft_doc::HVal::Int(_)) => {
@@ -442,11 +504,6 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
 
 pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
-    for n in SESSION_VARS {
-        if let Some(v) = get(s, n) {
-            m.insert((*n).to_string(), v);
-        }
-    }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
             if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
@@ -454,6 +511,13 @@ pub fn list(s: &Session) -> Value {
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
             }
+        }
+    }
+    // The session's values last: a drawing's header can carry the same names (ORTHOMODE,
+    // LWDISPLAY, an AREA), and `get` reads the session's.
+    for n in SESSION_VARS {
+        if let Some(v) = get(s, n) {
+            m.insert((*n).to_string(), v);
         }
     }
     table::list(s, &mut m);

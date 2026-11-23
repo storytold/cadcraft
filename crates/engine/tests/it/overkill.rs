@@ -67,6 +67,48 @@ fn duplicates_tolerance_and_ignored_properties() {
 }
 
 #[test]
+fn objects_within_the_tolerance_are_duplicates_on_either_side_of_a_rounding_step() {
+    // Each pair is closer than the tolerance, but its numbers round to different multiples of it
+    // (50.004 → 5000, 50.006 → 5001 at 0.01).
+    let pairs = [
+        (json!({ "tolerance": 0.01 }), "circle", json!({ "center": [50.004, 50], "radius": 3 }), json!({ "center": [50.006, 50], "radius": 3 })),
+        (json!({ "tolerance": 0.01 }), "circle", json!({ "center": [50, 50], "radius": 3.004 }), json!({ "center": [50, 50], "radius": 3.006 })),
+        (json!({}), "circle", json!({ "center": [0.0000014, 0], "radius": 3 }), json!({ "center": [0.0000016, 0], "radius": 3 })),
+        (json!({ "tolerance": 0.01 }), "point", json!({ "at": [10.004, 0] }), json!({ "at": [10.006, 0] })),
+        (
+            json!({ "tolerance": 0.01 }),
+            "text",
+            json!({ "at": [0.004, 0], "text": "A", "height": 2.5 }),
+            json!({ "at": [0.006, 0], "text": "A", "height": 2.5 }),
+        ),
+    ];
+    for (opts, cmd, a, b) in pairs {
+        let mut s = Session::new();
+        s.execute(cmd, &a).unwrap();
+        s.execute(cmd, &b).unwrap();
+        let r = ok(&mut s, opts);
+        assert_eq!(r["deleted"], 1, "{cmd} {a} {b}: {r}");
+        assert_eq!(count(&s), 1, "{cmd} {a} {b}");
+    }
+    // Arcs on (about) one circle are combined the same way.
+    let mut s = Session::new();
+    s.execute("arc", &json!({ "center": [0.004, 0], "radius": 5, "start": 0, "end": 90 })).unwrap();
+    s.execute("arc", &json!({ "center": [0.006, 0], "radius": 5, "start": 45, "end": 180 })).unwrap();
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["overlapping"], 1, "{r}");
+    assert_eq!(count(&s), 1);
+    // Farther apart than the tolerance, they stay.
+    let mut s = Session::new();
+    s.execute("circle", &json!({ "center": [50.004, 50], "radius": 3 })).unwrap();
+    s.execute("circle", &json!({ "center": [50.016, 50], "radius": 3 })).unwrap();
+    s.execute("point", &json!({ "at": [10.004, 0] })).unwrap();
+    s.execute("point", &json!({ "at": [10.016, 0] })).unwrap();
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["deleted"], 0, "{r}");
+    assert_eq!(count(&s), 4);
+}
+
+#[test]
 fn collinear_lines_overlap_and_end_to_end() {
     let mut s = Session::new();
     line(&mut s, [0.0, 0.0], [10.0, 0.0]);
@@ -229,4 +271,48 @@ fn many_objects_stay_fast() {
     assert_eq!(r["overlapping"], 3999);
     assert_eq!(count(&s), 4001);
     assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
+}
+
+#[test]
+fn within_the_tolerance_does_not_chain() {
+    // At 0.01, the arc is within the tolerance of both circles, but the circles are 0.016 apart:
+    // the arc goes, both circles stay, whichever comes first in draw order.
+    let circle = |s: &mut Session, x: f64| s.execute("circle", &json!({ "center": [x, 0], "radius": 3 })).unwrap();
+    let arc_at = |s: &mut Session, x: f64, start: f64, end: f64| {
+        s.execute("arc", &json!({ "center": [x, 0], "radius": 3, "start": start, "end": end })).unwrap()
+    };
+    let kinds = |s: &Session| s.doc().unwrap().model.iter().map(|e| e.kind.type_name()).collect::<Vec<_>>();
+    let mut s = Session::new();
+    circle(&mut s, 50.0);
+    arc_at(&mut s, 50.008, 0.0, 90.0);
+    circle(&mut s, 50.016);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!((r["duplicates"].as_u64(), r["overlapping"].as_u64()), (Some(0), Some(1)), "{r}");
+    assert_eq!(kinds(&s), ["Circle", "Circle"]);
+    let mut s = Session::new();
+    arc_at(&mut s, 50.008, 0.0, 90.0);
+    circle(&mut s, 50.0);
+    circle(&mut s, 50.016);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["deleted"], 1, "{r}");
+    assert_eq!(kinds(&s), ["Circle", "Circle"]);
+    // Arcs alone: the third is 0.016 from the first, so it is not combined with it.
+    let mut s = Session::new();
+    arc_at(&mut s, 0.0, 0.0, 90.0);
+    arc_at(&mut s, 0.008, 45.0, 180.0);
+    arc_at(&mut s, 0.016, 100.0, 200.0);
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["overlapping"], 1, "{r}");
+    assert_eq!(kinds(&s), ["Arc", "Arc"]);
+    // A followed line displaces the first one, which a third line matched: the third is 0.016 from
+    // the followed line, so it stays.
+    let mut s = Session::new();
+    let first = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let third = line(&mut s, [0.0, 0.008], [10.0, 0.008]);
+    let followed = line(&mut s, [0.0, -0.008], [10.0, -0.008]);
+    s.execute("dimlinear", &json!({ "object": followed.hex(), "at": [5, 5] })).unwrap();
+    let r = ok(&mut s, json!({ "tolerance": 0.01 }));
+    assert_eq!(r["deleted"], 1, "{r}");
+    let d = s.doc().unwrap();
+    assert!(d.entity(first).is_none() && d.entity(third).is_some() && d.entity(followed).is_some());
 }

@@ -1,7 +1,8 @@
-//! INSERT and the attribute modes (gap F17): Verify attributes are asked twice, Preset ones take
-//! their default without asking, ATTREQ 0 gives every attribute its default, ATTDIA 0 (the
-//! default) asks at the command line and ATTDIA 1 asks for the values all at once in the Edit
-//! Attributes dialog (`Session::attribute_entry`), typed answers still working. The JSON form never asks. ATTREQ and ATTDIA are user settings, as in
+//! INSERT and the attribute modes (gap F17): Preset and constant attributes take their values
+//! without asking, ATTREQ 0 gives every attribute its default, ATTDIA 0 (the default) asks at the
+//! command line (a Verify attribute's value again once every value is in) and ATTDIA 1 asks for
+//! the values all at once in the Edit Attributes dialog (`Session::attribute_entry`), typed
+//! answers still working. The JSON form never asks. ATTREQ and ATTDIA are user settings, as in
 //! AutoCAD (DWG keeps them in its header only before R2000).
 
 use std::sync::Arc;
@@ -86,7 +87,7 @@ fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn typed_insert_asks_verify_twice_and_skips_preset_and_constant() {
+fn typed_insert_asks_verify_again_and_skips_preset_and_constant() {
     // AutoCAD's default, ATTDIA 0, with no value in the drawing: the command line asks.
     let mut s = session(None, None);
     assert_eq!(s.execute("getvar", &json!({ "name": "ATTDIA" })).unwrap()["value"], 0);
@@ -95,25 +96,27 @@ fn typed_insert_asks_verify_twice_and_skips_preset_and_constant() {
     assert!(s.attribute_entry().is_none(), "ATTDIA 0: no dialog");
     assert_eq!(s.prompt_text(), "INSERT First <1>:", "A first");
     s.input(Input::Text("10".into())).unwrap();
-    assert_eq!(s.prompt_text(), "INSERT Verify attribute value <10>:");
-    s.input(Input::Text("11".into())).unwrap(); // the value typed at Verify replaces it
     assert_eq!(s.prompt_text(), "INSERT Third <3>:", "B is Preset: not asked");
-    s.input(Input::Enter).unwrap();
+    s.input(Input::Enter).unwrap(); // C takes its default
+    // Then the Verify attributes, with the values typed.
+    assert_eq!(s.prompt_text(), "INSERT First <10>:");
+    s.input(Input::Text("11".into())).unwrap(); // the value typed at Verify replaces it
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(values(&s), pairs(&[("A", "11"), ("B", "two"), ("C", "3")]));
 
     // Enter at Verify keeps the value given; Enter at A takes its default, verified.
     insert_up_to_the_attributes(&mut s);
     s.input(Input::Enter).unwrap();
-    assert_eq!(s.prompt_text(), "INSERT Verify attribute value <1>:");
-    s.input(Input::Enter).unwrap();
     s.input(Input::Text("c".into())).unwrap();
+    assert_eq!(s.prompt_text(), "INSERT First <1>:");
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(values(&s), pairs(&[("A", "1"), ("B", "two"), ("C", "c")]));
 
     // A script answers in turn too.
-    s.script("-INSERT T 0,50 1 1 0\na\na\nc\n").unwrap();
+    s.script("-INSERT T 0,50 1 1 0\na\nc\nz\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
-    assert_eq!(values(&s), pairs(&[("A", "a"), ("B", "two"), ("C", "c")]));
+    assert_eq!(values(&s), pairs(&[("A", "z"), ("B", "two"), ("C", "c")]));
 }
 
 #[test]
@@ -146,9 +149,9 @@ fn attdia_1_asks_for_every_value_at_once_and_typed_answers_still_work() {
     let ask =
         |tag: &str, prompt: &str, default: &str, verify: bool| AttribAsk { tag: tag.into(), prompt: prompt.into(), default: default.into(), verify };
     assert_eq!(e.rows, vec![ask("A", "First", "1", true), ask("C", "Third", "3", false)]);
-    // The dialog's OK: the answers typed in turn, Verify ones twice.
+    // The dialog's OK: every value, then the Verify attribute's again.
     let answers = e.answers(&["x".into(), String::new()]);
-    assert_eq!(answers, ["x", "x", ""]);
+    assert_eq!(answers, ["x", "", "x"]);
     for a in answers {
         s.input(Input::Text(a)).unwrap();
     }
@@ -160,8 +163,9 @@ fn attdia_1_asks_for_every_value_at_once_and_typed_answers_still_work() {
     assert!(s.attribute_entry().is_some());
     s.input(Input::Text("typed".into())).unwrap();
     assert!(s.attribute_entry().is_none());
-    s.input(Input::Enter).unwrap();
-    s.input(Input::Enter).unwrap();
+    s.input(Input::Enter).unwrap(); // C takes its default
+    s.input(Input::Enter).unwrap(); // Verify keeps the value typed
+    assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(values(&s), pairs(&[("A", "typed"), ("B", "two"), ("C", "3")]));
 
     // Cancel from the dialog inserts nothing.
@@ -189,8 +193,8 @@ fn hostile_values_never_panic() {
     insert_up_to_the_attributes(&mut s);
     let e = s.attribute_entry().expect("asks");
     // Too few answers take the defaults, too many are ignored.
-    assert_eq!(e.answers(&[]), ["1", "1", "3"]);
-    assert_eq!(e.answers(&["p".into(), "q".into(), "r".into()]), ["p", "p", "q"]);
+    assert_eq!(e.answers(&[]), ["1", "3", "1"]);
+    assert_eq!(e.answers(&["p".into(), "q".into(), "r".into()]), ["p", "q", "p"]);
     s.cancel();
     for bad in [json!(2), json!(-1), json!("x"), json!(null), json!(1.5)] {
         assert!(s.execute("setvar", &json!({ "name": "ATTDIA", "value": bad })).is_err(), "{bad}");

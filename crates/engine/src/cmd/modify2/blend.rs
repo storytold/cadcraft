@@ -81,7 +81,7 @@ impl Interactive for BlendM {
             return Prompt::new("Enter continuity", curves::KW).kw(&["Tangent", "Smooth"]).default("Tangent");
         }
         match self.first {
-            None => Prompt::new("Select first object or", Accept::POINT).kw(&["CONtinuity"]),
+            None => Prompt::new("Select first object", Accept::POINT).kw(&["CONtinuity"]),
             Some(_) => Prompt::new("Select second point", Accept::POINT),
         }
     }
