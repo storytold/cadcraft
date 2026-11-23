@@ -43,14 +43,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
-            .interactive(|_| Ok(Box::new(InsertM::default()))),
+            .interactive(|s| Ok(Box::new(InsertM { scripted: s.script_running(), ..InsertM::default() }))),
         CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
             .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
-            .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
+            .interactive(|s| Ok(Box::new(InsertM { minsert: true, scripted: s.script_running(), ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -778,6 +778,9 @@ struct InsertM {
     asked: usize,
     /// ATTDIA 1: the values are asked for in the Edit Attributes dialog.
     dialog: bool,
+    /// A script started this command ([`Session::script_running`]), fixed for its whole life: a
+    /// script never opens the dialog, even when it ends with INSERT still waiting.
+    scripted: bool,
     values: serde_json::Map<String, Value>,
     /// Verify attributes asked again so far.
     verified: usize,
@@ -868,7 +871,8 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.dialog = s.settings.attdia;
+        // A script cannot click the dialog: it asks at the command line, as ATTDIA 0 does.
+        self.dialog = s.settings.attdia && !self.scripted;
         self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {

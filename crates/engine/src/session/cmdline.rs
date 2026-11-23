@@ -175,6 +175,13 @@ impl Session {
         self.input(Input::Text(tt.to_string()))
     }
 
+    /// Whether a script is running ([`Session::script`]). A command a script starts never opens a
+    /// dialog: every value it asks for stays at the command line, which is where the script (or
+    /// the user, once it ends) answers it.
+    pub fn script_running(&self) -> bool {
+        self.in_script
+    }
+
     /// Run a script, as AutoCAD reads one: a space or a line end ends an input, and an empty
     /// input (two spaces in a row, a space at the end of a line, an empty line) is Enter. At
     /// free-text prompts spaces are part of the text. Lines starting with `;` are comments.

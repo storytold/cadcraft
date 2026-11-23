@@ -144,6 +144,16 @@ fn a_new_insert_does_not_inherit_a_cancelled_draft() {
 }
 
 #[test]
+fn a_script_never_opens_the_dialog() {
+    let mut a = app();
+    // A script that ends before the first attribute answer leaves INSERT waiting.
+    a.session.script("-INSERT T 50,0 1 1 0\n").unwrap();
+    let h = harness(a);
+    assert!(h.query_by_label("Edit Attributes").is_none(), "a script never opens the dialog");
+    assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
+}
+
+#[test]
 fn no_dialog_with_attdia_0_or_from_json() {
     let mut a = app();
     a.run("setvar", json!({ "name": "ATTDIA", "value": 0 })).unwrap();

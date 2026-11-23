@@ -215,6 +215,25 @@ fn hostile_values_never_panic() {
 }
 
 #[test]
+fn a_script_never_asks_in_the_dialog() {
+    // A script cannot click a dialog: ATTDIA 1 keeps its prompts at the command line, even when
+    // the script ends with INSERT still waiting for the first attribute.
+    let mut s = session(None, Some(true));
+    s.script("-INSERT T 0,50 1 1 0\n").unwrap();
+    assert_eq!(s.prompt_text(), "INSERT First <1>:", "INSERT still waits after the script");
+    assert!(s.attribute_entry().is_none(), "a scripted INSERT never opens the dialog");
+    // The command the script started keeps answering at the command line.
+    s.input(Input::Text("a".into())).unwrap();
+    s.input(Input::Text("c".into())).unwrap();
+    s.input(Input::Text("a".into())).unwrap(); // A's Verify
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), pairs(&[("A", "a"), ("B", "two"), ("C", "c")]));
+    // A typed INSERT with ATTDIA 1 still asks in the dialog.
+    insert_up_to_the_attributes(&mut s);
+    assert!(s.attribute_entry().is_some(), "a typed INSERT asks in the dialog");
+}
+
+#[test]
 fn an_entry_belongs_to_the_drawing_and_command_that_asked() {
     let mut s = session(None, Some(true));
     insert_up_to_the_attributes(&mut s);
