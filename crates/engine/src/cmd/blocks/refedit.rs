@@ -123,6 +123,21 @@ fn editable_transform(m: &Mat3, sx: f64, sy: f64) -> bool {
     finite && m.det().abs() >= 1e-12 && (sx.abs() - sy.abs()).abs() <= 1e-9 * sx.abs().max(sy.abs())
 }
 
+/// Whether reference `i` shows its block more than once (columns and rows, as MINSERT makes): one
+/// object, so a pick can't tell which instance is meant, and hiding it hides them all.
+fn several(i: &cadcraft_doc::Insert) -> bool {
+    i.cols > 1 || i.rows > 1
+}
+
+fn several_refused(name: &str) -> crate::EngineError {
+    bad(
+        "refedit",
+        format!(
+            "the reference to \"{name}\" has several columns or rows, so it can't be edited in place; edit a single reference to the block, or the block with BEDIT"
+        ),
+    )
+}
+
 fn unequal_scale() -> crate::EngineError {
     bad("refedit", "the reference must be scaled equally in X and Y (and not flat) to be edited in place")
 }
@@ -130,6 +145,9 @@ fn unequal_scale() -> crate::EngineError {
 /// The levels from top reference `ins` down `path` (references inside the block definitions).
 fn levels(d: &Drawing, ins: &cadcraft_doc::Insert, path: &[Handle]) -> Result<Vec<Level>> {
     let mut block = d.block(&ins.block).cloned().ok_or_else(|| bad("refedit", format!("block \"{}\" not found", ins.block)))?;
+    if several(ins) {
+        return Err(several_refused(&ins.block));
+    }
     let mut m = ins.transform(block.base.xy());
     if !editable_transform(&m, ins.scale.x, ins.scale.y) {
         return Err(unequal_scale());
@@ -142,6 +160,9 @@ fn levels(d: &Drawing, ins: &cadcraft_doc::Insert, path: &[Handle]) -> Result<Ve
         let e = block.entities.get(*h).ok_or_else(|| bad("refedit", format!("object {} is not a reference in block \"{}\"", h.hex(), block.name)))?;
         let EntityKind::Insert(child) = &e.kind else { return Err(bad("refedit", format!("object {} is not a block reference", h.hex()))) };
         let cb = d.block(&child.block).cloned().ok_or_else(|| bad("refedit", format!("block \"{}\" not found", child.block)))?;
+        if several(child) {
+            return Err(several_refused(&cb.name));
+        }
         let cm = m.then_before(child.transform(cb.base.xy()));
         if !editable_transform(&cm, child.scale.x, child.scale.y) {
             return Err(bad("refedit", format!("the nested reference to \"{}\" must be scaled equally in X and Y", cb.name)));
@@ -165,11 +186,12 @@ fn nested(d: &Drawing, name: &str, m: &Mat3, path: &mut Vec<Handle>, out: &mut V
     for e in b.entities.iter() {
         let EntityKind::Insert(i) = &e.kind else { continue };
         // Generated geometry (dimensions, arrays) is not offered, nor a reference `levels` would
-        // refuse (scaled differently in X and Y, flat): nothing below it can be edited either.
+        // refuse (scaled differently in X and Y, flat, several columns or rows): nothing below it
+        // can be edited either.
         let Some(c) = d.block(&i.block) else { continue };
         let cm = m.then_before(i.transform(c.base.xy()));
         let editable = editable_transform(&cm, i.scale.x, i.scale.y);
-        if i.block.starts_with('*') || c.array.is_some() || out.len() >= MAX_LEVELS || !editable {
+        if i.block.starts_with('*') || c.array.is_some() || out.len() >= MAX_LEVELS || !editable || several(i) {
             continue;
         }
         path.push(e.handle);
@@ -184,6 +206,9 @@ fn level_list(d: &Drawing, ih: Handle) -> Result<Vec<(Vec<Handle>, String)>> {
     let Some(EntityKind::Insert(ins)) = d.entity(ih).map(|e| &e.kind) else { return Err(bad("refedit", "select a block reference")) };
     let m = d.block(&ins.block).map_or(Mat3::IDENTITY, |b| ins.transform(b.base.xy()));
     // As [`levels`] checks it: a reference it would refuse offers nothing nested in it either.
+    if several(ins) {
+        return Err(several_refused(&ins.block));
+    }
     if !editable_transform(&m, ins.scale.x, ins.scale.y) {
         return Err(unequal_scale());
     }

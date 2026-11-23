@@ -944,3 +944,43 @@ fn a_host_block_identical_to_the_xrefs_block_of_that_name_is_written() {
     assert_eq!(valve.entities.len(), 1);
     assert!(matches!(valve.entities.iter().next().unwrap().kind, EntityKind::Line(_)), "the file's Valve is unchanged");
 }
+
+/// Review of #3352: REFEDIT on a reference with several columns or rows (one object, many
+/// instances) opened the first instance and hid them all. It is refused, saying why; nested in a
+/// block, such a reference isn't offered as a level.
+#[test]
+fn a_reference_with_several_columns_or_rows_is_not_edited_in_place() {
+    let mut s = Session::new();
+    let c = hx(s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap());
+    s.execute("block", &json!({ "name": "Leaf", "base": [0, 0], "handles": [c], "keep": "delete" })).unwrap();
+    let grid = |s: &mut Session, at: [f64; 2], cols: u32, rows: u32| {
+        let h = Handle::parse_hex(&hx(s.execute("insert", &json!({ "name": "Leaf", "at": at })).unwrap())).unwrap();
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    (i.cols, i.rows, i.col_spacing, i.row_spacing) = (cols, rows, 5.0, 5.0);
+                }
+            })
+            .unwrap();
+        h.hex()
+    };
+    for (cols, rows) in [(3, 1), (1, 2)] {
+        let h = grid(&mut s, [0.0, 0.0], cols, rows);
+        let e = s.execute("refedit", &json!({ "handle": h })).unwrap_err().to_string();
+        assert!(e.contains("columns or rows"), "{e}");
+        let d = s.doc().unwrap();
+        assert!(d.refedit.is_none() && d.entity(Handle::parse_hex(&h).unwrap()).unwrap().common.visible, "nothing began, nothing hidden");
+    }
+    // Nested: not offered, and refused through a path.
+    let multi = grid(&mut s, [10.0, 0.0], 2, 2);
+    let one = hx(s.execute("insert", &json!({ "name": "Leaf", "at": [50, 0] })).unwrap());
+    s.execute("block", &json!({ "name": "Holder", "base": [0, 0], "handles": [multi, one], "keep": "delete" })).unwrap();
+    let o = hx(s.execute("insert", &json!({ "name": "Holder", "at": [0, 0] })).unwrap());
+    let levels = s.execute("refedit.levels", &json!({ "handle": o })).unwrap();
+    assert_eq!(levels["levels"].as_array().unwrap().len(), 2, "Holder and the single Leaf: {levels}");
+    let inner =
+        s.doc().unwrap().block("Holder").unwrap().entities.iter().find(|e| matches!(&e.kind, EntityKind::Insert(i) if i.cols > 1)).unwrap().handle;
+    let e = s.execute("refedit", &json!({ "handle": o, "path": [inner.hex()] })).unwrap_err().to_string();
+    assert!(e.contains("columns or rows"), "{e}");
+}
