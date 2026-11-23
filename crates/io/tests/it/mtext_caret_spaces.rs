@@ -77,6 +77,7 @@ fn dxf_mtext_caret_spaces_round_trip() -> TestResult {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn dwg_mtext_caret_spaces_round_trip() -> TestResult {
+    cadcraft_io::dwg_worker::allow_in_process();
     let (original, expected) = drawing()?;
     for version in Version::ALL {
         let mut d = original.clone();
@@ -106,6 +107,7 @@ fn dwg_mtext_caret_spaces_round_trip() -> TestResult {
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 #[test]
 fn bridge_caret_space_is_escaped_once_in_each_direction() -> TestResult {
+    cadcraft_io::dwg_worker::allow_in_process();
     let (d, _) = drawing()?;
     let dxf = cadcraft_io::write_dxf(&d);
     assert!(dxf.contains("  1\r\n^  C\r\n"), "literal caret plus authored space needs two wire spaces");

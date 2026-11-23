@@ -18,6 +18,7 @@ pub mod blockedit;
 pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
+pub mod file_access;
 mod finite;
 pub mod grip_dims;
 pub mod grips;
@@ -36,6 +37,7 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod ucs;
 pub mod undoctl;
 pub mod units;
 
@@ -52,7 +54,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
 mod doc_state;
 mod error;
@@ -245,6 +247,8 @@ impl Session {
             settings.snapunit = d.header.snap_unit();
             settings.gridunit = d.header.grid_unit();
         }
+        let a = self.input_ucs().rotation();
+        settings.ucs_angle = if a.is_finite() { a } else { 0.0 };
         settings
     }
     /// The space commands act on (model space while working inside a layout viewport).

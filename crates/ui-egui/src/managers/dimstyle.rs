@@ -658,6 +658,11 @@ fn fields(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
                 combo(ui, egui::Id::unique(id), &cur, options)
             }
         });
+        let new = new.map(|v| match (p.field, v.as_str()) {
+            // An empty per-end name inherits DIMBLK.
+            ("arrowBlock1" | "arrowBlock2", Some("")) => json!("_CLOSEDFILLED"),
+            _ => v,
+        });
         if let Some(v) = new.filter(|v| *v != cur) {
             st.values.insert(p.field.into(), v);
         }

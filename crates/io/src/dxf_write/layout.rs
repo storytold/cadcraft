@@ -1,4 +1,5 @@
 use super::ctx::Ctx;
+use super::header::model_ucs;
 use super::{Bounds2, Drawing, Entity, EntityKind, Handle, HashMap, Layout, Vec2, Vec3, VportConfig, VportTile, W, dxf_ext};
 
 /// Layouts with viewports but without the paper-space viewport (id 1, the sheet itself), keyed
@@ -46,9 +47,11 @@ fn sheet_scale(l: &Layout) -> f64 {
 /// leaves it implicit again.
 pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
+    // Keep generated viewport dimensions bounded even when a file supplies an extreme scale.
+    let sheet = (1e-6..=1e6).contains(&l.page.scale).then(|| cadcraft_render::layout_sheet(d, &l.name)).flatten();
     let paper = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
-    let size = paper / sheet_scale(l);
-    let center = size * 0.5;
+    let size = sheet.map_or_else(|| paper / sheet_scale(l), |s| s.size);
+    let center = sheet.map_or(size * 0.5, |s| s.bounds().center());
     let h = w.h();
     w.s(0, "VIEWPORT");
     w.s(5, h);
@@ -138,15 +141,44 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
         w.f(51, twist.to_degrees());
+        // UCSICON: bit 1 shows the icon, bit 2 puts it at the UCS origin. A setting of the shown
+        // configuration (there is no header variable for it).
+        if name == VportConfig::ACTIVE {
+            w.i(74, d.header.i64("UCSICON", 3).clamp(0, 3));
+        }
+        // The shown configuration's tiles keep model space's current UCS (UCSVP 1).
+        if name == VportConfig::ACTIVE {
+            let ucs = model_ucs(d);
+            w.i(65, 1);
+            w.p(110, ucs.origin);
+            w.p(111, ucs.x_axis);
+            w.p(112, ucs.y_axis);
+            w.i(79, 0);
+            // The named UCS it is (none: unnamed). The UCS table comes after VPORT, so the
+            // handle is filled in once that table has given it one ([`W::vport_ucs`]).
+            if !ucs.name.is_empty() {
+                w.s(345, "0");
+                w.vport_ucs.push((w.t.len() - 1, ucs.name.to_ascii_uppercase()));
+            }
+            w.f(146, 0.0);
+        }
     }
     w.s(0, "ENDTAB");
 }
 
 pub(super) fn table_head(w: &mut W, name: &str, count: usize) -> String {
+    table_head_x(w, name, count, None)
+}
+
+/// A table's head, with its extension dictionary `xdict` when it has one.
+pub(super) fn table_head_x(w: &mut W, name: &str, count: usize, xdict: Option<&str>) -> String {
     let h = w.h();
     w.s(0, "TABLE");
     w.s(2, name);
     w.s(5, h.clone());
+    if let Some(x) = xdict {
+        w.group("ACAD_XDICTIONARY", 360, &[x]);
+    }
     w.s(330, "0");
     w.s(100, "AcDbSymbolTable");
     w.i(70, count as i64);

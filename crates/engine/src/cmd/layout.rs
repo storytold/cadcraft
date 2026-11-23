@@ -313,7 +313,16 @@ fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
         let h = d.new_handle();
         store.push(Entity { handle: h, ..Entity::clone(e) });
     }
-    d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view, limits: src.limits });
+    d.layouts.push(Layout {
+        name: to.clone(),
+        tab_order: order,
+        page: src.page,
+        entities: store,
+        view: src.view,
+        ucs: src.ucs,
+        ucs_previous: Vec::new(),
+        limits: src.limits,
+    });
     Ok(json!({ "name": to }))
 }
 
@@ -376,9 +385,11 @@ fn run_layout(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- viewports ----------
 
-/// The printable area of a layout, in paper units.
+/// The printable area of a layout, in paper-space drawing coordinates.
 fn printable(s: &Session, layout: &str) -> Result<Bounds2> {
-    cadcraft_render::sheet(s.doc()?, layout).map(|sh| sh.printable).ok_or_else(|| bad("mview", format!("no layout `{layout}`")))
+    cadcraft_render::layout_sheet(s.doc()?, layout)
+        .map(|sh| sh.printable)
+        .ok_or_else(|| bad("mview", format!("no usable paper sheet for layout `{layout}`")))
 }
 
 /// The layout a viewport command acts on: `layout` param or the current layout.
@@ -895,6 +906,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 let path = _path;
                 // Exclusively create a fresh temporary file and rename it into place so a planted
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
+                crate::file_access::check_write(path).map_err(|e| bad(cmd, e))?;
                 let folder = super::file::new_folder(path);
                 crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
                 let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });

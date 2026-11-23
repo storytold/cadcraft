@@ -139,6 +139,10 @@ pub struct Drawing {
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
+    /// Model space's earlier UCSs for UCS Previous, oldest first (each layout keeps its own,
+    /// [`Layout::ucs_previous`]). Part of the drawing so undo restores them with the UCS. Never
+    /// written to a file.
+    pub ucs_previous: Vec<Ucs>,
     /// What reading the file left out (a DWG's object records the reader couldn't decode), told
     /// to the user when the drawing opens. Never written to a file.
     pub read_notes: Vec<String>,
@@ -211,6 +215,7 @@ impl Drawing {
             handseed: 0x100,
             reserved_handles: BTreeSet::new(),
             hidden_objects: BTreeSet::new(),
+            ucs_previous: Vec::new(),
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),

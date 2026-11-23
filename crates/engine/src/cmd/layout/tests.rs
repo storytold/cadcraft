@@ -60,6 +60,22 @@ fn zoom_limits_frames_the_scaled_and_positioned_layout_sheet() {
 }
 
 #[test]
+fn mview_defaults_to_the_scaled_positioned_printable_area() {
+    let mut s = Session::new();
+    let l = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.margins_mm = [5.0; 4];
+    l.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    s.execute("mview", &json!({"layout": "Layout1"})).unwrap();
+    let vp = &viewports(&s, "Layout1")[0].1;
+    assert_eq!(vp.center.xy(), Vec2::new(301.0, 212.0));
+    assert_eq!((vp.width, vp.height), (574.0, 400.0));
+}
+
+#[test]
 fn rename_keeps_the_active_layout_whatever_its_case() {
     let mut s = session_with_model();
     s.doc_mut().unwrap().active_layout = Some("layout1".into());

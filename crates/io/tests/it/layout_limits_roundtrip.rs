@@ -43,6 +43,7 @@ fn a_layout_keeps_its_limits_and_image_origin_through_dxf() {
 
 #[test]
 fn a_layout_keeps_its_limits_and_image_origin_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = write_with(&drawing(), "t.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).expect("DWG");
     let back = read(&dwg, "t.dwg").expect("reopen");
     assert_kept(&back, "DWG");
@@ -61,4 +62,20 @@ fn a_new_layout_writes_the_defaults() {
     assert_eq!((l.limits, l.page.image_origin), (None, None));
     let limits = (after("10"), after("11"));
     assert!(limits.0.iter().any(|v| v.parse::<f64>() == Ok(0.0)) && limits.1.iter().any(|v| v.parse::<f64>() == Ok(12.0)), "{limits:?}");
+}
+
+#[test]
+fn scaled_sheet_bounds_survive_a_dxf_round_trip_without_saved_limits() {
+    let mut d = Drawing::new_imperial();
+    let l = d.layouts.first_mut().unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.page.plot_area = "extents".into();
+    let before = cadcraft_render::layout_sheet(&d, "Layout1").unwrap().bounds();
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(cadcraft_render::layout_sheet(&back, "Layout1").unwrap().bounds(), before);
+    assert_eq!(back.layout("Layout1").unwrap().limits, Some((before.min, before.max)));
 }

@@ -6,8 +6,8 @@ printable area. Layouts show the printable area as a dashed outline on the sheet
 
 On a layout tab, the sheet and its margins are divided by the layout's plot scale and
 placed at its saved paper-space limits, when those still match the page setup. Otherwise,
-the plot window or extents and centering determine the sheet's placement. Physical output
-still uses the selected paper size: an A4 plot stays A4 even when the drawing is larger.
+it starts at the paper-space origin. Changing geometry does not move the sheet. Physical
+output still uses the selected paper size: an A4 plot stays A4 even when the drawing is larger.
 
 ## Devices
 
