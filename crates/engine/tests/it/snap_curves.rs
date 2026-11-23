@@ -134,3 +134,16 @@ fn perpendicular_from_an_arcs_center_stays_on_the_arc() {
     assert_eq!(m, mode::PER);
     assert!(p.near(Vec2::new(-6.0, 8.0), 1e-9), "{p:?}");
 }
+
+#[test]
+fn perpendicular_to_a_ray_needs_the_cursor_on_the_ray() {
+    // A ray along +X from the origin: behind its start the cursor is over nothing.
+    let mut s = Session::new();
+    s.execute("ray", &serde_json::json!({"base": [0, 0], "through": [10, 0]})).unwrap();
+    let d = s.doc().unwrap();
+    let base = Some(Vec2::new(5.0, 3.0));
+    assert_eq!(snap::osnap(d, &Space::Model, Vec2::new(-2.0, 0.0), 0.5, mode::PER, base, false), None);
+    // Over the ray, the foot is found.
+    let hit = snap::osnap(d, &Space::Model, Vec2::new(2.0, 0.0), 0.5, mode::PER, base, false).expect("the foot on the ray");
+    assert!(hit.point.near(Vec2::new(5.0, 0.0), 1e-9), "{hit:?}");
+}

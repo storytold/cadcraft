@@ -844,6 +844,10 @@ fn from_base_on_objects(
 
 /// The distance from `cursor` to the nearest point of `p`, measured as Nearest measures it.
 fn distance_to_prim(p: &Prim, cursor: Vec2) -> f64 {
+    // A ray runs one way from its start (an xline both ways, as its segment does).
+    if let Prim::Infinite { base, dir, ray: true } = p {
+        return (*base + *dir * (cursor - *base).dot(*dir).max(0.0)).dist(cursor);
+    }
     prim_segments(p).iter().map(|s| fix_circle(s).closest(cursor).dist(cursor)).fold(f64::INFINITY, f64::min)
 }
 
