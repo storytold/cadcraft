@@ -295,20 +295,22 @@ pub(crate) fn osnap_with_neighborhood(
         if !model_cursor.is_finite() || !(model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
             continue;
         }
-        let hit = osnap_in(
-            d,
-            &model,
-            &model_ix,
-            model_cursor,
-            model_aperture,
-            osmode,
-            model_base,
-            deferred,
-            &view.viewport.frozen_layers,
-            Some(view.model_clip),
-        )
+        let Some((cands, prims)) = collect_in(d, &model, &model_ix, model_cursor, model_aperture, osmode, &view.viewport.frozen_layers)
+        else {
+            continue;
+        };
+        let clip = Some(view.model_clip);
         // The rank was found in model units: paper units are model units times the scale.
-        .and_then(|(h, r)| Some((view.hit(h)?, Rank { score: r.score * view.scale, ..r })));
+        let project = |(h, r): (SnapHit, Rank)| Some((view.hit(h)?, Rank { score: r.score * view.scale, ..r }));
+        let first = finish(cands.clone(), &prims, model_cursor, model_aperture, osmode, model_base, deferred, clip);
+        // The model clip is the box round the viewport as the model sees it, larger than the
+        // viewport when it is twisted: a snap inside it can still fall off the viewport. Then the
+        // best of the others that is on it, as Tab ranks them.
+        let hit = first.and_then(|f| {
+            project(f).or_else(|| {
+                finish_all(cands, &prims, model_cursor, model_aperture, osmode, model_base, deferred, clip).into_iter().find_map(project)
+            })
+        });
         if let Some((hit, rank)) = hit
             && best.as_ref().is_none_or(|(_, b)| rank.beats(b))
         {
@@ -336,22 +338,6 @@ impl Rank {
     fn beats(&self, other: &Rank) -> bool {
         self.cmp(other).is_lt()
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn osnap_in(
-    d: &Drawing,
-    space: &Space,
-    ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
-    cursor: Vec2,
-    aperture: f64,
-    osmode: u32,
-    base: Option<Vec2>,
-    deferred: bool,
-    frozen: &[String],
-    clip: Option<Bounds2>,
-) -> Option<(SnapHit, Rank)> {
-    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _)| hit)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -449,3 +449,31 @@ fn nearest_takes_the_visible_part_of_a_curve_crossing_the_viewport_edge() {
     let model = hit.viewport.expect("seen through the viewport").point;
     assert!(model.y <= 20.0 + 1e-9 && model.dist(Vec2::new(15.0, 19.99)) <= 1.0, "{hit:?}");
 }
+
+#[test]
+fn a_twisted_viewport_offers_the_visible_perpendicular_when_a_nearer_one_is_off_the_sheet() {
+    // A viewport twisted 45°, 20 square at 0,0 on the sheet, scale 1. Through it, a line along
+    // y = 0 under the cursor and one along x = 9.3 (sheet coordinates). From the base 12,3 the
+    // foot on the first, 12,0, is inside the turned model box but off the viewport; the foot on
+    // the second, 9.3,3, is on it.
+    let mut d = Drawing::new_imperial();
+    let paper = Space::Paper("Layout1".into());
+    let vp = Viewport {
+        center: Vec3::ZERO,
+        width: 20.0,
+        height: 20.0,
+        view_center: Vec2::ZERO,
+        view_height: 20.0,
+        id: 2,
+        twist: std::f64::consts::FRAC_PI_4,
+        ..Viewport::default()
+    };
+    for (a, b) in [(Vec2::new(-9.0, 0.0), Vec2::new(30.0, 0.0)), (Vec2::new(9.3, -9.0), Vec2::new(9.3, 9.0))] {
+        let (a, b) = (vp.paper_to_model(a), vp.paper_to_model(b));
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) })).unwrap();
+    }
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let hit = osnap(&d, &paper, Vec2::new(9.0, 0.0), 0.5, mode::PER, Some(Vec2::new(12.0, 3.0)), false).expect("the visible foot");
+    assert_eq!(hit.mode, mode::PER);
+    assert!(hit.point.near(Vec2::new(9.3, 3.0), 1e-9), "{hit:?}");
+}
