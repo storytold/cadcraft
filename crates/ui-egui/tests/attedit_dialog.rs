@@ -154,6 +154,33 @@ fn the_properties_palette_lists_the_attributes() {
     }
 }
 
+/// A value typed into a Properties attribute field reaches the drawing, as one undo step.
+#[test]
+fn a_properties_value_is_set_and_undone_as_one_step() {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    let (app, h) = app_with_reference();
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run();
+    let field = harness.get_all_by_role(egui::accesskit::Role::TextInput).find(|n| n.value().as_deref() == Some("n")).expect("the NOTE field");
+    field.focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.event(egui::Event::Text("EG".into()));
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NOTE"), "EG");
+    harness.state_mut().run("undo", json!({})).unwrap();
+    assert_eq!(value(harness.state(), h, "NOTE"), "n", "one undo puts the value back");
+}
+
 /// The dialog belongs to the drawing it was opened for: with another drawing's tab chosen (where
 /// the same handle is a reference with the same tags), Apply changes nothing and the dialog
 /// closes.
