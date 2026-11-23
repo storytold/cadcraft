@@ -46,9 +46,10 @@ fn projected_row(projection: &str) -> Result<&str, String> {
     let Some(row) = rows.next() else {
         return Err(format!("missing projected key {SHARED_ZH_KEY:?}"));
     };
-    let valid = row.strip_prefix('\t').and_then(|rest| rest.split_once('\t')).is_some_and(|(key, value)| {
-        key == SHARED_ZH_KEY && !value.trim().is_empty() && !value.contains(['\t', '\\', '\r'])
-    });
+    let valid = row
+        .strip_prefix('\t')
+        .and_then(|rest| rest.split_once('\t'))
+        .is_some_and(|(key, value)| key == SHARED_ZH_KEY && !value.trim().is_empty() && !value.contains(['\t', '\\', '\r']));
     if rows.next().is_some() || !valid {
         return Err(format!("expected exactly one ordinary literal row for {SHARED_ZH_KEY:?}"));
     }
