@@ -522,13 +522,19 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    data_row(ui, crate::i18n::t(label), add);
+}
+
+/// A Properties row labelled with the drawing's own text (an attribute tag), shown as it is: a
+/// name that happens to match an interface string must not be translated.
+fn data_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
-        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), crate::i18n::t(label)));
+        label_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label));
         ui.painter().galley(pos2(lr.right() - 6.0, lr.center().y - galley.size().y / 2.0), galley, t.text_dim);
         ui.label_inputs_by(label_response.id, add);
     });
@@ -1226,7 +1232,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 if !atts.is_empty() {
                     group(ui, "Attributes");
                     for (i, a) in atts.iter().enumerate() {
-                        prop_row(ui, &a.tag, |ui| {
+                        data_row(ui, &a.tag, |ui| {
                             // The buffer is the drawing's too: handles repeat across drawings, and a
                             // pending value must not follow a tab switch.
                             // A value with line breaks is edited in the Edit Attributes dialog;
@@ -1565,6 +1571,35 @@ mod tests {
             output.textures_delta.clear();
         }
         texts
+    }
+
+    /// An attribute tag is the drawing's text: in Spanish `To` is still `To`, not `A`, while the
+    /// interface around it is translated.
+    #[test]
+    fn attribute_tags_in_properties_are_not_translated() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let mut hs = vec![app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone()];
+        hs.push(app.run("attdef", json!({ "tag": "To", "default": "T-201", "at": [0, 1] })).unwrap()["handle"].clone());
+        app.run("block", json!({ "name": "B", "base": [0, 0], "handles": hs, "keep": "delete" })).unwrap();
+        let r = app.run("insert", json!({ "name": "B", "at": [0, 0] })).unwrap();
+        let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        // Set here: a file can hold what the commands would not create (a mixed-case tag).
+        app.session
+            .doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    i.attribs[0].tag = "To".into();
+                    i.attribs[0].text.value = "T-201".into();
+                }
+            })
+            .unwrap();
+        app.run("select", json!({ "handles": [r["handle"].clone()] })).unwrap();
+
+        let texts = crate::i18n::with_language("es", || painted_texts(&mut app, properties_section));
+        assert!(texts.iter().any(|t| t == "Rotación"), "the interface is translated; painted: {texts:?}");
+        assert!(texts.iter().any(|t| t == "To"), "the tag is shown as it is; painted: {texts:?}");
+        assert!(!texts.iter().any(|t| t == "A"), "the tag is not translated; painted: {texts:?}");
     }
 
     /// Several dimensions selected: the Properties palette shows all of a dimension's properties,
