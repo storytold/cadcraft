@@ -267,6 +267,7 @@ pub const NO_FILES: &[&str] = &[
     "bsave",
     "bsaveas",
     "bclose",
+    "bconstruction",
     "erase",
     "oops",
     "move",
