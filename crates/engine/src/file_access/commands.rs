@@ -41,6 +41,7 @@ pub const FILES: &[&str] = &[
     "options",
     "pagesetup",
     "pdfbook",
+    "pdfimport",
     "plot",
     "plotstyle",
     "plottermanager",

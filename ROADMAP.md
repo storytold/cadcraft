@@ -187,3 +187,7 @@ REFEDIT (#818), XCLIP (#2354), dynamic block references (#838–#883), and the D
 ## Shared UI workspace integration
 
 Tool Sets, Layers and Properties use shared docking with persisted layouts, keyboard focus and compact toolbar overflow. No milestone percentage change.
+
+## PDF vector import
+
+PDFIMPORT and File > Import PDF... convert a selected PDF page into editable geometry, fills and text. The CLI converts PDF pages to DXF/DWG. Import reports skipped or approximated content; PDF underlays and scanned-page tracing remain unavailable. See [the import guide](docs/pdf-import.md).
