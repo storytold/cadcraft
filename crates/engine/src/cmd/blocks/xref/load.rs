@@ -344,14 +344,15 @@ fn read(file: &Path, cx: &mut Ctx) -> Result<(Drawing, Option<Stamp>, Vec<u8>), 
     }
 }
 
-/// A file's size and modification time (nanoseconds since 1970): how an edit in place (REFEDIT)
-/// tells whether an xref's file changed since it was read ([`cadcraft_doc::Block::xref_stamp`]).
-pub(crate) type Stamp = (u64, u128);
+/// A file's size and modification time: how an edit in place (REFEDIT) tells whether an xref's
+/// file changed since it was read ([`cadcraft_doc::Block::xref_stamp`]). The time is kept as the
+/// system gives it: counted from 1970, a file dated before then would have none and always look
+/// changed.
+pub(crate) type Stamp = (u64, std::time::SystemTime);
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn stamp_of(m: &std::fs::Metadata) -> Option<Stamp> {
-    let t = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    Some((m.len(), t))
+    Some((m.len(), m.modified().ok()?))
 }
 
 /// The [`Stamp`] of the file at `file` now.

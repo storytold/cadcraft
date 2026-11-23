@@ -728,11 +728,11 @@ pub struct Block {
     /// The parameters of an associative array when this is an array block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub array: Option<crate::ArrayParams>,
-    /// An xref's file as its loaded objects were read from it: size and modification time
-    /// (nanoseconds since 1970). Kept per drawing, so an edit in place (REFEDIT) can tell whether
+    /// An xref's file as its loaded objects were read from it: size and modification time (as the
+    /// system gives it, so a time before 1970 is kept too). Kept per drawing, so an edit in place (REFEDIT) can tell whether
     /// the file changed since this drawing loaded it (session state; not saved).
     #[serde(skip)]
-    pub xref_stamp: Option<(u64, u128)>,
+    pub xref_stamp: Option<(u64, std::time::SystemTime)>,
 }
 
 /// The load state of an external reference.

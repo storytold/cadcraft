@@ -67,8 +67,8 @@ pub struct XrefSource {
     pub binary: bool,
     /// The block of the source drawing being edited; `None` for its model space.
     pub block: Option<String>,
-    /// The file's size and modification time (nanoseconds since 1970) when the edit began.
-    pub stamp: Option<(u64, u128)>,
+    /// The file's size and modification time when the edit began.
+    pub stamp: Option<(u64, std::time::SystemTime)>,
     /// Edited block objects (their handles in this drawing) and the objects of the source
     /// drawing they were loaded from.
     pub sources: Vec<(Handle, Handle)>,

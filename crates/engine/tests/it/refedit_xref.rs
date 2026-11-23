@@ -984,3 +984,22 @@ fn a_reference_with_several_columns_or_rows_is_not_edited_in_place() {
     let e = s.execute("refedit", &json!({ "handle": o, "path": [inner.hex()] })).unwrap_err().to_string();
     assert!(e.contains("columns or rows"), "{e}");
 }
+
+/// Review of #3352: a file dated before 1970 had no stamp (its time was counted from 1970), so it
+/// always looked changed and REFEDIT refused it even after a reload. The time is kept as it is.
+#[test]
+fn an_xref_file_dated_before_1970_can_be_edited_in_place() {
+    let (mut s, dir, _, insert) = attached("pre-1970");
+    let file = dir.join("site.dxf");
+    let old = std::time::UNIX_EPOCH - std::time::Duration::from_secs(10 * 365 * 86_400);
+    let set = std::fs::OpenOptions::new().write(true).open(&file).and_then(|f| f.set_modified(old));
+    if set.is_err() || std::fs::metadata(&file).and_then(|m| m.modified()).ok() != Some(old) {
+        eprintln!("skipped: this file system doesn't keep a time before 1970 ({set:?})");
+        return;
+    }
+    s.execute("-xref", &json!({ "option": "reload", "names": "site" })).unwrap();
+    s.execute("refedit", &json!({ "handle": insert })).unwrap();
+    s.execute("line", &json!({ "points": [[100, 20], [110, 20]] })).unwrap();
+    s.execute("refclose", &json!({ "option": "save" })).unwrap();
+    assert_eq!(read(&file).model.len(), 3, "the edit is written");
+}
