@@ -221,7 +221,7 @@ fn a_new_insert_does_not_inherit_a_cancelled_draft() {
     h.run_steps(2);
     assert_eq!(h.get_by_label("Room").value().as_deref(), Some("101"), "the replacement's own default");
     assert_eq!(h.get_by_label("Floor").value().as_deref(), Some("1"), "the replacement's own default");
-    // The confirmation left over from the old dialog submits what this one shows.
+    // A confirmation made once the replacement has been drawn completes it with what it shows.
     h.get_by_label("OK").click();
     h.run_steps(3);
     let app = h.state();
@@ -333,6 +333,33 @@ fn a_person_typing_a_transparent_insert_still_opens_the_dialog() {
     let h = harness(a);
     h.get_by_label("Edit Attributes");
     assert!(h.state().session.attribute_entry().is_some());
+}
+
+#[test]
+fn a_person_replacing_paused_lisp_keeps_their_insert_dialog() {
+    // A routine waits in `(command "LINE" "0,0" pause)`; the person's `'-INSERT` cancels it,
+    // and the routine's `*error*` handler starts a LINE of its own. That handler command is the
+    // program's; the dialog still belongs to the person's INSERT.
+    let mut a = app();
+    a.cmdline("(defun *error* (msg) (command \"LINE\" \"1,1\" \"2,2\" \"\"))");
+    a.cmdline("(command \"LINE\" \"0,0\" pause)");
+    a.cmdline("'-INSERT T 50,0 1 1 0");
+    assert!(a.session.attribute_entry().is_some(), "the person's INSERT asks in the dialog: {}", a.session.prompt_text());
+    let h = harness(a);
+    h.get_by_label("Edit Attributes");
+    assert_eq!(h.state().session.command_origin(), cadcraft_engine::Origin::Person);
+}
+
+#[test]
+fn a_person_replacing_paused_lisp_keeps_their_minsert_dialog() {
+    let mut a = app();
+    a.cmdline("(defun *error* (msg) (command \"LINE\" \"1,1\" \"2,2\" \"\"))");
+    a.cmdline("(command \"LINE\" \"0,0\" pause)");
+    a.cmdline("'-MINSERT T 50,0 1 1 0 1 1");
+    assert!(a.session.attribute_entry().is_some(), "the person's MINSERT asks in the dialog: {}", a.session.prompt_text());
+    let h = harness(a);
+    h.get_by_label("Edit Attributes");
+    assert_eq!(h.state().session.command_origin(), cadcraft_engine::Origin::Person);
 }
 
 #[test]

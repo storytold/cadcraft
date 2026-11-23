@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use cadcraft_engine::doc::{Attrib, AttribModes, Block, Entity, EntityKind, Handle, Text};
 use cadcraft_engine::geom::{Vec2, Vec3};
-use cadcraft_engine::{AttribAsk, Input, Session};
+use cadcraft_engine::{AttribAsk, Input, Origin, Session};
 use serde_json::json;
 
 fn def(tag: &str, prompt: &str, default: &str, y: f64, constant: bool, modes: AttribModes) -> Attrib {
@@ -308,6 +308,52 @@ fn a_person_typing_a_transparent_insert_still_asks_in_the_dialog() {
     assert!(s.running.is_some(), "{}", s.prompt_text());
     assert!(s.attribute_entry().is_some(), "a typed transparent INSERT asks in the dialog");
     s.cancel();
+}
+
+/// A person typing `'NAME T …` while a routine waits in `(command "LINE" "0,0" pause)`
+/// cancels it; the routine's `*error*` handler then starts a LINE of its own. The handler's
+/// command is the program's, and it must not take the origin or number of the person's start.
+/// `extra` answers MINSERT's rows and columns.
+fn person_replaces_paused_lisp(spelling: &str, extra: &str) -> Session {
+    let mut s = session(None, Some(true));
+    s.cmdline("(defun *error* (msg) (command \"LINE\" \"1,1\" \"2,2\" \"\"))").unwrap();
+    s.cmdline("(command \"LINE\" \"0,0\" pause)").unwrap();
+    assert!(s.running.is_some(), "the routine's LINE waits for the person: {}", s.prompt_text());
+    // The person replaces the waiting routine with their own command.
+    s.cmdline(&format!("'{spelling} T 0,50 1 1 0{extra}")).unwrap();
+    assert!(s.running.is_some(), "{}", s.prompt_text());
+    // The handler's LINE is the only one drawn: the paused LINE was cancelled at its first
+    // point, and the handler's own command ran as the program's (nobody typed 1,1 or 2,2).
+    let lines: Vec<(Vec2, Vec2)> = s
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Line(l) => Some((l.a.xy(), l.b.xy())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines, vec![(Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0))], "the error handler's LINE is drawn, and the paused one added nothing");
+    s
+}
+
+#[test]
+fn a_person_replacing_paused_lisp_keeps_their_insert_dialog() {
+    let s = person_replaces_paused_lisp("-INSERT", "");
+    assert_eq!(s.command_origin(), Origin::Person, "the person's INSERT is not the handler's command");
+    let e = s.attribute_entry().expect("ATTDIA 1: the person's INSERT asks in the dialog");
+    // The handler's LINE finished as a command of its own; the INSERT's answers belong to a
+    // later number, so the dialog a cancelled command left behind is not taken.
+    assert_eq!(s.last_finished.map(|(command, _)| command), Some(e.command.wrapping_sub(1)), "the handler's LINE keeps its own number");
+}
+
+#[test]
+fn a_person_replacing_paused_lisp_keeps_their_minsert_dialog() {
+    let s = person_replaces_paused_lisp("MINSERT", " 1 1");
+    assert_eq!(s.command_origin(), Origin::Person, "the person's MINSERT is not the handler's command");
+    let e = s.attribute_entry().expect("ATTDIA 1: the person's MINSERT asks in the dialog");
+    assert_eq!(s.last_finished.map(|(command, _)| command), Some(e.command.wrapping_sub(1)), "the handler's LINE keeps its own number");
 }
 
 #[test]

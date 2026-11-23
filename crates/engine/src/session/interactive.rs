@@ -122,11 +122,15 @@ impl Session {
             return self.input(Input::Keyword("Undo".into()));
         }
         if !nested {
-            self.commands_started = self.commands_started.wrapping_add(1);
-            self.command_origin = origin;
+            // The command this one replaces is cancelled first: its cancellation can run a paused
+            // LISP routine's `*error*` handler, and a handler that starts a command records that
+            // command's Program origin. Origin and number go in after it, so they describe this
+            // start and the factory below still sees the origin this command was started with.
             if self.running.is_some() {
                 self.cancel();
             }
+            self.commands_started = self.commands_started.wrapping_add(1);
+            self.command_origin = origin;
         }
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
