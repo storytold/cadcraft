@@ -108,6 +108,26 @@ xref (flag 4), an invalid name, a block that inserts itself and a block being ed
 (REFEDIT) return nil. A definition stays open across routines until ENDBLK, but a routine that
 fails drops the one it began.
 
+An INSERT in the drawing (not one inside a block definition) has its attributes as records
+after it, and `entnext` reaches them: from the block reference to its first ATTRIB, from an
+ATTRIB to the next, and from the last one to the SEQEND (group `-2`, its reference's name), then
+on to the next main entity or nil. `entget` of an ATTRIB lists its groups with `-2` (its
+reference) beside its name (group `-1`). CADCraft keeps no handle of its own for them (a DXF
+file's are the writer's), so LISP names them from `FFFFFFFFFFFFFFFE` down, and each name is
+reserved in the drawing: a handle `new_handle` gives out can never take one, also after Undo
+lowers the handseed. Those names are the routine's way to reach them: `entmod` of an ATTRIB
+takes its value (group 1) only, as one undo step, and leaves its tag, place, flags and
+properties as they are; any other edit, including one of the layout, owner, handle or other
+groups the entity can't set, a `SEQEND` list, `entdel` and `entmake` of one return nil and
+change nothing. A name holds while its reference keeps that record in its place with that tag:
+erasing the reference, ATTSYNC, -BLOCKREPLACE, Undo and Redo end it, and a name that ended names
+nothing (nil), never another record. A drawing's session gives out at most 65,536 such names at
+once, at handles that no entity, block definition, object or `entdel` uses (1,024 tries); at the
+limit `entnext` stops naming (nil) until an edit that expires names makes room. Expired names
+stay reserved, so a drawing reserves at most 1,048,576 names in all while it is open; after
+that, names already given still work, but `entnext` gives no new ones (nil) until the drawing
+is opened again. `handent` of a name returns nil: these names aren't handles.
+
 Non-graphic objects (the named object dictionary and its dictionaries, layouts, table records)
 are listed as a DXF file of the drawing holds them, pointers as entity names and group 5 (105 for a DIMSTYLE) as the
 object's own name. An object read from a file keeps that file's handle as its name, so

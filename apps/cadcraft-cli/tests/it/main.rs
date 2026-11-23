@@ -1,3 +1,4 @@
+mod block_resources;
 mod cli;
 mod drafting_spacing;
 mod help;

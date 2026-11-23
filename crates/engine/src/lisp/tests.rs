@@ -1,11 +1,16 @@
 #![allow(clippy::unwrap_used)]
 
+use cadcraft_doc::Handle;
+use serde_json::json;
+
 use super::value::{Value, to_text};
 use crate::Session;
-use crate::cmd::file::{EntityCodec, set_entity_codec, set_object_records};
+use crate::cmd::file::{EntityCodec, set_entity_codec, set_entity_sub_record, set_object_records};
 
 pub(super) fn session() -> Session {
     set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    // ... and one record after an entity's own (an INSERT's ATTRIBs and SEQEND) for `entnext`.
+    set_entity_sub_record(cadcraft_io::entity_sub_record);
     // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
     set_object_records(cadcraft_io::object_records);
     Session::new()
@@ -1667,4 +1672,379 @@ fn append_checks_the_cell_cap_before_building_its_result() {
     assert!(e.contains("too many list cells"), "{e}");
     assert!(super::value::live_cells() < before + 50_000, "no oversized result was built");
     assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
+}
+
+// ---------------- an INSERT's ATTRIBs and SEQEND (#1660, Story 4.3) ----------------
+
+/// A session with block K: a circle and attributes (tag, DXF flags, default value). `entmake`
+/// goes through the DXF codec, as in the app.
+fn with_attributes(defs: &[(&str, i32, &str)]) -> Session {
+    let mut s = session();
+    let mut code =
+        String::from("(entmake '((0 . \"BLOCK\") (2 . \"K\") (70 . 2) (10 0.0 0.0 0.0))) (entmake '((0 . \"CIRCLE\") (10 0.0 0.0 0.0) (40 . 3.0)))");
+    for (i, (tag, flags, default)) in defs.iter().enumerate() {
+        let y = 5.0 + 3.0 * i as f64;
+        code += &format!(
+            " (entmake '((0 . \"ATTDEF\") (10 0.0 {y:.1} 0.0) (40 . 2.5) (1 . \"{default}\") (3 . \"P{tag}\") (2 . \"{tag}\") (70 . {flags})))"
+        );
+    }
+    code += " (entmake '((0 . \"ENDBLK\")))";
+    s.cmdline(&format!("(progn {code})")).unwrap();
+    s.log.clear();
+    s
+}
+
+/// `s` with one reference of K at (10,10), its values `attribs`, and the reference's handle; the
+/// LISP global `i` names it.
+fn inserted(s: &mut Session, attribs: serde_json::Value) -> Handle {
+    s.execute("insert", &json!({ "name": "K", "at": [10, 10], "attribs": attribs })).unwrap();
+    let h = *s.doc().unwrap().model.handles().last().unwrap();
+    ok(s, &format!("(setq i (handent \"{}\")) i", h.hex()));
+    h
+}
+
+/// Every reference's attributes (tag, value) from the model, in order.
+fn attribute_values(s: &Session) -> Vec<(String, String)> {
+    let d = s.doc().unwrap();
+    d.model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Insert(i) => Some(i.attribs.iter().map(|a| (a.tag.clone(), a.text.value.clone())).collect::<Vec<_>>()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// The records from `i` in order: (type, tag, value) and the SEQEND's owner.
+const WALK: &str = r#"(progn
+  (setq e (entnext i) out nil)
+  (while (and e (= "ATTRIB" (cdr (assoc 0 (setq ed (entget e))))))
+    (setq out (append out (list (list (cdr (assoc 0 ed)) (cdr (assoc 2 ed)) (cdr (assoc 1 ed))
+                                     (if (equal (cdr (assoc -2 ed)) i) T nil))))
+          e (entnext e)))
+  (list out (cdr (assoc 0 ed)) (equal (cdr (assoc -2 ed)) i)))"#;
+
+#[test]
+fn entnext_walks_an_inserts_attribs_then_the_seqend_then_the_next_entity() {
+    let mut s = with_attributes(&[("T1", 0, "D1"), ("T2", 8, "P2"), ("T3", 0, "D3")]);
+    inserted(&mut s, json!({ "T1": "A1", "T3": "A3" }));
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 66 (entget i)))"), "1");
+    assert_eq!(ok(&mut s, WALK), "(((\"ATTRIB\" \"T1\" \"A1\" T) (\"ATTRIB\" \"T2\" \"P2\" T) (\"ATTRIB\" \"T3\" \"A3\" T)) \"SEQEND\" T)");
+    // After the SEQEND the main order goes on: a line made later is next, then nil.
+    s.execute("line", &json!({ "points": [[0, -10], [10, -10]] })).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext (entnext (entnext (entnext (entnext i))))))))"), "\"LINE\"");
+    assert_eq!(ok(&mut s, "(entnext (entlast))"), "nil");
+    // A reference of a block without attributes is followed by the next main entity, no SEQEND.
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    s.cmdline("(progn (entmake '((0 . \"BLOCK\") (2 . \"E\") (70 . 2) (10 0.0 0.0 0.0))) (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (entmake '((0 . \"ENDBLK\"))))").unwrap();
+    s.execute("insert", &json!({ "name": "E", "at": [0, 0] })).unwrap();
+    let plain = *s.doc().unwrap().model.handles().last().unwrap();
+    s.execute("line", &json!({ "points": [[0, -20], [10, -20]] })).unwrap();
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 0 (entget (entnext (handent \"{}\")))))", plain.hex())), "\"LINE\"");
+    // The owner is group -2 in a record's list and not 330, and the reference's own list has
+    // neither (as `entity_groups` keeps it).
+    inserted(&mut s, json!({ "T1": "A1" }));
+    assert_eq!(ok(&mut s, "(assoc 330 (entget (entnext i)))"), "nil");
+    assert!(attribute_values(&s).iter().any(|(t, v)| t == "T1" && v == "A1"));
+}
+
+#[test]
+fn entmod_of_an_attrib_changes_only_its_value() {
+    let mut s = with_attributes(&[("T1", 0, "D1"), ("T2", 8, "P2")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) d (entget a) seq (entnext (entnext a)))");
+    // The value (group 1) is the one edit an ATTRIB's list takes.
+    let r = ok(&mut s, "(entmod (subst (cons 1 \"A2\") (assoc 1 d) d))");
+    assert!(r.contains("(1 . \"A2\")"), "{r}");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"A2\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget a)))"), "\"T1\"");
+    assert_eq!(attribute_values(&s), [("T1".into(), "A2".into()), ("T2".into(), "P2".into())]);
+    // A list asking for anything else, and any edit of the SEQEND, is refused and changes nothing.
+    for code in [
+        "(entmod (subst (cons 2 \"X\") (assoc 2 d) d))",
+        "(entmod (subst (cons 40 9.0) (assoc 40 d) d))",
+        "(entmod (subst (cons 8 \"L\") (assoc 8 d) d))",
+        "(entmod (subst (cons 0 \"SEQEND\") (assoc 0 d) d))",
+        "(entmod (entget seq))",
+        // Groups `list_to_groups` does not keep are still the reference's: an edit (or an added
+        // group) is refused, also when the same list changes group 1.
+        "(entmod (subst (cons 410 \"Layout2\") (assoc 410 d) d))",
+        "(entmod (subst (cons -2 a) (assoc -2 d) d))",
+        "(entmod (append d (list (cons 5 \"FF\"))))",
+        "(entmod (append d (list (cons 330 a))))",
+        "(entmod (append d (list (cons 360 \"FF\"))))",
+        "(entmod (append d (list (cons 102 \"{X\"))))",
+        "(entmod (subst (cons 1 \"A2\") (assoc 1 d) (subst (cons 410 \"Layout2\") (assoc 410 d) d)))",
+    ] {
+        assert_eq!(ok(&mut s, code), "nil", "{code}");
+    }
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"A2\"", "no refused edit changed the value");
+    // `entdel` of a record, and `entdel` of the SEQEND, do nothing either.
+    assert_eq!(ok(&mut s, "(progn (entdel a) (entdel seq))"), "nil");
+    assert_eq!(attribute_values(&s), [("T1".into(), "A2".into()), ("T2".into(), "P2".into())]);
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"A2\"", "the name still holds: nothing changed");
+    // The edit is one undo step: the value goes back with it.
+    s.undo().unwrap();
+    assert_eq!(attribute_values(&s), [("T1".into(), "A1".into()), ("T2".into(), "P2".into())]);
+}
+
+#[test]
+fn a_subentity_name_expires_when_its_record_is_rebuilt() {
+    let mut s = with_attributes(&[("T1", 0, "D1"), ("T2", 8, "P2")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    // Erased: the records go with the reference.
+    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
+    assert_eq!(ok(&mut s, "(list (entget a) (entnext a))"), "(nil nil)");
+    // Undone: the reference is back, the name given before the Undo is not.
+    s.undo().unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    assert_eq!(ok(&mut s, &format!("(cdr (assoc 1 (entget (entnext (handent \"{}\")))))", h.hex())), "\"A1\"");
+    // ATTSYNC rebuilds the attributes in place: the old name names nothing, the values stay.
+    ok(&mut s, "(setq b (entnext i))");
+    s.execute("attsync", &json!({ "name": "K" })).unwrap();
+    assert_eq!(ok(&mut s, "(entget b)"), "nil");
+    assert_eq!(attribute_values(&s), [("T1".into(), "A1".into()), ("T2".into(), "P2".into())]);
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+    // A name never resolves to another attribute: when a tag at that place changed, it is nil.
+    ok(&mut s, "(setq c (entnext i))");
+    ok(&mut s, "(entmod (subst (cons 1 \"Z\") (assoc 1 (entget (entnext (entnext c)))) (entget (entnext (entnext c)))))");
+    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
+    s.execute("undo", &json!({ "count": 1 })).unwrap();
+    assert_eq!(ok(&mut s, "(entget c)"), "nil");
+}
+
+#[test]
+fn a_restored_reference_does_not_revive_an_old_name() {
+    // entdel of the reference, then entdel again to bring it back: the name given before the
+    // first entdel names nothing, also after the reference returns.
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(ok(&mut s, "(progn (entdel i) (entget a))"), "nil");
+    assert_eq!(ok(&mut s, "(progn (entdel i) (entget a))"), "nil", "the name must not come back");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+    // ERASE, then OOPS: the same. Erasing expires the names it took with it.
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    s.execute("oops", &json!({})).unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil", "OOPS must not revive the name");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+}
+
+#[test]
+fn a_redo_does_not_revive_an_old_name() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) d (entget a))");
+    ok(&mut s, "(entmod (subst (cons 1 \"A2\") (assoc 1 d) d))");
+    s.undo().unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    s.redo().unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil", "Redo must not revive the name");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A2\"");
+}
+
+#[test]
+fn a_block_replace_expires_an_old_attrib_name() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    // A replacement block with the same tag as K's first attribute: without the expiry, the old
+    // name would keep naming that place and return the new record.
+    s.cmdline(
+        "(progn (entmake '((0 . \"BLOCK\") (2 . \"L\") (70 . 2) (10 0.0 0.0 0.0))) \
+         (entmake '((0 . \"ATTDEF\") (10 0.0 0.0 0.0) (40 . 2.5) (1 . \"Z1\") (3 . \"P\") (2 . \"T1\") (70 . 0))) \
+         (entmake '((0 . \"ENDBLK\"))))",
+    )
+    .unwrap();
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    s.execute("blockreplace", &json!({ "block": "K", "with": "L" })).unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil", "-BLOCKREPLACE rebuilt the record");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+}
+
+#[test]
+fn a_reinsert_after_undo_takes_the_handle_and_no_old_name() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    // U takes the reference back; INSERT then gives a new one the handle it had.
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().entity(h).is_none());
+    let again = inserted(&mut s, json!({ "T1": "B1" }));
+    assert_eq!(again, h, "the same handle");
+    assert_eq!(ok(&mut s, "(list (entget a) (cdr (assoc 1 (entget (entnext i)))))"), "(nil \"B1\")");
+}
+
+/// A drawing with one reference of `attribs` attributes (all value V), for the bounds.
+fn drawing_with_attributes(attribs: usize) -> (Session, Handle) {
+    let text = |v: &str| cadcraft_doc::Text {
+        insert: cadcraft_geom::Vec3::ZERO,
+        align_pt: None,
+        height: 1.0,
+        value: v.into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: cadcraft_doc::HAlign::Left,
+        valign: cadcraft_doc::VAlign::Baseline,
+    };
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    let list = (0..attribs)
+        .map(|i| cadcraft_doc::Attrib {
+            tag: format!("T{i}"),
+            text: text("V"),
+            invisible: false,
+            constant: false,
+            prompt: String::new(),
+            props: cadcraft_doc::AttribProps::default(),
+            multiline: None,
+            modes: cadcraft_doc::AttribModes::default(),
+        })
+        .collect();
+    let insert = cadcraft_doc::Insert { block: "B".into(), attribs: list, ..cadcraft_doc::Insert::default() };
+    let h = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::Insert(insert)).expect("add");
+    let mut s = session();
+    s.open_drawing(d, "attributes", None);
+    ok(&mut s, &format!("(setq i (handent \"{}\"))", h.hex()));
+    (s, h)
+}
+
+/// The number of records a walk from `i` names.
+const COUNT: &str = "(progn (setq e (entnext i) n 0) (while e (setq n (1+ n) e (entnext e))) n)";
+
+#[test]
+fn a_new_entity_never_takes_an_issued_name() {
+    // A hostile $HANDSEED at the top of the range: the line made next gets that handle, never the
+    // name given below it.
+    let (mut s, _) = drawing_with_attributes(1);
+    s.doc_mut().unwrap().handseed = u64::MAX;
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(
+        ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
+        "\"FFFFFFFFFFFFFFFF\""
+    );
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+    assert_eq!(ok(&mut s, "(entdel a)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"LINE\"");
+}
+
+#[test]
+fn a_lowered_handseed_never_takes_an_issued_name() {
+    // An undo can lower the handseed below a name given before it: the handle stays reserved.
+    let (mut s, _) = drawing_with_attributes(1);
+    s.doc_mut().unwrap().handseed = u64::MAX;
+    ok(&mut s, "(setq a (entnext i))");
+    s.doc_mut().unwrap().handseed = u64::MAX - 1;
+    assert_eq!(
+        ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
+        "\"FFFFFFFFFFFFFFFF\""
+    );
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+}
+
+#[test]
+fn a_real_entity_in_the_name_range_is_never_filtered() {
+    let (mut s, _) = drawing_with_attributes(1);
+    {
+        let d = s.doc_mut().unwrap();
+        d.handseed = u64::MAX;
+        for handle in [Handle(u64::MAX - 1), Handle(u64::MAX)] {
+            let line =
+                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) });
+            d.model.push(cadcraft_doc::Entity { handle, common: cadcraft_doc::Common::default(), kind: line });
+        }
+    }
+    // The names skip both lines (below the handseed); `entnext` of the first must still find the
+    // second: a real entity's handle is the drawing's, not a stale name.
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(ok(&mut s, "(equal (entnext (handent \"FFFFFFFFFFFFFFFE\")) (handent \"FFFFFFFFFFFFFFFF\"))"), "T");
+    assert_eq!(ok(&mut s, "(entnext (handent \"FFFFFFFFFFFFFFFF\"))"), "nil");
+}
+
+#[test]
+fn an_issued_attrib_name_does_not_take_a_non_graphic_object_name() {
+    let (mut s, _) = drawing_with_attributes(1);
+    // The layer's object name is the file's handle at the top of the range: the ATTRIB name skips
+    // it, so each name still reaches its own object.
+    let mut foreign = cadcraft_doc::foreign::Foreign::default();
+    foreign.handles.insert(Handle(u64::MAX - 1), ("LAYER".into(), "0".into()));
+    s.doc_mut().unwrap().foreign = std::sync::Arc::new(foreign);
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (tblobjname \"LAYER\" \"0\"))))"), "\"LAYER\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+    assert_ne!(ok(&mut s, "(equal (tblobjname \"LAYER\" \"0\") a)"), "T");
+}
+
+#[test]
+fn a_session_names_at_most_65536_records_and_nothing_changes() {
+    let (mut s, h) = drawing_with_attributes(65_537);
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    // The names given hold: a second walk is the same, and the drawing kept every attribute.
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    // Erasing and bringing the reference back frees the 65,536 names it held: the old name names
+    // nothing, and a new walk can name the records again.
+    ok(&mut s, "(setq a (entnext i))");
+    ok(&mut s, "(progn (entdel i) (entdel i))");
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    let d = s.doc().unwrap();
+    let kept = d.entity(h).and_then(|e| match &e.kind {
+        cadcraft_doc::EntityKind::Insert(i) => Some(i.attribs.len()),
+        _ => None,
+    });
+    assert_eq!(kept, Some(65_537));
+}
+
+#[test]
+fn names_already_given_still_hold_at_the_lifetime_cap() {
+    // Two full walks, the names expired between them, reserve the lifetime cap (two walks' worth
+    // in tests, so this reaches it in bounded time).
+    let (mut s, _) = drawing_with_attributes(65_537);
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    ok(&mut s, "(progn (entdel i) (entdel i))");
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    assert_eq!(s.doc().unwrap().lisp_handle_count(), 131_072, "the cap is two walks' worth in tests");
+    // The names the last walk gave still hold: a repeated walk is the same, and `entget` reaches
+    // a record through the name it was given.
+    assert_eq!(ok(&mut s, COUNT), "65536");
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+    // The cap stops new names only: a new epoch names nothing, and the drawing is as it was.
+    ok(&mut s, "(progn (entdel i) (entdel i))");
+    assert_eq!(ok(&mut s, COUNT), "0");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
+}
+
+/// Entities in `s`'s drawing holding the first `n` handles names are taken from, so a lookup has
+/// to probe past them.
+fn hold_names_at_top(s: &mut Session, n: u64) {
+    let d = s.doc_mut().unwrap();
+    for i in 0..n {
+        let handle = Handle(u64::MAX - 1 - i);
+        let line = cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) });
+        d.model.push(cadcraft_doc::Entity { handle, common: cadcraft_doc::Common::default(), kind: line });
+    }
+}
+
+#[test]
+fn a_name_steps_past_a_hostile_handle_and_stops_after_1024_tries() {
+    // 1,023 handles taken: the 1,024th try finds a free handle.
+    let (mut s, _) = drawing_with_attributes(1);
+    hold_names_at_top(&mut s, 1_023);
+    assert_eq!(ok(&mut s, "(entnext i)"), "<Entity name: fffffffffffffbff>");
+    // Each name is given once: the same record keeps its name.
+    assert_eq!(ok(&mut s, "(equal (entnext i) (entnext i))"), "T");
+    // 1,024 taken, and the lookup gives up: nil, and the drawing is as it was (`entget` of the
+    // reference still works, and one of its own records is not lost).
+    let (mut s, _) = drawing_with_attributes(1);
+    hold_names_at_top(&mut s, 1_024);
+    assert_eq!(ok(&mut s, "(entnext i)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
 }

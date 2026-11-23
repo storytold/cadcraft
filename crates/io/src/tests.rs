@@ -4234,3 +4234,85 @@ fn a_layer_state_saved_before_masks_restores_everything() {
     let got: Vec<(&str, u32, &str, &str)> = states.iter().map(|s| (s.name.as_str(), s.mask, s.current.as_str(), s.description.as_str())).collect();
     assert_eq!(got, [("S", LayerState::ALL, "", "")]);
 }
+
+/// The value of group `code` in `tags`.
+fn tag_text(tags: &[craft_dxf::Tag], code: i32) -> Option<String> {
+    tags.iter().find(|t| t.code == code).map(craft_dxf::Tag::str)
+}
+
+/// An INSERT with two attributes, for the records written after it (#1660).
+fn insert_with_attribs() -> (Drawing, Handle) {
+    let text = |value: &str| Text {
+        insert: Vec3::new(1.0, 2.0, 0.0),
+        align_pt: None,
+        height: 2.5,
+        value: value.into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: HAlign::Left,
+        valign: VAlign::Baseline,
+    };
+    let attrib = |tag: &str, value: &str| Attrib {
+        tag: tag.into(),
+        text: text(value),
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: AttribProps::default(),
+        multiline: None,
+        modes: AttribModes::default(),
+    };
+    let mut d = Drawing::new_metric();
+    let insert =
+        Insert { block: "B".into(), insert: Vec3::new(10.0, 10.0, 0.0), attribs: vec![attrib("T1", "A1"), attrib("T2", "A2")], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    (d, h)
+}
+
+#[test]
+fn an_inserts_records_are_read_one_at_a_time() {
+    let (mut d, h) = insert_with_attribs();
+    let e = d.entity(h).expect("the reference");
+    // The reference's own list is its record, with no attribute in it.
+    let (kind, own) = entity_groups(&d, e);
+    assert_eq!(kind, "INSERT");
+    assert_eq!(tag_text(&own, 66).as_deref(), Some("1"));
+    // The records after it: each attribute, then the SEQEND.
+    let first = entity_sub_record(&d, e, 0).expect("the first attribute");
+    assert_eq!(first.0, "ATTRIB");
+    assert_eq!((tag_text(&first.1, 2).as_deref(), tag_text(&first.1, 1).as_deref()), (Some("T1"), Some("A1")));
+    assert_eq!(tag_text(&first.1, 10).as_deref(), Some("1.0"), "its place is written as for the file");
+    let second = entity_sub_record(&d, e, 1).expect("the second attribute");
+    assert_eq!((tag_text(&second.1, 2).as_deref(), tag_text(&second.1, 1).as_deref()), (Some("T2"), Some("A2")));
+    let seqend = entity_sub_record(&d, e, 2).expect("the SEQEND");
+    assert_eq!(seqend.0, "SEQEND");
+    assert!(entity_sub_record(&d, e, 3).is_none(), "past the last record");
+    // They have no handle or owner of their own in the drawing: their names are LISP's.
+    for tags in [&first.1, &second.1, &seqend.1] {
+        assert!(tags.iter().all(|t| t.code != 5 && t.code != 330), "{tags:?}");
+    }
+    // An entity with no records after it has none, at any index.
+    let line = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })).expect("line");
+    let e = d.entity(line).expect("the line");
+    assert!(entity_sub_record(&d, e, 0).is_none());
+}
+
+#[test]
+fn an_attributes_value_reads_as_lisp_text() {
+    let (mut d, h) = insert_with_attribs();
+    // A caret is written `^ ` and read back as the caret LISP typed: what `entget` lists is
+    // what `entmod` takes again.
+    d.modify_entity(h, |e| {
+        if let EntityKind::Insert(i) = &mut e.kind
+            && let Some(a) = i.attribs.first_mut()
+        {
+            a.text.value = "10^2".into();
+        }
+    })
+    .expect("modify");
+    let e = d.entity(h).expect("the reference");
+    let (_, tags) = entity_sub_record(&d, e, 0).expect("the first attribute");
+    assert_eq!(tag_text(&tags, 1).as_deref(), Some("10^2"));
+}

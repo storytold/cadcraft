@@ -28,6 +28,11 @@ pub struct DocState {
     pub title: String,
     pub saved: Arc<Drawing>,
     pub revision: u64,
+    /// How many times this drawing's names of things without handles stopped holding: an undo or
+    /// redo showed another drawing state, or an attribute set was rebuilt in place (ATTSYNC,
+    /// -BLOCKREPLACE). AutoLISP's `entnext` names an INSERT's ATTRIBs and SEQEND from it, so a
+    /// name it gave stops naming anything after one of these changes (#1660).
+    pub(crate) names_epoch: u64,
     pub space: Space,
     /// Tiled model viewports (VPORTS).
     pub tiles: ModelTiles,
@@ -66,6 +71,7 @@ impl DocState {
             path,
             title: title.into(),
             revision: 1,
+            names_epoch: 0,
             space: Space::Model,
             tiles: ModelTiles::default(),
             mspace: None,
@@ -91,7 +97,15 @@ impl DocState {
         self.follow_layout(&cur.doc);
         self.reconcile_untiled_twist();
         self.revision += 1;
+        self.expire_names();
         cur
+    }
+    /// Names given to records without handles (an INSERT's ATTRIBs and SEQEND) stop holding: the
+    /// records of the drawing they were given for may be gone or replaced. They are never given
+    /// to another record, so a routine's stale name names nothing (`nil`) rather than something
+    /// else.
+    pub(crate) fn expire_names(&mut self) {
+        self.names_epoch = self.names_epoch.wrapping_add(1);
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,

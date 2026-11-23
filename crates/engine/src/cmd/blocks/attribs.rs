@@ -207,6 +207,8 @@ pub(super) fn sync(s: &mut Session, name: &str) -> Result<(String, usize)> {
     let defs = attdefs(&blk);
     let d = s.doc_mut()?;
     let n = update_references(d, &blk.name, |ins| ins.attribs = synced(&blk, &defs, ins));
+    // The references have new ATTRIBs: names given to the old ones hold no longer (#1660).
+    s.state_mut()?.expire_names();
     Ok((blk.name.clone(), n))
 }
 

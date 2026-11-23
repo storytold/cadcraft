@@ -51,6 +51,14 @@ struct Records {
     by_role: HashMap<ForeignKey, String>,
 }
 
+impl Names {
+    /// Whether the drawing already names one of its non-graphic objects `h`: an INSERT's record
+    /// must not be given the same handle, or one name would resolve to another object.
+    pub(crate) fn names_handle(&self, h: Handle) -> bool {
+        self.by_name.contains_key(&h)
+    }
+}
+
 impl Records {
     fn key(&self, written: &str) -> Option<ForeignKey> {
         let i = *self.by_handle.get(written)?;
@@ -109,7 +117,8 @@ fn name_of(names: &mut Names, d: &Drawing, key: &ForeignKey) -> Option<Handle> {
     if let Some(h) = names.by_key.get(key) {
         return Some(*h);
     }
-    let free = |names: &Names, h: Handle| d.entity(h).is_none() && !names.by_name.contains_key(&h);
+    // A handle LISP named an INSERT's record at is taken too: names never resolve to another object.
+    let free = |names: &Names, h: Handle| d.entity(h).is_none() && !names.by_name.contains_key(&h) && !d.is_lisp_handle(h);
     let file = (key.0 != BY_HANDLE).then(|| d.foreign.handles.iter().find(|(_, k)| *k == key).map(|(h, _)| *h)).flatten();
     let h = match file.filter(|h| free(names, *h)) {
         Some(h) => h,

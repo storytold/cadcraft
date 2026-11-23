@@ -163,6 +163,41 @@ fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::Hash
     (tags, kept)
 }
 
+/// One record written after an entity's own, at `index`: an INSERT's ATTRIB, then its SEQEND
+/// (items of a POLYLINE's sequence are not records `entnext` reaches yet). The record's type name
+/// and groups without its `0` group; its handle (5) and owner (330) are left out, as for
+/// [`entity_groups`], since it has none of its own in the drawing. `None` past the last record,
+/// and for an entity written as a single record. AutoLISP's `entnext` and `entget` read one
+/// record at a time through it, never writing the entity's other records.
+pub fn entity_sub_record(d: &Drawing, e: &Entity, index: usize) -> Option<(String, Vec<Tag>)> {
+    let cadcraft_doc::EntityKind::Insert(i) = &e.kind else { return None };
+    if i.attribs.is_empty() {
+        return None;
+    }
+    let mut w = W {
+        t: Vec::new(),
+        next: d.handseed.max(0x100).saturating_add(0x1000),
+        used: HashSet::new(),
+        pstyles: HashMap::new(),
+        layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
+        reactors: HashMap::new(),
+    };
+    let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
+    match i.attribs.get(index) {
+        Some(a) => entity::attrib_record(&mut w, d, e, i, a, &cx),
+        None if index == i.attribs.len() => entity::seqend_record(&mut w, e),
+        None => return None,
+    }
+    let mut tags = w.t.into_iter();
+    let kind = tags.next().filter(|t| t.code == 0).map(|t| t.value.as_str())?;
+    let mut tags: Vec<Tag> = tags.filter(|t| t.code != 5 && t.code != 330).collect();
+    // Strings as AutoLISP sees them (`10^2`, not the file's `10^ 2`), as in `entity_groups`.
+    crate::dxf_read::mtext_dxf::map_text_groups(&kind, &mut tags, crate::dxf_read::mtext_dxf::decode_line);
+    Some((kind, tags))
+}
+
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
 /// version's (MULTILEADER from 2007).
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {

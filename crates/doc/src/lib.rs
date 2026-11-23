@@ -96,6 +96,56 @@ impl Space {
     }
 }
 
+/// Handles AutoLISP gave names to records that have no handle of their own (an INSERT's
+/// ATTRIBs and SEQEND, #1660). A name is given from just below the top of the handle range, and
+/// reserved here, so [`Drawing::new_handle`] never gives it out; the set is shared by the
+/// drawing's undo snapshots, so the handle stays reserved when an undo or redo shows another
+/// state. Never written to a file: names don't survive closing the drawing. Separate from
+/// [`Drawing::reserved_handles`], which holds the handles a file's records already use.
+#[derive(Clone, Debug, Default)]
+pub struct LispHandles(std::sync::Arc<std::sync::Mutex<BTreeSet<Handle>>>);
+
+impl LispHandles {
+    /// The set, locked once for a walk that reads it many times: a thread never takes this lock
+    /// twice, which would wait for itself.
+    fn locked(&self) -> Option<std::sync::MutexGuard<'_, BTreeSet<Handle>>> {
+        self.0.lock().ok()
+    }
+}
+
+impl PartialEq for LispHandles {
+    fn eq(&self, other: &Self) -> bool {
+        // A drawing and its clone share the set: locking it twice would deadlock.
+        if std::sync::Arc::ptr_eq(&self.0, &other.0) {
+            return true;
+        }
+        // One snapshot at a time, never two locks at once: two threads comparing `a == b` and
+        // `b == a` would take the two locks in opposite orders and wait for each other forever.
+        let left = match self.0.lock() {
+            Ok(left) => left.clone(),
+            Err(_) => return false,
+        };
+        #[cfg(test)]
+        BEFORE_RIGHT_LOCK.with(|observe| {
+            if let Some(observe) = observe.borrow().as_ref() {
+                observe();
+            }
+        });
+        other.0.lock().is_ok_and(|right| *right == left)
+    }
+}
+
+#[cfg(test)]
+type LockObserver = Option<Box<dyn Fn()>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook: runs in the comparing thread just before [`LispHandles::eq`] locks the
+    /// right-hand set, so a test can see whether the left-hand set is still locked at that point.
+    pub(crate) static BEFORE_RIGHT_LOCK: std::cell::RefCell<LockObserver> =
+        const { std::cell::RefCell::new(None) };
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drawing {
     pub header: Header,
@@ -136,6 +186,9 @@ pub struct Drawing {
     /// record is placed: [`Drawing::new_handle`] skips them meanwhile. [`Drawing::bump_handseed`]
     /// does not follow them (#913). Emptied once the file is read; never written to a file.
     pub reserved_handles: BTreeSet<u64>,
+    /// Handles LISP gave names to: [`Drawing::new_handle`] never gives one out. Shared with the
+    /// drawing's snapshots; never written to a file.
+    pub lisp_handles: LispHandles,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
@@ -214,6 +267,7 @@ impl Drawing {
             scales: imperial_scales(),
             handseed: 0x100,
             reserved_handles: BTreeSet::new(),
+            lisp_handles: LispHandles::default(),
             hidden_objects: BTreeSet::new(),
             ucs_previous: Vec::new(),
             read_notes: Vec::new(),
@@ -241,26 +295,34 @@ impl Drawing {
     ///   object may hold that same handle; the seed does not follow a file's handles in the band,
     ///   so taking it as-is would hand the file's object's handle to a new object and
     ///   `EntityStore` would replace it (#913, #1921);
+    /// - handles LISP gave names to ([`Drawing::reserve_lisp_handle`], #1660): an INSERT's ATTRIBs
+    ///   and SEQEND have no handle of their own, so a name is given from the top of the band down;
     /// - handle 0, which a file reads as "no handle".
     ///
     /// Off the top of the range it goes on at the bottom of the band.
     ///
     /// Cost: below the band the reader and [`Drawing::bump_handseed`] keep the seed above every
-    /// handle an object holds (AUDIT repairs a drawing where that fails), and reserved handles are
-    /// all in the band, so there only `foreign.handles` is looked up. The scan of every space and
-    /// block definition runs only for a candidate in the band. Every handle skipped is a distinct
-    /// one something holds, so the walk ends within one step more than the count of held handles.
+    /// handle an object holds (AUDIT repairs a drawing where that fails), and reserved and named
+    /// handles are all in the band, so there only `foreign.handles` is looked up. The scan of
+    /// every space and block definition runs only for a candidate in the band. Every handle
+    /// skipped is a distinct one something holds, so the walk ends within one step more than the
+    /// count of held handles.
     pub fn next_handle(&self) -> Handle {
+        // The names are read under one lock for the whole walk: taking it per step and again for
+        // the count would lock it twice at once.
+        let named = self.lisp_handles.locked();
+        let named_count = named.as_ref().map_or(0, |n| n.len());
+        let is_named = |h: u64| named.as_ref().is_some_and(|n| n.contains(&Handle(h)));
         let held = |h: u64| {
             h == 0
                 || self.foreign.handles.contains_key(&Handle(h))
-                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || self.handle_in_use(Handle(h))))
+                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || is_named(h) || self.handle_in_use(Handle(h))))
         };
         let mut h = self.handseed;
         // Counted only once a handle is skipped, so the usual first-try answer costs nothing.
         let mut steps_left: Option<usize> = None;
         while held(h) {
-            let left = steps_left.get_or_insert_with(|| self.held_handle_count());
+            let left = steps_left.get_or_insert_with(|| self.held_handle_count(named_count));
             let Some(rest) = left.checked_sub(1) else { break };
             *left = rest;
             h = h.checked_add(1).unwrap_or(HANDLE_LIMIT);
@@ -273,12 +335,14 @@ impl Drawing {
         self.model.contains(h) || self.layouts.iter().any(|l| l.entities.contains(h)) || self.blocks.values().any(|b| b.entities.contains(h))
     }
     /// An upper bound on how many handles [`Drawing::next_handle`] can find held, plus handle 0.
-    fn held_handle_count(&self) -> usize {
+    /// `named` is the count of LISP names, read while their lock was held (never locked here).
+    fn held_handle_count(&self, named: usize) -> usize {
         let spaces = self.layouts.iter().map(|l| l.entities.len()).chain(self.blocks.values().map(|b| b.entities.len()));
         spaces
             .fold(self.model.len(), usize::saturating_add)
             .saturating_add(self.foreign.handles.len())
             .saturating_add(self.reserved_handles.len())
+            .saturating_add(named)
             .saturating_add(1)
     }
     /// Record a handle a file's record holds in the reserved band, before the record is placed in
@@ -292,7 +356,23 @@ impl Drawing {
             self.reserved_handles.insert(h.0);
         }
     }
-
+    /// Keep [`Drawing::new_handle`] from ever giving out `h`: LISP gave a name to an INSERT's
+    /// record at it (#1660). The set is shared with the drawing's undo snapshots, so the name
+    /// stays reserved whichever state they show.
+    pub fn reserve_lisp_handle(&self, h: Handle) {
+        if let Ok(mut named) = self.lisp_handles.0.lock() {
+            named.insert(h);
+        }
+    }
+    /// Whether `h` is a handle LISP named a record at ([`Drawing::reserve_lisp_handle`]).
+    pub fn is_lisp_handle(&self, h: Handle) -> bool {
+        self.lisp_handles.0.lock().is_ok_and(|r| r.contains(&h))
+    }
+    /// How many handles names were given to in this drawing (and its snapshots): a bound for a
+    /// routine that keeps walking and editing.
+    pub fn lisp_handle_count(&self) -> usize {
+        self.lisp_handles.0.lock().map(|r| r.len()).unwrap_or(0)
+    }
     /// Make sure future handles don't collide with `h` (after loading a file).
     ///
     /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not

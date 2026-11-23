@@ -67,6 +67,22 @@ pub fn entity_codec() -> Option<&'static EntityCodec> {
     CODEC.get()
 }
 
+/// One record written after an entity's own, at `index` (an INSERT's ATTRIB, then its SEQEND):
+/// its type name and the groups of its record, without its `0` group. AutoLISP's `entnext` and
+/// `entget` reach an INSERT's attributes through it, one record at a time (the attributes have no
+/// handle of their own in the drawing). Installed by the app with the DXF writer, a lower layer;
+/// optional, so a host without one simply has no such records ([`EntityCodec`] is unchanged).
+pub type EntitySubRecord = fn(&Drawing, &cadcraft_doc::Entity, usize) -> Option<(String, Vec<craft_dxf::Tag>)>;
+
+static SUB_RECORD: OnceLock<EntitySubRecord> = OnceLock::new();
+
+pub fn set_entity_sub_record(f: EntitySubRecord) {
+    let _ = SUB_RECORD.set(f);
+}
+pub fn entity_sub_record() -> Option<EntitySubRecord> {
+    SUB_RECORD.get().copied()
+}
+
 /// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
 /// type, groups after the type and role (see [`cadcraft_doc::foreign::ForeignKey`]). AutoLISP's
 /// `namedobjdict`, `tblobjname` and `handent` of non-graphic objects read them (installed by the

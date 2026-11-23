@@ -65,6 +65,9 @@ pub struct Env {
     /// Each block-definition entity with its successor in its block (None for the last), for the drawing
     /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
     pub block_next: Option<(usize, Arc<BlockSlots>)>,
+    /// Names given to an INSERT's ATTRIBs and SEQEND, which have no handle of their own (#1660):
+    /// `entget`, `entmod` and `entnext` reach those records by them, one at a time.
+    pub(crate) subents: drawing::SubEnts,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
@@ -89,6 +92,7 @@ impl Default for Env {
             deleted: HashMap::new(),
             order: None,
             block_next: None,
+            subents: drawing::SubEnts::default(),
             tblnext: HashMap::new(),
             pending_block: None,
             objects: objects::Names::default(),
