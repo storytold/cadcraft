@@ -226,7 +226,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         if n == 0 {
                             ui.colored_label(t.warn, crate::tl!("No objects selected"));
                         } else {
-                            ui.label(format!("{n} {}", crate::tl!("object(s) selected")));
+                            ui.label(crate::i18n::count(n as u64, "{n} object selected", "{n} objects selected"));
                         }
                         ui.add_space(8.0);
                         if ui.button(crate::tl!("Select objects")).clicked() {
@@ -368,7 +368,11 @@ pub fn confirm(app: &mut CadApp) -> bool {
     match app.run("wblock", params) {
         Ok(v) => {
             let n = v["entities"].as_u64().unwrap_or(0);
-            app.session.echo(format!("{n} object(s) written to \"{path}\"."));
+            app.session.echo(crate::tf!(
+                "{objects} written to \"{path}\".",
+                objects = crate::i18n::count(n, "{n} object", "{n} objects"),
+                path = path
+            ));
             app.wblock.error = None;
             true
         }
