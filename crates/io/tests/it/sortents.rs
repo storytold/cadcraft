@@ -97,6 +97,7 @@ fn a_block_entity_left_out_of_the_table_sorts_by_its_own_handle() {
 
 #[test]
 fn the_block_draw_order_survives_dxf_and_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(block_dxf().as_bytes()).unwrap();
     let dxf = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
     assert_eq!(block_kinds(&dxf), ["wipeout", "circle", "hline", "vline"], "DXF");
