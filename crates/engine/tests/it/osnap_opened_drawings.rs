@@ -87,8 +87,8 @@ fn with_osmode(text: &str, value: u32) -> String {
 
 #[test]
 fn a_dxf_with_osmode_0_keeps_the_running_snaps() {
-    let text = String::from_utf8(cadcraft_io::write(&drawing(), "snaps.dxf").unwrap()).unwrap();
-    let text = with_osmode(&text, 0);
+    let clean = String::from_utf8(cadcraft_io::write(&drawing(), "snaps.dxf").unwrap()).unwrap();
+    let text = with_osmode(&clean, 0);
     let d = cadcraft_io::read(text.as_bytes(), "snaps.dxf").unwrap();
     let mut s = Session::new();
     // OSMODE is the profile's: the user's own choice survives opening the file.
@@ -98,7 +98,9 @@ fn a_dxf_with_osmode_0_keeps_the_running_snaps() {
     // Nor does a file change a profile without Center.
     let mut s = Session::new();
     s.execute("setvar", &json!({ "name": "OSMODE", "value": mode::END })).unwrap();
-    s.open_drawing(cadcraft_io::read(with_osmode(&text, DEFAULT).as_bytes(), "x.dxf").unwrap(), "x.dxf", None);
+    let text = with_osmode(&clean, DEFAULT);
+    assert_eq!(text.matches("$OSMODE").count(), 1, "one $OSMODE in the file");
+    s.open_drawing(cadcraft_io::read(text.as_bytes(), "x.dxf").unwrap(), "x.dxf", None);
     assert_eq!(s.settings.osmode, mode::END);
 }
 
