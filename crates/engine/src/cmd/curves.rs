@@ -355,6 +355,20 @@ pub fn ttt_where(objs: [(TanObj, Vec2); 3], ok: impl Fn(&Circle) -> bool) -> Opt
     starts.push([cen.x, cen.y, rad.max(1e-3)]);
     if let Some(c) = Circle::from_3_points(p1, p2, p3) {
         starts.push([c.center.x, c.center.y, c.radius]);
+    } else {
+        // The picks lie in one line. When the circles picked are centred on it too, every Newton
+        // step from a start on that line stays on it: start off it as well, on both sides, from
+        // the circle through the two picks farthest apart and a point beside them.
+        let (a, b) = [(p1, p2), (p1, p3), (p2, p3)].into_iter().max_by(|x, y| x.0.dist(x.1).total_cmp(&y.0.dist(y.1))).unwrap_or((p1, p3));
+        let span = a.dist(b);
+        let n = (b - a).normalized().perp();
+        if span.is_finite() && span > 0.0 && n.is_finite() {
+            for side in [1.0, -1.0] {
+                if let Some(c) = Circle::from_3_points(a, b, (a + b) / 2.0 + n * (span * side)) {
+                    starts.push([c.center.x, c.center.y, c.radius]);
+                }
+            }
+        }
     }
     let mut best: Option<(f64, Circle)> = None;
     let scale = rad.max(p1.dist(p2)).max(1e-6);

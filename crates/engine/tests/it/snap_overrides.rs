@@ -227,3 +227,14 @@ fn tan_for_a_3p_circle_refuses_the_picked_circle_itself() {
     assert!(s.log.iter().any(|l| l.contains("Circle does not exist.")), "{:?}", s.log);
     assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Circle(_))).count(), 1);
 }
+
+#[test]
+fn tan_for_a_3p_circle_through_points_in_line_with_the_picked_circles_center() {
+    // Through 3,0 and 5,0 and tangent to the unit circle at the origin: the two points and that
+    // circle's center lie on one line, the circle that touches it does not (center 4,±√48, radius 7).
+    let mut s = Session::new();
+    s.script("CIRCLE 0,0 1\nCIRCLE 3P 3,0 5,0 TAN 1,0\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let (c, r) = last_circle(&s);
+    assert!(near(Vec2::new(c.x, c.y.abs()), 4.0, 48f64.sqrt()) && (r - 7.0).abs() < 1e-9, "{c:?} r={r}");
+}
