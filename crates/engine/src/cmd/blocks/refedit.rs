@@ -13,11 +13,12 @@
 //! stand faded around it.
 //!
 //! An xref (or a block that came with one) is edited the same way, and REFCLOSE Save writes the
-//! change into its source drawing the way SAVE writes a drawing: the previous file is kept as its
-//! `.bak`, the new one replaces it atomically, and a symbolic link planted beside it or put at its
-//! path during the edit never redirects the write. The save is refused when the file is
-//! read-only, open in another program (or another drawing tab), or changed since it was loaded.
-//! The xref is then loaded again from the file it wrote.
+//! change into its source drawing the way SAVE writes a drawing: when ISAVEBAK is on, the previous
+//! file is kept as its `.bak` (with it off, no backup is kept); the new one replaces it
+//! atomically, and a symbolic link planted beside it or put at its path during the edit never
+//! redirects the write. The save is refused when the file is read-only, open in another program
+//! (or another drawing tab), or changed since it was loaded. The xref is then loaded again from
+//! the file it wrote.
 //!
 //! The state is [`Drawing::refedit`]: it travels with undo, is never written to a file (files
 //! are written from [`Drawing::committed`]) and ends with the drawing it belongs to.
