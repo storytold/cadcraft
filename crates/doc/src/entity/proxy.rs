@@ -329,7 +329,7 @@ impl Decoder<'_> {
             return self.push(EntityKind::Hatch(Hatch {
                 pattern: "SOLID".into(),
                 solid: true,
-                loops: vec![HatchLoop { vertices, outer: true, sources: Vec::new() }],
+                loops: vec![HatchLoop { vertices, outer: true, boundary_flags: None, sources: Vec::new() }],
                 scale: 1.0,
                 angle: 0.0,
                 associative: false,
