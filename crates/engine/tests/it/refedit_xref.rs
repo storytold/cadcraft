@@ -792,3 +792,24 @@ fn a_nested_reference_too_small_with_its_parents_is_not_offered() {
     let names: Vec<&str> = levels["levels"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Holder"], "{levels}");
 }
+
+/// Review of #3352: the outer reference wasn't checked when listing levels, so one scaled (2, 1)
+/// offered the uniformly scaled reference nested in it, which REFEDIT then refused. An outer
+/// reference REFEDIT can't open offers no level; one scaled equally still offers its children.
+#[test]
+fn an_outer_reference_refedit_cannot_open_offers_no_nested_level() {
+    let mut s = Session::new();
+    let c = hx(s.execute("circle", &json!({ "center": [0, 0], "radius": 1 })).unwrap());
+    s.execute("block", &json!({ "name": "Leaf", "base": [0, 0], "handles": [c], "keep": "delete" })).unwrap();
+    let leaf = hx(s.execute("insert", &json!({ "name": "Leaf", "at": [10, 0] })).unwrap());
+    s.execute("block", &json!({ "name": "Holder", "base": [0, 0], "handles": [leaf], "keep": "delete" })).unwrap();
+    let stretched = hx(s.execute("insert", &json!({ "name": "Holder", "at": [0, 0], "scale": [2, 1] })).unwrap());
+    let e = s.execute("refedit.levels", &json!({ "handle": stretched })).unwrap_err().to_string();
+    assert!(e.contains("scaled equally"), "{e}");
+    let e = s.execute("refedit", &json!({ "handle": stretched, "nested": "Leaf" })).unwrap_err().to_string();
+    assert!(e.contains("scaled equally"), "{e}");
+    let uniform = hx(s.execute("insert", &json!({ "name": "Holder", "at": [0, 50], "scale": 2 })).unwrap());
+    let levels = s.execute("refedit.levels", &json!({ "handle": uniform })).unwrap();
+    let names: Vec<&str> = levels["levels"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Holder", "Leaf"], "{levels}");
+}

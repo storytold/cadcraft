@@ -123,12 +123,16 @@ fn editable_transform(m: &Mat3, sx: f64, sy: f64) -> bool {
     finite && m.det().abs() >= 1e-12 && (sx.abs() - sy.abs()).abs() <= 1e-9 * sx.abs().max(sy.abs())
 }
 
+fn unequal_scale() -> crate::EngineError {
+    bad("refedit", "the reference must be scaled equally in X and Y (and not flat) to be edited in place")
+}
+
 /// The levels from top reference `ins` down `path` (references inside the block definitions).
 fn levels(d: &Drawing, ins: &cadcraft_doc::Insert, path: &[Handle]) -> Result<Vec<Level>> {
     let mut block = d.block(&ins.block).cloned().ok_or_else(|| bad("refedit", format!("block \"{}\" not found", ins.block)))?;
     let mut m = ins.transform(block.base.xy());
     if !editable_transform(&m, ins.scale.x, ins.scale.y) {
-        return Err(bad("refedit", "the reference must be scaled equally in X and Y (and not flat) to be edited in place"));
+        return Err(unequal_scale());
     }
     if path.len() >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return Err(bad("refedit", "the reference is nested too deeply"));
@@ -178,8 +182,12 @@ fn nested(d: &Drawing, name: &str, m: &Mat3, path: &mut Vec<Handle>, out: &mut V
 /// The nesting levels of reference `ih`: the reference itself, then every reference nested in it.
 fn level_list(d: &Drawing, ih: Handle) -> Result<Vec<(Vec<Handle>, String)>> {
     let Some(EntityKind::Insert(ins)) = d.entity(ih).map(|e| &e.kind) else { return Err(bad("refedit", "select a block reference")) };
-    let mut out = vec![(Vec::new(), ins.block.clone())];
     let m = d.block(&ins.block).map_or(Mat3::IDENTITY, |b| ins.transform(b.base.xy()));
+    // As [`levels`] checks it: a reference it would refuse offers nothing nested in it either.
+    if !editable_transform(&m, ins.scale.x, ins.scale.y) {
+        return Err(unequal_scale());
+    }
+    let mut out = vec![(Vec::new(), ins.block.clone())];
     nested(d, &ins.block, &m, &mut Vec::new(), &mut out);
     Ok(out)
 }
