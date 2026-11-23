@@ -2329,12 +2329,35 @@ fn two_point_imported_degenerate_geometry_keeps_edited_height() {
         let imported = first(&d, |kind| if let EntityKind::Text(t) = kind { Some(t.clone()) } else { None });
         assert_eq!(imported.align_pt, if missing { None } else { Some(Vec3::ZERO) });
         d.model.modify(handle, |entity| {
-            if let EntityKind::Text(t) = &mut entity.kind { t.height = 4.0; }
+            if let EntityKind::Text(t) = &mut entity.kind {
+                t.height = 4.0;
+            }
         });
         let saved = read(&write(&d, "edge.dxf").unwrap(), "edge.dxf").unwrap();
         let text = first(&saved, |kind| if let EntityKind::Text(t) = kind { Some(t.clone()) } else { None });
         assert!((text.height - 4.0).abs() < 1e-10, "missing: {missing}");
     }
+}
+
+#[test]
+fn two_point_imported_nonfinite_geometry_keeps_edited_height() {
+    let mut d = imported_two_point_text_sample();
+    let handle = d.model.handles()[0];
+    d.model.modify(handle, |entity| {
+        if let EntityKind::Text(t) = &mut entity.kind {
+            assert_eq!(t.halign, HAlign::Aligned);
+            t.insert = Vec3::ZERO;
+            t.align_pt = Some(Vec3::new(f64::INFINITY, 0.0, 0.0));
+            t.height = 4.0;
+        }
+    });
+    let snapshot = &mut std::sync::Arc::make_mut(&mut d.foreign).text_fits.get_mut(&handle).unwrap()[0].0;
+    snapshot.insert = Vec3::ZERO;
+    snapshot.align_pt = Some(Vec3::new(f64::INFINITY, 0.0, 0.0));
+    snapshot.height = 2.0;
+    let saved = read(&write(&d, "edge.dxf").unwrap(), "edge.dxf").unwrap();
+    let text = first(&saved, |kind| if let EntityKind::Text(t) = kind { Some(t.clone()) } else { None });
+    assert!((text.height - 4.0).abs() < 1e-10);
 }
 
 #[test]
