@@ -1,7 +1,7 @@
 //! Original synthetic plot subclasses covering the Autodesk DXF Reference's PLOTSETTINGS fields.
 
 use cadcraft_doc::{Drawing, NamedView};
-use cadcraft_io::{read, write, write_dxf};
+use cadcraft_io::{SaveOptions, Version, read, write, write_dxf, write_with};
 use std::collections::BTreeMap;
 
 fn normalized(text: &str) -> String {
@@ -46,8 +46,8 @@ fn source(plot_type: i64, flags: i64) -> String {
     result
         .replacen("2\nCLASSES\n", "2\nCLASSES\n0\nCLASS\n1\nRENDERSETTINGS\n2\nAcDbRenderSettings\n3\nSCENEOE\n90\n1024\n91\n1\n280\n0\n281\n0\n", 1)
         .replacen(
-            "2\nOBJECTS\n",
-            "2\nOBJECTS\n0\nRENDERSETTINGS\n5\nF00\n330\n0\n100\nAcDbRenderSettings\n90\n2\n1\nDraft render\n290\n1\n290\n1\n290\n1\n290\n1\n1\n\n1\n\n90\n3\n",
+            "0\nENDSEC\n0\nEOF\n",
+            "0\nRENDERSETTINGS\n5\nF00\n330\n0\n100\nAcDbRenderSettings\n90\n2\n1\nDraft render\n290\n1\n290\n1\n290\n1\n290\n1\n1\n\n1\n\n90\n3\n0\nENDSEC\n0\nEOF\n",
             1,
         )
 }
@@ -64,6 +64,22 @@ fn plots(text: &str) -> BTreeMap<String, BTreeMap<i32, String>> {
             (name, tags)
         })
         .collect()
+}
+
+fn expected_plots(text: &str) -> BTreeMap<String, BTreeMap<i32, String>> {
+    plots(text)
+        .into_iter()
+        .map(|(layout, mut tags)| {
+            let flags = tags[&70].parse::<i64>().unwrap();
+            tags.insert(70, (if layout == "Model" { flags | 1024 } else { flags & !1024 }).to_string());
+            tags.remove(&333);
+            (layout, tags)
+        })
+        .collect()
+}
+
+fn saved_plots(drawing: &Drawing) -> BTreeMap<String, BTreeMap<i32, String>> {
+    plots(&String::from_utf8(write(drawing, "saved.dxf").unwrap()).unwrap())
 }
 
 fn assert_plot_eq(expected: &BTreeMap<i32, String>, actual: &BTreeMap<i32, String>, context: &str) {
@@ -93,7 +109,7 @@ fn every_layout_keeps_all_plot_settings_in_dxf_and_dwg() {
     for plot_type in [0, 3, 4] {
         for flags in [11952, 11936] {
             let source = source(plot_type, flags);
-            let expected = plots(&source);
+            let expected = expected_plots(&source);
             assert_eq!(expected.len(), 3);
             assert!(expected.contains_key("Model"));
             let drawing = read(source.as_bytes(), "source.dxf").unwrap();
@@ -110,7 +126,7 @@ fn every_layout_keeps_all_plot_settings_in_dxf_and_dwg() {
                     assert_plot_eq(tags, &actual[layout], &format!("{name}: {layout}"));
                 }
                 let reopened = read(&bytes, name).unwrap();
-                let again = plots(&write_dxf(&reopened));
+                let again = saved_plots(&reopened);
                 for (layout, tags) in &expected {
                     assert_plot_eq(tags, &again[layout], &format!("reopened {name}: {layout}"));
                 }
@@ -123,7 +139,7 @@ fn every_layout_keeps_all_plot_settings_in_dxf_and_dwg() {
 fn changed_page_fields_override_only_their_saved_groups() {
     cadcraft_io::dwg_worker::allow_in_process();
     let source = source(3, 11952).replace("72\n0\n", "72\n2\n");
-    let expected = plots(&source);
+    let expected = expected_plots(&source);
     let mut drawing = read(source.as_bytes(), "source.dxf").unwrap();
     let pages = drawing.model_page.iter_mut().chain(drawing.layouts.iter_mut().map(|layout| &mut layout.page));
     for page in pages {
@@ -135,11 +151,14 @@ fn changed_page_fields_override_only_their_saved_groups() {
     }
     for name in ["changed.dxf", "changed.dwg"] {
         let reopened = read(&write(&drawing, name).unwrap(), name).unwrap();
-        let actual = plots(&write_dxf(&reopened));
+        let actual = saved_plots(&reopened);
         for (layout, original) in &expected {
             let mut tags = original.clone();
             for (code, value) in [(74, "1"), (142, "0.5"), (143, "1"), (147, "0.5"), (70, "11936"), (75, "16"), (7, "Changed.ctb"), (72, "0")] {
                 tags.insert(code, value.into());
+            }
+            if layout != "Model" {
+                tags.insert(70, (11936 & !1024).to_string());
             }
             assert_plot_eq(&tags, &actual[layout], &format!("{name}: {layout}"));
         }
@@ -150,7 +169,7 @@ fn changed_page_fields_override_only_their_saved_groups() {
 fn changing_only_paper_or_device_keeps_other_plot_settings() {
     cadcraft_io::dwg_worker::allow_in_process();
     let source = source(3, 11952);
-    let expected = plots(&source);
+    let expected = expected_plots(&source);
     for (code, value) in [(4, "Changed_paper"), (2, "Changed-device.pc3")] {
         let mut drawing = read(source.as_bytes(), "source.dxf").unwrap();
         let pages = drawing.model_page.iter_mut().chain(drawing.layouts.iter_mut().map(|layout| &mut layout.page));
@@ -172,12 +191,95 @@ fn changing_only_paper_or_device_keeps_other_plot_settings() {
             };
             let saved = plots(&text);
             let reopened = read(&bytes, name).unwrap();
-            let again = plots(&write_dxf(&reopened));
+            let again = saved_plots(&reopened);
             for (layout, original) in &expected {
                 let mut tags = original.clone();
                 tags.insert(code, value.into());
                 assert_plot_eq(&tags, &saved[layout], &format!("saved {name}: {layout}, changed group {code}"));
                 assert_plot_eq(&tags, &again[layout], &format!("reopened {name}: {layout}, changed group {code}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn kept_model_type_is_corrected_with_and_without_page_edits() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let source = source(0, 688);
+    let source = source.replacen(&settings(2, 0, 688), &settings(2, 0, 1712), 1);
+    let drawing = read(source.as_bytes(), "source.dxf").unwrap();
+    for edited in [false, true] {
+        let mut drawing = drawing.clone();
+        if edited {
+            for page in drawing.model_page.iter_mut().chain(drawing.layouts.iter_mut().map(|layout| &mut layout.page)) {
+                page.center = true;
+            }
+        }
+        for name in ["saved.dxf", "saved.dwg"] {
+            let bytes = write(&drawing, name).unwrap();
+            let text = if name.ends_with("dwg") { craft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes.clone() };
+            let actual = plots(&String::from_utf8(text).unwrap());
+            let centered = if edited { 4 } else { 0 };
+            assert_eq!(actual["Model"][&70].trim().parse::<i64>().unwrap(), 1712 | centered, "{name}, edited {edited}");
+            assert_eq!(actual["Layout1"][&70].trim().parse::<i64>().unwrap(), 688 | centered, "{name}, edited {edited}");
+            let reopened = read(&bytes, name).unwrap();
+            assert_eq!(reopened.model_page.as_ref().unwrap().file_plot_flags, Some(1712 | centered));
+            assert_eq!(reopened.layouts.iter().find(|layout| layout.name == "Layout1").unwrap().page.file_plot_flags, Some(688 | centered));
+        }
+    }
+}
+
+#[test]
+fn shade_plot_groups_follow_the_target_version_not_the_source() {
+    let source = source(0, 688);
+    let drawing = read(source.as_bytes(), "source.dxf").unwrap();
+    for version in [Version::R2000, Version::R2004, Version::R2007, Version::R2018] {
+        let bytes = write_with(&drawing, "saved.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        for (layout, tags) in plots(&text) {
+            for code in [76, 77, 78] {
+                assert_eq!(tags.contains_key(&code), version >= Version::R2004, "{version:?}: {layout}, group {code}");
+            }
+            assert!(!tags.contains_key(&333), "unwritten shade plot object: {version:?}: {layout}");
+        }
+        for layout in normalized(&text).split("100\nAcDbLayout\n").skip(1) {
+            let lines = layout.lines().collect::<Vec<_>>();
+            assert!(lines.as_chunks::<2>().0.iter().take_while(|pair| pair[0] != "0").any(|pair| pair[0] == "76"), "layout UCS group: {version:?}");
+        }
+    }
+}
+
+#[test]
+fn shade_plot_handle_names_a_written_object_or_is_omitted() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let source = source(0, 688);
+    let root = source.split("2\nOBJECTS\n").nth(1).unwrap().split("0\nDICTIONARY\n5\n").nth(1).unwrap().lines().next().unwrap();
+    let source = source.replacen("3\nACAD_GROUP\n", "3\nDraft render\n350\nF00\n3\nACAD_GROUP\n", 1).replacen(
+        "5\nF00\n330\n0\n",
+        &format!("5\nF00\n330\n{root}\n"),
+        1,
+    );
+    let drawing = read(source.as_bytes(), "source.dxf").unwrap();
+    assert!(drawing.foreign.objects.iter().any(|object| object.kind == "RENDERSETTINGS"));
+    for keep_object in [true, false] {
+        let mut drawing = drawing.clone();
+        if !keep_object {
+            std::sync::Arc::make_mut(&mut drawing.foreign).objects.retain(|object| object.kind != "RENDERSETTINGS");
+        }
+        for version in [Version::R2000, Version::R2004, Version::R2007, Version::R2018] {
+            for name in ["saved.dxf", "saved.dwg"] {
+                let bytes = write_with(&drawing, name, &SaveOptions { version: Some(version), binary: false }).unwrap();
+                let text = if name.ends_with("dwg") { craft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes };
+                let text = normalized(&String::from_utf8(text).unwrap());
+                let written = text.split("0\nRENDERSETTINGS\n5\n").nth(1).and_then(|part| part.lines().next());
+                for (layout, tags) in plots(&text) {
+                    if keep_object && version >= Version::R2007 {
+                        assert_eq!(tags.get(&333).map(String::as_str), written, "{name}, {version:?}: {layout}");
+                        assert!(tags.contains_key(&333), "{name}, {version:?}: {layout}");
+                    } else {
+                        assert!(!tags.contains_key(&333), "{name}, {version:?}: {layout}");
+                    }
+                }
             }
         }
     }

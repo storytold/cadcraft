@@ -446,11 +446,11 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.s(5, h);
     w.s(330, layout_dict.to_string());
     w.s(100, "AcDbPlotSettings");
-    write_plot_settings(w, d, page);
+    write_plot_settings(w, d, page, data.model);
     write_layout_data(w, d, data, view);
 }
 
-fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
+fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
     let start = w.t.len();
     // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
     // per 143 drawing units).
@@ -458,7 +458,7 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
     // The file's standard scale (such as 1:50) while the scale is still the one read with it.
     let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
     let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
-    let plot_flags = plot_layout_flags(page, standard, data.model);
+    let plot_flags = plot_layout_flags(page, standard, model);
     let plot_type = match page.plot_area.as_str() {
         "display" => 0,
         "extents" => 1,
@@ -505,7 +505,7 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
     w.f(149, origin.y);
     if let Some(kept) = &page.file_plot_settings {
         let current = w.t.split_off(start);
-        write_plot_settings(w, d, &kept.page);
+        write_plot_settings(w, d, &kept.page, model);
         let baseline = w.t.split_off(start);
         let changed = |code| {
             (matches!(code, 142 | 143 | 147) && page.scale != kept.page.scale)
@@ -525,11 +525,13 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup) {
                 if tag.code == 70
                     && let Some((now, before)) = current.iter().find(|tag| tag.code == 70).zip(baseline.iter().find(|tag| tag.code == 70))
                 {
-                    let mask = now.i64() ^ before.i64();
+                    let mask = (now.i64() ^ before.i64()) | 1024;
                     w.i(70, (tag.i64() & !mask) | (now.i64() & mask));
                     continue;
                 }
                 w.t.extend(current.iter().filter(|new| new.code == tag.code).cloned());
+            } else if tag.code == 70 {
+                w.i(70, if model { tag.i64() | 1024 } else { tag.i64() & !1024 });
             } else {
                 w.t.push(tag.clone());
             }
@@ -1341,7 +1343,47 @@ pub(super) fn tags_kept_for(
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
+    plot_settings_compatibility(&mut w.t, target);
     (w.t, kept)
+}
+
+fn plot_settings_compatibility(tags: &mut Vec<Tag>, target: Version) {
+    let mut objects = HashSet::new();
+    let mut section = String::new();
+    let mut section_start = false;
+    for tag in tags.iter() {
+        if tag.code == 0 {
+            section_start = tag.str() == "SECTION";
+            if tag.str() == "ENDSEC" {
+                section.clear();
+            }
+        } else if section_start && tag.code == 2 {
+            section = tag.str();
+            section_start = false;
+        } else if section == "OBJECTS" && tag.code == 5 {
+            objects.extend(u64::from_str_radix(tag.str().trim(), 16).ok().filter(|handle| *handle != 0));
+        }
+    }
+    let mut kind = String::new();
+    let mut subclass = String::new();
+    tags.retain(|tag| {
+        if tag.code == 0 {
+            kind = tag.str();
+            subclass.clear();
+        } else if tag.code == 100 {
+            subclass = tag.str();
+        }
+        if !matches!(kind.as_str(), "LAYOUT" | "PLOTSETTINGS") {
+            return true;
+        }
+        if subclass == "AcDbPlotSettings" && matches!(tag.code, 76..=78) {
+            return target >= Version::R2004;
+        }
+        if matches!(subclass.as_str(), "AcDbPlotSettings" | "AcDbLayout") && tag.code == 333 {
+            return target >= Version::R2007 && u64::from_str_radix(tag.str().trim(), 16).ok().is_some_and(|handle| objects.contains(&handle));
+        }
+        true
+    });
 }
 
 /// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups
