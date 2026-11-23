@@ -122,3 +122,15 @@ fn spline_midpoint_perpendicular_and_tangent() {
     let d = (sp.eval(i + 1e-6) - sp.eval(i - 1e-6)).normalized();
     assert!(d.cross((q - base).normalized()).abs() < 1e-3, "the line from the base runs along the curve at {q:?}");
 }
+
+#[test]
+fn perpendicular_from_an_arcs_center_stays_on_the_arc() {
+    // From the center of an arc every point is perpendicular: the one under the cursor, never a
+    // point of its circle outside the sweep.
+    let mut s = Session::new();
+    s.execute("arc", &serde_json::json!({"center": [0, 0], "radius": 10, "start": 90, "end": 180})).unwrap();
+    let hit = snap::osnap(s.doc().unwrap(), &Space::Model, Vec2::new(-6.0, 8.0), 0.3, mode::PER, Some(Vec2::ZERO), false);
+    let (p, m) = hit.map(|h| (h.point, h.mode)).expect("a perpendicular on the arc");
+    assert_eq!(m, mode::PER);
+    assert!(p.near(Vec2::new(-6.0, 8.0), 1e-9), "{p:?}");
+}

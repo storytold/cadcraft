@@ -133,7 +133,11 @@ impl SnapCurve {
             SnapCurve::Circle { center, radius } | SnapCurve::Arc { center, radius, .. } => {
                 let u = (p - *center).normalized();
                 if u == Vec2::ZERO {
-                    vec![Circle::new(*center, *radius).closest(picked)]
+                    // On an arc, the point within its sweep.
+                    vec![match *self {
+                        SnapCurve::Arc { center, radius, start, end } => cadcraft_geom::Arc::new(center, radius, start, end).closest(picked),
+                        _ => Circle::new(*center, *radius).closest(picked),
+                    }]
                 } else {
                     [*center + u * *radius, *center - u * *radius].into_iter().filter(|q| self.contains(*q)).collect()
                 }
@@ -725,9 +729,10 @@ fn base_snaps(near_prims: &[Prim], osmode: u32, base: Option<Vec2>, cursor: Vec2
             let pts = match p {
                 Prim::Seg(Segment::Line(l)) => vec![l.project(bp)],
                 // Both antipodes, filtered to the arc's sweep: a perpendicular in the gap is
-                // not offered, and the far side is still found.
+                // not offered, and the far side is still found. From the centre, the point of
+                // the arc under the cursor.
                 Prim::Seg(Segment::Arc { arc, .. }) => {
-                    SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end }.perpendiculars(bp, bp)
+                    SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end }.perpendiculars(bp, cursor)
                 }
                 // Both antipodes too, so a pick on the far side of the circle snaps there
                 // rather than across it. From the centre every point is perpendicular: the
