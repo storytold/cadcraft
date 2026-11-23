@@ -583,8 +583,9 @@ fn edit_field(ui: &mut egui::Ui, id: egui::Id, value: String) -> Option<String> 
 
 /// Text waiting in an attribute's Properties field, kept with the attribute it was typed into: a
 /// reorder, an edit from elsewhere, or an undo can put another attribute in that place. The whole
-/// row is kept, not just its tag and value: two attributes can share those and differ only in
-/// where they are drawn, and a reorder of the block's definitions swaps those.
+/// row is kept, which holds the whole stored attribute (`AttributeRow::record`): two attributes can
+/// share a tag, a value and even an insertion point, and still differ in text height, rotation,
+/// justification, style or their own overrides, which a reorder of the block's definitions swaps.
 #[derive(Clone)]
 struct PendingAttr {
     row: cadcraft_engine::AttributeRow,
@@ -594,7 +595,8 @@ struct PendingAttr {
 /// [`edit_field`] for the value of attribute `a`, which the drawing has where this row is. The
 /// field is a place in the reference (addressed by index, which keeps attributes sharing a tag
 /// apart), so the pending text stays bound to the attribute it was typed into: when the place
-/// holds another one, the text is dropped (and `stale` set) rather than written to it.
+/// holds another one — any stored property differs, not only the tag, value and insertion point —
+/// the text is dropped (and `stale` set) rather than written to it.
 fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> Option<String> {
     let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
     if pending.as_ref().is_some_and(|p| p.row != *a) {

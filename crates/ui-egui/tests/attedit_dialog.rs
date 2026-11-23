@@ -394,6 +394,66 @@ fn a_stale_dialog_tells_equal_tag_and_value_attributes_apart_by_place() {
     assert!(error.contains("The attributes changed"), "the dialog says so: {error}");
 }
 
+/// A block "Twin" with two editable `T=v` attribute definitions at the same insertion point, their
+/// texts 1 and 2 high, and one reference to it (selected): the two attributes share every field
+/// the palette and the dialog show, so only a property they don't show tells them apart.
+fn app_with_same_place_twins() -> (CadApp, Handle) {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let mut hs = vec![app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone()];
+    hs.push(app.run("attdef", json!({ "tag": "T", "default": "v", "at": [0, 1], "height": 1 })).unwrap()["handle"].clone());
+    hs.push(app.run("attdef", json!({ "tag": "T", "default": "v", "at": [0, 1], "height": 2 })).unwrap()["handle"].clone());
+    app.run("block", json!({ "name": "Twin", "base": [0, 0], "handles": hs, "keep": "delete" })).unwrap();
+    let r = app.run("insert", json!({ "name": "Twin", "at": [100, 0] })).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    app.session.set_selection(vec![h]);
+    (app, h)
+}
+
+/// Every attribute's value by the height its text is drawn at, smallest first: the property that
+/// tells [`app_with_same_place_twins`]'s two attributes apart after a reorder.
+fn values_by_height(app: &CadApp, h: Handle) -> Vec<(f64, String)> {
+    match app.session.doc().unwrap().entity(h).map(|e| &e.kind) {
+        Some(EntityKind::Insert(i)) => {
+            let mut v: Vec<(f64, String)> = i.attribs.iter().map(|a| (a.text.height, a.text.value.clone())).collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A reorder can leave every field the palette shows equal — tag, prompt, value and insertion point
+/// — and still put another attribute in the place: the text heights differ. Text waiting in the
+/// first field must not go to the attribute now in that place.
+#[test]
+fn a_pending_properties_value_does_not_follow_a_reorder_only_a_hidden_property_shows() {
+    let (app, h) = app_with_same_place_twins();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "v", "EG");
+    harness.state_mut().run("battman", json!({ "name": "Twin", "action": "down", "tag": "T" })).unwrap();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(values_by_height(harness.state(), h), [(1.0, "v".to_string()), (2.0, "v".to_string())], "neither attribute changed");
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+}
+
+/// The Enhanced Attribute Editor draws the same line: a reorder that leaves every field it shows
+/// in place, but swaps the attributes' text heights, is a stale dialog too.
+#[test]
+fn a_stale_dialog_tells_attributes_apart_by_a_property_it_does_not_show() {
+    let (mut app, h) = app_with_same_place_twins();
+    menus::activate(&mut app, "attedit");
+    assert_eq!(app.attedit.rows.len(), 2);
+    app.attedit.rows[0].typed = "EG".into();
+    app.run("battman", json!({ "name": "Twin", "action": "down", "tag": "T" })).unwrap();
+    assert!(!attedit::apply(&mut app), "the dialog refuses the stale row");
+    assert_eq!(values_by_height(&app, h), [(1.0, "v".to_string()), (2.0, "v".to_string())], "nothing was written");
+    let error = app.attedit.error.clone().unwrap_or_default();
+    assert!(error.contains("The attributes changed"), "the dialog says so: {error}");
+}
+
 /// Input queued for the frame that finds the row has another attribute belongs to the attribute
 /// the field had: neither its text nor its Enter may reach the one now in that place, and nothing
 /// may be kept for a later Enter either.

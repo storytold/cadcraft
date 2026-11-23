@@ -5,7 +5,6 @@
 //! JSON calls never open the dialog.
 
 use cadcraft_engine::doc::{Drawing, EntityKind, Handle};
-use cadcraft_geom::Vec3;
 use egui::{RichText, vec2};
 use serde_json::{Map, Value, json};
 
@@ -18,25 +17,23 @@ pub struct Row {
     pub tag: String,
     pub prompt: String,
     pub value: String,
-    /// Where the attribute's text is inserted (see `cadcraft_engine::AttributeRow`): what tells
-    /// two attributes sharing a tag and a value apart.
-    pub at: Vec3,
     pub editable: bool,
     pub invisible: bool,
     pub multiline: bool,
+    /// The whole attribute the row was loaded from (see `cadcraft_engine::AttributeRow`): a row
+    /// index is only the attribute's place in the reference, and a reorder of the block's
+    /// definitions moves a different attribute — the same tag, value and insertion point is not
+    /// enough to tell them apart.
+    pub record: cadcraft_engine::doc::Attrib,
     pub typed: String,
 }
 
 impl Row {
-    /// Whether `a` is still the attribute this row was loaded from, as the row shows it.
+    /// Whether `a` is still the attribute this row was loaded from: the whole stored attribute must
+    /// be equal, so a property the dialog doesn't show (text height, rotation, justification,
+    /// style, the attribute's own overrides) tells a reordered one apart too.
     fn is(&self, a: &cadcraft_engine::AttributeRow) -> bool {
-        self.tag == a.tag
-            && self.prompt == a.prompt
-            && self.value == a.value
-            && self.at == a.at
-            && self.editable == a.editable
-            && self.invisible == a.invisible
-            && self.multiline == a.multiline
+        self.record == a.record
     }
 }
 
@@ -90,10 +87,10 @@ fn load(app: &mut CadApp, h: Handle) {
             tag: a.tag,
             prompt: a.prompt,
             value: a.value,
-            at: a.at,
             editable: a.editable,
             invisible: a.invisible,
             multiline: a.multiline,
+            record: a.record,
         })
         .collect();
     let current = app.attedit.current;
@@ -144,9 +141,9 @@ fn changed(rows: &[Row]) -> Map<String, Value> {
     rows.iter().enumerate().filter(|(_, r)| r.editable && r.typed != r.value).map(|(i, r)| (i.to_string(), Value::String(r.typed.clone()))).collect()
 }
 
-/// True while the reference's attributes are still the ones the dialog listed: every property a
-/// row shows, its place included (two attributes can share a tag and a value, and a reorder of the
-/// block's definitions swaps those).
+/// True while the reference's attributes are still the ones the dialog listed: every stored
+/// property of every row's attribute, its place included (two attributes can share a tag and a
+/// value, and a reorder of the block's definitions swaps those).
 fn rows_unchanged(app: &CadApp, h: Handle) -> bool {
     let Ok(st) = app.session.state() else { return false };
     let now = cadcraft_engine::attributes(&st.doc, h);
@@ -270,16 +267,37 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cadcraft_geom::Vec3;
 
     fn row(tag: &str, value: &str, typed: &str, editable: bool) -> Row {
         Row {
             tag: tag.into(),
             prompt: String::new(),
             value: value.into(),
-            at: Vec3::default(),
             editable,
             invisible: false,
             multiline: false,
+            record: cadcraft_engine::doc::Attrib {
+                tag: tag.into(),
+                text: cadcraft_engine::doc::Text {
+                    insert: Vec3::ZERO,
+                    align_pt: None,
+                    height: 1.0,
+                    value: value.into(),
+                    rotation: 0.0,
+                    width_factor: 1.0,
+                    oblique: 0.0,
+                    style: "Standard".into(),
+                    halign: cadcraft_engine::doc::HAlign::Left,
+                    valign: cadcraft_engine::doc::VAlign::Baseline,
+                },
+                invisible: false,
+                constant: !editable,
+                prompt: String::new(),
+                props: cadcraft_engine::doc::AttribProps::default(),
+                multiline: None,
+                modes: cadcraft_engine::doc::AttribModes::default(),
+            },
             typed: typed.into(),
         }
     }

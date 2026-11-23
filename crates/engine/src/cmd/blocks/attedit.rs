@@ -3,7 +3,7 @@
 //! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::{AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
+use cadcraft_doc::{Attrib, AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
 use cadcraft_geom::Vec3;
 use serde_json::{Map, Value, json};
 
@@ -124,13 +124,18 @@ pub struct AttributeRow {
     pub prompt: String,
     pub value: String,
     /// Where the attribute's text is inserted: two attributes can share a tag and a value, and a
-    /// reorder of the block's definitions moves them, so this is what tells them apart.
+    /// reorder of the block's definitions moves them.
     pub at: Vec3,
     /// Not constant: the value can be changed.
     pub editable: bool,
     pub invisible: bool,
     /// A multiline attribute: its value may hold line breaks.
     pub multiline: bool,
+    /// The whole stored attribute this row was made from. The fields above are what a list shows;
+    /// this is what a pending edit is bound to, so a row is stale when any stored property differs
+    /// (text height, rotation, alignment point, justification, style, its own layer/colour/
+    /// linetype/lineweight overrides, its modes, …) and not only when the shown ones do.
+    pub record: Attrib,
 }
 
 /// The attributes of block reference `h`, in order (empty for other objects). The prompt comes
@@ -156,6 +161,7 @@ pub fn attributes(d: &cadcraft_doc::Drawing, h: Handle) -> Vec<AttributeRow> {
             editable: !a.constant,
             invisible: a.invisible,
             multiline: a.multiline.is_some(),
+            record: a.clone(),
         })
         .collect()
 }
