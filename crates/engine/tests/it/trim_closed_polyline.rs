@@ -123,11 +123,13 @@ fn undo_restores_the_closed_polyline() {
 }
 
 #[test]
-fn a_single_cut_still_opens_the_outline_there() {
+fn a_single_cut_leaves_the_outline_as_it_was() {
+    // As AutoCAD 2024 does (measured with accoreconsole on a 100 x 10 rectangle cut once on its
+    // bottom): it refuses, "Curve must intersect cutting edges at least twice."
     let mut s = Session::new();
     let p = handle(s.execute("pline", &json!({ "vertices": square(), "closed": true })).unwrap());
     let cutter = handle(s.execute("line", &json!({ "points": [[2, -1], [2, 1]] })).unwrap());
-    s.execute("trim", &json!({ "handle": p, "pick": [0, 2], "edges": [cutter] })).unwrap();
-    let all = [(2.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 4.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 0.0), (2.0, 0.0, 0.0)];
-    assert_eq!(polys(&s), vec![(false, all.to_vec())]);
+    let r = s.execute("trim", &json!({ "handle": p, "pick": [0, 2], "edges": [cutter] }));
+    assert!(r.is_err_and(|e| e.to_string() == "Curve must intersect cutting edges at least twice."));
+    assert_eq!(polys(&s), vec![(true, vec![(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 4.0, 0.0), (0.0, 4.0, 0.0)])]);
 }

@@ -79,6 +79,9 @@ impl Session {
             }
             return Err(EngineError::UnknownCommand(typed.to_string()));
         };
+        if let Some(why) = crate::file_access::commands::refusal(spec.id) {
+            return Err(EngineError::Disabled(spec.id.into(), why));
+        }
         if transparent && spec.transparent && self.running.is_some() {
             // Transparent commands (zoom, pan…) run without cancelling the active one.
             if spec.interactive.is_none() {
@@ -531,6 +534,11 @@ impl Session {
     /// ([`Interactive::editing_mtext`]).
     pub fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
+    }
+
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<crate::TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
     }
 
     pub fn current_prompt(&self) -> Option<Prompt> {
