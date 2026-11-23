@@ -564,7 +564,17 @@ pub fn seg_param(s: &Segment, p: Vec2) -> f64 {
     match s {
         Segment::Line(l) => l.param_of(p).clamp(0.0, 1.0),
         Segment::Arc { arc, ccw } => {
-            let t = (cadcraft_geom::norm_angle(arc.center.angle_to(p) - arc.start) / arc.sweep().max(1e-15)).clamp(0.0, 1.0);
+            // A point just outside the sweep (on the arc within tolerance of an end) goes to the
+            // nearer end: a hair before the start is the start, not round the circle to the end.
+            let a = cadcraft_geom::norm_angle(arc.center.angle_to(p) - arc.start);
+            let sweep = arc.sweep().max(1e-15);
+            let t = if a <= sweep {
+                a / sweep
+            } else if a - sweep < TAU - a {
+                1.0
+            } else {
+                0.0
+            };
             if *ccw { t } else { 1.0 - t }
         }
     }

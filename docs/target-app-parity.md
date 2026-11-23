@@ -22,7 +22,7 @@ and the deep checklists are [geometry-parity.md](geometry-parity.md),
 | Remaining to beta | **≈ 600–930 Opus 5.5 hours** | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 Opus 5.5 hours** | estimated |
 
-Stage: **pre-alpha**. Four of the five core workflows fail the [alpha gate](roadmap.md#alpha-gate) (precise drafting with tracking, blocks, plotting, lossless DWG save), and ready for real work is under the ~40% alpha bar. Alpha is ≈ 125–190 h away.
+Stage: **pre-alpha**. Five of the six rows of the [alpha gate](roadmap.md#alpha-gate) fail (starting on common hardware, opening the files people already have, saving without loss, input feel, printing at scale with an interface that can be restored; the gate was revised on 2026-11-19), and ready for real work is under the ~40% alpha bar. The ≈ 125–190 h to alpha was estimated for the previous gate and is not re-estimated.
 
 ## Readiness by audience
 

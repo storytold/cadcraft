@@ -2,7 +2,7 @@ use super::common::T;
 use super::objects::MAX_OBJECTS;
 use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
-    VportConfig, VportTile, records,
+    VportConfig, VportTile, record_slices,
 };
 use cadcraft_fonts::windows::windows_font;
 
@@ -92,7 +92,7 @@ fn style_font(tags: &[Tag], file: String) -> String {
 
 /// Load symbol tables and resolve handle references, indexing layer names for case-insensitive updates.
 pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
-    let recs = records(tags);
+    let recs = record_slices(tags);
     // STYLE handle → name, or the shape file of an unnamed shape style (linetype elements).
     let ltype_styles: HashMap<String, String> = recs
         .iter()
@@ -114,7 +114,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
-        let t = T(&tg);
+        let t = T(tg);
         match kind.as_str() {
             "LAYER" => {
                 let name = t.s(2).unwrap_or_default();
@@ -141,11 +141,11 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if let Some(n) = t.s(390).and_then(|h| rx.pstyles.get(&h.trim().to_ascii_uppercase())) {
                     l.plot_style = n.clone();
                 }
-                let alpha = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
+                let alpha = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
                 if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
                     l.transparency = pct;
                 }
-                if let Some(desc) = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
+                if let Some(desc) = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
                     l.description = desc.str();
                 }
                 match layer_index.get(&name.to_ascii_lowercase()) {
@@ -166,7 +166,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 linetype_names.insert(name.to_ascii_lowercase());
-                let pattern = ltype_pattern(&tg, &ltype_styles);
+                let pattern = ltype_pattern(tg, &ltype_styles);
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -178,7 +178,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 let gen_flags = t.i(71).unwrap_or(0);
                 let st = TextStyle {
                     name: name.clone(),
-                    font: style_font(&tg, t.s(3).unwrap_or_default()),
+                    font: style_font(tg, t.s(3).unwrap_or_default()),
                     big_font: t.s(4).unwrap_or_default(),
                     height: t.fd(40, 0.0),
                     width_factor: t.fd(41, 1.0),
@@ -186,7 +186,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     backwards: gen_flags & 2 != 0,
                     upside_down: gen_flags & 4 != 0,
                     vertical: t.i(70).unwrap_or(0) & 4 != 0,
-                    annotative: annotative(&tg),
+                    annotative: annotative(tg),
                 };
                 match style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.text_styles.get_mut(i)) {
                     Some(x) => *x = st,
@@ -214,6 +214,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 {
                     d.header.set("SNAPBASE", HVal::Point(Vec3::new(x, y, 0.0)));
                 }
+                ucsicon(d, &t);
                 if let Some(a) = t.f(50).filter(|a| a.is_finite()) {
                     d.header.set_f64("SNAPANG", a);
                 }
@@ -230,7 +231,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
-                let x = crate::dxf_ext::xdata(&tg, crate::dxf_ext::APP);
+                let x = crate::dxf_ext::xdata(tg, crate::dxf_ext::APP);
                 let field = |key: &str| {
                     x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str)
                 };
@@ -274,8 +275,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                         fields.insert(field.to_string(), v);
                     }
                 }
-                fields.extend(crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes));
-                let mut st = DimStyle { name: name.clone(), annotative: annotative(&tg), ..DimStyle::default() };
+                fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
+                let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
                 match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = st,
@@ -292,7 +293,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
 }
 
-fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
+fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
     for (kind, tags) in recs {
         let table = T(tags);
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
@@ -314,8 +315,18 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
             "LAYER" => {
                 rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
             }
+            "UCS" => {
+                rx.ucss.insert(handle.trim().to_ascii_uppercase(), name);
+            }
             _ => {}
         }
+    }
+}
+
+/// The `*ACTIVE` VPORT's UCSICON setting (group 74: bit 1 the icon shown, bit 2 at the UCS origin).
+fn ucsicon(d: &mut Drawing, t: &T) {
+    if let Some(v) = t.i(74) {
+        d.header.set_i64("UCSICON", v.clamp(0, 3));
     }
 }
 
