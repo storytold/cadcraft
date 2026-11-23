@@ -150,6 +150,8 @@ mod tests {
 
     #[test]
     fn opens_dwg_and_dxf_without_replacing_an_unsaved_drawing() {
+        // Writing and opening the DWG here needs the converter in this process: each test is its own.
+        cadcraft_io::dwg_worker::allow_in_process();
         let dir = TestDir::new();
         let dxf = dir.0.join("planta com espaços.dxf");
         let dwg = dir.0.join("Documentac\u{327}a\u{303}o.dwg");
