@@ -34,7 +34,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
             if !lt.is_empty() && !lt.eq_ignore_ascii_case("bylayer") && !lt.eq_ignore_ascii_case("byblock") {
                 c.linetype = lt.to_string();
             }
-            let (rgb, w, lt, scale, _, _) = resolve_common(ctx, &c, b.plotting);
+            let (rgb, w, lt, scale, _, _, _) = resolve_common(ctx, &c, b.plotting);
             // Construction geometry in the Block Editor: every element takes the editor's look.
             let (rgb, lt) = construction_style(ctx, e, (rgb, lt));
             let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {

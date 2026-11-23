@@ -163,10 +163,11 @@ fn binary_is_for_dxf_only() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_at_every_version_reads_back() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = sample();
     for v in Version::ALL {
         let dwg = write_with(&d, "x.dwg", &opts(v, false)).unwrap();
-        assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some(v.code()), "{v}");
+        assert_eq!(craft_dwg::version(&dwg).as_deref(), Some(v.code()), "{v}");
         let back = read(&dwg, "x.dwg").unwrap();
         assert_eq!(save_version(&back), v, "{v}");
         assert_eq!(back.model.len(), d.model.len(), "{v}");
@@ -186,7 +187,8 @@ fn dwg_at_every_version_reads_back() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_default_is_at_least_2004() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let from_r2000 = read(write_dxf(&sample()).as_bytes(), "x.dxf").unwrap();
-    assert_eq!(cadcraft_dwg::version(&write(&from_r2000, "x.dwg").unwrap()).as_deref(), Some("AC1018"));
-    assert_eq!(cadcraft_dwg::version(&write(&sample(), "x.dwg").unwrap()).as_deref(), Some("AC1032"));
+    assert_eq!(craft_dwg::version(&write(&from_r2000, "x.dwg").unwrap()).as_deref(), Some("AC1018"));
+    assert_eq!(craft_dwg::version(&write(&sample(), "x.dwg").unwrap()).as_deref(), Some("AC1032"));
 }

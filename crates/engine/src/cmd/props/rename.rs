@@ -93,6 +93,8 @@ pub(super) fn simple(s: &mut Session, table: &str, from: &str, to: &str) -> Resu
         "tablestyle" => d.table_styles.iter_mut().map(|t| &mut t.name).collect(),
         "view" => d.views.iter_mut().map(|t| &mut t.name).collect(),
         "ucs" => d.ucss.iter_mut().map(|t| &mut t.name).collect(),
+        // A saved viewport configuration, every tile of it; never the one shown (`*Active`).
+        "vport" => d.vports.iter_mut().filter(|v| !v.is_active()).map(|t| &mut t.name).collect(),
         _ => return Err(bad("rename", "unsupported table")),
     };
     if !to.eq_ignore_ascii_case(from) && names.iter().any(|n| n.eq_ignore_ascii_case(&to)) {
@@ -134,33 +136,45 @@ const TYPES: &[(&str, Option<&str>, &str)] = &[
     ("Plotstyle", None, "plot style"),
     ("textStyle", Some("style"), "text style"),
     ("Tablestyle", Some("tablestyle"), "table style"),
-    ("Ucs", Some("ucs"), "UCS"),
+    ("Ucs", Some("ucs"), "ucs"),
     ("VIew", Some("view"), "view"),
-    ("VPort", None, "viewport configuration"),
+    ("VPort", Some("vport"), "viewport configuration"),
 ];
+
+/// The noun in "Cannot find …" and "Invalid … name.": AutoCAD 2024 writes "UCS" there, "ucs" in
+/// its prompts and in "A ucs named … already exists." (measured).
+fn title(noun: &str) -> &str {
+    if noun == "ucs" { "UCS" } else { noun }
+}
 
 /// Keyword-only: spaces separate inputs.
 const KW: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 /// A name: Space ends the input.
 const NAME: Accept = Accept { number: true, ..Accept::TEXT };
 
-fn any_named<'a>(mut names: impl Iterator<Item = &'a String>, name: &str) -> bool {
-    names.any(|n| n.eq_ignore_ascii_case(name))
+fn any_named<'a>(mut names: impl Iterator<Item = &'a String>, name: &str) -> Option<String> {
+    names.find(|n| n.eq_ignore_ascii_case(name)).cloned()
 }
 
-fn exists(d: &Drawing, table: &str, name: &str) -> bool {
+/// The name as the drawing spells it of the `table` entry named `name` (without regard to case).
+fn stored(d: &Drawing, table: &str, name: &str) -> Option<String> {
     match table {
-        "block" => d.block(name).is_some(),
-        "layer" => d.layer(name).is_some(),
-        "linetype" => d.linetype(name).is_some(),
-        "style" => d.text_style(name).is_some(),
-        "dimstyle" => d.dim_style(name).is_some(),
+        "block" => d.block(name).map(|t| t.name.clone()),
+        "layer" => d.layer(name).map(|t| t.name.clone()),
+        "linetype" => d.linetype(name).map(|t| t.name.clone()),
+        "style" => d.text_style(name).map(|t| t.name.clone()),
+        "dimstyle" => d.dim_style(name).map(|t| t.name.clone()),
         "mleaderstyle" => any_named(d.mleader_styles.iter().map(|t| &t.name), name),
         "tablestyle" => any_named(d.table_styles.iter().map(|t| &t.name), name),
         "view" => any_named(d.views.iter().map(|t| &t.name), name),
         "ucs" => any_named(d.ucss.iter().map(|t| &t.name), name),
-        _ => true,
+        "vport" => any_named(d.vports.iter().filter(|v| !v.is_active()).map(|t| &t.name), name),
+        _ => Some(name.to_string()),
     }
+}
+
+fn exists(d: &Drawing, table: &str, name: &str) -> bool {
+    stored(d, table, name).is_some()
 }
 
 #[derive(Default)]
@@ -199,6 +213,15 @@ impl Interactive for RenameM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // No new name is an invalid one (AutoCAD 2024, measured for layers, blocks, views and
+        // viewport configurations).
+        if i == Input::Enter
+            && let Stage::New(t, _) = &self.stage
+            && let Some((_, Some(_), noun)) = TYPES.get(*t)
+        {
+            s.echo(format!("Invalid {} name.", title(noun)));
+            return Ok(Step::Done);
+        }
         if matches!(i, Input::Cancel | Input::Enter) {
             return Ok(if i == Input::Cancel { Step::Cancel } else { Step::Done });
         }
@@ -217,12 +240,41 @@ impl Interactive for RenameM {
                     self.stage = Stage::Old(t);
                     return Ok(Step::Continue);
                 };
-                if let Some(table) = table
-                    && !exists(s.doc()?, table, &name)
-                {
-                    self.stage = Stage::Old(t);
-                    return Err(EngineError::Other(format!("No {noun} named \"{name}\".")));
+                // AutoCAD 2024 ends -RENAME on an old name it won't rename (measured): "Invalid … name."
+                // for a viewport configuration or block whose name starts with "*" (*Active,
+                // *Model_Space, an anonymous block's *U0) and for linetypes ByLayer and ByBlock;
+                // "Cannot rename …" and "*Invalid*" for layer 0 and linetype Continuous.
+                let invalid = match *table {
+                    Some("vport" | "block") => name.starts_with('*'),
+                    Some("linetype") => name.eq_ignore_ascii_case("bylayer") || name.eq_ignore_ascii_case("byblock"),
+                    _ => false,
+                };
+                if invalid {
+                    s.echo(format!("Invalid {} name.", title(noun)));
+                    return Ok(Step::Done);
                 }
+                let fixed = match *table {
+                    Some("layer") => name == "0",
+                    Some("linetype") => name.eq_ignore_ascii_case("continuous"),
+                    _ => false,
+                };
+                if fixed {
+                    s.echo(format!("Cannot rename {} \"{name}\".", title(noun)));
+                    s.echo("*Invalid*");
+                    return Ok(Step::Done);
+                }
+                // The old name as the drawing spells it: a new name in another case than that is a
+                // rename, even when it is the old name as typed (AutoCAD 2024, measured).
+                let name = match table {
+                    Some(table) => match stored(s.doc()?, table, &name) {
+                        Some(n) => n,
+                        None => {
+                            s.echo(format!("Cannot find {} \"{name}\".", title(noun)));
+                            return Ok(Step::Done);
+                        }
+                    },
+                    None => name,
+                };
                 self.stage = Stage::New(t, name);
                 Ok(Step::Continue)
             }
@@ -235,6 +287,19 @@ impl Interactive for RenameM {
                     s.echo(format!("Renaming a {noun} is not available yet."));
                     return Ok(Step::Done);
                 };
+                // AutoCAD 2024's messages, each ending the command (measured).
+                if !valid_name(&name) {
+                    s.echo(format!("Invalid {} name.", title(noun)));
+                    return Ok(Step::Done);
+                }
+                if !name.eq_ignore_ascii_case(&old) && exists(s.doc()?, table, &name) {
+                    s.echo(format!("A {noun} named \"{name}\" already exists."));
+                    s.echo("*Invalid*");
+                    return Ok(Step::Done);
+                }
+                if name == old {
+                    return Ok(Step::Done);
+                }
                 match super::run_rename(s, &json!({ "table": table, "from": old, "to": name })) {
                     Ok(_) => Ok(Step::Done),
                     Err(e) => {
