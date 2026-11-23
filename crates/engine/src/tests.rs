@@ -747,6 +747,15 @@ fn script_runs_commands() {
 }
 
 #[test]
+fn scripts_allow_one_leading_utf8_bom() {
+    for text in ["\u{feff}LINE 0,0 10,10\n\n", "\u{feff}; first comment\r\nLINE 0,0 10,10\r\n\r\n"] {
+        let mut s = Session::new();
+        s.script(text).unwrap();
+        assert_eq!(kinds(&s), vec!["Line"]);
+    }
+}
+
+#[test]
 fn script_splits_line_at_keyword_prompt() {
     let mut s = Session::new();
     s.script("POLYGON 6 200,20 I 15").unwrap();

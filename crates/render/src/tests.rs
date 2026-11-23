@@ -82,7 +82,7 @@ fn hatch_pattern_and_solid() {
     let h = Hatch {
         pattern: "ANSI31".into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 1.0,
         angle: 0.0,
         associative: false,
@@ -514,7 +514,7 @@ fn pattern_hatch(pattern: &str, scale: f64, (x0, y0, x1, y1): (f64, f64, f64, f6
     Hatch {
         pattern: pattern.into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale,
         angle: 0.0,
         associative: false,
@@ -1371,7 +1371,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
             }
         }
         v.rotate_left(rot);
-        HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+        HatchLoop { vertices: v, outer: true, boundary_flags: None, sources: Vec::new() }
     };
     let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
     h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
@@ -1380,6 +1380,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     h.loops.push(HatchLoop {
         vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
         outer: true,
+        boundary_flags: None,
         sources: Vec::new(),
     });
     assert_eq!(loops_of(&h).len(), 2);

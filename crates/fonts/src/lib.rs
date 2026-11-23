@@ -649,31 +649,41 @@ fn frame(font: &TextFont, s: &str, p: &TextParams) -> (Vec2, Vec2, f64, Vec2) {
     (origin, justify_offset(font, &sh, height, p.h, p.v), rot, mirror)
 }
 
+/// Resolve Aligned/Fit dimensions with the same shaping direction as [`place`].
+/// Missing, coincident or nonfinite points leave the parameters unchanged.
+pub fn fit_params(font: &TextFont, s: &str, p: &TextParams) -> TextParams {
+    let mut fitted = *p;
+    if !matches!(p.h, Align::Aligned | Align::Fit) {
+        return fitted;
+    }
+    let Some(second) = p.align_pt else { return fitted };
+    let distance = p.insert.dist(second);
+    if !distance.is_finite() || distance <= 1e-12 {
+        return fitted;
+    }
+    fitted.rotation = p.insert.angle_to(second);
+    let height = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
+    let width = shape_line_dir(font, s, height, p.width_factor, p.oblique, TEXT_BASE_RTL).width;
+    if width.is_finite() && width > 1e-12 {
+        let scale = distance / width;
+        if p.h == Align::Aligned {
+            fitted.height = height * scale;
+        } else {
+            fitted.width_factor *= scale;
+        }
+    }
+    fitted
+}
+
 /// Place a single-line TEXT in world coordinates with any font. Returns the shaped text and its
 /// bounding box.
 pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
-    let mut height = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
-    let mut wf = p.width_factor;
-    let mut rot = if p.rotation.is_finite() { p.rotation } else { 0.0 };
+    let fitted = fit_params(font, s, p);
+    let p = &fitted;
+    let height = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
+    let rot = if p.rotation.is_finite() { p.rotation } else { 0.0 };
     let insert = p.insert;
-    if matches!(p.h, Align::Aligned | Align::Fit)
-        && let Some(p2) = p.align_pt
-    {
-        let len = insert.dist(p2);
-        rot = insert.angle_to(p2);
-        // Measured as it is placed, left to right: the stroke font's trailing gap follows the
-        // glyph that ends the line.
-        let w = shape_line_dir(font, s, height, wf, p.oblique, TEXT_BASE_RTL).width;
-        if w > 1e-12 && len > 1e-12 {
-            let k = len / w;
-            if p.h == Align::Aligned {
-                height *= k;
-            } else {
-                wf *= k;
-            }
-        }
-    }
-    let mut sh = shape_line_dir(font, s, height, wf, p.oblique, TEXT_BASE_RTL);
+    let mut sh = shape_line_dir(font, s, height, p.width_factor, p.oblique, TEXT_BASE_RTL);
     let width = sh.width;
     // Every justification but baseline-left (and aligned/fit, which span both points) is placed by
     // its alignment point (DXF group 11); the insertion point (group 10) is then a computed point.
@@ -738,6 +748,15 @@ mod tests {
         let fit = TextParams { h: Align::Fit, align_pt: Some(Vec2::new(10.0, 0.0)), ..TextParams::new(Vec2::ZERO, 1.0) };
         let (text, _) = place(&TextFont::Stroke, s, &fit);
         assert!((text.width - 10.0).abs() < 1e-9, "{}", text.width);
+    }
+
+    #[test]
+    fn two_point_middle_vertical_spans_points() {
+        for h in [Align::Aligned, Align::Fit] {
+            let p = TextParams { h, v: VAlign::Middle, align_pt: Some(Vec2::new(12.0, 5.0)), ..TextParams::new(Vec2::ZERO, 2.0) };
+            let (shaped, _) = place(&TextFont::Stroke, "SYNTHETIC", &p);
+            assert!((shaped.width - p.insert.dist(p.align_pt.unwrap())).abs() < 1e-9);
+        }
     }
 
     #[test]
