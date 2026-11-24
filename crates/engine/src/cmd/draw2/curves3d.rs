@@ -284,7 +284,7 @@ pub(super) fn run_spline_cv(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[derive(Default)]
-pub(super) struct SplineCvM {
+pub(in crate::cmd) struct SplineCvM {
     pts: Vec<Vec2>,
     degree: Option<usize>,
     asking_degree: bool,
@@ -342,7 +342,7 @@ impl Interactive for SplineCvM {
                         s.add_entity(EntityKind::Spline(sp))?;
                         return Ok(Step::Done);
                     }
-                    _ => s.echo(format!("{k}: use SPLINE for fit points.")),
+                    _ => return Err(other("Invalid option keyword.")),
                 }
                 Ok(Step::Continue)
             }
