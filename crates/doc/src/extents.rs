@@ -487,13 +487,17 @@ fn bounds_of<'a>(
 
 /// The bounds of a record kept as read that draws something: a proxy as its proxy graphics draw
 /// (layer 0 in them is the proxy's layer), each at the next depth as a block's contents are, and an
-/// OLE2FRAME as its frame.
+/// OLE2FRAME as its frame. Measured through a viewport, the proxy graphics on a layer `frozen`
+/// there are left out as a block's parts are ([`in_block_visible`]), and a reference among them
+/// takes its boxes from `blocks` and `in_drawing` as any other does ([`bounds_in`]).
 fn unknown_bounds<'a>(
     d: &'a Drawing,
     u: &crate::Unknown,
     depth: usize,
     blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    in_drawing: &mut HashMap<(&'a str, usize), Bounds2>,
     off_counts: bool,
+    frozen: &[String],
 ) -> Bounds2 {
     if u.graphics.is_empty() {
         return ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points);
@@ -503,8 +507,8 @@ fn unknown_bounds<'a>(
     }
     u.graphics
         .iter()
-        .filter(|g| in_block_visible(d, g, off_counts))
-        .fold(Bounds2::EMPTY, |b, g| b.union(&bounds_in(d, g, depth + 1, blocks, off_counts)))
+        .filter(|g| in_block_visible(d, g, off_counts, frozen))
+        .fold(Bounds2::EMPTY, |b, g| b.union(&bounds_in(d, g, depth + 1, blocks, in_drawing, off_counts, frozen)))
 }
 
 /// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
@@ -655,7 +659,7 @@ fn bounds_in<'a>(
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         // A proxy measures as its proxy graphics draw. An OLE object's content is not drawn, but its
         // frame is, so the frame counts (#2422).
-        EntityKind::Unknown(u) if !u.graphics.is_empty() || u.is_ole_frame() => unknown_bounds(d, u, depth, blocks, off_counts),
+        EntityKind::Unknown(u) if !u.graphics.is_empty() || u.is_ole_frame() => unknown_bounds(d, u, depth, blocks, in_drawing, off_counts, frozen),
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {

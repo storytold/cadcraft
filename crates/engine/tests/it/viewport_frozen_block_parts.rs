@@ -1159,6 +1159,41 @@ fn a_crossing_window_tests_the_parts_the_viewport_draws() {
     assert_eq!(select::select_fence_in(&d, &model, &[], &across(hidden_part)), [dim]);
 }
 
+/// A proxy that is a part of a block draws its proxy graphics as the block draws its other parts,
+/// so through a viewport the reference is measured and hit by the graphics that viewport draws:
+/// with the proxy's line on a layer frozen there, a window around the reference's own line alone
+/// takes it and a pick on the proxy's line finds nothing. Where the layer is drawn that window
+/// misses the reference and the pick takes it. A proxy is never selected itself (it is kept as it
+/// was read), so it counts only this way. The frozen layers are given to the selection as a
+/// viewport gives them.
+#[test]
+fn a_proxy_in_a_block_counts_by_the_graphics_the_viewport_draws() {
+    use cadcraft_engine::doc::{Block, Common, Drawing, Entity, EntityKind, Insert, Line, Space, Unknown};
+    use cadcraft_engine::geom::Vec3;
+    let mut d = Drawing::new_metric();
+    d.ensure_layer("Hidden");
+    let line = |y: f64, layer: &str| {
+        let mut g = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) }));
+        g.common.layer = layer.into();
+        g
+    };
+    let proxy = Entity::new(
+        Handle(2),
+        EntityKind::Unknown(Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![line(5.0, "Hidden")] }),
+    );
+    let mut block = Block::new("BX");
+    block.entities.push(Entity { handle: Handle(1), ..line(0.0, "0") });
+    block.entities.push(proxy);
+    d.blocks.insert("BX".into(), std::sync::Arc::new(block));
+    let reference = d.add(&Space::Model, Common::default(), EntityKind::Insert(Insert { block: "BX".into(), ..Insert::default() })).unwrap();
+    let through = ["Hidden".to_string()];
+    assert_eq!(windowed(&d, &through, [-1.0, -1.0], [11.0, 1.0]), [reference], "a window around the reference's own line alone");
+    assert_eq!(picked(&d, &through, [5.0, 5.0]), None, "a pick on the proxy's line");
+    assert_eq!(picked(&d, &through, [5.0, 0.0]), Some(reference), "a pick on the reference's own line");
+    assert_eq!(windowed(&d, &[], [-1.0, -1.0], [11.0, 1.0]), [], "where the layer is drawn, the same window");
+    assert_eq!(picked(&d, &[], [5.0, 5.0]), Some(reference), "and the same pick");
+}
+
 /// A dimension is picked anywhere inside the box of its text, and that text is a part of its
 /// block. Through a viewport that freezes the text's layer the text is not drawn: a pick in its
 /// box finds nothing there and selection cycling lists nothing, while the lines of the dimension
