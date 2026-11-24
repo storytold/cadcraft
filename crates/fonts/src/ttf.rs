@@ -661,7 +661,14 @@ impl Db {
                 return Some(face);
             }
         }
-        self.by_family(k).or_else(|| self.user_family(k))
+        self.by_family(k).or_else(|| self.user_family(k)).or_else(|| self.substitute(k))
+    }
+
+    /// The metric-compatible free font for a Windows font that is not installed (#1669): a text
+    /// style naming `arial.ttf` draws in Liberation Sans when that is installed or embedded.
+    fn substitute(&mut self, k: &str) -> Option<Face> {
+        let stem = metric_substitute(k)?;
+        self.file(&stem).and_then(|b| faces(&b).into_iter().next())
     }
 
     /// A face in the user's font folders whose family or full name is `k`, whatever its file is
@@ -848,6 +855,29 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
+}
+
+/// Windows fonts and the free fonts with the same advance widths, so that line breaks and
+/// alignment stay where the drawing's author had them: the names a text style stores for the
+/// regular, bold, italic and bold italic files, the family names, and the substitute's file stem
+/// prefix (`LiberationSans-Regular`, ...). Only pairs that are metric-compatible are listed: a
+/// font with other widths (Verdana, Georgia, Century Gothic) moves text and is left out.
+const METRIC_SUBSTITUTES: [(&[&str], [&str; 4], &str); 5] = [
+    (&["arial"], ["arial", "arialbd", "ariali", "arialbi"], "LiberationSans"),
+    (&["times new roman", "timesnewroman"], ["times", "timesbd", "timesi", "timesbi"], "LiberationSerif"),
+    (&["courier new", "couriernew"], ["cour", "courbd", "couri", "courbi"], "LiberationMono"),
+    (&["calibri"], ["calibri", "calibrib", "calibrii", "calibriz"], "Carlito"),
+    (&["cambria"], ["cambria", "cambriab", "cambriai", "cambriaz"], "Caladea"),
+];
+
+/// The file stem of the metric-compatible free font for the lookup key `k` of a Windows font
+/// (`arialbd` gives `liberationsans-bold`), or `None` when `k` is not one of those.
+fn metric_substitute(k: &str) -> Option<String> {
+    const STYLES: [&str; 4] = ["Regular", "Bold", "Italic", "BoldItalic"];
+    METRIC_SUBSTITUTES.iter().find_map(|(families, files, free)| {
+        let style = if families.contains(&k) { 0 } else { files.iter().position(|f| *f == k)? };
+        Some(format!("{free}-{}", STYLES.get(style)?).to_ascii_lowercase())
+    })
 }
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
@@ -1457,6 +1487,23 @@ mod family_tests {
         assert!(family_candidates(&stems, &norm("gost type a"), "go").is_empty(), "too short a word matches nothing");
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
+    }
+
+    #[test]
+    fn windows_font_names_map_to_metric_compatible_files_only() {
+        let sub = |k: &str| metric_substitute(k);
+        assert_eq!(sub("arial").as_deref(), Some("liberationsans-regular"));
+        assert_eq!(sub("arialbd").as_deref(), Some("liberationsans-bold"));
+        assert_eq!(sub("ariali").as_deref(), Some("liberationsans-italic"));
+        assert_eq!(sub("arialbi").as_deref(), Some("liberationsans-bolditalic"));
+        assert_eq!(sub("times new roman").as_deref(), Some("liberationserif-regular"));
+        assert_eq!(sub("courbi").as_deref(), Some("liberationmono-bolditalic"));
+        assert_eq!(sub("calibriz").as_deref(), Some("carlito-bolditalic"));
+        assert_eq!(sub("cambria").as_deref(), Some("caladea-regular"));
+        // Other widths move the text: no substitute.
+        for k in ["verdana", "georgia", "gothic", "arialn", "arial black", "romans", ""] {
+            assert!(sub(k).is_none(), "{k}");
+        }
     }
 
     #[test]
