@@ -434,6 +434,16 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     if let Some(s) = pos(ratio).or_else(|| pos(t.f(147))) {
         p.scale = s;
     }
+    // Keep CADCraft's previous custom scale only while the 1:1 fit fallback is unchanged.
+    // Another program may have replaced that fallback with a real fitted ratio.
+    let fit_scale = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(tags, crate::dxf_ext::APP), "PSFITSCALE");
+    if p.scale_to_fit
+        && p.scale == 1.0
+        && let Some(s) = fit_scale.iter().find(|t| t.code == 1040).map(Tag::f64).filter(|s| s.is_finite() && *s > 0.0)
+    {
+        p.scale = s;
+        p.fit_scale_pending = true;
+    }
     // A standard scale (flag 16, group 75 above 0: 0 is scaled to fit, the DXF Reference lists
     // 1 to 32), kept with the scale it stands for so a save can tell it was not changed.
     if t.i(70).is_some_and(|f| f & 16 != 0)

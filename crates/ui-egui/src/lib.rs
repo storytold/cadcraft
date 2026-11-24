@@ -73,6 +73,7 @@ pub mod theme;
 pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
+pub mod wblock;
 
 pub mod exchange;
 
@@ -370,6 +371,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Write Block dialog ([`wblock`]).
+    pub wblock: wblock::State,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -431,6 +434,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
@@ -775,7 +779,8 @@ impl CadApp {
 
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
-    /// web it opens at once.
+    /// web it opens at once. An already open drawing is selected without re-reading it, retaining
+    /// its unsaved edits and view; window drops and Open Recent use this same entry point.
     pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
@@ -783,6 +788,9 @@ impl CadApp {
                 Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
+            return;
+        }
+        if self.select_open_drawing(path) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -815,6 +823,10 @@ impl CadApp {
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
         for (path, outcome) in self.opening.poll() {
+            // A drawing may have been opened or saved at this path while the read was pending.
+            if self.select_open_drawing(&path) {
+                continue;
+            }
             // A recent file that is gone can never be opened again: drop it from the list. A path
             // whose existence can't be checked (a folder that denies access) stays.
             if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
@@ -830,6 +842,22 @@ impl CadApp {
             }
             self.opened(r);
         }
+    }
+
+    /// Reuse the existing document through the normal tab-switch command, including symlink paths.
+    fn select_open_drawing(&mut self, path: &Path) -> bool {
+        let existing = self.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| opening::same_path(Path::new(p), path)));
+        let Some(index) = existing else { return false };
+        match self.run("document.switch", json!({"index": index})) {
+            Ok(_) => {
+                self.ui.start_tab = false;
+                if let Some(path) = self.session.docs.get(index).and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+            }
+            Err(error) => self.open_failed(error),
+        }
+        true
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
@@ -931,6 +959,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        wblock::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;

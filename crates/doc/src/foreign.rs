@@ -53,6 +53,10 @@ impl ForeignExtra {
 /// Everything of a file CADCraft keeps without modelling it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Foreign {
+    /// Original two-point text and style, by entity handle and attribute position.
+    /// Kept with imported metadata so new entities never inherit another entity's fitting.
+    pub text_fits: BTreeMap<Handle, Vec<(crate::Text, crate::TextStyle)>>,
+
     /// CLASS records (groups after `0 CLASS`) of the kept objects' and entities' types.
     pub classes: Vec<Vec<RawTag>>,
     /// Classes retain every source position, including duplicate names.

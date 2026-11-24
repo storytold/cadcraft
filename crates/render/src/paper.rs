@@ -206,7 +206,11 @@ pub fn layout_sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     let physical = Sheet::from_page(page, page_unit_mm(d, page));
     if !(page.scale.is_finite() && page.scale > 0.0) {
         warn_invalid_sheet();
-        return None;
+        return Some(physical);
+    }
+    // A custom scale retained when fit is selected is not an effective fitted ratio.
+    if page.scale_to_fit && page.fit_scale_pending {
+        return Some(physical);
     }
     // Imported layouts cache the sheet's drawing-space limits. Only use them while their
     // size agrees with the current paper and scale, not old limits after a page-size change.
@@ -228,7 +232,7 @@ pub fn layout_sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     // Hostile scales or coordinates must not put infinities into the canvas transform.
     if !origin.is_finite() || !size.is_finite() || !(origin + size).is_finite() || !printable.min.is_finite() || !printable.max.is_finite() {
         warn_invalid_sheet();
-        return None;
+        return Some(physical);
     }
     Some(Sheet { origin, size, printable, ..physical })
 }
@@ -237,7 +241,7 @@ fn warn_invalid_sheet() {
     use std::sync::atomic::{AtomicBool, Ordering};
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
-        log::warn!("a layout has invalid or unrepresentable paper bounds; its paper sheet cannot be displayed");
+        log::warn!("a layout has invalid or unrepresentable paper bounds; displaying the physical sheet instead");
     }
 }
 

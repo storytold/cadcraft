@@ -747,6 +747,7 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = p.get("lineweights").and_then(Value::as_bool) {
         page.lineweights = v;
     }
+    let fit_was_enabled = page.scale_to_fit;
     if let Some(v) = p.get("scaleToFit").and_then(Value::as_bool) {
         page.scale_to_fit = v;
     }
@@ -755,6 +756,10 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(v) = p.get("scale") {
         page.scale = parse_scale(v).ok_or_else(|| bad(cmd, "`scale` must be positive"))?;
+    }
+    let invalidate_fit = page.scale_to_fit && (!fit_was_enabled || p.get("scale").is_some());
+    if invalidate_fit {
+        page.fit_scale_pending = true;
     }
     if let Some(v) = str_param(p, "plotArea") {
         let v = v.to_ascii_lowercase();
@@ -778,6 +783,10 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if changes {
         if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
+            if invalidate_fit {
+                // Limits for the former custom scale cannot locate a newly fitted sheet.
+                l.limits = None;
+            }
             l.page = page.clone();
         }
         s.touch();

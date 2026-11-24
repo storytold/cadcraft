@@ -796,6 +796,8 @@ pub struct PageSetup {
     pub scale_to_fit: bool,
     /// Paper units per drawing unit.
     pub scale: f64,
+    /// Fit was selected after a custom scale; no effective fitted ratio is known yet.
+    pub fit_scale_pending: bool,
     pub plot_style_table: String,
     pub center: bool,
     pub lineweights: bool,
@@ -848,6 +850,7 @@ impl Default for PageSetup {
             plot_window: [0.0; 4],
             scale_to_fit: false,
             scale: 1.0,
+            fit_scale_pending: false,
             plot_style_table: String::new(),
             center: false,
             lineweights: true,

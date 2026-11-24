@@ -79,3 +79,43 @@ fn scaled_sheet_bounds_survive_a_dxf_round_trip_without_saved_limits() {
     assert_eq!(cadcraft_render::layout_sheet(&back, "Layout1").unwrap().bounds(), before);
     assert_eq!(back.layout("Layout1").unwrap().limits, Some((before.min, before.max)));
 }
+
+#[test]
+fn pending_fit_keeps_the_custom_scale_through_dxf_and_dwg() {
+    let mut d = Drawing::new_imperial();
+    let l = d.layouts.first_mut().unwrap();
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.page.fit_scale_pending = true;
+    let verify = |back: &Drawing| {
+        let l = back.layout("Layout1").unwrap();
+        assert!(l.page.scale_to_fit && l.page.fit_scale_pending);
+        assert_eq!(l.page.scale, 0.5);
+        assert_eq!(cadcraft_render::layout_sheet(back, "Layout1"), cadcraft_render::sheet(back, "Layout1"));
+    };
+    verify(&read_dxf(write_dxf(&d).as_bytes()).unwrap());
+    cadcraft_io::dwg_worker::allow_in_process();
+    let dwg = write_with(&d, "t.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    verify(&read(&dwg, "t.dwg").unwrap());
+}
+
+#[test]
+fn an_external_fit_ratio_supersedes_the_pending_custom_scale() {
+    let mut d = Drawing::new_imperial();
+    let l = d.layouts.first_mut().unwrap();
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.page.fit_scale_pending = true;
+    let text = write_dxf(&d);
+    let mut lines: Vec<&str> = text.lines().collect();
+    let marker = lines.iter().position(|line| line.trim() == "PSFITSCALE").unwrap();
+    let start = lines[..marker].iter().rposition(|line| line.trim() == "AcDbPlotSettings").unwrap();
+    for code in ["142", "147"] {
+        let index = start + lines[start..marker].iter().position(|line| line.trim() == code).unwrap();
+        lines[index + 1] = "0.75";
+    }
+    let back = read_dxf(lines.join("\n").as_bytes()).unwrap();
+    let page = &back.layout("Layout1").unwrap().page;
+    assert!(!page.fit_scale_pending);
+    assert_eq!(page.scale, 0.75);
+}
