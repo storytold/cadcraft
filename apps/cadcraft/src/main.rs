@@ -402,12 +402,16 @@ fn main() -> eframe::Result {
     if stencil == 0 {
         log::warn!("CADCRAFT_STENCIL is off: the window has no stencil buffer; clipped layout viewports draw unclipped");
     }
+    let persistence_path = vars
+        .portable_storage_file
+        .clone()
+        .or_else(|| std::env::var_os("CADCRAFT_CONFIG_DIR").and_then(|_| vars.config_dir.as_ref().map(|d| d.join("app.ron"))));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        persistence_path: vars.portable_storage_file.clone(),
-        ..window_options(restores_window(vars.portable_storage_file.as_deref()), stencil)
+        persistence_path: persistence_path.clone(),
+        ..window_options(restores_window(persistence_path.as_deref()), stencil)
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
