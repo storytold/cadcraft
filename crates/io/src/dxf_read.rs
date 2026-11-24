@@ -98,6 +98,50 @@ fn keep_file_order<T>(items: &mut [T], name: impl Fn(&T) -> &str, order: &[Strin
     });
 }
 
+/// A dimension kept as read (LARGE_RADIAL_DIMENSION, ARC_DIMENSION) draws its `*D` block, as
+/// AutoCAD does, in place of the proxy graphics it may carry: those can differ from what AutoCAD
+/// shows (an exporter's picture without the arrowheads; #3438). The block's contents become the
+/// dimension's graphics, with its handle, so it is drawn, measured and picked like a proxy.
+fn draw_kept_dimensions_from_their_blocks(d: &mut Drawing) {
+    let pictures = |store: &cadcraft_doc::EntityStore, d: &Drawing| -> Vec<(Handle, Vec<Entity>)> {
+        store
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Unknown(u) => {
+                    let block = d.block(u.dimension_block()?)?;
+                    let graphics: Vec<Entity> = block.entities.iter().map(|g| Entity { handle: e.handle, ..g.as_ref().clone() }).collect();
+                    (!graphics.is_empty()).then_some((e.handle, graphics))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let apply = |store: &mut cadcraft_doc::EntityStore, found: Vec<(Handle, Vec<Entity>)>| {
+        for (h, graphics) in found {
+            store.modify(h, |e| {
+                if let EntityKind::Unknown(u) = &mut e.kind {
+                    u.graphics = graphics;
+                }
+            });
+        }
+    };
+    let found = pictures(&d.model, d);
+    apply(&mut d.model, found);
+    for i in 0..d.layouts.len() {
+        let found = pictures(&d.layouts[i].entities, d);
+        apply(&mut d.layouts[i].entities, found);
+    }
+    let names: Vec<String> = d.blocks.keys().cloned().collect();
+    for name in names {
+        let found = d.blocks.get(&name).map(|b| pictures(&b.entities, d)).unwrap_or_default();
+        if !found.is_empty()
+            && let Some(b) = d.blocks.get_mut(&name)
+        {
+            apply(&mut std::sync::Arc::make_mut(b).entities, found);
+        }
+    }
+}
+
 /// Read a DXF file into a drawing.
 pub fn read(bytes: &[u8]) -> Result<Drawing> {
     read_budgeted(bytes, 4_000_000, hatch::MAX_READ_CURVE_POINTS)
@@ -215,6 +259,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     let (paper_block_for, first_layout) = setup_layouts(&mut d, &mut layout_objs, &rx);
     place_blocks(&mut d, blocks, &mut rx, &paper_block_for, &first_layout);
     place_entities(&mut d, entities, &rx, &paper_block_for, &first_layout);
+    draw_kept_dimensions_from_their_blocks(&mut d);
     number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
