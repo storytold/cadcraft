@@ -1291,16 +1291,15 @@ pub(crate) fn finish(
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     // A dependency stays when an action of unknown form names it by group 330 or 360, or is its
     // owner. That action's list and count stay as read, and only the dangling target becomes null.
-    let unknown_refs: HashSet<String> = f
-        .objects
+    // Each kept action is classified once, here.
+    let unknown_actions: Vec<&ForeignObject> = f.objects.iter().filter(|o| is_unknown_assoc_action(&o.tags)).collect();
+    let unknown_handles: HashSet<String> = unknown_actions.iter().map(|o| o.handle.hex()).collect();
+    let unknown_refs: HashSet<String> = unknown_actions
         .iter()
-        .filter(|o| is_unknown_assoc_action(&o.tags))
         .flat_map(|o| o.tags.iter().take_while(|t| t.code < 1000).filter(|t| matches!(t.code, 330 | 360)).map(|t| norm(&t.value)))
         .collect();
-    let in_unknown_action = |h: &str| {
-        unknown_refs.contains(h)
-            || own.get(h).cloned().flatten().and_then(|owner| objs.get(&owner)).is_some_and(|owner| is_unknown_assoc_action(&owner.tags))
-    };
+    let in_unknown_action =
+        |h: &str| unknown_refs.contains(h) || own.get(h).and_then(Option::as_deref).is_some_and(|owner| unknown_handles.contains(owner));
     // Each pass that changes something drops at least one live object, so the loop ends.
     loop {
         let mut changed = false;
