@@ -4,7 +4,8 @@ impl Session {
     /// Append a new untitled drawing (`DrawingN`, metric or imperial default view), end a running command, make it active, bump the document epoch and return its index.
     pub fn new_drawing(&mut self, metric: bool) -> usize {
         self.untitled_counter += 1;
-        let d = if metric { Drawing::new_metric() } else { Drawing::new_imperial() };
+        let mut d = if metric { Drawing::new_metric() } else { Drawing::new_imperial() };
+        crate::apply_dim_defaults(&self.dim_defaults, &mut d);
         let mut st = DocState::new(d, &format!("Drawing{}", self.untitled_counter), None);
         st.set_view_quiet(if metric { View { center: Vec2::new(210.0, 148.5), height: 297.0, twist: 0.0 } } else { View::default() });
         self.end_running();
