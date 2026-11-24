@@ -949,3 +949,11 @@ fn json_output_is_pretty_unless_compact() {
     assert_eq!(r.stdout.lines().count(), 2, "one line per --cmd result: {}", r.stdout);
     assert_eq!(invoke(&["run", "--sample", "--compact"]).code, 2, "run takes no --compact");
 }
+
+#[test]
+fn roundtrip_progress_uses_the_requested_stderr() {
+    run_cases(
+        "roundtrip-progress",
+        &[case("roundtrip progress", &["roundtrip", "{b}", "--same-format", "--no-census"], 0, Starts("b.dxf: opened;"), Line("[1/1] b.dxf"))],
+    );
+}

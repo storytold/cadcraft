@@ -457,6 +457,10 @@ pub(crate) fn read(secs: &[SectionRef<'_>], d: &mut Drawing) {
     if !f.is_empty() {
         f.version = file_version(secs);
     }
+    // Added after the version: registered applications alone are no kept objects whose groups
+    // the DWG writer must read as the file's version, and nearly every file has some (ACAD).
+    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
+    f.appids = appids.take(MAX_OBJECTS).collect();
     // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
     f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
     if !f.is_empty() || !f.handles.is_empty() {
@@ -1267,7 +1271,7 @@ pub(crate) fn finish(
             join_entries(&map, b, kept, &mut out);
         }
     }
-    add_appids(&mut out);
+    add_appids(&mut out, &f.appids);
     let top = max_handle(&out).saturating_add(1);
     if let Some(t) = seed_index(&out).and_then(|i| out.get_mut(i))
         && Handle::parse_hex(&t.str()).is_none_or(|h| h.0 < top)
@@ -1593,9 +1597,13 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
     }
 }
 
-/// APPID records for every application with xdata in the file, added to the APPID table.
-fn add_appids(out: &mut Vec<Tag>) {
-    let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+/// APPID records for every application with xdata in the file and every one the file read had
+/// (`kept`), added to the APPID table.
+fn add_appids(out: &mut Vec<Tag>, kept: &[String]) {
+    let mut used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+    for name in kept.iter().filter(|n| !n.is_empty()) {
+        used.entry(up(name)).or_insert_with(|| name.clone());
+    }
     let recs = written_records(out);
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
