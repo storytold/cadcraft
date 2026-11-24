@@ -285,3 +285,50 @@ fn switching_drawing_tabs_drops_pending_edit_without_writing_to_other_drawing() 
     assert_eq!(h.state().session.active, first);
     assert_eq!(d1_expr(&h), "20", "the first drawing's pending edit was dropped");
 }
+
+#[test]
+fn enter_to_commit_does_not_repeat_last_command() {
+    let mut h = harness();
+    let pos = pill_pos(&h);
+
+    // Edit once, then Undo via `u` (sets `last_command = Some("u")`, matching Cmd+Z).
+    double_click_at(&mut h, pos);
+    h.event(Event::Text("30".into()));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(d1_expr(&h), "30");
+
+    h.state_mut().start("u");
+    h.run_steps(3);
+    assert_eq!(d1_expr(&h), "20");
+    assert_eq!(h.state().session.last_command.as_deref(), Some("u"));
+
+    // Committing with Enter must not leak into `cmdline::keyboard` in the same frame and repeat Undo.
+    h.run_steps(25);
+    let pos2 = pill_pos(&h);
+    double_click_at(&mut h, pos2);
+    h.event(Event::Text("35".into()));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(d1_expr(&h), "35", "Enter must not repeat Undo and revert the edit");
+    assert!((line_length(&h) - 35.0).abs() < 1e-6);
+
+    // Same when `last_command` is an interactive drawing command (LINE): Enter must not start it.
+    h.state_mut().start("line");
+    h.run_steps(2);
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(h.state().session.last_command.as_deref(), Some("line"));
+
+    h.run_steps(25);
+    let pos3 = pill_pos(&h);
+    double_click_at(&mut h, pos3);
+    h.event(Event::Text("40".into()));
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+    assert_eq!(d1_expr(&h), "40");
+    assert!(h.state().session.running.is_none(), "Enter must not repeat LINE");
+}

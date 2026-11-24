@@ -78,6 +78,9 @@ pub struct Cache {
     glyphs: Vec<Glyph>,
     dof: Dof,
     editing: Option<InlineEdit>,
+    /// True on the frame the inline editor rendered, so `cmdline::keyboard` later in the same frame
+    /// does not also consume the Enter or Escape that just closed it (repeating `last_command`, e.g. Undo).
+    took_keyboard: bool,
 }
 
 fn doc_key(app: &CadApp) -> Option<(u64, u64, usize)> {
@@ -518,7 +521,19 @@ fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::P
     }
 }
 
+pub fn take_keyboard(app: &mut CadApp) -> bool {
+    std::mem::take(&mut app.canvas.param.took_keyboard)
+}
+
+pub fn dismiss_inline(app: &mut CadApp, ctx: &egui::Context) {
+    if app.canvas.param.editing.take().is_some() {
+        ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(egui::Id::unique("dimcon_edit_te")));
+    }
+    app.canvas.param.took_keyboard = false;
+}
+
 pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
+    app.canvas.param.took_keyboard = false;
     refresh(app);
     let Ok(d) = app.session.doc() else { return };
     if d.constraints.is_empty() {
@@ -552,6 +567,7 @@ fn act_take(app: &mut CadApp, act: Option<Act>, ui: &mut egui::Ui) -> Option<()>
         app.canvas.param.editing = None;
         return None;
     }
+    app.canvas.param.took_keyboard = true;
     let mut done: Option<bool> = None;
     egui::Area::new(egui::Id::unique("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(edit.at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
