@@ -285,3 +285,17 @@ fn a_lookup_cell_that_isnt_a_number_is_refused() {
     set_property(&mut d, r, "Lookup1", "Left").unwrap();
     assert_eq!(prop(&d, r, "Angle1"), "180");
 }
+
+#[test]
+fn an_xy_distance_past_the_number_range_is_refused() {
+    // With an X scale of 1e-12, 1e308 typed is past the range in block units.
+    let (mut d, r) = reference_to("Many", 0.0);
+    let _ = d.modify_entity(r, |e| {
+        if let EntityKind::Insert(i) = &mut e.kind {
+            i.scale.x = 1e-12;
+        }
+    });
+    let before = prop(&d, r, "X Distance1");
+    assert!(set_property(&mut d, r, "X Distance1", "1e308").is_err());
+    assert_eq!(prop(&d, r, "X Distance1"), before);
+}

@@ -204,3 +204,124 @@ fn hostile_arrays_are_refused_not_built() {
     assert!(set_property(&mut d, r, "Angle1", "nan").is_err());
     assert!(set_property(&mut d, r, "Distance1", "0").is_err());
 }
+
+/// Row with an associative hatch on its square (handle 31), the hatch also in the array's
+/// selection.
+fn hatched_row() -> (Drawing, Handle) {
+    let hatch = [
+        "0 HATCH",
+        "5 31",
+        "330 1D",
+        "100 AcDbEntity",
+        "8 0",
+        "100 AcDbHatch",
+        "10 0",
+        "20 0",
+        "30 0",
+        "210 0",
+        "220 0",
+        "230 1",
+        "2 SOLID",
+        "70 1",
+        "71 1",
+        "91 1",
+        "92 3",
+        "72 0",
+        "73 1",
+        "93 4",
+        "10 0",
+        "20 0",
+        "10 2",
+        "20 0",
+        "10 2",
+        "20 2",
+        "10 0",
+        "20 2",
+        "97 1",
+        "330 30",
+        "75 0",
+        "76 1",
+        "98 0",
+        "1001 AcDbBlockRepETag",
+        "1070 1",
+        "1071 1",
+        "1005 31",
+    ]
+    .join("\n");
+    let src = include_str!("../data/dynblock_arrays.txt")
+        .replace("\r\n", "\n")
+        .replace("1005 30\n0 ENDBLK", &format!("1005 30\n{hatch}\n0 ENDBLK"))
+        .replace("71 1\n330 30\n1010 4", "71 2\n330 30\n330 31\n1010 4");
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let ins = cadcraft_doc::Insert {
+        block: "Row".into(),
+        insert: Vec3::new(100.0, 100.0, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
+    (d, r)
+}
+
+#[test]
+fn a_repeated_associative_hatch_follows_its_own_outline() {
+    let (mut d, r) = hatched_row();
+    set_property(&mut d, r, "Distance1", "9").unwrap();
+    let Some(EntityKind::Insert(i)) = d.entity(r).map(|e| &e.kind) else { panic!("a reference") };
+    let b = d.block(&i.block).unwrap();
+    let first_x = |e: &cadcraft_doc::Entity| match &e.kind {
+        EntityKind::LwPolyline(p) => Some(p.vertices[0].p.x),
+        EntityKind::Hatch(h) => h.loops[0].vertices.first().map(|v| v.p.x),
+        _ => None,
+    };
+    let outlines: Vec<(Handle, f64)> =
+        b.entities.iter().filter(|e| matches!(e.kind, EntityKind::LwPolyline(_))).filter_map(|e| Some((e.handle, first_x(e)?))).collect();
+    let hatches: Vec<&cadcraft_doc::Entity> = b.entities.iter().filter(|e| matches!(e.kind, EntityKind::Hatch(_))).map(|e| &**e).collect();
+    assert_eq!((outlines.len(), hatches.len()), (3, 3), "the square and its hatch, three times");
+    let mut xs = Vec::new();
+    for h in hatches {
+        let EntityKind::Hatch(hh) = &h.kind else { continue };
+        let [src] = hh.loops[0].sources.as_slice() else { panic!("one source") };
+        let (_, outline_x) = outlines.iter().find(|(oh, _)| oh == src).expect("the loop names a square of this block");
+        // Each hatch fills the square at its own place, not the first one.
+        assert!((first_x(h).unwrap() - outline_x).abs() < 1e-9, "{} vs {outline_x}", first_x(h).unwrap());
+        xs.push((outline_x * 1000.0).round() as i64);
+    }
+    xs.sort_unstable();
+    assert_eq!(xs, vec![0, 3000, 6000]);
+}
+
+#[test]
+fn a_polar_end_grip_snaps_its_angle_to_the_angle_value_set() {
+    // Fan with Angle1 limited to 0° and 90° (a list, in radians).
+    let free = "307 Angle1\n308\n140 0\n309\n96 0\n141 0\n142 0\n143 0\n175 0\n410\n97 0\n145 0\n146 0\n147 0\n176 0";
+    let src = include_str!("../data/dynblock_arrays.txt").replace("\r\n", "\n");
+    assert_eq!(src.matches(free).count(), 1);
+    let src = src.replace(free, &free.replace("97 0\n145 0\n146 0\n147 0\n176 0", "97 8\n145 0\n146 0\n147 0\n176 2\n148 0\n148 1.5707963267948966"));
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let ins = cadcraft_doc::Insert {
+        block: "Fan".into(),
+        insert: Vec3::new(100.0, 100.0, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
+    // Dragged toward 40°: the nearest allowed angle is 0°, the distance kept.
+    drag_grip(&mut d, r, 1, GripPart::End, Vec2::new(100.0 + 6.0 * 40f64.to_radians().cos(), 100.0 + 6.0 * 40f64.to_radians().sin())).unwrap();
+    assert_eq!(props(&d, r), pairs(&[("Distance1", "6.0000"), ("Angle1", "0")]));
+    // Toward 60°: 90°.
+    drag_grip(&mut d, r, 1, GripPart::End, Vec2::new(100.0 + 6.0 * 60f64.to_radians().cos(), 100.0 + 6.0 * 60f64.to_radians().sin())).unwrap();
+    assert_eq!(props(&d, r), pairs(&[("Distance1", "6.0000"), ("Angle1", "90")]));
+}
