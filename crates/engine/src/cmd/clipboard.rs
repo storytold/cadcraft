@@ -10,7 +10,7 @@
 //! The clipboard can also travel as DXF text ([`system_text`], [`load_system_text`]), so a front
 //! end can put it on the system clipboard and paste it into another CADCraft window.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Block, Drawing, Entity, EntityKind, HVal, Handle};
@@ -79,10 +79,11 @@ pub(crate) fn paste(s: &mut Session, m: &Mat3) -> Result<Vec<Handle>> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let space = s.space();
     let d = s.doc_mut()?;
-    let renames = defs.map(|x| merge(d, &x)).unwrap_or_default();
+    let mut raster_map = HashMap::new();
+    let renames = defs.as_deref().map(|x| merge(d, x, &mut raster_map)).unwrap_or_default();
     let mut out = Vec::new();
     for e in &ents {
-        let mut e = adopt(d, e, &renames);
+        let mut e = adopt(d, defs.as_deref(), e, &renames, &mut raster_map);
         e.kind.transform(m);
         d.ensure_layer(&e.common.layer);
         out.push(e.handle);
@@ -104,7 +105,8 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let defs = s.clipboard_source.as_ref().map(|c| c.defs.clone());
     let base = s.clipboard_base;
     let d = s.doc_mut()?;
-    let renames = defs.map(|x| merge(d, &x)).unwrap_or_default();
+    let mut raster_map = HashMap::new();
+    let renames = defs.as_deref().map(|x| merge(d, x, &mut raster_map)).unwrap_or_default();
     let seed = d.handseed;
     let name = (0..1_000_000u64)
         .map(|i| format!("A$C{:08X}", seed.wrapping_add(i) & 0xFFFF_FFFF))
@@ -113,7 +115,7 @@ pub(crate) fn paste_block(s: &mut Session, at: Vec2) -> Result<Handle> {
     let mut b = Block::new(&name);
     b.base = base.to3(0.0);
     for e in &ents {
-        let e = adopt(d, e, &renames);
+        let e = adopt(d, defs.as_deref(), e, &renames, &mut raster_map);
         d.ensure_layer(&e.common.layer);
         b.entities.push(e);
     }
@@ -131,16 +133,18 @@ pub fn system_text(s: &Session) -> Option<String> {
     }
     let hooks = super::file::io()?;
     let mut d = Drawing::new_imperial();
+    let defs = s.clipboard_source.as_ref().map(|c| c.defs.as_ref());
+    let mut raster_map = HashMap::new();
     let renames = match &s.clipboard_source {
         Some(c) => {
             d.header = c.defs.header.clone();
-            merge(&mut d, &c.defs)
+            merge(&mut d, &c.defs, &mut raster_map)
         }
-        None => BTreeMap::new(),
+        None => Renames::default(),
     };
     d.header.set("INSBASE", HVal::Point(s.clipboard_base.to3(0.0)));
     for e in &s.clipboard {
-        let e = adopt(&mut d, e, &renames);
+        let e = adopt(&mut d, defs, e, &renames, &mut raster_map);
         d.ensure_layer(&e.common.layer);
         d.model.push(e);
     }
@@ -168,7 +172,8 @@ pub fn load_system_text(s: &mut Session, text: &str) -> bool {
     true
 }
 
-/// Upper-case names of the table records and blocks some objects use.
+/// Upper-case names of the table records and blocks some objects use, plus exact raster keys
+/// they depend on.
 #[derive(Default)]
 struct Used {
     layers: HashSet<String>,
@@ -178,6 +183,7 @@ struct Used {
     mleader_styles: HashSet<String>,
     table_styles: HashSet<String>,
     blocks: HashSet<String>,
+    rasters: HashSet<String>,
 }
 
 fn up(n: &str) -> String {
@@ -222,6 +228,9 @@ impl Used {
             EntityKind::Table(t) => {
                 self.table_styles.insert(up(&t.style));
             }
+            EntityKind::Image(img) if !img.path.is_empty() => {
+                self.rasters.insert(img.path.clone());
+            }
             _ => {}
         }
         blocks
@@ -229,7 +238,7 @@ impl Used {
 }
 
 /// The definitions `ents` need from `src`: the layers, linetypes, styles and blocks they (and the
-/// blocks they reference, nested ones too) use, and `src`'s header.
+/// blocks they reference, nested ones too) use, decoded rasters, and `src`'s header.
 fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     let mut used = Used::default();
     let mut frontier: Vec<String> = ents.iter().flat_map(|e| used.note(e)).collect();
@@ -272,13 +281,24 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     d.mleader_styles = pick(&src.mleader_styles, &used.mleader_styles, |t| &t.name);
     d.table_styles = pick(&src.table_styles, &used.table_styles, |t| &t.name);
     d.blocks = src.blocks.iter().filter(|(k, _)| used.blocks.contains(&up(k))).map(|(k, b)| (k.clone(), b.clone())).collect();
+    for path in &used.rasters {
+        if let Some(r) = src.rasters.get(path) {
+            d.rasters.insert(path, r.clone());
+        }
+    }
     d.layouts.clear();
     d
 }
 
+#[derive(Default)]
+struct Renames {
+    exact: BTreeMap<String, String>,
+    lower: HashMap<String, Option<String>>,
+}
+
 /// Add `defs`' table records and blocks that `d` doesn't have. Returns the blocks copied, from
-/// their name in `defs` to their name in `d`.
-fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
+/// their name in `defs` to their name in `d` (plus a case-insensitive lookup index).
+fn merge(d: &mut Drawing, defs: &Drawing, raster_map: &mut HashMap<String, String>) -> Renames {
     use crate::cmd::merge::merge_named as add;
     add(&mut d.layers, &defs.layers, |l| &l.name);
     add(&mut d.linetypes, &defs.linetypes, |l| &l.name);
@@ -286,14 +306,19 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     add(&mut d.dim_styles, &defs.dim_styles, |t| &t.name);
     add(&mut d.mleader_styles, &defs.mleader_styles, |t| &t.name);
     add(&mut d.table_styles, &defs.table_styles, |t| &t.name);
-    let renames = crate::cmd::merge::block_renames(d, defs, None);
-    for (from, to) in &renames {
+    let exact = crate::cmd::merge::block_renames(d, defs, None);
+    let mut lower = HashMap::new();
+    for k in defs.blocks.keys() {
+        lower.entry(k.to_ascii_lowercase()).or_insert_with(|| exact.get(k).cloned());
+    }
+    let renames = Renames { exact, lower };
+    for (from, to) in &renames.exact {
         let Some(b) = defs.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
-            let e = adopt(d, e, &renames);
+            let e = adopt(d, Some(defs), e, &renames, raster_map);
             d.ensure_layer(&e.common.layer);
             nb.entities.push(e);
         }
@@ -302,21 +327,74 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     renames
 }
 
-/// A copy of a clipboard object for `d`: a fresh handle, block references renamed, and links to
-/// objects of the source drawing (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn rename_for<'a>(renames: &'a Renames, name: &str) -> Option<&'a str> {
+    renames.exact.get(name).map(String::as_str).or_else(|| renames.lower.get(&name.to_ascii_lowercase()).and_then(|v| v.as_deref()))
+}
+
+fn raster_candidate_key(path: &str, suffix: usize) -> String {
+    let file_start = path.rfind(['/', '\\']).map_or(0, |i| i + 1);
+    if let Some(dot_rel) = path[file_start..].rfind('.')
+        && dot_rel > 0
+    {
+        let split = file_start + dot_rel;
+        return format!("{}__{}{}", &path[..split], suffix, &path[split..]);
+    }
+    format!("{path}__{suffix}")
+}
+
+fn unique_raster_key(rasters: &cadcraft_doc::Rasters, path: &str, src: &cadcraft_doc::Raster) -> Option<String> {
+    (2..=1_000_000usize).map(|i| raster_candidate_key(path, i)).find(|k| match rasters.get(k) {
+        None => true,
+        Some(existing) => existing.as_ref() == src,
+    })
+}
+
+/// A copy of a clipboard object for `d`: a fresh handle, block references renamed, rasters carried
+/// into the target drawing, and links to objects of the source drawing (associative dimension
+/// points) dropped.
+fn adopt(d: &mut Drawing, defs: Option<&Drawing>, e: &Entity, renames: &Renames, raster_map: &mut HashMap<String, String>) -> Entity {
     let mut e = e.clone();
     e.handle = d.new_handle();
     match &mut e.kind {
         EntityKind::Insert(i) => {
-            if let Some(n) = renames.get(&i.block) {
-                i.block = n.clone();
+            if let Some(n) = rename_for(renames, &i.block) {
+                i.block = n.to_string();
             }
         }
         EntityKind::Dimension(dm) => {
             dm.assoc.clear();
-            if let Some(n) = dm.block.as_ref().and_then(|b| renames.get(b)) {
-                dm.block = Some(n.clone());
+            if let Some(n) = dm.block.as_deref().and_then(|b| rename_for(renames, b)) {
+                dm.block = Some(n.to_string());
+            }
+        }
+        EntityKind::MLeader(ml) => {
+            if let Some(b) = &mut ml.block
+                && let Some(n) = rename_for(renames, &b.block)
+            {
+                b.block = n.to_string();
+            }
+        }
+        EntityKind::Image(img) => {
+            if let Some(src_raster) = defs.and_then(|s| s.rasters.get(&img.path)).cloned() {
+                if let Some(mapped) = raster_map.get(&img.path)
+                    && d.rasters.get(mapped).is_some_and(|existing| Arc::ptr_eq(existing, &src_raster) || existing.as_ref() == src_raster.as_ref())
+                {
+                    img.path = mapped.clone();
+                } else {
+                    match d.rasters.get(&img.path) {
+                        None => d.rasters.insert(&img.path, src_raster),
+                        Some(existing) if Arc::ptr_eq(existing, &src_raster) || existing.as_ref() == src_raster.as_ref() => {}
+                        Some(_) => {
+                            if let Some(new_key) = unique_raster_key(&d.rasters, &img.path, &src_raster) {
+                                if d.rasters.get(&new_key).is_none() {
+                                    d.rasters.insert(&new_key, src_raster);
+                                }
+                                raster_map.insert(img.path.clone(), new_key.clone());
+                                img.path = new_key;
+                            }
+                        }
+                    }
+                }
             }
         }
         _ => {}
