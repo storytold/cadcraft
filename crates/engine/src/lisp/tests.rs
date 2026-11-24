@@ -1181,6 +1181,28 @@ fn a_leading_newline_ends_the_command_line_instead_of_adding_an_empty_one() {
     assert_eq!(&s.log[from..], ["Hello", "", "After a blank"]);
 }
 
+/// A module written on Windows names its include in one case and ships the file in another.
+/// Windows resolved that for free; a case-sensitive file system does not.
+#[test]
+fn load_finds_a_support_file_named_in_another_case() {
+    let dir = std::env::temp_dir().join(format!("cadcraft-lisp-case-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("UpperCase.lsp"), "(setq case-test-loaded 1)").unwrap();
+
+    let mut s = session();
+    s.set_lisp_support_dir(Some(dir.clone()));
+    let _ = ok(&mut s, "(load \"uppercase\")");
+    assert_eq!(to_text(&s.lisp_var("CASE-TEST-LOADED"), true), "1", "(load \"uppercase\") reads UpperCase.lsp");
+
+    // An exact name still wins when the folder also holds a spelling that differs only by case.
+    std::fs::write(dir.join("variant.lsp"), "(setq picked 1)").unwrap();
+    std::fs::write(dir.join("Variant.lsp"), "(setq picked 2)").unwrap();
+    let _ = ok(&mut s, "(load \"variant\")");
+    assert_eq!(to_text(&s.lisp_var("PICKED"), true), "1", "the exact name wins");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn startup_files_load_from_the_support_folder() {
     let dir = std::env::temp_dir().join(format!("cadcraft-lisp-startup-{}", std::process::id()));
