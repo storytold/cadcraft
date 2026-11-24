@@ -12,7 +12,8 @@ const CONFIG_DIR: &str = "CADCRAFT_CONFIG_DIR";
 const LOCALE: &str = "CADCRAFT_LOCALE";
 const VSYNC: &str = "CADCRAFT_VSYNC";
 const STENCIL: &str = "CADCRAFT_STENCIL";
-const WAYLAND: &str = "CADCRAFT_WAYLAND";
+const X11: &str = "CADCRAFT_X11";
+const TITLEBAR: &str = "CADCRAFT_TITLEBAR";
 const NO_NATIVE_MENU: &str = "CADCRAFT_NO_NATIVE_MENU";
 const SYSTEM_CURSOR: &str = "CADCRAFT_SYSTEM_CURSOR";
 const FONTALT: &str = "CADCRAFT_FONTALT";
@@ -24,7 +25,11 @@ pub(crate) const VARS: &[(&str, &str)] = &[
     (LOCALE, "the interface language, instead of the system's"),
     (VSYNC, "1 presents with vsync, 0 without it (default: without on Linux and BSD)"),
     (STENCIL, "0 opens the window without a stencil buffer, for drivers that show a black window; clipped layout viewports then draw unclipped"),
-    (WAYLAND, "1 keeps the native Wayland backend instead of XWayland; 0 or unset is off"),
+    (X11, "1 runs through XWayland instead of the native Wayland backend, as a fallback, when the X11 libraries load; 0 or unset is off"),
+    (
+        TITLEBAR,
+        "Linux and BSD: app draws the window buttons in the app, system leaves the frame to the desktop (default: GNOME on Wayland draws them in the app)",
+    ),
     (NO_NATIVE_MENU, "macOS: 1 keeps the menus inside the window; 0 or unset is off"),
     (SYSTEM_CURSOR, "1 uses the system cursor instead of the drawn crosshair; 0 or unset is off"),
     (FONTALT, "the font that replaces a missing one"),
@@ -49,9 +54,13 @@ pub(crate) struct Env {
     /// Off: the window has no stencil buffer (default: on). Some old drivers (Mesa on Intel HD
     /// 4000, old Intel drivers on Windows) accept a stencil pass and then present a black window.
     pub(crate) stencil: Switch,
-    /// Keep the native Wayland backend instead of XWayland.
+    /// Run through XWayland instead of the native Wayland backend.
     #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
-    pub(crate) wayland: Switch,
+    pub(crate) x11: Switch,
+    /// Linux and BSD: `app` draws the window buttons in the app, `system` leaves the frame to the
+    /// desktop; otherwise `decorations` decides.
+    #[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+    pub(crate) titlebar: Option<String>,
     /// macOS: keep the menus inside the window.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) no_native_menu: Switch,
@@ -101,7 +110,8 @@ impl Env {
             locale: text(LOCALE),
             vsync: switch(VSYNC),
             stencil: switch(STENCIL),
-            wayland: switch(WAYLAND),
+            x11: switch(X11),
+            titlebar: text(TITLEBAR),
             no_native_menu: switch(NO_NATIVE_MENU),
             system_cursor: switch(SYSTEM_CURSOR),
             font_alt: text(FONTALT),
@@ -189,7 +199,8 @@ mod tests {
             (LOCALE, "cs-CZ"),
             (VSYNC, " On "),
             (STENCIL, "No"),
-            (WAYLAND, "0"),
+            (X11, "0"),
+            (TITLEBAR, " system "),
             (NO_NATIVE_MENU, "yes"),
             (SYSTEM_CURSOR, "maybe"),
             (FONTALT, "Noto Sans"),
@@ -204,7 +215,8 @@ mod tests {
                 locale: Some("cs-CZ".into()),
                 vsync: Switch::On,
                 stencil: Switch::Off,
-                wayland: Switch::Off,
+                x11: Switch::Off,
+                titlebar: Some(" system ".into()),
                 no_native_menu: Switch::On,
                 system_cursor: Switch::Default,
                 font_alt: Some("Noto Sans".into()),
@@ -214,8 +226,8 @@ mod tests {
         let blank = vars.map(|(k, _)| (k, if k == FONTALT { "  " } else { "" }));
         let read = Env::from_vars(env(&blank));
         assert_eq!(read.config_dir, None, "an empty variable means no directory, not the working directory");
-        assert_eq!((read.locale, read.font_alt, read.font_fallback), (None, None, None));
-        assert_eq!([read.vsync, read.stencil, read.wayland, read.no_native_menu, read.system_cursor], [Switch::Default; 5]);
+        assert_eq!((read.locale, read.titlebar, read.font_alt, read.font_fallback), (None, None, None, None));
+        assert_eq!([read.vsync, read.stencil, read.x11, read.no_native_menu, read.system_cursor], [Switch::Default; 5]);
     }
 
     #[test]

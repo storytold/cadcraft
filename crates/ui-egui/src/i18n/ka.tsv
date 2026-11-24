@@ -1519,6 +1519,10 @@ menu	View	ხედი
 	This drawing has no blocks.	ამ ნახაზში ბლოკები არ არის.
 	This library has no drawings or blocks.	ამ ბიბლიოთეკაში ნახაზები ან ბლოკები არ არის.
 	Only the first {n} are shown.	ნაჩვენებია მხოლოდ პირველი {n}.
+	Minimize	ჩაკეცვა
+	Maximize	გაშლა
+	Use system title bar	სისტემის სათაურის ზოლის გამოყენება
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	ფანჯრის ღილაკებისთვის მარტივი სათაურის ზოლის ჩვენება CADCraft-ის საკუთარი ზოლის ზემოთ. GNOME აპებისთვის სათაურის ზოლებს არ ხატავს, ამიტომ ეს ზოლი მის თემას არ მიჰყვება.
 
 # ArtCraft feature naming
 	Additional Tools	დამატებითი ხელსაწყოები

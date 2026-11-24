@@ -1486,6 +1486,10 @@ menu	Modify	Izmijeni
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Crtež se promijenio. Zatvorite prozor i otvorite ga ponovo.
+	Minimize	Minimiziraj
+	Maximize	Maksimiziraj
+	Use system title bar	Koristi sistemsku naslovnu traku
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Prikaži osnovnu naslovnu traku za dugmad prozora iznad CADCraftove vlastite. GNOME ne crta naslovne trake za aplikacije, pa ova ne prati njegovu temu.
 
 # ArtCraft feature naming
 	Additional Tools	Dodatni alati

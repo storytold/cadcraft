@@ -1491,6 +1491,10 @@ menu	Modify	Hiệu chỉnh
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Bản vẽ đã thay đổi. Đóng cửa sổ và mở lại.
+	Minimize	Thu nhỏ
+	Maximize	Phóng to
+	Use system title bar	Dùng thanh tiêu đề của hệ thống
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Hiện một thanh tiêu đề đơn giản cho các nút cửa sổ phía trên thanh của CADCraft. GNOME không vẽ thanh tiêu đề cho ứng dụng, nên thanh này không theo chủ đề của nó.
 
 # ArtCraft feature naming
 	Additional Tools	Công cụ bổ sung

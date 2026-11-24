@@ -24,7 +24,8 @@ description: |-
 
 # The binaries link only glibc and libgcc_s directly. Windowing (X11/Wayland, xkbcommon) and the
 # GPU (Vulkan, EGL/GL) are loaded at runtime, so they are dependencies/recommendations here
-# rather than ELF NEEDED entries.
+# rather than ELF NEEDED entries. On a Wayland desktop the app runs natively and needs X11 only
+# with CADCRAFT_X11=1 (see main.rs), so the X11 libraries are recommendations.
 overrides:
   deb:
     depends:
@@ -36,6 +37,7 @@ overrides:
       - libwayland-client0
       - libx11-6
       - libx11-xcb1
+      - libxkbcommon-x11-0
       - libxcursor1
       - libxi6
       - libxrandr2
@@ -48,6 +50,8 @@ overrides:
     recommends:
       - libwayland-client
       - libX11
+      - libX11-xcb
+      - libxkbcommon-x11
       - libXcursor
       - libXi
       - libXrandr

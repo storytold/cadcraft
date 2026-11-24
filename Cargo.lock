@@ -674,9 +674,12 @@ dependencies = [
  "sys-locale",
  "thiserror 2.0.21",
  "uds_windows",
+ "wayland-client",
  "windows",
  "winit",
  "winresource",
+ "x11-dl",
+ "xkbcommon-dl",
  "zbus",
 ]
 
