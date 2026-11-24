@@ -165,6 +165,8 @@ struct BitmapRect {
 }
 
 fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
+    use emf_core::parser::RecordType::*;
+
     if emf.len() > MAX_BYTES || emf.get(40..44) != Some(b" EMF") {
         return Err(bad("invalid EMF header"));
     }
@@ -182,18 +184,55 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
         let record = emf.get(at..end).ok_or_else(|| bad("truncated EMF record"))?;
         // Word emits EMF+ Dual with a complete GDI fallback. Its comments are not needed
         // by this converter; unsupported EMF+ Only presentations are rejected below.
-        if kind != 70 {
-            if kind == 81 {
-                images.push(BitmapRect {
-                    id: format!("elem{count}"),
-                    rect: [i32_at(record, 24)?, i32_at(record, 28)?, i32_at(record, 72)?, i32_at(record, 76)?],
-                });
+        if kind != EMR_COMMENT as u32 {
+            match emf_core::parser::RecordType::from_repr(kind) {
+                // emf-core's SVG player accepts these records but emits no artwork.
+                Some(
+                    kind @ (EMR_STRETCHBLT
+                    | EMR_MASKBLT
+                    | EMR_PLGBLT
+                    | EMR_SETDIBITSTODEVICE
+                    | EMR_TRANSPARENTBLT
+                    | EMR_ANGLEARC
+                    | EMR_ARC
+                    | EMR_ARCTO
+                    | EMR_CHORD
+                    | EMR_EXTFLOODFILL
+                    | EMR_EXTTEXTOUTA
+                    | EMR_FILLRGN
+                    | EMR_FRAMERGN
+                    | EMR_GRADIENTFILL
+                    | EMR_INVERTRGN
+                    | EMR_PAINTRGN
+                    | EMR_PIE
+                    | EMR_POLYDRAW
+                    | EMR_POLYDRAW16
+                    | EMR_POLYPOLYGON
+                    | EMR_POLYTEXTOUTA
+                    | EMR_POLYTEXTOUTW
+                    | EMR_ROUNDRECT
+                    | EMR_SETPIXELV
+                    | EMR_SMALLTEXTOUT
+                    | EMR_DRAWESCAPE
+                    | EMR_EXTESCAPE
+                    | EMR_NAMEDESCAPE
+                    | EMR_GLSRECORD
+                    | EMR_GLSBOUNDEDRECORD),
+                ) => {
+                    return Err(bad(format!("unsupported EMF paint record {kind:?}")));
+                }
+                Some(EMR_BITBLT) if !matches!(u32_at(record, 40)?, 0x0000_0042 | 0x00ff_0062 | 0x00f0_0021) => {
+                    return Err(bad("unsupported EMR_BITBLT raster operation"));
+                }
+                Some(EMR_ALPHABLEND) => return Err(bad("unsupported EMR_ALPHABLEND compositing")),
+                Some(EMR_STRETCHDIBITS) => images.push(stretch_dibits(record, count)?),
+                _ => {}
             }
             out.extend_from_slice(record);
             count += 1;
         }
         at = end;
-        if kind == 14 {
+        if kind == EMR_EOF as u32 {
             break;
         }
     }
@@ -204,6 +243,27 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
     out.get_mut(48..52).ok_or_else(|| bad("short EMF header"))?.copy_from_slice(&length.to_le_bytes());
     out.get_mut(52..56).ok_or_else(|| bad("short EMF header"))?.copy_from_slice(&count.to_le_bytes());
     Ok((out, images))
+}
+
+fn stretch_dibits(record: &[u8], index: u32) -> Result<BitmapRect> {
+    const SRCCOPY: u32 = 0x00cc_0020;
+    if u32_at(record, 68)? != SRCCOPY {
+        return Err(bad("unsupported EMR_STRETCHDIBITS raster operation"));
+    }
+    let header_offset = u32_at(record, 48)? as usize;
+    let header_len = u32_at(record, 52)? as usize;
+    let header_end = header_offset.checked_add(header_len).ok_or_else(|| bad("invalid bitmap header"))?;
+    let header = record.get(header_offset..header_end).ok_or_else(|| bad("truncated bitmap header"))?;
+    let width = i32_at(header, 4)?;
+    let height = i32_at(header, 8)?.unsigned_abs();
+    if i32_at(record, 32)? != 0 || i32_at(record, 36)? != 0 || i32_at(record, 40)? != width || u32::try_from(i32_at(record, 44)?).ok() != Some(height)
+    {
+        return Err(bad("cropped or reversed EMR_STRETCHDIBITS source rectangle"));
+    }
+    if width <= 0 || height == 0 || u64::from(width.unsigned_abs()) * u64::from(height) > 1_000_000 {
+        return Err(bad("invalid or oversized EMR_STRETCHDIBITS bitmap"));
+    }
+    Ok(BitmapRect { id: format!("elem{index}"), rect: [i32_at(record, 24)?, i32_at(record, 28)?, i32_at(record, 72)?, i32_at(record, 76)?] })
 }
 
 fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
@@ -541,6 +601,40 @@ fn add_triangle(drawing: &mut Drawing, points: [Vec3; 3], rgb: Rgb) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gdi_preflight_rejects_paint_that_the_svg_converter_would_drop() {
+        use emf_core::parser::RecordType::*;
+
+        let record = |kind, len: usize| {
+            let mut bytes = vec![0u8; len];
+            bytes[..4].copy_from_slice(&(kind as u32).to_le_bytes());
+            bytes[4..8].copy_from_slice(&(len as u32).to_le_bytes());
+            bytes
+        };
+        let mut header = record(EMR_HEADER, 88);
+        header[40..44].copy_from_slice(b" EMF");
+        header.extend(record(EMR_RECTANGLE, 24));
+        let eof = record(EMR_EOF, 20);
+        assert!(gdi_records(&[header.as_slice(), &eof].concat()).is_ok());
+        for kind in [EMR_STRETCHBLT, EMR_TRANSPARENTBLT, EMR_GRADIENTFILL] {
+            let unsupported = record(kind, 108);
+            let emf = [header.as_slice(), &unsupported, &eof].concat();
+            assert!(gdi_records(&emf).err().unwrap().to_string().contains(&format!("{kind:?}")));
+        }
+    }
+
+    #[test]
+    fn stretch_dibits_requires_a_full_source_copy() {
+        let mut record = vec![0u8; 120];
+        for (offset, value) in [(24, 5i32), (28, 6), (40, 2), (44, 1), (48, 80), (52, 40), (68, 0x00cc_0020), (72, 20), (76, 10), (84, 2), (88, 1)] {
+            record[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        assert_eq!(stretch_dibits(&record, 0).unwrap().rect, [5, 6, 20, 10]);
+        record[32..36].copy_from_slice(&1i32.to_le_bytes());
+        record[40..44].copy_from_slice(&1i32.to_le_bytes());
+        assert!(stretch_dibits(&record, 0).err().unwrap().to_string().contains("source rectangle"));
+    }
 
     fn chunk(data: &[u8], count: u32, remaining: u32, total: u32) -> Vec<u8> {
         let mut record = vec![0; 44];

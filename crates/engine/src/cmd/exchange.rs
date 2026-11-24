@@ -305,13 +305,7 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
             let layout = doc.layout(name).ok_or_else(|| bad("import", "layout is missing"))?;
             cadcraft_render::paper::page_unit_mm(doc, &layout.page)
         }
-        Space::Model => match doc.header.i64("INSUNITS", 0) {
-            1 => 25.4,
-            2 => 304.8,
-            5 => 10.0,
-            6 => 1000.0,
-            _ => 1.0,
-        },
+        Space::Model => insertion_unit_mm(doc.header.i64("INSUNITS", 0)),
     };
     let scale = scale / mm_per_unit;
     let at = if params.get("at").is_none() {
@@ -330,6 +324,37 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
     s.set_selection(vec![inserted]);
     Ok(json!({"handle": inserted.hex(), "handles":[inserted.hex()], "imported": 1,
         "layers":0,"styles":0,"blocks":1,"block":block_name,"message": message}))
+}
+
+/// Convert the DXF $INSUNITS length unit to millimetres. Unitless drawings use mm.
+fn insertion_unit_mm(unit: i64) -> f64 {
+    const SURVEY_FOOT_MM: f64 = 1_200_000.0 / 3_937.0;
+    match unit {
+        1 => 25.4,
+        2 => 304.8,
+        3 => 1_609_344.0,
+        5 => 10.0,
+        6 => 1_000.0,
+        7 => 1e6,
+        8 => 25.4e-6,
+        9 => 25.4e-3,
+        10 => 914.4,
+        11 => 1e-7,
+        12 => 1e-6,
+        13 => 1e-3,
+        14 => 100.0,
+        15 => 1e4,
+        16 => 1e5,
+        17 => 1e12,
+        18 => 149_597_870_700_000.0,
+        19 => 9.460_730_472_580_8e18,
+        20 => 149_597_870_700_000.0 * 648_000.0 / std::f64::consts::PI,
+        21 => SURVEY_FOOT_MM,
+        22 => SURVEY_FOOT_MM / 12.0,
+        23 => SURVEY_FOOT_MM * 3.0,
+        24 => SURVEY_FOOT_MM * 5_280.0,
+        _ => 1.0,
+    }
 }
 
 /// Copy `src`'s model space into the current space (scaled about the origin, then moved to

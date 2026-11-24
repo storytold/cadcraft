@@ -444,7 +444,9 @@ pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[
         });
         let mut pts = polys.iter().flatten();
         let hit = if crossing {
-            crosses || pts.any(|p| point_in_polygon(poly, *p))
+            crosses
+                || pts.any(|p| point_in_polygon(poly, *p))
+                || d.imported_page_frame(e).is_some_and(|frame| poly.iter().any(|p| point_in_polygon(&frame, *p)))
         } else {
             !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
         };

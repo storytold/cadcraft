@@ -2113,8 +2113,11 @@ fn reads_utf8_and_code_page_text() {
 fn dwg_roundtrip_keeps_non_ascii_text() {
     crate::dwg_worker::allow_in_process();
     // Content determines the DWG reader even with a page-import extension.
-    let back = read(&write(&intl_sample(), "x.dwg").unwrap(), "mislabeled.pdf").unwrap();
-    assert_intl(&back);
+    let bytes = write(&intl_sample(), "x.dwg").unwrap();
+    for name in ["mislabeled.pdf", "mislabeled.docx"] {
+        assert_intl(&read(&bytes, name).unwrap());
+    }
+    assert!(read(&bytes, "mislabeled.olepreview").unwrap_err().to_string().contains("no compound document"));
 }
 
 #[test]

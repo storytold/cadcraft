@@ -170,7 +170,11 @@ fn inline_bitmaps(svg: &str) -> Result<String> {
     let mut replacement_bytes = 0usize;
     for image in root.descendants().filter(|n| n.has_tag_name("image") && !n.ancestors().any(|p| p.has_tag_name("mask"))) {
         let pixels = bitmap(image)?;
-        let mask_group = image.ancestors().find(|n| n.has_attribute("mask"));
+        let mut masks = image.ancestors().filter(|n| n.has_attribute("mask"));
+        let mask_group = masks.next();
+        if masks.next().is_some() {
+            return Err(error("unsupported nested image masks"));
+        }
         let mask = mask_group.map(|group| image_mask(root, group, image, &pixels)).transpose()?;
         // A nested SVG maps pixel coordinates through the original image viewport,
         // including x/y, scaling, transforms, and references to its ID.
@@ -218,12 +222,18 @@ fn image_mask(root: Node<'_, '_>, group: Node<'_, '_>, image: Node<'_, '_>, pixe
         .ok_or_else(|| error("unsupported image mask"))?;
     let definition =
         root.descendants().find(|n| n.has_tag_name("mask") && n.attribute("id") == Some(id)).ok_or_else(|| error("missing image mask"))?;
-    let mut images = definition.descendants().filter(|n| n.has_tag_name("image"));
-    let source = images.next().ok_or_else(|| error("missing mask bitmap"))?;
-    let transform = |n: Node<'_, '_>| n.parent_element().and_then(|p| p.attribute("transform")).map(str::to_owned);
-    if images.next().is_some()
-        || transform(source) != transform(image)
-        || ["x", "y", "width", "height", "transform", "preserveAspectRatio"].iter().any(|&attr| source.attribute(attr) != image.attribute(attr))
+    // Baking is valid only when the mask and its target each paint a single
+    // aligned bitmap. Removing a general SVG mask would expose hidden artwork.
+    let (source, mask_transform) = single_bitmap(definition).ok_or_else(|| error("unsupported artwork in image mask"))?;
+    let (target, image_transform) = single_bitmap(group).ok_or_else(|| error("unsupported artwork under image mask"))?;
+    let placement = ["x", "y", "width", "height", "transform", "preserveAspectRatio"];
+    if target != image
+        || !group.has_tag_name("g")
+        || group.has_attribute("transform")
+        || definition.attributes().any(|attr| attr.name() != "id")
+        || source.attributes().any(|attr| !matches!(attr.name(), "id" | "href") && !placement.contains(&attr.name()))
+        || mask_transform != image_transform
+        || placement.iter().any(|&attr| source.attribute(attr) != image.attribute(attr))
     {
         return Err(error("unsupported mask placement"));
     }
@@ -234,12 +244,33 @@ fn image_mask(root: Node<'_, '_>, group: Node<'_, '_>, image: Node<'_, '_>, pixe
     Ok(mask)
 }
 
+fn single_bitmap<'a, 'input>(container: Node<'a, 'input>) -> Option<(Node<'a, 'input>, Option<&'a str>)> {
+    fn only_child<'a, 'input>(node: Node<'a, 'input>) -> Option<Node<'a, 'input>> {
+        let mut children = node.children().filter(Node::is_element);
+        let child = children.next()?;
+        children.next().is_none().then_some(child)
+    }
+
+    let child = only_child(container)?;
+    let (image, transform) = if child.has_tag_name("g") && child.attributes().all(|attr| attr.name() == "transform") {
+        (only_child(child)?, child.attribute("transform"))
+    } else {
+        (child, None)
+    };
+    image.has_tag_name("image").then_some((image, transform))
+}
+
 fn bitmap_rectangles(pixels: &Raster, mask: Option<&Raster>) -> Result<String> {
     use std::fmt::Write;
     let mut svg = String::from("<g>");
     let composite = |x, y| {
         let [r, g, b, alpha] = pixels.pixel(x, y)?;
-        let alpha = u32::from(alpha) * u32::from(mask.and_then(|m| m.pixel(x, y)).map_or(255, |p| p[0]));
+        let mask_coverage = match mask.and_then(|m| m.pixel(x, y)) {
+            None | Some([255, 255, 255, 255]) => 255,
+            Some([0, 0, 0, _] | [_, _, _, 0]) => 0,
+            Some(_) => 1, // Any other luminance/alpha combination is partial.
+        };
+        let alpha = u32::from(alpha) * mask_coverage;
         Some(([r, g, b], alpha))
     };
     for row in 0..pixels.height() {
@@ -344,6 +375,23 @@ mod tests {
         let drawing = ole::read_vector_svg(&inline_bitmaps(&svg).unwrap(), false).unwrap();
         assert_two_logos(&drawing, 25.4 / 72.0);
         assert_eq!(drawing.model.len(), 5, "paper and two red rectangles, with both blue pixels masked");
+    }
+
+    #[test]
+    fn bitmap_masks_with_additional_artwork_fail_without_removing_the_mask() {
+        let white = Raster::new(1, 1, vec![255, 255, 255, 255]).unwrap();
+        let png = base64::engine::general_purpose::STANDARD.encode(raster::encode_png(&white).unwrap());
+        let image = format!(r#"<image width="1" height="1" href="data:image/png;base64,{png}"/>"#);
+        let rect = r#"<rect x="0.5" width="0.5" height="1"/>"#;
+        let svg = |mask: &str, target: &str| {
+            format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72">
+                <defs><mask id="m">{mask}</mask></defs><g mask="url(#m)">{target}</g></svg>"##
+            )
+        };
+        assert!(inline_bitmaps(&svg(&image, &image)).is_ok());
+        assert!(inline_bitmaps(&svg(&format!("{image}{rect}"), &image)).unwrap_err().to_string().contains("artwork in image mask"));
+        assert!(inline_bitmaps(&svg(&image, &format!("{image}{rect}"))).unwrap_err().to_string().contains("artwork under image mask"));
     }
 
     #[test]

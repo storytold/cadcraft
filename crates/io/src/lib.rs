@@ -91,7 +91,7 @@ fn ext(name: impl AsRef<Path>) -> String {
 }
 
 /// Read a drawing; the format comes from the content (DXF ASCII/binary, DWG) or the name
-/// (SVG and gzip-compressed SVGZ).
+/// (SVG, SVGZ, native PDF/DOCX and cached OLE previews).
 pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
     read_source(bytes, name.as_ref()).map(|(d, _)| d)
 }
@@ -99,14 +99,18 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// [`read`], also returning the DXF rendition a DWG was read through (`None` for other files),
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
+    let extension = ext(name);
+    // OLECONVERT requests normalized geometry from a cached presentation only.
+    if extension == "olepreview" {
+        return ole::read(bytes).map(|d| (d, None));
+    }
     if craft_dwg::is_dwg(bytes) {
         let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
     }
-    let extension = ext(name);
-    if matches!(extension.as_str(), "pdf" | "docx" | "olepreview") && Format::has_dxf_header(bytes) {
+    if matches!(extension.as_str(), "pdf" | "docx") && Format::has_dxf_header(bytes) {
         return dxf_read::read(bytes).map(|drawing| (drawing, None));
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -114,9 +118,6 @@ pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<
         "pdf" => return word::read_pdf(bytes).map(|drawing| (drawing, None)),
         "docx" => return word::read(bytes).map(|drawing| (drawing, None)),
         _ => {}
-    }
-    if extension == "olepreview" {
-        return ole::read(bytes).map(|d| (d, None));
     }
     let d = match (Format::from_path(name), extension.as_str()) {
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),

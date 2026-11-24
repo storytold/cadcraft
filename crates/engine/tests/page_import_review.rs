@@ -93,11 +93,17 @@ fn drawing_with_a_page_extension_imports_as_a_drawing() {
 #[test]
 fn page_import_uses_the_destination_space_units() {
     let mut s = session();
-    s.doc_mut().unwrap().header.set_i64("INSUNITS", 6);
-    for (tab, paper_mm, unit) in [("Model", true, 1000.0), ("Layout1", true, 1.0), ("Layout1", false, 25.4)] {
+    s.execute("layout.new", &json!({"name":"Import Sheet"})).unwrap();
+    s.doc_mut().unwrap().header.set_i64("INSUNITS", 10);
+    for (tab, paper_mm, in_viewport, unit) in
+        [("Model", true, false, 914.4), ("Import Sheet", true, false, 1.0), ("Import Sheet", false, false, 25.4), ("Import Sheet", true, true, 914.4)]
+    {
         s.execute("layout.set", &json!({"name":tab})).unwrap();
         if tab != "Model" {
             s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == tab).unwrap().page.paper_mm = Some(paper_mm);
+        }
+        if in_viewport {
+            s.execute("mspace", &json!({})).unwrap();
         }
         let r = s.execute("import", &json!({"name":"page.pdf","data":"AA==","scale":2.0})).unwrap();
         let handle = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
@@ -110,9 +116,28 @@ fn page_import_uses_the_destination_space_units() {
 fn dxf_bytes_take_precedence_over_page_file_extensions() {
     for binary in [false, true] {
         let bytes = cadcraft_io::write_with(&page(), "source.dxf", &cadcraft_io::SaveOptions { version: None, binary }).unwrap();
-        for name in ["source.pdf", "source.docx", "source.olepreview"] {
+        for name in ["source.pdf", "source.docx"] {
             let drawing = cadcraft_io::read(&bytes, name).unwrap();
             assert!(matches!(drawing.model.iter().next().unwrap().kind, EntityKind::Solid(_)));
+        }
+        assert!(cadcraft_io::read(&bytes, "source.olepreview").unwrap_err().to_string().contains("no compound document"));
+    }
+}
+
+#[test]
+fn dxf_page_extension_probe_preserves_the_decoders_line_and_tag_rules() {
+    let dxf = String::from_utf8(cadcraft_io::write(&page(), "source.dxf").unwrap()).unwrap();
+    let lf = dxf.replace("\r\n", "\n");
+    let variants = [format!("\u{feff}{lf}"), format!("999\n\n\n{lf}"), lf.replace('\n', "\r"), format!("999\r\n\r\n{dxf}")];
+    for dxf in variants {
+        for name in ["source.pdf", "source.docx"] {
+            let drawing = cadcraft_io::read(dxf.as_bytes(), name).unwrap();
+            assert!(matches!(drawing.model.iter().next().unwrap().kind, EntityKind::Solid(_)));
+            let mut s = session();
+            let data = cadcraft_engine::cmd::file::base64_encode(dxf.as_bytes());
+            let result = s.execute("import", &json!({"name":name,"data":data})).unwrap();
+            assert_eq!(result["blocks"], 0);
+            assert!(matches!(s.doc().unwrap().model.iter().next().unwrap().kind, EntityKind::Solid(_)));
         }
     }
 }
@@ -174,6 +199,18 @@ fn rotated_page_crossing_ignores_empty_bounding_box_corners() {
     assert!(cadcraft_engine::select::select_window(d, &Space::Model, inside, true).contains(&h));
     let edge = Bounds2::new(Vec2::new(-0.1, -0.1), Vec2::new(0.1, 0.1));
     assert!(cadcraft_engine::select::select_window(d, &Space::Model, edge, true).contains(&h));
+}
+
+#[test]
+fn crossing_polygon_inside_a_page_selects_the_paper() {
+    let mut s = session();
+    let h = insert(&mut s, true, 0.0);
+    let d = s.doc().unwrap();
+    let polygon = [(1.0, 1.0), (6.0, 1.0), (1.0, 6.0)].map(|(x, y)| Vec2::new(x, y));
+    assert_eq!(cadcraft_engine::select::select_polygon(d, &Space::Model, &polygon, true), vec![h]);
+    assert!(cadcraft_engine::select::select_polygon(d, &Space::Model, &polygon, false).is_empty());
+    let outside = polygon.map(|p| p + Vec2::new(100.0, 100.0));
+    assert!(cadcraft_engine::select::select_polygon(d, &Space::Model, &outside, true).is_empty());
 }
 #[test]
 fn successful_shrink_never_disables_subsequent_enlargement() {

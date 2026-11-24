@@ -20,15 +20,19 @@ impl Format {
         if craft_dxf::is_binary(bytes) {
             return true;
         }
-        let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
-        let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
-        loop {
-            match (lines.next(), lines.next()) {
-                (Some("999"), Some(_)) => continue,
-                (Some("0"), Some(v)) => return v.eq_ignore_ascii_case("SECTION"),
+        let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+        let text = prefix.strip_prefix('\u{feff}').unwrap_or(&prefix).replace("\r\n", "\n");
+        let mut lines = text.split_terminator(['\r', '\n']);
+        while let Some(code) = lines.find(|line| !line.trim().is_empty()) {
+            let Some(value) = lines.next() else { return false };
+            // A blank line is skipped between tags, but it still occupies the value of a tag.
+            match code.trim().parse::<i32>() {
+                Ok(999) => continue,
+                Ok(0) => return value.trim().eq_ignore_ascii_case("SECTION"),
                 _ => return false,
             }
         }
+        false
     }
 
     /// The formats a drawing can be read from by name. DXF and DWG are also recognised by content.
