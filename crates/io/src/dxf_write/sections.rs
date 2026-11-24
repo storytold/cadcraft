@@ -517,7 +517,7 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
                                 .iter()
                                 .find(|tag| tag.code == 72)
                                 .zip(current.iter().find(|tag| tag.code == 72))
-                                .is_some_and(|(old, now)| old.i64() != now.i64()))))
+                                .is_some_and(|(old, now)| matches!(old.i64(), 0 | 1) && old.i64() != now.i64()))))
                 || current.iter().find(|tag| tag.code == code) != baseline.iter().find(|tag| tag.code == code)
         };
         for tag in &kept.tags {

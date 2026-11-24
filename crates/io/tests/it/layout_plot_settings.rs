@@ -305,3 +305,39 @@ fn inherited_paper_units_follow_measurement_when_saved_again() {
         }
     }
 }
+
+fn pixel_paper_units(edit: Option<bool>) {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let input = source(3, 11952).replace("72\n0\n", "72\n2\n");
+    let mut drawing = read(input.as_bytes(), "source.dxf").unwrap();
+    for page in drawing.model_page.iter_mut().chain(drawing.layouts.iter_mut().map(|layout| &mut layout.page)) {
+        assert_eq!(page.paper_mm, None);
+        match edit {
+            Some(false) => page.device = "Changed-device.pc3".into(),
+            Some(true) => page.paper_mm = Some(true),
+            None => {}
+        }
+    }
+    for name in ["saved.dxf", "saved.dwg"] {
+        let bytes = write(&drawing, name).unwrap();
+        let text = if name.ends_with("dwg") { craft_dwg::dwg_to_dxf(&bytes).unwrap() } else { bytes };
+        for (layout, tags) in plots(&String::from_utf8(text).unwrap()) {
+            assert_eq!(tags[&72].trim(), if edit == Some(true) { "1" } else { "2" }, "{name}: {layout}");
+        }
+    }
+}
+
+#[test]
+fn pixel_units_survive_unchanged() {
+    pixel_paper_units(None);
+}
+
+#[test]
+fn pixel_units_survive_device_edit() {
+    pixel_paper_units(Some(false));
+}
+
+#[test]
+fn pixel_units_follow_explicit_unit_edit() {
+    pixel_paper_units(Some(true));
+}
