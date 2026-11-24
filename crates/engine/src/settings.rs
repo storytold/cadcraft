@@ -138,6 +138,9 @@ pub struct Settings {
     /// ATTREQ: 0 inserts blocks with their attributes' default values instead of asking for them
     /// (default: 1).
     pub attreq: bool,
+    /// ATTDIA: INSERT typed or from a menu asks for attribute values in the Edit Attributes
+    /// dialog; on by default, as in AutoCAD (Initial value 1).
+    pub attdia: bool,
 }
 
 impl Default for Settings {
@@ -205,6 +208,7 @@ impl Default for Settings {
             ucs_angle: 0.0,
             auditctl: false,
             attreq: true,
+            attdia: true,
         }
     }
 }

@@ -10,6 +10,7 @@ use crate::theme::Tokens;
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
+    crate::attentry::show(app, ctx);
     crate::line_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     // The Annotation Object Scale dialog replaced or closed from elsewhere leaves no state behind.
