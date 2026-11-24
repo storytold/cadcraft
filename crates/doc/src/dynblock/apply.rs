@@ -924,6 +924,9 @@ impl ActionRun<'_> {
     /// offsets of each arrayed object's other copies, by the object's copy in the reference.
     fn arrays(&mut self) -> Result<HashMap<Handle, Vec<Vec2>>, String> {
         let mut arrays: HashMap<Handle, Vec<Vec2>> = HashMap::new();
+        // Copies the arrays make so far: the budget is taken before each copy's offsets are kept,
+        // so many objects in a large array are refused before their offsets are held.
+        let mut total = 0usize;
         for a in &self.m.actions {
             let ActionKind::Array { column, row } = a.kind else { continue };
             let Some((node, _)) = a.connections.first() else { continue };
@@ -938,11 +941,8 @@ impl ActionRun<'_> {
                 if shift.x != 0.0 || shift.y != 0.0 {
                     self.moves.entry(c).or_default().push(Op::Move(None, shift));
                 }
-                arrays.insert(c, offsets.clone());
+                keep_array(&mut arrays, &mut total, c, &offsets)?;
             }
-        }
-        if arrays.values().map(Vec::len).sum::<usize>() > MAX_ARRAY {
-            return Err(format!("The arrays would make more than {MAX_ARRAY} copies."));
         }
         Ok(arrays)
     }
@@ -1233,6 +1233,15 @@ fn apply(
     }
     // The array copies made of each object: (its copy in the reference, the new copy).
     let mut repeats: Vec<(Handle, Handle)> = Vec::new();
+    // Each arrayed object's copies' handles, by place in its array, made before any copy is (in
+    // the order the copies are made, so the handles are those they would get anyway): a repeated
+    // associative hatch's loops name the copy of their outline at the same place.
+    let mut repeat_handles: HashMap<(Handle, usize), Handle> = HashMap::new();
+    for e in src.entities.iter().filter(|e| copies.contains_key(&e.handle) && !matches!(e.kind, EntityKind::AttDef(_))) {
+        for k in 0..arrays.get(&e.handle).map_or(0, Vec::len) {
+            repeat_handles.insert((e.handle, k), d.new_handle());
+        }
+    }
     // How each attribute definition moves, turns or mirrors (block coordinates): the reference's
     // attribute of that tag follows it, as AutoCAD moves it.
     let attrib_moves: HashMap<String, Mat3> = src
@@ -1290,9 +1299,21 @@ fn apply(
         let again: Vec<Entity> = offsets
             .into_iter()
             .flatten()
-            .map(|v| {
+            .enumerate()
+            .map(|(k, v)| {
                 let mut r = c.clone();
-                r.handle = d.new_handle();
+                r.handle = repeat_handles.get(&(e.handle, k)).copied().unwrap_or_else(|| d.new_handle());
+                // A loop whose outline is repeated at this place follows that copy of it.
+                if let (EntityKind::Hatch(h), EntityKind::Hatch(src_h)) = (&mut r.kind, &e.kind) {
+                    for (l, sl) in h.loops.iter_mut().zip(&src_h.loops) {
+                        for (s, orig) in l.sources.iter_mut().zip(&sl.sources) {
+                            let same_place = arrays.get(orig).and_then(|o| o.get(k)) == Some(v);
+                            if let Some(rh) = repeat_handles.get(&(*orig, k)).filter(|_| same_place) {
+                                *s = *rh;
+                            }
+                        }
+                    }
+                }
                 for t in &mut r.common.xdata {
                     if t.code == 1005 && Handle::parse_hex(&t.value) == Some(nh) {
                         t.value = r.handle.hex();
@@ -1384,6 +1405,18 @@ fn mark_repeat(x: &mut Vec<RawTag>, on: bool) {
 
 /// Most copies one change's arrays make.
 const MAX_ARRAY: usize = 100_000;
+
+/// Keep `offsets` as copy `c`'s array (in place of one an earlier action gave it), within the
+/// budget of `MAX_ARRAY` copies in all (`total`, updated). Over it, nothing is kept or cloned.
+fn keep_array(arrays: &mut HashMap<Handle, Vec<Vec2>>, total: &mut usize, c: Handle, offsets: &[Vec2]) -> Result<(), String> {
+    let next = total.saturating_sub(arrays.get(&c).map_or(0, Vec::len)).saturating_add(offsets.len());
+    if next > MAX_ARRAY {
+        return Err(format!("The arrays would make more than {MAX_ARRAY} copies."));
+    }
+    *total = next;
+    arrays.insert(c, offsets.to_vec());
+    Ok(())
+}
 
 /// Where an array action repeats its objects (offsets from the first copy, which isn't listed)
 /// for parameter `kind` with points `b` and `e`, as AutoCAD repeats them: along a linear or polar
@@ -1957,6 +1990,22 @@ fn drop_if_unused(d: &mut Drawing, name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_array_budget_is_taken_before_offsets_are_kept() {
+        let mut arrays: HashMap<Handle, Vec<Vec2>> = HashMap::new();
+        let mut total = 0;
+        let big = vec![Vec2::ZERO; MAX_ARRAY - 10];
+        keep_array(&mut arrays, &mut total, Handle(1), &big).unwrap();
+        // The next object's array would pass the budget: refused, nothing more kept.
+        assert!(keep_array(&mut arrays, &mut total, Handle(2), &[Vec2::ZERO; 20]).is_err());
+        assert_eq!((arrays.len(), total), (1, MAX_ARRAY - 10));
+        // A copy whose array another action replaces counts once.
+        keep_array(&mut arrays, &mut total, Handle(1), &[Vec2::ZERO; 3]).unwrap();
+        assert_eq!(total, 3);
+        keep_array(&mut arrays, &mut total, Handle(2), &[Vec2::ZERO; 20]).unwrap();
+        assert_eq!(total, 23);
+    }
 
     fn tagged(h: u64, tag_value: Option<&str>) -> Entity {
         let mut e = Entity::new(Handle(h), EntityKind::Line(crate::Line { a: Vec3::ZERO, b: Vec3::ZERO }));
