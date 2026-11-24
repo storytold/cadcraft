@@ -1079,9 +1079,9 @@ impl CadApp {
             // The batch reached an actual Ui callback; a discarded pass still consumed it.
             self.synthetic_injected = false;
         }
-        // `will_discard()` is false on the settled (final) pass of a frame, whether the frame is
-        // single-pass or the second pass after a layout discard; a discarded pass is skipped.
-        if !ctx.will_discard() {
+        // `will_rerun` is false on the settled (final) pass of a frame, whether the frame is
+        // single-pass or the second pass after a layout discard; a pass that will run again is skipped.
+        if !craft_ui::runtime::frame::will_rerun(&ctx) {
             self.ui_frames = self.ui_frames.saturating_add(1);
             capture::issue(self, &ctx);
         }

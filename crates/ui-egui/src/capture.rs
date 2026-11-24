@@ -388,10 +388,10 @@ fn identity_change(app: &CadApp, ctx: &egui::Context, shot: &Shot) -> Option<&'s
 
 /// Issue settled requests from the first non-discarded UI pass.
 ///
-/// egui discards a pass only when `will_discard()` says so, and the final pass of a multi-pass
-/// frame reports false; a hidden `run_logic` tick never reaches `issue` at all.
+/// A pass is skipped only when `craft_ui::runtime::frame::will_rerun` says it will run again, and
+/// the final pass of a multi-pass frame reports false; a hidden `run_logic` tick never reaches `issue` at all.
 pub(crate) fn issue(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.will_discard() {
+    if craft_ui::runtime::frame::will_rerun(ctx) {
         return;
     }
     // The draw may have moved the focus or switched drawings: observe that before judging.

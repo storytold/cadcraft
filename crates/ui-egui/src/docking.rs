@@ -606,8 +606,8 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         app.forward_native_input(&ctx, events, modifiers);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    for file in &output.window_files {
-        if let Some(path) = &file.path {
+    for dropped in &output.window_files {
+        for path in dropped.files.iter().filter_map(|file| file.path.as_ref()) {
             app.open_path(path);
         }
     }
