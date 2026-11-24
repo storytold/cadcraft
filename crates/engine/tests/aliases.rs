@@ -293,11 +293,15 @@ fn the_polish_alias_set_is_added_on_request() {
     assert_eq!(resolve_alias("okrąg"), "okrąg", "no Polish names before the set is added");
     assert_eq!(resolve_alias("o"), "offset");
 
-    s.execute("aliasedit", &json!({ "set": { "zzmine": "line" } })).unwrap();
+    s.execute("aliasedit", &json!({ "set": { "zzmine": "line", "pl": "line" } })).unwrap();
     let r = s.execute("aliasedit", &json!({ "preset": "pl" })).unwrap();
     assert!(r["loaded"].as_u64().unwrap() >= 30);
     assert_eq!(r["aliases"]["zzmine"], "line", "the user's own aliases stay");
+    assert_eq!(r["aliases"]["pl"], "line", "a same-named alias of the user's is kept, not replaced");
+    let warnings = r["warnings"].to_string();
+    assert!(warnings.contains("kept your alias PL"), "{warnings}");
     for (typed, id) in [
+        ("PL", "line"),
         ("OKRĄG", "circle"),
         ("okrąg", "circle"),
         ("OKRAG", "circle"),
@@ -317,4 +321,18 @@ fn the_polish_alias_set_is_added_on_request() {
 
     s.execute("aliasedit", &json!({ "clear": true })).unwrap();
     assert_eq!(resolve_alias("o"), "offset");
+}
+
+/// Aliases used to be kept in ASCII lower case, so a profile saved before may hold `Łuk` for ŁUK.
+/// Restored, it is kept in full lower case and found in any case.
+#[test]
+fn an_alias_saved_with_a_non_ascii_capital_still_matches_when_restored() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = cadcraft_engine::cmd::file::alias_profile();
+    cadcraft_engine::cmd::file::restore_aliases(&json!({ "aliases": { "Łuk": "arc", "ŻZ": "line" }, "file": null }));
+    for (typed, id) in [("ŁUK", "arc"), ("łuk", "arc"), ("Łuk", "arc"), ("żz", "line"), ("ŻZ", "line")] {
+        assert_eq!(resolve_alias(typed), id, "{typed}");
+    }
+    assert_eq!(cadcraft_engine::cmd::file::alias_profile()["aliases"], json!({ "łuk": "arc", "żz": "line" }));
+    cadcraft_engine::cmd::file::restore_aliases(&saved);
 }

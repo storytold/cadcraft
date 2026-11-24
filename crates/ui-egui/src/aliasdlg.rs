@@ -42,10 +42,23 @@ pub struct AliasDlgState {
     pub confirm_import: bool,
 }
 
-/// Adds a shipped language alias set to the edited user aliases (OK or Apply sends them).
+/// Adds a shipped language alias set to the edited user aliases (OK or Apply sends them). An alias
+/// the user already has keeps its command; the dialog lists those under its warnings.
 pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) {
+    st.warnings.clear();
     for (alias, command) in set {
-        st.user.insert(alias.clone(), command.clone());
+        match st.user.get(alias) {
+            None => {
+                st.user.insert(alias.clone(), command.clone());
+            }
+            Some(mine) if mine != command => st.warnings.push(crate::tf!(
+                "Kept your alias {alias} ({mine}); the set has it for {command}",
+                alias = alias.to_uppercase(),
+                mine = mine.to_ascii_uppercase(),
+                command = command.to_ascii_uppercase()
+            )),
+            Some(_) => {}
+        }
     }
     st.error = None;
 }
@@ -329,7 +342,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             if let Some(set) = &language_set
                 && ui
                     .button(crate::tl!("Add command aliases in this language"))
-                    .on_hover_text(crate::tl!("Adds CADCraft's command names in the interface language to your aliases. Some override built-in aliases; OK or Apply keeps them."))
+                    .on_hover_text(crate::tl!("Adds CADCraft's command names in the interface language to your aliases. Your own aliases of the same names stay; some of the set override built-in aliases. OK or Apply keeps them."))
                     .clicked()
             {
                 add_language_set(st, set);
@@ -437,7 +450,22 @@ pub(crate) fn lock_alias_store() -> std::sync::MutexGuard<'static, ()> {
 
 #[cfg(test)]
 mod filter_tests {
-    use super::shown_by_filter;
+    use super::{AliasDlgState, add_language_set, shown_by_filter};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn a_language_set_keeps_the_users_own_aliases() {
+        let mut st = AliasDlgState::default();
+        st.user.insert("o".into(), "offset".into());
+        st.user.insert("zzmine".into(), "line".into());
+        let set: BTreeMap<String, String> = [("o", "circle"), ("łuk", "arc")].into_iter().map(|(a, c)| (a.to_string(), c.to_string())).collect();
+        add_language_set(&mut st, &set);
+        assert_eq!(st.user.get("o").map(String::as_str), Some("offset"), "the user's O stays");
+        assert_eq!(st.user.get("łuk").map(String::as_str), Some("arc"));
+        assert_eq!(st.user.get("zzmine").map(String::as_str), Some("line"));
+        assert_eq!(st.warnings.len(), 1, "{:?}", st.warnings);
+        assert!(st.warnings[0].contains('O') && st.warnings[0].contains("OFFSET"), "{:?}", st.warnings);
+    }
 
     #[test]
     fn the_filter_matches_aliases_with_polish_letters_in_any_case() {

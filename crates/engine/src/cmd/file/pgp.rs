@@ -60,13 +60,6 @@ pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
 }
 
-/// The command a user alias stands for, `name` typed in any case (`KR` or `kr`); `None` when it is
-/// no user alias. The interface resolves a typed alias with this before its own command routes,
-/// so a user alias of HATCH opens the Hatch dialog as HATCH does.
-pub fn user_alias_command(name: &str) -> Option<String> {
-    user_alias(&name.trim().to_lowercase())
-}
-
 /// Alias sets CADCraft ships for interface languages, in the `.pgp` format: the language's command
 /// names, which a user adds to their own aliases (ALIASEDIT `{preset}`) and can edit or remove.
 const PRESETS: &[(&str, &str)] = &[("pl", include_str!("aliases/pl.pgp"))];
@@ -231,7 +224,14 @@ fn run_aliasedit(_s: &mut Session, p: &Value) -> Result<Value> {
             let set = language_aliases(code).ok_or_else(|| bad("aliasedit", format!("no alias set for language `{code}`")))?;
             let mut st = store();
             for (name, id) in set {
-                if !st.map.contains_key(&name) && st.map.len() >= MAX_ALIASES {
+                // The user's own alias of the same name stays: the set only adds names they don't have.
+                if let Some(mine) = st.map.get(&name) {
+                    if *mine != id {
+                        warnings.push(format!("kept your alias {} (→ {mine}); the set has it for {id}", name.to_uppercase()));
+                    }
+                    continue;
+                }
+                if st.map.len() >= MAX_ALIASES {
                     return Err(bad("aliasedit", format!("more than {MAX_ALIASES} aliases")));
                 }
                 st.map.insert(name, id);

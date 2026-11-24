@@ -151,7 +151,8 @@ alias set (`crates/engine/src/cmd/file/aliases/pl.pgp`) written from the English
 `LINIA` (LINE), `OKRĄG` or `O` (CIRCLE), `ŁUK` or `Ł` (ARC), `KRESKUJ` (HATCH) and so on, with
 the longer names also without Polish letters (`OKRAG`). Nothing changes until the user adds it:
 Command Aliases (ALIASEDIT) ▸ *Add command aliases in this language*, or
-`ALIASEDIT {"preset": "pl"}`. The set joins the user's own aliases, which they can edit or remove;
+`ALIASEDIT {"preset": "pl"}`. The set joins the user's own aliases, which they can edit or remove
+(an alias the user already has keeps its command);
 like every user alias it applies to scripts too, and some entries override built-in aliases
 (`O`, `PR`, `PU`).
 
