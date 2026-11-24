@@ -67,3 +67,34 @@ fn a_device_that_disagrees_with_the_extension_is_refused() {
     assert_eq!(magic(&none), b"<svg ");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn publish_single_pdf_respects_each_layout_page_setup_and_subset() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "Layout3"})).unwrap();
+    s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A3", "landscape": true, "fit": true })).unwrap();
+    s.execute("pagesetup", &json!({ "layout": "Layout2", "paper": "A4", "landscape": false, "fit": false, "scale": 0.5 })).unwrap();
+
+    let dir = std::env::temp_dir().join(format!("cadcraft-publish-single-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("subset.pdf");
+    let r = s.execute("publish", &json!({ "path": out.to_string_lossy(), "layouts": ["Layout1", "Layout2"], "single_pdf": true })).unwrap();
+    assert_eq!(r["pages"].as_u64(), Some(2));
+    let raw = String::from_utf8_lossy(&std::fs::read(&out).unwrap()).into_owned();
+    let boxes: Vec<(f64, f64)> = raw
+        .match_indices("/MediaBox")
+        .filter_map(|(i, _)| {
+            let rest = &raw[i + 9..];
+            let start = rest.find('[')?;
+            let end = rest[start..].find(']')?;
+            let nums: Vec<f64> = rest[start + 1..start + end].split_whitespace().filter_map(|t| t.parse::<f64>().ok()).collect();
+            (nums.len() == 4).then(|| (nums[2] - nums[0], nums[3] - nums[1]))
+        })
+        .collect();
+    assert_eq!(boxes.len(), 2, "expected 2 pages in combined PDF, got {boxes:?}");
+    // A3 landscape = 420 x 297 mm (~1190.55 x 841.89 pt), A4 portrait = 210 x 297 mm (~595.28 x 841.89 pt).
+    let pt_per_mm = 72.0 / 25.4;
+    assert!((boxes[0].0 - 420.0 * pt_per_mm).abs() < 2.0 && (boxes[0].1 - 297.0 * pt_per_mm).abs() < 2.0, "page 1 A3: {:?}", boxes[0]);
+    assert!((boxes[1].0 - 210.0 * pt_per_mm).abs() < 2.0 && (boxes[1].1 - 297.0 * pt_per_mm).abs() < 2.0, "page 2 A4: {:?}", boxes[1]);
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -26,9 +26,13 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => app
             .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
-        "publish" => app
-            .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
-            .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
+        "publish" => {
+            if app.pending_pick.is_some() {
+                return Err(app.refuse_pick("A file dialog is already open; answer it first.".into()));
+            }
+            app.ui.dialog = Some("publish".into());
+            Ok(Value::Null)
+        }
         _ => app
             .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| app.run("export", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "EXPORT", r#"export {"format": "svg"}"#)),
@@ -90,6 +94,132 @@ fn preview_texture(ctx: &egui::Context, png: &[u8]) -> Result<TextureHandle, Str
     let img = cadcraft_io::raster::decode(png).map_err(|e| e.to_string())?;
     let size = [img.width() as usize, img.height() as usize];
     Ok(ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.rgba()), egui::TextureOptions::LINEAR))
+}
+
+#[derive(Clone)]
+struct PublishState {
+    doc_uid: u64,
+    selected: std::collections::BTreeSet<String>,
+    single_pdf: bool,
+}
+
+/// The Batch Publish window: pick which sheets to publish and whether to combine them into a
+/// single multi-page PDF.
+pub fn publish_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    #[derive(Clone)]
+    struct PublishSheet {
+        name: String,
+        paper: String,
+        ctb: String,
+    }
+
+    let doc_uid = app.session.state().map(|s| s.uid).unwrap_or(0);
+    let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+    let stem = std::path::Path::new(&title)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Drawing".into());
+
+    let mut sheets: Vec<PublishSheet> = Vec::new();
+    if let Ok(st) = app.session.state()
+        && !st.doc.model.is_empty()
+    {
+        sheets.push(PublishSheet { name: "Model".into(), paper: "Extents".into(), ctb: "None".into() });
+    }
+    if let Ok(info) = app.session.execute("layout.list", &json!({}))
+        && let Some(arr) = info.as_array().or_else(|| info["layouts"].as_array())
+    {
+        let mut items: Vec<(i32, PublishSheet)> = arr
+            .iter()
+            .filter_map(|v| {
+                let name = v["name"].as_str()?.to_string();
+                let order = v["tabOrder"].as_i64().unwrap_or(0) as i32;
+                let page = &v["page"];
+                let paper_name = page["paper"].as_str().unwrap_or("Default");
+                let orient = if page["landscape"].as_bool() == Some(true) { "Landscape" } else { "Portrait" };
+                let ctb = page["plotStyleTable"].as_str().filter(|s| !s.is_empty()).unwrap_or("None").to_string();
+                Some((order, PublishSheet { name, paper: format!("{paper_name} · {orient}"), ctb }))
+            })
+            .collect();
+        items.sort_by_key(|(order, _)| *order);
+        sheets.extend(items.into_iter().map(|(_, s)| s));
+    }
+
+    let id = egui::Id::unique("cc_publish_state");
+    let mut state = ctx.data(|d| d.get_temp::<PublishState>(id)).filter(|s| s.doc_uid == doc_uid).unwrap_or_else(|| PublishState {
+        doc_uid,
+        selected: sheets.iter().map(|s| s.name.clone()).collect(),
+        single_pdf: true,
+    });
+    let valid: std::collections::HashSet<&str> = sheets.iter().map(|s| s.name.as_str()).collect();
+    state.selected.retain(|name| valid.contains(name.as_str()));
+
+    let mut do_publish: Option<(Vec<String>, bool)> = None;
+    let mut keep_open = *open;
+    egui::Window::new("Batch Publish").open(&mut keep_open).collapsible(false).resizable(true).default_width(520.0).show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            if ui.button("Select All").clicked() {
+                state.selected = sheets.iter().map(|s| s.name.clone()).collect();
+            }
+            if ui.button("Clear All").clicked() {
+                state.selected.clear();
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("{}/{} selected", state.selected.len(), sheets.len()));
+            });
+        });
+        ui.separator();
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            egui::Grid::new("publish_sheets_grid").num_columns(3).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
+                ui.strong("Layout");
+                ui.strong("Page Setup");
+                ui.strong("Plot Style");
+                ui.end_row();
+                for s in &sheets {
+                    let mut checked = state.selected.contains(&s.name);
+                    if ui.checkbox(&mut checked, &s.name).changed() {
+                        if checked {
+                            state.selected.insert(s.name.clone());
+                        } else {
+                            state.selected.remove(&s.name);
+                        }
+                    }
+                    ui.label(&s.paper);
+                    ui.label(&s.ctb);
+                    ui.end_row();
+                }
+            });
+        });
+        ui.separator();
+        ui.checkbox(&mut state.single_pdf, "Publish to single multi-page PDF");
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let can_publish = !state.selected.is_empty();
+            if ui.add_enabled(can_publish, egui::Button::new("Publish...")).clicked() {
+                let chosen: Vec<String> = sheets.iter().filter(|s| state.selected.contains(&s.name)).map(|s| s.name.clone()).collect();
+                do_publish = Some((chosen, state.single_pdf));
+            }
+            if ui.button("Cancel").clicked() {
+                *open = false;
+            }
+        });
+    });
+    if !keep_open {
+        *open = false;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, state));
+    if let Some((chosen, single_pdf)) = do_publish {
+        *open = false;
+        let res = app
+            .pick_then(Pick::Save(format!("{stem}.pdf")), move |app, path| {
+                app.run("publish", json!({ "path": path, "layouts": chosen, "single_pdf": single_pdf }))
+            })
+            .unwrap_or_else(|| no_picker(app, "PUBLISH", r#"publish {"path": "sheets.pdf", "single_pdf": true}"#));
+        if let Err(err) = res {
+            app.status = Some((err, crate::now_ms()));
+        }
+    }
 }
 
 /// The Plot Preview window: the sheet as it plots, with Print and Close.
@@ -189,8 +319,10 @@ mod tests {
         let (mut app, asked) = app();
         app.start("export");
         app.cmdline("PUBLISH");
+        assert_eq!(app.ui.dialog.as_deref(), Some("publish"));
+        app.ui.dialog = None;
         app.start("imp");
-        assert_eq!(*asked.borrow(), ["Drawing1.svg", "Drawing1.pdf", "open"]);
+        assert_eq!(*asked.borrow(), ["Drawing1.svg", "open"]);
         assert!(app.ui.dialog.is_none());
         app.cmdline("pre");
         assert_eq!(app.ui.dialog.as_deref(), Some("preview"));
@@ -204,7 +336,7 @@ mod tests {
         let _ = app.run("publish", json!({ "layouts": [] }));
         let r = app.run("preview", json!({ "width": 64 })).unwrap();
         assert!(r["data"].is_string());
-        assert_eq!(asked.borrow().len(), 3, "JSON calls never open a file dialog");
+        assert_eq!(asked.borrow().len(), 2, "JSON calls never open a file dialog");
         assert!(app.ui.dialog.is_none(), "nor the preview window");
 
         let e = app.run("share", json!({})).unwrap_err();
@@ -374,5 +506,19 @@ mod tests {
         app.finish_pick(&ctx);
         assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"), "LINE was not cancelled");
         assert!(status(&app).starts_with("APPLOAD: another command started"), "{:?}", app.status);
+    }
+
+    #[test]
+    fn publish_dialog_lists_paper_space_layouts() {
+        let (mut app, _) = app();
+        let ctx = egui::Context::default();
+        let mut open = true;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::exchange::publish_dialog(&mut app, ui.ctx(), &mut open);
+        });
+        out.textures_delta.clear();
+        let id = egui::Id::unique("cc_publish_state");
+        let selected = ctx.data(|d| d.get_temp::<crate::exchange::PublishState>(id)).expect("publish state stored").selected;
+        assert!(selected.contains("Layout1") && selected.contains("Layout2"), "expected Paper Space layouts in PublishState, got {selected:?}");
     }
 }
