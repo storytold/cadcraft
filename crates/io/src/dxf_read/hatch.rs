@@ -73,7 +73,7 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        loops.push(HatchLoop { vertices: verts, outer, boundary_flags: Some(flags), sources });
     }
     curves.left = curves.left.saturating_sub(start_left.saturating_sub(budget.left));
     if budget.cut {

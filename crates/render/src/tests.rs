@@ -3,6 +3,11 @@ use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
 use cadcraft_geom::{PolyVertex, Vec3};
 
+// The synthetic TrueType file both this suite and the PDF writer's build: the fonts layer's
+// test-only helper, inlined rather than published or depended on.
+#[path = "../../fonts/tests/support/sfnt.rs"]
+mod sfnt;
+
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 0.0, 0.0) }))
@@ -77,7 +82,7 @@ fn hatch_pattern_and_solid() {
     let h = Hatch {
         pattern: "ANSI31".into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 1.0,
         angle: 0.0,
         associative: false,
@@ -277,6 +282,44 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+// ---------- a fixture TrueType font: no font file, no installed font ----------
+
+/// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
+fn ring(rx: f64, ry: f64, points: usize, clockwise: bool) -> Vec<(i16, i16)> {
+    let dir = if clockwise { -1.0 } else { 1.0 };
+    (0..points)
+        .map(|i| {
+            (
+                (500.0 + rx * (dir * std::f64::consts::TAU * i as f64 / points as f64).cos()) as i16,
+                (350.0 + ry * (dir * std::f64::consts::TAU * i as f64 / points as f64).sin()) as i16,
+            )
+        })
+        .collect()
+}
+
+/// A TrueType font whose only glyph, "O", is a 128-point ring: the flattened outline a real font's
+/// curve gives, at the same scale, with plenty of detail to simplify. It is built in code so the
+/// level-of-detail test needs no installed font and no font file in the repository (#651).
+fn fixture_font() -> &'static str {
+    const NAME: &str = "cadcraft-render-lod.ttf";
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| cadcraft_fonts::ttf::register(NAME, fixture_font_bytes()));
+    NAME
+}
+
+fn fixture_font_bytes() -> Vec<u8> {
+    sfnt::bytes(&sfnt::Sfnt {
+        // Glyph 1 is "O": a 128-point ring, its counter a second, oppositely wound contour.
+        glyphs: &[sfnt::notdef(), sfnt::glyph(&[ring(500.0, 350.0, 128, false), ring(250.0, 150.0, 128, true)])],
+        cmap: &[(0x4F, 0x4F, 1 - 0x4F)], // "O" → glyph 1
+        advance: 1000,                   // one em wide
+        lsb: 0,
+        metrics: 2,                 // hmtx matches the two metrics hhea declares
+        fs_type: 0,                 // any use
+        ink_box: [0, 0, 1000, 700], // the ring's box; the 700-unit cap height is the unit scale
+    })
+}
+
 #[test]
 fn truetype_text_is_filled_or_outlined() {
     let Some(font) = system_font() else { return };
@@ -296,6 +339,31 @@ fn truetype_text_is_filled_or_outlined() {
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().all(|p| p.kind == Kind::Polyline), "TEXTFILL=0 outlines");
     assert!(l.prims.len() >= 3, "O has two contours, H one");
+}
+
+// Regression test for #651: filled TrueType text was triangulated at full outline detail at every
+// zoom, so a page of small text on screen produced millions of triangles and froze the canvas.
+#[test]
+fn small_filled_text_on_screen_is_simplified_but_plots_keep_full_detail() {
+    let d = text_doc(fixture_font(), "OOOO");
+    let tris = |l: &DisplayList| l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p).len() / 3).sum::<usize>();
+    let plot = build_plot(&d, &Space::Model, &Options::default());
+    let full = tris(&plot);
+    assert!(full > 100, "a plot keeps every point of the 128-point rings: {full} triangles");
+    // One pixel is a tenth of the cap height: the rings are simplified to a few points, the shapes
+    // stay.
+    let reduced = build(&d, &Space::Model, &screen(0.1, None));
+    assert!(tris(&reduced) < full / 2, "{} triangles at 10 px per cap height, {full} in a plot", tris(&reduced));
+    assert!(tris(&reduced) > 0 && reduced.bounds.width() > plot.bounds.width() * 0.9, "{:?} vs {:?}", reduced.bounds, plot.bounds);
+    // An em under two pixels is drawn as the ink's box: two triangles a glyph, same extent.
+    let tiny = build(&d, &Space::Model, &screen(2.0, None));
+    assert_eq!(tris(&tiny), 2 * 4, "one box per glyph");
+    assert!(
+        tiny.bounds.width() > plot.bounds.width() * 0.9 && tiny.bounds.height() > plot.bounds.height() * 0.9,
+        "{:?} vs {:?}",
+        tiny.bounds,
+        plot.bounds
+    );
 }
 
 #[test]
@@ -446,7 +514,7 @@ fn pattern_hatch(pattern: &str, scale: f64, (x0, y0, x1, y1): (f64, f64, f64, f6
     Hatch {
         pattern: pattern.into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale,
         angle: 0.0,
         associative: false,
@@ -1231,7 +1299,8 @@ fn raster_hatch_pattern_matches_one_by_one() {
 #[test]
 fn ole_frame_draws_its_outline() {
     let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
-    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let frame =
+        |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
@@ -1263,6 +1332,51 @@ fn without_linetypes_every_line_is_drawn_whole() {
     assert_eq!(dashed.tris, continuous.tris);
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
+
+/// A proxy draws its proxy graphics like block contents: layer 0 and ByBlock in the picture are
+/// the proxy's own, and the proxy's layer hides all of it.
+#[test]
+fn proxy_graphics_draw_like_block_contents() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Notes".into(), color: Color::Index(3), ..Default::default() });
+    let byblock = Common { color: Color::ByBlock, ..Default::default() };
+    let graphics = vec![
+        block_entity(7, byblock, EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })),
+        block_entity(
+            7,
+            Common { color: Color::Index(1), ..Default::default() },
+            EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 0.0, 0.0), radius: 5.0 }),
+        ),
+    ];
+    let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Default::default() }, proxy).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims.iter().map(|p| p.color).collect::<Vec<_>>(), [Rgb(0, 255, 0), Rgb(255, 0, 0)]);
+    let b = d.extents(&Space::Model);
+    assert!((b.min.x, b.max.x, b.max.y) == (0.0, 20.0, 5.0), "{b:?}");
+    d.layer_mut("Notes").unwrap().frozen = true;
+    assert!(build(&d, &Space::Model, &Options::default()).prims.is_empty());
+}
+
+/// On a locked layer, a proxy's graphics fade like a block's contents: layer 0 in the picture takes
+/// the proxy's fade, a ByBlock part on an unlocked layer only the proxy's own transparency.
+#[test]
+fn proxy_graphics_on_a_locked_layer_fade_like_block_contents() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    for (own, want) in [(ByLayer, 0), (Percent(20), 20)] {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 0.0, 0.0) });
+        let graphics = vec![
+            block_entity(7, Common::default(), line(0.0)),
+            block_entity(7, Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() }, line(2.0)),
+        ];
+        let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+        d.add(&Space::Model, Common { layer: "Locked".into(), transparency: own, ..Default::default() }, proxy).unwrap();
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![50.max(want), want], "{own:?}");
+    }
 }
 
 /// A broken table whose parts, with their repeated labels, together hold more cells than a table may
@@ -1303,7 +1417,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
             }
         }
         v.rotate_left(rot);
-        HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+        HatchLoop { vertices: v, outer: true, boundary_flags: None, sources: Vec::new() }
     };
     let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
     h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
@@ -1312,6 +1426,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     h.loops.push(HatchLoop {
         vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
         outer: true,
+        boundary_flags: None,
         sources: Vec::new(),
     });
     assert_eq!(loops_of(&h).len(), 2);

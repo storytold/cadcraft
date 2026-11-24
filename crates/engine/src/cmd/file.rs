@@ -95,6 +95,15 @@ pub fn set_proxies_lost(f: ProxiesLost) {
     let _ = PROXIES_LOST.set(f);
 }
 
+/// Version-specific DWG compatibility omissions, counted by the host's actual writer.
+pub type DwgCompatLost = fn(&Drawing, Version) -> std::collections::BTreeMap<String, usize>;
+
+static DWG_COMPAT_LOST: OnceLock<DwgCompatLost> = OnceLock::new();
+
+pub fn set_dwg_compat_lost(f: DwgCompatLost) {
+    let _ = DWG_COMPAT_LOST.set(f);
+}
+
 /// What a DXF of `version` leaves out of `d` for its proxies' string streams (#3229): empty from
 /// 2007 on. `d` is written as committed (a reference edit's working copies are not in the file).
 fn proxies_lost(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
@@ -921,6 +930,12 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
         if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
             let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
+        }
+    }
+    if let Some(compatibility) = DWG_COMPAT_LOST.get() {
+        for (kind, count) in compatibility(d, version) {
+            let total = out.entry(kind).or_default();
+            *total = total.saturating_add(count);
         }
     }
     out

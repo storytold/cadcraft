@@ -40,6 +40,23 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     }
 }
 
+/// A proxy entity draws its proxy graphics as AutoCAD does with PROXYSHOW 1, like block contents:
+/// layer 0 and ByBlock in the picture stand for the proxy's own layer and properties. Other
+/// unknown records draw nothing. `own` is the proxy's transparency without its locked-layer fade,
+/// as for a block reference.
+pub(crate) fn proxy(b: &mut Builder, ctx: &Ctx, e: &Entity, u: &cadcraft_doc::Unknown, own: u8) {
+    if u.graphics.is_empty() || ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
+        return;
+    }
+    let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+    for g in &u.graphics {
+        if !b.expand() {
+            break;
+        }
+        entity(b, &sub, g);
+    }
+}
+
 /// `own` is the reference's resolved transparency without its locked-layer fade: what ByBlock
 /// children inherit (a child fades only for its own layer).
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink, own: u8) {

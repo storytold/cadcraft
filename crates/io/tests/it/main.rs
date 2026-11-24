@@ -31,6 +31,7 @@ mod exhausted_handseed;
 mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
+mod hatch_loop_flags;
 mod hatch_pattern_def;
 mod helix_roundtrip;
 mod layer_states_acad;
@@ -68,6 +69,7 @@ mod plot_model_png_scale;
 mod plot_styles;
 mod polyface_roundtrip;
 mod portable_fonts;
+mod proxy_graphics;
 mod region_roundtrip;
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 mod render_settings_version;
@@ -90,5 +92,7 @@ mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod view_target;
 mod viewport_clip_roundtrip;
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+mod visualstyle_dwg;
 mod xclip_roundtrip;
 mod xref_roundtrip;
