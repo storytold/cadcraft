@@ -411,22 +411,28 @@ struct LayoutWriteData<'a> {
     ucs: Option<&'a Ucs>,
     /// The layout's limits as read (`None`: the default 0,0 to 12,9).
     limits: Option<(Vec2, Vec2)>,
+    /// Whether this is the Model layout (block record *Model_Space).
+    model: bool,
 }
 
 /// The plot layout flags (AcDbPlotSettings group 70) for `page`. The bits CADCraft models come
 /// from the page: 2 display plot styles, 4 centred, 128 lineweights, and 16 standard scale where
 /// the scale decides it (scaled to fit: set; a custom scale: clear). The rest are kept as the file
 /// had them (#3227); a page CADCraft made gets 512 (plot paper space last) and 32 (plot with plot
-/// styles), and 16 when its scale is standard.
-fn plot_layout_flags(page: &PageSetup, standard: bool) -> i64 {
+/// styles), and 16 when its scale is standard. 1024 ("ModelType", DXF Reference, PLOTSETTINGS
+/// group 70) follows the layout: set for the Model layout, cleared for a paper-space layout even
+/// when the file had it, since it would mark that layout as model space.
+fn plot_layout_flags(page: &PageSetup, standard: bool, model: bool) -> i64 {
     const MODELED: i64 = 2 | 4 | 128;
     const STANDARD_SCALE: i64 = 16;
+    const MODEL_TYPE: i64 = 1024;
     let kept = match page.file_plot_flags {
         Some(f) if page.scale_to_fit => (f & !MODELED) | STANDARD_SCALE,
         Some(f) if !standard => f & !MODELED & !STANDARD_SCALE,
         Some(f) => f & !MODELED,
         None => 512 | 32 | if standard { STANDARD_SCALE } else { 0 },
     };
+    let kept = if model { kept | MODEL_TYPE } else { kept & !MODEL_TYPE };
     kept | if page.lineweights { 128 } else { 0 } | if page.center { 4 } else { 0 } | if page.show_plot_styles { 2 } else { 0 }
 }
 
@@ -446,7 +452,7 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     // The file's standard scale (such as 1:50) while the scale is still the one read with it.
     let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
     let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
-    let plot_flags = plot_layout_flags(page, standard);
+    let plot_flags = plot_layout_flags(page, standard, data.model);
     let plot_type = match page.plot_area.as_str() {
         "display" => 0,
         "extents" => 1,
@@ -610,6 +616,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
             view: None,
             ucs: None,
             limits: None,
+            model: true,
         },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
@@ -627,6 +634,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 view: l.view,
                 ucs: l.ucs.as_ref(),
                 limits: l.limits,
+                model: false,
             },
         );
     }
