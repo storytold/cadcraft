@@ -557,8 +557,12 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
         draw_viewcube(app, ui, rect);
     }
     viewport_label(painter, rect);
-    // Typing and Escape reach the command line even when its overlay is hidden.
-    crate::cmdline::keyboard(app, ui.ctx());
+    // Typing and Escape reach the command line even when its overlay is hidden, unless the
+    // inline constraint editor already handled this frame's keys (Enter would otherwise repeat
+    // `last_command`, e.g. immediately undoing the edit after Cmd+Z).
+    if !crate::parametric::take_keyboard(app) {
+        crate::cmdline::keyboard(app, ui.ctx());
+    }
     // Command line overlay.
     if app.ui.show_command_line {
         crate::cmdline::show(app, ui, full);
@@ -1201,6 +1205,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         };
         let p = painter.with_clip_rect(clip);
         crate::parametric::draw_overlay(app, ui, &p, &xf);
+    } else {
+        crate::parametric::dismiss_inline(app, ui.ctx());
     }
     // Grips on selected objects (when idle or editing grips).
     let grip_edit = app.session.running.as_ref().is_some_and(|r| r.id == "grip");
