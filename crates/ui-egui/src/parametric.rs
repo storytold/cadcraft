@@ -63,6 +63,8 @@ fn dof_text(status: &str, dof: Option<usize>) -> Option<(String, Color32)> {
 /// The dimensional constraint whose expression is being edited inline on the canvas.
 #[derive(Clone)]
 struct InlineEdit {
+    /// Active drawing (`DocState::uid`) when editing started; switching drawings drops the edit.
+    uid: u64,
     name: String,
     original: String,
     buf: String,
@@ -276,8 +278,8 @@ struct DimensionalContext<'a> {
     ui: &'a mut egui::Ui,
     tokens: Tokens,
     units: (i64, i64),
-    /// Clickable only at the Command prompt with no selection window open, so picks during a
-    /// command still reach the drawing (matches `viewcube::ucs_icon`).
+    /// Clickable only when idle (no active command or LISP prompt, and no selection window open),
+    /// so picks during a prompt still reach the drawing (matches `viewcube::ucs_icon`).
     interactive: bool,
 }
 
@@ -520,14 +522,16 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
     refresh(app);
     let Ok(d) = app.session.doc() else { return };
     if d.constraints.is_empty() {
-        app.canvas.param.editing = None;
+        if app.canvas.param.editing.take().is_some() {
+            ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(egui::Id::unique("dimcon_edit_te")));
+        }
         return;
     }
     let t = Tokens::get();
     let set = &d.parametric.settings;
     let glyphs = &app.canvas.param.glyphs;
     let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
-    let interactive = app.session.running.is_none() && app.session.pending_window.is_none();
+    let interactive = !app.session.prompting() && app.session.pending_window.is_none();
     let act =
         draw_dimensional_constraints(DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp), interactive });
     draw_geometric_constraints(app, ui, painter, xf, t);
@@ -536,12 +540,18 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
 
 fn act_take(app: &mut CadApp, act: Option<Act>, ui: &mut egui::Ui) -> Option<()> {
     let te_id = egui::Id::unique("dimcon_edit_te");
+    let uid = app.session.state().ok()?.uid;
     if let Some(Act::Edit(name, expr, at)) = act {
         ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
-        app.canvas.param.editing = Some(InlineEdit { name, original: expr.clone(), buf: expr, at });
+        app.canvas.param.editing = Some(InlineEdit { uid, name, original: expr.clone(), buf: expr, at });
     }
     // The inline expression editor.
     let mut edit = app.canvas.param.editing.clone()?;
+    if edit.uid != uid {
+        ui.ctx().data_mut(|d| d.remove::<egui::text_edit::TextEditState>(te_id));
+        app.canvas.param.editing = None;
+        return None;
+    }
     let mut done: Option<bool> = None;
     egui::Area::new(egui::Id::unique("dimcon_edit")).order(egui::Order::Foreground).fixed_pos(edit.at - vec2(0.0, 12.0)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {

@@ -222,3 +222,66 @@ fn clicking_pill_during_command_passes_point_to_drawing() {
     h.run_steps(2);
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Specify next point");
 }
+
+#[test]
+fn clicking_pill_during_lisp_prompt_passes_point_to_drawing() {
+    let mut h = harness();
+    let pos = pill_pos(&h);
+    h.state_mut().session.cmdline("(setq p (getpoint \"\nPick: \"))").unwrap();
+    h.run_steps(2);
+    assert!(h.state().session.prompting());
+
+    click_at(&mut h, pos);
+    h.run_steps(2);
+    assert!(!h.state().session.lisp_running(), "the click on the label answered the LISP prompt");
+    assert!(h.state().session.lisp_var("P").as_point().is_some(), "the LISP prompt received a point");
+}
+
+#[test]
+fn switching_drawing_tabs_drops_pending_edit_without_writing_to_other_drawing() {
+    let mut session = Session::empty();
+    let add_d1 = |session: &mut Session, title: &str, length: f64| {
+        session.open_drawing(Drawing::new_imperial(), title, None);
+        session.settings.osmode = 0;
+        session.execute("line", &json!({ "points": [[0, 0], [length, 0]] })).unwrap();
+        let handle = session.doc().unwrap().model.iter().next().unwrap().handle.hex();
+        session.execute("dchorizontal", &json!({ "h1": handle, "value": length, "name": "d1" })).unwrap();
+        session.execute("view.set", &json!({ "center": [length / 2.0, 5.0], "height": 40 })).unwrap();
+    };
+    add_d1(&mut session, "First drawing", 20.0);
+    let first = session.active;
+    add_d1(&mut session, "Second drawing", 10.0);
+    let second = session.active;
+    session.execute("document.switch", &json!({ "index": first })).unwrap();
+
+    let mut app = CadApp::new(session, Services::default());
+    app.canvas.zoom_pending = false;
+    let mut h = Harness::builder().with_size(vec2(1280.0, 760.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(5);
+
+    let pos = pill_pos(&h);
+    double_click_at(&mut h, pos);
+    h.event(Event::Text("99".into()));
+    h.run_steps(2);
+
+    // Click the other drawing's tab: switching drawings before the canvas draws must drop the
+    // pending inline edit instead of committing `99` to the other drawing's `d1`.
+    h.get_by_label("Second drawing").click();
+    h.run_steps(3);
+
+    assert_eq!(h.state().session.active, second);
+    assert!(h.query_by_role_and_label(Role::TextInput, "d1 =").is_none(), "inline editor closed on tab switch");
+    assert_eq!(d1_expr(&h), "10", "the second drawing's d1 was not overwritten");
+    assert!((line_length(&h) - 10.0).abs() < 1e-6);
+
+    h.get_by_label("First drawing").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.active, first);
+    assert_eq!(d1_expr(&h), "20", "the first drawing's pending edit was dropped");
+}
