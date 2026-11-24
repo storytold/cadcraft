@@ -113,6 +113,8 @@ fn missing_property_labels(language: &str) -> Vec<String> {
         .collect()
 }
 
+/// The command labels, menu names, tool names and snap mode names that `language`'s catalog has no
+/// row for.
 fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     let catalog = catalog(language).unwrap();
     let mut sources = BTreeSet::new();
@@ -137,6 +139,7 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     sources.into_iter().filter(|s| !s.is_empty() && !catalog.contains_key(&("", *s))).map(str::to_string).collect()
 }
 
+/// The `tl!`/`tf!` literals of the listed UI source files that `language`'s catalog has no row for.
 fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
@@ -148,6 +151,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "credits",
         "docking",
         "dialogs",
+        "saveas",
         "hatchdlg",
         "aliasdlg",
         "keys",
