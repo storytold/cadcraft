@@ -128,3 +128,22 @@ fn a_deferred_qsave_keeps_the_format_the_picker_requested() {
     std::fs::remove_file(path).unwrap();
     std::fs::remove_file(wrong).unwrap();
 }
+
+#[test]
+fn reopening_save_as_in_the_block_editor_keeps_the_saved_version() {
+    set_io(IoHooks { read: |_, _| Ok(Drawing::new_metric()), write: |_, _| Ok(b"plain".to_vec()), plot: None });
+    set_write_as(with_options);
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let mut drawing = cadcraft_doc::Drawing::new_metric();
+    drawing.header.set_str("ACADVER", "AC1015");
+    app.session.open_drawing(drawing, "plan.dxf", Some("plan.dxf".into()));
+    app.run("bedit", json!({ "name": "Door", "create": true })).unwrap();
+    assert_eq!(cadcraft_ui_egui::saveas::SaveAsState::for_app(&app).version, cadcraft_ui_egui::SaveVersion::R2000);
+    let dir = std::env::temp_dir().join(format!("cadcraft-saveas-bedit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    app.run("saveas", json!({ "path": dir.join("saved.dxf"), "version": 2018 })).unwrap();
+    assert!(app.session.state().unwrap().block_editor().is_some());
+    cadcraft_ui_egui::saveas::open(&mut app);
+    assert_eq!(app.saveas.as_ref().unwrap().version, cadcraft_ui_egui::SaveVersion::R2018);
+    std::fs::remove_dir_all(dir).unwrap();
+}

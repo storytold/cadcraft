@@ -83,8 +83,7 @@ impl SaveAsState {
             SaveFormat::Dxf => FileType::Dxf,
             SaveFormat::Dwg => FileType::Dwg,
         };
-        let own =
-            app.session.doc().ok().and_then(|d| d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(SaveVersion::for_acadver));
+        let own = st.as_ref().and_then(|s| s.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(SaveVersion::for_acadver));
         let version = match (untitled, own) {
             (false, Some(v)) => v,
             _ => SaveVersion::parse(&app.ui.save_version).unwrap_or_default(),
