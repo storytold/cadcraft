@@ -135,3 +135,20 @@ mod tests {
         assert_eq!(plot(json!({ "output": "png", "resolution": 100, "stamp": " " })), png_plain);
     }
 }
+
+#[cfg(test)]
+mod window_stamp_regressions {
+    use super::*;
+    use cadcraft_doc::Space;
+    use serde_json::json;
+
+    #[test]
+    fn a_centered_narrow_window_does_not_erase_the_png_stamp() {
+        let d = Drawing::new_metric();
+        let mut opts = json!({ "output": "png", "resolution": 100, "paper": "A4", "landscape": false, "fit": true, "window": [[0, 0], [1, 100]] });
+        let plain = crate::plotter::plot(&d, &Space::Model, &opts).unwrap();
+        opts["stamp"] = json!("Checked");
+        let stamped = crate::plotter::plot(&d, &Space::Model, &opts).unwrap();
+        assert_ne!(plain, stamped, "the stamp remains visible outside the narrow drawing window");
+    }
+}

@@ -19,7 +19,7 @@ fn printers() -> Vec<PlotterConfig> {
     vec![PlotterConfig {
         name: "Office_T120".into(),
         default_paper: "Letter".into(),
-        papers: vec![DevicePaper { name: "Letter".into(), width: 215.9, height: 279.4, margins: [5.0; 4] }],
+        papers: vec![DevicePaper { native_key: None, name: "Letter".into(), width: 215.9, height: 279.4, margins: [5.0; 4] }],
         system: true,
         ..PlotterConfig::default()
     }]

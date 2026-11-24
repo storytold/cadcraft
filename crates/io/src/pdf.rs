@@ -520,6 +520,8 @@ struct SheetPage {
     list: cadcraft_render::DisplayList,
     map: Map,
     clip_pt: Bounds2,
+    stamp: cadcraft_render::DisplayList,
+    printable_pt: Bounds2,
     /// The drawing layers (indices in the layer table) drawn on, in order of first use: the
     /// candidates for PDF layers.
     layers: Vec<u32>,
@@ -610,11 +612,15 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     }
     // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
-    if let Some(text) = &o.stamp {
-        let text = crate::stamp::fill(text, &sheet_name(space), &page.paper, &crate::stamp::scale_label(map.s));
-        let to_world = |p: Vec2| (p - map.to) / map.s + map.from;
-        list.append(crate::stamp::display_list(d, &text, sheet.printable.min, unit_mm, to_world, 1.0 / map.s, &ropts));
-    }
+    let stamp = o
+        .stamp
+        .as_ref()
+        .map(|text| {
+            let text = crate::stamp::fill(text, &sheet_name(space), &page.paper, &crate::stamp::scale_label(map.s));
+            let to_world = |p: Vec2| (p - map.to) / map.s + map.from;
+            crate::stamp::display_list(d, &text, sheet.printable.min, unit_mm, to_world, 1.0 / map.s, &ropts)
+        })
+        .unwrap_or_default();
     let media = sheet.size * k;
     let printable_pt = Bounds2::new(sheet.printable.min * k, sheet.printable.max * k);
     let clip_pt = match window {
@@ -636,16 +642,13 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         }
     }
     let links = links(&list, &map, &clip_pt, links_to);
-    Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
+    Ok(SheetPage { media, list, map, clip_pt, stamp, printable_pt, layers, links, label: sheet_name(space) })
 }
 
-/// `w` grown by what a plotted line may reach past it (the widest lineweight, 2.11 mm, and a
-/// little more), in drawing units at `s` paper units per drawing unit, for
-/// [`cadcraft_render::DisplayList::retain_within`].
+/// `w` grown by what a plotted line may reach past it, at `s` paper units per drawing unit (see
+/// [`cadcraft_render::pen::plot_window_reach`]).
 pub(crate) fn window_margin(w: &Bounds2, s: f64, unit_mm: f64) -> Bounds2 {
-    let reach = 3.0 / (unit_mm * s);
-    let margin = if reach.is_finite() && reach > 0.0 { reach } else { 0.0 };
-    w.expand(margin + w.width().max(w.height()) * 0.01)
+    cadcraft_render::pen::plot_window_reach(w, unit_mm * s)
 }
 
 /// A plotted window `w` on the sheet, in points: where its corners land through `map`.
@@ -829,7 +832,15 @@ fn write_page(
     let mut drawn = Ok(());
     if let Some(clip) = rect_path(p.clip_pt.min, p.clip_pt.max) {
         surface.push_clip_path(&clip, &FillRule::NonZero);
-        drawn = marks(&mut surface, p, groups, fonts);
+        drawn = marks(&mut surface, p, &p.list, &p.clip_pt, groups, fonts);
+        surface.pop();
+    }
+    if drawn.is_ok()
+        && !p.stamp.prims.is_empty()
+        && let Some(clip) = rect_path(p.printable_pt.min, p.printable_pt.max)
+    {
+        surface.push_clip_path(&clip, &FillRule::NonZero);
+        drawn = marks(&mut surface, p, &p.stamp, &p.printable_pt, groups, fonts);
         surface.pop();
     }
     surface.pop();
@@ -906,8 +917,14 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
-fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
-    let list = &p.list;
+fn marks(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    list: &cadcraft_render::DisplayList,
+    clip_pt: &Bounds2,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+) -> std::result::Result<(), Failure> {
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
@@ -930,7 +947,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
         let w = if w.is_finite() && w > 0.0 { w.min(100.0) } else { 0.0 };
         let m = Mark { rgb, t, w };
         match prim.kind {
-            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, prim, raw, m),
+            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, clip_pt, prim, raw, m),
             Kind::Tris | Kind::Mask => {
                 flush(s, &mut batch);
                 // A wipeout's mask is paper white.
@@ -939,7 +956,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                     u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
                 match text_font {
                     Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
-                    None => fill_tris(s, p, raw, m.rgb, m.t),
+                    None => fill_tris(s, p, clip_pt, raw, m.rgb, m.t),
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
@@ -960,14 +977,22 @@ struct Mark {
 }
 
 /// Stroke a polyline or infinite line, clipped to the plot area, into the open batch.
-fn polyline(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, p: &SheetPage, prim: &DPrim, raw: &[Vec2], m: Mark) {
-    let Some(pts) = polyline_points(prim, raw, &p.map, &p.clip_pt) else { return };
+fn polyline(
+    s: &mut Surface<'_>,
+    batch: &mut Option<(StrokeStyle, PathBuilder)>,
+    p: &SheetPage,
+    clip_pt: &Bounds2,
+    prim: &DPrim,
+    raw: &[Vec2],
+    m: Mark,
+) {
+    let Some(pts) = polyline_points(prim, raw, &p.map, clip_pt) else { return };
     if pts.len() < 2 {
         return;
     }
     // With a vertex out of range, keep the pieces inside the plot area, widened so
     // a wide stroke just outside it still shows its edge.
-    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(m.w + 1.0)) };
+    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &clip_pt.expand(m.w + 1.0)) };
     let style = StrokeStyle { rgb: m.rgb, width: m.w as f32, transparency: m.t };
     if m.t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
         flush(s, batch);
@@ -1018,10 +1043,10 @@ fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)
 }
 
 /// Fill a set of triangles, clipped to the plot area.
-fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
+fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, clip_pt: &Bounds2, raw: &[Vec2], rgb: Rgb, t: u8) {
     let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
     // With a vertex out of range, keep the parts inside the plot area.
-    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, clip_pt) };
     let mut pb = PathBuilder::new();
     for tri in tris.as_chunks::<3>().0 {
         let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
@@ -1170,5 +1195,28 @@ mod saved_setup_tests {
         let m = map(&d, json!({"scale": 0.25}));
         assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
         assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
+}
+
+#[cfg(test)]
+mod stamp_clip_regressions {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_narrow_window_and_its_stamp_have_independent_clips() {
+        let d = Drawing::new_metric();
+        let page = sheet(
+            &d,
+            &Space::Model,
+            &PdfOptions::from_json(&json!({
+                "paper": "A4", "landscape": false, "fit": true, "window": [[0, 0], [1, 100]], "stamp": "Checked"
+            })),
+            &[],
+        )
+        .unwrap();
+        let b = Bounds2::from_points(page.stamp.verts.iter().chain(&page.stamp.tris).map(|p| page.map.pt(*p)));
+        assert!(b.max.x < page.clip_pt.min.x, "the stamp is outside the drawing clip");
+        assert!(page.printable_pt.contains(b.min) && page.printable_pt.contains(b.max), "the stamp remains inside its printable clip");
     }
 }

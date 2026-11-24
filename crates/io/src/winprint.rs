@@ -49,15 +49,25 @@ fn same_size(a: &WinPaper, b: &WinPaper) -> bool {
     a.width.min(a.height).abs_diff(b.width.min(b.height)) <= 250 && a.width.max(a.height).abs_diff(b.width.max(b.height)) <= 250
 }
 
+/// Margins assumed for a driver option whose printable area is unknown (past the margin
+/// queries, or a query that failed): a quarter inch, the usual hardware margin of office
+/// printers, or the widest margins the same driver reported if they are wider. Never zero, so
+/// the preview does not show an edge-to-edge area the driver may not print.
+const UNKNOWN_MARGIN_MM: f64 = 6.35;
+
 /// Margins printable on every paper of `p`'s size: the widest on each side. craft-print may
 /// print on any driver option of that size (`A4` or `A4 Borderless`), so the preview uses the
-/// margins all of them can print.
-fn conservative_margins(papers: &[WinPaper], p: &WinPaper) -> Option<[f64; 4]> {
-    papers.iter().filter(|o| same_size(o, p)).fold(p.margins, |acc, o| match (acc, o.margins) {
-        (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]), a[3].max(b[3])]),
-        (None, b) => b,
-        (a, None) => a,
+/// margins all of them can print; an option with unknown margins counts as `unknown`.
+fn conservative_margins(papers: &[WinPaper], p: &WinPaper, unknown: [f64; 4]) -> [f64; 4] {
+    papers.iter().filter(|o| same_size(o, p)).fold(p.margins.unwrap_or(unknown), |a, o| {
+        let b = o.margins.unwrap_or(unknown);
+        [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]), a[3].max(b[3])]
     })
+}
+
+/// The margins assumed for options the driver did not describe: see [`UNKNOWN_MARGIN_MM`].
+fn unknown_margins(papers: &[WinPaper]) -> [f64; 4] {
+    papers.iter().filter_map(|o| o.margins).fold([UNKNOWN_MARGIN_MM; 4], |a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]), a[3].max(b[3])])
 }
 
 /// The paper that stands for its size in the list: the one with the widest margins (the plain
@@ -80,6 +90,7 @@ fn represents_its_size(papers: &[WinPaper], p: &WinPaper) -> bool {
 pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], default_key: Option<&str>) -> PlotterConfig {
     let mut device_papers: Vec<DevicePaper> = Vec::new();
     let mut default_paper = String::new();
+    let unknown = unknown_margins(papers);
     for p in papers {
         if device_papers.len() >= MAX_PAPERS {
             break;
@@ -87,17 +98,21 @@ pub fn printer_config(name: &str, default_printer: bool, papers: &[WinPaper], de
         if p.width == 0 || p.height == 0 || p.name.is_empty() || device_papers.iter().any(|d| d.name.eq_ignore_ascii_case(&p.name)) {
             continue;
         }
-        if !represents_its_size(papers, p) {
+        // Sizes chain within the tolerance (210.0, 210.2, 210.4 mm): leave a paper out only when
+        // a paper that is listed stands for it.
+        if !represents_its_size(papers, p) && papers.iter().any(|q| same_size(p, q) && represents_its_size(papers, q)) {
             continue;
         }
         if default_paper.is_empty() && default_key.is_some_and(|k| papers.iter().any(|o| o.key == k && same_size(o, p))) {
             default_paper = p.name.clone();
         }
+        let margins = conservative_margins(papers, p, unknown);
         device_papers.push(DevicePaper {
+            native_key: None,
             name: p.name.clone(),
             width: f64::from(p.width) / 1000.0,
             height: f64::from(p.height) / 1000.0,
-            margins: conservative_margins(papers, p).unwrap_or([0.0; 4]),
+            margins,
         });
     }
     if default_paper.is_empty() {
@@ -128,8 +143,8 @@ mod system {
     use winprint::ticket::document::{PrintTicketDocument, reader::ParsableXmlDocument as _};
     use winprint::ticket::{FeatureOptionPack as _, PageImageableSize, PageMediaSize, PrintCapabilities, PrintTicketBuilder};
 
-    /// Papers whose printable area is asked for (one driver call each); later ones print to the
-    /// edge as far as the dialog knows.
+    /// Papers whose printable area is asked for (one driver call each); later ones keep
+    /// conservative margins (see `printer_config`).
     const MAX_MARGIN_QUERIES: usize = 64;
 
     /// The option name of the paper in the driver's default ticket (`ISOA4`).
@@ -284,8 +299,8 @@ mod tests {
         let p = |key: &str, name: &str, width, height, margins| WinPaper { key: key.into(), name: name.into(), width, height, margins };
         let papers = [
             p("NorthAmericaLetter", "Letter", 215_900, 279_400, Some([3.4, 5.0, 3.4, 3.0])),
-            p("ISOA4", "A4", 210_000, 297_000, None),
-            p("Custom1", "a4", 210_000, 297_000, None),
+            p("ISOA4", "A4", 210_000, 297_000, Some([0.0; 4])),
+            p("Custom1", "a4", 210_000, 297_000, Some([0.0; 4])),
             p("Roll", "Roll 24 in", 609_600, 0, None),
             p("ISOA3", "A3", 297_000, 420_000, None),
         ];
@@ -301,6 +316,9 @@ mod tests {
         assert!((a4.width - 210.0).abs() < 1e-9 && (a4.height - 297.0).abs() < 1e-9);
         assert_eq!(a4.margins, [0.0; 4]);
         assert_eq!(c.paper("Letter").unwrap().margins, [3.4, 5.0, 3.4, 3.0]);
+        // A paper past the margin queries stays listed, with margins at least the driver's widest.
+        let a3 = c.paper("A3").unwrap().margins;
+        assert!(a3.iter().zip([3.4, 5.0, 3.4, 3.0]).all(|(m, widest)| *m >= widest && *m > 0.0), "{a3:?}");
         // An unknown default falls back to the first paper.
         let other = printer_config("Canon", false, &papers, Some("JapanHagaki"));
         assert_eq!(other.default_paper, "Letter");
@@ -323,8 +341,35 @@ mod tests {
         assert_eq!(names, ["A4"]);
         assert_eq!(config.default_paper, "A4", "the driver's default variant maps to its size's entry");
         assert_eq!(config.papers[0].margins, [5.0, 4.0, 5.0, 6.0]);
-        // A size without margins on any variant keeps none.
+        // An unknown printable area is not advertised as borderless.
         let config = printer_config("P", false, &[p("ISOA4", "A4", None)], None);
-        assert_eq!(config.papers[0].margins, [0.0; 4]);
+        assert!(config.papers[0].margins.iter().all(|m| *m > 0.0));
+    }
+}
+
+#[cfg(test)]
+mod unknown_margin_regressions {
+    use super::*;
+
+    #[test]
+    fn a_known_borderless_variant_does_not_hide_unknown_plain_margins() {
+        let papers = [
+            WinPaper { key: "Borderless".into(), name: "A4 Borderless".into(), width: 210_000, height: 297_000, margins: Some([0.0; 4]) },
+            WinPaper { key: "ISOA4".into(), name: "A4".into(), width: 210_000, height: 297_000, margins: None },
+        ];
+        let config = printer_config("P", false, &papers, None);
+        assert_eq!(config.papers.len(), 1, "the size stays listed");
+        assert!(config.papers[0].margins.iter().all(|m| *m > 0.0), "{:?}", config.papers[0].margins);
+    }
+
+    #[test]
+    fn every_left_out_paper_has_a_listed_paper_within_tolerance() {
+        let p = |key: &str, width, total: f64| WinPaper { key: key.into(), name: key.into(), width, height: 297_000, margins: Some([total; 4]) };
+        let papers = [p("W0", 210_000, 1.0), p("W2", 210_200, 2.0), p("W4", 210_400, 3.0)];
+        let config = printer_config("P", false, &papers, None);
+        for o in &papers {
+            let w = f64::from(o.width) / 1000.0;
+            assert!(config.papers.iter().any(|d| (d.width - w).abs() <= 0.25), "{} has no listed paper within tolerance", o.name);
+        }
     }
 }

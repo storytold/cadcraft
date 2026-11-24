@@ -1496,3 +1496,4 @@ menu	Modify	Edita
 	Plotted {what} ({bytes} bytes; there is no file dialog here)	{what} stampato ({bytes} byte; qui non c'è una finestra per i file)
 	landscape	orizzontale
 	portrait	verticale
+	Sheet {w} × {h} mm, unprintable margins left {l}, bottom {b}, right {r}, top {t} mm	Foglio {w} × {h} mm, margini non stampabili sinistro {l}, inferiore {b}, destro {r}, superiore {t} mm

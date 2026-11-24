@@ -487,10 +487,14 @@ fn pagesetup_applies_one_change_to_several_layouts_in_one_step() {
     }
     assert_ne!(paper_of(&s, "Sheet 3"), paper_of(&s, "Layout1"), "a layout not named keeps its settings");
     // "all" takes every layout; one undo step reverts all of it.
+    s.execute("pagesetup", &json!({"layouts": ["Layout1", "Layout2"], "landscape": true})).unwrap();
+    let pages = |s: &Session| s.doc().unwrap().layouts.iter().map(|l| (l.name.clone(), l.page.clone())).collect::<Vec<_>>();
+    let before = pages(&s);
+    assert!(before.iter().filter(|(_, p)| p.landscape).count() >= 2);
     s.execute("pagesetup", &json!({"layouts": "all", "landscape": false})).unwrap();
     assert!(s.doc().unwrap().layouts.iter().all(|l| !l.page.landscape));
     s.undo().unwrap();
-    assert!(s.doc().unwrap().layouts.iter().any(|l| l.page.landscape), "the whole change is one undo step");
+    assert_eq!(pages(&s), before, "the whole change is one undo step");
 }
 
 /// A change a layout refuses leaves every layout as it was.

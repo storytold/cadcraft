@@ -82,6 +82,15 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     }
     let mut pm = Pixmap::new(view.width, view.height)?;
     pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
+    render_into(list, view, o, &mut pm)?;
+    Some(pm)
+}
+
+/// Draw onto an existing pixmap, preserving its background and earlier marks.
+pub fn render_into(list: &DisplayList, view: &View, o: &RasterOptions, pm: &mut Pixmap) -> Option<()> {
+    if pm.width() != view.width || pm.height() != view.height {
+        return None;
+    }
     let vis = view.world_bounds();
     let mut hairlines = Hairlines::default();
     let mut screen: Vec<(f32, f32)> = Vec::new();
@@ -93,7 +102,7 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
         paint.anti_alias = o.antialias;
         let pts = list.points(p);
         if p.kind != Kind::Polyline {
-            hairlines.flush(&mut pm, o.antialias);
+            hairlines.flush(pm, o.antialias);
         }
         match p.kind {
             Kind::Polyline => {
@@ -105,10 +114,10 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
                 screen.clear();
                 screen.extend(pts.iter().map(|q| view.to_screen(*q)));
                 if is_hairline(w, o.antialias) && screen.len() >= 2 && screen.iter().all(|&(x, y)| batchable(x) && batchable(y)) {
-                    hairlines.add(&mut pm, [c.0, c.1, c.2, p.alpha()], w, &screen, o.antialias);
+                    hairlines.add(pm, [c.0, c.1, c.2, p.alpha()], w, &screen, o.antialias);
                     continue;
                 }
-                hairlines.flush(&mut pm, o.antialias);
+                hairlines.flush(pm, o.antialias);
                 let mut pb = PathBuilder::new();
                 for (i, (x, y)) in screen.iter().enumerate() {
                     if i == 0 {
@@ -156,7 +165,7 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
                 if let Some(img) = list.images.get(index as usize)
                     && Bounds2::from_points(pts.iter().copied()).intersects(&vis)
                 {
-                    image(&mut pm, img, view, p.alpha(), o.antialias);
+                    image(pm, img, view, p.alpha(), o.antialias);
                 }
             }
             Kind::Infinite { ray } => {
@@ -175,8 +184,8 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
             }
         }
     }
-    hairlines.flush(&mut pm, o.antialias);
-    Some(pm)
+    hairlines.flush(pm, o.antialias);
+    Some(())
 }
 
 /// Whether tiny-skia strokes a line `width` pixels wide (untransformed) as a hairline: zero

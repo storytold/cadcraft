@@ -679,10 +679,14 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let before = s.state()?.doc.clone();
     let mut done = Vec::new();
+    // The options for one layout, without the selection (which may be long), copied per layout.
+    let mut base = p.clone();
+    if let Some(o) = base.as_object_mut() {
+        o.remove("layouts");
+    }
     for n in &names {
-        let mut one = p.clone();
+        let mut one = base.clone();
         if let Some(o) = one.as_object_mut() {
-            o.remove("layouts");
             o.insert("layout".into(), json!(n));
         }
         match pagesetup_one(s, &one) {
@@ -888,6 +892,9 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         return Err(bad(cmd, "`layout` and `layouts` name different sheets; give only one of them"));
     }
     let printer = str_param(p, "printer").map(str::trim).filter(|n| !n.is_empty());
+    if printer.is_some() && sheets.as_ref().is_some_and(|names| names.len() > 1) {
+        return Err(bad(cmd, "several sheets require PDF file output; print one sheet at a time"));
+    }
     // A printer takes the PDF, whatever `output` says.
     let is_image =
         printer.is_none() && p.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
@@ -897,7 +904,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         // A PNG or SVG holds one render: a single `layouts` entry names the sheet to draw (the PDF
         // path resolves `layouts` itself), not whatever space the session happens to show.
         None => match sheets.as_deref() {
-            Some([only]) if is_image => {
+            Some([only]) if is_image || printer.is_some() => {
                 if only.eq_ignore_ascii_case("model") {
                     Space::Model
                 } else {
@@ -956,6 +963,15 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
         return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
     }
+    if printer.is_some() {
+        let d = s.doc()?;
+        let page = space.layout().and_then(|name| d.layout(name)).map(|l| l.page.clone()).unwrap_or_else(|| cadcraft_render::paper::model_page(d));
+        let (w, h) = match (opts.get("width").and_then(Value::as_f64), opts.get("height").and_then(Value::as_f64)) {
+            (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => (w, h),
+            _ => (page.width_mm, page.height_mm),
+        };
+        opts["printerSheetSize"] = json!([w.clamp(1.0, cadcraft_doc::MAX_PAPER_MM), h.clamp(1.0, cadcraft_doc::MAX_PAPER_MM)]);
+    }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
         Some(names) => names.first().cloned().unwrap_or_default(),
@@ -969,6 +985,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         let saved: Option<&str> = match str_param(p, "path") {
             #[cfg(not(target_arch = "wasm32"))]
             Some(path) => {
+                crate::file_access::check_write(path).map_err(|e| bad(cmd, e))?;
                 folder = super::file::new_folder(path);
                 crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
                 Some(path)
@@ -978,7 +995,13 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         let copies = p.get("copies").and_then(Value::as_u64).unwrap_or(1);
         let title = format!("{} - {layout}", s.state()?.title);
         let paper = str_param(p, "printerPaper").or_else(|| str_param(p, "paper")).unwrap_or_default();
-        let job = super::plotters::print_pdf(cmd, printer, paper, copies, &title, &bytes)?;
+        // The PDF is already on disk when the printer refuses the job: say so, with its path.
+        let job = super::plotters::print_pdf(cmd, printer, paper, copies, &title, &bytes, &opts).map_err(|e| match (saved, e) {
+            (Some(path), crate::EngineError::BadParams { cmd, msg }) => {
+                crate::EngineError::BadParams { msg: format!("the PDF was saved to {path}, but printing failed: {msg}"), cmd }
+            }
+            (_, e) => e,
+        })?;
         let mut r = json!({ "printer": printer, "job": job, "copies": copies.clamp(1, super::plotters::MAX_COPIES), "bytes": bytes.len(), "layout": layout, "pages": pages });
         if let (Some(path), Some(o)) = (saved, r.as_object_mut()) {
             o.insert("path".into(), json!(path));

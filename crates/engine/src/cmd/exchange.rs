@@ -342,8 +342,7 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // A saved window shows only what is inside it, as the plotters plot it.
     if let Some(w) = saved.window.filter(|w| !w.is_empty()) {
-        let reach = 3.0 / (sheet.unit_mm * k);
-        list.retain_within(&w.expand(if reach.is_finite() && reach > 0.0 { reach } else { 0.0 } + w.width().max(w.height()) * 0.01));
+        list.retain_within(&cadcraft_render::pen::plot_window_reach(&w, sheet.unit_mm * k));
     }
     // The table's line ends, joins and fill patterns at the plot scale, as the plotters draw them.
     cadcraft_render::pen::apply(&mut list, k * sheet.unit_mm);

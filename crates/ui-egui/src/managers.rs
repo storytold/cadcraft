@@ -558,6 +558,14 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     };
     let mut layouts: Vec<(u32, String, cadcraft_doc::PageSetup)> = d.layouts.iter().map(|l| (l.tab_order, l.name.clone(), l.page.clone())).collect();
     layouts.sort_by_key(|l| l.0);
+    let uid = app.session.state().ok().map(|s| s.uid);
+    if temp::<Option<u64>>(ctx, "pagesetup_origin") != Some(uid) {
+        ctx.data_mut(|d| {
+            d.remove::<String>(egui::Id::unique("pagesetup_sel"));
+            d.remove::<Vec<String>>(egui::Id::unique("pagesetup_picked"));
+        });
+        set_temp(ctx, "pagesetup_origin", uid);
+    }
     let shown = app.session.layout_space().layout().map(str::to_string);
     let mut sel = temp::<String>(ctx, "pagesetup_sel")
         .filter(|s| layouts.iter().any(|l| l.1 == *s))
@@ -1167,9 +1175,15 @@ fn toggle_sheet(sheets: &mut Vec<String>, targets: &[String], name: &str, on: bo
 
 /// Drop the ticked sheets that no longer exist (`targets` lists those that do). With none left,
 /// `target` is the one; with exactly one left, that one is the target, which the dialog then edits
-/// and OK plots. Returns whether the target changed.
-fn sync_sheets(sheets: &mut Vec<String>, target: &mut String, targets: &[String]) -> bool {
+/// and OK plots. A deleted target gives way to the first ticked sheet left, or to `fallback` (the
+/// active tab) when none is. Returns whether the target changed.
+fn sync_sheets(sheets: &mut Vec<String>, target: &mut String, targets: &[String], fallback: &str) -> bool {
     sheets.retain(|n| targets.contains(n));
+    let mut changed = false;
+    if !targets.contains(target) {
+        *target = sheets.first().cloned().unwrap_or_else(|| fallback.to_string());
+        changed = true;
+    }
     if sheets.is_empty() {
         sheets.push(target.clone());
     }
@@ -1178,14 +1192,14 @@ fn sync_sheets(sheets: &mut Vec<String>, target: &mut String, targets: &[String]
             *target = only.clone();
             true
         }
-        _ => false,
+        _ => changed,
     }
 }
 
 /// The `plot` parameters for several sheets in one PDF: no device or page overrides, so each
 /// sheet plots with its own page setup.
 fn sheets_params(sheets: &[String]) -> Value {
-    json!({ "layouts": sheets, "layout": sheets.first(), "device": "None" })
+    json!({ "layouts": sheets, "device": "None" })
 }
 
 /// One line about a sheet's page setup for the summary shown with several sheets ticked.
@@ -1204,7 +1218,14 @@ fn preview_target(st: &PlotState) -> &str {
 /// asks for a PNG at that resolution instead of the device's output, on the same sheet.
 fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
     if preview_dpi.is_some() && st.sheets.len() > 1 {
-        return json!({ "layout": preview_target(st), "device": "None", "output": "png", "resolution": preview_dpi });
+        let mut p = json!({ "layout": preview_target(st), "device": "None", "output": "png", "resolution": preview_dpi });
+        // The stamp OK sends with several sheets, on the PDF they go to.
+        if st.stamp
+            && let Some(o) = p.as_object_mut()
+        {
+            o.insert("stamp".into(), json!(stamp_template(None).replace("{device}", "CADCraft PDF")));
+        }
+        return p;
     }
     let page = &st.page;
     let mut p = json!({
@@ -1357,8 +1378,9 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     layouts.sort_by_key(|l| l.0);
     targets.extend(layouts.into_iter().map(|l| l.1));
     let generation = PLOT_GEN.load(Ordering::Relaxed);
-    let mut st = temp::<PlotState>(ctx, "plot_state").filter(|s| s.generation == generation && targets.contains(&s.target)).unwrap_or_else(|| {
-        let target = app.session.layout_space().tab_name().to_string();
+    let active = app.session.layout_space().tab_name().to_string();
+    let mut st = temp::<PlotState>(ctx, "plot_state").filter(|s| s.generation == generation).unwrap_or_else(|| {
+        let target = active.clone();
         let mut ext = d.extents(&cadcraft_doc::Space::Model);
         if ext.is_empty() {
             ext = cadcraft_geom::Bounds2::new(cadcraft_geom::Vec2::ZERO, cadcraft_geom::Vec2::new(12.0, 9.0));
@@ -1367,7 +1389,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         PlotState::new(generation, target, page, [ext.min.x, ext.min.y, ext.max.x, ext.max.y])
     });
     // Layouts deleted since the dialog was last open drop out of the ticked sheets.
-    if sync_sheets(&mut st.sheets, &mut st.target, &targets) {
+    if sync_sheets(&mut st.sheets, &mut st.target, &targets, &active) {
         st.page = plot_page(d, &st.target);
     }
     let model = st.target == "Model";
@@ -1853,7 +1875,20 @@ fn sheet_sketch(ui: &mut egui::Ui, page: &cadcraft_doc::PageSetup, t: &Tokens) {
     let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
     ui.vertical(|ui| {
         // The dimension lines and their labels take the space the sheet leaves on its bottom and right.
-        let (rect, _) = ui.allocate_exact_size(vec2(140.0, 124.0), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(vec2(140.0, 124.0), Sense::hover());
+        // Screen readers get what the sketch shows: the sheet and its printable margins.
+        let mm = |v: f64| format!("{v:.1}");
+        let [ml, mb, mr, mt] = page.margins_mm.map(mm);
+        let described = crate::tf!(
+            "Sheet {w} × {h} mm, unprintable margins left {l}, bottom {b}, right {r}, top {t} mm",
+            w = mm(w),
+            h = mm(h),
+            l = ml,
+            b = mb,
+            r = mr,
+            t = mt
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, false, described.clone()));
         let area = egui::Rect::from_min_size(rect.min, rect.size() - vec2(30.0, 30.0));
         let k = (area.width() / w.max(1.0) as f32).min(area.height() / h.max(1.0) as f32);
         let sheet = egui::Rect::from_center_size(area.center(), vec2(w as f32 * k, h as f32 * k));
@@ -2009,6 +2044,10 @@ mod plot_dialog_tests {
         assert!(params.get("width").is_none() && params.get("margins").is_none(), "inherit that sheet's setup as the final multi-sheet plot does");
         st.target = "Layout2".into();
         assert_eq!(plot_params(&st, Some(150.0))["layout"], "Layout2");
+        assert!(params.get("stamp").is_none());
+        st.stamp = true;
+        let stamp = plot_params(&st, Some(150.0))["stamp"].as_str().unwrap().to_string();
+        assert!(stamp.contains("CADCraft PDF") && stamp.contains("{paper}"), "the stamp OK sends, on the PDF: {stamp}");
     }
 
     /// Choosing a device gives the page one of its papers and printable areas, and the plot parameters name them.
@@ -2217,20 +2256,27 @@ mod plot_sheets_tests {
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         // Nothing deleted: nothing changes, whatever the target (it may have been unticked).
         let (mut sheets, mut target) = (names(&["Layout1", "Layout2"]), "Sheet 3".to_string());
-        assert!(!sync_sheets(&mut sheets, &mut target, &t));
+        assert!(!sync_sheets(&mut sheets, &mut target, &t, "Model"));
         assert_eq!((sheets.as_slice(), target.as_str()), (names(&["Layout1", "Layout2"]).as_slice(), "Sheet 3"));
         // One of three ticked layouts is deleted while the target was not among them: two are left.
         let (mut sheets, mut target) = (names(&["Layout1", "Gone", "Layout2"]), "Sheet 3".to_string());
-        assert!(!sync_sheets(&mut sheets, &mut target, &t));
+        assert!(!sync_sheets(&mut sheets, &mut target, &t, "Model"));
         assert_eq!(sheets, ["Layout1", "Layout2"]);
         // One left: it becomes the target, so the dialog's single sheet is what OK plots.
         let (mut sheets, mut target) = (names(&["Gone", "Layout2"]), "Layout1".to_string());
-        assert!(sync_sheets(&mut sheets, &mut target, &t));
+        assert!(sync_sheets(&mut sheets, &mut target, &t, "Model"));
         assert_eq!((sheets, target.as_str()), (names(&["Layout2"]), "Layout2"));
         // None left: the target alone.
         let (mut sheets, mut target) = (names(&["Gone", "Also gone"]), "Layout1".to_string());
-        assert!(!sync_sheets(&mut sheets, &mut target, &t));
+        assert!(!sync_sheets(&mut sheets, &mut target, &t, "Model"));
         assert_eq!((sheets, target.as_str()), (names(&["Layout1"]), "Layout1"));
+        // The target itself deleted: a ticked sheet left takes over, else the active tab.
+        let (mut sheets, mut target) = (names(&["Gone", "Layout2", "Sheet 3"]), "Gone".to_string());
+        assert!(sync_sheets(&mut sheets, &mut target, &t, "Model"));
+        assert_eq!((sheets, target.as_str()), (names(&["Layout2", "Sheet 3"]), "Layout2"));
+        let (mut sheets, mut target) = (names(&["Gone"]), "Gone".to_string());
+        assert!(sync_sheets(&mut sheets, &mut target, &t, "Model"));
+        assert_eq!((sheets, target.as_str()), (names(&["Model"]), "Model"));
     }
     /// Ticking keeps tab order and leaves at least one sheet.
     #[test]
@@ -2253,7 +2299,7 @@ mod plot_sheets_tests {
     #[test]
     fn several_sheets_plot_with_their_own_page_setups_into_one_pdf() {
         let p = sheets_params(&["Layout1".to_string(), "Layout2".to_string()]);
-        assert_eq!(p, json!({ "layouts": ["Layout1", "Layout2"], "layout": "Layout1", "device": "None" }));
+        assert_eq!(p, json!({ "layouts": ["Layout1", "Layout2"], "device": "None" }));
         // No page overrides: each sheet keeps its paper, orientation, style table and lineweights.
         for k in ["paper", "width", "height", "landscape", "plotStyleTable", "lineweights", "plotTransparency", "fit"] {
             assert!(p.get(k).is_none(), "{k} would apply to every sheet");

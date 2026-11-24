@@ -1721,3 +1721,4 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+	Sheet {w} × {h} mm, unprintable margins left {l}, bottom {b}, right {r}, top {t} mm	Аркуш {w} × {h} мм, поля без друку: ліве {l}, нижнє {b}, праве {r}, верхнє {t} мм

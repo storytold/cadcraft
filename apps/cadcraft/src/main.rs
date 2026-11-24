@@ -179,7 +179,7 @@ pub fn install_io() {
     #[cfg(unix)]
     cadcraft_engine::cmd::plotters::set_system_printers(cadcraft_engine::cmd::plotters::SystemPrinters {
         list: cadcraft_io::cups::printers,
-        print: |j| cadcraft_io::cups::print(j.printer, j.paper, j.copies, j.title, j.pdf),
+        print: |j| cadcraft_io::cups::print(j.printer, j.paper_key, j.size_mm, j.copies, j.title, j.pdf),
     });
     // System printers: the Windows spooler.
     #[cfg(windows)]

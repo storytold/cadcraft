@@ -243,6 +243,7 @@ impl DisplayList {
 pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     let (verts, tris, prims) = (dst.verts.len() as u32, dst.tris.len() as u32, dst.prims.len() as u32);
     let images = dst.images.len() as u32;
+    let src_prims = src.prims.len();
     // Pens are parallel to the primitives, with missing entries meaning "use object".
     if !src.pens.is_empty() {
         dst.pens.resize(dst.prims.len(), Pen::default());
@@ -257,7 +258,13 @@ pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
     dst.images.extend(src.images);
     dst.verts.extend(src.verts);
     dst.tris.extend(src.tris);
-    dst.prim_layers.extend(src.prim_layers);
+    // Layers are parallel to the primitives too: when either list has them, a primitive without
+    // one gets NO_LAYER, so every later primitive keeps its own layer.
+    if !src.prim_layers.is_empty() || !dst.prim_layers.is_empty() {
+        dst.prim_layers.resize(prims as usize, NO_LAYER);
+        dst.prim_layers.extend(src.prim_layers.into_iter().take(src_prims));
+        dst.prim_layers.resize(prims as usize + src_prims, NO_LAYER);
+    }
     dst.texts.extend(src.texts.into_iter().map(|mut t| {
         if t.prim < PlotText::CLIPPED {
             t.prim += prims;

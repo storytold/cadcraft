@@ -139,11 +139,6 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     } else {
         (Vec2::ZERO, Vec2::ZERO)
     };
-    if let Some(text) = &o.stamp {
-        let text = crate::stamp::fill(text, space.tab_name(), &page.paper, &crate::stamp::scale_label(s));
-        let to_world = |p: Vec2| (p - to) / s + from;
-        list.append(crate::stamp::display_list(d, &text, sheet.printable.min, sheet.unit_mm, to_world, 1.0 / s, &ropts));
-    }
     // The world point at the image centre, mapped through the same paper origin as PDF.
     let center = from + (half - to) / s;
     let view = raster::View { center, scale: k * s, width, height };
@@ -166,6 +161,15 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
             let (x1, y0) = view.to_screen(keep.max);
             raster::blank_outside_pixels(&mut pm, (f64::from(x0), f64::from(y0)), (f64::from(x1), f64::from(y1)));
         }
+    }
+    if let Some(text) = &o.stamp {
+        let text = crate::stamp::fill(text, space.tab_name(), &page.paper, &crate::stamp::scale_label(s));
+        let to_world = |p: Vec2| (p - to) / s + from;
+        let stamp = crate::stamp::display_list(d, &text, sheet.printable.min, sheet.unit_mm, to_world, 1.0 / s, &ropts);
+        raster::render_into(&stamp, &view, &ro, &mut pm).ok_or_else(|| IoError::Format("render failed".into()))?;
+        let (x0, y1) = view.to_screen(to_world(sheet.printable.min));
+        let (x1, y0) = view.to_screen(to_world(sheet.printable.max));
+        raster::blank_outside_pixels(&mut pm, (f64::from(x0), f64::from(y0)), (f64::from(x1), f64::from(y1)));
     }
     raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))
 }

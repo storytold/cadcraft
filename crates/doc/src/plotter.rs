@@ -64,6 +64,9 @@ pub enum Orientation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DevicePaper {
+    /// Native media identifier, retained exactly for system-printer submission.
+    #[serde(skip)]
+    pub native_key: Option<String>,
     pub name: String,
     pub width: f64,
     pub height: f64,
@@ -72,7 +75,7 @@ pub struct DevicePaper {
 
 impl Default for DevicePaper {
     fn default() -> Self {
-        DevicePaper { name: String::new(), width: 210.0, height: 297.0, margins: [0.0; 4] }
+        DevicePaper { native_key: None, name: String::new(), width: 210.0, height: 297.0, margins: [0.0; 4] }
     }
 }
 
@@ -237,9 +240,9 @@ mod tests {
             resolution: 1_000_000,
             default_paper: "nope".into(),
             papers: vec![
-                DevicePaper { name: "A3 borderless".into(), width: 420.0, height: 297.0, margins: [0.0; 4] },
+                DevicePaper { native_key: None, name: "A3 borderless".into(), width: 420.0, height: 297.0, margins: [0.0; 4] },
                 DevicePaper { name: "a3-BORDERLESS".into(), ..DevicePaper::default() },
-                DevicePaper { name: String::new(), width: f64::NAN, height: 1e12, margins: [f64::INFINITY, 9e9, -1.0, 5.0] },
+                DevicePaper { native_key: None, name: String::new(), width: f64::NAN, height: 1e12, margins: [f64::INFINITY, 9e9, -1.0, 5.0] },
             ],
             ..PlotterConfig::default()
         };

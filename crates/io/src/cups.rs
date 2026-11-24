@@ -192,14 +192,18 @@ pub fn parse_lpoptions(text: &str) -> Ppd {
         let Some((name, w, h)) = media_size(keyword) else { continue };
         let borderless = keyword.ends_with(".Fullbleed") || keyword.contains(".Borderless");
         let name = if borderless { format!("{name} (borderless)") } else { name };
-        if ppd.papers.iter().any(|p| p.name == name) {
-            continue;
-        }
+        let imageable = (!borderless && w > 2.0 * m && h > 2.0 * m).then_some([m, m, w - m, h - m]);
+        let paper = PpdPaper { keyword: keyword.to_string(), name, width: w, height: h, imageable };
         if default {
             ppd.default_size = keyword.to_string();
         }
-        let imageable = (!borderless && w > 2.0 * m && h > 2.0 * m).then_some([m, m, w - m, h - m]);
-        ppd.papers.push(PpdPaper { keyword: keyword.to_string(), name, width: w, height: h, imageable });
+        // Two keywords with one display name are listed once; the starred one (the queue's
+        // default) wins, so the default keeps its own keyword.
+        match ppd.papers.iter_mut().find(|p| p.name == paper.name) {
+            Some(listed) if default => *listed = paper,
+            Some(_) => {}
+            None => ppd.papers.push(paper),
+        }
     }
     ppd
 }
@@ -223,7 +227,13 @@ pub fn printer_config(name: &str, ppd: &Ppd) -> PlotterConfig {
             let margins = p.imageable.map_or([0.0; 4], |[llx, lly, urx, ury]| {
                 [llx / PT_PER_MM, lly / PT_PER_MM, (p.width - urx) / PT_PER_MM, (p.height - ury) / PT_PER_MM]
             });
-            DevicePaper { name: p.name.clone(), width: p.width / PT_PER_MM, height: p.height / PT_PER_MM, margins }
+            DevicePaper {
+                native_key: Some(p.keyword.clone()),
+                name: p.name.clone(),
+                width: p.width / PT_PER_MM,
+                height: p.height / PT_PER_MM,
+                margins,
+            }
         })
         .collect();
     let default_paper = ppd.papers.iter().find(|p| p.keyword == ppd.default_size).map(|p| p.name.clone()).unwrap_or_default();
@@ -274,10 +284,19 @@ pub fn paper_option(keyword: &str, from_ppd: bool) -> String {
 /// Resolve the requested sheet before spawning `lp`: an absent override would print on the
 /// queue's default paper instead of the paper the preview showed.
 #[cfg_attr(not(all(unix, not(target_arch = "wasm32"))), allow(dead_code))]
-fn required_paper(papers: Option<(Ppd, bool)>, paper: &str) -> Result<String, String> {
+fn required_paper(papers: Option<(Ppd, bool)>, paper: &str, size_mm: (f64, f64)) -> Result<String, String> {
     let (ppd, from_ppd) = papers.ok_or_else(|| "could not read the printer's paper capabilities".to_string())?;
-    let selected =
-        ppd.papers.iter().find(|p| p.name.eq_ignore_ascii_case(paper)).ok_or_else(|| format!("the printer no longer offers paper `{paper}`"))?;
+    let selected = ppd.papers.iter().find(|p| p.keyword == paper).ok_or_else(|| format!("the printer no longer offers paper `{paper}`"))?;
+    let (w, h) = (selected.width / PT_PER_MM, selected.height / PT_PER_MM);
+    if !size_mm.0.is_finite()
+        || !size_mm.1.is_finite()
+        || size_mm.0 <= 0.0
+        || size_mm.1 <= 0.0
+        || (w.min(h) - size_mm.0.min(size_mm.1)).abs() > 0.1
+        || (w.max(h) - size_mm.0.max(size_mm.1)).abs() > 0.1
+    {
+        return Err("the printer paper size changed; refresh the printer and plot again".into());
+    }
     Ok(paper_option(&selected.keyword, from_ppd))
 }
 
@@ -384,11 +403,11 @@ mod system {
 
     /// Send `pdf` to `printer` on the paper called `paper` (a name [`printers`] gave).
     /// Returns the job id.
-    pub fn print(printer: &str, paper: &str, copies: u32, title: &str, pdf: &[u8]) -> Result<String, String> {
+    pub fn print(printer: &str, paper: &str, size_mm: (f64, f64), copies: u32, title: &str, pdf: &[u8]) -> Result<String, String> {
         if !valid_name(printer) {
             return Err(format!("`{printer}` is not a printer name"));
         }
-        let option = super::required_paper(papers(printer), paper)?;
+        let option = super::required_paper(papers(printer), paper, size_mm)?;
         let mut child = Command::new("lp")
             .args(lp_args(printer, Some(&option), copies, title))
             .env("LC_ALL", "C")
@@ -560,10 +579,49 @@ mod tests {
 
     #[test]
     fn a_missing_selected_paper_is_not_replaced_by_the_queue_default() {
-        assert!(required_paper(None, "A3").is_err());
+        assert!(required_paper(None, "A3", (297.0, 420.0)).is_err());
         let papers = || parse_lpoptions("PageSize: *A4");
-        assert!(required_paper(Some((papers(), true)), "A3").is_err());
-        assert_eq!(required_paper(Some((papers(), true)), "A4").unwrap(), "PageSize=A4");
-        assert_eq!(required_paper(Some((papers(), false)), "A4").unwrap(), "media=A4");
+        assert!(required_paper(Some((papers(), true)), "A3", (297.0, 420.0)).is_err());
+        assert_eq!(required_paper(Some((papers(), true)), "A4", (210.0, 297.0)).unwrap(), "PageSize=A4");
+        assert_eq!(required_paper(Some((papers(), false)), "A4", (210.0, 297.0)).unwrap(), "media=A4");
+    }
+}
+
+#[cfg(test)]
+mod media_regressions {
+    // Synthetic PPD records authored here; no printer driver files or samples are copied.
+    use super::*;
+
+    #[test]
+    fn a_shortened_display_label_keeps_its_native_media_identifier() {
+        let label = "A long display label ".repeat(8);
+        let text = format!("*PageSize Roll24/{label}: \"\"\n*PaperDimension Roll24: \"1728 2592\"\n");
+        let ppd = parse_ppd(&text);
+        let config = printer_config("Office", &ppd);
+        let paper = &config.papers[0];
+        assert!(paper.name.len() < label.len());
+        assert_eq!(required_paper(Some((ppd, true)), paper.native_key.as_deref().unwrap(), (paper.width, paper.height)).unwrap(), "PageSize=Roll24");
+    }
+
+    #[test]
+    fn changed_media_dimensions_are_refused_before_submission() {
+        let papers = || parse_ppd("*PageSize Roll24/Roll 24 in: \"\"\n*PaperDimension Roll24: \"1728 3456\"\n");
+        assert!(required_paper(Some((papers(), true)), "Roll24", (609.6, 914.4)).is_err());
+        assert!(required_paper(Some((papers(), true)), "Roll24", (609.6, 1219.2)).is_ok());
+        assert!(required_paper(Some((papers(), true)), "removed", (609.6, 1219.2)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod starred_collision_regressions {
+    use super::*;
+
+    #[test]
+    fn the_starred_choice_wins_a_display_name_collision() {
+        let ppd = parse_lpoptions("PageSize/Media Size: na_letter_8.5x11in iso_a4_210x297mm *A4\n");
+        let a4: Vec<&PpdPaper> = ppd.papers.iter().filter(|p| p.name == "A4").collect();
+        assert_eq!(a4.len(), 1, "one entry per display name");
+        assert_eq!(a4[0].keyword, ppd.default_size, "the default keeps its own keyword");
+        assert_eq!(printer_config("Office", &ppd).default_paper, "A4");
     }
 }

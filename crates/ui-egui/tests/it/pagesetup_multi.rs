@@ -52,3 +52,23 @@ fn picking_the_value_shown_makes_the_other_picked_layouts_match() {
     h.run_steps(3);
     assert!(landscape(h.state(), "Layout1") && landscape(h.state(), "Layout2"), "both layouts are landscape now");
 }
+
+#[test]
+fn a_multi_selection_does_not_follow_the_user_into_another_drawing() {
+    let mut app = CadApp::new(Session::default(), Services::default());
+    app.ui.start_tab = false;
+    app.ui.in_window_menu = false;
+    let mut h = harness(app);
+    menus::activate(h.state_mut(), "pagesetup");
+    h.run_steps(4);
+    h.get_by_label("Select all").click();
+    h.run_steps(3);
+    h.state_mut().session.open_drawing(cadcraft_engine::doc::Drawing::new_metric(), "other.dxf", None);
+    h.state_mut().run("pagesetup", json!({ "layout": "Layout1", "landscape": false })).unwrap();
+    h.state_mut().run("pagesetup", json!({ "layout": "Layout2", "landscape": false })).unwrap();
+    h.run_steps(4);
+    h.get_by_label("Landscape").click();
+    h.run_steps(3);
+    assert!(landscape(h.state(), "Layout1"));
+    assert!(!landscape(h.state(), "Layout2"), "the second drawing never had multiple layouts selected");
+}

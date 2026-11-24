@@ -136,6 +136,9 @@ pub struct PrintJob<'a> {
     pub printer: &'a str,
     /// The paper's name as the printer's device lists it.
     pub paper: &'a str,
+    pub paper_key: &'a str,
+    /// Sheet dimensions used to render the PDF, in millimetres.
+    pub size_mm: (f64, f64),
     pub copies: u32,
     pub title: &'a str,
     pub pdf: &'a [u8],
@@ -178,12 +181,7 @@ fn system_printers() -> Vec<PlotterConfig> {
             let spawned = std::thread::Builder::new().name("system-printers".into()).spawn(move || {
                 let _worker = ListingWorker;
                 let found: Vec<PlotterConfig> = list().into_iter().filter(|p| p.system && !is_builtin(&p.name)).collect();
-                // Only the latest listing writes: one given up and finishing after a newer one
-                // started would put an older list back.
-                let mut c = printer_cache();
-                if c.listing == Some(started) {
-                    (c.list, c.at, c.hung, c.listing) = (found, Some(std::time::Instant::now()), false, None);
-                }
+                printer_cache().complete(started, found);
             });
             if spawned.is_err() {
                 c.listing = None;
@@ -226,6 +224,7 @@ struct PrinterCache {
     list: Vec<PlotterConfig>,
     at: Option<std::time::Instant>,
     listing: Option<std::time::Instant>,
+    published: Option<std::time::Instant>,
     /// Running calls, including expired listings whose driver has not returned yet.
     workers: usize,
     /// A wait for a listing ran out (a driver that never answers): commands stop waiting until a
@@ -235,6 +234,15 @@ struct PrinterCache {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl PrinterCache {
+    fn complete(&mut self, started: std::time::Instant, found: Vec<PlotterConfig>) {
+        if self.published.is_none_or(|published| started > published) {
+            (self.list, self.at, self.hung, self.published) = (found, Some(std::time::Instant::now()), false, Some(started));
+        }
+        if self.listing == Some(started) {
+            self.listing = None;
+        }
+    }
+
     /// Whether a listing is under way and not yet given up (younger than [`PRINTERS_WAIT`]).
     fn listing_live(&self) -> bool {
         self.listing.is_some_and(|t| t.elapsed() < PRINTERS_WAIT)
@@ -345,13 +353,25 @@ fn named_device(name: &str) -> Option<PlotterConfig> {
 const PRINTERS_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Print `pdf` on the system printer `printer`; returns the job id.
-pub(crate) fn print_pdf(cmd: &str, printer: &str, paper: &str, copies: u64, title: &str, pdf: &[u8]) -> Result<String> {
+pub(crate) fn print_pdf(cmd: &str, printer: &str, paper: &str, copies: u64, title: &str, pdf: &[u8], opts: &Value) -> Result<String> {
     let h = PRINTERS.get().ok_or_else(|| bad(cmd, "there are no system printers in this build"))?;
     let Some(dev) = system_printer(printer) else {
         return Err(bad(cmd, format!("unknown printer `{printer}`")));
     };
     let copies = copies.clamp(1, MAX_COPIES) as u32;
-    (h.print)(&PrintJob { printer: &dev.name, paper, copies, title, pdf }).map_err(|e| bad(cmd, format!("{}: {e}", dev.name)))
+    (h.print)(&PrintJob {
+        printer: &dev.name,
+        paper,
+        copies,
+        title,
+        pdf,
+        paper_key: str_param(opts, "printerPaperKey").unwrap_or(paper),
+        size_mm: (
+            opts.get("printerSheetSize").and_then(|v| v.get(0)).and_then(Value::as_f64).unwrap_or(0.0),
+            opts.get("printerSheetSize").and_then(|v| v.get(1)).and_then(Value::as_f64).unwrap_or(0.0),
+        ),
+    })
+    .map_err(|e| bad(cmd, format!("{}: {e}", dev.name)))
 }
 
 /// Most user devices listed.
@@ -371,7 +391,7 @@ const NO_DEVICE: &str = "None";
 fn builtin(name: &str, output: PlotOutput, description: &str) -> PlotterConfig {
     let papers = cadcraft_render::PAPER_SIZES
         .iter()
-        .map(|p| DevicePaper { name: p.name.into(), width: p.width_mm, height: p.height_mm, margins: p.margins_mm() })
+        .map(|p| DevicePaper { native_key: None, name: p.name.into(), width: p.width_mm, height: p.height_mm, margins: p.margins_mm() })
         .collect();
     let default_paper = cadcraft_render::paper_size("A4").map(|p| p.name.to_string()).unwrap_or_default();
     PlotterConfig {
@@ -552,10 +572,19 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     if let Some(o) = out.as_object_mut() {
         o.remove("printer");
         o.remove("printerPaper");
+        o.remove("printerPaperKey");
     }
     // The plot stamp names the drawing and the device here; the plotter fills in each sheet's
     // layout, paper and scale.
-    let device_name = dev.as_ref().map_or_else(|| "CADCraft PDF".to_string(), |d| d.name.clone());
+    // Without a device, the built-in one for the format the path or `output` asks for.
+    let by_path = if cmd == "exportpdf" { None } else { str_param(p, "path").and_then(path_output) };
+    let no_device = if cmd == "exportpdf" {
+        PlotOutput::Pdf
+    } else {
+        by_path.or_else(|| p.get("output").and_then(Value::as_str).and_then(PlotOutput::parse)).unwrap_or(PlotOutput::Pdf)
+    };
+    let builtin_name = BUILTIN.iter().find(|(_, o, _)| *o == no_device).map_or("CADCraft PDF", |(n, _, _)| *n);
+    let device_name = dev.as_ref().map_or_else(|| builtin_name.to_string(), |d| d.name.clone());
     let text = stamp(s, p, cmd, &device_name)?;
     if let Some(o) = out.as_object_mut() {
         o.remove("stamp");
@@ -565,7 +594,6 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     }
     // The path's extension names the format, like EXPORT, unless a device is given; a given
     // device that writes another format is refused. EXPORTPDF always writes PDF.
-    let by_path = if cmd == "exportpdf" { None } else { str_param(p, "path").and_then(path_output) };
     // A path whose extension names no format (or has none) would hold a PDF under that name:
     // refuse it, as EXPORT does, unless `output` or a device says what to write.
     if cmd == "plot"
@@ -618,6 +646,9 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
     if dev.system && cmd == "plot" && output == PlotOutput::Pdf {
         o.insert("printer".into(), json!(dev.name));
         let on = paper.map(|pp| pp.name.clone()).or_else(|| layout.as_ref().map(|pg| pg.paper.clone())).unwrap_or_default();
+        if let Some(key) = paper.or_else(|| device_paper(&dev, &on)).and_then(|pp| pp.native_key.as_ref()) {
+            o.insert("printerPaperKey".into(), json!(key));
+        }
         o.insert("printerPaper".into(), json!(on));
     }
     // The stamp names the device's paper (the plotter only sees its size).
@@ -775,7 +806,9 @@ fn summary(c: &PlotterConfig) -> Value {
 
 fn device_name(cmd: &str, p: &Value) -> Result<String> {
     let n = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(cmd, "`name` (a plotter name) is required"))?;
-    Ok(n.chars().take(cadcraft_doc::MAX_PLOTTER_NAME).collect())
+    // The whole name: a system printer's may be longer than a user device's, and a shortened
+    // one could name another printer. `new` shortens the name it gives a user device.
+    Ok(n.to_string())
 }
 
 /// Write a user device to the store.
@@ -842,7 +875,7 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
                 }
             }
         };
-        let new = DevicePaper { name: name.into(), width: w, height: h, margins };
+        let new = DevicePaper { native_key: None, name: name.into(), width: w, height: h, margins };
         match existing.and_then(|e| c.papers.iter().position(|x| x.name == e.name)) {
             Some(i) => {
                 if let Some(slot) = c.papers.get_mut(i) {
@@ -888,7 +921,7 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
             Ok(v)
         }
         "new" => {
-            let name = device_name(cmd, p)?;
+            let name: String = device_name(cmd, p)?.chars().take(cadcraft_doc::MAX_PLOTTER_NAME).collect();
             if find_device(&name).is_some() {
                 return Err(bad(cmd, format!("plotter `{name}` already exists")));
             }
@@ -897,7 +930,8 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, format!("a plotter file `{file}` already exists")));
             }
             let mut c = match str_param(p, "from") {
-                Some(f) => find_device(f).ok_or_else(|| unknown_device(cmd, f))?,
+                // A system printer named before the first listing ended is waited for.
+                Some(f) => find_device(f).or_else(|| system_printer(f)).ok_or_else(|| unknown_device(cmd, f))?,
                 None => {
                     // A copy of the built-in device for the output: the standard papers.
                     let output = match p.get("output") {
@@ -910,6 +944,8 @@ fn run_plottermanager(_s: &mut Session, p: &Value) -> Result<Value> {
             };
             c.name = name;
             c.description = String::new();
+            // A copy of a system printer is a user device: it is neither the spooler's nor its default.
+            (c.system, c.system_default) = (false, false);
             edit_device(cmd, &mut c, p)?;
             let c = c.sanitized();
             save_device(cmd, &c)?;
@@ -1117,5 +1153,25 @@ impl Interactive for PlotterManagerM {
                 Ok(Step::Done)
             }
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cache_regressions {
+    use super::*;
+
+    #[test]
+    fn replacement_listings_do_not_starve_completed_results_or_overwrite_newer_lists() {
+        let older = std::time::Instant::now();
+        let newer = older + std::time::Duration::from_secs(1);
+        let mut cache = PrinterCache { listing: Some(newer), ..Default::default() };
+        let device = |name: &str| PlotterConfig { name: name.into(), ..Default::default() };
+        cache.complete(older, vec![device("older")]);
+        assert_eq!(cache.list[0].name, "older");
+        assert_eq!(cache.listing, Some(newer), "the replacement is still pending");
+        cache.complete(newer, vec![device("newer")]);
+        cache.complete(older, vec![device("stale")]);
+        assert_eq!(cache.list[0].name, "newer");
+        assert!(cache.listing.is_none());
     }
 }
