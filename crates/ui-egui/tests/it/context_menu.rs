@@ -456,3 +456,34 @@ fn without_late_answers_a_paste_after_the_next_frame_is_ordinary() {
     frame(&mut app, paste());
     assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the Ctrl+V pastes");
 }
+
+/// A paste command the user bound to a key of its own reads the system clipboard first, like a
+/// menu paste: the key press is not a `Paste` event, so nothing has been read when it fires.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_paste_bound_to_another_key_asks_the_window_for_the_system_clipboard() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let h = app.session.doc().unwrap().model.handles();
+    app.session.set_selection(h);
+    app.run("copyclip", json!({})).unwrap();
+    app.ui.shortcuts.insert("pasteclip".into(), "F9".into());
+    let ctx = egui::Context::default();
+    let mut now = 0.0;
+    let mut frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        now += 0.01;
+        ctx.begin_pass(egui::RawInput { events, time: Some(now), ..Default::default() });
+        cadcraft_ui_egui::menus::shortcuts(app, &ctx);
+        let mut out = ctx.end_pass();
+        out.textures_delta.clear();
+        out.viewport_output.into_values().flat_map(|v| v.commands).any(|c| c == egui::ViewportCommand::RequestPaste)
+    };
+    let running = |app: &CadApp| app.session.running.as_ref().map(|r| r.id.clone());
+    let f9 = egui::Event::Key { key: egui::Key::F9, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+
+    let asked = frame(&mut app, vec![f9]);
+    assert_eq!(running(&app), None, "held until the system clipboard has been read");
+    assert!(asked || frame(&mut app, vec![]), "the window is asked for the clipboard text");
+    frame(&mut app, vec![egui::Event::Paste("text from another program".into())]);
+    assert_eq!(running(&app).as_deref(), Some("pasteclip"), "the text arrived: paste runs");
+}
