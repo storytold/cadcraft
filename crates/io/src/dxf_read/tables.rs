@@ -296,6 +296,18 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
 fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
     for (kind, tags) in recs {
         let table = T(tags);
+        // Proxy graphics count every LAYER and LTYPE record, so one without a handle or a name
+        // keeps its place in the index lists (an empty name) and the records after it don't
+        // shift (#3094).
+        if table.s(5).is_none() || table.s(2).is_none() {
+            let name = table.s(2).unwrap_or_default();
+            match kind.as_str() {
+                "LAYER" => rx.proxy_tables.layers.push(name),
+                "LTYPE" if !name.eq_ignore_ascii_case("ByBlock") && !name.eq_ignore_ascii_case("ByLayer") => rx.proxy_tables.linetypes.push(name),
+                _ => {}
+            }
+            continue;
+        }
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
         match kind.as_str() {
             "STYLE" => {

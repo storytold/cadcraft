@@ -158,6 +158,11 @@ pub struct Drawing {
     pub portable_fonts: bool,
     /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
     pub rasters: Rasters,
+    /// The LAYER table of the file this drawing was read from, in the file's order and under
+    /// the layers' current names: proxy graphics name layers by their index in it, and saving
+    /// turns those indices into the written table's (#3094). An empty name stands for a record
+    /// without one. Empty for a drawing not read from a file.
+    pub proxy_layers: Vec<String>,
 }
 
 impl Default for Drawing {
@@ -221,6 +226,7 @@ impl Drawing {
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
             rasters: Rasters::default(),
+            proxy_layers: Vec::new(),
         }
     }
 

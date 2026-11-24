@@ -10,6 +10,7 @@
 //! polylines, materials) are skipped.
 
 use super::{Arc, Circle, Common, Entity, EntityKind, Handle, Hatch, HatchLoop, Line, Lineweight, LwPolyline, Text, Unknown};
+use crate::RawTag;
 use cadcraft_color::{Color, Rgb};
 use cadcraft_geom::{PolyVertex, Vec2, Vec3};
 
@@ -39,11 +40,7 @@ impl Unknown {
     /// (92, or 160 in newer files), cut to that size. Empty for other records, for an entity
     /// without graphics and for one whose data isn't hex.
     pub fn proxy_graphics_bytes(&self) -> Vec<u8> {
-        if !self.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
-            return Vec::new();
-        }
-        let Some(at) = self.tags.iter().position(|t| t.code == 92 || t.code == 160) else { return Vec::new() };
-        let size = self.tags.get(at).and_then(|t| t.value.trim().parse::<usize>().ok()).unwrap_or(0).min(MAX_BYTES);
+        let Some((at, size)) = self.graphics_size_group() else { return Vec::new() };
         let mut out = Vec::with_capacity(size);
         for t in self.tags.iter().skip(at + 1).take_while(|t| t.code == 310) {
             // Damaged data draws nothing rather than a picture cut at a guess.
@@ -56,6 +53,114 @@ impl Unknown {
         }
         out.truncate(size);
         out
+    }
+}
+
+impl Unknown {
+    /// Where the proxy graphics size group (92, or 160 in newer files) of an ACAD_PROXY_ENTITY
+    /// is, and the size it gives (at most [`MAX_BYTES`]).
+    fn graphics_size_group(&self) -> Option<(usize, usize)> {
+        if !self.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
+            return None;
+        }
+        let at = self.tags.iter().position(|t| t.code == 92 || t.code == 160)?;
+        let size = self.tags.get(at).and_then(|t| t.value.trim().parse::<usize>().ok()).unwrap_or(0).min(MAX_BYTES);
+        Some((at, size))
+    }
+
+    /// The record's groups with the layer indices of its proxy graphics (ATTRIBUTE_LAYER)
+    /// turned from the file's table `read` (see [`crate::Drawing::proxy_layers`]) into the
+    /// written table `written`, by name; everything else as read. A layer that is gone becomes
+    /// layer 0 (the proxy's own layer, as in a block); an index past the read table, or one of a
+    /// record without a name, stays past the written one, which keeps the layer before it as
+    /// AutoCAD does. `None` when no index changes, or the graphics aren't readable.
+    pub fn with_proxy_layers(&self, read: &[String], written: &[String]) -> Option<Vec<RawTag>> {
+        if read.is_empty() {
+            return None;
+        }
+        let (at, size) = self.graphics_size_group()?;
+        let groups: Vec<usize> = (at + 1..self.tags.len()).take_while(|&i| self.tags[i].code == 310).collect();
+        let (mut bytes, mut lens) = (Vec::new(), Vec::with_capacity(groups.len()));
+        for &i in &groups {
+            let before = bytes.len();
+            if !push_hex(&mut bytes, &self.tags[i].value) {
+                return None;
+            }
+            lens.push(bytes.len() - before);
+        }
+        let zero = written.iter().position(|n| n == "0");
+        let past = u32::try_from(written.len()).unwrap_or(u32::MAX).max(u32::try_from(read.len()).unwrap_or(u32::MAX));
+        let new_index = |i: u32| -> u32 {
+            match read.get(i as usize).filter(|n| !n.is_empty()) {
+                Some(name) => written.iter().position(|w| w.eq_ignore_ascii_case(name)).or(zero).and_then(|p| u32::try_from(p).ok()).unwrap_or(i),
+                None if i >= past => i,
+                None => past,
+            }
+        };
+        let end = size.min(bytes.len());
+        let mut changed = false;
+        let mut chunk = 8usize;
+        while let (Some(len), Some(kind)) = (u32_at(&bytes[..end], chunk), u32_at(&bytes[..end], chunk + 4)) {
+            let len = len as usize;
+            if len < 8 || chunk.saturating_add(len) > end {
+                break;
+            }
+            if kind == 16
+                && let Some(i) = u32_at(&bytes[..chunk + len], chunk + 8)
+            {
+                let j = new_index(i);
+                if j != i {
+                    bytes[chunk + 8..chunk + 12].copy_from_slice(&j.to_le_bytes());
+                    changed = true;
+                }
+            }
+            chunk += len;
+        }
+        if !changed {
+            return None;
+        }
+        let mut tags = self.tags.clone();
+        let mut from = 0;
+        for (&g, &n) in groups.iter().zip(&lens) {
+            tags[g].value = bytes[from..from + n].iter().map(|b| format!("{b:02X}")).collect();
+            from += n;
+        }
+        Some(tags)
+    }
+}
+
+impl crate::Drawing {
+    /// Rename layer `old` to `new` where proxy graphics use it: in [`crate::Drawing::proxy_layers`],
+    /// so saving finds the layer under its new name, and in the decoded graphics, which draw on
+    /// it at once. RENAME calls it, LAYMRG for each merged layer (its graphics move to the
+    /// target, as its objects do) and LAYDEL with layer 0.
+    pub fn rename_proxy_layer(&mut self, old: &str, new: &str) {
+        for n in &mut self.proxy_layers {
+            if n.eq_ignore_ascii_case(old) {
+                *n = new.to_string();
+            }
+        }
+        let uses = |e: &Entity| matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| g.common.layer.eq_ignore_ascii_case(old)));
+        let fix = |e: &mut Entity| {
+            if let EntityKind::Unknown(u) = &mut e.kind {
+                for g in u.graphics.iter_mut().filter(|g| g.common.layer.eq_ignore_ascii_case(old)) {
+                    g.common.layer = new.to_string();
+                }
+            }
+        };
+        let mut stores: Vec<&mut crate::EntityStore> = vec![&mut self.model];
+        stores.extend(self.layouts.iter_mut().map(|l| &mut l.entities));
+        for b in self.blocks.values_mut() {
+            if b.entities.iter().any(|e| uses(e)) {
+                stores.push(&mut std::sync::Arc::make_mut(b).entities);
+            }
+        }
+        for store in stores {
+            let hs: Vec<Handle> = store.iter().filter(|e| uses(e)).map(|e| e.handle).collect();
+            for h in hs {
+                store.modify(h, fix);
+            }
+        }
     }
 }
 
@@ -192,9 +297,10 @@ impl Decoder<'_> {
                     self.pen.color = Color::from_aci(i16::try_from(c).unwrap_or(256));
                 }
             }
-            // ATTRIBUTE_LAYER: index into the layer table; an index past it leaves the layer.
+            // ATTRIBUTE_LAYER: index into the layer table; an index past it, or one of a record
+            // without a name, leaves the layer.
             16 => {
-                if let Some(name) = b.u32().and_then(|i| self.tables.layers.get(i as usize)) {
+                if let Some(name) = b.u32().and_then(|i| self.tables.layers.get(i as usize)).filter(|n| !n.is_empty()) {
                     self.pen.layer = name.clone();
                 }
             }
@@ -204,7 +310,7 @@ impl Decoder<'_> {
                 if let Some(i) = b.u32() {
                     self.pen.linetype = match i {
                         32766 => "ByBlock".into(),
-                        _ => self.tables.linetypes.get(i as usize).cloned().unwrap_or_else(|| "ByLayer".into()),
+                        _ => self.tables.linetypes.get(i as usize).filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| "ByLayer".into()),
                     };
                 }
             }
