@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -313,6 +314,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -405,6 +408,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -616,6 +620,13 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -646,7 +657,15 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }
@@ -748,6 +767,12 @@ impl CadApp {
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
         }
+    }
+
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
     }
 
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and

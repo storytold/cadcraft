@@ -98,6 +98,64 @@ fn keep_file_order<T>(items: &mut [T], name: impl Fn(&T) -> &str, order: &[Strin
     });
 }
 
+/// A dimension kept as read (LARGE_RADIAL_DIMENSION, ARC_DIMENSION) draws its `*D` block, as
+/// AutoCAD does, in place of the proxy graphics it may carry: those can differ from what AutoCAD
+/// shows (an exporter's picture without the arrowheads; #3438). Its graphics become one reference
+/// to that block, with the dimension's handle, so it is drawn, measured and picked like a proxy.
+/// A reference, not a copy of the contents: nested dimensions, the block's draw order and the
+/// renderer's depth and size limits all apply as for any block reference.
+fn draw_kept_dimensions_from_their_blocks(d: &mut Drawing) {
+    let pictures = |store: &cadcraft_doc::EntityStore, d: &Drawing| -> Vec<(Handle, Entity)> {
+        store
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Unknown(u) => {
+                    let block = d.block(u.dimension_block()?)?;
+                    // The block holds the dimension as drawn, in the dimension's coordinates: placed
+                    // at its base point it draws where it is, as a DIMENSION's block does.
+                    let reference = Insert { block: block.name.clone(), insert: block.base, ..Insert::default() };
+                    // Everything ByBlock, so what the block gives ByBlock is the dimension's own.
+                    let common = Common {
+                        layer: "0".into(),
+                        color: Color::ByBlock,
+                        linetype: "ByBlock".into(),
+                        lineweight: Lineweight::ByBlock,
+                        transparency: Transparency::ByBlock,
+                        plot_style: "ByBlock".into(),
+                        ..Common::default()
+                    };
+                    (!block.entities.is_empty()).then(|| (e.handle, Entity { handle: e.handle, common, kind: EntityKind::Insert(reference) }))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let apply = |store: &mut cadcraft_doc::EntityStore, found: Vec<(Handle, Entity)>| {
+        for (h, reference) in found {
+            store.modify(h, |e| {
+                if let EntityKind::Unknown(u) = &mut e.kind {
+                    u.graphics = vec![reference];
+                }
+            });
+        }
+    };
+    let found = pictures(&d.model, d);
+    apply(&mut d.model, found);
+    for i in 0..d.layouts.len() {
+        let found = pictures(&d.layouts[i].entities, d);
+        apply(&mut d.layouts[i].entities, found);
+    }
+    let names: Vec<String> = d.blocks.keys().cloned().collect();
+    for name in names {
+        let found = d.blocks.get(&name).map(|b| pictures(&b.entities, d)).unwrap_or_default();
+        if !found.is_empty()
+            && let Some(b) = d.blocks.get_mut(&name)
+        {
+            apply(&mut std::sync::Arc::make_mut(b).entities, found);
+        }
+    }
+}
+
 /// Read a DXF file into a drawing.
 pub fn read(bytes: &[u8]) -> Result<Drawing> {
     read_budgeted(bytes, 4_000_000, hatch::MAX_READ_CURVE_POINTS)
@@ -205,6 +263,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     // Proxy graphics name layers and linetypes by their place in the file's tables, and saving
     // writes them unchanged: the tables keep the file's order, with what CADCraft adds after it.
     keep_file_order(&mut d.layers, |l| &l.name, &rx.proxy_tables.layers, &[]);
+    // Saving turns the graphics' layer indices from this order into the written table's, so
+    // removing or adding layers doesn't move them (#3094).
+    d.proxy_layers.clone_from(&rx.proxy_tables.layers);
     keep_file_order(&mut d.linetypes, |l| &l.name, &rx.proxy_tables.linetypes, &["ByBlock", "ByLayer"]);
     // A proxy text takes the first style on its font, so the styles keep the file's order too.
     let styles: Vec<String> = rx.proxy_tables.styles.iter().map(|(n, _)| n.clone()).collect();
@@ -215,6 +276,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     let (paper_block_for, first_layout) = setup_layouts(&mut d, &mut layout_objs, &rx);
     place_blocks(&mut d, blocks, &mut rx, &paper_block_for, &first_layout);
     place_entities(&mut d, entities, &rx, &paper_block_for, &first_layout);
+    draw_kept_dimensions_from_their_blocks(&mut d);
     number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);

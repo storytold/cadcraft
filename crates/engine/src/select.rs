@@ -6,6 +6,11 @@ use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 use crate::spatial::{self, SpatialIndex};
 use crate::{Accept, Prompt};
 
+/// A dimension kept as read whose graphics are a reference to its `*D` block (#3438).
+fn draws_a_block(e: &Entity) -> bool {
+    matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| matches!(g.kind, EntityKind::Insert(_))))
+}
+
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     if matches!(e.kind, EntityKind::Insert(_)) {
@@ -24,9 +29,16 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                     }
                     _ => Vec::new(),
                 },
-                // An image's points are its unclipped corners: what it shows is tested as a
-                // fill, so a clipped-away part doesn't pick the reference.
-                cadcraft_render::Kind::Image { .. } => Vec::new(),
+                // An image's points are its unclipped corners: it is hit on the outline of what
+                // it shows, so a clipped-away part doesn't pick the reference.
+                cadcraft_render::Kind::Image { index } => match list.images.get(index as usize) {
+                    Some(img) if img.clips.is_empty() => {
+                        let [a, b, c, d] = img.corners();
+                        vec![vec![a, b, c, d, a]]
+                    }
+                    Some(img) => shown_image_tris(img).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect(),
+                    None => Vec::new(),
+                },
                 _ => vec![list.points(p).to_vec()],
             })
             .collect();
@@ -39,15 +51,19 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
         | EntityKind::Table(_)
         | EntityKind::Tolerance(_)
         | EntityKind::MLeader(_)
-        | EntityKind::Image(_) => {
-            // Text-like objects are hit inside their box.
+        | EntityKind::Image(_)
+        | EntityKind::Unknown(_)
+            if !matches!(e.kind, EntityKind::Unknown(_)) || draws_a_block(e) =>
+        {
+            // Text-like objects are hit inside their box; a dimension kept as read that draws its
+            // block, like a dimension.
             let b = entity_bounds(d, e, 0);
             if b.is_empty() {
                 return Vec::new();
             }
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
-            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::MLeader(_)) {
+            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::MLeader(_)) || draws_a_block(e) {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
@@ -110,21 +126,27 @@ fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::Displa
     cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() })
 }
 
+/// The part of an image its clips leave showing, as triangles (three points each); empty when a
+/// clip has no outline to cut with.
+fn shown_image_tris(img: &cadcraft_render::DImage) -> Vec<Vec2> {
+    let [a, b, c, d] = img.corners();
+    let mut tris = vec![a, b, c, a, c, d];
+    for outline in &img.clips {
+        let Some(clip) = cadcraft_render::clip::PolyClip::new(outline) else { return Vec::new() };
+        tris = clip.clip_triangles(&tris);
+        if tris.is_empty() {
+            break;
+        }
+    }
+    tris
+}
+
 fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
     let list = insert_geometry(d, e, tol);
     list.prims.iter().any(|p| {
         if let cadcraft_render::Kind::Image { index } = p.kind {
             let Some(img) = list.images.get(index as usize) else { return false };
-            let [a, b, c, d] = img.corners();
-            let mut tris = vec![a, b, c, a, c, d];
-            for outline in &img.clips {
-                let Some(clip) = cadcraft_render::clip::PolyClip::new(outline) else { return false };
-                tris = clip.clip_triangles(&tris);
-                if tris.is_empty() {
-                    return false;
-                }
-            }
-            return !cadcraft_render::clip::clip_triangles(&tris, bx).is_empty();
+            return !cadcraft_render::clip::clip_triangles(&shown_image_tris(img), bx).is_empty();
         }
         if !matches!(p.kind, cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask) {
             return false;

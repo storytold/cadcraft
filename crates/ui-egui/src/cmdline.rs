@@ -425,6 +425,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
 /// What Escape does, and the right-click or menu "Cancel" that stand for it: what was typed so far
 /// goes, and so does the running command.
 pub fn escape(app: &mut CadApp) {
+    app.paste.cancel();
     app.cmd.buffer.clear();
     app.cmd.preedit.clear();
     app.session.cancel();
