@@ -2017,6 +2017,30 @@ fn layer_filters_roundtrip() {
 }
 
 #[test]
+fn layer_filters_the_reader_would_drop_are_not_written() {
+    let mut fs = LayerFilters::default();
+    let rules = vec![FilterRule::default(); cadcraft_doc::layer_filter::MAX_RULES + 1];
+    fs.filters.push(LayerFilter::property("F", rules));
+    assert!(crate::dxf_ext::layer_filter_chunks(&fs).is_none());
+    let mut d = Drawing::new_imperial();
+    d.layer_filters = fs;
+    assert!(!write_dxf(&d).contains("CADCRAFT_LAYERFILTERS"));
+    let mut ok = LayerFilters::default();
+    ok.filters.push(LayerFilter::group("G", vec!["0".into()]));
+    assert!(crate::dxf_ext::layer_filter_chunks(&ok).is_some());
+}
+
+#[test]
+fn layer_filter_selection_state_is_compared() {
+    let mut a = Drawing::new_imperial();
+    a.layer_filters.filters.push(LayerFilter::group("G", vec!["0".into()]));
+    let mut b = a.clone();
+    b.layer_filters.invert = true;
+    let r = crate::roundtrip::compare(&a, &b, &crate::roundtrip::Options::default());
+    assert!(!r.is_empty());
+}
+
+#[test]
 fn hostile_layer_filter_records_are_ignored() {
     assert!(crate::dxf_ext::parse_layer_filters("{").is_none());
     assert!(crate::dxf_ext::parse_layer_filters(r#"{"version":2,"filters":{}}"#).is_none());

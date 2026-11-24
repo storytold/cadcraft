@@ -534,23 +534,24 @@ impl LayerFilters {
     /// for all), or of those it does not list when `invert`. `used` tells whether objects are on a
     /// layer.
     pub fn select(&self, name: Option<&str>, invert: bool, layers: &[Layer], used: &dyn Fn(&Layer) -> bool) -> Result<Vec<usize>, FilterError> {
-        let keep: Vec<bool> = match name {
-            None => vec![true; layers.len()],
-            Some(n) if n.trim().eq_ignore_ascii_case(Self::ALL) => vec![true; layers.len()],
-            Some(n) if n.trim().eq_ignore_ascii_case(Self::ALL_USED) => layers.iter().map(used).collect(),
+        let shown: Vec<bool> = match name {
+            None => vec![!invert; layers.len()],
+            Some(n) if n.trim().eq_ignore_ascii_case(Self::ALL) => vec![!invert; layers.len()],
+            Some(n) if n.trim().eq_ignore_ascii_case(Self::ALL_USED) => layers.iter().map(|l| used(l) != invert).collect(),
             Some(n) => {
                 let chain = self.chain(n)?;
                 let compiled: Vec<Compiled<'_>> = chain.into_iter().map(Compiled::new).collect::<Result<_, _>>()?;
+                let Some((own, parents)) = compiled.split_last() else { return err(format!("no layer filter `{n}`")) };
                 layers
                     .iter()
                     .map(|l| {
                         let u = used(l);
-                        compiled.iter().all(|c| c.matches(l, u))
+                        parents.iter().all(|c| c.matches(l, u)) && own.matches(l, u) != invert
                     })
                     .collect()
             }
         };
-        Ok(keep.into_iter().enumerate().filter(|(_, k)| *k != invert).map(|(i, _)| i).collect())
+        Ok(shown.into_iter().enumerate().filter(|(_, k)| *k).map(|(i, _)| i).collect())
     }
 
     /// Indices of the layers the current filter shows, as [`LayerFilters::select`].
@@ -689,6 +690,19 @@ mod tests {
     fn names(fs: &LayerFilters, name: Option<&str>, invert: bool, layers: &[Layer]) -> Vec<String> {
         let used = |l: &Layer| l.name.starts_with('U');
         fs.select(name, invert, layers, &used).unwrap().into_iter().map(|i| layers[i].name.clone()).collect()
+    }
+
+    #[test]
+    fn inverted_nested_filter_stays_inside_its_parent() {
+        let layers: Vec<Layer> = ["A", "B", "C"].into_iter().map(layer).collect();
+        let mut fs = LayerFilters::default();
+        fs.filters.push(LayerFilter::group("P", vec!["A".into(), "B".into()]));
+        let mut c = LayerFilter::group("C1", vec!["A".into()]);
+        c.parent = Some("P".into());
+        fs.filters.push(c);
+        assert_eq!(names(&fs, Some("C1"), false, &layers), ["A"]);
+        assert_eq!(names(&fs, Some("C1"), true, &layers), ["B"]);
+        assert_eq!(names(&fs, Some("P"), true, &layers), ["C"]);
     }
 
     #[test]
