@@ -69,6 +69,7 @@ mod plot_model_png_scale;
 mod plot_styles;
 mod polyface_roundtrip;
 mod portable_fonts;
+mod proxy_graphics;
 mod region_roundtrip;
 #[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
 mod render_settings_version;
