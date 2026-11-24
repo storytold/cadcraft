@@ -42,6 +42,53 @@ pub struct AliasDlgState {
     pub confirm_import: bool,
 }
 
+/// Adds a shipped language alias set to the edited user aliases (OK or Apply sends them). An alias
+/// the user already has keeps its command; each such one is a warning, in the dialog and (by
+/// [`add_language_set_to`]) on the command line. Nothing changes when the aliases would come to
+/// more than ALIASEDIT keeps.
+pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) {
+    let missing = set.keys().filter(|a| !st.user.contains_key(*a)).count();
+    let max = cadcraft_engine::cmd::file::MAX_ALIASES;
+    if st.user.len().saturating_add(missing) > max {
+        st.error = Some(crate::tf!("More than {n} aliases.", n = max));
+        return;
+    }
+    st.warnings.clear();
+    for (alias, command) in set {
+        match st.user.get(alias) {
+            None => {
+                st.user.insert(alias.clone(), command.clone());
+            }
+            Some(mine) if mine != command => st.warnings.push(crate::tf!(
+                "Kept your alias {alias} ({mine}); the set has it for {command}",
+                alias = alias.to_uppercase(),
+                mine = mine.to_ascii_uppercase(),
+                command = command.to_ascii_uppercase()
+            )),
+            Some(_) => {}
+        }
+    }
+    st.error = None;
+}
+
+/// [`add_language_set`] for the open dialog, echoing every warning on the command line as Import…
+/// does, since the dialog shows only the first few.
+pub fn add_language_set_to(app: &mut CadApp, set: &BTreeMap<String, String>) {
+    let Some(st) = app.alias_dlg.as_mut() else { return };
+    add_language_set(st, set);
+    let warnings = st.warnings.clone();
+    for w in warnings {
+        app.session.echo(w);
+    }
+}
+
+/// Whether the Filter field shows the row of `alias` (stored in lower case) and its `command`.
+/// Aliases are kept in full lower case (łuk), so the filter is too: ŁUK finds it.
+pub fn shown_by_filter(filter: &str, alias: &str, command: &str) -> bool {
+    let f = filter.trim().to_lowercase();
+    f.is_empty() || alias.contains(&f) || command.contains(&f)
+}
+
 /// Whether Import… asks first: the file would replace the user's aliases or the edits not applied yet.
 pub fn import_replaces_something(st: &AliasDlgState) -> bool {
     !st.user.is_empty() || !st.applied.is_empty()
@@ -235,9 +282,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     let built = built_in();
     let warn = Tokens::get().warn;
-    let (mut ok, mut cancel, mut apply_clicked, mut import_clicked) = (false, false, false, false);
+    let (mut ok, mut cancel, mut apply_clicked, mut import_clicked, mut add_set_clicked) = (false, false, false, false, false);
     // Without a native file picker (the web) Import… can't open one; ALIASEDIT's `text` form loads a file there.
     let can_pick = app.services.pick_pgp.is_some();
+    // The command names CADCraft ships for the interface language, if any (Polish: OKRĄG, ŁUK…).
+    let language_set = cadcraft_engine::cmd::file::language_aliases(app.language());
     let Some(st) = app.alias_dlg.as_mut() else { return };
     let id = egui::Id::unique("aliasedit_dialog");
     if std::mem::take(&mut st.raise) {
@@ -253,7 +302,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             let label = ui.label(crate::tl!("Filter"));
             ui.text_edit_singleline(&mut st.filter).labelled_by(label.id);
         });
-        let f = st.filter.trim().to_ascii_lowercase();
+        let f = st.filter.clone();
         let mut names: Vec<&String> = st.user.keys().chain(built.keys().filter(|a| !st.user.contains_key(*a))).collect();
         names.sort();
         // Edit and Remove act only on a selected row the filter shows.
@@ -269,7 +318,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         Some(c) => (c, true),
                         None => (built.get(name).unwrap_or(name), false),
                     };
-                    if !f.is_empty() && !name.contains(&f) && !command.contains(&f) {
+                    if !shown_by_filter(&f, name, command) {
                         continue;
                     }
                     let selected = st.selected.as_deref() == Some(name.as_str());
@@ -308,6 +357,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 && let Some(s) = &sel
             {
                 st.user.remove(s);
+            }
+            if language_set.is_some()
+                && ui
+                    .button(crate::tl!("Add command aliases in this language"))
+                    .on_hover_text(crate::tl!("Adds CADCraft's command names in the interface language to your aliases. Your own aliases of the same names stay; some of the set override built-in aliases. OK or Apply keeps them."))
+                    .clicked()
+            {
+                add_set_clicked = true;
             }
             let import = ui
                 .add_enabled(can_pick, egui::Button::new(crate::tl!("Import…")))
@@ -392,6 +449,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if import_clicked {
         let _ = pick_and_import(app);
     }
+    if add_set_clicked && let Some(set) = &language_set {
+        add_language_set_to(app, set);
+    }
     if (ok && apply(app)) || cancel {
         *open = false;
     } else if apply_clicked {
@@ -408,6 +468,48 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 pub(crate) fn lock_alias_store() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::{AliasDlgState, add_language_set, shown_by_filter};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn a_language_set_keeps_the_users_own_aliases() {
+        let mut st = AliasDlgState::default();
+        st.user.insert("o".into(), "offset".into());
+        st.user.insert("zzmine".into(), "line".into());
+        let set: BTreeMap<String, String> = [("o", "circle"), ("łuk", "arc")].into_iter().map(|(a, c)| (a.to_string(), c.to_string())).collect();
+        add_language_set(&mut st, &set);
+        assert_eq!(st.user.get("o").map(String::as_str), Some("offset"), "the user's O stays");
+        assert_eq!(st.user.get("łuk").map(String::as_str), Some("arc"));
+        assert_eq!(st.user.get("zzmine").map(String::as_str), Some("line"));
+        assert_eq!(st.warnings.len(), 1, "{:?}", st.warnings);
+        assert!(st.warnings[0].contains('O') && st.warnings[0].contains("OFFSET"), "{:?}", st.warnings);
+    }
+
+    #[test]
+    fn a_language_set_that_would_pass_the_cap_changes_nothing() {
+        let max = cadcraft_engine::cmd::file::MAX_ALIASES;
+        let mut st = AliasDlgState::default();
+        for i in 0..max - 1 {
+            st.user.insert(format!("zz{i}"), "line".into());
+        }
+        let before = st.user.clone();
+        let set: BTreeMap<String, String> = [("okrąg", "circle"), ("łuk", "arc")].into_iter().map(|(a, c)| (a.to_string(), c.to_string())).collect();
+        add_language_set(&mut st, &set);
+        assert_eq!(st.user, before);
+        assert!(st.error.is_some());
+    }
+
+    #[test]
+    fn the_filter_matches_aliases_with_polish_letters_in_any_case() {
+        for typed in ["ŁUK", "łuk", "Łuk", "łu", "ARC", ""] {
+            assert!(shown_by_filter(typed, "łuk", "arc"), "{typed}");
+        }
+        assert!(!shown_by_filter("OKRĄG", "łuk", "arc"));
+    }
 }
 
 #[cfg(test)]

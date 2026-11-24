@@ -144,6 +144,18 @@ then shows **ქართული**. A build without that face keeps the saved 
 in English, names the language **Georgian** in the picker, and the language command reports that a
 Georgian font is needed.
 
+## Command aliases in Polish
+
+Command names stay English at the command line in every language. For Polish, CADCraft ships an
+alias set (`crates/engine/src/cmd/file/aliases/pl.pgp`) written from the English command names:
+`LINIA` (LINE), `OKRĄG` or `O` (CIRCLE), `ŁUK` or `Ł` (ARC), `KRESKUJ` (HATCH) and so on, with
+the longer names also without Polish letters (`OKRAG`). Nothing changes until the user adds it:
+Command Aliases (ALIASEDIT) ▸ *Add command aliases in this language*, or
+`ALIASEDIT {"preset": "pl"}`. The set joins the user's own aliases, which they can edit or remove
+(an alias the user already has keeps its command);
+like every user alias it applies to scripts too, and some entries override built-in aliases
+(`O`, `PR`, `PU`).
+
 ## Adding translations
 
 The implementation follows the display-time catalog pattern used by

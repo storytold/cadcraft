@@ -238,7 +238,8 @@ pub fn resolve_alias(name: &str) -> String {
     if find_command(&l).is_some() {
         return l;
     }
-    if let Some(id) = file::user_alias(&l) {
+    // User aliases may hold non-ASCII letters (ŁUK), so they are looked up in full lower case.
+    if let Some(id) = file::user_alias(&name.to_lowercase()) {
         return id;
     }
     command_specs().iter().find(|c| c.aliases.iter().any(|a| a.eq_ignore_ascii_case(&l))).map(|c| c.id.to_string()).unwrap_or(l)
