@@ -88,6 +88,8 @@ struct Ctx<'a> {
     block_lw: Lineweight,
     block_ltype: String,
     depth: usize,
+    /// A construction INSERT in the editor gives its displayed contents the same style.
+    construction: bool,
     top: Handle,
     /// Layers frozen in the viewport being drawn.
     frozen: &'a [String],

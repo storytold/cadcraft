@@ -53,7 +53,7 @@ fn stretched_pieces(be: &Entity, m: &Mat3) -> Option<Vec<Entity>> {
 
 fn explode_block_ref(d: &cadcraft_doc::Drawing, e: &Entity, ins: &cadcraft_doc::Insert) -> Option<Vec<Entity>> {
     if let Some(items) = crate::cmd::array::explode_array(d, e) {
-        return Some(items);
+        return Some(items.into_iter().filter(|item| !item.common.is_construction()).collect());
     }
     // A MINSERT grid stays whole, as in AutoCAD 2024 (see `explode`).
     if minserted(ins) {
@@ -65,6 +65,7 @@ fn explode_block_ref(d: &cadcraft_doc::Drawing, e: &Entity, ins: &cadcraft_doc::
     Some(
         blk.entities
             .iter()
+            .filter(|be| !be.common.is_construction())
             .flat_map(|be| {
                 stretched.then(|| stretched_pieces(be, &m)).flatten().unwrap_or_else(|| {
                     let mut ne = (**be).clone();

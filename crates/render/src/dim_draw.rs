@@ -1,5 +1,5 @@
 use super::display::Kind;
-use super::draw::stroke_with;
+use super::draw::{construction_style, stroke_with};
 use super::props::default_lineweight;
 use super::text_entity::{layout_mtext_entity, place_text_entity, style_font, text_style};
 use super::{Builder, Color, Ctx, DimGeometry, DimText, Drawing, Entity, EntityKind, LineRole, Lineweight, Vec2, dim, ink};
@@ -39,9 +39,6 @@ pub(crate) fn dimension(
         Color::ByBlock => ctx.block_color,
         c => c,
     };
-    let dim_rgb = ink(style.dim_line_color, layer_color, own);
-    let ext_rgb = ink(style.ext_line_color, layer_color, own);
-    let txt_rgb = ink(style.text_color, layer_color, own);
     let layer = d.layer(layer_name);
     let weight = |v: i16| -> f32 {
         if !b.opts.lineweights {
@@ -65,7 +62,13 @@ pub(crate) fn dimension(
         }
     };
     let (dim_lw, ext_lw) = (weight(style.dim_lineweight), weight(style.ext_lineweight));
-    let (dim_lt, ext1_lt, ext2_lt) = (ltype(&style.dim_linetype), ltype(&style.ext_linetype1), ltype(&style.ext_linetype2));
+    // Construction geometry in the Block Editor takes the editor's look whatever the style's
+    // colours and linetypes are, as the contents of a dimension block do.
+    let look = |c: Color, lt: Option<cadcraft_doc::Linetype>| construction_style(ctx, e, (ink(c, layer_color, own), lt));
+    let (dim_rgb, dim_lt) = look(style.dim_line_color, ltype(&style.dim_linetype));
+    let (ext_rgb, ext1_lt) = look(style.ext_line_color, ltype(&style.ext_linetype1));
+    let (_, ext2_lt) = look(style.ext_line_color, ltype(&style.ext_linetype2));
+    let (txt_rgb, _) = look(style.text_color, None);
     let line_style = |i: usize| match g.line_roles.get(i).unwrap_or(&LineRole::Dim) {
         LineRole::Ext if g.ext2_lines.contains(&i) => (ext_rgb, ext_lw, ext2_lt.as_ref()),
         LineRole::Ext => (ext_rgb, ext_lw, ext1_lt.as_ref()),
