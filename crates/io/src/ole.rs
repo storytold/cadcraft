@@ -289,10 +289,20 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
                 Some(EMR_SETMAPMODE) => mapping.mode = MapMode::from_repr(u32_at(record, 8)?),
                 Some(EMR_SETWINDOWEXTEX) if mapping.uses_extents() => mapping.window = [i32_at(record, 8)?, i32_at(record, 12)?],
                 Some(EMR_SETVIEWPORTEXTEX) if mapping.uses_extents() => mapping.viewport = [i32_at(record, 8)?, i32_at(record, 12)?],
-                Some(EMR_SCALEWINDOWEXTEX | EMR_SCALEVIEWPORTEXTEX) => {
+                Some(kind @ (EMR_SCALEWINDOWEXTEX | EMR_SCALEVIEWPORTEXTEX)) => {
                     let (x_num, x_den, y_num, y_den) = (i32_at(record, 8)?, i32_at(record, 12)?, i32_at(record, 16)?, i32_at(record, 20)?);
                     if x_den == 0 || y_den == 0 {
                         return Err(bad("invalid EMF extent scale"));
+                    }
+                    let extent = if kind == EMR_SCALEWINDOWEXTEX { &mut mapping.window } else { &mut mapping.viewport };
+                    for (dimension, (numerator, denominator)) in extent.iter_mut().zip([(x_num, x_den), (y_num, y_den)]) {
+                        // Match the player's i32 arithmetic and its unsigned stored magnitude.
+                        // Even an identity ratio can overflow in the multiplication.
+                        let scaled = dimension
+                            .checked_mul(numerator)
+                            .and_then(|product| product.checked_div(denominator))
+                            .ok_or_else(|| bad("EMF extent scale exceeds the supported range"))?;
+                        *dimension = scaled.unsigned_abs() as i32;
                     }
                     mapping.scaled_extents |= (x_num, y_num) != (x_den, y_den);
                 }
@@ -736,6 +746,53 @@ mod tests {
             let unsupported = emf_record(kind, 108);
             let emf = [header.as_slice(), &unsupported, &eof].concat();
             assert!(gdi_records(&emf).err().unwrap().to_string().contains(&format!("{kind:?}")));
+        }
+    }
+
+    fn emf_extent_scale(kind: RecordType, factors: [i32; 4]) -> Vec<u8> {
+        let mut record = emf_record(kind, 24);
+        for (field, factor) in record[8..].as_chunks_mut::<4>().0.iter_mut().zip(factors) {
+            *field = factor.to_le_bytes();
+        }
+        record
+    }
+
+    #[test]
+    fn emf_extent_scale_rejects_overflow_in_both_record_types() {
+        use emf_core::parser::RecordType::*;
+
+        let mut header = emf_header();
+        header[16..20].copy_from_slice(&1i32.to_le_bytes());
+        let eof = emf_record(EMR_EOF, 20);
+        for kind in [EMR_SCALEWINDOWEXTEX, EMR_SCALEVIEWPORTEXTEX] {
+            for factors in [[i32::MIN, -1, 1, 1], [1, 1, i32::MAX, 1], [1, 1, i32::MAX, i32::MAX]] {
+                let scale = emf_extent_scale(kind, factors);
+                let emf = [header.as_slice(), &scale, &eof].concat();
+                assert!(gdi_records(&emf).err().unwrap().to_string().contains("extent scale exceeds"), "{kind:?}: {factors:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn emf_extent_scale_uses_updated_and_restored_extents() {
+        use emf_core::parser::RecordType::*;
+
+        let header = emf_header();
+        let save = emf_record(EMR_SAVEDC, 8);
+        let mut restore = emf_record(EMR_RESTOREDC, 12);
+        restore[8..12].copy_from_slice(&(-1i32).to_le_bytes());
+        let mut eof = emf_record(EMR_EOF, 20);
+        eof[16..20].copy_from_slice(&20u32.to_le_bytes());
+        for kind in [EMR_SCALEWINDOWEXTEX, EMR_SCALEVIEWPORTEXTEX] {
+            let first = emf_extent_scale(kind, [-1_000, 1, 1, 1]);
+            let second = emf_extent_scale(kind, [30_000, 1, 1, 1]);
+            let emf = [header.as_slice(), &first, &second, &eof].concat();
+            assert!(gdi_records(&emf).err().unwrap().to_string().contains("extent scale exceeds"));
+
+            let identity = emf_extent_scale(kind, [2, 2, 3, 3]);
+            let emf = [header.as_slice(), &identity, &save, &first, &restore, &second, &eof].concat();
+            let (records, _) = gdi_records(&emf).unwrap();
+            assert!(emf_core::converter::convert_to_svg(records.as_slice()).is_ok());
         }
     }
 
