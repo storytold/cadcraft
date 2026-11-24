@@ -157,7 +157,8 @@ impl Unknown {
     /// this record's decoded graphics: the bytes decoded again with index `i` named `#i` give the
     /// same entities in the same order, so each one's marker meets its real layer. `None` for an
     /// index after which the graphics stay on the layer before (one past the table it was read
-    /// with), and for one above 65,535, which isn't named. Empty when the graphics don't match
+    /// with). An index above 65,535 isn't named here (it resolves through the file's table, like
+    /// one no entity follows). Empty when the graphics don't match
     /// (not decoded from these bytes); an index whose entities disagree is left out.
     fn layers_by_index(&self, bytes: &[u8], indices: &[u32]) -> std::collections::HashMap<u32, Option<String>> {
         /// What the entities after an index say about it.
@@ -216,9 +217,6 @@ impl Unknown {
             if !conflict.contains(&i) {
                 out.insert(i, if let Seen::Named(n) = s { Some(n) } else { None });
             }
-        }
-        for &i in indices.iter().filter(|&&i| i > MAX) {
-            out.insert(i, None);
         }
         out
     }
@@ -910,7 +908,7 @@ mod tests {
 
     /// An index whose graphics stay on the layer before (99 here, past the table) doesn't make
     /// the index before it (3) look contradictory when that one comes again; an index above
-    /// 65,535 isn't named, and the others still are.
+    /// 65,535 isn't named (it resolves through the file's table), and the others still are.
     #[test]
     fn indices_are_named_around_kept_layers_and_huge_indices() {
         let mut circle = pt(0.0, 0.0);
@@ -931,7 +929,7 @@ mod tests {
             learned
         };
         assert_eq!(named(&[0, 3, 99, 3]), [(0, Some("0".into())), (3, Some("B".into())), (99, None)]);
-        assert_eq!(named(&[2, 70_000]), [(2, Some("C".into())), (70_000, None)]);
+        assert_eq!(named(&[2, 70_000]), [(2, Some("C".into()))]);
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and
