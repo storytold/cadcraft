@@ -157,6 +157,12 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::lisp_ide::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::xdedit::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::blocks_palette::route(app, id, params) {
         return Some(r);
     }
@@ -504,6 +510,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         {
             return Some(crate::exchange::route(app, id));
         }
+        // IMAGEATTACH from menu or typed without parameters: ask for the file with the native image picker.
+        "imageattach" | "iat" if params.is_null() && app.session.state().is_ok() => {
+            return Some(run_imageattach_picker(app));
+        }
         "ui.hidepalettes" => {
             app.ui.show_palettes = false;
             app.ui.show_toolsets = false;
@@ -512,6 +522,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "ui.resetpalettes" => {
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
+            let startup_plugins = std::mem::take(&mut app.ui.startup_plugins);
             let system_cursor = app.system_cursor_default;
             // The user's shortcuts and import folder are preferences, not palette layout.
             let (shortcuts, last_pgp_dir) = (std::mem::take(&mut app.ui.shortcuts), app.ui.last_pgp_dir.take());
@@ -522,6 +533,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 interface_language,
                 save_format,
                 save_version,
+                startup_plugins,
                 system_cursor,
                 shortcuts,
                 last_pgp_dir,
@@ -540,7 +552,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             Ok(json!({ "lines": app.ui.history_lines }))
         }
-        "ui.cmdline.clear" => {
+        "ui.cmdline.clear" | "clear" | "cls" => {
             app.session.log.clear();
             Ok(Value::Null)
         }
@@ -640,6 +652,24 @@ fn suggested_save_format(params: &Value, default: crate::SaveFormat) -> Result<c
         let shown: String = name.chars().take(40).collect();
         format!("unknown save format \"{shown}\" (dxf or dwg)")
     })
+}
+
+fn run_imageattach_picker(app: &mut CadApp) -> Result<Value, String> {
+    if let Some(pick) = app.services.pick_image.as_ref() {
+        if let Some(path) = pick() {
+            app.cmd.buffer.clear();
+            if let Err(e) = app.session.start("imageattach") {
+                app.session.echo(e.to_string());
+            } else {
+                let _ = app.session.input(cadcraft_engine::Input::Text(path));
+            }
+        }
+        return Ok(Value::Null);
+    }
+    if let Err(e) = app.session.start("imageattach") {
+        app.session.echo(e.to_string());
+    }
+    Ok(Value::Null)
 }
 
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved
@@ -803,6 +833,7 @@ pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String
     }
 }
 
+/// Render the top application menu bar, including the `.NET` / AutoLISP `🧩 Plugins` dropdown.
 pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let tree = tree(app);
@@ -821,6 +852,7 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                         }
                     });
                 }
+                crate::lisp_ide::plugin_menubar_item(app, ui);
             });
         },
     );
@@ -996,6 +1028,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
+    let had_paste_event = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
     let mut fire: Vec<String> = Vec::new();
     let mut pasted_table = false;
     for action in crate::clipboard::shortcut_actions(app, ctx) {
@@ -1020,6 +1053,9 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
             if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
+                if had_paste_event && (id == "pasteclip" || id == "pasteblock") {
+                    continue;
+                }
                 fire.push(id.clone());
             }
         }
@@ -1073,7 +1109,7 @@ mod tests {
                 log.borrow_mut().push(name.to_string());
                 answer.clone()
             })),
-            ..Services::default()
+            ..Default::default()
         };
         (CadApp::new(Session::new(), services), asked)
     }

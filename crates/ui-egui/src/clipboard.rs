@@ -51,13 +51,50 @@ pub enum ShortcutAction {
 /// own last copy (another CADCraft's) becomes the clipboard first; non-DXF tab-separated table text
 /// starts `pastetable`.
 pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAction> {
-    let (events, shift) = ctx.input(|i| {
+    let (events, shift, has_paste_ev, saw_v_pressed, saw_v_release, saw_shift_insert) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
-        (ev, i.modifiers.shift)
+        let has_paste_ev = ev.iter().any(|e| matches!(e, egui::Event::Paste(_)));
+        let saw_v_pressed = i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. }
+                    if modifiers.command || modifiers.ctrl || i.modifiers.command || i.modifiers.ctrl
+            )
+        });
+        let saw_v_release = i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. }
+                    if modifiers.command || modifiers.ctrl || i.modifiers.command || i.modifiers.ctrl
+            )
+        });
+        let saw_shift_insert = i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key { key: egui::Key::Insert, pressed: true, modifiers, .. }
+                    if modifiers.shift || i.modifiers.shift
+            )
+        });
+        (ev, i.modifiers.shift, has_paste_ev, saw_v_pressed, saw_v_release, saw_shift_insert)
     });
+    // egui-winit 0.36 swallows Key::V(pressed: true) on Ctrl+V when the OS clipboard holds an
+    // image without text, emitting only Key::V(pressed: false) on key release. Track whether
+    // pressed: true arrived (outside ctx.input lock) so we never fire twice on press + release.
+    let v_pressed_id = egui::Id::unique("cadcraft_ctrl_v_pressed_seen");
+    let prev_v_pressed = ctx.data(|d| d.get_temp::<bool>(v_pressed_id)).unwrap_or(false);
+    if saw_v_pressed {
+        ctx.data_mut(|d| d.insert_temp(v_pressed_id, true));
+    } else if saw_v_release {
+        ctx.data_mut(|d| d.remove::<bool>(v_pressed_id));
+    }
+    let ctrl_v_key = !has_paste_ev && (saw_v_pressed || saw_shift_insert || (saw_v_release && !prev_v_pressed));
     let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };
     let mut out = Vec::new();
+    if ctrl_v_key && try_load_os_clipboard_image(app) {
+        app.paste.cancel();
+        out.push(ShortcutAction::Command("pasteclip"));
+    }
     for e in events {
         match e {
             egui::Event::Copy => out.push(ShortcutAction::Command(if shift { "copybase" } else { "copyclip" })),
@@ -75,7 +112,8 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 let held = if mine { app.paste.wait.take().map(|(p, _, _)| p) } else { None };
                 // The text is the system clipboard's either way, so a stale answer still counts.
                 let h = hash(&text);
-                let is_dxf = if ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h) {
+                let is_own = ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h);
+                let is_dxf = if is_own {
                     true
                 } else if clipboard::load_system_text(&mut app.session, &text) {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
@@ -86,8 +124,16 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 if held.is_none() && answered.is_some() {
                     continue;
                 }
+                let clean = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                let t = clean.trim();
+                let typing_in_cmd = !app.cmd.buffer.is_empty()
+                    || app.session.prompting()
+                    || t.starts_with('(')
+                    || t.starts_with('!')
+                    || cadcraft_engine::is_bare_lisp_prefix(t);
                 if !is_dxf
                     && !shift
+                    && !typing_in_cmd
                     && cadcraft_engine::cmd::table::is_tsv_table(&text)
                     && (held.is_none() || held.as_ref().is_some_and(|p| p.id == "pasteclip"))
                 {
@@ -98,13 +144,163 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 match held {
                     Some(p) if p.line.is_some() => run_now(app, p),
                     Some(p) => out.push(ShortcutAction::Command(p.id)),
-                    None => out.push(ShortcutAction::Command(paste_cmd())),
+                    None => {
+                        let is_img = !is_own && !is_dxf && !typing_in_cmd && try_load_os_clipboard_image(app);
+                        let paste_to_cmd = !is_own && !is_dxf && !is_img && !t.is_empty() && (app.session.clipboard.is_empty() || typing_in_cmd);
+                        if paste_to_cmd {
+                            app.cmd.buffer.push_str(&clean);
+                            app.cmd.note_typing();
+                        } else if is_img {
+                            out.push(ShortcutAction::Command("pasteclip"));
+                        } else {
+                            out.push(ShortcutAction::Command(paste_cmd()));
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
     out
+}
+
+/// Synchronize the OS clipboard before executing `pasteclip` / `paste` from menus or the command line.
+pub fn sync_os_clipboard_for_paste(app: &mut CadApp) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let has_os_text = arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).is_some_and(|t| !t.trim().is_empty());
+        if !has_os_text {
+            let _ = try_load_os_clipboard_image(app);
+            return;
+        }
+        if app.session.clipboard.is_empty() && app.session.clipboard_image.is_none() {
+            let _ = try_load_os_clipboard_image(app);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn store_rgba_in_session(app: &mut CadApp, mut rgba: image::RgbaImage) -> bool {
+    let (width, height) = (rgba.width(), rgba.height());
+    if width == 0 || height == 0 {
+        return false;
+    }
+    // Windows GDI 32-bit CF_DIB bitmaps (e.g. FastStone Capture) often have alpha = 0 across all pixels.
+    if rgba.pixels().all(|p| p.0[3] == 0) {
+        for p in rgba.pixels_mut() {
+            p.0[3] = 255;
+        }
+    }
+    let mut png_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png_bytes);
+    if rgba.write_to(&mut cursor, image::ImageFormat::Png).is_ok() {
+        app.session.set_clipboard_image(png_bytes, width, height);
+        return true;
+    }
+    false
+}
+
+/// Try to read a raster image from the OS clipboard and load it into `app.session`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn try_load_os_clipboard_image(app: &mut CadApp) -> bool {
+    if let Ok(mut cb) = arboard::Clipboard::new()
+        && let Ok(img) = cb.get_image()
+        && let (Ok(width), Ok(height)) = (u32::try_from(img.width), u32::try_from(img.height))
+        && width > 0
+        && height > 0
+        && let Some(rgba) = image::RgbaImage::from_raw(width, height, img.bytes.into_owned())
+        && store_rgba_in_session(app, rgba)
+    {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    if try_load_windows_clipboard_image(app) {
+        return true;
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn try_load_windows_clipboard_image(app: &mut CadApp) -> bool {
+    use clipboard_win::{Clipboard, Getter, raw};
+    let Ok(_clip) = Clipboard::new_attempts(10) else { return false };
+    const MAX_DIB_BYTES: usize = 64 * 1024 * 1024;
+
+    for fmt_name in ["PNG", "image/png", "JFIF", "image/jpeg", "GIF"] {
+        if let Some(fmt) = clipboard_win::register_format(fmt_name) {
+            let mut buf = Vec::new();
+            if raw::get_vec(fmt.get(), &mut buf).is_ok()
+                && !buf.is_empty()
+                && buf.len() <= MAX_DIB_BYTES
+                && let Ok(dyn_img) = image::load_from_memory(&buf)
+                && store_rgba_in_session(app, dyn_img.to_rgba8())
+            {
+                return true;
+            }
+        }
+    }
+
+    let mut bmp_bytes = Vec::new();
+    if clipboard_win::formats::Bitmap.read_clipboard(&mut bmp_bytes).is_ok()
+        && !bmp_bytes.is_empty()
+        && bmp_bytes.len() <= MAX_DIB_BYTES
+        && let Ok(dyn_img) = image::load_from_memory(&bmp_bytes)
+        && store_rgba_in_session(app, dyn_img.to_rgba8())
+    {
+        return true;
+    }
+    for cf_dib in [8u32, 17u32] {
+        if raw::is_format_avail(cf_dib) {
+            let mut dib = Vec::new();
+            if raw::get_vec(cf_dib, &mut dib).is_ok() && dib.len() > 40 && dib.len() <= MAX_DIB_BYTES {
+                let header_size = u32::from_le_bytes([dib[0], dib[1], dib[2], dib[3]]);
+                if header_size < 40 || (header_size as usize) > dib.len() {
+                    continue;
+                }
+                let bpp = u16::from_le_bytes([dib[14], dib[15]]);
+                if bpp > 32 {
+                    continue;
+                }
+                let compression = u32::from_le_bytes([dib[16], dib[17], dib[18], dib[19]]);
+                let clr_used = u32::from_le_bytes([dib[32], dib[33], dib[34], dib[35]]);
+                let palette_bytes = if clr_used > 0 {
+                    clr_used.checked_mul(4)
+                } else if bpp <= 8 {
+                    1u32.checked_shl(u32::from(bpp)).and_then(|n| n.checked_mul(4))
+                } else if compression == 3 && header_size == 40 {
+                    Some(12)
+                } else {
+                    Some(0)
+                };
+                let Some(palette_bytes) = palette_bytes else { continue };
+                let Some(offset) = 14u32.checked_add(header_size).and_then(|n| n.checked_add(palette_bytes)) else {
+                    continue;
+                };
+                let Ok(dib_len) = u32::try_from(dib.len()) else { continue };
+                let Some(file_size) = 14u32.checked_add(dib_len) else { continue };
+                if (offset as usize) > (file_size as usize) {
+                    continue;
+                }
+                let mut bmp = Vec::with_capacity(file_size as usize);
+                bmp.extend_from_slice(b"BM");
+                bmp.extend_from_slice(&file_size.to_le_bytes());
+                bmp.extend_from_slice(&[0u8; 4]);
+                bmp.extend_from_slice(&offset.to_le_bytes());
+                bmp.extend_from_slice(&dib);
+                if let Ok(dyn_img) = image::load_from_memory(&bmp)
+                    && store_rgba_in_session(app, dyn_img.to_rgba8())
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn try_load_os_clipboard_image(_app: &mut CadApp) -> bool {
+    false
 }
 
 /// How long a menu, context menu or typed paste waits for the window to deliver the system
@@ -275,6 +471,9 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     }
     // A request that can no longer be answered, or the time to give up, ends the wait; a `Paste`
     // in this frame completes the held command first ([`shortcut_actions`]).
+    if pasted && ctx.egui_wants_keyboard_input() {
+        app.paste.wait = None;
+    }
     let gone = |app: &CadApp| app.paste.wait.as_ref().is_some_and(|(_, id, _)| !app.paste.sent.iter().any(|r| r.id == *id));
     if (gone(app) || (!pasted && app.paste.wait.as_ref().is_some_and(|(_, _, deadline)| now >= *deadline)))
         && let Some((p, _, _)) = app.paste.wait.take()

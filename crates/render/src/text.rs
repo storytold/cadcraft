@@ -27,7 +27,7 @@ enum Detail {
 type Key = (usize, usize, u32, u16, Detail);
 
 pub(super) struct Mesh {
-    contours: Arc<[Vec<Vec2>]>,
+    pub contours: Arc<[Vec<Vec2>]>,
     pub triangles: Vec<Vec2>,
 }
 
