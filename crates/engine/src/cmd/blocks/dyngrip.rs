@@ -62,7 +62,7 @@ fn drag_in(s: &Session, d: &mut Drawing, h: Handle, node: i32, part: GripPart, t
         return dynblock::drag_grip(d, h, node, part, to);
     }
     let aperture = s.pixel_size() * s.settings.aperture.max(1.0);
-    let near = crate::snap::nearest_with_direction(d, &s.space(), to, aperture, h);
+    let near = crate::snap::nearest_with_direction(d, &s.space(), to, aperture, s.viewport_frozen(), h);
     dynblock::align_grip(d, h, node, to, near)
 }
 

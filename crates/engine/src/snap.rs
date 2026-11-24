@@ -481,10 +481,18 @@ pub(crate) fn gather(
 /// The point nearest `cursor` within `aperture` on the visible objects of `space` other than
 /// `skip` (and on the objects inside block references), with the object's direction there (a unit
 /// vector; a circle's or arc's runs counterclockwise): what an alignment grip aligns a dynamic
-/// block reference with.
-pub(crate) fn nearest_with_direction(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, skip: Handle) -> Option<(Vec2, Vec2)> {
+/// block reference with. Objects on the layers `frozen` in the active viewport aren't drawn there,
+/// so they are passed over.
+pub(crate) fn nearest_with_direction(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    frozen: &[String],
+    skip: Handle,
+) -> Option<(Vec2, Vec2)> {
     let ix = crate::spatial::index(d, space);
-    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, &[], Some(skip))?;
+    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, frozen, Some(skip))?;
     let mut best: Option<(f64, Vec2, Vec2)> = None;
     let mut consider = |at: Vec2, dir: Vec2| {
         let dd = at.dist(cursor);
@@ -498,11 +506,13 @@ pub(crate) fn nearest_with_direction(d: &Drawing, space: &Space, cursor: Vec2, a
             consider(at, (at - c.center).perp());
             continue;
         }
-        if let Prim::Infinite { base, dir, .. } = p {
+        if let Prim::Infinite { base, dir, ray } = p {
             let len = dir.len();
             if len > 1e-12 {
                 let u = *dir * (1.0 / len);
-                consider(*base + u * (cursor - *base).dot(u), u);
+                // A ray runs one way from its base: behind it, its base is the nearest point.
+                let t = (cursor - *base).dot(u);
+                consider(*base + u * if *ray { t.max(0.0) } else { t }, u);
             }
             continue;
         }
@@ -1211,6 +1221,27 @@ mod tests {
         d.add(&Space::Model, Common::default(), l((5.0, -5.0), (5.0, 5.0))).unwrap();
         d.add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(20.0, 0.0, 0.0), radius: 2.0 })).unwrap();
         d
+    }
+
+    #[test]
+    fn alignment_targets_stay_on_a_ray_and_off_frozen_layers() {
+        let mut d = Drawing::new_imperial();
+        let ray = |base: (f64, f64)| EntityKind::Ray(cadcraft_doc::RayLine { base: Vec3::new(base.0, base.1, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), ray((0.0, 0.0))).unwrap();
+        // Behind the ray: its base is the nearest point, out of a small aperture.
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(-5.0, 0.0), 0.5, &[], Handle(0)), None);
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(-0.2, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::ZERO) < 1e-12, "{at:?}");
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::new(5.0, 0.0)) < 1e-12, "{at:?}");
+        // A line on a layer frozen in the viewport isn't a target.
+        let mut d = drawing();
+        d.ensure_layer("Hidden");
+        let c = Common { layer: "Hidden".into(), ..Common::default() };
+        let l = EntityKind::Line(Line { a: Vec3::new(0.0, 30.0, 0.0), b: Vec3::new(10.0, 30.0, 0.0) });
+        d.add(&Space::Model, c, l).unwrap();
+        assert!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &[], Handle(0)).is_some());
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &["HIDDEN".to_string()], Handle(0)), None);
     }
 
     #[test]
