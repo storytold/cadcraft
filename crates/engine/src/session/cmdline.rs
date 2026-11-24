@@ -192,6 +192,7 @@ impl Session {
     }
 
     fn script_lines(&mut self, text: &str) -> Result<()> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for line in text.lines() {
             // Trailing spaces are inputs (Enter); other trailing whitespace (`\r`) is not.
             let line = line.trim_end_matches(|c: char| c.is_whitespace() && c != ' ');
