@@ -53,6 +53,7 @@ pub(super) struct Ctx {
     /// The version the file ends up in (the DWG version for a DWG save): it decides which
     /// entity types exist (MULTILEADER from 2007).
     pub(super) target: Version,
+    pub(super) modern_table_values: bool,
     /// A VIEWPORT's frozen layers in group 341, as an R2000 DXF has them; otherwise 331 (DXF 2004
     /// and later, and the DWG bridge, which reads only 331).
     pub(super) frozen_341: bool,

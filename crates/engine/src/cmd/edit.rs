@@ -593,7 +593,9 @@ fn run_select(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(f) = points_param(p, "fence") {
         crate::select::select_fence_in(s.doc()?, &space, s.viewport_frozen(), &f)
     } else if ["handles", "handle"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
-        targets(s, p)?
+        // Handles named outright, less the proxies: no selection takes one in.
+        let d = s.doc()?;
+        targets(s, p)?.into_iter().filter(|h| !d.entity(*h).is_some_and(|e| crate::select::kept_as_read(&e.kind))).collect()
     } else {
         // Nothing to select with: the selection stays, also what the active viewport does not draw.
         s.stored_selection()
