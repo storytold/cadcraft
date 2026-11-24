@@ -18,7 +18,7 @@ use super::has_doc;
 use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Origin, Prompt, Result, Session, Step};
 
 mod attdef;
-mod attedit;
+pub(crate) mod attedit;
 mod burst;
 mod description;
 mod dyngrip;

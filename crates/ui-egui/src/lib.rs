@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attedit;
 pub mod attentry;
 pub mod autosave;
 pub mod bedit;
@@ -372,6 +373,8 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Edit Attributes dialog ([`attedit`]).
+    pub attedit: attedit::State,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
     /// The Write Block dialog ([`wblock`]).
@@ -437,6 +440,7 @@ impl CadApp {
             autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            attedit: attedit::State::default(),
             bedit: bedit::State::default(),
             wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
