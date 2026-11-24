@@ -75,7 +75,8 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 let held = if mine { app.paste.wait.take().map(|(p, _, _)| p) } else { None };
                 // The text is the system clipboard's either way, so a stale answer still counts.
                 let h = hash(&text);
-                let is_dxf = if ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h) {
+                let is_own = ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h);
+                let is_dxf = if is_own {
                     true
                 } else if clipboard::load_system_text(&mut app.session, &text) {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
@@ -86,8 +87,16 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 if held.is_none() && answered.is_some() {
                     continue;
                 }
+                let clean = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                let t = clean.trim();
+                let typing_in_cmd = !app.cmd.buffer.is_empty()
+                    || app.session.prompting()
+                    || t.starts_with('(')
+                    || t.starts_with('!')
+                    || cadcraft_engine::is_bare_lisp_prefix(t);
                 if !is_dxf
                     && !shift
+                    && !typing_in_cmd
                     && cadcraft_engine::cmd::table::is_tsv_table(&text)
                     && (held.is_none() || held.as_ref().is_some_and(|p| p.id == "pasteclip"))
                 {
@@ -98,7 +107,15 @@ pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAc
                 match held {
                     Some(p) if p.line.is_some() => run_now(app, p),
                     Some(p) => out.push(ShortcutAction::Command(p.id)),
-                    None => out.push(ShortcutAction::Command(paste_cmd())),
+                    None => {
+                        let paste_to_cmd = !is_own && !is_dxf && !t.is_empty() && (app.session.clipboard.is_empty() || typing_in_cmd);
+                        if paste_to_cmd {
+                            app.cmd.buffer.push_str(&clean);
+                            app.cmd.note_typing();
+                        } else {
+                            out.push(ShortcutAction::Command(paste_cmd()));
+                        }
+                    }
                 }
             }
             _ => {}

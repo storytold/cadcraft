@@ -47,6 +47,7 @@ pub mod switch;
 // The Edit Text window, opened from the shortcut menu's Edit Text entry.
 pub mod textdlg;
 // The External References palette.
+pub mod lisp_ide;
 pub mod xrefs;
 
 pub mod blocks_palette;
@@ -385,6 +386,7 @@ pub struct CadApp {
     pub array_dlg: Option<arraydlg::ArrayDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    pub lisp_ide: Option<lisp_ide::LispIdeState>,
     /// The Write Block dialog ([`wblock`]).
     pub wblock: wblock::State,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
@@ -450,6 +452,7 @@ impl CadApp {
             hatch_dlg: None,
             array_dlg: None,
             bedit: bedit::State::default(),
+            lisp_ide: None,
             wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
