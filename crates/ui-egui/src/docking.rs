@@ -1,11 +1,10 @@
 //! Application panel identities and persistence around the shared docking renderer.
 //! Document contents remain owned by their existing view implementations.
 
-use craft_ui::docking::{
-    Action, Column, DockArea, DockCommand, DockContent, DockHeights, DockOperation, DockStyle, FloatSpace, Group, Layout, Location, Node,
-    PanelLimits, Permissions, Placement, Side, Sides, Target, UiDock, Zone,
-};
-use craft_ui::layout::{SplitAxis, SplitSize};
+use craft_behavior::dock::{Action, Column, DockEdge, DockPlacement, Group, Layout, Location, Node, Permissions, Target};
+use craft_ui::docking::{DockArea, DockCommand, DockContent, DockHeights, DockOperation, DockStyle, FloatSpace, PanelLimits, Sides, UiDock, Zone};
+use craft_behavior::flow::Axis;
+use craft_behavior::dock::SplitSize;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -72,12 +71,12 @@ fn tabs(panel: Panel) -> Node<Panel> {
     Node::Tabs { panels: vec![panel], active: 0 }
 }
 
-fn split(axis: SplitAxis, size: SplitSize, first: Node<Panel>, second: Node<Panel>) -> Node<Panel> {
+fn split(axis: Axis, size: SplitSize, first: Node<Panel>, second: Node<Panel>) -> Node<Panel> {
     Node::Split { axis, size, first: Box::new(first), second: Box::new(second) }
 }
 
 /// The saved panel arrangement: craft-ui's workspace over CADCraft's panels.
-pub type Workspace = craft_ui::docking::Workspace<Panel>;
+pub type Workspace = craft_behavior::dock::Workspace<Panel>;
 
 /// The panel layout's shape version, saved beside it. Layouts saved without it, or with an
 /// older one, are the split frames from before the dock columns and give way to the default.
@@ -90,7 +89,7 @@ pub const PALETTES_WIDTH: f32 = 300.0;
 /// Layers' body height above Properties in a dock column.
 const LAYERS_HEIGHT: f32 = 280.0;
 
-fn dock(side: Side, width: f32, groups: &[Panel]) -> Node<Panel> {
+fn dock(side: DockEdge, width: f32, groups: &[Panel]) -> Node<Panel> {
     let groups = groups.iter().map(|panel| Group::new(vec![*panel], 0)).collect();
     Node::Dock { side, columns: vec![Column::new(groups, width)] }
 }
@@ -99,14 +98,14 @@ fn dock(side: Side, width: f32, groups: &[Panel]) -> Node<Panel> {
 pub fn default_workspace() -> Workspace {
     Workspace::new(Layout {
         root: Some(split(
-            SplitAxis::Horizontal,
+            Axis::X,
             SplitSize::FixedFirst(TOOL_SETS_WIDTH),
-            dock(Side::Start, TOOL_SETS_WIDTH, &[Panel::ToolSets]),
+            dock(DockEdge::Start, TOOL_SETS_WIDTH, &[Panel::ToolSets]),
             split(
-                SplitAxis::Horizontal,
+                Axis::X,
                 SplitSize::FixedSecond(PALETTES_WIDTH),
                 tabs(Panel::Canvas),
-                dock(Side::End, PALETTES_WIDTH, &[Panel::Layers, Panel::Properties]),
+                dock(DockEdge::End, PALETTES_WIDTH, &[Panel::Layers, Panel::Properties]),
             ),
         )),
         floating: Vec::new(),
@@ -114,18 +113,18 @@ pub fn default_workspace() -> Workspace {
 }
 
 /// The dock a panel belongs in: Tool Sets on the left, the palettes on the right.
-fn home_side(panel: Panel) -> (Side, f32) {
-    if panel == Panel::ToolSets { (Side::Start, TOOL_SETS_WIDTH) } else { (Side::End, PALETTES_WIDTH) }
+fn home_side(panel: Panel) -> (DockEdge, f32) {
+    if panel == Panel::ToolSets { (DockEdge::Start, TOOL_SETS_WIDTH) } else { (DockEdge::End, PALETTES_WIDTH) }
 }
 
 /// The panels of every dock group on `side`: columns from the window edge inwards, groups from
 /// top to bottom.
-fn dock_groups(layout: &Layout<Panel>, side: Side) -> Vec<Vec<Vec<Panel>>> {
+fn dock_groups(layout: &Layout<Panel>, side: DockEdge) -> Vec<Vec<Vec<Panel>>> {
     let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
     let mut seen = 0usize;
     while let Some(node) = nodes.pop() {
         seen = seen.saturating_add(1);
-        if seen > 4 * craft_ui::docking::MAX_PANELS {
+        if seen > 4 * craft_behavior::dock::MAX_PANELS {
             break;
         }
         match node {
@@ -140,7 +139,7 @@ fn dock_groups(layout: &Layout<Panel>, side: Side) -> Vec<Vec<Vec<Panel>>> {
 }
 
 fn docked(layout: &Layout<Panel>, panel: Panel) -> bool {
-    [Side::Start, Side::End].into_iter().any(|side| dock_groups(layout, side).iter().flatten().flatten().any(|p| *p == panel))
+    [DockEdge::Start, DockEdge::End].into_iter().any(|side| dock_groups(layout, side).iter().flatten().flatten().any(|p| *p == panel))
 }
 
 /// The docked neighbour a panel with no recorded place opens beside, as a new group above
@@ -172,7 +171,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
 /// docked neighbour, else a new dock on its side at its default width.
 fn home(layout: &Layout<Panel>, panel: Panel) -> Vec<Action<Panel>> {
     if let Some((anchor, below)) = home_anchor(layout, panel) {
-        return vec![Action::OpenAt { panel, anchor, placement: Placement::Group { below, height: None } }];
+        return vec![Action::OpenAt { panel, anchor, placement: DockPlacement::Group { below, height: None } }];
     }
     let (side, width) = home_side(panel);
     vec![Action::Open { panel, anchor: None }, Action::MovePanel { panel, to: Target::NewDock { side } }, Action::ResizeColumn { panel, width }]
@@ -208,7 +207,7 @@ pub fn validate(workspace: &Workspace) -> Result<(), String> {
         }
     }
     let over_canvas = |location: &Location<Panel>| {
-        location.anchor == Some(Panel::Canvas) && matches!(location.placement, Placement::Tab { .. } | Placement::Split(Zone::Center))
+        location.anchor == Some(Panel::Canvas) && matches!(location.placement, DockPlacement::Tab { .. } | DockPlacement::Split(Zone::Center))
     };
     if workspace.hidden.iter().any(|(_, location)| over_canvas(location)) {
         return Err("A hidden panel cannot restore over the document view".into());
