@@ -193,6 +193,11 @@ impl Unknown {
             before = Some((mark, real));
             let Some(i) = mark.strip_prefix('\u{1}').and_then(|i| i.parse::<u32>().ok()) else { continue };
             if !changed_here {
+                // The same marker on another real layer: an index in between (one past the table
+                // the marker decoding doesn't see as such) changed it, so this one can't be named.
+                if !kept {
+                    conflict.insert(i);
+                }
                 continue;
             }
             let real = real.to_string();
@@ -930,6 +935,26 @@ mod tests {
         };
         assert_eq!(named(&[0, 3, 99, 3]), [(0, Some("0".into())), (3, Some("B".into())), (99, None)]);
         assert_eq!(named(&[2, 70_000]), [(2, Some("C".into()))]);
+        // Layer 4 (past the table, so it keeps layer 0), a circle, then layers 1 and 4 at once (4
+        // keeps A): both circles follow index 4 in the marker decoding, on different layers.
+        let g = graphics(&[
+            chunk(16, &4u32.to_le_bytes()),
+            chunk(2, &circle),
+            chunk(16, &1u32.to_le_bytes()),
+            chunk(16, &4u32.to_le_bytes()),
+            chunk(2, &circle),
+        ]);
+        let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+        let hex: String = g.iter().map(|b| format!("{b:02X}")).collect();
+        let u = Unknown {
+            dxf_type: "ACAD_PROXY_ENTITY".into(),
+            tags: vec![tag(100, "AcDbProxyEntity"), tag(92, &g.len().to_string()), tag(310, &hex)],
+            graphics: proxy_entities(&g, &tables, Handle(1)),
+        };
+        assert_eq!(u.graphics.iter().map(|e| e.common.layer.as_str()).collect::<Vec<_>>(), ["0", "A"]);
+        assert!(!u.layers_by_index(&g, &[4, 1, 4]).contains_key(&4), "index 4 isn't named");
+        // Saved with the same table, nothing changes, so both circles stay where they are.
+        assert!(u.with_proxy_layers(&tables.layers, &tables.layers).is_none());
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and
