@@ -107,7 +107,11 @@ fn save_as_from_the_dwg_warning_suggests_dxf_and_leaves_the_default() {
     app.run("ui.saveformat", json!({ "format": "dwg" })).unwrap();
     menus::activate(&mut app, "qsave");
     app.answer_save_loss(Choice::SaveAs);
+    assert_eq!(app.saveas.as_ref().unwrap().file_type, cadcraft_ui_egui::saveas::FileType::Dxf);
+    assert_eq!(cadcraft_ui_egui::saveas::save(&mut app), Some(false));
     app.run("ui.saveas", json!(null)).unwrap();
+    assert_eq!(app.saveas.as_ref().unwrap().file_type, cadcraft_ui_egui::saveas::FileType::Dwg);
+    assert_eq!(cadcraft_ui_egui::saveas::save(&mut app), Some(false));
     assert_eq!(suggested.lock().unwrap().as_slice(), ["Plan.dxf", "Plan.dwg"]);
     assert_eq!(app.ui.save_format, cadcraft_ui_egui::SaveFormat::Dwg);
     assert_eq!(std::fs::read(&path).unwrap(), ORIGINAL, "cancelling the dialog writes nothing");

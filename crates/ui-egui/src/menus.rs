@@ -464,7 +464,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         // Save As from the menu, the tool bar, a shortcut or typed: the Save As dialog (file type,
         // version, binary DXF) before the host's file picker.
         "ui.saveas" | "saveas" if no_path => {
+            let format = match suggested_save_format(params, app.ui.save_format) {
+                Ok(format) => format,
+                Err(e) => return Some(Err(e)),
+            };
             crate::saveas::open(app);
+            if let Some(state) = app.saveas.as_mut() {
+                state.file_type = match format {
+                    crate::SaveFormat::Dxf => crate::saveas::FileType::Dxf,
+                    crate::SaveFormat::Dwg => crate::saveas::FileType::Dwg,
+                };
+            }
             Ok(Value::Null)
         }
         // The picker alone, in the default format and version: QSAVE of a drawing with no file
