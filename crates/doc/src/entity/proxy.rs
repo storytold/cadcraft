@@ -126,9 +126,9 @@ impl Decoder<'_> {
             // CIRCLE_3P: three points on it.
             3 => {
                 if let (Some(p1), Some(p2), Some(p3)) = (b.point(), b.point(), b.point())
-                    && let Some((c, r)) = circle_through(p1.xy(), p2.xy(), p3.xy())
+                    && let Some(fit) = Fit3::through(p1, p2, p3)
                 {
-                    self.circle(c.to3(p1.z), r);
+                    self.circle_in(fit.center, fit.radius, fit.e1, fit.e2);
                 }
             }
             // CIRCULAR_ARC: centre, radius, normal, start vector, sweep angle (around the normal).
@@ -290,11 +290,11 @@ impl Decoder<'_> {
         self.matrices.iter().map(|m| (m[0] * m[5] - m[1] * m[4]).abs().sqrt()).product()
     }
 
-    /// Where the pushed matrices take `c` and the unit vectors of the chunk's plane: the circle of
-    /// radius 1 around `c` is drawn as `c' + u·cos a + v·sin a`. The vectors go through the
-    /// matrices' linear parts only, so a small scale isn't lost against a large translation.
-    fn axes(&self, c: Vec3) -> (Vec2, Vec2, Vec2) {
-        (self.xy(c), self.linear(Vec3::new(1.0, 0.0, 0.0)), self.linear(Vec3::new(0.0, 1.0, 0.0)))
+    /// Where the pushed matrices take `c` and the unit vectors `e1`, `e2` of a circle's plane: the
+    /// circle of radius 1 around `c` is drawn as `c' + u·cos a + v·sin a`. The vectors go through
+    /// the matrices' linear parts only, so a small scale isn't lost against a large translation.
+    fn axes(&self, c: Vec3, e1: Vec3, e2: Vec3) -> (Vec2, Vec2, Vec2) {
+        (self.xy(c), self.linear(e1), self.linear(e2))
     }
 
     /// Direction `v` through the pushed matrices' linear parts, innermost first, in the XY plane.
@@ -310,7 +310,13 @@ impl Decoder<'_> {
     /// plane unevenly or shear it. While ATTRIBUTE_FILL is on, a solid hatch under it: AutoCAD
     /// draws a filled shape's outline too, with its lineweight.
     fn circle(&mut self, c: Vec3, r: f64) {
-        let (at, u, v) = self.axes(c);
+        self.circle_in(c, r, X, Y);
+    }
+
+    /// The circle of radius `r` around `c` in the plane of the unit vectors `e1` and `e2`, as
+    /// `circle` draws one in the chunk's XY plane.
+    fn circle_in(&mut self, c: Vec3, r: f64, e1: Vec3, e2: Vec3) {
+        let (at, u, v) = self.axes(c, e1, e2);
         if !(r.is_finite() && r > 0.0 && at.is_finite()) {
             return;
         }
@@ -353,13 +359,14 @@ impl Decoder<'_> {
         if sweep.abs() >= std::f64::consts::TAU - 1e-9 {
             return self.circle(c, r);
         }
-        self.arc_between(c, r, a0, a1);
+        self.arc_between(c, r, X, Y, a0, a1);
     }
 
-    /// The arc of radius `r` around `c` (in the chunk's plane) from angle `a0` to `a1`, either
-    /// way round, through the pushed matrices: an elliptical arc when they don't keep it round.
-    fn arc_between(&mut self, c: Vec3, r: f64, a0: f64, a1: f64) {
-        let (at, u, v) = self.axes(c);
+    /// The arc of radius `r` around `c` from angle `a0` to `a1` (from `e1` towards `e2`, the unit
+    /// vectors of its plane), either way round, through the pushed matrices: an elliptical arc
+    /// when they don't keep it round.
+    fn arc_between(&mut self, c: Vec3, r: f64, e1: Vec3, e2: Vec3, a0: f64, a1: f64) {
+        let (at, u, v) = self.axes(c, e1, e2);
         let on = |a: f64| at + u * (r * a.cos()) + v * (r * a.sin());
         if round(u * r, v * r).is_some() {
             return self.arc_3p(on(a0), on((a0 + a1) / 2.0), on(a1));
@@ -369,21 +376,20 @@ impl Decoder<'_> {
         }
     }
 
-    /// The arc from `p1` through `p2` to `p3`, given in the chunk's plane (`z` is the plane's):
-    /// fitted there and drawn through the pushed matrices, which may make it elliptical.
+    /// The arc from `p1` through `p2` to `p3`, chunk coordinates: fitted in the plane of the
+    /// three points and drawn through the pushed matrices, which may make it elliptical.
     fn arc_3p_local(&mut self, p1: Vec3, p2: Vec3, p3: Vec3) {
-        if self.matrices.is_empty() {
+        if self.matrices.is_empty() && p1.z == p2.z && p2.z == p3.z {
             return self.arc_3p(p1.xy(), p2.xy(), p3.xy());
         }
-        let Some((c, r)) = circle_through(p1.xy(), p2.xy(), p3.xy()) else {
+        let Some(fit) = Fit3::through(p1, p2, p3) else {
             return self.polyline(vec![self.xy(p1), self.xy(p3)], false);
         };
-        let ang = |p: Vec3| (p.y - c.y).atan2(p.x - c.x);
-        let (a1, a2, a3) = (ang(p1), ang(p2), ang(p3));
+        let (a1, a2, a3) = (fit.angle(p1), fit.angle(p2), fit.angle(p3));
         let ccw = |from: f64, to: f64| (to - from).rem_euclid(std::f64::consts::TAU);
         // Counter-clockwise from p1 to p3 when p2 lies on that way, else from p3 to p1.
         let (from, sweep) = if ccw(a1, a2) <= ccw(a1, a3) { (a1, ccw(a1, a3)) } else { (a3, ccw(a3, a1)) };
-        self.arc_between(c.to3(p1.z), r, from, from + sweep);
+        self.arc_between(fit.center, fit.radius, fit.e1, fit.e2, from, from + sweep);
     }
 
     /// The arc from `p1` through `p2` to `p3`.
@@ -534,15 +540,49 @@ fn ellipse(c: Vec2, u: Vec2, v: Vec2, a0: f64, a1: f64) -> Option<Ellipse> {
 
 /// The circle through three points (centre, radius), if they aren't on one line.
 fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f64)> {
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if !d.is_finite() || d.abs() < 1e-12 {
-        return None;
+    cadcraft_geom::Circle::from_3_points(a, b, c).filter(|f| f.radius > 0.0).map(|f| (f.center, f.radius))
+}
+
+const X: Vec3 = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+const Y: Vec3 = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
+
+/// The circle through three points in space: its centre, radius and the unit vectors `e1`, `e2`
+/// of its plane. For points of equal `z` they are X and Y, so angles are the chunk's.
+struct Fit3 {
+    center: Vec3,
+    radius: f64,
+    e1: Vec3,
+    e2: Vec3,
+}
+
+impl Fit3 {
+    /// The fit, if the points aren't on one line (relative to the triangle's size, so it holds at
+    /// any scale).
+    fn through(p1: Vec3, p2: Vec3, p3: Vec3) -> Option<Fit3> {
+        let (u, v) = (p2 - p1, p3 - p1);
+        let w = u.cross(v);
+        let w2 = w.dot(w);
+        if !(w2.is_finite() && w.len() > 1e-12 * (u.len() * v.len()) && w2 > 0.0) {
+            return None;
+        }
+        // The centre in point-relative coordinates: ((|u|² v − |v|² u) × w) / (2 |w|²).
+        let center = p1 + (v * u.dot(u) - u * v.dot(v)).cross(w) * (0.5 / w2);
+        let radius = (p1 - center).len();
+        // The plane's normal towards +Z (which way the arc turns comes from the middle point), and
+        // X (or Y) laid into the plane.
+        let up = if w.z < 0.0 { -1.0 } else { 1.0 };
+        let n = w * (up / w.len());
+        let along = |a: Vec3| a - n * a.dot(n);
+        let e1 = if along(X).len() > 1e-6 { along(X).normalized() } else { along(Y).normalized() };
+        let e2 = n.cross(e1);
+        (center.is_finite() && radius.is_finite() && radius > 0.0 && e2.is_finite()).then_some(Fit3 { center, radius, e1, e2 })
     }
-    let (a2, b2, c2) = (a.x * a.x + a.y * a.y, b.x * b.x + b.y * b.y, c.x * c.x + c.y * c.y);
-    let center =
-        Vec2::new((a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d, (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d);
-    let r = (a - center).len();
-    (center.is_finite() && r.is_finite() && r > 0.0).then_some((center, r))
+
+    /// The angle of `p` around the centre, from `e1` towards `e2`.
+    fn angle(&self, p: Vec3) -> f64 {
+        let d = p - self.center;
+        d.dot(self.e2).atan2(d.dot(self.e1))
+    }
 }
 
 /// The little-endian u32 at `at`, if `bytes` holds one there.
@@ -816,6 +856,26 @@ mod tests {
         big.extend(pt(0.0, 0.0));
         let es = proxy_entities(&graphics(&[far, chunk(2, &big)]), &tables(), Handle(1));
         assert!(matches!(&es[..], [e] if matches!(&e.kind, EntityKind::Circle(c) if (c.radius - 1.0).abs() < 1e-6)), "{es:?}");
+        // Three points fitted in their own plane: a circle across XY turned into it, and points
+        // far smaller than the scale that enlarges them.
+        let p3 = |p: [f64; 3]| p.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+        let mat = |m: [f64; 16]| chunk(29, &m.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
+        let turn = mat([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        let across = [p3([0.0, 1.0, 0.0]), p3([0.0, 0.0, 1.0]), p3([0.0, -1.0, 0.0])].concat();
+        let tiny = mat([1e7, 0.0, 0.0, 0.0, 0.0, 1e7, 0.0, 0.0, 0.0, 0.0, 1e7, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        let small = [p3([1e-7, 0.0, 0.0]), p3([0.0, 1e-7, 0.0]), p3([-1e-7, 0.0, 0.0])].concat();
+        // The arc's half is the one through the middle point.
+        for (m, pts, mid) in [(turn, across, Vec2::new(1.0, 0.0)), (tiny, small, Vec2::new(0.0, 1.0))] {
+            let es = proxy_entities(&graphics(&[m, chunk(3, &pts), chunk(5, &pts)]), &tables(), Handle(1));
+            assert!(matches!(&es[0].kind, EntityKind::Circle(c) if c.center.xy().len() < 1e-9 && near(c.radius, 1.0)), "{es:?}");
+            match &es[1].kind {
+                EntityKind::Arc(a) => {
+                    let m = a.start + (a.end - a.start).rem_euclid(TAU) / 2.0;
+                    assert!(near(a.radius, 1.0) && (Vec2::new(m.cos(), m.sin()) - mid).len() < 1e-9, "{a:?}");
+                }
+                other => panic!("{other:?}"),
+            }
+        }
         // Even scaling, mirrored or not, keeps circles and arcs.
         let es = proxy_entities(&graphics(&[push(-3.0, 3.0), chunk(2, &circle), chunk(4, &quarter), chunk(5, &quarter_3p)]), &tables(), Handle(1));
         assert!(matches!(&es[0].kind, EntityKind::Circle(c) if near(c.radius, 3.0)));
