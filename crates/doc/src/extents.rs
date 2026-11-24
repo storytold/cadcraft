@@ -271,7 +271,8 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
 /// geometry in real drawings. Layer "0" takes the insert's layer, which the caller has checked.
 /// `off_counts`: a layer turned off counts too, as in the drawing's extents ([`extent_bounds`]).
 fn in_block_visible(d: &Drawing, e: &Entity, off_counts: bool) -> bool {
-    // Attribute definitions are not drawn in an insert (its attribs are, see below).
+    // Attribute definitions are not drawn in an insert (its attribs are, see below), except
+    // constant ones, which the insert's bounds add on their own.
     !matches!(e.kind, EntityKind::AttDef(_)) && e.common.visible && layer_counts(d, &e.common.layer, off_counts)
 }
 
@@ -289,6 +290,25 @@ fn attrib_layer<'a>(d: &'a Drawing, ins: &crate::Insert, a: &'a crate::Attrib) -
             .and_then(|blk| blk.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))))
             .map_or("0", |be| be.common.layer.as_str())
     })
+}
+
+/// The bounds of `be` as a block reference draws it (at `depth`): nothing for what it doesn't
+/// draw, the value of a visible constant attribute definition.
+fn insert_part_bounds<'a>(d: &'a Drawing, be: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
+    match &be.kind {
+        EntityKind::AttDef(a) if a.constant && !a.invisible && be.common.visible && layer_counts(d, &be.common.layer, off_counts) => constant_box(a),
+        _ if in_block_visible(d, be, off_counts) => bounds_in(d, be, depth, blocks, off_counts),
+        _ => Bounds2::EMPTY,
+    }
+}
+
+/// The box of a constant attribute definition's value, as a block reference draws it.
+fn constant_box(a: &crate::Attrib) -> Bounds2 {
+    match a.multiline_text() {
+        Some(m) if !blank(&m.contents) => mtext_box(&m),
+        None if !blank(&a.text.value) => text_box(&a.text, a.text.value.chars().count()),
+        _ => Bounds2::EMPTY,
+    }
 }
 
 /// A text that draws no glyph (empty, or only blanks and non-breaking spaces) takes no room.
@@ -426,8 +446,8 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                     Some(b) => *b,
                     None => {
                         let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
+                        for be in blk.entities.iter() {
+                            inner = inner.union(&insert_part_bounds(d, be, depth + 1, blocks, off_counts));
                         }
                         blocks.insert((blk.name.as_str(), depth), inner);
                         inner

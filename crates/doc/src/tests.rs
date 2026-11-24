@@ -521,6 +521,21 @@ fn block_entity_with_invisible_flag_is_ignored_in_insert_extents() {
 }
 
 #[test]
+fn a_visible_constant_attribute_definition_counts_in_insert_extents() {
+    // #3413: a reference draws a constant definition's value, so its extents reach it.
+    let def = |constant: bool, invisible: bool| {
+        let mut a = plain_attrib("C");
+        a.text.insert = Vec3::new(0.0, 50.0, 0.0);
+        (a.constant, a.invisible) = (constant, invisible);
+        Entity::new(Handle(2), EntityKind::AttDef(a))
+    };
+    let near = extents_pair(&drawing_with_block(def(false, false))).1;
+    assert!(extents_pair(&drawing_with_block(def(true, false))).1.y > near.y + 40.0);
+    // An invisible constant one, like a variable one, does not count.
+    assert_eq!(extents_pair(&drawing_with_block(def(true, true))).1, near);
+}
+
+#[test]
 fn block_entity_on_frozen_layer_is_ignored_and_on_a_layer_turned_off_counts() {
     let mut d = drawing_with_block(far_line("Hidden"));
     assert!(d.layer("Hidden").is_none(), "block contents do not create layers");
