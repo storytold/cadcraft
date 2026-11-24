@@ -4767,3 +4767,37 @@ fn a_layer_state_saved_before_masks_restores_everything() {
     let got: Vec<(&str, u32, &str, &str)> = states.iter().map(|s| (s.name.as_str(), s.mask, s.current.as_str(), s.description.as_str())).collect();
     assert_eq!(got, [("S", LayerState::ALL, "", "")]);
 }
+
+#[test]
+fn plt_read_maps_units_fills_line_types_and_pens() {
+    let d = read(b"IN;SP1;PU0,0;PD400,0,400,400;PU;", "a.plt").unwrap();
+    assert_eq!(kinds(&d), ["Polyline"]);
+    let Some(EntityKind::LwPolyline(p)) = d.model.iter().next().map(|e| &e.kind) else { panic!("no polyline") };
+    let far = p.vertices.iter().map(|v| v.p.x.max(v.p.y)).fold(0.0, f64::max);
+    assert!((far - 10.0).abs() < 1e-9, "400 plotter units are 10 mm, got {far}");
+
+    // Pen 2 fills a square: a solid hatch on its own pen layer, in the pen's colour.
+    let filled = read(b"IN;SP2;PA0,0;RA400,400;", "a.hpgl").unwrap();
+    assert_eq!(kinds(&filled), ["Hatch"]);
+    let hatch = filled.model.iter().next().unwrap();
+    assert_eq!(hatch.common.layer, "PEN2");
+    assert!(filled.layer("PEN2").is_some_and(|l| l.color != Color::ByLayer));
+
+    // A dashed line gets a linetype that alternates dashes and gaps; a solid one doesn't.
+    let dashed = read(b"IN;SP1;LT2;PU0,0;PD4000,0;PU;LT;PU0,400;PD4000,400;", "a.plt").unwrap();
+    let types: Vec<&str> = dashed.model.iter().map(|e| e.common.linetype.as_str()).collect();
+    assert_eq!(types.len(), 2);
+    let lt = dashed.linetype(types[0]).expect("dashed line has a linetype");
+    assert!(lt.pattern.iter().any(|d| d.length > 0.0) && lt.pattern.iter().any(|d| d.length < 0.0));
+    assert_eq!(types[1], "ByLayer", "a solid line keeps the layer's linetype");
+
+
+    // A plot the driver turned with RO180 for the media is read upright: left to right stays so.
+    let turned = read(b"IN;RO180;SP1;PU0,0;PD400,0,400,200;", "a.plt").unwrap();
+    let Some(EntityKind::LwPolyline(p)) = turned.model.iter().next().map(|e| &e.kind) else { panic!("no polyline") };
+    assert!(p.vertices[1].p.x > p.vertices[0].p.x && p.vertices[2].p.y > p.vertices[1].p.y, "{:?}", p.vertices);
+    assert!(read(b"hello, world", "a.plt").is_err());
+    for junk in [&b""[..], b"IN;PD1e400,0;", b"IN;PD", b"\x1b%-12345X@PJL\r\nIN;CI;"] {
+        let _ = read(junk, "a.plt");
+    }
+}
