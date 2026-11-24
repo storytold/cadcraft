@@ -24,6 +24,9 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                     }
                     _ => Vec::new(),
                 },
+                // An image's points are its unclipped corners: what it shows is tested as a
+                // fill, so a clipped-away part doesn't pick the reference.
+                cadcraft_render::Kind::Image { .. } => Vec::new(),
                 _ => vec![list.points(p).to_vec()],
             })
             .collect();
