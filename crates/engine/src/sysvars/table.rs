@@ -60,6 +60,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("INSNAME", Kind::Name, Def::Str("")),
+    // Percent that objects on locked layers fade on screen; 0 or negative: no fade.
+    ("LAYLOCKFADECTL", Kind::Int(-90, 90), Def::Int(50)),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
     // Negative: Through (OFFSET picks a point).
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),

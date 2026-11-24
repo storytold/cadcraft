@@ -257,7 +257,8 @@ pub(super) fn assert_layouts(a: &Drawing, b: &Drawing, context: &str) {
         let back = b.layouts.iter().find(|l| l.name == layout.name).expect("layout must survive");
         assert_eq!(back.tab_order, layout.tab_order, "{context}.{}.tab_order", layout.name);
         // The groups 44, 45 and 73 the file stored are provenance, not a setting.
-        let setting = |p: &cadcraft_doc::PageSetup| cadcraft_doc::PageSetup { file_paper: None, ..p.clone() };
+        let setting =
+            |p: &cadcraft_doc::PageSetup| cadcraft_doc::PageSetup { file_paper: None, file_plot_flags: None, file_standard_scale: None, ..p.clone() };
         assert_eq!(setting(&back.page), setting(&layout.page), "{context}.{}.page", layout.name);
         assert_eq!(back.view, layout.view, "{context}.{}.view", layout.name);
         compare::entities(a, b, &layout.entities, &back.entities, &format!("{context}.layout[{}]", layout.name));

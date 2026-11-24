@@ -144,7 +144,10 @@ fn dxf_page_extension_probe_preserves_the_decoders_line_and_tag_rules() {
 
 fn ole(s: &mut Session, width: f64, height: f64) -> Handle {
     let tags = [(10, 0.0), (20, 0.0), (11, width), (21, -height)].into_iter().map(|(code, v)| RawTag { code, value: v.to_string() }).collect();
-    s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap()
+    s.doc_mut()
+        .unwrap()
+        .add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() }))
+        .unwrap()
 }
 #[test]
 fn degenerate_ole_is_preserved_and_conversion_reports_collision_name() {

@@ -14,6 +14,8 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_os = "macos", test))]
+mod apple_events;
 mod control_server;
 mod desktop_theme;
 mod env;
@@ -23,6 +25,7 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod portable;
 #[cfg(target_os = "macos")]
 mod sheet;
 mod single_instance;
@@ -53,6 +56,9 @@ struct App {
     /// The `movable` flag last set on the main window.
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
+    /// Drawings and quit requests from Finder, the Dock and `open -a` (see `apple_events`).
+    #[cfg(target_os = "macos")]
+    apple_events: fmv_macos_events::Inbox,
 }
 
 impl App {
@@ -101,6 +107,9 @@ impl eframe::App for App {
                 }
             }
         }
+        // Drawings and quit requests from Finder, the Dock and `open -a` (macOS).
+        #[cfg(target_os = "macos")]
+        apple_events::poll(&self.apple_events, &mut self.cad, ctx);
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
@@ -173,6 +182,9 @@ pub fn install_io() {
     });
     // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
     cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+    // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
+    cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
 fn services() -> Services {
@@ -235,9 +247,12 @@ fn saved_window(app_ron: &str) -> bool {
 
 /// The window state from the last session is saved and will be restored (#2595). A saved size
 /// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
-/// unusable) is dropped first, so the window opens at its default size.
-fn restores_window() -> bool {
-    let Some(path) = eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron")) else { return false };
+/// unusable) is dropped first, so the window opens at its default size. `portable_file`: the
+/// portable copy's settings file, read instead of the user profile's.
+fn restores_window(portable_file: Option<&std::path::Path>) -> bool {
+    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(APP_ID).map(|dir| dir.join("app.ron"))) else {
+        return false;
+    };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
     // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
     if let Some(fixed) = without_tiny_window(&ron)
@@ -395,7 +410,8 @@ fn main() -> eframe::Result {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options(restores_window(), stencil)
+        persistence_path: vars.portable_storage_file.clone(),
+        ..window_options(restores_window(vars.portable_storage_file.as_deref()), stencil)
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -434,6 +450,12 @@ fn main() -> eframe::Result {
             b.with_close_requested_on_terminate(true);
         }));
     }
+    // Registered before the event loop starts, so it catches the Finder event that launched us as
+    // well as later ones. Lives until the event loop returns; the app creator only borrows it.
+    #[cfg(target_os = "macos")]
+    let apple_events = apple_events::AppleEvents::install();
+    #[cfg(target_os = "macos")]
+    let apple_events = &apple_events;
     eframe::run_native(
         "CADCraft",
         options,
@@ -497,6 +519,14 @@ fn main() -> eframe::Result {
             for f in &files {
                 app.open_path(f);
             }
+            // Start reading any launch-time documents before the first frame. Later events use
+            // this same inbox, including the normal unsaved-changes handling for quit requests.
+            #[cfg(target_os = "macos")]
+            let apple_events = {
+                let inbox = apple_events.connect(&cc.egui_ctx);
+                apple_events::poll(&inbox, &mut app, &cc.egui_ctx);
+                inbox
+            };
             if app.session.docs.is_empty() {
                 // In the units the profile asks for (MEASUREINIT, restored above).
                 let metric = app.session.settings.measureinit;
@@ -524,6 +554,8 @@ fn main() -> eframe::Result {
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
                 movable: None,
+                #[cfg(target_os = "macos")]
+                apple_events,
             }))
         }),
     )

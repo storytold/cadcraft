@@ -24,6 +24,8 @@ mod entity;
 mod header;
 mod layout;
 mod objects;
+mod proxy;
+pub use proxy::proxies_lost;
 mod sections;
 
 #[cfg(test)]
@@ -149,15 +151,70 @@ pub fn write(d: &Drawing) -> String {
 
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`.
 pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
-    tags_for(d, version, version, version < Version::R2004)
+    tags_kept(d, version).0
+}
+
+/// [`tags`], with the foreign objects the file keeps, by their handles in the drawing.
+fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::HashSet<cadcraft_doc::Handle>) {
+    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
+    // Kept proxies in this version's layout (#3229). Not for the DWG bridge, whose writer reads
+    // them in the layout of the DWG they came from.
+    proxy::proxy_layout(&mut tags, version);
+    (tags, kept)
 }
 
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
 /// version's (MULTILEADER from 2007).
-pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg, false);
+pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> (String, craft_dwg::Unwritten) {
+    let (mut tags, kept) = sections::tags_kept_for(d, Version::R2000, dwg, false, true);
+    let mut unwritten = craft_dwg::Unwritten::new();
+    if dwg == Version::R2007 {
+        let omitted = legacy_visualstyles_kept(d, &kept);
+        if omitted != 0 {
+            let mut source = d.clone();
+            std::sync::Arc::make_mut(&mut source.foreign).objects.retain(|object| !legacy_visual_style(object));
+            tags = tags_for(&source, Version::R2000, dwg, false);
+            unwritten.insert("VISUALSTYLE".into(), omitted);
+        }
+    }
     bridge_markers(&mut tags);
-    craft_dxf::write_ascii(&tags)
+    (craft_dxf::write_ascii(&tags), unwritten)
+}
+
+/// Version-specific DWG compatibility omissions, counted from the actual saved view.
+/// Hosts use this before saving and when reporting saves through their byte-only I/O hooks.
+pub fn dwg_compat_lost(d: &Drawing, version: Version) -> craft_dwg::Unwritten {
+    let mut lost = craft_dwg::Unwritten::new();
+    if version == Version::R2007 && d.foreign.objects.iter().any(legacy_visual_style) {
+        let (_, kept) = sections::tags_kept_for(d, Version::R2000, version, false, true);
+        let omitted = legacy_visualstyles_kept(d, &kept);
+        if omitted != 0 {
+            lost.insert("VISUALSTYLE".into(), omitted);
+        }
+    }
+    lost
+}
+
+fn legacy_visualstyles_kept(d: &Drawing, kept: &HashSet<cadcraft_doc::Handle>) -> usize {
+    d.foreign.objects.iter().filter(|object| kept.contains(&object.handle) && legacy_visual_style(object)).count()
+}
+
+/// The fixed-property VISUALSTYLE layout in the 2007/2010 DXF Reference has no 176/177
+/// property pairs. The bridge cannot faithfully save this layout as a 2007 DWG.
+fn legacy_visual_style(object: &cadcraft_doc::foreign::ForeignObject) -> bool {
+    if !object.kind.trim().eq_ignore_ascii_case("VISUALSTYLE") {
+        return false;
+    }
+    let mut properties = object.tags.iter().skip_while(|tag| tag.code != 100 || tag.value.trim() != "AcDbVisualStyle");
+    properties.next();
+    let mut fixed = false;
+    for tag in properties.take_while(|tag| tag.code != 100 && tag.code < 1000) {
+        if matches!(tag.code, 176 | 177) {
+            return false;
+        }
+        fixed |= matches!(tag.code, 40 | 71);
+    }
+    fixed
 }
 
 /// Proxy type names and lookup-parameter subclass names must match the bridge reader's spelling.

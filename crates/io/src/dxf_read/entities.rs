@@ -88,6 +88,7 @@ fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
         // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
         // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        thickness_along_z(c);
         c.extrusion = Vec3::Z;
     } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
@@ -328,6 +329,7 @@ pub(super) fn entity_with_table_budget(
         other => EntityKind::Unknown(Unknown {
             dxf_type: other.to_string(),
             tags: tags.iter().map(|tg| RawTag { code: tg.code, value: tg.str() }).collect(),
+            graphics: Vec::new(),
         }),
     };
     Some((c, k))
@@ -487,6 +489,10 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
+        // Its proxy graphics, with the table indices resolved while the file's order is known.
+        ("ACAD_PROXY_ENTITY", EntityKind::Unknown(u)) => {
+            u.graphics = cadcraft_doc::proxy_entities(&u.proxy_graphics_bytes(), &rx.proxy_tables, h);
+        }
         ("DIMENSION", EntityKind::Dimension(dm)) => {
             dm.overrides = crate::dxf_ext::read_dstyle(tags, &rx.styles, &rx.brs, &rx.ltypes);
             dm.assoc = crate::dxf_ext::read_assoc(tags);
@@ -513,6 +519,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             let ours = crate::dxf_ext::xdata(tags, crate::dxf_ext::APP).iter().any(|t| t.code == 1000 && t.str() == "TABLE");
             if !ours {
                 rx.table_style_fix.push((h, t.s(342).map(|sh| sh.trim().to_ascii_uppercase()).unwrap_or_default()));
+            }
+        }
+        // Keyed by the handle the entity was given, so an IMAGE whose repeated handle was
+        // reassigned still finds its own IMAGEDEF.
+        ("IMAGE", EntityKind::Image(_)) => {
+            if let Some(def) = tags.iter().find(|t| t.code == 340) {
+                rx.image_defs.insert(h, def.str().trim().to_ascii_uppercase());
             }
         }
         ("INSERT", EntityKind::Insert(ins)) => {
@@ -570,7 +583,7 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
             break;
         }
     }
-    let c = common(t);
+    let mut c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
     let k = if flags & 64 != 0 {
         // Face records that name a missing vertex (or fewer than three) are dropped: they draw
@@ -592,13 +605,26 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
     } else if flags & 8 != 0 {
         EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
     } else {
-        // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
-        let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
+        // A 2D polyline's vertices are in its OCS, at the elevation of the POLYLINE's own point:
+        // in a tilted plane drawn as seen from above like LWPOLYLINE, else mirrored like it.
+        let closed = flags & 1 != 0;
+        let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
+        let mut elevation = t.p(10).z;
+        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+            (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
+            thickness_along_z(&mut c);
+            c.extrusion = Vec3::Z;
+        } else if c.extrusion.z < 0.0 {
+            for v in &mut vertices {
+                v.p.x = -v.p.x;
+                v.bulge = -v.bulge;
+            }
+        }
         EntityKind::LwPolyline(LwPolyline {
-            vertices: pts.iter().map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 }).collect(),
-            closed: flags & 1 != 0,
+            vertices,
+            closed,
             const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
-            elevation: t.p(10).z,
+            elevation,
             plinegen: flags & 128 != 0,
         })
     };
@@ -706,4 +732,12 @@ fn helix(tags: &[Tag]) -> Helix {
         constrain: HelixConstrain::from_dxf(t.i(280).unwrap_or(2)),
     }
     .sanitized()
+}
+
+/// A polyline drawn as seen from above gets the normal +Z: its thickness keeps the side of Z it
+/// extruded toward, which the normal it is losing said.
+fn thickness_along_z(c: &mut Common) {
+    if c.extrusion.z < 0.0 {
+        c.thickness = -c.thickness;
+    }
 }
