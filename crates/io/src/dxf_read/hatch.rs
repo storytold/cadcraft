@@ -73,7 +73,7 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        loops.push(HatchLoop { vertices: verts, outer, boundary_flags: Some(flags), sources });
     }
     curves.left = curves.left.saturating_sub(start_left.saturating_sub(budget.left));
     if budget.cut {
@@ -215,7 +215,8 @@ fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     if !ccw {
         points.reverse();
     }
-    vertices.extend(points.into_iter().map(PolyVertex::new));
+    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
+    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
 }
 
 fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, budget: &mut EdgeBudget) {
