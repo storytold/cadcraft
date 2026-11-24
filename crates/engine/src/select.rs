@@ -17,6 +17,13 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask => {
                     list.points(p).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect()
                 }
+                cadcraft_render::Kind::Infinite { ray } => match list.points(p) {
+                    [base, dir] => {
+                        let far = 1e9;
+                        vec![vec![if ray { *base } else { *base - *dir * far }, *base + *dir * far]]
+                    }
+                    _ => Vec::new(),
+                },
                 _ => vec![list.points(p).to_vec()],
             })
             .collect();
@@ -102,7 +109,23 @@ fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::Displa
 
 fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
     let list = insert_geometry(d, e, tol);
-    list.prims.iter().filter(|p| matches!(p.kind, cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask)).any(|p| {
+    list.prims.iter().any(|p| {
+        if let cadcraft_render::Kind::Image { index } = p.kind {
+            let Some(img) = list.images.get(index as usize) else { return false };
+            let [a, b, c, d] = img.corners();
+            let mut tris = vec![a, b, c, a, c, d];
+            for outline in &img.clips {
+                let Some(clip) = cadcraft_render::clip::PolyClip::new(outline) else { return false };
+                tris = clip.clip_triangles(&tris);
+                if tris.is_empty() {
+                    return false;
+                }
+            }
+            return !cadcraft_render::clip::clip_triangles(&tris, bx).is_empty();
+        }
+        if !matches!(p.kind, cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask) {
+            return false;
+        }
         list.points(p).as_chunks::<3>().0.iter().any(|t| {
             let triangle = [t[0], t[1], t[2]];
             bx.corners().iter().any(|q| point_in_polygon(&triangle, *q))
@@ -588,7 +611,7 @@ impl SelectMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_doc::{Common, RayLine};
+    use cadcraft_doc::{Common, Image, Raster, RayLine};
     use cadcraft_geom::Vec3;
 
     fn fence_hits(kind: EntityKind, fence: [(f64, f64); 2]) -> usize {
@@ -759,6 +782,65 @@ mod tests {
         let filled = Bounds2::new(Vec2::new(2.0, 2.0), Vec2::new(3.0, 3.0));
         assert!(select_window(&d, &Space::Model, empty, true).is_empty());
         assert_eq!(select_window(&d, &Space::Model, filled, true), vec![h]);
+    }
+
+    #[test]
+    fn crossing_a_block_ray_and_xline_uses_their_direction() {
+        for (kind, behind) in [(true, false), (false, true)] {
+            let mut d = Drawing::new_metric();
+            let mut block = cadcraft_doc::Block::new("infinite");
+            let line = RayLine { base: Vec3::new(100.0, 100.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) };
+            block.entities.push(Entity::new(Handle(10), if kind { EntityKind::Ray(line) } else { EntityKind::XLine(line) }));
+            block
+                .entities
+                .push(Entity::new(Handle(11), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(200.0, 0.0, 0.0) })));
+            block.entities.push(Entity::new(
+                Handle(12),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 0.0, 0.0), b: Vec3::new(200.0, 200.0, 0.0) }),
+            ));
+            block.entities.push(Entity::new(
+                Handle(13),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 200.0, 0.0), b: Vec3::new(0.0, 200.0, 0.0) }),
+            ));
+            block
+                .entities
+                .push(Entity::new(Handle(14), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 200.0, 0.0), b: Vec3::new(0.0, 0.0, 0.0) })));
+            d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+            let insert = cadcraft_doc::Insert { block: "infinite".into(), ..Default::default() };
+            let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+            let ahead = Bounds2::new(Vec2::new(149.0, 99.0), Vec2::new(151.0, 101.0));
+            let back = Bounds2::new(Vec2::new(49.0, 99.0), Vec2::new(51.0, 101.0));
+            assert_eq!(select_window(&d, &Space::Model, ahead, true), vec![h]);
+            assert_eq!(select_window(&d, &Space::Model, back, true).contains(&h), behind);
+        }
+    }
+
+    #[test]
+    fn crossing_a_block_image_respects_its_clip() {
+        let mut d = Drawing::new_metric();
+        d.rasters.insert("map.png", std::sync::Arc::new(Raster::new(2, 2, vec![255; 16]).unwrap()));
+        let mut block = cadcraft_doc::Block::new("picture");
+        block.entities.push(Entity::new(
+            Handle(10),
+            EntityKind::Image(Image {
+                insert: Vec3::ZERO,
+                u: Vec3::new(5.0, 0.0, 0.0),
+                v: Vec3::new(0.0, 5.0, 0.0),
+                size: Vec2::new(2.0, 2.0),
+                path: "map.png".into(),
+                clipping: true,
+                clip: vec![Vec2::new(-0.5, -0.5), Vec2::new(0.5, 1.5)],
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let h = d
+            .add(&Space::Model, Common::default(), EntityKind::Insert(cadcraft_doc::Insert { block: "picture".into(), ..Default::default() }))
+            .unwrap();
+        let visible = Bounds2::new(Vec2::new(2.0, 4.0), Vec2::new(3.0, 6.0));
+        let hidden = Bounds2::new(Vec2::new(7.0, 4.0), Vec2::new(8.0, 6.0));
+        assert_eq!(select_window(&d, &Space::Model, visible, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, hidden, true).is_empty());
     }
 }
 
