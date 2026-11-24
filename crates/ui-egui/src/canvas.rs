@@ -1254,7 +1254,11 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
-    let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
+    // While the Array window is open the pointer is over it, so fall back to the last canvas
+    // cursor; every other command keeps today's behavior.
+    let over_array = app.ui.dialog.as_deref() == Some("array") && app.session.cursor.is_finite();
+    let cursor = app.canvas.cursor.or(if over_array { Some(app.session.cursor) } else { None });
+    let drag = match (cursor, app.canvas.gpu.is_some()) {
         (Some(c), true) => app.session.drag(c),
         _ => None,
     };
@@ -1266,7 +1270,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             let list = rebuilt_preview(&st.doc, extra.iter(), scale);
             draw_list(painter, &xf, &list, bg, false);
         }
-    } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
+    } else if let (Some(c), true) = (cursor, app.session.prompting()) {
         let ents = app.session.preview(c);
         if !ents.is_empty()
             && let Ok(st) = app.session.state()

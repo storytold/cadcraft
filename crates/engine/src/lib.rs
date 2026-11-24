@@ -7,6 +7,7 @@
 //! [`Session::input`], [`Session::cmdline`]) exactly like typing at AutoCAD's command line.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
+pub mod array_live;
 
 pub mod assoc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +49,7 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use array_live::{ArrayLive, ArrayLiveKind};
 pub use cadcraft_doc as doc;
 pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
