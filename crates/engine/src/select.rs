@@ -8,10 +8,29 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    if matches!(e.kind, EntityKind::Insert(_)) {
+        let list = insert_geometry(d, e, tol);
+        return list
+            .prims
+            .iter()
+            .flat_map(|p| match p.kind {
+                cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask => {
+                    list.points(p).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect()
+                }
+                cadcraft_render::Kind::Infinite { ray } => match list.points(p) {
+                    [base, dir] => {
+                        let far = 1e9;
+                        vec![vec![if ray { *base } else { *base - *dir * far }, *base + *dir * far]]
+                    }
+                    _ => Vec::new(),
+                },
+                _ => vec![list.points(p).to_vec()],
+            })
+            .collect();
+    }
     match &e.kind {
         EntityKind::Text(_)
         | EntityKind::MText(_)
-        | EntityKind::Insert(_)
         | EntityKind::Dimension(_)
         | EntityKind::AttDef(_)
         | EntityKind::Table(_)
@@ -25,7 +44,7 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             }
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
-            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
+            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::MLeader(_)) {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
@@ -82,6 +101,38 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             out
         }
     }
+}
+
+fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::DisplayList {
+    cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() })
+}
+
+fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
+    let list = insert_geometry(d, e, tol);
+    list.prims.iter().any(|p| {
+        if let cadcraft_render::Kind::Image { index } = p.kind {
+            let Some(img) = list.images.get(index as usize) else { return false };
+            let [a, b, c, d] = img.corners();
+            let mut tris = vec![a, b, c, a, c, d];
+            for outline in &img.clips {
+                let Some(clip) = cadcraft_render::clip::PolyClip::new(outline) else { return false };
+                tris = clip.clip_triangles(&tris);
+                if tris.is_empty() {
+                    return false;
+                }
+            }
+            return !cadcraft_render::clip::clip_triangles(&tris, bx).is_empty();
+        }
+        if !matches!(p.kind, cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask) {
+            return false;
+        }
+        list.points(p).as_chunks::<3>().0.iter().any(|t| {
+            let triangle = [t[0], t[1], t[2]];
+            bx.corners().iter().any(|q| point_in_polygon(&triangle, *q))
+                || triangle.iter().any(|q| bx.contains(*q))
+                || (0..3).any(|i| seg_hits_box(triangle[i], triangle[(i + 1) % 3], bx))
+        })
+    })
 }
 
 fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
@@ -459,8 +510,11 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
             pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| seg_hits_box(*a, *b, bx)))
         }
     });
-    // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    // A crossing box inside a text bounding rectangle selects the text.
+    if hit
+        || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_)))
+        || (matches!(e.kind, EntityKind::Insert(_)) && insert_fill_hits_box(d, e, bx, tol))
+    {
         return true;
     }
     // Likewise inside a blank MTEXT's frame (a multileader's too), where picking also selects it.
@@ -676,7 +730,7 @@ impl SelectMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_doc::{Common, RayLine};
+    use cadcraft_doc::{Common, Image, Raster, RayLine};
     use cadcraft_geom::Vec3;
 
     fn fence_hits(kind: EntityKind, fence: [(f64, f64); 2]) -> usize {
@@ -1037,8 +1091,8 @@ mod tests {
         let e = d.entity(h).unwrap();
         let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
         assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
-        // The line, and the block's bounding rectangle.
-        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+        // Hit testing uses the line without laying out every dash.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 1);
     }
 
     /// A dashed line in a block is hit across its gaps, as one outside a block is.
@@ -1052,6 +1106,126 @@ mod tests {
         assert!(end.dist(start) > 0.01, "a gap between the first two dashes");
         let gap = end + (start - end) * 0.5;
         assert_eq!(pick(&d, &Space::Model, gap, end.dist(start) / 8.0), Some(h));
+    }
+
+    #[test]
+    fn crossing_a_transformed_block_requires_its_drawn_geometry() {
+        let mut d = Drawing::new_metric();
+        let mut block = cadcraft_doc::Block::new("two lines");
+        for y in [0.0, 5.0] {
+            block.entities.push(Entity::new(
+                Handle(10 + y as u64),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) }),
+            ));
+        }
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "two lines".into(),
+            insert: Vec3::new(30.0, 40.0, 0.0),
+            scale: Vec3::new(2.0, 2.0, 1.0),
+            rotation: std::f64::consts::FRAC_PI_2,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        let bx = |a, b| Bounds2::new(a, b);
+        let empty = bx(Vec2::new(24.0, 48.0), Vec2::new(26.0, 52.0));
+        let crossed = bx(Vec2::new(19.0, 48.0), Vec2::new(21.0, 52.0));
+        assert!(select_window(&d, &Space::Model, empty, true).is_empty());
+        assert_eq!(select_window(&d, &Space::Model, crossed, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, crossed, false).is_empty());
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(25.0, 40.0), 0.1), None);
+    }
+
+    #[test]
+    fn crossing_a_block_fill_uses_the_filled_shape() {
+        let mut d = Drawing::new_metric();
+        let mut block = cadcraft_doc::Block::new("filled triangle");
+        let a = Vec3::new(0.0, 0.0, 0.0);
+        let b = Vec3::new(10.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 10.0, 0.0);
+        block.entities.push(Entity::new(Handle(10), EntityKind::Solid(cadcraft_doc::Solid { corners: [a, b, c, c] })));
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let insert = cadcraft_doc::Insert {
+            block: "filled triangle".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        let empty = Bounds2::new(Vec2::new(7.0, 7.0), Vec2::new(8.0, 8.0));
+        let filled = Bounds2::new(Vec2::new(2.0, 2.0), Vec2::new(3.0, 3.0));
+        assert!(select_window(&d, &Space::Model, empty, true).is_empty());
+        assert_eq!(select_window(&d, &Space::Model, filled, true), vec![h]);
+    }
+
+    #[test]
+    fn crossing_a_block_ray_and_xline_uses_their_direction() {
+        for (kind, behind) in [(true, false), (false, true)] {
+            let mut d = Drawing::new_metric();
+            let mut block = cadcraft_doc::Block::new("infinite");
+            let line = RayLine { base: Vec3::new(100.0, 100.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) };
+            block.entities.push(Entity::new(Handle(10), if kind { EntityKind::Ray(line) } else { EntityKind::XLine(line) }));
+            block
+                .entities
+                .push(Entity::new(Handle(11), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(200.0, 0.0, 0.0) })));
+            block.entities.push(Entity::new(
+                Handle(12),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 0.0, 0.0), b: Vec3::new(200.0, 200.0, 0.0) }),
+            ));
+            block.entities.push(Entity::new(
+                Handle(13),
+                EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(200.0, 200.0, 0.0), b: Vec3::new(0.0, 200.0, 0.0) }),
+            ));
+            block
+                .entities
+                .push(Entity::new(Handle(14), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 200.0, 0.0), b: Vec3::new(0.0, 0.0, 0.0) })));
+            d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+            let insert = cadcraft_doc::Insert { block: "infinite".into(), ..Default::default() };
+            let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+            let ahead = Bounds2::new(Vec2::new(149.0, 99.0), Vec2::new(151.0, 101.0));
+            let back = Bounds2::new(Vec2::new(49.0, 99.0), Vec2::new(51.0, 101.0));
+            assert_eq!(select_window(&d, &Space::Model, ahead, true), vec![h]);
+            assert_eq!(select_window(&d, &Space::Model, back, true).contains(&h), behind);
+        }
+    }
+
+    #[test]
+    fn crossing_a_block_image_respects_its_clip() {
+        let mut d = Drawing::new_metric();
+        d.rasters.insert("map.png", std::sync::Arc::new(Raster::new(2, 2, vec![255; 16]).unwrap()));
+        let mut block = cadcraft_doc::Block::new("picture");
+        block.entities.push(Entity::new(
+            Handle(10),
+            EntityKind::Image(Image {
+                insert: Vec3::ZERO,
+                u: Vec3::new(5.0, 0.0, 0.0),
+                v: Vec3::new(0.0, 5.0, 0.0),
+                size: Vec2::new(2.0, 2.0),
+                path: "map.png".into(),
+                clipping: true,
+                clip: vec![Vec2::new(-0.5, -0.5), Vec2::new(0.5, 1.5)],
+                ..Default::default()
+            }),
+        ));
+        d.blocks.insert(block.name.clone(), std::sync::Arc::new(block));
+        let h = d
+            .add(&Space::Model, Common::default(), EntityKind::Insert(cadcraft_doc::Insert { block: "picture".into(), ..Default::default() }))
+            .unwrap();
+        let visible = Bounds2::new(Vec2::new(2.0, 4.0), Vec2::new(3.0, 6.0));
+        let hidden = Bounds2::new(Vec2::new(7.0, 4.0), Vec2::new(8.0, 6.0));
+        assert_eq!(select_window(&d, &Space::Model, visible, true), vec![h]);
+        assert!(select_window(&d, &Space::Model, hidden, true).is_empty());
     }
 }
 
