@@ -35,17 +35,26 @@ pub struct ProxyTables {
 }
 
 impl Unknown {
-    /// The proxy graphics bytes of an ACAD_PROXY_ENTITY: the 310 groups after its size group
-    /// (92, or 160 in newer files), cut to that size. The size group is the first after the
-    /// `AcDbProxyEntity` subclass marker (from the start in a record without one), so a 92 or
-    /// 160 among the entity's own groups before it isn't taken for it. Empty for other records,
-    /// for an entity without graphics and for one whose data isn't hex.
+    /// The proxy graphics bytes of an entity: the 310 groups after its size group (92, or 160 in
+    /// newer files), cut to that size. An ACAD_PROXY_ENTITY holds them in its proxy data: the size
+    /// group is the first after the `AcDbProxyEntity` subclass marker (from the start in a record
+    /// without one), so a 92 or 160 among the entity's own groups before it isn't taken for it.
+    /// An entity of another type CADCraft keeps as read holds them in its `AcDbEntity` part when
+    /// it was saved with a picture of itself (a LARGE_RADIAL_DIMENSION or an ARC_DIMENSION, or an
+    /// object of another application; #3438). Empty for an entity without graphics and for one
+    /// whose data isn't hex.
     pub fn proxy_graphics_bytes(&self) -> Vec<u8> {
-        if !self.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
-            return Vec::new();
-        }
-        let from = self.tags.iter().position(|t| t.code == 100 && t.value.trim() == "AcDbProxyEntity").map_or(0, |m| m + 1);
-        let Some(at) = self.tags.iter().skip(from).position(|t| t.code == 92 || t.code == 160).map(|i| from + i) else { return Vec::new() };
+        let at = if self.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
+            let from = self.tags.iter().position(|t| t.code == 100 && t.value.trim() == "AcDbProxyEntity").map_or(0, |m| m + 1);
+            self.tags.iter().skip(from).position(|t| t.code == 92 || t.code == 160).map(|i| from + i)
+        } else {
+            // The groups of the AcDbEntity subclass, up to the entity's own subclass marker.
+            self.tags.iter().position(|t| t.code == 100 && t.value.trim() == "AcDbEntity").and_then(|m| {
+                let own = &self.tags[m + 1..];
+                own.iter().take_while(|t| t.code != 100).position(|t| t.code == 92 || t.code == 160).map(|i| m + 1 + i)
+            })
+        };
+        let Some(at) = at else { return Vec::new() };
         let size = self.tags.get(at).and_then(|t| t.value.trim().parse::<usize>().ok()).unwrap_or(0).min(MAX_BYTES);
         // Reserve what the 310 groups hold, not what the size claims: a size far past the data
         // would otherwise reserve up to MAX_BYTES for nothing.
@@ -62,6 +71,17 @@ impl Unknown {
         }
         out.truncate(size);
         out
+    }
+}
+
+impl Unknown {
+    /// The `*D` block a dimension CADCraft keeps as read names (group 2 of its `AcDbDimension`
+    /// part): a LARGE_RADIAL_DIMENSION or an ARC_DIMENSION. AutoCAD draws a dimension from that
+    /// block, so CADCraft draws it from there too, and saving keeps it (#3438, #1161). `None`
+    /// for other records.
+    pub fn dimension_block(&self) -> Option<&str> {
+        let m = self.tags.iter().position(|t| t.code == 100 && t.value.trim() == "AcDbDimension")?;
+        self.tags[m + 1..].iter().take_while(|t| t.code != 100).find(|t| t.code == 2).map(|t| t.value.trim()).filter(|n| !n.is_empty())
     }
 }
 
@@ -143,8 +163,9 @@ impl Decoder<'_> {
                     self.arc_3p_local(p1, p2, p3);
                 }
             }
-            // POLYLINE and POLYGON: a count, then the points.
-            6 | 7 => {
+            // POLYLINE and POLYGON: a count, then the points; POLYLINE_WITH_NORMAL: a count, the
+            // points and a normal (the dimension lines of a LARGE_RADIAL_DIMENSION's picture).
+            6 | 7 | 32 => {
                 let Some(n) = b.u32() else { return };
                 let n = (n as usize).min(MAX_VERTICES);
                 let pts: Vec<Vec2> = (0..n).map_while(|_| b.point()).map(|p| self.xy(p)).collect();
@@ -1028,6 +1049,43 @@ mod tests {
         // A size far past the data gives the data there is.
         let short = Unknown { tags: vec![tag(92, "16000000"), tag(310, "0102")], ..u };
         assert_eq!(short.proxy_graphics_bytes(), [1, 2]);
+    }
+
+    /// Another entity saved with a picture of itself (a LARGE_RADIAL_DIMENSION) holds it in its
+    /// AcDbEntity part; a 92 among its own groups after that isn't taken for it. Its dimension
+    /// lines are POLYLINE_WITH_NORMAL chunks (type 32).
+    #[test]
+    fn a_kept_entity_draws_the_picture_in_its_acdbentity_part() {
+        let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+        let mut line = 2u32.to_le_bytes().to_vec();
+        line.extend(pt(250.0, 150.0));
+        line.extend(pt(290.0, 190.0));
+        line.extend([0.0f64, 0.0, 1.0].iter().flat_map(|v| v.to_le_bytes()));
+        let g = graphics(&[chunk(32, &line)]);
+        let hex: String = g.iter().map(|b| format!("{b:02X}")).collect();
+        let size = g.len().to_string();
+        let u = Unknown {
+            dxf_type: "LARGE_RADIAL_DIMENSION".into(),
+            tags: vec![
+                tag(100, "AcDbEntity"),
+                tag(8, "0"),
+                tag(92, &size),
+                tag(310, &hex),
+                tag(100, "AcDbDimension"),
+                tag(2, "*D1"),
+                tag(100, "AcDbRadialDimensionLarge"),
+                tag(40, "0.785398"),
+            ],
+            graphics: Vec::new(),
+        };
+        assert_eq!(u.proxy_graphics_bytes(), g);
+        let es = proxy_entities(&u.proxy_graphics_bytes(), &tables(), Handle(1));
+        assert!(
+            matches!(&es[..], [e] if matches!(&e.kind, EntityKind::Line(l) if l.a == Vec3::new(250.0, 150.0, 0.0) && l.b == Vec3::new(290.0, 190.0, 0.0)))
+        );
+        // Without graphics in the AcDbEntity part, a 92 in the entity's own data is not one.
+        let own = Unknown { tags: vec![tag(100, "AcDbEntity"), tag(8, "0"), tag(100, "AcDbSomething"), tag(92, "4"), tag(310, "01020304")], ..u };
+        assert!(own.proxy_graphics_bytes().is_empty());
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and

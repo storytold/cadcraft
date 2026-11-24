@@ -36,6 +36,7 @@ mod hatch_elliptic_edge_dedup;
 mod hatch_loop_flags;
 mod hatch_pattern_def;
 mod helix_roundtrip;
+mod large_radial_dimension;
 mod layer_states_acad;
 mod layout_limits_roundtrip;
 mod layout_paper_units;

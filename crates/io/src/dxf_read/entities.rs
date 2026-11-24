@@ -489,8 +489,9 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
-        // Its proxy graphics, with the table indices resolved while the file's order is known.
-        ("ACAD_PROXY_ENTITY", EntityKind::Unknown(u)) => {
+        // Its proxy graphics (a proxy's, or the picture another kept entity was saved with), with
+        // the table indices resolved while the file's order is known.
+        (_, EntityKind::Unknown(u)) => {
             u.graphics = cadcraft_doc::proxy_entities(&u.proxy_graphics_bytes(), &rx.proxy_tables, h);
         }
         ("DIMENSION", EntityKind::Dimension(dm)) => {
