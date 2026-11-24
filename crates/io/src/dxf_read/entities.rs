@@ -610,7 +610,7 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
         let closed = flags & 1 != 0;
         let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
         let mut elevation = t.p(10).z;
-        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+        if tilted(c.extrusion, || run_points(&vertices, elevation, closed)) {
             (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
             thickness_along_z(&mut c);
             c.extrusion = Vec3::Z;
