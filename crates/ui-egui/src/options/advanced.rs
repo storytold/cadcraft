@@ -14,6 +14,7 @@ pub(super) const ERROR: &str = "cc_options_advanced_error";
 const FILTER: &str = "cc_options_advanced_filter";
 const JSON_TEXT: &str = "cc_options_advanced_json";
 const JSON_OPEN: &str = "cc_options_advanced_json_open";
+const JSON_PENDING: &str = "cc_options_advanced_json_pending";
 const JSON_BASELINE: &str = "cc_options_advanced_json_baseline";
 
 /// The report the retained JSON edits, rather than a later live report. A drawing or style
@@ -98,17 +99,25 @@ pub(super) fn split_edits(
     Ok((diff, ui_diff))
 }
 
-/// A text field that commits when it loses focus or on Enter; `Some(text)` on a change.
-fn commit_text(ui: &mut egui::Ui, id: egui::Id, current: &str, width: f32, label: egui::Id) -> Option<String> {
-    let mut buf = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_string());
-    let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(width)).labelled_by(label);
-    if r.changed() {
-        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+/// A row's retained text and the value it was started from, so a later live change is not
+/// mistaken for an edit.
+#[derive(Clone)]
+struct RowDraft {
+    text: String,
+    original: Value,
+}
+
+/// A text field that commits when it loses focus or on Enter; `Some(draft)` on a change.
+fn commit_text(ui: &mut egui::Ui, id: egui::Id, current: &Value, width: f32, label: egui::Id) -> Option<RowDraft> {
+    let mut draft = ui.data(|d| d.get_temp::<RowDraft>(id)).unwrap_or_else(|| RowDraft { text: compact(current), original: current.clone() });
+    let r = ui.add(egui::TextEdit::singleline(&mut draft.text).desired_width(width)).labelled_by(label);
+    if r.changed() || r.gained_focus() {
+        ui.data_mut(|d| d.insert_temp(id, draft.clone()));
     }
     if r.lost_focus() {
-        ui.data_mut(|d| d.remove::<String>(id));
-        if buf != current {
-            return Some(buf);
+        ui.data_mut(|d| d.remove::<RowDraft>(id));
+        if draft.text != compact(&draft.original) {
+            return Some(draft);
         }
     }
     None
@@ -152,40 +161,42 @@ pub(super) fn advanced(app: &CadApp, ui: &mut egui::Ui, edits: &mut Map<String, 
     }
     let mut filter = ui.data(|d| d.get_temp::<String>(egui::Id::unique(FILTER))).unwrap_or_default();
     ui.horizontal(|ui| {
-        ui.label(crate::tl!("Filter"));
-        if ui.add(egui::TextEdit::singleline(&mut filter).desired_width(180.0)).changed() {
+        let label = ui.label(crate::tl!("Filter"));
+        if ui.add(egui::TextEdit::singleline(&mut filter).desired_width(180.0)).labelled_by(label.id).changed() {
             ui.data_mut(|d| d.insert_temp(egui::Id::unique(FILTER), filter.clone()));
         }
         ui.label(RichText::new(crate::tf!("{n} settings", n = report.len() + interface_state(app, &report).len())).small().color(t.text_dim));
     });
     let needle = filter.trim().to_ascii_lowercase();
     let interface = interface_state(app, &report);
+    let origin = (app.session.state().ok().map(|s| s.uid), super::current_dim_style_name(app));
     ui.add_space(4.0);
-    egui::ScrollArea::vertical().id_salt("options_advanced").max_height(250.0).auto_shrink([false, true]).show(ui, |ui| {
-        super::dialog::grid(ui, "options_advanced_grid", |ui| {
-            for (key, value) in &report {
-                if !needle.is_empty() && !key.to_ascii_lowercase().contains(&needle) {
-                    continue;
-                }
-                let label = ui.label(RichText::new(key).monospace());
-                row(ui, key, label.id, value, edits);
-                ui.end_row();
-            }
-            let shown: Vec<_> = interface.iter().filter(|(k, _)| needle.is_empty() || k.to_ascii_lowercase().contains(&needle)).collect();
-            if !shown.is_empty() {
-                ui.label(RichText::new(crate::tl!("Interface state")).strong());
-                ui.label(RichText::new(crate::tl!("Panels, toolbars and recent files")).small().color(t.text_dim));
-                ui.end_row();
-                for (key, value) in shown {
+    ui.push_id(("options_rows", &origin), |ui| {
+        egui::ScrollArea::vertical().id_salt("options_advanced").max_height(250.0).auto_shrink([false, true]).show(ui, |ui| {
+            super::dialog::grid(ui, "options_advanced_grid", |ui| {
+                for (key, value) in &report {
+                    if !needle.is_empty() && !key.to_ascii_lowercase().contains(&needle) {
+                        continue;
+                    }
                     let label = ui.label(RichText::new(key).monospace());
-                    row(ui, key, label.id, value, ui_edits);
+                    row(ui, key, label.id, value, edits);
                     ui.end_row();
                 }
-            }
+                let shown: Vec<_> = interface.iter().filter(|(k, _)| needle.is_empty() || k.to_ascii_lowercase().contains(&needle)).collect();
+                if !shown.is_empty() {
+                    ui.label(RichText::new(crate::tl!("Interface state")).strong());
+                    ui.label(RichText::new(crate::tl!("Panels, toolbars and recent files")).small().color(t.text_dim));
+                    ui.end_row();
+                    for (key, value) in shown {
+                        let label = ui.label(RichText::new(key).monospace());
+                        row(ui, key, label.id, value, ui_edits);
+                        ui.end_row();
+                    }
+                }
+            });
         });
+        ui.add_space(4.0);
     });
-    ui.add_space(4.0);
-    let origin = (app.session.state().ok().map(|s| s.uid), super::current_dim_style_name(app));
     json_editor(ui, origin, &report, &interface, edits, ui_edits);
 }
 
@@ -212,11 +223,11 @@ fn row(ui: &mut egui::Ui, key: &str, label: egui::Id, value: &Value, edits: &mut
             }
         }
         other => {
-            let id = egui::Id::unique(("cc_options_advanced_text", key));
-            if let Some(text) = commit_text(ui, id, &compact(other), 290.0, label) {
-                match parse_edit(other, &text) {
+            let id = ui.make_persistent_id(("cc_options_advanced_text", key));
+            if let Some(draft) = commit_text(ui, id, other, 290.0, label) {
+                match parse_edit(&draft.original, &draft.text) {
                     Ok(v) => {
-                        if let Some(v) = edit_of(key, Some(other), &v) {
+                        if let Some(v) = edit_of(key, Some(&draft.original), &v) {
                             edits.insert(key.into(), v);
                         }
                     }
@@ -245,8 +256,11 @@ fn json_editor(
         ui.data_mut(|d| d.remove::<String>(text_id));
         set_error(ui, None);
     }
-    let baseline =
-        baseline.filter(|b| b.origin == origin).unwrap_or_else(|| JsonBaseline { origin, report: report.clone(), interface: interface.clone() });
+    let baseline = baseline.filter(|b| b.origin == origin && ui.data(|d| d.get_temp::<String>(text_id)).is_some()).unwrap_or_else(|| JsonBaseline {
+        origin,
+        report: report.clone(),
+        interface: interface.clone(),
+    });
     ui.data_mut(|d| d.insert_temp(baseline_id, baseline.clone()));
     let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     let r = egui::CollapsingHeader::new(crate::tl!("Edit as JSON")).id_salt("options_advanced_json").default_open(open).show(ui, |ui| {
@@ -258,21 +272,16 @@ fn json_editor(
         let mut text = ui.data(|d| d.get_temp::<String>(text_id)).unwrap_or_else(pretty);
         let edit = egui::TextEdit::multiline(&mut text).code_editor().desired_rows(6).desired_width(f32::INFINITY);
         // A full report has hundreds of lines. Keep the error and Apply controls on screen.
-        let response = egui::ScrollArea::vertical()
-            .id_salt("options_advanced_json_text")
-            .max_height(160.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| ui.add(edit))
-            .inner;
-        if response.changed() {
-            ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
-        }
+        egui::ScrollArea::vertical().id_salt("options_advanced_json_text").max_height(160.0).auto_shrink([false, true]).show(ui, |ui| ui.add(edit));
+        // The text and its baseline stay a pair until Apply or Reload, so retain the text even unedited.
+        ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
         ui.horizontal(|ui| {
             if ui.button(crate::tl!("Apply")).clicked() {
                 match serde_json::from_str::<Value>(&text) {
                     Ok(Value::Object(new)) => match split_edits(&baseline.report, &baseline.interface, &new) {
                         Ok((diff, ui_diff)) => {
                             set_error(ui, None);
+                            ui.data_mut(|d| d.insert_temp(egui::Id::unique(JSON_PENDING), new));
                             edits.extend(diff);
                             ui_edits.extend(ui_diff);
                             // Semantic validation happens after drawing the dialog. Preserve the
@@ -298,6 +307,27 @@ fn json_editor(
         });
     });
     ui.data_mut(|d| d.insert_temp(open_id, r.openness > 0.5));
+}
+
+/// Advance each accepted part of a submitted draft, retaining refused text for correction.
+pub(super) fn finish_apply(ctx: &egui::Context, settings_ok: bool, interface_ok: bool) {
+    ctx.data_mut(|d| {
+        let Some(new) = d.get_temp::<Map<String, Value>>(egui::Id::unique(JSON_PENDING)) else { return };
+        d.remove::<Map<String, Value>>(egui::Id::unique(JSON_PENDING));
+        let id = egui::Id::unique(JSON_BASELINE);
+        if let Some(mut baseline) = d.get_temp::<JsonBaseline>(id) {
+            for (values, accepted) in [(&mut baseline.report, settings_ok), (&mut baseline.interface, interface_ok)] {
+                if accepted {
+                    for (key, value) in values.iter_mut() {
+                        if let Some(submitted) = new.get(key) {
+                            *value = submitted.clone();
+                        }
+                    }
+                }
+            }
+            d.insert_temp(id, baseline);
+        }
+    });
 }
 
 #[cfg(test)]

@@ -439,3 +439,112 @@ fn a_pending_dimension_drag_does_not_edit_another_drawing() {
     assert_eq!(a.session.dim_defaults, defaults);
     assert_eq!(a.session.state().unwrap().undo.len(), undo);
 }
+
+fn advanced_frame(a: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<egui::epaint::ClippedShape> {
+    let input =
+        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), events, ..Default::default() };
+    let mut output = ctx.run_ui(input, |ui| a.ui(ui));
+    output.textures_delta.clear();
+    output.shapes
+}
+
+fn advanced_click(a: &mut CadApp, ctx: &egui::Context, label: &str) {
+    advanced_frame(a, ctx, Vec::new());
+    let shapes = advanced_frame(a, ctx, Vec::new());
+    let pos = *text_pos(&shapes, &|s| s == label).first().expect(label) + egui::vec2(3.0, 6.0);
+    advanced_frame(a, ctx, vec![egui::Event::PointerMoved(pos)]);
+    for pressed in [true, false] {
+        advanced_frame(
+            a,
+            ctx,
+            vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }],
+        );
+    }
+}
+
+#[test]
+fn opening_json_after_a_style_command_does_not_save_defaults() {
+    let mut a = app();
+    a.ui.animations = cadcraft_ui_egui::animation::AnimationPref::Off;
+    a.ui.dialog = Some("options:advanced".into());
+    let ctx = egui::Context::default();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_advanced_filter"), "no_matching_setting".to_string()));
+    render(&mut a, &ctx);
+    let name = cadcraft_ui_egui::options::current_dim_style_name(&a).unwrap();
+    a.session.execute("dimstyle", &json!({ "name": name, "DIMTXT": 17.0 })).unwrap();
+    let defaults = a.session.dim_defaults.clone();
+    advanced_click(&mut a, &ctx, "Edit as JSON");
+    advanced_click(&mut a, &ctx, "Apply");
+    assert_eq!(current(&mut a, "DIMTXT"), json!(17.0));
+    assert_eq!(a.session.dim_defaults, defaults);
+}
+
+#[test]
+fn successive_json_applies_can_revert_an_accepted_edit_and_correct_a_refused_one() {
+    let mut a = app();
+    a.ui.animations = cadcraft_ui_egui::animation::AnimationPref::Off;
+    a.ui.dialog = Some("options:advanced".into());
+    let ctx = egui::Context::default();
+    ctx.data_mut(|d| {
+        d.insert_temp(egui::Id::unique("cc_options_advanced_filter"), "no_matching_setting".to_string());
+        d.insert_temp(egui::Id::unique("cc_options_advanced_json_open"), true);
+    });
+    render(&mut a, &ctx);
+    let original = a.run("options", json!({})).unwrap()["PICKBOX"].clone();
+    for value in [json!(11), original.clone(), json!("bad"), json!(9)] {
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_advanced_json"), json!({ "PICKBOX": value }).to_string()));
+        advanced_click(&mut a, &ctx, "Apply");
+        let report = a.run("options", json!({})).unwrap();
+        if value == json!("bad") {
+            assert_eq!(report["PICKBOX"], original);
+            assert!(ctx.data(|d| d.get_temp::<String>(egui::Id::unique("cc_options_advanced_error"))).is_some());
+        } else {
+            assert_eq!(report["PICKBOX"].as_f64(), value.as_f64());
+        }
+    }
+}
+
+#[test]
+fn a_dimension_style_row_draft_keeps_its_original_values_and_drawing() {
+    use egui_kittest::kittest::{Queryable, by};
+    for switch_drawing in [false, true] {
+        let mut a = app();
+        a.ui.animations = cadcraft_ui_egui::animation::AnimationPref::Off;
+        a.ui.dialog = Some("options:advanced".into());
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_advanced_filter"), "dimStyle".to_string()));
+                app.ui(ui);
+            },
+            a,
+        );
+        h.run_steps(3);
+        let mut style = h.state_mut().run("options", json!({})).unwrap()["dimStyle"].clone();
+        style["DIMTXT"] = json!(19.0);
+        h.get(by().role(egui::accesskit::Role::TextInput).label("dimStyle")).focus();
+        h.run_steps(1);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run_steps(1);
+        h.get(by().role(egui::accesskit::Role::TextInput).label("dimStyle")).type_text(&style.to_string());
+        h.run_steps(2);
+        let a = h.state_mut();
+        if switch_drawing {
+            a.session.open_drawing(cadcraft_engine::doc::Drawing::new_metric(), "other.dxf", None);
+        }
+        let name = cadcraft_ui_egui::options::current_dim_style_name(a).unwrap();
+        a.session.execute("dimstyle", &json!({ "name": name, "DIMDEC": 7 })).unwrap();
+        let defaults = a.session.dim_defaults.clone();
+        let before = current(a, "DIMTXT");
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let a = h.state_mut();
+        assert_eq!(current(a, "DIMDEC"), json!(7));
+        if switch_drawing {
+            assert_eq!(current(a, "DIMTXT"), before);
+            assert_eq!(a.session.dim_defaults, defaults);
+        } else {
+            assert_eq!(current(a, "DIMTXT"), json!(19.0));
+            assert_eq!(a.session.dim_defaults.get("DIMDEC"), defaults.get("DIMDEC"));
+        }
+    }
+}
