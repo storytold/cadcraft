@@ -40,6 +40,7 @@ pub mod finddlg;
 pub mod hatchdlg;
 mod line_editor;
 mod mtext_editor;
+pub mod objectscale;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
@@ -372,6 +373,8 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Annotation Object Scale dialog while open ([`objectscale`]).
+    pub objectscale: Option<objectscale::ObjectScaleDlg>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
     /// The Write Block dialog ([`wblock`]).
@@ -437,6 +440,7 @@ impl CadApp {
             autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            objectscale: None,
             bedit: bedit::State::default(),
             wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
