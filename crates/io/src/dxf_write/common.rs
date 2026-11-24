@@ -16,7 +16,16 @@ pub(super) fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W {
+        t: Vec::new(),
+        next: 0,
+        used: std::collections::HashSet::new(),
+        pstyles: HashMap::new(),
+        layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
+        reactors: HashMap::new(),
+    };
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };
@@ -100,6 +109,10 @@ pub(super) fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass
     }
     if let Some(v) = transparency_440(e.common.transparency) {
         w.i(440, v);
+    }
+    // ByBlock is the plot style name type 1 (ByLayer, 0, is the default and left out).
+    if e.common.plot_style.trim().eq_ignore_ascii_case("byblock") {
+        w.i(380, 1);
     }
     // A named plot style (not ByLayer/ByBlock): its placeholder object.
     if let Some(h) = w.pstyles.get(&e.common.plot_style.trim().to_ascii_uppercase()).cloned() {
@@ -241,10 +254,82 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
     if q.is_finite() { Vec3::new(q.x, q.y, t.insert.z) } else { t.insert }
 }
 
-pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
-    w.p(10, text_insert(d, t));
+fn relative_match(a: f64, b: f64) -> bool {
+    a.is_finite() && b.is_finite() && (a - b).abs() <= 1e-9 * a.abs().max(b.abs())
+}
+
+// A fitted dimension depends on the point distance, independently of position and direction.
+fn imported_fit_scale(original: &Text, current: &Text) -> Option<f64> {
+    let (Some(first), Some(second)) = (original.align_pt, current.align_pt) else {
+        return None;
+    };
+    let before = original.insert.xy().dist(first.xy());
+    let after = current.insert.xy().dist(second.xy());
+    if !before.is_finite() || !after.is_finite() || before <= 0.0 || after <= 0.0 {
+        return None;
+    }
+    if relative_match(before, after) {
+        return Some(1.0);
+    }
+    let scale = after / before;
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
+/// `attdef_prompt` is `Some` for an ATTDEF (its prompt, which may be empty) and `None` for an ATTRIB.
+pub(super) fn text_tags(
+    w: &mut W,
+    d: &Drawing,
+    t: &Text,
+    attrib: Option<(&Attrib, Version)>,
+    attdef_prompt: Option<&str>,
+    source: (cadcraft_doc::Handle, usize),
+) {
+    let fitted;
+    let t = if matches!(t.halign, HAlign::Aligned | HAlign::Fit) {
+        let mut resolved = t.clone();
+        // Imported dimensions use the originating font's measurements. A substituted font
+        // must not replace them while the fitting inputs still match the read-time snapshot.
+        if let Some((original, style)) = d.foreign.text_fits.get(&source.0).and_then(|texts| texts.get(source.1))
+            && original.value == t.value
+            && let Some(scale) = imported_fit_scale(original, t)
+            && original.style == t.style
+            && *style == d.text_style(&t.style).cloned().unwrap_or_default()
+            && original.halign == t.halign
+            && original.valign == t.valign
+            && original.oblique == t.oblique
+            && original.width_factor == t.width_factor
+            && (t.halign != HAlign::Fit || relative_match(t.height, original.height * scale))
+        {
+            if t.halign == HAlign::Aligned && !t.value.is_empty() {
+                resolved.height = original.height * scale;
+            }
+            if let Some(second) = t.align_pt {
+                let distance = t.insert.xy().dist(second.xy());
+                if distance.is_finite() && distance > 1e-12 {
+                    resolved.rotation = t.insert.xy().angle_to(second.xy());
+                }
+            }
+        } else {
+            resolved = cadcraft_render::fitted_text_entity(d, t, &t.value);
+        }
+        fitted = resolved;
+        &fitted
+    } else {
+        t
+    };
+    let attdef = attdef_prompt.is_some();
+    // An attribute definition with no default value is drawn as its tag, whatever its prompt: the
+    // baseline start AutoCAD stored is judged against the tag's width too. A stored point that is
+    // close to the empty text's own start is kept as it is, so the font's width of the tag never
+    // moves it.
+    let own = text_insert(d, t);
+    let insert = match attrib {
+        Some((a, _)) if attdef && t.value.is_empty() && own != t.insert => text_insert(d, &Text { value: a.tag.clone(), ..t.clone() }),
+        _ => own,
+    };
+    w.p(10, insert);
     w.f(40, t.height);
-    w.s(1, &t.value);
+    w.s(1, crate::dxf_read::mtext_dxf::encode_line(&t.value));
     if t.rotation != 0.0 {
         w.f(50, t.rotation.to_degrees());
     }
@@ -277,12 +362,12 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
     }
     match attrib {
         Some((a, target)) => {
-            w.s(100, if attdef_prompt.is_some() { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
+            w.s(100, if attdef { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
             if target >= Version::R2010 {
                 w.i(280, 0);
             }
             if let Some(prompt) = attdef_prompt {
-                w.s(3, prompt);
+                w.s(3, crate::dxf_read::mtext_dxf::encode_line(prompt));
             }
             w.s(2, &a.tag);
             w.i(70, attrib_flags(a));

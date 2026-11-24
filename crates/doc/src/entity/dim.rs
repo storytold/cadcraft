@@ -52,6 +52,11 @@ pub struct Dimension {
     /// Anonymous block with the rendered geometry (from files); regenerated when edited.
     #[serde(default)]
     pub block: Option<String>,
+    /// Insertion point (DXF group 12): a dimension moved by an older AutoCAD keeps its offset
+    /// here with the `*D` block's contents left where they were, and is drawn translated by it.
+    /// Zero once the geometry is regenerated from the definition points.
+    #[serde(default)]
+    pub insertion_point: Vec3,
     /// Per-dimension style overrides (DIMOVERRIDE): DimStyle field names (camelCase) → values,
     /// merged over the named style.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]

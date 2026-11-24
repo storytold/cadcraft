@@ -226,6 +226,22 @@ fn find_text_reads_texts_and_render_shows_one_area() {
     assert_eq!((w, h), (1600, 800));
 }
 
+/// Guards #3011: `find_text` filters by `query` as it does by `contains`, instead of ignoring it
+/// and returning every text.
+#[test]
+fn find_text_filters_by_query() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [1, 1], "height": 0.15, "text": "RECAMARA 1"}}));
+    tool(&mut s, "execute", json!({"command": "text", "params": {"at": [50, 1], "height": 0.15, "text": "COCINA"}}));
+    assert_eq!(tool(&mut s, "find_text", json!({}))["count"], 2);
+    let r = tool(&mut s, "find_text", json!({"query": "cocina"}));
+    assert_eq!((r["count"].as_u64(), r["texts"][0]["text"].as_str()), (Some(1), Some("COCINA")), "{r}");
+    assert_eq!(tool(&mut s, "find_text", json!({"query": "nada"}))["count"], 0);
+    // `contains` still works and wins when both are given.
+    assert_eq!(tool(&mut s, "find_text", json!({"contains": "recamara", "query": "cocina"}))["texts"][0]["text"], "RECAMARA 1");
+}
+
 /// Guards a lazy Remote bridge: it serves tools without the app, reports how to start it
 /// (`--control`), and reaches the app once that app starts listening on the port.
 #[test]
@@ -258,4 +274,219 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     let r = call(&mut s, 4, "tools/call", json!({"name": "command_line", "arguments": {"text": ""}}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
+}
+
+/// The pixels of a `render` tool result.
+fn render_pixels(s: &mut Server, args: Value) -> tiny_skia::Pixmap {
+    let img = tool(s, "render", args);
+    assert_eq!(img["type"], "image", "{img}");
+    let png = cadcraft_engine::cmd::file::base64_decode(img["data"].as_str().unwrap()).unwrap();
+    tiny_skia::Pixmap::decode_png(&png).unwrap()
+}
+
+/// The RGB of pixel (x, y).
+fn rgb(pm: &tiny_skia::Pixmap, x: u32, y: u32) -> (u8, u8, u8) {
+    let c = pm.pixel(x, y).unwrap();
+    (c.red(), c.green(), c.blue())
+}
+
+/// The pixel of the middle column that differs most from the corner: what the line along the
+/// middle of the image is drawn with.
+fn ink(pm: &tiny_skia::Pixmap) -> (u8, u8, u8) {
+    let bg = rgb(pm, 0, 0);
+    let far = |c: &(u8, u8, u8)| bg.0.abs_diff(c.0) as u32 + bg.1.abs_diff(c.1) as u32 + bg.2.abs_diff(c.2) as u32;
+    (0..pm.height()).map(|y| rgb(pm, pm.width() / 2, y)).max_by_key(far).unwrap()
+}
+
+/// A drawing with one line along y = 0: colour 7 (layer 0's colour), or red on a red layer.
+fn line_drawing(red: bool) -> Server {
+    let mut s = Server::new(Box::new(Headless::default()));
+    if red {
+        tool(&mut s, "execute", json!({"command": "layer.new", "params": {"name": "Red", "color": "red", "current": true}}));
+    }
+    tool(&mut s, "execute", json!({"command": "line", "params": {"points": [[0, 0], [10, 0]]}}));
+    s
+}
+
+/// Around the line, which runs along the middle of pixel row 20 of a 120 x 40 image (not on a
+/// pixel edge, so it isn't blended across two rows).
+const WINDOW: [[f64; 2]; 2] = [[-1.0, -1.95], [11.0, 2.05]];
+
+/// Guards #803: `render` draws on the background asked for (`white`, `paper`, `#rrggbb`) and a
+/// colour-7 line follows it, as on a plot: dark on white, light on the dark canvas, which stays
+/// the default.
+#[test]
+fn render_draws_on_the_background_asked_for() {
+    let mut s = line_drawing(false);
+    let dark = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40}));
+    assert_eq!(rgb(&dark, 0, 0), (33, 40, 48), "the default stays the dark canvas");
+    let (r, g, b) = ink(&dark);
+    assert!(r > 200 && g > 200 && b > 200, "colour 7 is light on the dark canvas: {:?}", (r, g, b));
+    for bg in ["white", "paper", "WHITE"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": bg}));
+        let (w, h) = (pm.width(), pm.height());
+        for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+            assert_eq!(rgb(&pm, x, y), (255, 255, 255), "{bg}: corner ({x}, {y})");
+        }
+        let (r, g, b) = ink(&pm);
+        assert!(r < 128 && g < 128 && b < 128, "{bg}: colour 7 is drawn dark on white: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "#336699"}));
+    assert_eq!(rgb(&pm, 0, 0), (0x33, 0x66, 0x99));
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "dark"}));
+    assert_eq!(rgb(&pm, 0, 0), (33, 40, 48));
+}
+
+/// Guards #803: `plot_style` draws with a built-in plot style table: `monochrome.ctb` turns a red
+/// line black, which without one stays red.
+#[test]
+fn render_draws_with_the_plot_style_asked_for() {
+    let mut s = line_drawing(true);
+    let plain = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white"}));
+    let (r, g, b) = ink(&plain);
+    assert!(r > 200 && g < 100 && b < 100, "red without a plot style: {:?}", (r, g, b));
+    for table in ["monochrome.ctb", "Monochrome", "monochrome.CTB"] {
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": table}));
+        let (r, g, b) = ink(&pm);
+        assert!(r < 100 && r == g && g == b, "{table}: red plots black: {:?}", (r, g, b));
+    }
+    let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "background": "white", "plot_style": "grayscale.ctb"}));
+    let (r, g, b) = ink(&pm);
+    assert!(r == g && g == b, "grayscale.ctb draws red grey: {:?}", (r, g, b));
+}
+
+/// Guards #803: a plot style alone plots on white, as on paper, so `monochrome.ctb` doesn't draw
+/// black on the dark canvas; `background` still wins, and `plot_style: "none"` keeps the canvas
+/// and the objects' colours.
+#[test]
+fn render_with_a_plot_style_plots_on_white() {
+    for red in [false, true] {
+        let mut s = line_drawing(red);
+        for table in ["monochrome.ctb", "grayscale.ctb"] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": table}));
+            assert_eq!(rgb(&pm, 0, 0), (255, 255, 255), "{table} without a background plots on white");
+            let (r, g, b) = ink(&pm);
+            assert!(r == g && g == b && r < 128, "{table}, red {red}: drawn dark grey or black on white: {:?}", (r, g, b));
+        }
+        let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": "monochrome.ctb", "background": "dark"}));
+        assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "an explicit background wins");
+        for none in ["none", ""] {
+            let pm = render_pixels(&mut s, json!({"window": WINDOW, "width": 120, "height": 40, "plot_style": none}));
+            assert_eq!(rgb(&pm, 0, 0), (33, 40, 48), "{none:?} keeps the dark canvas");
+            let (r, g, b) = ink(&pm);
+            let light = r > 200 && g > 200 && b > 200;
+            assert!(if red { r > 200 && g < 100 && b < 100 } else { light }, "{none:?}, red {red}: own colour {:?}", (r, g, b));
+        }
+    }
+}
+
+/// Guards #803: an unknown `background` or `plot_style` is refused with what is accepted, not
+/// drawn some other way; a value of the wrong type is invalid params.
+#[test]
+fn render_refuses_unknown_backgrounds_and_plot_styles() {
+    let mut s = line_drawing(false);
+    for (args, wants) in [
+        (json!({"background": "purple"}), "#rrggbb"),
+        (json!({"background": "#12345"}), "#rrggbb"),
+        (json!({"background": "336699"}), "#rrggbb"),
+        (json!({"background": ""}), "#rrggbb"),
+        (json!({"plot_style": "nope.ctb"}), "monochrome.ctb"),
+        (json!({"plot_style": "default.ctx"}), "monochrome.ctb"),
+    ] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["result"]["isError"], json!(true), "{args} must be refused, not drawn");
+        let msg = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(msg.contains(wants), "{args}: {msg}");
+    }
+    for args in [json!({"background": 7}), json!({"plot_style": ["monochrome.ctb"]})] {
+        let r = call(&mut s, 2, "tools/call", json!({"name": "render", "arguments": args.clone()}));
+        assert_eq!(r["error"]["code"], -32602, "{args} must be invalid params");
+    }
+    // The headless control method refuses them too.
+    let mut h = Headless::default();
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"background": "purple"})).is_err());
+    assert!(crate::Backend::call(&mut h, "ui.render", json!({"plot_style": 3})).is_err());
+}
+
+#[test]
+fn legacy_protocol_routing_and_version_negotiation() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    assert!(s.handle_line(r#"{"method":"notifications/initialized"}"#).is_none());
+    assert!(s.is_initialized());
+    for (params, expected) in
+        [(json!(null), "2025-06-18"), (json!({"protocolVersion":"2024-11-05"}), "2024-11-05"), (json!({"protocolVersion":"other"}), "2025-06-18")]
+    {
+        let response = call(&mut s, 1, "initialize", params);
+        assert_eq!(response["result"]["protocolVersion"], expected);
+        assert_eq!(response["result"]["serverInfo"]["title"], "CADCraft");
+        assert!(response["result"]["instructions"].as_str().unwrap().contains("Backend:"));
+    }
+    let response: Value =
+        serde_json::from_str(&s.handle_line(r#"[{"id":[1],"method":"ping","params":5},{"method":"ignored"},{"result":1},{}]"#).unwrap()).unwrap();
+    assert_eq!(
+        response,
+        json!([{"jsonrpc":"2.0","id":[1],"result":{}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"missing `method`"}}])
+    );
+}
+
+/// A folder of this test's own, made here so nothing else put it there first, and removed when the
+/// test ends, also when it fails.
+struct TestDir(std::path::PathBuf);
+
+impl TestDir {
+    /// A new folder named after `tag`: creating it must not find one already there, such as one a
+    /// failed run with the same process id left behind.
+    fn fresh(tag: &str) -> TestDir {
+        let mut n = 0u32;
+        loop {
+            let dir = std::env::temp_dir().join(format!("{tag}-{}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return TestDir(dir),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+                Err(e) => panic!("{}: {e}", dir.display()),
+            }
+        }
+    }
+}
+
+impl Drop for TestDir {
+    /// Removes the folder and all it holds.
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// With a read root and no write root (the read-only use #1931 asks for), an agent still draws,
+/// reads and renders, but no route writes a file outside: the save tool, `execute` of the
+/// writers, a save hidden mid-line at the command line and one in a script. Carried from #1973's
+/// read-only mode tests.
+#[test]
+fn a_read_root_alone_still_draws_but_writes_nothing() {
+    let base = TestDir::fresh("cc-mcp-readonly");
+    let (inside, outside) = (base.0.join("in"), base.0.join("outside"));
+    std::fs::create_dir(&inside).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let roots = cadcraft_engine::file_access::AutomationRoots::new(Some(&inside), None).unwrap();
+    let mut s = Server::new(Box::new(Headless::default().with_automation_roots(roots)));
+    let _ = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    let _ = s.handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+
+    tool(&mut s, "command_line", json!({"text": "rectang 0,0 100,60"}));
+    tool(&mut s, "execute", json!({"command": "circle", "params": {"center": [10, 10], "radius": 4}}));
+    assert_eq!(tool(&mut s, "inspect_drawing", json!({}))["entityCount"], 2, "drawing edits are allowed");
+    assert_eq!(tool(&mut s, "render", json!({}))["type"], json!("image"), "a render without `path` writes nothing");
+
+    let out = |n: &str| outside.join(n).to_string_lossy().into_owned();
+    let refused = |s: &mut Server, name: &str, args: Value| {
+        let r = call(s, 98, "tools/call", json!({"name": name, "arguments": args}));
+        assert_eq!(r["result"]["isError"], json!(true), "{name} was not refused: {r}");
+    };
+    refused(&mut s, "save", json!({"path": out("a.dxf")}));
+    refused(&mut s, "execute", json!({"command": "saveas", "params": {"path": out("b.dxf")}}));
+    refused(&mut s, "execute", json!({"command": "wblock", "params": {"path": out("c.dxf")}}));
+    refused(&mut s, "render", json!({"path": out("d.png")}));
+    let _ = call(&mut s, 97, "tools/call", json!({"name": "command_line", "arguments": {"text": format!("zoom e save {}", out("e.dxf"))}}));
+    let _ = call(&mut s, 96, "tools/call", json!({"name": "script", "arguments": {"text": format!("circle 0,0 1\nsave {}\n", out("f.dxf"))}}));
+    let written: Vec<_> = std::fs::read_dir(&outside).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
+    assert!(written.is_empty(), "nothing is written outside the roots: {written:?}");
 }

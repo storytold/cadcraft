@@ -54,16 +54,34 @@ fn header_settings_round_trip_through_dxf() {
 
 #[test]
 fn header_settings_round_trip_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = drawing();
     let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
     let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     check("DWG", &r);
 }
 
+/// `$PSTYLEMODE` (0 = named plot styles, 1 = colour-dependent) is written as read, as DXF and
+/// as DWG: left out, readers default to colour-dependent and the drawing plots with the wrong
+/// table (#2332).
+#[test]
+fn plot_style_mode_round_trips() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let dxf = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$PSTYLEMODE\n290\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = cadcraft_io::read_dxf(dxf.as_bytes()).unwrap();
+    assert_eq!(d.header.i64("PSTYLEMODE", -1), 0, "read");
+    let as_dxf = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(as_dxf.header.i64("PSTYLEMODE", -1), 0, "DXF");
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    let as_dwg = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    assert_eq!(as_dwg.header.i64("PSTYLEMODE", -1), 0, "DWG");
+}
+
 /// The current layer (`$CLAYER`) survives a DWG save and reopen, ASCII or not. A DWG stores a
 /// handle to the layer, and the writer used the null handle, so the drawing came back on "0" (#2252).
 #[test]
 fn the_current_layer_round_trips_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     for name in ["Survey_B", "Survey_\u{c4}"] {
         let mut d = Drawing::new_metric();
         d.layers.push(cadcraft_doc::Layer::new(name));
@@ -80,6 +98,7 @@ fn the_current_layer_round_trips_through_dwg() {
 /// layer, under the layer's own spelling, not on "0" (#2252).
 #[test]
 fn a_current_layer_in_other_case_resolves_to_the_layer() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     d.layers.push(cadcraft_doc::Layer::new("Survey_\u{c4}"));
     d.header.set_str("CLAYER", "Survey_\u{e4}");

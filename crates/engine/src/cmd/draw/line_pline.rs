@@ -39,6 +39,10 @@ fn vertex_value(v: &Value) -> Option<PolyVertex> {
     Some(PolyVertex { p, bulge: f64_or(v, "bulge", 0.0), start_width: f64_or(v, "startWidth", 0.0), end_width: f64_or(v, "endWidth", 0.0) })
 }
 
+fn current_elevation(s: &Session) -> Result<f64> {
+    Ok(s.doc()?.header.f64("ELEVATION", 0.0))
+}
+
 pub(super) fn run_pline(s: &mut Session, p: &Value) -> Result<Value> {
     let raw = p.get("vertices").or_else(|| p.get("points")).and_then(Value::as_array);
     let mut vertex_widths = false;
@@ -59,6 +63,7 @@ pub(super) fn run_pline(s: &mut Session, p: &Value) -> Result<Value> {
     let mut k = lwpoly(vs, bool_or(p, "closed", false));
     if let EntityKind::LwPolyline(pl) = &mut k {
         pl.const_width = width;
+        pl.elevation = current_elevation(s)?;
     }
     added(s.add_entity(k)?)
 }
@@ -180,6 +185,7 @@ impl Interactive for LineM {
 #[derive(Default)]
 pub(super) struct PlineM {
     verts: Vec<PolyVertex>,
+    elevation: f64,
     arc_mode: bool,
     /// Total width at the start and end of the next segment (Width / Halfwidth answers).
     start_w: f64,
@@ -197,6 +203,7 @@ impl PlineM {
     fn entity(&self, closed: bool) -> EntityKind {
         let mut k = lwpoly(self.verts.clone(), closed);
         if let EntityKind::LwPolyline(pl) = &mut k {
+            pl.elevation = self.elevation;
             // Every segment the same uniform width: store it as the constant width, as before.
             let segs = if closed { pl.vertices.len() } else { pl.vertices.len().saturating_sub(1) };
             let w = pl.vertices.first().map_or(0.0, |v| v.start_width);
@@ -267,6 +274,7 @@ impl Interactive for PlineM {
     }
     /// Segments start at PLINEWID, the width the last Width or Halfwidth answer left.
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.elevation = current_elevation(s)?;
         let w = s.doc()?.header.f64("PLINEWID", 0.0);
         (self.start_w, self.end_w) = if w.is_finite() && w > 0.0 { (w, w) } else { (0.0, 0.0) };
         Ok(Step::Continue)

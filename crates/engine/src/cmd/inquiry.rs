@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dist", "Distance", run_dist)
             .menu(&["Tools", "Inquiry", "Distance"])
             .alias(&["di"])
-            .params("{p1, p2}")
+            .params("{p1, p2} -> {distance, angle, angleFromXY, dx, dy, dz (world), ucs: {angle, angleFromXY, dx, dy, dz} (in the frame typed points are read in: the current UCS, or the World UCS while the UCS is tilted; as the message), message}")
             .noundo()
             .transparent()
             .interactive(|_| Ok(Box::new(DistM::default()))),
@@ -56,7 +56,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
         CommandSpec::new("loops", "Implied Loops", loops::run).params(loops::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
-            .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
+            .params("{contains?: text (any case; `query` is the same filter), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
             .noundo(),
         CommandSpec::new("countlist", "Count List", count::run_countlist)
             .params("{space?: all (default)|current|model|<layout>, nested?: bool} → per-block counts, as COUNT")
@@ -192,11 +192,21 @@ fn angle_from_xy(d: Vec3) -> f64 {
     d.z.atan2(d.xy().len())
 }
 
-fn dist_text(s: &Session, a: Vec3, b: Vec3) -> String {
+/// The delta from `a` to `b` along the axes of the current UCS (the World UCS while that is
+/// tilted): what DIST's report shows.
+fn dist_delta(s: &Session, a: Vec3, b: Vec3) -> Vec3 {
+    let u = s.input_ucs();
+    // The difference turned onto the axes: converting each point first would subtract a far
+    // origin and round a short distance away.
     let d = b - a;
+    Vec3::new(d.dot(u.x), d.dot(u.y), d.dot(u.z()))
+}
+
+/// DIST's report: the distance, the angles and the deltas `d`, measured in the current UCS.
+fn dist_text(s: &Session, dist: f64, d: Vec3) -> String {
     format!(
         "Distance = {},  Angle in XY Plane = {},  Angle from XY Plane = {}\nDelta X = {},  Delta Y = {},   Delta Z = {}",
-        fmt_d(s, (b - a).len()),
+        fmt_d(s, dist),
         fmt_a(s, d.xy().angle()),
         fmt_a(s, angle_from_xy(d)),
         fmt_d(s, d.x),
@@ -217,6 +227,13 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "dist", p, "p1")?;
     let b = point3_req(s, "dist", p, "p2")?;
     let d = b - a;
+    if !d.len().is_finite() {
+        return Err(bad("dist", "the distance is too large"));
+    }
+    s.distance = d.len();
+    s.last_point = a.xy();
+    // Top level: the world values, as ID's x, y, z are; `ucs` has what the message shows.
+    let du = dist_delta(s, a, b);
     Ok(json!({
         "distance": d.len(),
         "angle": d.xy().angle().to_degrees(),
@@ -224,18 +241,28 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
         "dx": d.x,
         "dy": d.y,
         "dz": d.z,
-        "message": dist_text(s, a, b),
+        "ucs": {
+            "angle": du.xy().angle().to_degrees(),
+            "angleFromXY": angle_from_xy(du).to_degrees(),
+            "dx": du.x,
+            "dy": du.y,
+            "dz": du.z,
+        },
+        "message": dist_text(s, d.len(), du),
     }))
 }
 
+/// ID's report: the point in the current UCS.
 fn id_text(s: &Session, a: Vec3) -> String {
-    format!("X = {}     Y = {}     Z = {}", fmt_d(s, a.x), fmt_d(s, a.y), fmt_d(s, a.z))
+    let u = s.input_ucs().to_ucs3(a);
+    format!("X = {}     Y = {}     Z = {}", fmt_d(s, u.x), fmt_d(s, u.y), fmt_d(s, u.z))
 }
 
 fn run_id(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "id", p, "at")?;
     s.last_point = a.xy();
-    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "message": id_text(s, a) }))
+    let u = s.input_ucs().to_ucs3(a);
+    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "ucs": [u.x, u.y, u.z], "message": id_text(s, a) }))
 }
 
 /// The Z of what is drawn at `p`: the object a pick finds there, at that point, or the current
@@ -285,6 +312,14 @@ fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
         EntityKind::MText(t) => Some(t.insert.z),
         EntityKind::Insert(i) => Some(i.insert.z),
         EntityKind::Face3d(f) => face_z(&f.corners, p).or_else(|| along(&f.corners, true)),
+        // Drawn as its faces' visible edges: the Z on the nearest one.
+        EntityKind::PolyfaceMesh(m) => m
+            .faces3d()
+            .iter()
+            .flat_map(cadcraft_doc::Face3d::visible_edges)
+            .map(|(a, b)| on_segment(a, b))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(z, _)| z),
         _ => None,
     }
 }
@@ -422,6 +457,8 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(what) = too_large(a, per) {
         return Err(bad("area", format!("the {what} is too large")));
     }
+    s.area = a;
+    s.perimeter = per;
     Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
 }
 
@@ -508,6 +545,13 @@ pub(super) fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
             total
         }
         EntityKind::Region(r) => (r.area(), r.perimeter()),
+        // Like an open polyline: the area closed by the chord, the perimeter its own length.
+        EntityKind::Spline(sp) if sp.is_valid() => {
+            let b = sp.bounds();
+            let pts = sp.tessellate_spans((b.min.dist(b.max) * 1e-7).max(1e-12));
+            // A length past f64's range is too large to report, as a polyline's is, not 0.
+            (cadcraft_geom::shoelace(&pts).abs(), sp.checked_length().unwrap_or(f64::INFINITY))
+        }
         _ => return Err(bad("area", "object has no area")),
     })
 }
@@ -569,11 +613,13 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
         "dimStyles": d.dim_styles.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
         "blocks": d.blocks.keys().filter(|k| !k.starts_with('*')).cloned().collect::<Vec<_>>(),
         "layouts": d.layouts.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
-        "selection": st.selection.iter().map(|h| h.hex()).collect::<Vec<_>>(),
+        "selection": st.shown_selection().iter().map(|h| h.hex()).collect::<Vec<_>>(),
         "undo": st.undo.iter().rev().take(20).map(|u| u.label.clone()).collect::<Vec<_>>(),
         "view": { "center": [st.view().center.x, st.view().center.y], "height": st.view().height },
         // Records of the file the drawing came from that the reader could not place.
         "skipped": { "count": d.skipped_records.values().fold(0usize, |a, n| a.saturating_add(*n)), "sections": d.skipped_records },
+        // What reading the file left out, in words (a damaged DWG's unreadable object records).
+        "readNotes": d.read_notes,
     });
     if bool_or(p, "entities", true)
         && let (Some(o), Some(store)) = (out.as_object_mut(), d.space(&space))
@@ -640,7 +686,12 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
             v.as_u64().map(|n| usize::try_from(n).unwrap_or(usize::MAX)).ok_or_else(|| bad(CMD, format!("`{k}` must be a whole number, 0 or more")))
         })
     };
-    let contains = text("contains")?;
+    // `query` is what agents tend to call the filter; without this alias it was silently ignored
+    // and every text came back (#3011).
+    let contains = match text("contains")? {
+        Some(c) => Some(c),
+        None => text("query")?,
+    };
     let layer = text("layer")?;
     let window = given("window")
         .map(|w| {
@@ -864,16 +915,25 @@ impl Interactive for DistM {
                 self.first_source = s.picked_viewport;
                 Ok(Step::Continue)
             }
-            (Some(a), Input::Point(b)) => {
+            (Some(first), Input::Point(b)) => {
                 let (a, b) = match (self.first_source, s.picked_viewport) {
                     (Some(first), Some(second)) if first.viewport == second.viewport => (first.point, second.point),
-                    _ => (a, b),
+                    _ => (first, b),
                 };
                 let (za, zb) = if self.first_source.is_some() || s.picked_viewport.is_some() { (0.0, 0.0) } else { (z_at(s, a), z_at(s, b)) };
-                let t = dist_text(s, Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                let (a, b) = (Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                if !(b - a).len().is_finite() {
+                    // The first point stays LASTPOINT, as after a measurement.
+                    s.last_point = first;
+                    return Err(bad("dist", "the distance is too large"));
+                }
+                let t = dist_text(s, (b - a).len(), dist_delta(s, a, b));
                 for l in t.lines() {
                     s.echo(l.to_string());
                 }
+                // As in AutoCAD, the second point doesn't become LASTPOINT: the first stays.
+                s.distance = (b - a).len();
+                s.last_point = first;
                 Ok(Step::Done)
             }
             (Some(a), Input::Keyword(k)) if k == "Multiple points" => {
@@ -901,7 +961,11 @@ impl DistM {
             .as_deref()
             .or(self.multi.as_deref())
             .map_or(0.0, |pts| if closed { arcs::polyline(pts, &self.bulges, true).len() } else { path_len(pts, &self.bulges) });
+        if !d.is_finite() {
+            return Err(bad("dist", "the distance is too large"));
+        }
         s.echo(format!("Distance = {}", fmt_d(s, d)));
+        s.distance = d;
         Ok(Step::Done)
     }
 }
@@ -1115,10 +1179,14 @@ impl AreaM {
             return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
         s.echo(area_text(s, a, per));
+        // AREA: this area, or in Add and Subtract mode the running total; PERIMETER: this area's.
+        s.perimeter = per;
         if self.mode == AreaMode::Single {
+            s.area = a;
             return Step::Done;
         }
         self.total = total;
+        s.area = total;
         s.echo(format!("Total area = {}", fmt_d(s, self.total)));
         Step::Continue
     }

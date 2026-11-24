@@ -297,6 +297,41 @@ fn arrayedit_base_replace_and_reset() {
 }
 
 #[test]
+fn a_new_base_point_keeps_replaced_items_in_place() {
+    let mut s = Session::new();
+    let a = rect_array(&mut s);
+    // Item 1 (at 2,0) becomes a circle one unit to its right.
+    let c = circle(&mut s, 3.0, 10.0);
+    s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [c], "base": [2, 10], "items": [[1, 0, 0]]}})).unwrap();
+    assert_eq!(centres(&s, &a), vec![(0, 0), (3000, 0), (4000, 0)]);
+    // Neither a new base point nor a key point moves the replacement (or the other items).
+    s.execute("arrayedit", &json!({"handle": a, "base": [7, 7]})).unwrap();
+    assert_eq!(centres(&s, &a), vec![(0, 0), (3000, 0), (4000, 0)]);
+    s.execute("arrayedit", &json!({"handle": a, "keyPoint": [4, 0.9]})).unwrap();
+    assert_eq!(centres(&s, &a), vec![(0, 0), (3000, 0), (4000, 0)]);
+    // The replacement still counts from its item.
+    s.execute("arrayedit", &json!({"handle": a, "colSpacing": 4})).unwrap();
+    assert_eq!(centres(&s, &a), vec![(0, 0), (5000, 0), (8000, 0)]);
+}
+
+#[test]
+fn a_bad_key_point_refuses_arrayedit_before_reset_or_replace() {
+    let mut s = Session::new();
+    let a = rect_array(&mut s);
+    let l = s.execute("line", &json!({"points": [[0, 20], [1, 20]]})).unwrap()["handles"][0].clone();
+    s.execute("arrayedit", &json!({"handle": a, "replace": {"handles": [l], "base": [0, 20], "items": [[1, 0, 0]]}})).unwrap();
+    let c = s.execute("line", &json!({"points": [[50, 50], [51, 50]]})).unwrap()["handles"][0].clone();
+    for bad in [
+        json!({"handle": a, "reset": true, "keyPoint": "bad"}),
+        json!({"handle": a, "reset": true, "replace": {"handles": [c], "keyPoint": [1], "items": [[0, 0, 0]]}}),
+        json!({"handle": a, "replace": {"handles": [c], "items": [[2, 0, 0]]}, "keyPoint": {"x": 1}}),
+    ] {
+        assert!(s.execute("arrayedit", &bad).is_err(), "{bad}");
+        assert_eq!((centres(&s, &a), lines_in(&s, &a)), (vec![(0, 0), (4000, 0)], 1), "{bad}");
+    }
+}
+
+#[test]
 fn arrayedit_source_then_arrayclose() {
     let mut s = Session::new();
     let a = rect_array(&mut s);
@@ -336,7 +371,7 @@ fn typed_arrayedit() {
     let a = rect_array(&mut s);
     typed(&mut s, &["arrayedit", "l"]);
     let p = s.prompt_text();
-    assert!(p.contains("Enter an option or [Source/REPlace/Base point/Rows/Columns/Levels/RESet/eXit] <eXit>"), "{p}");
+    assert!(p.contains("Enter an option [Source/REPlace/Base point/Rows/Columns/Levels/RESet/eXit] <eXit>"), "{p}");
     typed(&mut s, &["c", "4", "t", "9", "r", "2", "5", ""]);
     assert!(s.prompt_text().contains("Enter an option"), "{}", s.prompt_text());
     assert_eq!(centres(&s, &a).len(), 8);

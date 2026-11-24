@@ -16,9 +16,11 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod raster;
 mod refedit;
 mod store;
 mod tables;
+mod xclip;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,15 +29,25 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds};
+pub use extents::{
+    BlockBoundsCache, MAX_BLOCK_DEPTH, entity_bounds, entity_bounds_cached, extent_bounds, extent_bounds_cached, ole_frame, ole_frame_accepts,
+    ole_frame_transform,
+};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use raster::{Raster, Rasters};
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
+pub use xclip::{ClipBoundary, MAX_CLIP_VERTICES};
+
+/// Handles at or above this are not followed: a file may name one (an object's handle, or its
+/// `$HANDSEED`), and the four billion handles above the limit stay free for the drawing's own
+/// growth. A file's handles keep their identity, however high they are (#913, #939).
+pub const HANDLE_LIMIT: u64 = u64::MAX - 0xFFFF_FFFF;
 
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
@@ -120,9 +132,17 @@ pub struct Drawing {
     pub scales: Vec<AnnoScale>,
     /// Next free handle.
     pub handseed: u64,
+    /// Handles a file's records hold in the reserved band, recorded while reading before the
+    /// record is placed: [`Drawing::new_handle`] skips them meanwhile. [`Drawing::bump_handseed`]
+    /// does not follow them (#913). Emptied once the file is read; never written to a file.
+    pub reserved_handles: BTreeSet<u64>,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
+    /// Model space's earlier UCSs for UCS Previous, oldest first (each layout keeps its own,
+    /// [`Layout::ucs_previous`]). Part of the drawing so undo restores them with the UCS. Never
+    /// written to a file.
+    pub ucs_previous: Vec<Ucs>,
     /// What reading the file left out (a DWG's object records the reader couldn't decode), told
     /// to the user when the drawing opens. Never written to a file.
     pub read_notes: Vec<String>,
@@ -132,6 +152,12 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
+    /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
+    pub rasters: Rasters,
 }
 
 impl Default for Drawing {
@@ -187,23 +213,94 @@ impl Drawing {
             parametric: Parametric::default(),
             scales: imperial_scales(),
             handseed: 0x100,
+            reserved_handles: BTreeSet::new(),
             hidden_objects: BTreeSet::new(),
+            ucs_previous: Vec::new(),
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            portable_fonts: false,
+            rasters: Rasters::default(),
         }
     }
 
-    /// Allocate a fresh handle.
+    /// Allocate a fresh handle: [`Drawing::next_handle`], with the seed moved past it. Past the
+    /// top of the range the drawing goes on growing in the reserved band (#913).
     pub fn new_handle(&mut self) -> Handle {
-        let h = Handle(self.handseed);
-        self.handseed = self.handseed.saturating_add(1);
+        let h = self.next_handle();
+        self.handseed = h.0.checked_add(1).unwrap_or(HANDLE_LIMIT);
         h
     }
+    /// The handle [`Drawing::new_handle`] gives out next (AutoCAD's `HANDSEED`), without taking it:
+    /// the first one at or above the seed that nothing holds. It skips
+    /// - the handles the drawing's file gave the objects CADCraft writes itself
+    ///   ([`foreign::Foreign::handles`]): AutoLISP names those objects by them, and a file
+    ///   CADCraft wrote numbers them above its `$HANDSEED` (#495);
+    /// - handles an object or a file record being read holds in the reserved band above
+    ///   [`HANDLE_LIMIT`]. A hostile or damaged file may name a `$HANDSEED` there, and a file
+    ///   object may hold that same handle; the seed does not follow a file's handles in the band,
+    ///   so taking it as-is would hand the file's object's handle to a new object and
+    ///   `EntityStore` would replace it (#913, #1921);
+    /// - handle 0, which a file reads as "no handle".
+    ///
+    /// Off the top of the range it goes on at the bottom of the band.
+    ///
+    /// Cost: below the band the reader and [`Drawing::bump_handseed`] keep the seed above every
+    /// handle an object holds (AUDIT repairs a drawing where that fails), and reserved handles are
+    /// all in the band, so there only `foreign.handles` is looked up. The scan of every space and
+    /// block definition runs only for a candidate in the band. Every handle skipped is a distinct
+    /// one something holds, so the walk ends within one step more than the count of held handles.
+    pub fn next_handle(&self) -> Handle {
+        let held = |h: u64| {
+            h == 0
+                || self.foreign.handles.contains_key(&Handle(h))
+                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || self.handle_in_use(Handle(h))))
+        };
+        let mut h = self.handseed;
+        // Counted only once a handle is skipped, so the usual first-try answer costs nothing.
+        let mut steps_left: Option<usize> = None;
+        while held(h) {
+            let left = steps_left.get_or_insert_with(|| self.held_handle_count());
+            let Some(rest) = left.checked_sub(1) else { break };
+            *left = rest;
+            h = h.checked_add(1).unwrap_or(HANDLE_LIMIT);
+        }
+        Handle(h)
+    }
+
+    /// Whether an object in any space or block definition already holds `h`.
+    fn handle_in_use(&self, h: Handle) -> bool {
+        self.model.contains(h) || self.layouts.iter().any(|l| l.entities.contains(h)) || self.blocks.values().any(|b| b.entities.contains(h))
+    }
+    /// An upper bound on how many handles [`Drawing::next_handle`] can find held, plus handle 0.
+    fn held_handle_count(&self) -> usize {
+        let spaces = self.layouts.iter().map(|l| l.entities.len()).chain(self.blocks.values().map(|b| b.entities.len()));
+        spaces
+            .fold(self.model.len(), usize::saturating_add)
+            .saturating_add(self.foreign.handles.len())
+            .saturating_add(self.reserved_handles.len())
+            .saturating_add(1)
+    }
+    /// Record a handle a file's record holds in the reserved band, before the record is placed in
+    /// the drawing, so [`Drawing::new_handle`] does not hand it to an object read earlier (#1276).
+    ///
+    /// Only handles at or above [`HANDLE_LIMIT`] are recorded: below it [`Drawing::bump_handseed`]
+    /// already moves the seed past them. The reservation stays separate from the seed because the
+    /// writer's growth lives above the limit and a file's handles there are not followed (#913).
+    pub fn reserve_handle(&mut self, h: Handle) {
+        if h.0 >= HANDLE_LIMIT {
+            self.reserved_handles.insert(h.0);
+        }
+    }
+
     /// Make sure future handles don't collide with `h` (after loading a file).
+    ///
+    /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not
+    /// followed, so a new object is never given the top handle and the file's object is never
+    /// replaced (#913). The handles above the limit are the drawing's room to grow.
     pub fn bump_handseed(&mut self, h: Handle) {
-        if h.0 >= self.handseed {
-            self.handseed = h.0.saturating_add(1);
+        if h.0 >= self.handseed && h.0 < HANDLE_LIMIT {
+            self.handseed = h.0 + 1;
         }
     }
 
@@ -369,13 +466,22 @@ impl Drawing {
         !self.hidden_objects.is_empty() && self.hidden_objects.contains(&h)
     }
 
-    /// Bounds of all visible entities in a space.
+    /// Whether an entity counts in the extents: as AutoCAD 2024 counts it for ZOOM Extents and
+    /// EXTMIN/EXTMAX, on a layer that is off too, but not on a frozen one.
+    pub fn in_extents(&self, e: &Entity) -> bool {
+        e.common.visible && self.layer(&e.common.layer).is_none_or(|l| !l.frozen) && !self.is_hidden_object(e.handle)
+    }
+
+    /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
+        // One block-bounds cache for the whole space: every reference to a block reuses its
+        // measured contents instead of measuring the definition again.
+        let mut cache = BlockBoundsCache::default();
         if let Some(store) = self.space(space) {
             for e in store.iter() {
-                if self.is_visible(e) {
-                    b = b.union(&entity_bounds(self, e, 0));
+                if self.in_extents(e) {
+                    b = b.union(&extent_bounds_cached(self, e, &mut cache));
                 }
             }
         }
