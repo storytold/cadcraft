@@ -50,10 +50,13 @@ fn ui_frame(app: &mut CadApp, ctx: &egui::Context) -> egui::FullOutput {
     ui_frame_sized(app, ctx, 800.0, 600.0)
 }
 
-/// Run one real `logic` + `ui` pass at the requested size and drop texture deltas, yielding the frame's output.
+/// Run one real frame at the requested size, as the desktop app does (the raw input hooks, then `logic` + `ui`), and
+/// drop texture deltas, yielding the frame's output. The framework's hook gives the runtime the Options interface
+/// scale, which it applies as egui's zoom.
 fn ui_frame_sized(app: &mut CadApp, ctx: &egui::Context, width: f32, height: f32) -> egui::FullOutput {
-    let raw = raw(width, height);
-    note_raw_geometry(app, ctx, &raw);
+    let mut raw = raw(width, height);
+    app.raw_input_hook(ctx, &mut raw);
+    app.before_input(ctx);
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
         app.ui(ui);
@@ -102,7 +105,16 @@ fn admission_counts_completed_but_undrained_and_never_evicts() {
     let ctx = egui::Context::default();
     crate::framework::install_headless(&ctx);
     let mut app = app();
-    let _receivers: Vec<_> = (0..MAX_REQUESTS).map(|_| admit_one(&mut app, &ctx)).collect();
+    // One geometry for every admission: a geometry seeded again between them is an identity change that rejects the
+    // queued requests at the next drain.
+    set_geometry(&mut app, &ctx, egui::vec2(800.0, 600.0));
+    let _receivers: Vec<_> = (0..MAX_REQUESTS)
+        .map(|_| {
+            let (tx, rx) = channel();
+            admit(&mut app, &ctx, None, tx);
+            rx
+        })
+        .collect();
     assert_eq!(app.shots.len(), MAX_REQUESTS);
     // Complete the issued slots without draining them: each still owns its reservation and request.
     let (_, callbacks) = issue_after_settling(&mut app, &ctx);
