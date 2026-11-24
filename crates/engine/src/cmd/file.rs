@@ -572,7 +572,7 @@ pub(super) fn has_dwg_header(bytes: &[u8]) -> bool {
 /// the backup. A file that doesn't (truncated, overwritten by another program) never replaces a
 /// good `.bak`.
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
-    has_dwg_header(bytes) || Format::has_dxf_header(bytes)
+    has_dwg_header(bytes) || Format::has_dxf_header(&bytes[..bytes.len().min(4096)])
 }
 
 /// How much of a drawing's end [`looks_complete`] reads.

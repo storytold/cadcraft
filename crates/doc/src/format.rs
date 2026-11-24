@@ -20,15 +20,25 @@ impl Format {
         if craft_dxf::is_binary(bytes) {
             return true;
         }
-        let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
-        let text = prefix.strip_prefix('\u{feff}').unwrap_or(&prefix).replace("\r\n", "\n");
-        let mut lines = text.split_terminator(['\r', '\n']);
-        while let Some(code) = lines.find(|line| !line.trim().is_empty()) {
+        let mut rest = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+        let mut lines = std::iter::from_fn(|| {
+            if rest.is_empty() {
+                return None;
+            }
+            let end = rest.iter().position(|&b| matches!(b, b'\r' | b'\n')).unwrap_or(rest.len());
+            let (line, after) = rest.split_at(end);
+            rest = match after {
+                [b'\r', b'\n', tail @ ..] | [b'\r' | b'\n', tail @ ..] => tail,
+                _ => after,
+            };
+            Some(line)
+        });
+        while let Some(code) = lines.by_ref().map(dxf_header_text).find(|code| *code != Some("")) {
             let Some(value) = lines.next() else { return false };
             // A blank line is skipped between tags, but it still occupies the value of a tag.
-            match code.trim().parse::<i32>() {
-                Ok(999) => continue,
-                Ok(0) => return value.trim().eq_ignore_ascii_case("SECTION"),
+            match code.and_then(|code| code.parse::<i32>().ok()) {
+                Some(999) => continue,
+                Some(0) => return dxf_header_text(value).is_some_and(|value| value.eq_ignore_ascii_case("SECTION")),
                 _ => return false,
             }
         }
@@ -88,6 +98,10 @@ impl Format {
     pub fn list(formats: &[Format]) -> String {
         formats.iter().map(|f| f.extension()).collect::<Vec<_>>().join(", ")
     }
+}
+
+fn dxf_header_text(line: &[u8]) -> Option<&str> {
+    std::str::from_utf8(line).ok().map(str::trim)
 }
 
 #[cfg(test)]

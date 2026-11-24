@@ -281,7 +281,7 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
     let page = match extension(&name).as_str() {
-        "docx" | "pdf" if super::file::looks_like_drawing(&bytes) => None,
+        "docx" | "pdf" if super::file::has_dwg_header(&bytes) || cadcraft_doc::Format::has_dxf_header(&bytes) => None,
         "docx" => Some(("WORD_ANTET", "Word page embedded as a CAD block.")),
         "pdf" => Some(("PDF_ANTET", "PDF page embedded as a CAD block.")),
         _ => None,
@@ -300,6 +300,12 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
     }
     let space = s.space();
     let doc = s.doc()?;
+    let layer_name = doc.header.str("CLAYER", "0");
+    let layer = doc.layer(&layer_name).ok_or_else(|| bad("import", format!("current layer `{layer_name}` is missing")))?;
+    if layer.locked || !layer.visible() || s.viewport_frozen().iter().any(|name| name.eq_ignore_ascii_case(&layer.name)) {
+        return Err(bad("import", format!("current layer `{}` is not editable", layer.name)));
+    }
+    let common = Common { layer: layer.name.clone(), ..Common::default() };
     let mm_per_unit = match &space {
         Space::Paper(name) => {
             let layout = doc.layout(name).ok_or_else(|| bad("import", "layout is missing"))?;
@@ -318,7 +324,7 @@ fn import_page(s: &mut Session, params: &Value, src: &Drawing, at: Vec2, scale: 
         s.doc_mut()?,
         &space,
         src,
-        Common::default(),
+        common,
         Insert { block: block.into(), insert: Vec3::new(at.x, at.y, 0.0), scale: Vec3::new(scale, scale, 1.0), ..Insert::default() },
     )?;
     s.set_selection(vec![inserted]);

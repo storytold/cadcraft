@@ -8,6 +8,7 @@ use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Common, Drawing, EntityKind, Solid, Space};
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use craft_svg::tree::{self, usvg};
+use emf_core::parser::{MapMode, ModifyWorldTransformMode};
 use lyon_tessellation::geometry_builder::{FillGeometryBuilder, GeometryBuilder, GeometryBuilderError};
 use lyon_tessellation::math::point;
 use lyon_tessellation::{FillOptions, FillRule, FillTessellator, FillVertex, VertexId};
@@ -77,7 +78,7 @@ pub(super) fn read_vector_svg(svg: &str, normalized: bool) -> Result<Drawing> {
     let start = drawing.model.len();
     let page_clip = (!normalized).then(|| Bounds2::new(Vec2::new(0.0, -height), Vec2::new(width, 0.0)));
     draw_group(tree.root(), &mut drawing, divisor, 0, page_clip)?;
-    if drawing.model.len() == start {
+    if normalized && drawing.model.len() == start {
         return Err(bad("the preview has no visible geometry"));
     }
     Ok(drawing)
@@ -161,7 +162,56 @@ fn embedded_emf(wmf: &[u8]) -> Result<Vec<u8>> {
 #[derive(Clone)]
 struct BitmapRect {
     id: String,
-    rect: [i32; 4],
+    size: [i32; 2],
+}
+
+/// The SVG player maps a bitmap's origin, but does not map its axes. Keep
+/// enough GDI state to refuse a bitmap whenever its axes may have changed.
+#[derive(Clone, Copy)]
+struct BitmapMapping {
+    world_translation_only: bool,
+    mode: Option<MapMode>,
+    window: [i32; 2],
+    viewport: [i32; 2],
+    scaled_extents: bool,
+    layout: u32,
+}
+
+impl BitmapMapping {
+    fn new(emf: &[u8]) -> Result<Self> {
+        // The SVG player seeds both extents from the device-space header bounds.
+        let width = i32_at(emf, 16)?.checked_sub(i32_at(emf, 8)?).ok_or_else(|| bad("invalid EMF width"))?;
+        let height = i32_at(emf, 20)?.checked_sub(i32_at(emf, 12)?).ok_or_else(|| bad("invalid EMF height"))?;
+        let extent = [width, height];
+        Ok(Self { world_translation_only: true, mode: Some(MapMode::MM_TEXT), window: extent, viewport: extent, scaled_extents: false, layout: 0 })
+    }
+
+    fn uses_extents(self) -> bool {
+        matches!(self.mode, Some(MapMode::MM_ISOTROPIC | MapMode::MM_ANISOTROPIC))
+    }
+
+    fn translation_only(self) -> bool {
+        (self.mode == Some(MapMode::MM_TEXT) || self.uses_extents())
+            && self.world_translation_only
+            && !self.scaled_extents
+            && self.layout == 0
+            && self.window == self.viewport
+            && !self.window.contains(&0)
+    }
+
+    fn world_transform(&mut self, record: &[u8], mode: ModifyWorldTransformMode) -> Result<()> {
+        if mode == ModifyWorldTransformMode::MWT_IDENTITY {
+            // The pinned SVG player leaves its transform unchanged in this mode.
+            return Ok(());
+        }
+        let mut matrix = [0.0; 6];
+        for (i, value) in matrix.iter_mut().enumerate() {
+            *value = f32::from_bits(u32_at(record, 8 + i * 4)?);
+        }
+        let translation = matrix.starts_with(&[1.0, 0.0, 0.0, 1.0]) && matrix.iter().all(|v| v.is_finite());
+        self.world_translation_only = translation && (mode == ModifyWorldTransformMode::MWT_SET || self.world_translation_only);
+        Ok(())
+    }
 }
 
 fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
@@ -174,6 +224,8 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
     let mut images = Vec::new();
     let mut at = 0usize;
     let mut count = 0u32;
+    let mut mapping = BitmapMapping::new(emf)?;
+    let mut saved_mappings = Vec::new();
     for _ in 0..MAX_RECORDS {
         let kind = u32_at(emf, at)?;
         let size = u32_at(emf, at + 4)? as usize;
@@ -186,6 +238,14 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
         // by this converter; unsupported EMF+ Only presentations are rejected below.
         if kind != EMR_COMMENT as u32 {
             match emf_core::parser::RecordType::from_repr(kind) {
+                Some(
+                    kind @ (EMR_EXCLUDECLIPRECT
+                    | EMR_EXTSELECTCLIPRGN
+                    | EMR_INTERSECTCLIPRECT
+                    | EMR_OFFSETCLIPRGN
+                    | EMR_SELECTCLIPPATH
+                    | EMR_SETMETARGN),
+                ) => return Err(bad(format!("unsupported EMF clipping record {kind:?}"))),
                 // emf-core's SVG player accepts these records but emits no artwork.
                 Some(
                     kind @ (EMR_STRETCHBLT
@@ -225,7 +285,38 @@ fn gdi_records(emf: &[u8]) -> Result<(Vec<u8>, Vec<BitmapRect>)> {
                     return Err(bad("unsupported EMR_BITBLT raster operation"));
                 }
                 Some(EMR_ALPHABLEND) => return Err(bad("unsupported EMR_ALPHABLEND compositing")),
-                Some(EMR_STRETCHDIBITS) => images.push(stretch_dibits(record, count)?),
+                Some(EMR_SETLAYOUT) => mapping.layout = u32_at(record, 8)?,
+                Some(EMR_SETMAPMODE) => mapping.mode = MapMode::from_repr(u32_at(record, 8)?),
+                Some(EMR_SETWINDOWEXTEX) if mapping.uses_extents() => mapping.window = [i32_at(record, 8)?, i32_at(record, 12)?],
+                Some(EMR_SETVIEWPORTEXTEX) if mapping.uses_extents() => mapping.viewport = [i32_at(record, 8)?, i32_at(record, 12)?],
+                Some(EMR_SCALEWINDOWEXTEX | EMR_SCALEVIEWPORTEXTEX) => {
+                    let (x_num, x_den, y_num, y_den) = (i32_at(record, 8)?, i32_at(record, 12)?, i32_at(record, 16)?, i32_at(record, 20)?);
+                    if x_den == 0 || y_den == 0 {
+                        return Err(bad("invalid EMF extent scale"));
+                    }
+                    mapping.scaled_extents |= (x_num, y_num) != (x_den, y_den);
+                }
+                Some(EMR_SETWORLDTRANSFORM) => mapping.world_transform(record, ModifyWorldTransformMode::MWT_SET)?,
+                Some(EMR_MODIFYWORLDTRANSFORM) => {
+                    let mode = ModifyWorldTransformMode::from_repr(u32_at(record, 32)?).ok_or_else(|| bad("invalid EMF transform mode"))?;
+                    mapping.world_transform(record, mode)?;
+                }
+                Some(EMR_SAVEDC) => saved_mappings.push(mapping),
+                Some(EMR_RESTOREDC) => {
+                    let depth = i32_at(record, 8)?;
+                    if depth < 0 {
+                        let index =
+                            saved_mappings.len().checked_sub(depth.unsigned_abs() as usize).ok_or_else(|| bad("missing saved EMF context"))?;
+                        mapping = *saved_mappings.get(index).ok_or_else(|| bad("missing saved EMF context"))?;
+                        saved_mappings.truncate(index);
+                    }
+                }
+                Some(EMR_STRETCHDIBITS) => {
+                    if !mapping.translation_only() {
+                        return Err(bad("unsupported EMF bitmap coordinate transform"));
+                    }
+                    images.push(stretch_dibits(record, count)?);
+                }
                 _ => {}
             }
             out.extend_from_slice(record);
@@ -263,7 +354,7 @@ fn stretch_dibits(record: &[u8], index: u32) -> Result<BitmapRect> {
     if width <= 0 || height == 0 || u64::from(width.unsigned_abs()) * u64::from(height) > 1_000_000 {
         return Err(bad("invalid or oversized EMR_STRETCHDIBITS bitmap"));
     }
-    Ok(BitmapRect { id: format!("elem{index}"), rect: [i32_at(record, 24)?, i32_at(record, 28)?, i32_at(record, 72)?, i32_at(record, 76)?] })
+    Ok(BitmapRect { id: format!("elem{index}"), size: [i32_at(record, 72)?, i32_at(record, 76)?] })
 }
 
 fn normalize_svg(svg: &str, images: &[BitmapRect]) -> Result<String> {
@@ -294,8 +385,11 @@ fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Resu
     }
     let mut edits = Vec::new();
     let mut replacement_bytes = 0usize;
+    let mut placements: std::collections::HashMap<_, _> = images.iter().map(|i| (i.id.as_str(), i.size)).collect();
     for node in root.descendants().filter(|n| n.has_tag_name("image")) {
-        let placement = images.iter().find(|i| Some(i.id.as_str()) == node.attribute("id")).ok_or_else(|| bad("unsupported bitmap placement"))?;
+        let [w, h] = node.attribute("id").and_then(|id| placements.remove(id)).ok_or_else(|| bad("unsupported bitmap placement"))?;
+        let coordinate = |name| node.attribute(name).ok_or_else(|| bad("missing mapped bitmap origin"))?.parse::<i32>().map_err(bad);
+        let (x, y) = (coordinate("x")?, coordinate("y")?);
         let href = node.attribute("href").ok_or_else(|| bad("missing embedded bitmap"))?;
         let data = href.strip_prefix("data:image/bmp;base64,").ok_or_else(|| bad("unsupported embedded image"))?;
         let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(bad)?;
@@ -304,7 +398,6 @@ fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Resu
             return Err(bad("bitmap is too large for CAD conversion"));
         }
         let raster = crate::raster::decode(&bytes)?;
-        let [x, y, w, h] = placement.rect;
         let mut replacement = format!(
             "<g transform=\"translate({x} {y}) scale({} {})\">",
             f64::from(w) / f64::from(raster.width()),
@@ -332,6 +425,9 @@ fn normalize_svg_bounded(svg: &str, images: &[BitmapRect], limit: usize) -> Resu
         replacement.push_str("</g>");
         replacement_bytes = checked_svg_size(replacement_bytes, 0, replacement.len(), limit)?;
         edits.push((node.range(), replacement));
+    }
+    if !placements.is_empty() {
+        return Err(bad("EMF bitmap missing from converted preview"));
     }
     let mut result = apply_svg_edits(svg, edits, limit)?;
     let end = result.find('>').ok_or_else(|| bad("invalid SVG root"))?;
@@ -386,20 +482,28 @@ fn clip_bounds(group: &usvg::Group, size: [f32; 2]) -> Result<Option<Bounds2>> {
         return Err(bad("unsupported nested clip path"));
     }
     use usvg::tiny_skia_path::PathSegment;
-    let mut points = Vec::new();
-    for segment in path.data().segments() {
+    let mut segments = path.data().segments();
+    let Some(PathSegment::MoveTo(start)) = segments.next() else { return Err(bad("empty clip path")) };
+    let mut points = vec![start];
+    for segment in segments.by_ref() {
         match segment {
-            PathSegment::MoveTo(point) | PathSegment::LineTo(point) => points.push(point),
-            PathSegment::Close => {}
-            _ => return Err(bad("unsupported curved clip")),
+            PathSegment::LineTo(point) if points.len() < 5 => points.push(point),
+            PathSegment::Close => break,
+            _ => return Err(bad("unsupported clip contour")),
         }
+    }
+    if segments.next().is_some() {
+        return Err(bad("unsupported multiple clip contours"));
     }
     if points.len() == 5 && points.first() == points.last() {
         points.pop();
     }
     let transform = group.abs_transform().pre_concat(clip.transform()).pre_concat(path.abs_transform());
     transform.map_points(&mut points);
-    if points.len() != 4 || !points.iter().zip(points.iter().cycle().skip(1)).all(|(a, b)| a.x == b.x || a.y == b.y) {
+    let [a, b, c, d] = points.as_slice() else { return Err(bad("unsupported nonrectangular clip")) };
+    let vertical_first = a.x == b.x && b.y == c.y && c.x == d.x && d.y == a.y;
+    let horizontal_first = a.y == b.y && b.x == c.x && c.y == d.y && d.x == a.x;
+    if !(vertical_first || horizontal_first) || a.x == c.x || a.y == c.y || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
         return Err(bad("unsupported nonrectangular clip"));
     }
     Ok(Some(Bounds2::from_points(points.into_iter().map(|p| Vec2::new(f64::from(p.x / size[0]), f64::from(-p.y / size[1]))))))
@@ -601,27 +705,92 @@ fn add_triangle(drawing: &mut Drawing, points: [Vec3; 3], rgb: Rgb) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use emf_core::parser::RecordType;
+
+    fn emf_record(kind: RecordType, len: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; len];
+        bytes[..4].copy_from_slice(&(kind as u32).to_le_bytes());
+        bytes[4..8].copy_from_slice(&(len as u32).to_le_bytes());
+        bytes
+    }
+
+    fn emf_header() -> Vec<u8> {
+        let mut header = emf_record(RecordType::EMR_HEADER, 88);
+        for offset in [16, 20, 32, 36, 72, 76, 80, 84] {
+            header[offset..offset + 4].copy_from_slice(&100i32.to_le_bytes());
+        }
+        header[40..44].copy_from_slice(b" EMF");
+        header[44..48].copy_from_slice(&0x10000u32.to_le_bytes());
+        header
+    }
 
     #[test]
-    fn gdi_preflight_rejects_paint_that_the_svg_converter_would_drop() {
+    fn gdi_preflight_rejects_paint_and_clipping_that_the_svg_converter_would_drop() {
         use emf_core::parser::RecordType::*;
 
-        let record = |kind, len: usize| {
-            let mut bytes = vec![0u8; len];
-            bytes[..4].copy_from_slice(&(kind as u32).to_le_bytes());
-            bytes[4..8].copy_from_slice(&(len as u32).to_le_bytes());
-            bytes
-        };
-        let mut header = record(EMR_HEADER, 88);
-        header[40..44].copy_from_slice(b" EMF");
-        header.extend(record(EMR_RECTANGLE, 24));
-        let eof = record(EMR_EOF, 20);
+        let mut header = emf_header();
+        header.extend(emf_record(EMR_RECTANGLE, 24));
+        let eof = emf_record(EMR_EOF, 20);
         assert!(gdi_records(&[header.as_slice(), &eof].concat()).is_ok());
-        for kind in [EMR_STRETCHBLT, EMR_TRANSPARENTBLT, EMR_GRADIENTFILL] {
-            let unsupported = record(kind, 108);
+        for kind in [EMR_STRETCHBLT, EMR_TRANSPARENTBLT, EMR_GRADIENTFILL, EMR_INTERSECTCLIPRECT, EMR_SELECTCLIPPATH] {
+            let unsupported = emf_record(kind, 108);
             let emf = [header.as_slice(), &unsupported, &eof].concat();
             assert!(gdi_records(&emf).err().unwrap().to_string().contains(&format!("{kind:?}")));
         }
+    }
+
+    #[test]
+    fn emf_bitmap_uses_the_mapped_origin_and_refuses_changed_axes() {
+        use emf_core::parser::RecordType::*;
+
+        let header = emf_header();
+        let mut bitmap = emf_record(EMR_STRETCHDIBITS, 124);
+        for (offset, value) in [
+            (24, 5i32),
+            (28, 6),
+            (40, 1),
+            (44, 1),
+            (48, 80),
+            (52, 40),
+            (56, 120),
+            (60, 4),
+            (68, 0x00cc_0020),
+            (72, 20),
+            (76, 10),
+            (80, 40),
+            (84, 1),
+            (88, 1),
+            (92, (24 << 16) | 1),
+            (100, 4),
+        ] {
+            bitmap[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bitmap[122] = 255;
+        let mut eof = emf_record(EMR_EOF, 20);
+        eof[16..20].copy_from_slice(&20u32.to_le_bytes());
+        let mut transform = emf_record(EMR_SETWORLDTRANSFORM, 32);
+        for (i, value) in [1.0f32, 0.0, 0.0, 1.0, 30.0, 10.0].into_iter().enumerate() {
+            let start = 8 + i * 4;
+            transform[start..start + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for (records, expected) in [(&[][..], "translate(5 6)"), (transform.as_slice(), "translate(35 16)")] {
+            let emf = [header.as_slice(), records, &bitmap, &eof].concat();
+            let (gdi, images) = gdi_records(&emf).unwrap();
+            let svg = emf_core::converter::convert_to_svg(gdi.as_slice()).unwrap();
+            let rewritten = normalize_svg(std::str::from_utf8(&svg).unwrap(), &images).unwrap();
+            assert!(rewritten.contains(expected), "{rewritten}");
+        }
+        transform[8..12].copy_from_slice(&2.0f32.to_le_bytes());
+        let emf = [header.as_slice(), &transform, &bitmap, &eof].concat();
+        assert!(gdi_records(&emf).err().unwrap().to_string().contains("bitmap coordinate transform"));
+
+        let mut mapping_mode = emf_record(EMR_SETMAPMODE, 12);
+        mapping_mode[8..12].copy_from_slice(&(MapMode::MM_ANISOTROPIC as u32).to_le_bytes());
+        let mut viewport = emf_record(EMR_SETVIEWPORTEXTEX, 16);
+        viewport[8..12].copy_from_slice(&1i32.to_le_bytes());
+        viewport[12..16].copy_from_slice(&1i32.to_le_bytes());
+        let emf = [header.as_slice(), &mapping_mode, &viewport, &bitmap, &eof].concat();
+        assert!(gdi_records(&emf).err().unwrap().to_string().contains("bitmap coordinate transform"));
     }
 
     #[test]
@@ -630,7 +799,7 @@ mod tests {
         for (offset, value) in [(24, 5i32), (28, 6), (40, 2), (44, 1), (48, 80), (52, 40), (68, 0x00cc_0020), (72, 20), (76, 10), (84, 2), (88, 1)] {
             record[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
-        assert_eq!(stretch_dibits(&record, 0).unwrap().rect, [5, 6, 20, 10]);
+        assert_eq!(stretch_dibits(&record, 0).unwrap().size, [20, 10]);
         record[32..36].copy_from_slice(&1i32.to_le_bytes());
         record[40..44].copy_from_slice(&1i32.to_le_bytes());
         assert!(stretch_dibits(&record, 0).err().unwrap().to_string().contains("source rectangle"));
@@ -655,13 +824,39 @@ mod tests {
         let mut bytes = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgb8(pixels).write_to(&mut bytes, image::ImageFormat::Bmp).unwrap();
         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes.into_inner());
-        let image = |id: &str| format!(r#"<image id="{id}" href="data:image/bmp;base64,{encoded}"/>"#);
+        let image = |id: &str| format!(r#"<image id="{id}" x="35" y="6" href="data:image/bmp;base64,{encoded}"/>"#);
         let svg = |content: String| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">{content}</svg>"#);
-        let a = BitmapRect { id: "a".into(), rect: [0, 0, 64, 64] };
-        let b = BitmapRect { id: "b".into(), rect: [0, 0, 64, 64] };
+        let a = BitmapRect { id: "a".into(), size: [64, 64] };
+        let b = BitmapRect { id: "b".into(), size: [64, 64] };
         let single = normalize_svg_bounded(&svg(image("a")), std::slice::from_ref(&a), 600_000).unwrap();
+        assert!(single.contains("translate(35 6) scale(1 1)"));
         let limit = single.len() + 1000;
         assert!(normalize_svg_bounded(&svg(image("a") + &image("b")), &[a, b], limit).is_err());
+    }
+
+    #[test]
+    fn blank_page_keeps_the_paper_but_an_empty_ole_preview_is_rejected() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"/>"#;
+        let page = read_vector_svg(svg, false).unwrap();
+        assert_eq!(page.model.len(), 1);
+        assert!((page.extents(&Space::Model).width() - 25.4).abs() < 1e-5);
+        assert!(read_vector_svg(svg, true).unwrap_err().to_string().contains("no visible geometry"));
+    }
+
+    #[test]
+    fn rectangular_clip_needs_four_corners_and_nonzero_area() {
+        let svg = |path| {
+            format!(
+                r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">
+            <defs><clipPath id="clip"><path d="{path}"/></clipPath></defs>
+            <g clip-path="url(#clip)"><rect width="10" height="10" fill="#ff0000"/></g></svg>"##
+            )
+        };
+        let red = |drawing: &Drawing| drawing.model.iter().any(|e| e.common.color == Color::True(Rgb(255, 0, 0)));
+        assert!(red(&read_vector_svg(&svg("M1 1H6V6H1Z"), false).unwrap()));
+        for path in ["M1 1H6V6V1Z", "M1 1H6 M6 6H1Z"] {
+            assert!(!read_vector_svg(&svg(path), false).is_ok_and(|drawing| red(&drawing)), "{path}");
+        }
     }
 
     #[test]

@@ -128,7 +128,9 @@ fn dxf_bytes_take_precedence_over_page_file_extensions() {
 fn dxf_page_extension_probe_preserves_the_decoders_line_and_tag_rules() {
     let dxf = String::from_utf8(cadcraft_io::write(&page(), "source.dxf").unwrap()).unwrap();
     let lf = dxf.replace("\r\n", "\n");
-    let variants = [format!("\u{feff}{lf}"), format!("999\n\n\n{lf}"), lf.replace('\n', "\r"), format!("999\r\n\r\n{dxf}")];
+    let long_header = format!("{}{lf}", "999\nlong DXF comment\n".repeat(256));
+    assert!(!cadcraft_engine::cmd::file::looks_like_drawing(long_header.as_bytes()), "the backup probe still stops at 4 KiB");
+    let variants = [format!("\u{feff}{lf}"), format!("999\n\n\n{lf}"), lf.replace('\n', "\r"), format!("999\r\n\r\n{dxf}"), long_header];
     for dxf in variants {
         for name in ["source.pdf", "source.docx"] {
             let drawing = cadcraft_io::read(dxf.as_bytes(), name).unwrap();
@@ -139,6 +141,32 @@ fn dxf_page_extension_probe_preserves_the_decoders_line_and_tag_rules() {
             assert_eq!(result["blocks"], 0);
             assert!(matches!(s.doc().unwrap().model.iter().next().unwrap().kind, EntityKind::Solid(_)));
         }
+    }
+}
+
+#[test]
+fn page_import_uses_an_editable_current_layer() {
+    let mut s = session();
+    let drawing = s.doc_mut().unwrap();
+    drawing.layers[0].locked = true;
+    drawing.ensure_layer("Title");
+    drawing.header.set_str("CLAYER", "title");
+    let params = json!({"name":"page.pdf","data":"AA==","at":[0,0]});
+    let result = s.execute("import", &params).unwrap();
+    let handle = Handle::parse_hex(result["handle"].as_str().unwrap()).unwrap();
+    let drawing = s.doc().unwrap();
+    assert_eq!(drawing.entity(handle).unwrap().common.layer, "Title");
+    let background = &drawing.block(result["block"].as_str().unwrap()).unwrap().entities.iter().next().unwrap().common;
+    assert_eq!(background.layer, "0");
+    assert_eq!(background.color, Color::True(Rgb(255, 255, 255)));
+    s.execute("page.resize", &json!({"handles":[handle.hex()],"corner":2,"to":[40,20]})).unwrap();
+
+    for (locked, on, frozen) in [(true, true, false), (false, false, false), (false, true, true)] {
+        let title = s.doc_mut().unwrap().layers.iter_mut().find(|l| l.name == "Title").unwrap();
+        (title.locked, title.on, title.frozen) = (locked, on, frozen);
+        assert!(s.execute("import", &params).unwrap_err().to_string().contains("is not editable"));
+        assert_eq!(s.doc().unwrap().blocks.len(), 1);
+        assert_eq!(s.doc().unwrap().model.len(), 1);
     }
 }
 

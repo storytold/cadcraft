@@ -11,6 +11,7 @@ use roxmltree::Node;
 use crate::{IoError, Result, ole, raster};
 
 const MAX_BYTES: usize = 32 << 20;
+const MAX_DIAGNOSTIC_BYTES: u64 = 64 << 10;
 
 fn error(message: impl std::fmt::Display) -> IoError {
     IoError::Format(format!("Page import: {message}"))
@@ -72,18 +73,32 @@ fn run(command: Command, name: &str) -> Result<()> {
 fn run_with_timeout(mut command: Command, name: &str, timeout: Duration) -> Result<()> {
     #[cfg(target_os = "linux")]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    // A file lets the child write diagnostics without blocking on a full pipe.
+    let stderr = tempfile::NamedTempFile::new().map_err(error)?;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(stderr.reopen().map_err(error)?)
         .spawn()
         .map_err(|e| error(format!("{name} is required and could not be started ({e})")))?;
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(error(format!("{name} failed ({status})"))),
-            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
+            Ok(Some(status)) => {
+                let mut diagnostic = Vec::new();
+                if stderr.reopen().and_then(|file| file.take(MAX_DIAGNOSTIC_BYTES).read_to_end(&mut diagnostic)).is_ok() {
+                    // Report a known condition without exposing converter output or file paths.
+                    let password = b"cannot authenticate password";
+                    if diagnostic.windows(password.len()).any(|bytes| bytes == password) {
+                        return Err(error("the PDF is password protected; import an unlocked copy"));
+                    }
+                }
+                return Err(error(format!("{name} failed ({status})")));
+            }
+            Ok(None) if start.elapsed() < timeout && stderr.as_file().metadata().is_ok_and(|m| m.len() <= MAX_DIAGNOSTIC_BYTES) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
             result => {
                 #[cfg(target_os = "linux")]
                 if let Some(group) = rustix::process::Pid::from_raw(child.id() as i32) {
@@ -91,7 +106,8 @@ fn run_with_timeout(mut command: Command, name: &str, timeout: Duration) -> Resu
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(error(result.err().map_or_else(|| format!("{name} timed out"), |e| e.to_string())));
+                let reason = if start.elapsed() >= timeout { "timed out" } else { "exceeded the diagnostic limit" };
+                return Err(error(result.err().map_or_else(|| format!("{name} {reason}"), |e| e.to_string())));
             }
         }
     }
@@ -398,6 +414,16 @@ mod tests {
     fn unsupported_blending_is_reported() {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><g style="mix-blend-mode:multiply"><rect width="5" height="5"/></g></svg>"#;
         assert!(ole::read_vector_svg(svg, false).unwrap_err().to_string().contains("compositing"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn password_failure_reports_a_sanitized_diagnostic() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf 'error: cannot authenticate password: private/path\\n' >&2; exit 1"]);
+        let message = run_with_timeout(command, "test converter", Duration::from_secs(1)).unwrap_err().to_string();
+        assert!(message.contains("import an unlocked copy"));
+        assert!(!message.contains("private/path"));
     }
 
     #[cfg(target_os = "linux")]
