@@ -19,7 +19,7 @@ fn user_linetypes_and_patterns_survive_dxf() {
     let h = Hatch {
         pattern: steps.name.clone(),
         solid: false,
-        loops: vec![HatchLoop { vertices: square, outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: square, outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 1.0,
         angle: 0.0,
         associative: false,
