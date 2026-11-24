@@ -684,7 +684,7 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         }
         _ => false,
     };
-    if inside && selecting && app.session.pending_window.is_none() {
+    if inside && selecting && app.session.selection_window().is_none() {
         if (hover_pos != app.canvas.hover_at || refrozen)
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
@@ -789,8 +789,16 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                     }
                     continue;
                 }
-                // PICKDRAG off: a window takes two clicks, a drag doesn't close it (#1032).
-                if app.session.settings.pickdrag && p.released_as_drag(pos, now) && p.opened_window && app.session.pending_window.is_some() {
+                // The release closes the selection window its press opened: always with PICKDRAG 1,
+                // after a drag with 2; with 0 a window takes two clicks (#1032). Any selection
+                // window closes so: the session's, or a command's own (TRIM's Crossing, a typed
+                // W or C).
+                let closes = match app.session.settings.pickdrag {
+                    1 => true,
+                    2 => p.released_as_drag(pos, now),
+                    _ => false,
+                };
+                if closes && p.opened_window && app.session.selection_window().is_some() {
                     let end = xf.to_world(pos);
                     let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
                     if let Err(e) = done {
@@ -1074,9 +1082,9 @@ fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
 
 /// Act on a press at `pos`: at a prompt the point goes in (snapped as the cursor would be there);
 /// with no command running it picks the object there or sets a selection window's corner.
-/// Returns whether the press opened a selection window.
+/// Returns whether the press opened a selection window ([`cadcraft_engine::Session::selection_window`]).
 fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egui::Modifiers) -> bool {
-    let had_window = app.session.pending_window.is_some();
+    let had_window = app.session.selection_window().is_some();
     let raw = xf.to_world(pos);
     let dyn_frame = crate::cmdline::dyn_frame(app);
     track_cursor(app, Some(raw), xf, ctx, dyn_frame);
@@ -1103,7 +1111,7 @@ fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egu
     } else if let Err(e) = app.session.idle_click(raw, mods.shift) {
         app.session.echo(e.to_string());
     }
-    !had_window && app.session.pending_window.is_some()
+    !had_window && app.session.selection_window().is_some()
 }
 
 fn paint_canvas(frame: CanvasPaint<'_>) {
@@ -1269,11 +1277,11 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             draw_list(painter, &xf, &list, bg, false);
         }
     }
-    // Pending selection window.
-    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
+    // The selection window waiting for its opposite corner, whoever opened it.
+    if let (Some(w), Some(c)) = (app.session.selection_window(), raw_world) {
         // The world box it selects (turned in a twisted view).
-        let corners = [pw.corner, Vec2::new(c.x, pw.corner.y), c, Vec2::new(pw.corner.x, c.y)].map(|q| xf.to_screen(q));
-        let crossing = app.session.window_is_crossing(pw.corner, c);
+        let corners = [w.corner, Vec2::new(c.x, w.corner.y), c, Vec2::new(w.corner.x, c.y)].map(|q| xf.to_screen(q));
+        let crossing = app.session.selection_window_crossing(&w, c);
         if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
             painter.add(Shape::convex_polygon(corners.to_vec(), fill, Stroke::NONE));
         }

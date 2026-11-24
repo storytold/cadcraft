@@ -88,7 +88,9 @@ fn a_click_made_while_moving_selects_in_stretch() {
 
     // Down on empty space while moving: the window starts where the button went down.
     press_moving(&mut h, Vec2::new(70.0, 20.0), Vec2::new(72.0, 22.0), 4);
-    assert_eq!(h.state().session.current_prompt().unwrap().message, "Specify opposite corner");
+    // STRETCH selects at the session's "Select objects", whose window waits like MOVE's.
+    let w = h.state().session.selection_window().expect("a window waits for its opposite corner");
+    assert!(w.corner.dist(Vec2::new(70.0, 20.0)) < 0.5, "it starts where the button went down: {w:?}");
     let corner = screen(&h, Vec2::new(90.0, 80.0));
     button(&mut h, corner, true);
     h.run_steps(1);
@@ -145,7 +147,7 @@ fn a_click_made_while_moving_closes_a_click_click_window() {
 fn a_click_made_while_moving_picks_with_pickdrag_off() {
     let mut h = select_harness();
     let ids = handles(&h);
-    h.state_mut().session.settings.pickdrag = false;
+    h.state_mut().session.settings.pickdrag = 0;
     press_moving(&mut h, Vec2::new(80.0, 40.0), Vec2::new(83.0, 41.0), 4);
     assert_eq!(h.state().session.selection(), vec![ids[1]]);
     assert!(h.state().session.pending_window.is_none());

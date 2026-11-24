@@ -39,6 +39,7 @@ mod properties_units;
 mod rapid_clicks;
 mod realtime_nav_release;
 mod selection_cycling;
+mod selection_windows;
 mod shared_controls;
 mod shortcut_menus;
 mod shortcuts_checked;

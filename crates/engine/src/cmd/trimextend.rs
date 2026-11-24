@@ -9,7 +9,7 @@ use cadcraft_geom::{Bounds2, Line, Vec2, line_line};
 use serde_json::{Value, json};
 
 use super::curves::KW;
-use super::helpers::{line, lwpoly, rect_vertices};
+use super::helpers::line;
 use super::modify::{CUT_ONCE, Edges, extend, json_pick_error, trim};
 use super::{bad, point_param, points_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
@@ -386,7 +386,8 @@ impl Interactive for TrimM {
             },
             Stage::QuickFence(a) => Prompt::new("Specify next fence point", Accept::POINT).base(*a),
             Stage::Crossing(None) => Prompt::new("Specify first corner", Accept::POINT),
-            Stage::Crossing(Some(_)) => Prompt::new("Specify opposite corner", Accept::POINT),
+            // A selection window like any other: drawn as a crossing, closed by a drag (PICKDRAG).
+            Stage::Crossing(Some(a)) => Prompt::new("Specify opposite corner", Accept::POINT).window(*a, Some(true)),
             Stage::Mode => {
                 let msg = if self.extend { "Enter an extend mode option" } else { "Enter a trim mode option" };
                 Prompt::new(msg, KW).kw(&["Quick", "Standard"]).default(if quick_mode(s) { "Quick" } else { "Standard" })
@@ -566,7 +567,6 @@ impl Interactive for TrimM {
                 .filter_map(|w| Some(line(*w.first()?, *w.get(1)?)))
                 .collect(),
             Stage::QuickFence(a) => vec![line(*a, c)],
-            Stage::Crossing(Some(a)) => vec![lwpoly(rect_vertices(*a, c), true)],
             _ => Vec::new(),
         }
     }

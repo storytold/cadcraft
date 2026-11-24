@@ -45,11 +45,11 @@ fn selection_tab_checkbox_updates_and_persists_the_preference() {
     h.run_steps(3);
     h.get_by_label("Select using two clicks only").click();
     h.run_steps(2);
-    assert!(!h.state().session.settings.pickdrag);
+    assert_eq!(h.state().session.settings.pickdrag, 0);
     let saved = h.state().profile_json();
     let mut restored = CadApp::new(Session::new(), Services::default());
     restored.load_profile(&saved);
-    assert!(!restored.session.settings.pickdrag);
+    assert_eq!(restored.session.settings.pickdrag, 0);
     if let Some(dir) = std::env::var_os("CADCRAFT_SELECTION_SHOTS") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -57,7 +57,7 @@ fn selection_tab_checkbox_updates_and_persists_the_preference() {
     }
     h.get_by_label("Select using two clicks only").click();
     h.run_steps(2);
-    assert!(h.state().session.settings.pickdrag);
+    assert_eq!(h.state().session.settings.pickdrag, 2);
 }
 
 #[test]
