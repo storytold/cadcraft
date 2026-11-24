@@ -111,6 +111,8 @@ pub struct Drawing {
     pub mline_styles: Vec<MLineStyle>,
     pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
     pub model: EntityStore,
+    /// Model layout's page setup, or the default extents-to-fit setup for a new drawing.
+    pub model_page: Option<PageSetup>,
     pub layouts: Vec<Layout>,
     /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
     /// written active again. `None`, or a layout that no longer exists: the first by tab order.
@@ -158,6 +160,11 @@ pub struct Drawing {
     pub portable_fonts: bool,
     /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
     pub rasters: Rasters,
+    /// The LAYER table of the file this drawing was read from, in the file's order and under
+    /// the layers' current names: proxy graphics name layers by their index in it, and saving
+    /// turns those indices into the written table's (#3094). An empty name stands for a record
+    /// without one. Empty for a drawing not read from a file.
+    pub proxy_layers: Vec<String>,
 }
 
 impl Default for Drawing {
@@ -201,6 +208,7 @@ impl Drawing {
             mline_styles: vec![MLineStyle::default()],
             blocks: BTreeMap::new(),
             model: EntityStore::new(),
+            model_page: None,
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
             active_layout: None,
             views: Vec::new(),
@@ -221,6 +229,7 @@ impl Drawing {
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
             rasters: Rasters::default(),
+            proxy_layers: Vec::new(),
         }
     }
 
