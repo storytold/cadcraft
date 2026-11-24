@@ -1,3 +1,6 @@
+use std::collections::{HashMap, HashSet};
+
+use cadcraft_doc::EntityKind;
 use cadcraft_geom::Vec3;
 
 use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, erase_kept, f64_req, json, point_param, point_req, targets};
@@ -55,21 +58,33 @@ pub(crate) fn at_elevation(s: &Session, p: Vec2) -> Vec3 {
     Vec3::new(p.x, p.y, z.unwrap_or(0.0))
 }
 
-/// Apply `edit` to each of `hs` still in the drawing, or to a copy of each when `copy`; an object
-/// on a locked layer is left alone unless it is copied. The handles edited or made.
+/// Apply `edit` once to each of `hs` still in the drawing, or to one copy of each when `copy`; an
+/// object on a locked layer is left alone unless it is copied. The handles edited or made.
 fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut Entity)) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
     let mut out = Vec::new();
+    // Copies: original handle to copy, and the copied hatches, so a hatch copied together with
+    // its boundary follows the copied boundary.
+    let mut copies: HashMap<Handle, Handle> = HashMap::new();
+    let mut hatches = Vec::new();
+    let mut seen = HashSet::new();
     for h in hs {
+        if !seen.insert(*h) {
+            continue;
+        }
         let Some(sp) = d.space_of(*h) else { continue };
         if copy {
             let Some(e) = d.entity(*h).map(|e| (**e).clone()) else { continue };
             let nh = d.new_handle();
             let mut ne = Entity { handle: nh, ..e };
             edit(&mut ne);
+            if matches!(ne.kind, EntityKind::Hatch(_)) {
+                hatches.push(nh);
+            }
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
                 out.push(nh);
+                copies.insert(*h, nh);
             }
         } else {
             let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
@@ -78,6 +93,12 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
             }
             d.modify_entity(*h, &edit)?;
             out.push(*h);
+        }
+    }
+    for h in hatches {
+        let Some(EntityKind::Hatch(mut x)) = d.entity(h).map(|e| e.kind.clone()) else { continue };
+        if crate::cmd::hatch::remap_copied_sources(&mut x, &copies) {
+            d.modify_entity(h, |e| e.kind = EntityKind::Hatch(x))?;
         }
     }
     Ok(out)
