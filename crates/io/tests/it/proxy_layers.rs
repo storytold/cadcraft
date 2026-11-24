@@ -130,3 +130,21 @@ fn a_layer_record_without_a_handle_keeps_its_place_in_the_index() {
     let d = read_dxf(file(false).as_bytes()).expect("read");
     assert_eq!(circle_layers(&d), ["0", "B_NOTIZ", "C_EXTRA", "C_EXTRA"]);
 }
+
+/// A proxy copied into a drawing whose LAYER table has another order keeps the layers it shows:
+/// its indices are named by its own graphics, not by the other file's table.
+#[test]
+fn a_proxy_copied_from_another_drawing_keeps_its_layers() {
+    let source = read_dxf(file(true).as_bytes()).expect("read");
+    let proxy = source.model.iter().find(|e| matches!(e.kind, EntityKind::Unknown(_))).expect("proxy").as_ref().clone();
+    // The target: the same layers in another order (C_EXTRA, B_NOTIZ before A_LEER), read from a
+    // file so it has a table of its own.
+    let mut target = read_dxf(file(true).as_bytes()).expect("read");
+    target.model = Default::default();
+    target.proxy_layers = vec!["0".into(), "C_EXTRA".into(), "B_NOTIZ".into(), "Defpoints".into(), "A_LEER".into()];
+    let order = ["0", "C_EXTRA", "B_NOTIZ", "Defpoints", "A_LEER"];
+    target.layers.sort_by_key(|l| order.iter().position(|n| *n == l.name).unwrap_or(99));
+    target.add(&cadcraft_doc::Space::Model, proxy.common.clone(), proxy.kind.clone()).expect("add");
+    let again = read_dxf(write_dxf(&target).as_bytes()).expect("reopen");
+    assert_eq!(circle_layers(&again), ["0", "B_NOTIZ", "C_EXTRA", "C_EXTRA"]);
+}

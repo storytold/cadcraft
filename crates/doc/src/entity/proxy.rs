@@ -68,37 +68,32 @@ impl Unknown {
         Some((at, size))
     }
 
-    /// The record's groups with the layer indices of its proxy graphics (ATTRIBUTE_LAYER)
-    /// turned from the file's table `read` (see [`crate::Drawing::proxy_layers`]) into the
-    /// written table `written`, by name; everything else as read. A layer that is gone becomes
-    /// layer 0 (the proxy's own layer, as in a block); an index past the read table, or one of a
-    /// record without a name, stays past the written one, which keeps the layer before it as
-    /// AutoCAD does. `None` when no index changes, or the graphics aren't readable.
+    /// The record's groups with the layer indices of its proxy graphics (ATTRIBUTE_LAYER) turned
+    /// into the written LAYER table `written`, by name; everything else as read. The name of an
+    /// index is the one the record's own decoded graphics draw on after it (so a proxy copied from
+    /// another drawing, or one whose layer was renamed, keeps the layer it shows); an index no
+    /// drawn entity follows takes the name from the file's table `read` (see
+    /// [`crate::Drawing::proxy_layers`]). A layer that is gone becomes layer 0 (the proxy's own
+    /// layer, as in a block); an index past the table, or one of a record without a name, stays
+    /// past the written one, which keeps the layer before it as AutoCAD does. Only the 310 groups
+    /// that hold the declared size are read and rewritten. `None` when no index changes, or the
+    /// graphics aren't readable.
     pub fn with_proxy_layers(&self, read: &[String], written: &[String]) -> Option<Vec<RawTag>> {
-        if read.is_empty() {
-            return None;
-        }
         let (at, size) = self.graphics_size_group()?;
-        let groups: Vec<usize> = (at + 1..self.tags.len()).take_while(|&i| self.tags[i].code == 310).collect();
-        let (mut bytes, mut lens) = (Vec::new(), Vec::with_capacity(groups.len()));
-        for &i in &groups {
+        let (mut bytes, mut groups) = (Vec::new(), Vec::new());
+        for i in (at + 1..self.tags.len()).take_while(|&i| self.tags[i].code == 310) {
+            if bytes.len() >= size {
+                break;
+            }
             let before = bytes.len();
             if !push_hex(&mut bytes, &self.tags[i].value) {
                 return None;
             }
-            lens.push(bytes.len() - before);
+            groups.push((i, bytes.len() - before));
         }
-        let zero = written.iter().position(|n| n == "0");
-        let past = u32::try_from(written.len()).unwrap_or(u32::MAX).max(u32::try_from(read.len()).unwrap_or(u32::MAX));
-        let new_index = |i: u32| -> u32 {
-            match read.get(i as usize).filter(|n| !n.is_empty()) {
-                Some(name) => written.iter().position(|w| w.eq_ignore_ascii_case(name)).or(zero).and_then(|p| u32::try_from(p).ok()).unwrap_or(i),
-                None if i >= past => i,
-                None => past,
-            }
-        };
         let end = size.min(bytes.len());
-        let mut changed = false;
+        // The ATTRIBUTE_LAYER chunks: where each index sits.
+        let mut refs: Vec<(usize, u32)> = Vec::new();
         let mut chunk = 8usize;
         while let (Some(len), Some(kind)) = (u32_at(&bytes[..end], chunk), u32_at(&bytes[..end], chunk + 4)) {
             let len = len as usize;
@@ -108,24 +103,98 @@ impl Unknown {
             if kind == 16
                 && let Some(i) = u32_at(&bytes[..chunk + len], chunk + 8)
             {
-                let j = new_index(i);
-                if j != i {
-                    bytes[chunk + 8..chunk + 12].copy_from_slice(&j.to_le_bytes());
-                    changed = true;
-                }
+                refs.push((chunk + 8, i));
             }
             chunk += len;
+        }
+        if refs.is_empty() {
+            return None;
+        }
+        let learned = self.layers_by_index(&bytes[..end], refs.iter().map(|r| r.1).max().unwrap_or(0));
+        if read.is_empty() && learned.is_empty() {
+            return None;
+        }
+        // Each written name's first place, found once.
+        let mut place: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for (p, n) in written.iter().enumerate() {
+            place.entry(n.to_ascii_lowercase()).or_insert(u32::try_from(p).unwrap_or(u32::MAX));
+        }
+        let zero = place.get("0").copied();
+        let past = u32::try_from(written.len()).unwrap_or(u32::MAX).max(u32::try_from(read.len()).unwrap_or(u32::MAX));
+        let mut resolved: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut changed = false;
+        for (offset, i) in refs {
+            let j = *resolved.entry(i).or_insert_with(|| {
+                let name = match learned.get(&i) {
+                    Some(name) => name.as_deref(),
+                    None => read.get(i as usize).map(String::as_str),
+                };
+                match name.filter(|n| !n.is_empty()) {
+                    Some(name) => place.get(&name.to_ascii_lowercase()).copied().or(zero).unwrap_or(i),
+                    None if i >= past => i,
+                    None => past,
+                }
+            });
+            if j != i {
+                bytes[offset..offset + 4].copy_from_slice(&j.to_le_bytes());
+                changed = true;
+            }
         }
         if !changed {
             return None;
         }
         let mut tags = self.tags.clone();
         let mut from = 0;
-        for (&g, &n) in groups.iter().zip(&lens) {
+        for (g, n) in groups {
             tags[g].value = bytes[from..from + n].iter().map(|b| format!("{b:02X}")).collect();
             from += n;
         }
         Some(tags)
+    }
+
+    /// The layer each ATTRIBUTE_LAYER index of `bytes` stands for in this record's decoded
+    /// graphics: the bytes decoded again with index `i` named `#i` give the same entities in the
+    /// same order, so each one's marker meets its real layer. `None` for an index after which the
+    /// graphics stay on the layer before (one past the table it was read with). Empty when the
+    /// graphics don't match (not decoded from these bytes) or an index is too large to name; an
+    /// index whose entities disagree is left out.
+    fn layers_by_index(&self, bytes: &[u8], max: u32) -> std::collections::HashMap<u32, Option<String>> {
+        let mut out: std::collections::HashMap<u32, Option<String>> = std::collections::HashMap::new();
+        if max > 65_535 || self.graphics.is_empty() {
+            return out;
+        }
+        let markers = ProxyTables { layers: (0..=max).map(|i| format!("\u{1}{i}")).collect(), ..ProxyTables::default() };
+        let marked = proxy_entities(bytes, &markers, Handle(0));
+        if marked.len() != self.graphics.len() {
+            return out;
+        }
+        let mut conflict = std::collections::HashSet::new();
+        let mut before: Option<(&str, &str)> = None;
+        for (m, g) in marked.iter().zip(&self.graphics) {
+            let (mark, real) = (m.common.layer.as_str(), g.common.layer.as_str());
+            let changed_here = before.is_none_or(|(prev_mark, _)| prev_mark != mark);
+            let kept = before.is_some_and(|(_, prev_real)| prev_real.eq_ignore_ascii_case(real));
+            before = Some((mark, real));
+            let Some(i) = mark.strip_prefix('\u{1}').and_then(|i| i.parse::<u32>().ok()) else { continue };
+            if !changed_here {
+                continue;
+            }
+            let name = (!kept).then(|| real.to_string());
+            match out.get(&i) {
+                Some(n)
+                    if !n.as_deref().unwrap_or_default().eq_ignore_ascii_case(name.as_deref().unwrap_or_default())
+                        || n.is_some() != name.is_some() =>
+                {
+                    conflict.insert(i);
+                }
+                Some(_) => {}
+                None => {
+                    out.insert(i, name);
+                }
+            }
+        }
+        out.retain(|i, _| !conflict.contains(i));
+        out
     }
 }
 
@@ -783,6 +852,34 @@ mod tests {
         assert!(other.proxy_graphics_bytes().is_empty());
         let bad = Unknown { tags: vec![tag(92, "4"), tag(310, "01zz")], ..u };
         assert!(bad.proxy_graphics_bytes().is_empty());
+    }
+
+    /// Saving renames the layer indices by name into the written table, reading only the 310
+    /// groups the declared size needs: a damaged group after them doesn't stop it.
+    #[test]
+    fn layer_indices_follow_the_written_table() {
+        let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+        let mut circle = pt(0.0, 0.0);
+        circle.extend(1.0f64.to_le_bytes());
+        circle.extend(pt(0.0, 0.0));
+        let g = graphics(&[chunk(16, &2u32.to_le_bytes()), chunk(2, &circle)]);
+        let hex: String = g.iter().map(|b| format!("{b:02X}")).collect();
+        let read: Vec<String> = ["0", "A", "B", "C"].map(String::from).to_vec();
+        let tables = ProxyTables { layers: read.clone(), ..ProxyTables::default() };
+        let u = Unknown {
+            dxf_type: "ACAD_PROXY_ENTITY".into(),
+            tags: vec![tag(100, "AcDbProxyEntity"), tag(92, &g.len().to_string()), tag(310, &hex), tag(310, "GG")],
+            graphics: proxy_entities(&g, &tables, Handle(1)),
+        };
+        assert_eq!(u.graphics[0].common.layer, "B");
+        let written: Vec<String> = ["0", "B", "C"].map(String::from).to_vec();
+        let tags = u.with_proxy_layers(&read, &written).expect("remapped");
+        let again = Unknown { tags, ..u.clone() };
+        assert_eq!(
+            proxy_entities(&again.proxy_graphics_bytes(), &ProxyTables { layers: written, ..ProxyTables::default() }, Handle(1))[0].common.layer,
+            "B"
+        );
+        assert_eq!(again.tags[3].value, "GG", "the group after the graphics is kept as read");
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and
