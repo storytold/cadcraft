@@ -1,7 +1,7 @@
-//! Story 4.3 (STORY43): an INSERT's ATTRIBs and SEQEND reached from AutoLISP through the CLI
-//! (`entnext`, `entget`, `entmod`, `entdel`), and the plan's I/O and edge-case matrix: the walk,
-//! a value edit (one Undo step), names that stop holding (erase, ATTSYNC, Undo, a reinsert that
-//! reuses the parent handle), edits that are refused, and the name bounds.
+//! An INSERT's ATTRIBs and SEQEND reached from AutoLISP through the CLI (`entnext`, `entget`,
+//! `entmod`, `entdel`): the walk, a value edit (one Undo step), names that stop holding (erase,
+//! ATTSYNC, Undo, a reinsert that reuses the parent handle), edits that are refused, and the
+//! name bounds.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -13,7 +13,7 @@ struct Dir(PathBuf);
 
 impl Dir {
     fn new(tag: &str) -> Dir {
-        let p = std::env::temp_dir().join(format!("cc-cli-s43-{tag}-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("cc-cli-attribs-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).expect("create scratch dir");
         Dir(p)
@@ -91,11 +91,11 @@ fn text(results: &[Value], i: usize) -> String {
     value(results, i).trim_matches('"').to_string()
 }
 
-/// S43TAG.dxf: block S43TAG with a circle and four attribute definitions (TAG1 D1, TAG2 D2
-/// verify, TAG3 P3 preset, TAG4 C4 constant), as the scenario's fixture. Opening the file again
-/// gives the drawing fresh names.
+/// TAGBLK.dxf: block TAGBLK with a circle and four attribute definitions (TAG1 D1, TAG2 D2
+/// verify, TAG3 P3 preset, TAG4 C4 constant). Opening the file again gives the drawing fresh
+/// names.
 const FIXTURE: &str = r#"(progn
-  (entmake '((0 . "BLOCK") (2 . "S43TAG") (70 . 2) (10 0.0 0.0 0.0)))
+  (entmake '((0 . "BLOCK") (2 . "TAGBLK") (70 . 2) (10 0.0 0.0 0.0)))
   (entmake '((0 . "CIRCLE") (10 -5.0 0.0 0.0) (40 . 2.0)))
   (entmake '((0 . "ATTDEF") (10 0.0 0.0 0.0) (40 . 2.5) (1 . "D1") (3 . "P1") (2 . "TAG1") (70 . 0)))
   (entmake '((0 . "ATTDEF") (10 0.0 5.0 0.0) (40 . 2.5) (1 . "D2") (3 . "P2") (2 . "TAG2") (70 . 4)))
@@ -103,15 +103,15 @@ const FIXTURE: &str = r#"(progn
   (entmake '((0 . "ATTDEF") (10 0.0 15.0 0.0) (40 . 2.5) (1 . "C4") (3 . "P4") (2 . "TAG4") (70 . 2)))
   (entmake '((0 . "ENDBLK"))))"#;
 
-/// STORY43's first reference: INSERT S43TAG at (10,10) with TAG1 "A1", TAG2 verified as "B1" and
+/// The first reference: INSERT TAGBLK at (10,10) with TAG1 "A1", TAG2 verified as "B1" and
 /// TAG3 preset ("P3"); TAG4 is constant, so it is not asked.
-const INSERT: &str = r#"(command "_.-INSERT" "S43TAG" '(10 10) 1 1 0 "A1" "B1" "")"#;
+const INSERT: &str = r#"(command "_.-INSERT" "TAGBLK" '(10 10) 1 1 0 "A1" "B1" "")"#;
 
 fn fixture(dir: &Dir) -> PathBuf {
-    let file = dir.path("S43TAG.dxf");
+    let file = dir.path("TAGBLK.dxf");
     let mut run = Run::new(dir, None);
     let out = run.lisp(FIXTURE).save(&file).out();
-    assert_eq!(text(&out, 0), "S43TAG");
+    assert_eq!(text(&out, 0), "TAGBLK");
     file
 }
 
@@ -134,7 +134,7 @@ fn the_walk_reaches_each_attrib_and_ends_at_the_seqend() {
   {INSERT}
   (setq i (entlast))
   (setvar "ATTREQ" 0)
-  (command "_.-INSERT" "S43TAG" '(60 10) 1 1 0)
+  (command "_.-INSERT" "TAGBLK" '(60 10) 1 1 0)
   (setvar "ATTREQ" 1)
   (setq second (entlast))
   "inserted")"#
@@ -213,7 +213,7 @@ fn a_name_stops_holding_after_erase_attsync_and_undo() {
         // ATTSYNC rebuilds the reference's attributes: the name given before names nothing, and
         // the rebuilt attribute keeps the value.
         .lisp("(progn (setq b (entnext (entlast))) (cdr (assoc 2 (entget b))))")
-        .cmd("attsync", json!({ "name": "S43TAG" }))
+        .cmd("attsync", json!({ "name": "TAGBLK" }))
         .lisp("(list (entget b) (cdr (assoc 1 (entget (entnext (entlast))))))")
         .out();
     assert_eq!(value(&out, 0), "\"TAG1\"");
@@ -282,7 +282,7 @@ fn insert_dxf_seed(attribs: usize, before: &str, handseed: Option<&str>) -> Stri
     }
     s.push_str("0\nSECTION\n2\nENTITIES\n");
     s.push_str(before);
-    s.push_str("0\nINSERT\n5\n20\n8\n0\n66\n1\n2\nS43TAG\n10\n0\n20\n0\n30\n0\n");
+    s.push_str("0\nINSERT\n5\n20\n8\n0\n66\n1\n2\nTAGBLK\n10\n0\n20\n0\n30\n0\n");
     for _ in 0..attribs {
         s.push_str("0\nATTRIB\n5\n21\n8\n0\n10\n0\n20\n0\n30\n0\n40\n1\n1\nV\n2\nT\n70\n0\n");
     }
@@ -300,9 +300,9 @@ const COUNT: &str = r#"(progn (setq e (entnext i) n 0) (while e (setq n (1+ n) e
 #[test]
 fn a_walk_is_stable_and_a_hostile_handle_takes_no_attribute_name() {
     let dir = Dir::new("stable");
-    // A file's handle at the top of the range the names are given from: the ATTRIB must get
-    // another name, and the line must keep its own.
-    let before = "0\nLINE\n5\nFFFFFFFFFFFFFFFF\n8\n0\n10\n0\n20\n0\n30\n0\n11\n5\n21\n5\n31\n0\n";
+    // A file's handle at the first one a name is taken from (one below the top of the range):
+    // the ATTRIB must skip it for another name, and the line must keep its own.
+    let before = "0\nLINE\n5\nFFFFFFFFFFFFFFFE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n5\n21\n5\n31\n0\n";
     let file = dir.path("hostile.dxf");
     std::fs::write(&file, insert_dxf(2, before)).expect("write the DXF");
 
@@ -310,13 +310,13 @@ fn a_walk_is_stable_and_a_hostile_handle_takes_no_attribute_name() {
     let out = run
         .lisp(
             r#"(progn
-  (setq i (handent "20") line (handent "FFFFFFFFFFFFFFFF") a (entnext i) b (entnext i))
-  (list (cdr (assoc 5 (entget line))) (equal (handent "FFFFFFFFFFFFFFFF") line)
-        (not (equal a line)) (equal a b) (equal (entnext a) (entnext b))))"#,
+  (setq i (handent "20") line (handent "FFFFFFFFFFFFFFFE") a (entnext i) b (entnext i))
+  (list (cdr (assoc 5 (entget line))) (equal (handent "FFFFFFFFFFFFFFFE") line)
+        (not (equal a line)) (cdr (assoc 0 (entget a))) (equal a b) (equal (entnext a) (entnext b))))"#,
         )
         .lisp(&format!(r#"(progn (setq i (handent "20")) {COUNT})"#))
         .out();
-    assert_eq!(value(&out, 0), "(\"FFFFFFFFFFFFFFFF\" T T T T)");
+    assert_eq!(value(&out, 0), "(\"FFFFFFFFFFFFFFFE\" T T \"ATTRIB\" T T)");
     // Two ATTRIBs and the SEQEND, then the line (it sorts last by its handle), then the end.
     assert_eq!(value(&out, 1), "4");
 }
@@ -327,9 +327,15 @@ fn a_restored_reference_does_not_revive_an_old_name() {
     let file = fixture(&dir);
     let mut run = Run::new(&dir, Some(&file));
     let out = run
-        .lisp(&format!(r#"(progn {INSERT} (setq i (entlast) a (entnext i)) (list (progn (entdel i) (entget a)) (progn (entdel i) (entget a))))"#))
+        .lisp(&format!(
+            r#"(progn {INSERT} (setq i (entlast) a (entnext i))
+  (entdel i)
+  (setq gone (entget a))
+  (entdel i)
+  (list gone (entget a) (cdr (assoc 1 (entget (entnext i))))))"#
+        ))
         .out();
-    assert_eq!(value(&out, 0), "(nil nil)");
+    assert_eq!(value(&out, 0), "(nil nil \"A1\")", "the reference comes back, the old name does not");
 
     // ERASE, then OOPS: the same. The old name never comes back with the reference.
     let mut run = Run::new(&dir, Some(&file));
@@ -339,9 +345,9 @@ fn a_restored_reference_does_not_revive_an_old_name() {
         .lisp(&format!(r#"(progn {INSERT} (setq a (entnext (entlast))) "named")"#))
         .cmd("erase", json!({ "handles": [handle] }))
         .cmd("oops", json!({}))
-        .lisp("(entget a)")
+        .lisp("(list (entget a) (cdr (assoc 1 (entget (entnext (entlast))))))")
         .out();
-    assert_eq!(value(&out, 1), "nil");
+    assert_eq!(value(&out, 1), "(nil \"A1\")", "OOPS restores the reference, not the old name");
 }
 
 #[test]

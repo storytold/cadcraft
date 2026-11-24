@@ -765,29 +765,19 @@ fn dim_style_spellings_of_one_field_apply_once() {
     assert_eq!(st.text_height, want);
 }
 
-/// Opposite comparisons of two drawings must not wait for each other's reservation set: `eq`
-/// releases the left-hand set before it locks the right-hand one, so it never holds both (F8).
-/// The observer runs at that exact boundary, in the comparing thread: no second thread, sleep or
-/// scheduling assumption (F9, F10).
+/// A drawing's reserved handles are plain data: comparing two drawings, or a drawing and its
+/// clone, is ordinary field comparison. It takes no lock (the model holds no `Arc<Mutex<..>>`),
+/// so opposite comparisons cannot wait for each other, and `Drawing` stays `Send + Sync`.
 #[test]
-fn comparing_two_drawings_never_holds_both_reservation_sets() {
-    let a = Drawing::new_metric();
-    let b = Drawing::new_metric();
-    a.reserve_lisp_handle(Handle(9));
-    b.reserve_lisp_handle(Handle(9));
-    // A drawing and its clone share the set: equal without locking it at all.
-    assert_eq!(a, a.clone());
-    let a_set = a.lisp_handles.0.clone();
-    let seen = std::rc::Rc::new(std::cell::Cell::new(None));
-    let record = seen.clone();
-    crate::BEFORE_RIGHT_LOCK.with(|o| {
-        *o.borrow_mut() = Some(Box::new(move || record.set(Some(a_set.try_lock().is_ok()))));
-    });
-    let equal = a == b;
-    crate::BEFORE_RIGHT_LOCK.with(|o| *o.borrow_mut() = None);
-    assert!(equal, "independent drawings with the same reserved handles");
-    assert_eq!(seen.get(), Some(true), "the comparison held a's reservation set while it locked b's: opposite comparisons can deadlock");
-    // Independent drawings compare their contents.
-    a.reserve_lisp_handle(Handle(10));
-    assert_ne!(a, b);
+fn comparing_two_drawings_takes_no_lock() {
+    fn send_and_sync<T: Send + Sync>() {}
+    send_and_sync::<Drawing>();
+    let mut a = Drawing::new_metric();
+    let mut b = Drawing::new_metric();
+    assert_eq!(a, b);
+    a.reserve_handle(Handle(HANDLE_LIMIT + 1));
+    assert_ne!(a, b, "a reserved handle is part of the drawing");
+    assert_eq!(a, a.clone(), "a drawing and its clone compare by their reservations");
+    b.reserve_handle(Handle(HANDLE_LIMIT + 1));
+    assert_eq!(a, b);
 }

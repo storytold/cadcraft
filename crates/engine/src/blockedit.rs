@@ -346,6 +346,9 @@ impl DocState {
         self.views = host.views;
         self.view_history = host.view_history;
         self.revision += 1;
+        // The editor's drawing shares the host's handles: a name given in it must never resolve
+        // to a host record (or the other way round) after the drawing comes back.
+        self.expire_names();
         Ok(())
     }
 }

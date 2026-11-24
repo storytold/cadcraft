@@ -235,7 +235,14 @@ impl Session {
         self.docs.get(self.active).ok_or(EngineError::NoDocument)
     }
     pub fn state_mut(&mut self) -> Result<&mut DocState> {
-        self.docs.get_mut(self.active).ok_or(EngineError::NoDocument)
+        let Self { docs, active, lisp, .. } = self;
+        let st = docs.get_mut(*active).ok_or(EngineError::NoDocument)?;
+        // LISP's names of records without a handle must stay reserved. The engine changes a
+        // drawing through this state, so the drawing gets them before a handle can be given out.
+        if let Some(subents) = lisp.subents.get_mut(&st.uid) {
+            subents.reserve_in(&mut st.doc);
+        }
+        Ok(st)
     }
     pub fn doc(&self) -> Result<&Drawing> {
         Ok(&self.state()?.doc)

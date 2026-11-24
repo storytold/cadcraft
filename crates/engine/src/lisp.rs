@@ -65,9 +65,6 @@ pub struct Env {
     /// Each block-definition entity with its successor in its block (None for the last), for the drawing
     /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
     pub block_next: Option<(usize, Arc<BlockSlots>)>,
-    /// Names given to an INSERT's ATTRIBs and SEQEND, which have no handle of their own (#1660):
-    /// `entget`, `entmod` and `entnext` reach those records by them, one at a time.
-    pub(crate) subents: drawing::SubEnts,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
@@ -92,7 +89,6 @@ impl Default for Env {
             deleted: HashMap::new(),
             order: None,
             block_next: None,
-            subents: drawing::SubEnts::default(),
             tblnext: HashMap::new(),
             pending_block: None,
             objects: objects::Names::default(),
@@ -125,6 +121,11 @@ impl Env {
 #[derive(Default)]
 pub struct LispState {
     envs: HashMap<u64, Env>,
+    /// Names given to records without a handle of their own (an INSERT's ATTRIBs and SEQEND,
+    /// #1660), by drawing: `entget`, `entmod` and `entnext` reach those records by them, one at a
+    /// time. They are the session's, not a snapshot's, so a name given once is never given again:
+    /// the drawing's undo states, and the Block Editor swapping the drawing, share them.
+    pub(crate) subents: HashMap<u64, drawing::SubEnts>,
     run: Option<Box<Run>>,
     /// A routine runs, from its start to its end (also while its machine is out of `run`).
     active: bool,
@@ -240,6 +241,19 @@ impl Session {
     pub(crate) fn lisp_forget_closed(&mut self) {
         let docs = &self.docs;
         self.lisp.envs.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
+        self.lisp.subents.retain(|uid, _| *uid == 0 || docs.iter().any(|d| d.uid == *uid));
+    }
+
+    /// The active drawing's names of records without a handle (#1660), if it has any yet.
+    pub(crate) fn subents(&self) -> Option<&drawing::SubEnts> {
+        let uid = self.state().ok()?.uid;
+        self.lisp.subents.get(&uid)
+    }
+
+    /// The active drawing's names of records without a handle (#1660), made on first use.
+    pub(crate) fn subents_mut(&mut self) -> Option<&mut drawing::SubEnts> {
+        let uid = self.state().ok()?.uid;
+        Some(self.lisp.subents.entry(uid).or_default())
     }
 
     /// A routine is running (possibly waiting for input).

@@ -1687,7 +1687,7 @@ fn append_checks_the_cell_cap_before_building_its_result() {
     assert_eq!(ok(&mut s, "(setq l nil m nil) (length (append '(1) '(2 3)))"), "3");
 }
 
-// ---------------- an INSERT's ATTRIBs and SEQEND (#1660, Story 4.3) ----------------
+// ---------------- an INSERT's ATTRIBs and SEQEND (#1660) ----------------
 
 /// A session with block K: a circle and attributes (tag, DXF flags, default value). `entmake`
 /// goes through the DXF codec, as in the app.
@@ -1790,6 +1790,9 @@ fn entmod_of_an_attrib_changes_only_its_value() {
         "(entmod (append d (list (cons 360 \"FF\"))))",
         "(entmod (append d (list (cons 102 \"{X\"))))",
         "(entmod (subst (cons 1 \"A2\") (assoc 1 d) (subst (cons 410 \"Layout2\") (assoc 410 d) d)))",
+        // The same items, but the outer list ends in an atom: iterating it would drop the tail
+        // and accept a list `entget` never returned.
+        "(progn (setq r \"X\" p (reverse d)) (while p (setq r (cons (car p) r) p (cdr p))) (entmod r))",
     ] {
         assert_eq!(ok(&mut s, code), "nil", "{code}");
     }
@@ -1821,12 +1824,22 @@ fn a_subentity_name_expires_when_its_record_is_rebuilt() {
     assert_eq!(ok(&mut s, "(entget b)"), "nil");
     assert_eq!(attribute_values(&s), [("T1".into(), "A1".into()), ("T2".into(), "P2".into())]);
     assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
-    // A name never resolves to another attribute: when a tag at that place changed, it is nil.
+    // A name never resolves to another attribute: when the record at its place has another tag
+    // now, it names nothing (the change makes no new epoch), and a new walk reaches the new tag.
     ok(&mut s, "(setq c (entnext i))");
-    ok(&mut s, "(entmod (subst (cons 1 \"Z\") (assoc 1 (entget (entnext (entnext c)))) (entget (entnext (entnext c)))))");
-    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
-    s.execute("undo", &json!({ "count": 1 })).unwrap();
-    assert_eq!(ok(&mut s, "(entget c)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget c)))"), "\"T1\"");
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind
+                && let Some(a) = i.attribs.first_mut()
+            {
+                a.tag = "T9".into();
+            }
+        })
+        .unwrap();
+    assert_eq!(ok(&mut s, "(entget c)"), "nil", "the record at that place has another tag now");
+    assert_eq!(ok(&mut s, "(list (cdr (assoc 0 (entget (entnext i)))) (cdr (assoc 2 (entget (entnext i)))))"), "(\"ATTRIB\" \"T9\")");
 }
 
 #[test]
@@ -1848,6 +1861,66 @@ fn a_restored_reference_does_not_revive_an_old_name() {
     s.execute("oops", &json!({})).unwrap();
     assert_eq!(ok(&mut s, "(entget a)"), "nil", "OOPS must not revive the name");
     assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+}
+
+#[test]
+fn erasing_another_object_keeps_an_attrib_name() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) d (entget a))");
+    s.execute("line", &json!({ "points": [[0, -10], [10, -10]] })).unwrap();
+    let line = *s.doc().unwrap().model.handles().last().unwrap();
+    // Erasing another object leaves the reference and its records as they were: the name holds
+    // and takes the value edit it always took.
+    s.execute("erase", &json!({ "handles": [line.hex()] })).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget a)))"), "\"T1\"");
+    let r = ok(&mut s, "(entmod (subst (cons 1 \"A2\") (assoc 1 d) d))");
+    assert!(r.contains("(1 . \"A2\")"), "{r}");
+    assert_eq!(attribute_values(&s), [("T1".into(), "A2".into())]);
+    // Erasing the reference itself ends its names, and OOPS bringing it back revives none.
+    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    s.execute("oops", &json!({})).unwrap();
+    assert_eq!(ok(&mut s, "(entget a)"), "nil", "the name of an erased reference stays dead");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A2\"");
+}
+
+#[test]
+fn a_name_given_in_the_block_editor_never_resolves_in_the_host() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    s.execute("bedit", &json!({ "name": "K" })).unwrap();
+    // A reference made in the editor's drawing, named there. The editor starts from the host's
+    // drawing, so its handle is the one the host gives its next new object.
+    s.execute("insert", &json!({ "name": "K", "at": [40, 40], "attribs": { "T1": "E1" } })).unwrap();
+    let editor = *s.doc().unwrap().model.handles().last().unwrap();
+    ok(&mut s, &format!("(setq a (entnext (handent \"{}\")))", editor.hex()));
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"E1\"");
+    s.execute("bclose", &json!({ "save": false })).unwrap();
+    // The host's next reference takes the handle the editor's reference had: the name given in
+    // the editor must not reach its ATTRIB, or `entmod` through it would edit the wrong one.
+    s.execute("insert", &json!({ "name": "K", "at": [80, 80], "attribs": { "T1": "H1" } })).unwrap();
+    let host = *s.doc().unwrap().model.handles().last().unwrap();
+    assert_eq!(host, editor, "the host takes the handle the editor's reference had");
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    assert_eq!(ok(&mut s, "(entdel a)"), "nil");
+    assert_eq!(
+        ok(&mut s, &format!("(cdr (assoc 1 (entget (entnext (handent \"{}\")))))", host.hex())),
+        "\"H1\"",
+        "the host's own attribute is untouched"
+    );
+}
+
+#[test]
+fn without_a_record_provider_entnext_walks_the_next_entity() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    s.execute("line", &json!({ "points": [[0, -20], [10, -20]] })).unwrap();
+    // A host that installed no provider has no records to name: the walk goes on to the next
+    // main entity as it always did, rather than answering nil at the reference.
+    let next = crate::cmd::file::without_entity_sub_record(|| ok(&mut s, "(entnext i)"));
+    assert_ne!(next, "nil");
+    assert_eq!(crate::cmd::file::without_entity_sub_record(|| ok(&mut s, "(cdr (assoc 0 (entget (entnext i))))")), "\"LINE\"");
 }
 
 #[test]
@@ -1934,10 +2007,10 @@ const COUNT: &str = "(progn (setq e (entnext i) n 0) (while e (setq n (1+ n) e (
 
 #[test]
 fn a_new_entity_never_takes_an_issued_name() {
-    // A hostile $HANDSEED at the top of the range: the line made next gets that handle, never the
-    // name given below it.
+    // A hostile $HANDSEED at the first handle a name is taken from: the name takes it, and the
+    // line made next has to go past it rather than take it.
     let (mut s, _) = drawing_with_attributes(1);
-    s.doc_mut().unwrap().handseed = u64::MAX;
+    s.doc_mut().unwrap().handseed = u64::MAX - 1;
     ok(&mut s, "(setq a (entnext i))");
     assert_eq!(
         ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
@@ -2023,7 +2096,8 @@ fn names_already_given_still_hold_at_the_lifetime_cap() {
     assert_eq!(ok(&mut s, COUNT), "65536");
     ok(&mut s, "(progn (entdel i) (entdel i))");
     assert_eq!(ok(&mut s, COUNT), "65536");
-    assert_eq!(s.doc().unwrap().lisp_handle_count(), 131_072, "the cap is two walks' worth in tests");
+    let uid = s.state().unwrap().uid;
+    assert_eq!(s.lisp.subents.get(&uid).map_or(0, |e| e.issued_count()), 131_072, "the cap is two walks' worth in tests");
     // The names the last walk gave still hold: a repeated walk is the same, and `entget` reaches
     // a record through the name it was given.
     assert_eq!(ok(&mut s, COUNT), "65536");

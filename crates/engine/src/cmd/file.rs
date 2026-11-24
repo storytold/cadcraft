@@ -76,11 +76,36 @@ pub type EntitySubRecord = fn(&Drawing, &cadcraft_doc::Entity, usize) -> Option<
 
 static SUB_RECORD: OnceLock<EntitySubRecord> = OnceLock::new();
 
+// This thread hid the optional provider ([`without_entity_sub_record`], tests only).
+#[cfg(test)]
+thread_local! {
+    static SUB_RECORD_HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub fn set_entity_sub_record(f: EntitySubRecord) {
     let _ = SUB_RECORD.set(f);
 }
 pub fn entity_sub_record() -> Option<EntitySubRecord> {
+    #[cfg(test)]
+    if SUB_RECORD_HIDDEN.with(std::cell::Cell::get) {
+        return None;
+    }
     SUB_RECORD.get().copied()
+}
+
+/// Run `f` as a host that did not install [`EntitySubRecord`]: `entnext` must walk the drawing's
+/// entities as it did before the provider existed. Tests only.
+#[cfg(test)]
+pub(crate) fn without_entity_sub_record<R>(f: impl FnOnce() -> R) -> R {
+    struct Unhide;
+    impl Drop for Unhide {
+        fn drop(&mut self) {
+            SUB_RECORD_HIDDEN.with(|h| h.set(false));
+        }
+    }
+    SUB_RECORD_HIDDEN.with(|h| h.set(true));
+    let _unhide = Unhide;
+    f()
 }
 
 /// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
