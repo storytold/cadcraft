@@ -13,7 +13,7 @@ mkdir -p "$stage/bin" "$dst" "$work/extract"
 # A local argv/env recorder stands in for the compiled binaries. It never opens a UI.
 cat >"$stage/bin/cadcraft" <<'RECORDER'
 #!/bin/sh
-printf 'config=<%s>\n' "${CADCRAFT_CONFIG_DIR-<unset>}"
+printf 'config=<%s>\n' "${CADCRAFT_CONFIG_DIR:-}"
 for arg in "$@"; do
   printf '<%s>\n' "$arg"
 done
@@ -45,13 +45,27 @@ expect() {
     exit 1
   fi
 }
-expect "config=<$HOME/.local/share/cadcraft-nightly>"
+# The launcher names the profile the flavor's way and keeps every argument after the delimiter.
+launch() {
+  local profile="$1"
+  shift
+  printf 'config=<>\n<--launch-profile>\n<nightly-v1>\n<--profile-root>\n<%s>\n<-->\n' "$profile"
+  for file in "$@"; do printf '<%s>\n' "$file"; done
+}
+expect "$(launch "$HOME/.local/share/cadcraft-nightly" 'sample.dxf')" sample.dxf
 export XDG_DATA_HOME="$work/xdg with space"
-expect "$(printf 'config=<%s>\n<%s>\n<%s>\n' "$XDG_DATA_HOME/cadcraft-nightly" 'drawing with spaces.dxf' '--other-name.dxf')" \
+expect "$(launch "$XDG_DATA_HOME/cadcraft-nightly" 'drawing with spaces.dxf' '--other-name.dxf')" \
   'drawing with spaces.dxf' '--other-name.dxf'
-expect "$(printf 'config=<<unset>>\n<--version>\n')" --version
-expect "$(printf 'config=<<unset>>\n<-V>\n')" -V
-CADCRAFT_CONFIG_DIR="$work/explicit with space" expect "$(printf 'config=<%s>\n<%s>\n' "$work/explicit with space" 'sample.dxf')" \
+# A version query answers with the plain argument, so it needs no profile at all.
+expect "$(printf 'config=<>\n<--version>\n')" --version
+expect "$(printf 'config=<>\n<-V>\n')" -V
+# The Launcher's own form is passed through once, never doubled.
+expect "$(printf 'config=<>\n<--launch-profile>\n<nightly-v1>\n<--profile-root>\n<%s>\n<--version>\n' "$work/launcher root")" \
+  --launch-profile nightly-v1 --profile-root "$work/launcher root" --version
+# A CADCRAFT_CONFIG_DIR from an older wrapper is neither honoured nor rewritten: the profile is the
+# launcher's, and the flavor refuses a variable outside it.
+CADCRAFT_CONFIG_DIR="$work/explicit with space" \
+  expect "$(launch "$XDG_DATA_HOME/cadcraft-nightly" 'sample.dxf' | sed '1s|.*|config=<'"$work"'/explicit with space>|')" \
   sample.dxf
 
-echo "PASS: Arch Nightly handoff isolates the profile and preserves launch arguments"
+echo "PASS: Arch Nightly handoff starts the flavor's profile and preserves launch arguments"

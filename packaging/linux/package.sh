@@ -165,19 +165,36 @@ if has deb || has rpm; then
     install -Dm755 "$NFPM_STAGE/usr/bin/cadcraft" "$NFPM_STAGE/usr/lib/cadcraft-nightly/cadcraft"
     cat >"$NFPM_STAGE/usr/bin/$NFPM_BIN" <<'WRAPPER'
 #!/bin/sh
+# Start the Nightly GUI the flavor's way: this channel's own launch profile, so an installed
+# nightly never reads or writes stable's settings, window state or recovery files.
 set -eu
-if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
-  exec /usr/lib/cadcraft-nightly/cadcraft "$@"
-fi
-if [ "${CADCRAFT_CONFIG_DIR+x}" != "x" ]; then
-  profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
-  export CADCRAFT_CONFIG_DIR="$profile_base/cadcraft-nightly"
-fi
-exec /usr/lib/cadcraft-nightly/cadcraft "$@"
+case "${1-}" in
+  # The Launcher already named the profile (its version query does too); never pass it twice. A
+  # plain version query answers without touching any profile.
+  --launch-profile | --version | -V) exec /usr/lib/cadcraft-nightly/cadcraft "$@" ;;
+esac
+profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
+exec /usr/lib/cadcraft-nightly/cadcraft \
+  --launch-profile nightly-v1 --profile-root "$profile_base/cadcraft-nightly" -- "$@"
 WRAPPER
     chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_BIN"
     rm -f "$NFPM_STAGE/usr/bin/cadcraft"
-    mv "$NFPM_STAGE/usr/bin/cadcraft-cli" "$NFPM_STAGE/usr/bin/$NFPM_CLI"
+    install -m755 "$NFPM_STAGE/usr/bin/cadcraft-cli" "$NFPM_STAGE/usr/lib/cadcraft-nightly/cadcraft-cli"
+    cat >"$NFPM_STAGE/usr/bin/$NFPM_CLI" <<'CLI_WRAPPER'
+#!/bin/sh
+# The Nightly CLI keeps its settings (plotter configurations, support) in the same channel folder
+# as the GUI. An explicitly empty CADCRAFT_CONFIG_DIR still means "no settings folder", and
+# --config-dir still wins.
+set -eu
+if [ "${CADCRAFT_CONFIG_DIR+x}" != x ]; then
+  profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
+  CADCRAFT_CONFIG_DIR="$profile_base/cadcraft-nightly"
+  export CADCRAFT_CONFIG_DIR
+fi
+exec /usr/lib/cadcraft-nightly/cadcraft-cli "$@"
+CLI_WRAPPER
+    chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_CLI"
+    rm -f "$NFPM_STAGE/usr/bin/cadcraft-cli"
     mv "$NFPM_STAGE/usr/share/doc/cadcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
     sed -e "s#^Exec=cadcraft\([[:space:]]\|$\)#Exec=$NFPM_BIN\1#" \
         -e "s|^TryExec=cadcraft$|TryExec=$NFPM_BIN|" \
@@ -244,16 +261,18 @@ if has appimage; then
     APPIMAGE_ID="$APP_ID.nightly-v1"
     cat >"$APPDIR/AppRun" <<'APPRUN'
 #!/bin/sh
+# The nightly AppImage runs this launcher rather than a symlink to the binary, so an extracted or
+# integrated AppImage starts with this channel's own launch profile too.
 set -eu
 APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
-  exec "$APPDIR/usr/bin/cadcraft" "$@"
-fi
-if [ "${CADCRAFT_CONFIG_DIR+x}" != "x" ]; then
-  profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
-  export CADCRAFT_CONFIG_DIR="$profile_base/cadcraft-nightly"
-fi
-exec "$APPDIR/usr/bin/cadcraft" "$@"
+case "${1-}" in
+  # The Launcher already named the profile (its version query does too); never pass it twice. A
+  # plain version query answers without touching any profile.
+  --launch-profile | --version | -V) exec "$APPDIR/usr/bin/cadcraft" "$@" ;;
+esac
+profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
+exec "$APPDIR/usr/bin/cadcraft" \
+  --launch-profile nightly-v1 --profile-root "$profile_base/cadcraft-nightly" -- "$@"
 APPRUN
     chmod 755 "$APPDIR/AppRun"
     sed -e "s|^Icon=$APP_ID$|Icon=$APPIMAGE_ID|" \

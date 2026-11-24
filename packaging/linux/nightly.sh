@@ -20,6 +20,9 @@ STAGE="$NIGHTLY_WORK/stage"
 mkdir -p "$STAGE"
 cp "$NIGHTLY_GUI" "$STAGE/cadcraft"
 chmod 755 "$STAGE/cadcraft"
+# An unpacked tar is isolated too: the launcher starts the GUI with this channel's own profile.
+cp "$ROOT/packaging/linux/nightly-launch.sh" "$STAGE/cadcraft-nightly"
+chmod 755 "$STAGE/cadcraft-nightly"
 cp "$ROOT/assets/app-icon/cadcraft-256.png" "$STAGE/cadcraft-nightly.png"
 nightly_copy_notices "$STAGE"
 # The private mktemp cwd is the helper authority root, not a CLI path parent.

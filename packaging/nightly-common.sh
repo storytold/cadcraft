@@ -32,19 +32,31 @@ nightly_init() {
   trap 'rm -rf -- "$NIGHTLY_WORK"' EXIT
 }
 
-# Compile only: macOS runs the version query after signing.
+# Compile only: macOS runs the version query after signing. The flavor's `build.rs` compiles the
+# channel from `CADCRAFT_BUILD_CHANNEL` and embeds `CADCRAFT_VERSION` (it does not read the
+# PhotoCraft-style `CADCRAFT_OVERRIDE_VERSION`, so both are passed explicitly rather than inherited).
 nightly_compile_gui() {
-  (cd "$ROOT" && CADCRAFT_OVERRIDE_VERSION="$VERSION" cargo build --release --locked -p cadcraft --target "$NIGHTLY_RUST_TARGET")
+  (cd "$ROOT" && CADCRAFT_BUILD_CHANNEL=nightly-v1 CADCRAFT_VERSION="$VERSION" \
+    cargo build --release --locked -p cadcraft --target "$NIGHTLY_RUST_TARGET")
   NIGHTLY_GUI="$CARGO_TARGET_DIR/$NIGHTLY_RUST_TARGET/release/cadcraft"
   [[ -f "$NIGHTLY_GUI" && ! -L "$NIGHTLY_GUI" ]] || nightly_die 'the owned GUI build did not produce a regular executable'
   [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$CADCRAFT_BUILD_SHA" && -z "$(git -C "$ROOT" status --porcelain)" ]] || nightly_die 'source changed during the build'
 }
 
+# The flavor prints exactly what it is -- `CADCraft <prepared version> (nightly-v1)` -- so the check
+# compares that line, not a substring a stable binary could also print. The Launcher's query form is
+# answered from the same parse, before any root is validated, so it must leave the root uncreated.
 nightly_build_gui() {
   nightly_compile_gui
-  local actual
+  local actual expected query_root
+  expected="CADCraft $VERSION (nightly-v1)"
   actual="$("$NIGHTLY_GUI" --version)" || nightly_die 'side-effect-free nightly version verification failed'
-  [[ "$actual" == *"$VERSION"* ]] || nightly_die 'the built version/flavor is not the prepared identity'
+  [[ "$actual" == "$expected" ]] || nightly_die "the built identity is not the prepared nightly: $actual"
+  query_root="$NIGHTLY_WORK/launcher-query-profile"
+  actual="$("$NIGHTLY_GUI" --launch-profile nightly-v1 --profile-root "$query_root" --version)" \
+    || nightly_die 'the Launcher version query did not answer'
+  [[ "$actual" == "$expected" ]] || nightly_die "the Launcher version query did not report the prepared identity: $actual"
+  [[ ! -e "$query_root" && ! -L "$query_root" ]] || nightly_die 'the Launcher version query touched the profile root'
   [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$CADCRAFT_BUILD_SHA" && -z "$(git -C "$ROOT" status --porcelain)" ]] || nightly_die 'source changed during the version query'
 }
 

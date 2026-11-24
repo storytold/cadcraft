@@ -62,15 +62,17 @@ if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
   mv "$WORK/stage/bin/cadcraft" "$WORK/stage/bin/cadcraft-bin"
   cat >"$WORK/stage/bin/cadcraft" <<'WRAPPER'
 #!/bin/sh
+# The bundled nightly starts the GUI with this channel's own launch profile. The sandbox's own
+# data folder belongs to the nightly app id, so the profile stays inside it.
 set -eu
-if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
-  exec /app/libexec/cadcraft "$@"
-fi
-if [ "${CADCRAFT_CONFIG_DIR+x}" != "x" ]; then
-  profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.var/app/ai.storyteller.cadcraft.nightly/data}"
-  export CADCRAFT_CONFIG_DIR="$profile_base/profile"
-fi
-exec /app/libexec/cadcraft "$@"
+case "${1-}" in
+  # The Launcher already named the profile (its version query does too); never pass it twice. A
+  # plain version query answers without touching any profile.
+  --launch-profile | --version | -V) exec /app/libexec/cadcraft "$@" ;;
+esac
+profile_base="${XDG_DATA_HOME:-${HOME:?HOME is required}/.var/app/ai.storyteller.cadcraft.nightly/data}"
+exec /app/libexec/cadcraft \
+  --launch-profile nightly-v1 --profile-root "$profile_base/cadcraft-nightly" -- "$@"
 WRAPPER
   chmod 755 "$WORK/stage/bin/cadcraft"
   sed -e "s|^Icon=$APP_ID$|Icon=$FLATPAK_ID|" \

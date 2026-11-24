@@ -326,9 +326,6 @@ fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
     }
 }
 
-/// The stable app id; a nightly build's windows use `os_window::app_id()` instead.
-const APP_ID: &str = os_window::APP_ID;
-
 /// The key eframe saves the main window state under in its storage.
 const WINDOW_KEY: &str = "window";
 

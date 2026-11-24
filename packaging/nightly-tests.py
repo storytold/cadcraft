@@ -10,6 +10,7 @@ def main() -> int:
     suite = unittest.TestSuite()
     for name, relative in (
         ("photo_archive_suite", "nightly-archive-tests.py"),
+        ("photo_launcher_suite", "nightly-launcher-tests.py"),
         ("photo_plist_suite", "macos/nightly_plist_tests.py"),
         ("photo_release_dispatch_suite", "nightly-release-tests.py"),
         ("photo_mac_sign_suite", "macos/nightly_sign_tests.py"),

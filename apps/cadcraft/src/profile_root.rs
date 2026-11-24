@@ -210,10 +210,15 @@ fn validate_for(
             return Err("nightly-v1 cannot be combined with CADCRAFT_CONFIG_DIR outside its own profile".into());
         }
     }
-    if platform != Platform::Windows && env("FLATPAK_ID").is_some_and(|v| !v.is_empty()) {
-        // These rows are native tar/app-bundle launches, not a Flatpak package. Inheriting its
-        // runtime socket namespace could point another profile at the stable app's socket.
-        return Err("nightly-v1 native packages cannot inherit a Flatpak instance; launch through the native Launcher".into());
+    if platform != Platform::Windows && let Some(id) = env("FLATPAK_ID").filter(|v| !v.is_empty()) {
+        // A Flatpak's data folder and runtime socket namespace belong to its app id. The nightly
+        // bundle has an id of its own ([`NIGHTLY_FLATPAK_ID`], named by
+        // `packaging/linux/flatpak-bundle.sh`), so its profile is already the sandbox's own; any
+        // other instance is the stable app's (or another app's), whose socket this profile must
+        // not inherit.
+        if id.to_string_lossy() != NIGHTLY_FLATPAK_ID {
+            return Err("nightly-v1 cannot inherit another Flatpak app's instance; launch through the native Launcher".into());
+        }
     }
     if is_portable_layout(root, platform) || is_portable_layout(&chosen, platform) {
         return Err("the nightly root must not use a portable CADCraft installation or its CADCraftData settings folder".into());
@@ -244,6 +249,11 @@ fn validate_for(
     writable(&confirmed).map_err(|e| format!("the nightly profile is not writable: {e}"))?;
     Ok(confirmed)
 }
+
+/// The app id of the nightly Flatpak bundle (`packaging/linux/flatpak-bundle.sh`): the one Flatpak
+/// instance whose sandbox is this channel's own. The window identity ([`crate::os_window`]) and the
+/// bundle id differ on purpose, as they do for stable.
+pub const NIGHTLY_FLATPAK_ID: &str = "ai.storyteller.cadcraft.nightly";
 
 /// The subfolder autosave and Drawing Recovery write ([`crate::main`], `<settings>/autosave`).
 pub const AUTOSAVE: &str = "autosave";
@@ -481,9 +491,24 @@ mod tests {
         assert!(fixture.check(Platform::Linux, &private).unwrap_err().contains("CADCRAFT_CONFIG_DIR"));
         assert!(!private.exists());
         fixture.env.remove("CADCRAFT_CONFIG_DIR");
-        fixture.env.insert("FLATPAK_ID".into(), "ai.storyteller.cadcraft".into());
-        assert!(fixture.check(Platform::Linux, &private).unwrap_err().contains("Flatpak"));
-        assert!(!private.exists());
+        for inherited in ["ai.storyteller.cadcraft", "org.freedesktop.other"] {
+            fixture.env.insert("FLATPAK_ID".into(), inherited.into());
+            assert!(fixture.check(Platform::Linux, &private).unwrap_err().contains("Flatpak"), "{inherited}");
+            assert!(!private.exists());
+        }
+    }
+
+    /// The nightly bundle runs under an app id of its own, so its sandbox data folder is this
+    /// channel's data root; that one instance is accepted, and its profile stays inside it.
+    #[test]
+    fn the_nightly_flatpaks_own_instance_accepts_its_own_profile() {
+        let mut fixture = Fixture::new();
+        fixture.env.insert("FLATPAK_ID".into(), NIGHTLY_FLATPAK_ID.into());
+        let private = fixture.home().join(".var/app/ai.storyteller.cadcraft.nightly/data/cadcraft-nightly");
+        assert_eq!(fixture.check(Platform::Linux, &private).unwrap(), private);
+        // Stable's Flatpak folder is still fenced even inside the nightly instance.
+        let stable = fixture.home().join(".var/app/ai.storyteller.cadcraft");
+        assert!(fixture.check(Platform::Linux, &stable).unwrap_err().contains("overlap"));
     }
 
     /// A Linux Launcher wrapper exports `CADCRAFT_CONFIG_DIR` at the profile it launches; that is
