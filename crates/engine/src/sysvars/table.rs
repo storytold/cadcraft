@@ -89,8 +89,8 @@ const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));
 const SETTINGS: &[Toggle] = &[
-    // ATTDIA 1: INSERT typed or from a menu asks for attribute values in the Edit Attributes
-    // dialog; 0 (the default): at the command line. ATTREQ 0: INSERT gives every attribute its default.
+    // ATTDIA 1 (the default): INSERT typed or from a menu asks for attribute values in the Edit
+    // Attributes dialog; 0: at the command line. ATTREQ 0: INSERT gives every attribute its default.
     ("ATTDIA", |s| s.attdia, |s, v| s.attdia = v),
     ("ATTREQ", |s| s.attreq, |s, v| s.attreq = v),
     ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
