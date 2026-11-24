@@ -111,6 +111,8 @@ pub struct Drawing {
     pub mline_styles: Vec<MLineStyle>,
     pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
     pub model: EntityStore,
+    /// Model layout's page setup, or the default extents-to-fit setup for a new drawing.
+    pub model_page: Option<PageSetup>,
     pub layouts: Vec<Layout>,
     /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
     /// written active again. `None`, or a layout that no longer exists: the first by tab order.
@@ -206,6 +208,7 @@ impl Drawing {
             mline_styles: vec![MLineStyle::default()],
             blocks: BTreeMap::new(),
             model: EntityStore::new(),
+            model_page: None,
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
             active_layout: None,
             views: Vec::new(),

@@ -26,30 +26,31 @@ mod sfnt;
 /// A TrueType font with glyphs .notdef (empty), A and B, and OS/2 `fsType`. `hmtx` holds
 /// `metrics` of the three metrics `hhea` declares: fewer is a font the writer cannot subset.
 fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
-    sfnt::bytes(&sfnt::Sfnt {
-        // "A" is a triangle and "B" a square: one contour each.
-        glyphs: &[
-            sfnt::notdef(),
-            sfnt::glyph(&[vec![(50, 0), (550, 0), (300, 700)]]),
-            sfnt::glyph(&[vec![(50, 0), (550, 0), (550, 700), (50, 700)]]),
-        ],
-        cmap: &[(0x41, 0x42, 1 - 0x41)], // "A".."B" → glyphs 1..2
-        advance: 600,
-        lsb: 50,
-        metrics,
-        fs_type,
-        ink_box: [0, 0, 600, 700],
-    })
+    font_of(fs_type, metrics, &['A', 'B'])
 }
 
-/// Register the test fonts once: an embeddable one, one with a restricted licence, and one
-/// the PDF writer accepts but can't subset (its `hmtx` is short).
+/// [`test_font`] with a glyph for each of `chars` (BMP characters, ascending), alternately a
+/// triangle and a square: one contour each.
+fn font_of(fs_type: u16, metrics: usize, chars: &[char]) -> Vec<u8> {
+    let shapes = [vec![(50, 0), (550, 0), (300, 700)], vec![(50, 0), (550, 0), (550, 700), (50, 700)]];
+    let glyphs: Vec<sfnt::Glyph> = std::iter::once(sfnt::notdef()).chain((0..chars.len()).map(|i| sfnt::glyph(&[shapes[i % 2].clone()]))).collect();
+    // One segment per character: chars[i] → glyph i + 1.
+    let cmap: Vec<(u16, u16, i16)> = chars.iter().zip(1u16..).map(|(c, g)| (*c as u16, *c as u16, g.wrapping_sub(*c as u16) as i16)).collect();
+    sfnt::bytes(&sfnt::Sfnt { glyphs: &glyphs, cmap: &cmap, advance: 600, lsb: 50, metrics, fs_type, ink_box: [0, 0, 600, 700] })
+}
+
+/// The characters of the Thai test font: no, sara aa, sara am, mai tho and nikhahit.
+const THAI: [char; 5] = ['\u{0E19}', '\u{0E32}', '\u{0E33}', '\u{0E49}', '\u{0E4D}'];
+
+/// Register the test fonts once: an embeddable one, one with a restricted licence, one
+/// the PDF writer accepts but can't subset (its `hmtx` is short), and one with Thai letters.
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0, 3));
         cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002, 3));
         cadcraft_fonts::ttf::register("cadcraft-pdf-short-hmtx.ttf", test_font(0, 1));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-thai.ttf", font_of(0, THAI.len() + 1, &THAI));
     });
 }
 
@@ -81,6 +82,7 @@ fn drawing() -> Drawing {
     style(&mut d, "Real", "cadcraft-pdf-test.ttf");
     style(&mut d, "Locked", "cadcraft-pdf-restricted.ttf");
     style(&mut d, "Short", "cadcraft-pdf-short-hmtx.ttf");
+    style(&mut d, "Thai", "cadcraft-pdf-thai.ttf");
     d
 }
 
@@ -278,4 +280,53 @@ fn hostile_text_never_panics() {
     }
     pdf(&d, &Space::Model, json!({}));
     pdf(&d, &Space::Model, json!({"compress": true}));
+}
+
+/// The text layer reads as typed (issue #2899): the shaper splits sara am into nikhahit and
+/// sara aa and draws the nikhahit before the tone mark, so in น้ำ the sara aa carries ำ, after
+/// the tone mark, and the nikhahit is drawn as an outline. Every glyph is still drawn.
+#[test]
+fn thai_text_reads_in_typed_order() {
+    let mut d = drawing();
+    text(&mut d, &Space::Model, "Thai", (0.0, 0.0), "น้ำ", (0.0, 1.0, 0.0));
+    let doc = pdf(&d, &Space::Model, json!({}));
+    let f = &doc.pages[0].fonts[0];
+    let map = pdf_read::to_unicode_map(f.to_unicode.as_deref().unwrap());
+    let read: String = codes(&doc).iter().map(|c| map.iter().find(|(k, _)| k == c).map_or("?", |(_, s)| s.as_str())).collect();
+    assert_eq!(read, "น้ำ", "{map:?}");
+    assert_eq!(pdf_read::count(doc.content(), "Tj") + fills(&doc), 4, "no, nikhahit, mai tho and sara aa: {}", doc.content());
+}
+
+/// The text the page reads as, glyph by glyph in content order: a glyph's `/ActualText` when it
+/// has one, else its code through the font's `ToUnicode` map.
+fn read_text(doc: &Doc) -> String {
+    let map = pdf_read::to_unicode_map(doc.pages[0].fonts[0].to_unicode.as_deref().unwrap());
+    let mut out = String::new();
+    for text in doc.content().split("BT").skip(1) {
+        if let Some((_, rest)) = text.split_once("/ActualText<") {
+            let hex = rest.split('>').next().unwrap();
+            let units: Vec<u16> = hex.as_bytes().chunks(4).map(|u| u16::from_str_radix(std::str::from_utf8(u).unwrap(), 16).unwrap()).collect();
+            out.extend(char::decode_utf16(units.into_iter().skip_while(|u| *u == 0xFEFF)).map(Result::unwrap));
+            continue;
+        }
+        for s in pdf_read::shown(text.as_bytes()) {
+            for c in s.chunks(2).map(|c| u32::from(c[0]) << 8 | u32::from(c[1])) {
+                out.push_str(map.iter().find(|(k, _)| *k == c).map_or("?", |(_, s)| s.as_str()));
+            }
+        }
+    }
+    out
+}
+
+/// One glyph shows sara am in น้ำ and sara aa in นา: whichever comes second gets its own
+/// `/ActualText`, so both read right whichever comes first.
+#[test]
+fn a_glyph_shared_by_two_characters_reads_right_in_both() {
+    for words in [["นา", "น้ำ"], ["น้ำ", "นา"]] {
+        let mut d = drawing();
+        text(&mut d, &Space::Model, "Thai", (0.0, 50.0), words[0], (0.0, 1.0, 0.0));
+        text(&mut d, &Space::Model, "Thai", (0.0, 0.0), words[1], (0.0, 1.0, 0.0));
+        let doc = pdf(&d, &Space::Model, json!({}));
+        assert_eq!(read_text(&doc), words.concat(), "{}", doc.content());
+    }
 }

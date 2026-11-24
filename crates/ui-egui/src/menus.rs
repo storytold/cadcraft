@@ -715,7 +715,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     };
     for c in cadcraft_engine::command_specs() {
         if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
+            add(c.menu, c.label, c.id, c.shortcut, crate::clipboard::offered(&app.session, c));
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
@@ -972,6 +972,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.closing.is_some() {
         return;
     }
+    crate::clipboard::pump(app, ctx);
     // A palette toggle is global even while its expression field owns keyboard focus.
     let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
@@ -981,7 +982,8 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    let clip: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    let mut fire = clip.clone();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
             if i.consume_shortcut(s) && !fire.contains(id) {
@@ -991,6 +993,14 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     });
     for id in fire {
         let id = id.as_str();
+        // Only a paste that came as a clipboard event has the system clipboard's content with it:
+        // one fired by a key the user bound asks for the clipboard like the menu does.
+        if clip.iter().any(|c| c == id)
+            && let Some(id) = crate::clipboard::paste_id(id)
+        {
+            crate::clipboard::run_read(app, id);
+            continue;
+        }
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {

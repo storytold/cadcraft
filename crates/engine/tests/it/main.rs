@@ -76,6 +76,7 @@ mod hidden_grip_targets;
 mod inquiry_keywords;
 mod inquiry_variables;
 mod inquiry_z;
+mod insert_attrib_entry;
 mod insert_attribute_prompts;
 mod insert_enter;
 mod insert_prompts;
