@@ -110,7 +110,8 @@ impl Unknown {
         if refs.is_empty() {
             return None;
         }
-        let learned = self.layers_by_index(&bytes[..end], refs.iter().map(|r| r.1).max().unwrap_or(0));
+        let indices: Vec<u32> = refs.iter().map(|r| r.1).collect();
+        let learned = self.layers_by_index(&bytes[..end], &indices);
         if read.is_empty() && learned.is_empty() {
             return None;
         }
@@ -152,48 +153,73 @@ impl Unknown {
         Some(tags)
     }
 
-    /// The layer each ATTRIBUTE_LAYER index of `bytes` stands for in this record's decoded
-    /// graphics: the bytes decoded again with index `i` named `#i` give the same entities in the
-    /// same order, so each one's marker meets its real layer. `None` for an index after which the
-    /// graphics stay on the layer before (one past the table it was read with). Empty when the
-    /// graphics don't match (not decoded from these bytes) or an index is too large to name; an
-    /// index whose entities disagree is left out.
-    fn layers_by_index(&self, bytes: &[u8], max: u32) -> std::collections::HashMap<u32, Option<String>> {
+    /// The layer each ATTRIBUTE_LAYER index of `bytes` (the record's `indices`) stands for in
+    /// this record's decoded graphics: the bytes decoded again with index `i` named `#i` give the
+    /// same entities in the same order, so each one's marker meets its real layer. `None` for an
+    /// index after which the graphics stay on the layer before (one past the table it was read
+    /// with), and for one above 65,535, which isn't named. Empty when the graphics don't match
+    /// (not decoded from these bytes); an index whose entities disagree is left out.
+    fn layers_by_index(&self, bytes: &[u8], indices: &[u32]) -> std::collections::HashMap<u32, Option<String>> {
+        /// What the entities after an index say about it.
+        enum Seen {
+            /// They are on this layer, and the ones before them weren't.
+            Named(String),
+            /// They are on the same layer as the ones before them: the index keeps that layer,
+            /// or names it.
+            Kept(String),
+            /// It keeps the layer before (two kept observations on different layers).
+            Keeps,
+        }
+        const MAX: u32 = 65_535;
         let mut out: std::collections::HashMap<u32, Option<String>> = std::collections::HashMap::new();
-        if max > 65_535 || self.graphics.is_empty() {
+        if self.graphics.is_empty() {
             return out;
         }
+        let max = indices.iter().copied().filter(|&i| i <= MAX).max().unwrap_or(0);
         let markers = ProxyTables { layers: (0..=max).map(|i| format!("\u{1}{i}")).collect(), ..ProxyTables::default() };
         let marked = proxy_entities(bytes, &markers, Handle(0));
         if marked.len() != self.graphics.len() {
             return out;
         }
+        let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+        let mut seen: std::collections::HashMap<u32, Seen> = std::collections::HashMap::new();
         let mut conflict = std::collections::HashSet::new();
         let mut before: Option<(&str, &str)> = None;
         for (m, g) in marked.iter().zip(&self.graphics) {
             let (mark, real) = (m.common.layer.as_str(), g.common.layer.as_str());
             let changed_here = before.is_none_or(|(prev_mark, _)| prev_mark != mark);
-            let kept = before.is_some_and(|(_, prev_real)| prev_real.eq_ignore_ascii_case(real));
+            let kept = before.is_some_and(|(_, prev_real)| same(prev_real, real));
             before = Some((mark, real));
             let Some(i) = mark.strip_prefix('\u{1}').and_then(|i| i.parse::<u32>().ok()) else { continue };
             if !changed_here {
                 continue;
             }
-            let name = (!kept).then(|| real.to_string());
-            match out.get(&i) {
-                Some(n)
-                    if !n.as_deref().unwrap_or_default().eq_ignore_ascii_case(name.as_deref().unwrap_or_default())
-                        || n.is_some() != name.is_some() =>
-                {
-                    conflict.insert(i);
+            let real = real.to_string();
+            let merged = match (seen.remove(&i), kept) {
+                (None, false) => Some(Seen::Named(real)),
+                (None, true) => Some(Seen::Kept(real)),
+                (Some(Seen::Named(a) | Seen::Kept(a)), false) | (Some(Seen::Named(a)), true) if same(&a, &real) => Some(Seen::Named(a)),
+                (Some(Seen::Kept(a)), true) => Some(if same(&a, &real) { Seen::Kept(a) } else { Seen::Keeps }),
+                (Some(Seen::Keeps), true) => Some(Seen::Keeps),
+                _ => None,
+            };
+            match merged {
+                Some(s) => {
+                    seen.insert(i, s);
                 }
-                Some(_) => {}
                 None => {
-                    out.insert(i, name);
+                    conflict.insert(i);
                 }
             }
         }
-        out.retain(|i, _| !conflict.contains(i));
+        for (i, s) in seen {
+            if !conflict.contains(&i) {
+                out.insert(i, if let Seen::Named(n) = s { Some(n) } else { None });
+            }
+        }
+        for &i in indices.iter().filter(|&&i| i > MAX) {
+            out.insert(i, None);
+        }
         out
     }
 }
@@ -880,6 +906,32 @@ mod tests {
             "B"
         );
         assert_eq!(again.tags[3].value, "GG", "the group after the graphics is kept as read");
+    }
+
+    /// An index whose graphics stay on the layer before (99 here, past the table) doesn't make
+    /// the index before it (3) look contradictory when that one comes again; an index above
+    /// 65,535 isn't named, and the others still are.
+    #[test]
+    fn indices_are_named_around_kept_layers_and_huge_indices() {
+        let mut circle = pt(0.0, 0.0);
+        circle.extend(1.0f64.to_le_bytes());
+        circle.extend(pt(0.0, 0.0));
+        let read: Vec<String> = ["0", "A", "C", "B"].map(String::from).to_vec();
+        let tables = ProxyTables { layers: read, ..ProxyTables::default() };
+        let named = |indices: &[u32]| {
+            let mut chunks = Vec::new();
+            for &i in indices {
+                chunks.push(chunk(16, &i.to_le_bytes()));
+                chunks.push(chunk(2, &circle));
+            }
+            let g = graphics(&chunks);
+            let u = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: proxy_entities(&g, &tables, Handle(1)) };
+            let mut learned: Vec<(u32, Option<String>)> = u.layers_by_index(&g, indices).into_iter().collect();
+            learned.sort();
+            learned
+        };
+        assert_eq!(named(&[0, 3, 99, 3]), [(0, Some("0".into())), (3, Some("B".into())), (99, None)]);
+        assert_eq!(named(&[2, 70_000]), [(2, Some("C".into())), (70_000, None)]);
     }
 
     /// Truncated chunks, sizes past the end, huge counts and garbage draw what they can and
