@@ -79,7 +79,7 @@ pub struct Prompt {
     /// pick arrives as the plain point it was picked at.
     pub deferred: bool,
     /// The base is a rectangle's first corner (ZOOM Window, PLOTWINDOW, RECTANG, ARRAYRECT's unit
-    /// cell): ortho does not bend the opposite corner, so the rectangle keeps its area.
+    /// cell, MTEXT): ortho does not bend the opposite corner, so the rectangle keeps its area.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub corner: bool,
     /// The grip this prompt stretches (one hot grip at the STRETCH prompt), as (object, grip
@@ -103,6 +103,10 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The value asked for is an angle about the base (a rotation grip): Dynamic Input shows one
+    /// angle box, with the command's live value ([`Interactive::live_value`]).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub angle: bool,
     /// The prompt takes a block's name as well as its keywords: a Greek word that is an existing
     /// block's name is that block, not a keyword read from its Latin keys.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -152,6 +156,11 @@ impl Prompt {
     /// The grip being stretched (the `grip` field).
     pub fn grip(mut self, g: (Handle, usize)) -> Self {
         self.grip = Some(g);
+        self
+    }
+    /// An angle about the base is asked for (the `angle` field).
+    pub fn angle(mut self) -> Self {
+        self.angle = true;
         self
     }
     /// The visual chooser the UI can show (the `picker` field).
@@ -325,6 +334,11 @@ pub trait Interactive: Send {
     /// under the cursor, drawn as it will look. Drawn under the rubber band.
     fn preview_objects(&self, _s: &Session, _cursor: Vec2) -> Vec<cadcraft_doc::Entity> {
         Vec::new()
+    }
+    /// The value the cursor would give, as the prompt asks for it (an angle as the drawing
+    /// shows angles): what Dynamic Input shows in its box before anything is typed.
+    fn live_value(&self, _s: &Session, _cursor: Vec2) -> Option<String> {
+        None
     }
     /// The preview as existing objects under one transform, when it is that (MOVE, COPY,
     /// ROTATE, SCALE). The UI then draws them from geometry uploaded once instead of rebuilding

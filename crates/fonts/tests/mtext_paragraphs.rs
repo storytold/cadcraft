@@ -109,6 +109,66 @@ fn reversed_columns_run_right_to_left() {
     assert!(first > 0 && second > 0 && min_x(&l) >= 0.0);
 }
 
+/// The geometry points inside `b`.
+fn points_in(l: &MTextLayout, b: &cadcraft_geom::Bounds2) -> usize {
+    l.strokes.iter().flatten().filter(|p| b.contains(**p)).count()
+}
+
+#[test]
+fn each_column_has_its_own_box_without_the_gutter() {
+    let two = lay(&"word ".repeat(12), 10.0, Some(MTextColumnSpec { count: 2, gutter: 2.0, height: 6.0, ..Default::default() }));
+    let [a, b] = two.column_bounds.as_slice() else { panic!("{:?}", two.column_bounds) };
+    assert!(two.bounds.contains_box(a) && two.bounds.contains_box(b));
+    assert!(a.max.x < b.min.x, "the gutter lies between the columns: {a:?} {b:?}");
+    assert!(a.width() + b.width() < two.bounds.width());
+    let total = two.strokes.iter().map(Vec::len).sum::<usize>();
+    assert!(points_in(&two, a) > 0 && points_in(&two, b) > 0);
+    assert_eq!(points_in(&two, a) + points_in(&two, b), total, "every point is in its column's box");
+
+    // Three static columns, the text filling two and a half: the half-full column keeps the
+    // column height; text past the last column lengthens only that one.
+    let spec = MTextColumnSpec { count: 3, gutter: 2.0, height: 6.0, ..Default::default() };
+    let three = lay(&"word ".repeat(20), 10.0, Some(spec.clone()));
+    assert_eq!(three.column_bounds.len(), 3);
+    assert!(three.column_bounds.windows(2).all(|w| w[0].max.x < w[1].min.x && (w[0].height() - w[1].height()).abs() < 1e-9));
+    let over = lay(&"word ".repeat(40), 10.0, Some(spec));
+    let [first, .., last] = over.column_bounds.as_slice() else { panic!("{:?}", over.column_bounds) };
+    assert!(last.height() > first.height() && (last.height() - over.bounds.height()).abs() < 1e-9);
+
+    // Manual heights: each column as tall as its own height.
+    let manual = lay("one\\Ntwo", 5.0, Some(MTextColumnSpec { dynamic: true, heights: vec![3.0, 5.0], ..Default::default() }));
+    let [a, b] = manual.column_bounds.as_slice() else { panic!("{:?}", manual.column_bounds) };
+    assert!(a.height() < b.height());
+}
+
+#[test]
+fn an_empty_column_keeps_its_place() {
+    let l = lay("first\\Nsecond", 10.0, Some(MTextColumnSpec { count: 3, gutter: 1.0, height: 4.0, ..Default::default() }));
+    let [a, b, c] = l.column_bounds.as_slice() else { panic!("{:?}", l.column_bounds) };
+    assert!(a.max.x < b.min.x && b.max.x < c.min.x);
+    assert!(points_in(&l, a) > 0 && points_in(&l, b) > 0 && points_in(&l, c) == 0);
+    assert!((c.max.x - l.bounds.max.x).abs() < 1e-9 && (c.height() - a.height()).abs() < 1e-9);
+    // Reversed: the column the text starts in is the rightmost.
+    let r = lay("first\\Nsecond", 10.0, Some(MTextColumnSpec { count: 2, height: 1.0, reversed: true, ..Default::default() }));
+    let [a, b] = r.column_bounds.as_slice() else { panic!("{:?}", r.column_bounds) };
+    assert!(a.min.x > b.max.x - 1e-9);
+}
+
+#[test]
+fn one_column_is_the_whole_box() {
+    let rotated = |p: MTextParams| MTextParams { rotation: 0.4, attach: 5, insert: Vec2::new(3.0, -2.0), ..p };
+    for (s, width, columns) in [
+        ("plain text that wraps a few times", 6.0, None),
+        ("\\pxl1;paragraph text that wraps\\Pagain", 6.0, None),
+        ("no width\\Pat all", 0.0, None),
+        (&*"word ".repeat(30), 10.0, Some(MTextColumnSpec { count: 1, gutter: 5.0, height: 3.0, ..Default::default() })),
+        ("one\\Ptwo", 10.0, Some(MTextColumnSpec { dynamic: true, gutter: 5.0, height: 30.0, ..Default::default() })),
+    ] {
+        let l = layout_mtext_with(s, &rotated(MTextParams { width, columns, ..MTextParams::new(Vec2::ZERO, 1.0) }));
+        assert_eq!(l.column_bounds, vec![l.bounds], "{s}");
+    }
+}
+
 #[test]
 fn hostile_paragraph_codes_do_not_panic() {
     let huge_tabs = format!("\\pt{};a\tb", (0..100_000).map(|i| i.to_string()).collect::<Vec<_>>().join(","));
