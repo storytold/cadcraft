@@ -363,11 +363,17 @@ impl Session {
             let mut env = self.lisp_env_take();
             value::set_string_budget(run.string_bytes, self.lisp.limits.string_bytes);
             value::set_cell_limit(self.lisp.limits.cells.max(run.cells_at_start));
+            // What the routine feeds the command line is the program's input: the command it
+            // starts, even when another one is running and the token reaches
+            // [`Session::typed`] first, never opens a dialog. Restored after the slice, a panic
+            // in it included, so a person's later command keeps its own origin.
+            let program_input = std::mem::replace(&mut self.program_input, true);
             let outcome = {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| machine.run(&mut ctx, SLICE)))
             };
+            self.program_input = program_input;
             run.string_bytes = value::string_bytes_used();
             let outcome = match outcome {
                 Ok(o) => o,
