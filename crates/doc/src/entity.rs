@@ -271,8 +271,10 @@ impl EntityKind {
             EntityKind::Image(i) => vec![Prim::Point(i.insert.xy())],
             EntityKind::Table(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Tolerance(t) => vec![Prim::Point(t.insert.xy())],
-            // What its proxy graphics draw, so a proxy can be picked and snapped to.
-            EntityKind::Unknown(u) => u.graphics.iter().flat_map(|g| g.kind.prims()).collect(),
+            // What its proxy graphics draw, so a proxy can be picked and snapped to. A filled
+            // shape's hatch is left out: its outline is drawn too, and the hatch's sides (72 for an
+            // ellipse) would offer snaps inside it.
+            EntityKind::Unknown(u) => u.graphics.iter().filter(|g| !matches!(g.kind, EntityKind::Hatch(_))).flat_map(|g| g.kind.prims()).collect(),
         }
     }
 

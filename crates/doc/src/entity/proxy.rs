@@ -870,6 +870,10 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        // Picked and snapped by the ellipse only, not the hatch's sides.
+        let u = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: es };
+        let prims = EntityKind::Unknown(u).prims();
+        assert!(matches!(prims.as_slice(), [crate::entity::Prim::Ellipse(_)]), "{prims:?}");
         // A tiny scale under a far translation keeps the circle: radius 1e8 at scale 1e-8 is 1.
         let mut far = [0.0f64; 16];
         (far[0], far[5], far[10], far[15], far[3], far[7]) = (1e-8, 1e-8, 1.0, 1.0, 1e9, 1e9);
@@ -879,8 +883,22 @@ mod tests {
         big.extend(pt(0.0, 0.0));
         let es = proxy_entities(&graphics(&[far, chunk(2, &big)]), &tables(), Handle(1));
         assert!(matches!(&es[..], [e] if matches!(&e.kind, EntityKind::Circle(c) if (c.radius - 1.0).abs() < 1e-6)), "{es:?}");
-        // Three points fitted in their own plane: a circle across XY turned into it, and points
-        // far smaller than the scale that enlarges them.
+        // Even scaling, mirrored or not, keeps circles and arcs.
+        let es = proxy_entities(&graphics(&[push(-3.0, 3.0), chunk(2, &circle), chunk(4, &quarter), chunk(5, &quarter_3p)]), &tables(), Handle(1));
+        assert!(matches!(&es[0].kind, EntityKind::Circle(c) if near(c.radius, 3.0)));
+        for e in &es[1..] {
+            let angle = |a: f64, b: f64| near((a - b).rem_euclid(TAU).min((b - a).rem_euclid(TAU)), 0.0);
+            assert!(matches!(&e.kind, EntityKind::Arc(a) if near(a.radius, 3.0) && angle(a.start, FRAC_PI_2) && angle(a.end, PI)), "{e:?}");
+        }
+    }
+
+    /// Three-point chunks are fitted in the plane of their points, then mapped: a circle across XY
+    /// turned into it, points far smaller than the scale that enlarges them, and circles and arcs
+    /// seen edge-on.
+    #[test]
+    fn three_point_chunks_fit_in_their_own_plane() {
+        use std::f64::consts::TAU;
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
         let p3 = |p: [f64; 3]| p.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
         let mat = |m: [f64; 16]| chunk(29, &m.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
         let turn = mat([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
@@ -915,13 +933,6 @@ mod tests {
         assert!(near(lo, -1.0) && near(hi, 1.0));
         let (lo, hi) = edge([p3([0.0, 0.6, 0.8]), p3([0.0, 1.0, 0.0]), p3([0.0, 0.6, -0.8])].concat(), 5);
         assert!(near(lo, 0.6) && near(hi, 1.0), "{lo} {hi}");
-        // Even scaling, mirrored or not, keeps circles and arcs.
-        let es = proxy_entities(&graphics(&[push(-3.0, 3.0), chunk(2, &circle), chunk(4, &quarter), chunk(5, &quarter_3p)]), &tables(), Handle(1));
-        assert!(matches!(&es[0].kind, EntityKind::Circle(c) if near(c.radius, 3.0)));
-        for e in &es[1..] {
-            let angle = |a: f64, b: f64| near((a - b).rem_euclid(TAU).min((b - a).rem_euclid(TAU)), 0.0);
-            assert!(matches!(&e.kind, EntityKind::Arc(a) if near(a.radius, 3.0) && angle(a.start, FRAC_PI_2) && angle(a.end, PI)), "{e:?}");
-        }
     }
 
     /// A quarter arc counter-clockwise from 0°, and the same sweep around a downward normal,
