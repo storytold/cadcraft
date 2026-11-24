@@ -1432,6 +1432,68 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     assert_eq!(loops_of(&h).len(), 2);
 }
 
+/// `retain_within` keeps the primitives that reach into the area, with their layers, and
+/// compacts the vertex arrays; one that is all inside or all outside decides alone.
+#[test]
+fn retain_within_keeps_what_reaches_the_area() {
+    let mut d = Drawing::new_metric();
+    let line = |a: Vec3, b: Vec3| EntityKind::Line(cadcraft_doc::Line { a, b });
+    d.add(&Space::Model, Common::default(), line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(100.0, 100.0, 0.0), Vec3::new(110.0, 100.0, 0.0))).unwrap();
+    d.add(&Space::Model, Common::default(), line(Vec3::new(-5.0, -50.0, 0.0), Vec3::new(-5.0, 50.0, 0.0))).unwrap();
+    let mut list = build_plot(&d, &Space::Model, &Options::default());
+    assert_eq!(list.prims.len(), 3);
+    // Distinct layers, so compaction is seen to keep each primitive's own.
+    list.prim_layers = vec![10, 11, 12];
+    list.retain_within(&Bounds2::new(Vec2::new(-10.0, -1.0), Vec2::new(20.0, 1.0)));
+    assert_eq!(list.prims.len(), 2, "the far line goes, the one crossing the area stays");
+    assert_eq!(list.prim_layers, [10, 12]);
+    assert!(list.verts.iter().all(|p| p.x < 50.0), "the far line's vertices are gone");
+    for p in &list.prims {
+        assert_eq!(list.points(p).len(), p.len as usize);
+    }
+    // An empty or non-finite area keeps everything.
+    let before = list.prims.len();
+    list.retain_within(&Bounds2::EMPTY);
+    assert_eq!(list.prims.len(), before);
+}
+
+/// A window plot keeps a line whose sharp mitred corner (the widest lineweight, 2.11 mm, at the
+/// miter limit) reaches into the window from outside the old 3 mm margin.
+#[test]
+fn the_window_reach_covers_a_mitred_corner() {
+    let w = Bounds2::new(Vec2::ZERO, Vec2::new(100.0, 100.0));
+    let kept = crate::pen::plot_window_reach(&w, 1.0);
+    // Points (-15, 48.5), (-5, 50), (-15, 51.5): the miter tip reaches about 7.1 mm right of (-5, 50).
+    let corner = Bounds2::from_points([Vec2::new(-15.0, 48.5), Vec2::new(-5.0, 50.0), Vec2::new(-15.0, 51.5)]);
+    assert!(corner.intersects(&kept));
+    // At a smaller plot scale (fewer paper mm per unit) the same reach covers more drawing units.
+    assert!(crate::pen::plot_window_reach(&w, 0.1).width() > kept.width());
+}
+
+/// Appending keeps each primitive's layer, whichever list had layers.
+#[test]
+fn append_keeps_layers_aligned_with_primitives() {
+    let mut d = Drawing::new_metric();
+    d.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) })).unwrap();
+    let one = || build_plot(&d, &Space::Model, &Options::default());
+    let (mut plain, mut layered) = (one(), one());
+    plain.prim_layers.clear();
+    layered.prim_layers = vec![7];
+    plain.append(layered.clone());
+    assert_eq!(plain.prim_layers, [NO_LAYER, 7]);
+    let mut first = layered;
+    let mut other = one();
+    other.prim_layers.clear();
+    first.append(other);
+    assert_eq!(first.prim_layers, [7, NO_LAYER]);
+    let (mut a, mut b) = (one(), one());
+    a.prim_layers.clear();
+    b.prim_layers.clear();
+    a.append(b);
+    assert!(a.prim_layers.is_empty(), "lists without layers stay without");
+}
+
 // ---------- point budget (#1922) ----------
 
 fn circle() -> EntityKind {

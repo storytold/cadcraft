@@ -61,6 +61,19 @@ pub const MAX_PATTERN_CELLS: usize = 2_000_000;
 /// Miters longer than this many half widths are drawn bevelled (as PDF's default miter limit).
 const MITER_LIMIT: f64 = 10.0;
 
+/// The widest plotted lineweight, in paper millimetres.
+const MAX_PLOT_WIDTH_MM: f64 = 2.11;
+
+/// `w` (in drawing units) grown by the most a plotted stroke can reach past the line it draws:
+/// a sharp mitred corner of the widest lineweight (half its width times [`MITER_LIMIT`]) and a
+/// millimetre more, at `mm_per_unit` paper millimetres per drawing unit, plus 1 % of the window.
+/// What a window plot keeps ([`crate::DisplayList::retain_within`]); the final clip stays at `w`.
+pub fn plot_window_reach(w: &cadcraft_geom::Bounds2, mm_per_unit: f64) -> cadcraft_geom::Bounds2 {
+    let reach = (MAX_PLOT_WIDTH_MM / 2.0 * MITER_LIMIT + 1.0) / mm_per_unit;
+    let margin = if reach.is_finite() && reach > 0.0 { reach } else { 0.0 };
+    w.expand(margin + w.width().max(w.height()) * 0.01)
+}
+
 /// Segments of a half circle (round ends and joins).
 const ROUND_STEPS: usize = 12;
 

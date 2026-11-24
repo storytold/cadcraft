@@ -238,7 +238,7 @@ fn plotter_settings_outside_the_roots_are_refused() {
     let device = cadcraft_engine::doc::PlotterConfig {
         name: "Office".into(),
         description: "not the agent's".into(),
-        papers: vec![cadcraft_engine::doc::DevicePaper { name: "A4".into(), width: 210.0, height: 297.0, margins: [5.0; 4] }],
+        papers: vec![cadcraft_engine::doc::DevicePaper { native_key: None, name: "A4".into(), width: 210.0, height: 297.0, margins: [5.0; 4] }],
         ..Default::default()
     };
     let file = settings.join("Office.plotter.json");

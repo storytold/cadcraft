@@ -64,6 +64,9 @@ pub enum Orientation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DevicePaper {
+    /// Native media identifier, retained exactly for system-printer submission.
+    #[serde(skip)]
+    pub native_key: Option<String>,
     pub name: String,
     pub width: f64,
     pub height: f64,
@@ -72,7 +75,7 @@ pub struct DevicePaper {
 
 impl Default for DevicePaper {
     fn default() -> Self {
-        DevicePaper { name: String::new(), width: 210.0, height: 297.0, margins: [0.0; 4] }
+        DevicePaper { native_key: None, name: String::new(), width: 210.0, height: 297.0, margins: [0.0; 4] }
     }
 }
 
@@ -113,9 +116,17 @@ pub struct PlotterConfig {
     /// Name of the paper chosen when a page setup switches to this device.
     pub default_paper: String,
     pub papers: Vec<DevicePaper>,
+    /// A printer of the operating system (listed by the host, never read from or written to a
+    /// file): a plot to it is a PDF the host prints rather than a file.
+    #[serde(skip)]
+    pub system: bool,
+    /// With `system`: the operating system's default printer (never in a file either).
+    #[serde(skip)]
+    pub system_default: bool,
 }
 
 impl Default for PlotterConfig {
+    /// An unnamed PDF device at 300 dpi, landscape, with no papers: a user device before its settings are filled in.
     fn default() -> Self {
         PlotterConfig {
             name: String::new(),
@@ -125,6 +136,8 @@ impl Default for PlotterConfig {
             orientation: Orientation::Landscape,
             default_paper: String::new(),
             papers: Vec::new(),
+            system: false,
+            system_default: false,
         }
     }
 }
@@ -227,9 +240,9 @@ mod tests {
             resolution: 1_000_000,
             default_paper: "nope".into(),
             papers: vec![
-                DevicePaper { name: "A3 borderless".into(), width: 420.0, height: 297.0, margins: [0.0; 4] },
+                DevicePaper { native_key: None, name: "A3 borderless".into(), width: 420.0, height: 297.0, margins: [0.0; 4] },
                 DevicePaper { name: "a3-BORDERLESS".into(), ..DevicePaper::default() },
-                DevicePaper { name: String::new(), width: f64::NAN, height: 1e12, margins: [f64::INFINITY, 9e9, -1.0, 5.0] },
+                DevicePaper { native_key: None, name: String::new(), width: f64::NAN, height: 1e12, margins: [f64::INFINITY, 9e9, -1.0, 5.0] },
             ],
             ..PlotterConfig::default()
         };

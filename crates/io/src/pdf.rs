@@ -100,12 +100,20 @@ pub struct PdfOptions {
     /// Entity hyperlinks read from a drawing file (`PE_URL` extended data) become link
     /// annotations too, after [`PdfOptions::links`]. Default on.
     pub hyperlinks: bool,
+    /// Landscape pages on portrait media: the sheet turned a quarter turn on a page of the
+    /// paper's portrait size (for printers, which feed portrait sheets and may not turn a
+    /// landscape page themselves). Link annotations are left out of turned pages.
+    pub portrait_media: bool,
     /// Plot objects with their transparency (PDF alpha). `None` = the page setup's "Plot
     /// transparency" (off for model space).
     pub plot_transparency: Option<bool>,
+    /// The plot stamp ([`crate::stamp`]): a line of text at the lower-left corner of each
+    /// sheet's printable area.
+    pub stamp: Option<String>,
 }
 
 impl Default for PdfOptions {
+    /// Every option unset: the page setup's paper, orientation, scale and plot style decide.
     fn default() -> Self {
         PdfOptions {
             plot_style_table: None,
@@ -126,7 +134,9 @@ impl Default for PdfOptions {
             text_as_geometry: false,
             margins: None,
             hyperlinks: true,
+            portrait_media: false,
             plot_transparency: None,
+            stamp: None,
         }
     }
 }
@@ -134,7 +144,7 @@ impl Default for PdfOptions {
 impl PdfOptions {
     /// Parse `{paper?, width?, height?, landscape?, fit?, scale?, center?, offset?: [x,y] mm,
     /// lineweights?, compress?, title?, window?: [[x1, y1], [x2, y2]], margins?: [l, b, r, t] (mm),
-    /// hyperlinks?: bool, plotTransparency?: bool}`.
+    /// hyperlinks?: bool, plotTransparency?: bool, stamp?: text}`.
     pub fn from_json(v: &Value) -> PdfOptions {
         let num = |k: &str| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
         let paper_mm = match (num("width"), num("height")) {
@@ -162,7 +172,9 @@ impl PdfOptions {
             window: window(v.get("window")),
             margins: margins(v.get("margins")),
             hyperlinks: v.get("hyperlinks").and_then(Value::as_bool).unwrap_or(true),
+            portrait_media: v.get("portraitMedia").and_then(Value::as_bool).unwrap_or(false),
             plot_transparency: v.get("plotTransparency").and_then(Value::as_bool),
+            stamp: crate::stamp::stamp_text(v),
         }
     }
 }
@@ -242,6 +254,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                 po.window = Some(w);
                 po.fit = Some(true);
                 po.compress = o.compress;
+                po.stamp = o.stamp.clone();
                 Ok((Space::Model, po))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -466,7 +479,7 @@ fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as
             let doc = writer.document_mut();
             // Groups are added to the document, so they must exist before the page starts.
             groups.add(doc, d, &page.layers);
-            write_page(doc, &page, &groups, &mut fonts)?;
+            write_page(doc, &page, &groups, &mut fonts, o.portrait_media)?;
         }
         if items.len() == 1 && !groups.ids.is_empty() {
             writer.document_mut().set_optional_content_page_mode(true);
@@ -507,6 +520,8 @@ struct SheetPage {
     list: cadcraft_render::DisplayList,
     map: Map,
     clip_pt: Bounds2,
+    stamp: cadcraft_render::DisplayList,
+    printable_pt: Bounds2,
     /// The drawing layers (indices in the layer table) drawn on, in order of first use: the
     /// candidates for PDF layers.
     layers: Vec<u32>,
@@ -576,7 +591,8 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let tolerance = if tol.is_finite() && tol > 0.0 { tol } else { ropts.tolerance };
     // Relative point sizes follow the plotted window (else the extents).
     let view_height = window.map(|w| w.height()).unwrap_or(0.0);
-    let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
+    let ropts = cadcraft_render::Options { tolerance, view_height, ..ropts };
+    let list = cadcraft_render::build_plot(d, space, &ropts);
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
     // A layout plotted over a window is placed like model space: the window on the printable area.
@@ -588,11 +604,33 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     } else {
         Map { from: Vec2::ZERO, s, to: Vec2::ZERO, k }
     };
-    // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
+    // A window plots what is inside it only: what lies wholly outside is left out of the page
+    // (a small window of a large drawing stays small), the rest is cut at the window's edges.
     let mut list = list;
+    if let Some(w) = window {
+        list.retain_within(&window_margin(&w, map.s, unit_mm));
+    }
+    // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
+    let stamp = o
+        .stamp
+        .as_ref()
+        .map(|text| {
+            let text = crate::stamp::fill(text, &sheet_name(space), &page.paper, &crate::stamp::scale_label(map.s));
+            let to_world = |p: Vec2| (p - map.to) / map.s + map.from;
+            crate::stamp::display_list(d, &text, sheet.printable.min, unit_mm, to_world, 1.0 / map.s, &ropts)
+        })
+        .unwrap_or_default();
     let media = sheet.size * k;
-    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
+    let printable_pt = Bounds2::new(sheet.printable.min * k, sheet.printable.max * k);
+    let clip_pt = match window {
+        // A window off the printable area plots nothing: a hair-thin clip at its corner.
+        Some(w) => Some(window_on_paper(&w, &map).intersection(&printable_pt))
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| Bounds2::new(printable_pt.min, printable_pt.min + Vec2::new(1e-3, 1e-3))),
+        None if placed => printable_pt,
+        None => Bounds2::new(Vec2::ZERO, media),
+    };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
     if o.layers {
@@ -604,7 +642,19 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         }
     }
     let links = links(&list, &map, &clip_pt, links_to);
-    Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
+    Ok(SheetPage { media, list, map, clip_pt, stamp, printable_pt, layers, links, label: sheet_name(space) })
+}
+
+/// `w` grown by what a plotted line may reach past it, at `s` paper units per drawing unit (see
+/// [`cadcraft_render::pen::plot_window_reach`]).
+pub(crate) fn window_margin(w: &Bounds2, s: f64, unit_mm: f64) -> Bounds2 {
+    cadcraft_render::pen::plot_window_reach(w, unit_mm * s)
+}
+
+/// A plotted window `w` on the sheet, in points: where its corners land through `map`.
+fn window_on_paper(w: &Bounds2, map: &Map) -> Bounds2 {
+    let at = |p: Vec2| ((p - map.from) * map.s + map.to) * map.k;
+    Bounds2::new(at(w.min), at(w.max))
 }
 
 /// Source and destination origins for the shared model-space PDF/PNG placement behavior.
@@ -749,13 +799,24 @@ fn circle_path(x: f32, y: f32, r: f32) -> Option<Path> {
     pb.finish()
 }
 
-/// Write one sheet as a page: its size, label, link annotations and marks.
-fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+/// Write one sheet as a page: its size, label, link annotations and marks. With
+/// `portrait_media`, a landscape sheet goes on a page of the paper's portrait size, turned a
+/// quarter turn counterclockwise (the sheet's bottom edge up the page's right edge), for
+/// printers that feed portrait sheets; a turned page has no link annotations.
+fn write_page(
+    doc: &mut kr::Document,
+    p: &SheetPage,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+    portrait_media: bool,
+) -> std::result::Result<(), Failure> {
     let (w, h) = (p.media.x as f32, p.media.y as f32);
+    let turned = portrait_media && w > h;
+    let (pw, ph) = if turned { (h, w) } else { (w, h) };
     let label = PageLabel::new(None, Some(p.label.chars().take(MAX_TEXT).collect()), None);
-    let settings = PageSettings::from_wh(w, h).ok_or_else(|| IoError::Format("the sheet has no area".into()))?.with_page_label(label);
+    let settings = PageSettings::from_wh(pw, ph).ok_or_else(|| IoError::Format("the sheet has no area".into()))?.with_page_label(label);
     let mut page = doc.start_page_with(settings);
-    for (r, url) in &p.links {
+    for (r, url) in p.links.iter().filter(|_| !turned) {
         let Some(uri) = uri(url) else { continue };
         // Annotation rectangles are given top-down, like the writer's page surface.
         let Some(rect) = Rect::from_ltrb(r.min.x as f32, h - r.max.y as f32, r.max.x as f32, h - r.min.y as f32) else { continue };
@@ -763,13 +824,23 @@ fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mu
         page.add_annotation(Annotation::new_link(link, None));
     }
     let mut surface = page.surface();
-    // The surface's y axis points down; flip it so we draw in PDF points (y up).
-    surface.push_transform(&Transform::from_row(1.0, 0.0, 0.0, -1.0, 0.0, h));
+    // The surface's y axis points down; flip it so we draw in PDF points (y up). Turned: the
+    // sheet's (x, y) lands at (h - y, x) on the page, y up.
+    let to_page = if turned { Transform::from_row(0.0, -1.0, -1.0, 0.0, h, w) } else { Transform::from_row(1.0, 0.0, 0.0, -1.0, 0.0, h) };
+    surface.push_transform(&to_page);
     // Clip to the plot area.
     let mut drawn = Ok(());
     if let Some(clip) = rect_path(p.clip_pt.min, p.clip_pt.max) {
         surface.push_clip_path(&clip, &FillRule::NonZero);
-        drawn = marks(&mut surface, p, groups, fonts);
+        drawn = marks(&mut surface, p, &p.list, &p.clip_pt, groups, fonts);
+        surface.pop();
+    }
+    if drawn.is_ok()
+        && !p.stamp.prims.is_empty()
+        && let Some(clip) = rect_path(p.printable_pt.min, p.printable_pt.max)
+    {
+        surface.push_clip_path(&clip, &FillRule::NonZero);
+        drawn = marks(&mut surface, p, &p.stamp, &p.printable_pt, groups, fonts);
         surface.pop();
     }
     surface.pop();
@@ -846,8 +917,14 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
-fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
-    let list = &p.list;
+fn marks(
+    s: &mut Surface<'_>,
+    p: &SheetPage,
+    list: &cadcraft_render::DisplayList,
+    clip_pt: &Bounds2,
+    groups: &Groups,
+    fonts: &mut fonts::Fonts,
+) -> std::result::Result<(), Failure> {
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
@@ -870,7 +947,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
         let w = if w.is_finite() && w > 0.0 { w.min(100.0) } else { 0.0 };
         let m = Mark { rgb, t, w };
         match prim.kind {
-            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, prim, raw, m),
+            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, clip_pt, prim, raw, m),
             Kind::Tris | Kind::Mask => {
                 flush(s, &mut batch);
                 // A wipeout's mask is paper white.
@@ -879,7 +956,7 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                     u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
                 match text_font {
                     Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
-                    None => fill_tris(s, p, raw, m.rgb, m.t),
+                    None => fill_tris(s, p, clip_pt, raw, m.rgb, m.t),
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
@@ -900,14 +977,22 @@ struct Mark {
 }
 
 /// Stroke a polyline or infinite line, clipped to the plot area, into the open batch.
-fn polyline(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, p: &SheetPage, prim: &DPrim, raw: &[Vec2], m: Mark) {
-    let Some(pts) = polyline_points(prim, raw, &p.map, &p.clip_pt) else { return };
+fn polyline(
+    s: &mut Surface<'_>,
+    batch: &mut Option<(StrokeStyle, PathBuilder)>,
+    p: &SheetPage,
+    clip_pt: &Bounds2,
+    prim: &DPrim,
+    raw: &[Vec2],
+    m: Mark,
+) {
+    let Some(pts) = polyline_points(prim, raw, &p.map, clip_pt) else { return };
     if pts.len() < 2 {
         return;
     }
     // With a vertex out of range, keep the pieces inside the plot area, widened so
     // a wide stroke just outside it still shows its edge.
-    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(m.w + 1.0)) };
+    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &clip_pt.expand(m.w + 1.0)) };
     let style = StrokeStyle { rgb: m.rgb, width: m.w as f32, transparency: m.t };
     if m.t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
         flush(s, batch);
@@ -958,10 +1043,10 @@ fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)
 }
 
 /// Fill a set of triangles, clipped to the plot area.
-fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
+fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, clip_pt: &Bounds2, raw: &[Vec2], rgb: Rgb, t: u8) {
     let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
     // With a vertex out of range, keep the parts inside the plot area.
-    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, clip_pt) };
     let mut pb = PathBuilder::new();
     for tri in tris.as_chunks::<3>().0 {
         let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
@@ -1110,5 +1195,28 @@ mod saved_setup_tests {
         let m = map(&d, json!({"scale": 0.25}));
         assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
         assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
+}
+
+#[cfg(test)]
+mod stamp_clip_regressions {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_narrow_window_and_its_stamp_have_independent_clips() {
+        let d = Drawing::new_metric();
+        let page = sheet(
+            &d,
+            &Space::Model,
+            &PdfOptions::from_json(&json!({
+                "paper": "A4", "landscape": false, "fit": true, "window": [[0, 0], [1, 100]], "stamp": "Checked"
+            })),
+            &[],
+        )
+        .unwrap();
+        let b = Bounds2::from_points(page.stamp.verts.iter().chain(&page.stamp.tris).map(|p| page.map.pt(*p)));
+        assert!(b.max.x < page.clip_pt.min.x, "the stamp is outside the drawing clip");
+        assert!(page.printable_pt.contains(b.min) && page.printable_pt.contains(b.max), "the stamp remains inside its printable clip");
     }
 }
