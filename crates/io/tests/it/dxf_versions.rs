@@ -163,6 +163,7 @@ fn binary_is_for_dxf_only() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_at_every_version_reads_back() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = sample();
     for v in Version::ALL {
         let dwg = write_with(&d, "x.dwg", &opts(v, false)).unwrap();
@@ -186,6 +187,7 @@ fn dwg_at_every_version_reads_back() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn dwg_default_is_at_least_2004() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let from_r2000 = read(write_dxf(&sample()).as_bytes(), "x.dxf").unwrap();
     assert_eq!(craft_dwg::version(&write(&from_r2000, "x.dwg").unwrap()).as_deref(), Some("AC1018"));
     assert_eq!(craft_dwg::version(&write(&sample(), "x.dwg").unwrap()).as_deref(), Some("AC1032"));

@@ -18,6 +18,7 @@ pub mod blockedit;
 pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
+pub mod file_access;
 mod finite;
 pub mod grip_dims;
 pub mod grips;
@@ -36,6 +37,7 @@ pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod ucs;
 pub mod undoctl;
 pub mod units;
 
@@ -50,9 +52,10 @@ pub use cadcraft_doc as doc;
 pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
+pub use cmd::blocks::WblockPicks;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, DisplayOnly, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
 mod doc_state;
 mod error;
@@ -156,6 +159,12 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// What the last WBLOCKPICK kept (the Write Block dialog's picks).
+    pub wblock_picks: Option<cmd::blocks::WblockPicks>,
+    /// The window's menu bar and tool bar as the UI shows them (it reports them every frame).
+    pub bars_shown: cmd::interface::InterfaceBars,
+    /// The bars MENUBAR or TOOLBAR asked to change, for the UI to apply.
+    pub bars_request: cmd::interface::BarsRequest,
     /// The object named with a point for the input a prompt picking one object is taking
     /// ([`Session::input_object`]): a pick at exactly that point picks that object
     /// ([`Session::pick_object`]).
@@ -215,6 +224,9 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            wblock_picks: None,
+            bars_shown: Default::default(),
+            bars_request: Default::default(),
             pick_hint: None,
         }
     }
@@ -239,6 +251,8 @@ impl Session {
             settings.snapunit = d.header.snap_unit();
             settings.gridunit = d.header.grid_unit();
         }
+        let a = self.input_ucs().rotation();
+        settings.ucs_angle = if a.is_finite() { a } else { 0.0 };
         settings
     }
     /// The space commands act on (model space while working inside a layout viewport).

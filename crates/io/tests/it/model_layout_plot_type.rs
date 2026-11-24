@@ -57,6 +57,7 @@ fn model_layout_plots_extents_fitted_and_layouts_their_sheet() {
 
 #[test]
 fn model_layout_plot_type_survives_the_dwg_bridge() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dwg = cadcraft_io::write(&drawing(), "x.dwg").unwrap();
     // What the DWG holds, as the bridge's own DXF.
     let dxf = String::from_utf8_lossy(&craft_dwg::dwg_to_dxf(&dwg).unwrap()).to_string();

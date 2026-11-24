@@ -882,4 +882,40 @@ mod tests {
         assert!((big - 2.0 * height).abs() < 1e-9, "{big} for a {height} text");
         assert_eq!(st.fmt.fmt_at(5).height, None, "the rest keeps the text's height");
     }
+
+    /// A Thai MTEXT, which the canvas draws from a Thai fallback font, opens in the editor in
+    /// letters, not boxes: the app's interface fonts take the face drawing text takes for a
+    /// character they lack. Both interface families do, so Thai typed at the command line or in a
+    /// layer name (proportional) and a FIND result (monospace) are letters too (#2949). Runs where
+    /// a Thai face is found (CI embeds craft-fonts' Noto Sans Thai).
+    #[test]
+    fn thai_text_opens_in_the_editor_without_boxes() {
+        let thai = "แบบขยายผนังห้องน้ำ ชั้นที่ ๒";
+        let letters: Vec<char> = thai.chars().filter(|c| !c.is_whitespace()).collect();
+        if letters.iter().any(|c| cadcraft_fonts::ttf::fallback_for(*c).is_none()) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("mtext", serde_json::json!({ "at": [0, 20], "text": thai, "height": 2.5, "width": 40 })).unwrap();
+        app.start("textedit");
+        app.session.input(cadcraft_engine::Input::Point(cadcraft_geom::Vec2::new(1.0, 19.0))).unwrap();
+        // Real app frames: the fonts are the ones the app installs.
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(input.clone(), |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open").fmt.text(), thai);
+        let mut missing = Vec::new();
+        ctx.fonts_mut(|f| {
+            for font in [FontId::proportional(MIN_PX), FontId::monospace(MIN_PX)] {
+                missing.extend(letters.iter().filter(|c| !f.has_glyph(&font, **c)).map(|c| format!("{:?} {c}", font.family)));
+            }
+        });
+        assert!(missing.is_empty(), "drawn as boxes: {missing:?}");
+    }
 }

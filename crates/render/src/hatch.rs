@@ -684,6 +684,7 @@ mod tests {
                 PolyVertex::new(Vec2::new(0.0, 10.0)),
             ],
             outer: true,
+            boundary_flags: None,
             sources: vec![],
         };
         let loop2 = loop1.clone();

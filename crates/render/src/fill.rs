@@ -1,7 +1,7 @@
 //! Polygon filling: even-odd regions to triangles (slab decomposition), wide polylines.
 
 use cadcraft_doc::LwPolyline;
-use cadcraft_geom::{Polyline, Vec2};
+use cadcraft_geom::{MAX_TESSELLATED_POINTS, Polyline, Segment, Vec2};
 
 /// Triangulate an even-odd region bounded by closed loops (holes allowed) by cutting it into
 /// horizontal slabs at every vertex y and emitting trapezoids. Two edges that cross inside a slab
@@ -116,8 +116,29 @@ fn crossing_y(l: &(f64, f64, f64), r: &(f64, f64, f64), ya: f64, yb: f64) -> Opt
     (y > ya && y < yb && y - ya > 1e-12 && yb - y > 1e-12).then_some(y)
 }
 
-/// Triangles for a polyline with widths (constant or tapered per segment).
+/// The points of `seg` (both ends included) into `pts`, spending `budget` as
+/// [`Polyline::tessellate_within`] does: once it is spent the segment is its chord. Every arc of a
+/// wide polyline samples up to thousands of points and makes six triangle corners from each, so a
+/// polyline of many tiny-tolerance arcs would otherwise build gigabytes (#1922).
+pub(crate) fn sample_within(seg: &Segment, tol: f64, budget: &mut usize, pts: &mut Vec<Vec2>) {
+    if *budget > 0 {
+        let from = pts.len();
+        seg.tessellate(tol, pts);
+        *budget = budget.saturating_sub(pts.len().saturating_sub(from));
+    } else {
+        pts.extend([seg.start(), seg.end()]);
+    }
+}
+
+/// Triangles for a polyline with widths (constant or tapered per segment), sampling at most
+/// about [`MAX_TESSELLATED_POINTS`] points as the centre line does.
 pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
+    let mut budget = MAX_TESSELLATED_POINTS;
+    wide_polyline_within(p, tol, &mut budget)
+}
+
+/// [`wide_polyline`] spending `budget` sampled points.
+fn wide_polyline_within(p: &LwPolyline, tol: f64, budget: &mut usize) -> Vec<Vec2> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let mut out = Vec::new();
     let n = p.vertices.len();
@@ -125,7 +146,7 @@ pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
         let v = p.vertices.get(i % n.max(1)).copied().unwrap_or_default();
         let (w0, w1) = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (v.start_width, v.end_width) };
         let mut pts = Vec::new();
-        seg.tessellate(tol, &mut pts);
+        sample_within(seg, tol, budget, &mut pts);
         let m = pts.len();
         if m < 2 {
             continue;
@@ -149,7 +170,7 @@ pub fn wide_polyline(p: &LwPolyline, tol: f64) -> Vec<Vec2> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn area(tris: &[Vec2]) -> f64 {
@@ -269,6 +290,24 @@ mod tests {
         assert_matches_oracle(&[reversed, hole], -1.0, 11.0);
         let tri = vec![Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(0.0, 3.0)];
         assert_matches_oracle(&[tri], -1.0, 5.0);
+    }
+
+    /// A wide polyline of 100 half circles at a tiny tolerance: each could sample 4,096 points.
+    pub(crate) fn arcs() -> LwPolyline {
+        let vertices = (0..100)
+            .map(|i| cadcraft_geom::PolyVertex { bulge: 1.0, ..cadcraft_geom::PolyVertex::new(Vec2::new(f64::from(i) * 100.0, 0.0)) })
+            .collect();
+        LwPolyline { vertices, closed: false, const_width: 1.0, elevation: 0.0, plinegen: false }
+    }
+
+    /// Sampling stops at the budget, past which each arc is a chord (#1922). The budget is checked
+    /// before each segment, so the last one sampled may pass it by up to 4,096 points; each point
+    /// makes six triangle corners.
+    #[test]
+    fn wide_arcs_stop_sampling_at_the_budget() {
+        let mut budget = 1000;
+        let tris = wide_polyline_within(&arcs(), 1e-9, &mut budget);
+        assert!(!tris.is_empty() && tris.len() <= 6 * (1000 + 4096 + 2 * 100), "{}", tris.len());
     }
 
     #[test]

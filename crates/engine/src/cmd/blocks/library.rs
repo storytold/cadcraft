@@ -70,6 +70,8 @@ fn stamp(path: &str) -> Option<(u64, Option<SystemTime>)> {
 /// A library drawing, read once and kept while the file is as it was: placing a block must not
 /// parse the whole file again.
 fn cached_drawing(path: &str) -> Result<Arc<Drawing>> {
+    // Before the cache too: a drawing read earlier must not be handed out past the roots.
+    crate::file_access::check_read(path).map_err(|e| bad("blocklibrary", e))?;
     // The reader sniffs the bytes, so a DXF named `part.bin` would load: the contract is DWG/DXF by name.
     if !is_drawing(Path::new(path)) {
         return Err(bad("blocklibrary", format!("{path}: expected a DWG or DXF file")));
@@ -186,6 +188,9 @@ pub fn read_library_file(path: &str) -> Result<Arc<Drawing>> {
 /// What BLOCKLIBRARY answers for `path`. It needs no session, so the palette reads big drawings
 /// and slow folders on a worker thread.
 pub fn list_library(path: &str) -> Result<Value> {
+    // Before anything looks at the path: a folder's listing, or whether it is one, says what is
+    // outside the automation roots.
+    crate::file_access::check_read(path).map_err(|e| bad("blocklibrary", e))?;
     if is_folder(path) {
         let (files, truncated) = folder_files(Path::new(path))?;
         let list: Vec<Value> = files.iter().map(|(name, file)| json!({ "name": name, "file": file })).collect();
@@ -355,6 +360,26 @@ fn run_libraries(_s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Under the automation roots a library folder or file outside them is refused before it is
+    /// listed or read.
+    #[test]
+    fn the_automation_roots_hold_library_paths() {
+        let base = std::env::temp_dir().join(format!("cadcraft-library-roots-{}", std::process::id()));
+        let (inside, outside) = (base.join("in"), base.join("outside"));
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("parts.dxf"), b"0\nEOF\n").unwrap();
+        let roots = crate::file_access::AutomationRoots::new(Some(&inside), None).unwrap();
+        crate::file_access::confine(roots.as_ref(), || {
+            let folder = list_library(&outside.to_string_lossy()).map(|v| v.to_string());
+            assert!(folder.as_ref().is_err_and(|e| e.to_string().contains("automation")), "{folder:?}");
+            let file = list_library(&outside.join("parts.dxf").to_string_lossy()).map(|v| v.to_string());
+            assert!(file.as_ref().is_err_and(|e| e.to_string().contains("automation")), "{file:?}");
+            assert!(list_library(&inside.to_string_lossy()).is_ok());
+        });
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     /// A list that could not be written stays the list of this session, whatever the file says.
     #[test]
