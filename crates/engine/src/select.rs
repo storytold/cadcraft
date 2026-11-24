@@ -6,12 +6,12 @@ use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 use crate::spatial::{self, SpatialIndex};
 use crate::{Accept, Prompt};
 
-/// Polylines approximating an entity for hit testing, tessellated at `tol`.
 /// A dimension kept as read whose graphics are a reference to its `*D` block (#3438).
 fn draws_a_block(e: &Entity) -> bool {
     matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| matches!(g.kind, EntityKind::Insert(_))))
 }
 
+/// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::Text(_)

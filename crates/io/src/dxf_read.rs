@@ -263,6 +263,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     // Proxy graphics name layers and linetypes by their place in the file's tables, and saving
     // writes them unchanged: the tables keep the file's order, with what CADCraft adds after it.
     keep_file_order(&mut d.layers, |l| &l.name, &rx.proxy_tables.layers, &[]);
+    // Saving turns the graphics' layer indices from this order into the written table's, so
+    // removing or adding layers doesn't move them (#3094).
+    d.proxy_layers.clone_from(&rx.proxy_tables.layers);
     keep_file_order(&mut d.linetypes, |l| &l.name, &rx.proxy_tables.linetypes, &["ByBlock", "ByLayer"]);
     // A proxy text takes the first style on its font, so the styles keep the file's order too.
     let styles: Vec<String> = rx.proxy_tables.styles.iter().map(|(n, _)| n.clone()).collect();
