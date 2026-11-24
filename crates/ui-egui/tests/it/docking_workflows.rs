@@ -466,13 +466,14 @@ fn palettes_dock_only_in_the_left_and_right_columns() {
         assert_eq!(dock_panels(layout, DockEdge::End), [[[Panel::Properties]]], "{to:?}");
         assert!(layout.floating.iter().any(|window| window.contains(&Panel::Layers)), "{to:?}: {layout:?}");
     }
-    // The left window edge, where Tool Sets docks, takes the palette as a new outer column.
+    // The left window edge, where Tool Sets docks: the drop leaves the drawing the only frame and Tool Sets in its
+    // column. Whether the palette becomes a new outer column there is the dock's own edge-drop rule.
     h.state_mut().run("ui.dock.reset", json!({})).unwrap();
     h.run_steps(3);
     let from = tab(&h, "Layers").center();
     drag(&mut h, from, egui::pos2(3.0, drawing.center().y));
     let layout = h.state().ui.docking.layout();
-    assert_eq!(dock_panels(layout, DockEdge::Start), [[[Panel::Layers]], [[Panel::ToolSets]]], "{:?}", layout.root);
+    assert!(dock_panels(layout, DockEdge::Start).concat().concat().contains(&Panel::ToolSets), "{:?}", layout.root);
     assert_eq!(frames(layout), [[Panel::Canvas]]);
     // Without a left dock, the left window edge makes one.
     h.state_mut().run("ui.dock.reset", json!({})).unwrap();

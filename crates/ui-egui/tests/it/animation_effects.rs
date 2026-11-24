@@ -11,7 +11,9 @@ fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
 
-/// One frame of the whole app with `events`; `look` reads the frame's input after `logic`.
+/// One frame of the whole app with `events`, with the frame input the shells give the runtime; `look` reads the
+/// frame's input after `logic` in the frame's first pass, the one that carries the input (a pass after a discard has
+/// none).
 fn frame<R>(
     app: &mut CadApp,
     ctx: &egui::Context,
@@ -20,11 +22,14 @@ fn frame<R>(
 ) -> (R, Vec<egui::epaint::ClippedShape>) {
     let raw =
         egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), events, ..Default::default() };
+    app.before_input(ctx);
     let mut seen = None;
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
         app.ui(ui);
-        seen = Some(look(ui.ctx()));
+        if ui.ctx().current_pass_index() == 0 {
+            seen = Some(look(ui.ctx()));
+        }
     });
     out.textures_delta.clear(); // no renderer here
     (seen.unwrap(), out.shapes)
@@ -112,13 +117,11 @@ fn wheel_scrolling_glides_only_while_animation_effects_show() {
     let scroll = |ctx: &egui::Context| ctx.input(|i| i.smooth_scroll_delta.y);
 
     let (mut a, ctx) = (app(), egui::Context::default());
-
     cadcraft_ui_egui::framework::install_headless(&ctx);
     let (first, _) = frame(&mut a, &ctx, notches(), scroll);
     assert!(first < 0.0 && first > -3.0 * line, "egui spreads the notches over several frames: {first}");
 
     let (mut a, ctx) = (app(), egui::Context::default());
-
     cadcraft_ui_egui::framework::install_headless(&ctx);
     a.system_animations = Some(false);
     assert_eq!(frame(&mut a, &ctx, notches(), scroll).0, -3.0 * line, "all of it in the frame it arrives");

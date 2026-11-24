@@ -5,7 +5,7 @@ use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services, menus};
 use egui::{accesskit::Role, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 fn harness() -> Harness<'static, CadApp> {
@@ -36,7 +36,7 @@ fn menu(h: &mut Harness<'_, CadApp>, id: &str) {
 }
 
 fn expression<'a>(h: &'a Harness<'_, CadApp>) -> egui_kittest::Node<'a> {
-    h.get_by_role_and_label(Role::Tab, "QuickCalc").parent().unwrap().get_all_by_role(Role::TextInput).next().unwrap()
+    h.get_by_role_and_label(Role::TabPanel, "QuickCalc").get_all_by_role(Role::TextInput).next().unwrap()
 }
 
 #[test]

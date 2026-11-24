@@ -22,6 +22,14 @@ fn harness() -> Harness<'static, CadApp> {
     h
 }
 
+/// Focuses the control labelled `label` through its accessibility focus action. Traversal starts from a focused
+/// control: with nothing focused, the app's raw input hook turns Tab into command-line text.
+fn focus(h: &mut Harness<'_, CadApp>, label: &str) {
+    h.get_by_label(label).focus();
+    h.run_steps(2);
+    assert!(h.get_by_label(label).is_focused(), "{label} takes the focus");
+}
+
 fn tab_to(h: &mut Harness<'_, CadApp>, label: &str) {
     for _ in 0..160 {
         if h.query_by_label(label).is_some_and(|node| node.is_focused()) {
@@ -34,11 +42,9 @@ fn tab_to(h: &mut Harness<'_, CadApp>, label: &str) {
 }
 
 #[test]
-fn toolbar_tab_and_shift_tab_skip_title_drag_and_activate_once() {
+fn toolbar_tab_and_shift_tab_move_and_activate_once() {
     let mut h = harness();
-    h.key_press(Key::Tab);
-    h.run_steps(2);
-    assert!(h.get_by_label("New Drawing (⌘N)").is_focused(), "the title drag region is not a keyboard control");
+    focus(&mut h, "New Drawing (⌘N)");
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert!(h.get_by_label("Open (⌘O)").is_focused());
@@ -54,6 +60,7 @@ fn toolbar_tab_and_shift_tab_skip_title_drag_and_activate_once() {
 #[test]
 fn toolset_tabs_traverse_and_activate_without_drafting_commands() {
     let mut h = harness();
+    focus(&mut h, "New Drawing (⌘N)");
     tab_to(&mut h, "Drafting");
     h.key_press(Key::Tab);
     h.run_steps(2);
@@ -86,6 +93,7 @@ fn document_tabs_have_distinct_keyboard_identity_and_activation() {
     h.state_mut().run("new", serde_json::json!({})).unwrap();
     h.run_steps(3);
     let title = h.state().session.docs[0].title.clone();
+    focus(&mut h, "New Drawing (⌘N)");
     tab_to(&mut h, "Start");
     h.key_press(Key::Tab);
     h.run_steps(2);

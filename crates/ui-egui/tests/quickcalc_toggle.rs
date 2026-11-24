@@ -5,7 +5,7 @@ use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services, docking::Panel, menus};
 use egui::{Key, Modifiers, accesskit::Role, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable, by};
+use egui_kittest::kittest::{Queryable, by};
 use serde_json::{Value, json};
 
 fn harness() -> Harness<'static, CadApp> {
@@ -71,7 +71,7 @@ fn restarting_restores_calculator_data_and_ui_edits_are_saved_when_hidden() {
 /// In these tests QuickCalc floats alone; scope to its body to avoid the Properties text fields.
 /// Its first text input is the expression, before conversion values and variable definitions.
 fn expression<'a>(h: &'a Harness<'_, CadApp>) -> egui_kittest::Node<'a> {
-    h.get_by_role_and_label(Role::Tab, "QuickCalc").parent().unwrap().get_all_by_role(Role::TextInput).next().unwrap()
+    h.get_by_role_and_label(Role::TabPanel, "QuickCalc").get_all_by_role(Role::TextInput).next().unwrap()
 }
 
 #[test]

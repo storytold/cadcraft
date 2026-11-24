@@ -82,8 +82,9 @@ fn clipboard_events_run_the_clipboard_commands() {
     app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
     let h = app.session.doc().unwrap().model.handles();
     app.session.set_selection(h);
+    // Only the shortcut table runs here, no app UI: the drawing that keeps the clipboard events in egui while it is
+    // shown is not drawn, so the runtime is not installed.
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         ctx.begin_pass(egui::RawInput { events, ..Default::default() });
         cadcraft_ui_egui::menus::shortcuts(app, &ctx);
