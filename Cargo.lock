@@ -675,6 +675,7 @@ dependencies = [
  "thiserror 2.0.21",
  "uds_windows",
  "windows",
+ "winsafe",
  "winit",
  "winresource",
  "zbus",
