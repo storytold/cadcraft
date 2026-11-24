@@ -358,6 +358,7 @@ fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -
             let before = app.session.log.len();
             let error = match s("key").unwrap_or("enter").to_ascii_lowercase().as_str() {
                 "escape" | "esc" => {
+                    app.paste.cancel();
                     app.session.cancel();
                     None
                 }
