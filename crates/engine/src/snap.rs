@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -385,7 +385,7 @@ fn osnap_in_with_prims(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<(Vec<SnapHit>, Vec<Prim>)> {
-    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen, None)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
     // that don't reach each other).
@@ -475,9 +475,60 @@ pub(crate) fn gather(
     aperture: f64,
     osmode: u32,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
+    gather_in(d, space, ix, cursor, aperture, osmode, &[], None)
 }
 
+/// The point nearest `cursor` within `aperture` on the visible objects of `space` other than
+/// `skip` (and on the objects inside block references), with the object's direction there (a unit
+/// vector; a circle's or arc's runs counterclockwise): what an alignment grip aligns a dynamic
+/// block reference with. Objects on the layers `frozen` in the active viewport aren't drawn there,
+/// so they are passed over.
+pub(crate) fn nearest_with_direction(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    frozen: &[String],
+    skip: Handle,
+) -> Option<(Vec2, Vec2)> {
+    let ix = crate::spatial::index(d, space);
+    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, frozen, Some(skip))?;
+    let mut best: Option<(f64, Vec2, Vec2)> = None;
+    let mut consider = |at: Vec2, dir: Vec2| {
+        let dd = at.dist(cursor);
+        if at.is_finite() && dir.len() > 1e-12 && dir.is_finite() && dd <= aperture && best.is_none_or(|(bd, _, _)| dd < bd) {
+            best = Some((dd, at, dir * (1.0 / dir.len())));
+        }
+    };
+    for p in prims.iter().take(2000) {
+        if let Prim::Circle(c) = p {
+            let at = c.closest(cursor);
+            consider(at, (at - c.center).perp());
+            continue;
+        }
+        if let Prim::Infinite { base, dir, ray } = p {
+            let len = dir.len();
+            if len > 1e-12 {
+                let u = *dir * (1.0 / len);
+                // A ray runs one way from its base: behind it, its base is the nearest point.
+                let t = (cursor - *base).dot(u);
+                consider(*base + u * if *ray { t.max(0.0) } else { t }, u);
+            }
+            continue;
+        }
+        for seg in prim_segments(p) {
+            let seg = fix_circle(&seg);
+            let at = seg.closest(cursor);
+            match seg {
+                Segment::Line(l) => consider(at, l.b - l.a),
+                Segment::Arc { arc, .. } => consider(at, (at - arc.center).perp()),
+            }
+        }
+    }
+    best.map(|(_, at, dir)| (at, dir))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn gather_in(
     d: &Drawing,
     space: &Space,
@@ -486,6 +537,7 @@ fn gather_in(
     aperture: f64,
     osmode: u32,
     frozen: &[String],
+    skip: Option<Handle>,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
     let probe = Bounds2::new(cursor, cursor).expand(aperture);
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
@@ -493,7 +545,7 @@ fn gather_in(
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
-        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
+        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) || Some(e.handle) == skip {
             continue;
         }
         let inf = crate::select::is_infinite(e);
@@ -1169,6 +1221,27 @@ mod tests {
         d.add(&Space::Model, Common::default(), l((5.0, -5.0), (5.0, 5.0))).unwrap();
         d.add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(20.0, 0.0, 0.0), radius: 2.0 })).unwrap();
         d
+    }
+
+    #[test]
+    fn alignment_targets_stay_on_a_ray_and_off_frozen_layers() {
+        let mut d = Drawing::new_imperial();
+        let ray = |base: (f64, f64)| EntityKind::Ray(cadcraft_doc::RayLine { base: Vec3::new(base.0, base.1, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), ray((0.0, 0.0))).unwrap();
+        // Behind the ray: its base is the nearest point, out of a small aperture.
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(-5.0, 0.0), 0.5, &[], Handle(0)), None);
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(-0.2, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::ZERO) < 1e-12, "{at:?}");
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::new(5.0, 0.0)) < 1e-12, "{at:?}");
+        // A line on a layer frozen in the viewport isn't a target.
+        let mut d = drawing();
+        d.ensure_layer("Hidden");
+        let c = Common { layer: "Hidden".into(), ..Common::default() };
+        let l = EntityKind::Line(Line { a: Vec3::new(0.0, 30.0, 0.0), b: Vec3::new(10.0, 30.0, 0.0) });
+        d.add(&Space::Model, c, l).unwrap();
+        assert!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &[], Handle(0)).is_some());
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &["HIDDEN".to_string()], Handle(0)), None);
     }
 
     #[test]
