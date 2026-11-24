@@ -73,7 +73,7 @@ pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
-const RECENT_CLEAR: &str = "ui.recent.clear";
+pub const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -162,6 +162,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
         return Some(r);
     }
     if let Some(r) = crate::bedit::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::wblock::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::managers::route(app, id, params) {
@@ -468,7 +471,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         // yet, and the close prompt's Save, which must finish in this call.
         "ui.saveas.pick" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
-            let format = app.ui.save_format;
+            // `format` ("dxf" or "dwg") is only this dialog's suggestion. Without it, Save As uses
+            // the user's default format, and neither call changes that default.
+            let format = match suggested_save_format(params, app.ui.save_format) {
+                Ok(format) => format,
+                Err(e) => return Some(Err(e)),
+            };
             let name = format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), move |app, p| {
@@ -618,6 +626,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         _ => return None,
     };
     Some(r)
+}
+
+/// The format a Save dialog suggests: `format` when the call names `dxf` or `dwg`, otherwise the
+/// user's default. Naming one does not change the default.
+fn suggested_save_format(params: &Value, default: crate::SaveFormat) -> Result<crate::SaveFormat, String> {
+    let Some(v) = params.get("format").filter(|v| !v.is_null()) else { return Ok(default) };
+    let Some(name) = v.as_str() else { return Err("save format must be \"dxf\" or \"dwg\"".into()) };
+    crate::SaveFormat::parse(name).ok_or_else(|| {
+        let shown: String = name.chars().take(40).collect();
+        format!("unknown save format \"{shown}\" (dxf or dwg)")
+    })
 }
 
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved
