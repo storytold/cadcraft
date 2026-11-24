@@ -468,6 +468,17 @@ fn main() -> eframe::Result {
                 app.ui = ui;
             }
             app.set_system_cursor_default(vars.system_cursor == Switch::On);
+            // Native Wayland answers a clipboard request asynchronously; every other backend in the
+            // next frame (egui-winit).
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                use eframe::egui_wgpu::wgpu::rwh::{HasDisplayHandle, RawDisplayHandle};
+                if let Ok(display) = cc.display_handle() {
+                    app.set_clipboard_late_answers(matches!(display.as_raw(), RawDisplayHandle::Wayland(_)));
+                }
+            }
+            #[cfg(any(not(unix), target_os = "macos"))]
+            app.set_clipboard_late_answers(false);
             // macOS: CADCRAFT_NO_NATIVE_MENU=1 keeps the menus inside the window.
             #[cfg(target_os = "macos")]
             app.set_native_menus(vars.no_native_menu != Switch::On);
