@@ -6,17 +6,25 @@ use super::{Color, Ctx, Drawing, Entity, Ink, Lineweight, ink};
 type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8, u8);
 
 pub(crate) fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
-    resolve_common(ctx, &e.common, plotting)
+    // A selection through a viewport counts a point on Defpoints inside a block whatever the
+    // viewport freezes.
+    let kept = ctx.selecting && ctx.depth > 0 && cadcraft_doc::point_on_defpoints(e);
+    resolve_in(ctx, &e.common, plotting, if kept { &[] } else { ctx.frozen })
 }
 
 /// [`resolve`] for an object's properties `c`.
 pub(crate) fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool) -> Resolved {
+    resolve_in(ctx, c, plotting, ctx.frozen)
+}
+
+/// [`resolve_common`] with `frozen` as the layers the viewport leaves out.
+fn resolve_in(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool, frozen: &[String]) -> Resolved {
     let d = ctx.d;
     // Layer "0" inside a block takes the insert's layer.
     let layer_name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
     let layer = d.layer(layer_name);
     let visible =
-        c.visible && layer.is_none_or(|l| l.visible() && (!plotting || l.plot)) && !ctx.frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name));
+        c.visible && layer.is_none_or(|l| l.visible() && (!plotting || l.plot)) && !frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name));
     let layer_color = ctx.layer_color(layer_name).unwrap_or(Color::Index(7));
     let rgb = ink(c.color, layer_color, ctx.block_color);
     let lw = match c.lineweight {

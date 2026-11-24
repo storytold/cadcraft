@@ -39,6 +39,129 @@ fn linetype_dashes_line() {
     assert!(l.prims.len() > 10);
 }
 
+/// Loose entities built as a layout viewport draws them leave out what is on a layer frozen in
+/// it, the part of a block reference on that layer too, whatever the case of the layer's name.
+/// With no such layer the list is the one [`build_entities`] gives.
+#[test]
+fn loose_entities_built_for_a_viewport_leave_out_its_frozen_layers() {
+    let line = |handle: u64, y: f64, layer: &str| {
+        let kind = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) });
+        let mut e = cadcraft_doc::Entity::new(Handle(handle), kind);
+        e.common.layer = layer.into();
+        e
+    };
+    let mut d = Drawing::new_metric();
+    d.ensure_layer("Hidden");
+    let mut b = cadcraft_doc::Block::new("B");
+    for part in [line(1, 0.0, "0"), line(2, 5.0, "Hidden")] {
+        b.entities.push(part);
+    }
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    let reference = cadcraft_doc::Insert { block: "B".into(), ..Default::default() };
+    let ents = [cadcraft_doc::Entity::new(Handle(3), EntityKind::Insert(reference)), line(4, 5.0, "Hidden"), line(5, 8.0, "0")];
+    let ys = |l: &DisplayList| -> Vec<f64> { l.prims.iter().map(|p| l.points(p)[0].y).collect() };
+    let opts = Options::default();
+    let frozen = ["HIDDEN".to_string()];
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &frozen)), [0.0, 8.0]);
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &[])), [0.0, 5.0, 5.0, 8.0]);
+    assert_eq!(ys(&build_entities(&d, &ents, &opts)), [0.0, 5.0, 5.0, 8.0]);
+}
+
+/// A drawing with the layers Defpoints and "Hidden" and the block P: a line along y = 0 on layer
+/// 0, a point at y = 5 and a line along y = 6 on Defpoints, and a line along y = 7 on "Hidden".
+/// The block N holds a dimension that draws P ([`dimension_of_p`]).
+fn drawing_with_p() -> Drawing {
+    let line = |handle: u64, y: f64, layer: &str| {
+        let kind = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(10.0, y, 0.0) });
+        let mut e = cadcraft_doc::Entity::new(Handle(handle), kind);
+        e.common.layer = layer.into();
+        e
+    };
+    let mut point = cadcraft_doc::Entity::new(Handle(2), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(5.0, 5.0, 0.0), angle: 0.0 }));
+    point.common.layer = "Defpoints".into();
+    let mut d = Drawing::new_metric();
+    d.ensure_layer("Defpoints");
+    d.ensure_layer("Hidden");
+    let mut p = cadcraft_doc::Block::new("P");
+    for part in [line(1, 0.0, "0"), point, line(3, 6.0, "Defpoints"), line(4, 7.0, "Hidden")] {
+        p.entities.push(part);
+    }
+    d.blocks.insert("P".into(), std::sync::Arc::new(p));
+    let mut n = cadcraft_doc::Block::new("N");
+    n.entities.push(cadcraft_doc::Entity::new(Handle(1), dimension_of_p()));
+    d.blocks.insert("N".into(), std::sync::Arc::new(n));
+    d
+}
+
+/// A dimension that draws the block P of [`drawing_with_p`].
+fn dimension_of_p() -> EntityKind {
+    EntityKind::Dimension(cadcraft_doc::Dimension {
+        kind: cadcraft_doc::DimKind::Aligned,
+        defpt: Vec3::new(5.0, 1.0, 0.0),
+        text_mid: Vec3::ZERO,
+        p13: Vec3::ZERO,
+        p14: Vec3::new(10.0, 0.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: String::new(),
+        style: "Standard".into(),
+        measurement: 0.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: Some("P".into()),
+        insertion_point: Vec3::ZERO,
+        overrides: Default::default(),
+        assoc: Vec::new(),
+        marks: Default::default(),
+    })
+}
+
+/// Built for a selection through a viewport that freezes the layer Defpoints, a point on that
+/// layer that is a part of a block is kept: in the block a dimension draws, where its definition
+/// points are, in that of a dimension inside a block and in that of a plain reference. The line
+/// on Defpoints in the same block is left out, in a dimension too, like the line on the other
+/// frozen layer. A point on Defpoints that is not a part of a block is left out with its layer,
+/// like every object on a layer the viewport freezes: the rule is about the parts of blocks.
+#[test]
+fn entities_built_for_a_viewport_keep_the_points_on_defpoints_in_a_block() {
+    let d = drawing_with_p();
+    let reference = |handle: u64, block: &str| {
+        cadcraft_doc::Entity::new(Handle(handle), EntityKind::Insert(cadcraft_doc::Insert { block: block.into(), ..Default::default() }))
+    };
+    let mut loose = cadcraft_doc::Entity::new(Handle(7), EntityKind::Point(cadcraft_doc::Point { p: Vec3::new(5.0, 9.0, 0.0), angle: 0.0 }));
+    loose.common.layer = "Defpoints".into();
+    let ents = [cadcraft_doc::Entity::new(Handle(4), dimension_of_p()), reference(5, "N"), reference(6, "P"), loose];
+    let ys = |l: &DisplayList| -> Vec<f64> { l.prims.iter().map(|p| l.points(p)[0].y).collect() };
+    let opts = Options::default();
+    let frozen = ["defpoints".to_string(), "Hidden".to_string()];
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &frozen)), [0.0, 5.0, 0.0, 5.0, 0.0, 5.0]);
+    assert_eq!(ys(&build_entities_in_viewport(&d, &ents, &opts, &[])), [0.0, 5.0, 6.0, 7.0, 0.0, 5.0, 6.0, 7.0, 0.0, 5.0, 6.0, 7.0, 9.0]);
+}
+
+/// A layout viewport that freezes the layer Defpoints does not draw the points on it, a part of a
+/// dimension's block or of a reference's: only a selection through the viewport counts them
+/// ([`build_entities_in_viewport`]). A viewport that draws the layer draws them.
+#[test]
+fn a_viewport_that_freezes_defpoints_does_not_draw_the_points_on_it() {
+    let drawn = |frozen: &[&str]| -> Vec<f64> {
+        let mut d = drawing_with_p();
+        d.add(&Space::Model, Common::default(), dimension_of_p()).unwrap();
+        let held = cadcraft_doc::Insert { block: "N".into(), insert: Vec3::new(0.0, 10.0, 0.0), ..Default::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(held)).unwrap();
+        let plain = cadcraft_doc::Insert { block: "P".into(), insert: Vec3::new(0.0, 20.0, 0.0), ..Default::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(plain)).unwrap();
+        // The viewport shows model space at 1:1 around (5, 15), so paper and model coordinates
+        // are the same.
+        let mut v = vp(Vec2::new(5.0, 15.0), 60.0, 60.0, Vec2::new(5.0, 15.0), 60.0, 2);
+        v.frozen_layers = frozen.iter().map(|layer| layer.to_string()).collect();
+        let paper = Space::Paper("Layout1".into());
+        d.add(&paper, Common::default(), EntityKind::Viewport(v)).unwrap();
+        viewport_points(&build(&d, &paper, &Options::default())).iter().map(|p| p[0].y).collect()
+    };
+    assert_eq!(drawn(&["defpoints"]), [0.0, 7.0, 10.0, 17.0, 20.0, 27.0]);
+    assert_eq!(drawn(&[]), [0.0, 5.0, 6.0, 7.0, 10.0, 15.0, 16.0, 17.0, 20.0, 25.0, 26.0, 27.0]);
+}
+
 #[test]
 fn frozen_layer_hidden() {
     let mut d = sample();

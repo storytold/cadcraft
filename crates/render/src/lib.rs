@@ -91,6 +91,11 @@ struct Ctx<'a> {
     top: Handle,
     /// Layers frozen in the viewport being drawn.
     frozen: &'a [String],
+    /// Built as loose entities ([`build_entities_in_viewport`]: for a selection, a highlight or a
+    /// preview) and not to draw a viewport: a point on the layer Defpoints that is a part of a
+    /// block is then kept whatever layers are given as frozen
+    /// ([`cadcraft_doc::point_on_defpoints`]).
+    selecting: bool,
     /// Per-viewport layer colour overrides of the viewport being drawn.
     vp_colors: &'a [(String, Color)],
     /// Extra linetype scale for model space seen through a viewport: 1 / viewport scale when
@@ -435,7 +440,7 @@ mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
 pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
-pub use pipeline::{Options, build, build_entities, build_plot};
+pub use pipeline::{Options, build, build_entities, build_entities_in_viewport, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{fitted_text_entity, layout_mtext_entity, place_text_entity, style_font, text_align};
