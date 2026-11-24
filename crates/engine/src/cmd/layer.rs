@@ -4,7 +4,7 @@ mod prompts;
 mod state_prompts;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{Layer, Lineweight};
+use cadcraft_doc::{EntityKind, Layer, Lineweight};
 use serde_json::{Value, json};
 
 use super::machines::SelectRun;
@@ -101,7 +101,8 @@ fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({ "layers": layers, "states": d.layer_states.iter().map(|st| st.name.clone()).collect::<Vec<_>>() }))
 }
 
-/// Lower-case names of layers that have objects on them (model, layouts and block definitions).
+/// Lower-case names of layers that have objects on them (model, layouts and block definitions),
+/// or that proxy graphics draw on: AutoCAD keeps those too.
 pub fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     let ents = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())).chain(d.blocks.values().flat_map(|b| b.entities.iter()));
@@ -112,6 +113,9 @@ pub fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<Strin
         // An attribute can sit on a layer of its own.
         for layer in super::blocks::object_attribs(e).iter().filter_map(|a| a.props.layer.as_ref()) {
             set.insert(layer.to_ascii_lowercase());
+        }
+        if let EntityKind::Unknown(u) = &e.kind {
+            set.extend(u.graphics.iter().map(|g| g.common.layer.to_ascii_lowercase()));
         }
     }
     set
@@ -258,6 +262,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         merge::rename_in_viewports(d, &old, &nn);
+        d.rename_proxy_layer(&old, &nn);
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }
@@ -302,10 +307,7 @@ fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
     if name == "0" || name.eq_ignore_ascii_case("Defpoints") || d.header.str("CLAYER", "0").eq_ignore_ascii_case(&name) {
         return Err(bad("layer.delete", "cannot delete layer 0, Defpoints or the current layer"));
     }
-    let used = d.model.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name))
-        || d.layouts.iter().any(|l| l.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)))
-        || d.blocks.values().any(|b| b.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)));
-    if used {
+    if used_layers(d).contains(&name.to_ascii_lowercase()) {
         return Err(bad("layer.delete", "layer has objects on it"));
     }
     d.layers.retain(|l| !l.name.eq_ignore_ascii_case(&name));
@@ -776,6 +778,61 @@ mod tests {
         assert!(s.execute("layer.delete", &json!({ "name": "A" })).is_err());
         s.execute("purge", &json!({})).unwrap();
         assert!(s.doc().unwrap().layer("A").is_some());
+    }
+
+    /// A session with layers A, B and C and a proxy on layer 0 whose graphics draw a line on B
+    /// (#3094).
+    fn proxy_on_b() -> Session {
+        use cadcraft_doc::{Common, Entity, EntityKind, Handle, Line, Space, Unknown};
+        let mut s = Session::new();
+        for name in ["A", "B", "C"] {
+            s.execute("layer.new", &json!({ "name": name })).unwrap();
+        }
+        let line = Entity {
+            handle: Handle(0),
+            common: Common { layer: "B".into(), ..Common::default() },
+            kind: EntityKind::Line(Line { a: cadcraft_doc::geom::Vec3::ZERO, b: cadcraft_doc::geom::Vec3::new(1.0, 0.0, 0.0) }),
+        };
+        let proxy = EntityKind::Unknown(Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![line] });
+        s.doc_mut().unwrap().add(&Space::Model, Common::default(), proxy).unwrap();
+        s
+    }
+
+    fn graphics_layer(s: &Session) -> String {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Unknown(u) => u.graphics.first().map(|g| g.common.layer.clone()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// As in AutoCAD, PURGE and layer.delete keep a layer only proxy graphics draw on.
+    #[test]
+    fn layers_proxy_graphics_draw_on_are_in_use() {
+        let mut s = proxy_on_b();
+        assert!(s.execute("layer.delete", &json!({ "name": "B" })).is_err());
+        s.execute("purge", &json!({})).unwrap();
+        let d = s.doc().unwrap();
+        assert!(d.layer("B").is_some() && d.layer("A").is_none() && d.layer("C").is_none());
+    }
+
+    /// RENAME and LAYMRG take the graphics with the layer, LAYDEL drops them to layer 0.
+    #[test]
+    fn rename_merge_and_laydel_move_proxy_graphics() {
+        let mut s = proxy_on_b();
+        s.doc_mut().unwrap().proxy_layers = vec!["0".into(), "A".into(), "B".into(), "C".into()];
+        s.execute("layer.set", &json!({ "name": "B", "newName": "B2" })).unwrap();
+        assert_eq!(graphics_layer(&s), "B2");
+        assert_eq!(s.doc().unwrap().proxy_layers, ["0", "A", "B2", "C"]);
+        s.execute("laymrg", &json!({ "from": "B2", "to": "C" })).unwrap();
+        assert_eq!(graphics_layer(&s), "C");
+        assert_eq!(s.doc().unwrap().proxy_layers, ["0", "A", "C", "C"]);
+        s.execute("laydel", &json!({ "name": "C" })).unwrap();
+        assert_eq!(graphics_layer(&s), "0");
     }
 
     #[test]

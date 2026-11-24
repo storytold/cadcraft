@@ -6,6 +6,11 @@ use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 use crate::spatial::{self, SpatialIndex};
 use crate::{Accept, Prompt};
 
+/// A dimension kept as read whose graphics are a reference to its `*D` block (#3438).
+fn draws_a_block(e: &Entity) -> bool {
+    matches!(&e.kind, EntityKind::Unknown(u) if u.graphics.iter().any(|g| matches!(g.kind, EntityKind::Insert(_))))
+}
+
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
@@ -17,15 +22,19 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
         | EntityKind::Table(_)
         | EntityKind::Tolerance(_)
         | EntityKind::MLeader(_)
-        | EntityKind::Image(_) => {
-            // Text-like objects are hit inside their box.
+        | EntityKind::Image(_)
+        | EntityKind::Unknown(_)
+            if !matches!(e.kind, EntityKind::Unknown(_)) || draws_a_block(e) =>
+        {
+            // Text-like objects are hit inside their box; a dimension kept as read that draws its
+            // block, like a dimension.
             let b = entity_bounds(d, e, 0);
             if b.is_empty() {
                 return Vec::new();
             }
             let c = b.corners();
             let mut v = vec![vec![c[0], c[1], c[2], c[3], c[0]]];
-            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) {
+            if matches!(e.kind, EntityKind::Dimension(_) | EntityKind::Insert(_) | EntityKind::MLeader(_)) || draws_a_block(e) {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
