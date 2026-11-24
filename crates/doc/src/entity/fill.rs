@@ -7,6 +7,11 @@ pub struct HatchLoop {
     pub vertices: Vec<PolyVertex>,
     #[serde(default)]
     pub outer: bool,
+    /// Original DXF group 92 bits. Writing keeps only Derived (4), Textbox (8) and
+    /// Outermost (16), derives External (1) from `outer`, and sets Polyline (2).
+    /// None uses the flags of a locally created loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_flags: Option<i64>,
     /// The objects the loop was made from (DXF group 97 count, 330 handles): an associative
     /// hatch re-fills the loop from them when they change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

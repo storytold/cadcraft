@@ -292,7 +292,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
-            text_tags(w, d, t, None, None);
+            text_tags(w, d, t, None, None, (e.handle, 0));
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -312,7 +312,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
         EntityKind::AttDef(a) => {
             w.s(0, "ATTDEF");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt));
+            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt), (e.handle, 0));
             if cx.target >= Version::R2007 {
                 multiline_tags(w, a, true);
             }
@@ -372,7 +372,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
             w.f(45, i.row_spacing);
         }
         if !i.attribs.is_empty() {
-            for a in &i.attribs {
+            for (index, a) in i.attribs.iter().enumerate() {
                 let ah = w.h();
                 w.s(0, "ATTRIB");
                 w.s(5, ah);
@@ -385,7 +385,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
                     w.i(60, 1);
                 }
                 w.s(100, "AcDbText");
-                text_tags(w, d, &a.text, Some((a, cx.target)), None);
+                text_tags(w, d, &a.text, Some((a, cx.target)), None, (e.handle, index));
                 if cx.target >= Version::R2007 {
                     multiline_tags(w, a, false);
                 }
@@ -627,7 +627,7 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         w.i(71, i64::from(h.associative));
         w.i(91, h.loops.len() as i64);
         for l in &h.loops {
-            w.i(92, 2 | if l.outer { 1 } else { 0 });
+            w.i(92, 2 | i64::from(l.outer) | (l.boundary_flags.unwrap_or(0) & (4 | 8 | 16)));
             let has_bulge = l.vertices.iter().any(|v| v.bulge != 0.0);
             w.i(72, i64::from(has_bulge));
             w.i(73, 1);
