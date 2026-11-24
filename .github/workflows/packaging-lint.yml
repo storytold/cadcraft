@@ -75,3 +75,5 @@ jobs:
             packaging/macos/nightly.sh packaging/macos/nightly-lib.sh packaging/macos/nightly-sign.sh packaging/macos/nightly-verify.sh
       - name: Enforce the nightly serialization and synthetic packaging contracts
         run: python3 packaging/nightly-tests.py
+      - name: Render the Arch Nightly handoff from stub binaries
+        run: bash packaging/linux/nightly-arch-tar-test.sh

@@ -160,7 +160,8 @@ mod tests {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             loop {
-                let path = std::env::temp_dir().join(format!("cadcraft-nightly-session-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+                let path =
+                    std::env::temp_dir().join(format!("cadcraft-nightly-session-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
                 match std::fs::create_dir(&path) {
                     Ok(()) => return Self(path),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,

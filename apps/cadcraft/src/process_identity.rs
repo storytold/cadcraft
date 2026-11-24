@@ -16,7 +16,8 @@ pub fn initialize(nightly: bool, app_id: &str) -> Result<(), IdentityError> {
             .get_or_init(|| {
                 #[cfg(windows)]
                 {
-                    winsafe::SetCurrentProcessExplicitAppUserModelID(id).map_err(|error| format!("cannot set the nightly Windows identity: {error}"))?;
+                    winsafe::SetCurrentProcessExplicitAppUserModelID(id)
+                        .map_err(|error| format!("cannot set the nightly Windows identity: {error}"))?;
                     let actual = winsafe::GetCurrentProcessExplicitAppUserModelID()
                         .map_err(|error| format!("cannot read back the nightly Windows identity: {error}"))?;
                     if actual != id {

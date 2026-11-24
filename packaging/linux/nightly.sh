@@ -18,12 +18,13 @@ OUTPUT="$DIST/cadcraft-$VERSION-linux-x86_64-nightly.tar.gz"
 nightly_build_gui
 STAGE="$NIGHTLY_WORK/stage"
 mkdir -p "$STAGE"
-cp "$NIGHTLY_GUI" "$STAGE/cadcraft"
+# The kit's flat tar layout: `cadcraft` is the launcher people run and `cadcraft-bin` the GUI it
+# starts with this channel's own profile, so an unpacked copy never writes stable's settings.
+cp "$NIGHTLY_GUI" "$STAGE/cadcraft-bin"
+chmod 755 "$STAGE/cadcraft-bin"
+cp "$ROOT/packaging/linux/nightly-launch.sh" "$STAGE/cadcraft"
 chmod 755 "$STAGE/cadcraft"
-# An unpacked tar is isolated too: the launcher starts the GUI with this channel's own profile.
-cp "$ROOT/packaging/linux/nightly-launch.sh" "$STAGE/cadcraft-nightly"
-chmod 755 "$STAGE/cadcraft-nightly"
-cp "$ROOT/assets/app-icon/cadcraft-256.png" "$STAGE/cadcraft-nightly.png"
+cp "$ROOT/assets/app-icon/cadcraft-nightly.png" "$STAGE/cadcraft-nightly.png"
 nightly_copy_notices "$STAGE"
 # The private mktemp cwd is the helper authority root, not a CLI path parent.
 (cd "$NIGHTLY_WORK" && python3 "$ROOT/packaging/nightly-archive.py" linux stage archive.tar.gz)

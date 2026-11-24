@@ -265,7 +265,8 @@ fn saved_window(app_ron: &str) -> bool {
 /// unusable) is dropped first, so the window opens at its default size. `portable_file`: the
 /// portable copy's settings file, read instead of the user profile's.
 fn restores_window(portable_file: Option<&std::path::Path>) -> bool {
-    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(os_window::app_id()).map(|dir| dir.join("app.ron"))) else {
+    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(os_window::app_id()).map(|dir| dir.join("app.ron")))
+    else {
         return false;
     };
     let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
@@ -354,15 +355,28 @@ fn built_version() -> &'static str {
     env!("CADCRAFT_BUILT_VERSION")
 }
 
-/// `CADCraft <version>`, with ` (nightly-v1)` appended for the nightly channel: the exact line
-/// `--version` prints, so a Launcher that compares the two is comparing the same string.
+/// The stable line, exactly what clap prints for `--version`: `cadcraft <workspace version>`.
 fn version_string() -> String {
-    format!("CADCraft {}", build_flavor::version(build_flavor::COMPILED, built_version()))
+    format!("cadcraft {}", cadcraft_engine::build_version())
 }
 
-/// The same line with the commit, for the log: a bug report's log names the build it came from.
+/// The Nightly identity line every nightly script checks: `<App> <version> (nightly-v1)`, with the
+/// prepared nightly version embedded at build time. The app name never gains a "Nightly".
+fn nightly_version_line() -> String {
+    format!("CADCraft {}", build_flavor::version(build_flavor::BuildFlavor::NightlyV1, built_version()))
+}
+
+/// The identity this build reports in its log: the Nightly line on that channel, stable's otherwise.
+fn reported_version() -> String {
+    match build_flavor::COMPILED {
+        build_flavor::BuildFlavor::Stable => version_string(),
+        build_flavor::BuildFlavor::NightlyV1 => nightly_version_line(),
+    }
+}
+
+/// The reported line with the commit, for the log: a bug report's log names the build it came from.
 fn log_version() -> String {
-    format!("{} ({})", version_string(), option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev"))
+    format!("{} ({})", reported_version(), option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev"))
 }
 
 /// Whether this start runs the isolated Nightly flavor.
@@ -402,11 +416,10 @@ fn prepare_launch() -> Option<Vec<std::ffi::OsString>> {
     let argv: Vec<_> = std::env::args_os().skip(1).collect();
     // Plain `--version`, or the Launcher's `--launch-profile nightly-v1 --profile-root <dir>
     // --version`: answered before root validation, process identity, logging, IPC or any window.
-    if build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1
-        && (build_flavor::version_query(&argv) || launch_profile::version_query(&argv))
+    if build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1 && (build_flavor::version_query(&argv) || launch_profile::version_query(&argv))
     {
         use std::io::Write as _;
-        let _ = writeln!(std::io::stdout(), "{}", version_string());
+        let _ = writeln!(std::io::stdout(), "{}", nightly_version_line());
         return None;
     }
     let early = launch_profile::parse(argv)
@@ -416,7 +429,9 @@ fn prepare_launch() -> Option<Vec<std::ffi::OsString>> {
             Ok(launch)
         })
         .and_then(|launch| {
-            launch_profile::prepare(launch, |root| launch_profile::validate_root(root, |key| std::env::var_os(key), std::env::current_exe().ok().as_deref()))
+            launch_profile::prepare(launch, |root| {
+                launch_profile::validate_root(root, |key| std::env::var_os(key), std::env::current_exe().ok().as_deref())
+            })
         })
         .unwrap_or_else(|error| {
             report_launch_profile_error(&error);
@@ -494,23 +509,20 @@ fn main() -> eframe::Result {
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
     // Nightly session health: the owner's lease and unclean-exit record live in the profile, and the
     // record is finished on the way out (on macOS in `on_exit`, see `nightly_session`).
-    let (nightly_watch, previous_unclean) = match nightly_session::Session::begin_with_health(
-        launch_profile::current().root(),
-        built_version(),
-        option_env!("CADCRAFT_BUILD_SHA"),
-    ) {
-        Ok((watch, unavailable)) => {
-            if unavailable {
-                log::warn!("another CADCraft Nightly holds this profile's session lease; this window keeps no health record");
+    let (nightly_watch, previous_unclean) =
+        match nightly_session::Session::begin_with_health(launch_profile::current().root(), built_version(), option_env!("CADCRAFT_BUILD_SHA")) {
+            Ok((watch, unavailable)) => {
+                if unavailable {
+                    log::warn!("another CADCraft Nightly holds this profile's session lease; this window keeps no health record");
+                }
+                let unclean = watch.as_ref().is_some_and(nightly_session::Session::previous_unclean);
+                (std::sync::Arc::new(std::sync::Mutex::new(watch)), unclean)
             }
-            let unclean = watch.as_ref().is_some_and(nightly_session::Session::previous_unclean);
-            (std::sync::Arc::new(std::sync::Mutex::new(watch)), unclean)
-        }
-        Err(error) => {
-            log::warn!("Nightly session state: {error}");
-            (std::sync::Arc::new(std::sync::Mutex::new(None)), false)
-        }
-    };
+            Err(error) => {
+                log::warn!("Nightly session state: {error}");
+                (std::sync::Arc::new(std::sync::Mutex::new(None)), false)
+            }
+        };
     if previous_unclean {
         log::warn!("the previous CADCraft Nightly ended without finishing its session record");
     }
@@ -706,7 +718,10 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{STENCIL_BITS, filters_for_save, follow_desktop, saved_window, stencil_bits, window_options, without_tiny_window};
+    use super::{
+        STENCIL_BITS, filters_for_save, follow_desktop, nightly_version_line, saved_window, stencil_bits, version_string, window_options,
+        without_tiny_window,
+    };
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -787,6 +802,17 @@ mod tests {
         let ok = tiny.replace("x:64.0,y:64.0)),", "x:1600.0,y:1000.0)),");
         assert_eq!(without_tiny_window(&ok), None);
         assert_eq!(without_tiny_window("not ron"), None);
+    }
+
+    /// The two identity lines. Nightly prints the kit's `<App> <version> (nightly-v1)` -- the app
+    /// name never gains a "Nightly" -- while stable keeps exactly the line clap prints, which
+    /// `launch_args` asserts against its own `-V` output.
+    #[test]
+    fn the_version_lines_name_the_app_and_its_channel() {
+        let nightly = nightly_version_line();
+        assert_eq!(nightly, format!("CADCraft {} (nightly-v1)", super::built_version()));
+        assert!(!nightly.contains("Nightly "), "the version line must not rename the app: {nightly}");
+        assert_eq!(version_string(), format!("cadcraft {}", cadcraft_engine::build_version()));
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;

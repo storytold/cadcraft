@@ -15,9 +15,8 @@ This file describes how CADCraft is released.
 CADCraft's Windows, Linux and macOS nightly is documented in
 [`nightly-release-preparation.md`](nightly-release-preparation.md). `.github/workflows/nightly.yml`
 and `nightly-sign.yml` are enabled for **supervised manual runs only** by the reviewed release
-managers: there is no schedule, and `.github/workflows/nightly-dispatch.yml` (the automatic
-completion transport) is still literally switched off. No platform secret is granted to the
-producer. Stable `release.yml`, its triggers, environment and secrets are unchanged.
+managers: there is no schedule, and there is no automatic transport yet — a run is dispatched by
+hand, and the completion step is manual too. No platform secret is granted to the producer. Stable `release.yml`, its triggers, environment and secrets are unchanged.
 
 The signer-owned files (`.github/workflows/nightly-sign.yml`,
 `.github/nightly-signing-policy.json`, `packaging/windows/sign.ps1`, the macOS nightly signing

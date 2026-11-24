@@ -84,11 +84,24 @@ class Launcher(unittest.TestCase):
 
     def test_the_plain_tar_launcher_starts_the_profile(self):
         launcher = LINUX / "nightly-launch.sh"
-        (self.root / "cadcraft").write_text(RECORDER, encoding="utf-8")
-        (self.root / "cadcraft").chmod(0o755)
-        installed = self.launcher("cadcraft-nightly", launcher.read_text(encoding="utf-8"))
+        (self.root / "cadcraft-bin").write_text(RECORDER, encoding="utf-8")
+        (self.root / "cadcraft-bin").chmod(0o755)
+        installed = self.launcher("cadcraft", launcher.read_text(encoding="utf-8"))
         self.assert_starts_the_profile(installed)
         self.assert_starts_the_profile(installed, {"XDG_DATA_HOME": str(self.root / "xdg with space")})
+
+    def test_the_tar_launcher_refuses_a_missing_or_aliased_gui(self):
+        launcher = self.launcher("cadcraft", (LINUX / "nightly-launch.sh").read_text(encoding="utf-8"))
+        for args in ([], ["--version"]):
+            with self.subTest(args=args):
+                result = subprocess.run([str(launcher), *args], capture_output=True, text=True, timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": str(self.home)})
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("cadcraft-bin is missing", result.stderr)
+        (self.root / "elsewhere").write_text(RECORDER, encoding="utf-8")
+        (self.root / "elsewhere").chmod(0o755)
+        (self.root / "cadcraft-bin").symlink_to(self.root / "elsewhere")
+        result = subprocess.run([str(launcher)], capture_output=True, text=True, timeout=60, env={"PATH": "/usr/bin:/bin", "HOME": str(self.home)})
+        self.assertEqual(result.returncode, 2, "an aliased GUI is not started")
 
     def test_the_arch_launcher_starts_the_profile(self):
         (self.root / ".cadcraft-nightly").mkdir()

@@ -78,17 +78,15 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Source = Get-NightlySourceState $Root
 Assert-NightlySource $Version $env:CADCRAFT_BUILD_SHA $env:CADCRAFT_BUILD_DATE $Source.Head $Source.Status
 $oldChannel = $env:CADCRAFT_BUILD_CHANNEL
-$oldVersionOverride = $env:CADCRAFT_OVERRIDE_VERSION
 try {
+  # `build.rs` reads CADCRAFT_VERSION (already required above), not a PhotoCraft-style override.
   $env:CADCRAFT_BUILD_CHANNEL = 'nightly-v1'
-  $env:CADCRAFT_OVERRIDE_VERSION = $Version
   $env:CADCRAFT_REQUIRE_WINRES = '1'
   $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = '-C target-feature=+crt-static'
   cargo build --release --locked -p cadcraft --target $Target
   if ($LASTEXITCODE -ne 0) { throw "nightly cargo build failed: $LASTEXITCODE" }
 } finally {
   $env:CADCRAFT_BUILD_CHANNEL = $oldChannel
-  $env:CADCRAFT_OVERRIDE_VERSION = $oldVersionOverride
 }
 $Source = Get-NightlySourceState $Root
 try { Assert-NightlySource $Version $env:CADCRAFT_BUILD_SHA $env:CADCRAFT_BUILD_DATE $Source.Head $Source.Status }

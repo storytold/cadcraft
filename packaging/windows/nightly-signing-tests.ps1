@@ -15,6 +15,15 @@ function Invoke-Refusal([scriptblock] $Operation, [string] $Message) {
   Assert-Policy ($errorText.Contains($Message)) "expected refusal: $Message; got: $errorText"
 }
 function global:cargo { $global:SigningFixtureCargoCalls++; throw 'FIXTURE_COMPILER_BOUNDARY' }
+# The source preflight runs `git` in the real checkout; this fixture owns its own identity, so the
+# stub answers for the fixture commit instead of whatever this working copy happens to be at.
+function global:git {
+  param([Parameter(ValueFromRemainingArguments=$true)][object[]] $Arguments)
+  $joined = ($Arguments | ForEach-Object { "$_" }) -join ' '
+  if ($joined -match 'rev-parse HEAD$') { $global:LASTEXITCODE = 0; return ('a' * 40) }
+  if ($joined -match 'status --porcelain$') { $global:LASTEXITCODE = 0; return '' }
+  throw "the fixture must not run git: $joined"
+}
 function global:Invoke-WebRequest { throw 'fixture must not perform signing downloads' }
 $global:SigningFixtureCargoCalls = 0
 if (-not [IO.Path]::IsPathRooted($FixtureRoot)) { throw 'use an owned absolute FixtureRoot' }
@@ -22,6 +31,9 @@ $root = Join-Path $FixtureRoot ('signing-policy-' + [Guid]::NewGuid().ToString('
 New-Item -ItemType Directory -Path $root | Out-Null
 $version = '0.23.1-nightly.20261121.12345.1.gaaaaaaaaaaaa'
 $env:CADCRAFT_VERSION = $version
+# The preflight's other two identities: the fixture commit the version names, and its run date.
+$env:CADCRAFT_BUILD_SHA = 'a' * 40
+$env:CADCRAFT_BUILD_DATE = '2026-11-21'
 function Invoke-Build([switch] $BuildOnly) {
   $arguments = @{Arch='x64';Version=$version;Target='x86_64-pc-windows-msvc';TargetDir=$root;Dist=(Join-Path $root 'dist')}
   if ($BuildOnly) { $arguments.BuildOnly = $true }
@@ -79,5 +91,8 @@ try {
   Write-Output 'PASS: stable-optional-policy-preserves-owned-bytes'
 } finally {
   Clear-SigningFixtures
+  # The fixture's own source identity, so it never reaches the caller's environment.
+  [Environment]::SetEnvironmentVariable('CADCRAFT_BUILD_SHA', $null)
+  [Environment]::SetEnvironmentVariable('CADCRAFT_BUILD_DATE', $null)
   Remove-Item -LiteralPath $root -Recurse -Force
 }

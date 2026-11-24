@@ -99,8 +99,13 @@ fn installation_boundary(platform: Platform, exe: &Path) -> Result<PathBuf, Stri
 fn forbidden_roots(platform: Platform, env: &impl Fn(&str) -> Option<OsString>, exe: &Path) -> Result<Vec<PathBuf>, String> {
     let mut roots = match platform {
         Platform::Windows => {
-            let mut roots =
-                ["APPDATA", "LOCALAPPDATA"].into_iter().map(|key| required_base(env, key).map(|p| p.join("CADCraft"))).collect::<Result<Vec<_>, _>>()?;
+            let mut roots = ["APPDATA", "LOCALAPPDATA"]
+                .into_iter()
+                .map(|key| required_base(env, key).map(|p| p.join("CADCraft")))
+                .collect::<Result<Vec<_>, _>>()?;
+            // Stable's eframe storage folder (`eframe::storage_dir`: `app.ron` under
+            // `%APPDATA%\ai.storyteller.cadcraft\data`), outside the roaming `CADCraft` folder.
+            roots.push(required_base(env, "APPDATA")?.join(EFRAME_APP_ID));
             // The MSI's per-machine folder (cadcraft.wxs). A custom install folder is not known
             // here; the executable's own folder is fenced below.
             for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
@@ -119,6 +124,9 @@ fn forbidden_roots(platform: Platform, env: &impl Fn(&str) -> Option<OsString>, 
             roots.extend(["/usr/bin/cadcraft", "/usr/local/bin/cadcraft", "/opt/cadcraft"].map(PathBuf::from));
             // The stable Flatpak keeps its data in its own per-app folder.
             roots.push(required_base(env, "HOME")?.join(".var/app/ai.storyteller.cadcraft"));
+            // Stable's eframe storage folder (`eframe::storage_dir`: window state, Options profile,
+            // UI and autosave prefs in `app.ron`), which is not the XDG settings folder above.
+            roots.push(xdg_base(env, "XDG_DATA_HOME", ".local/share")?.join(EFRAME_APP_ID));
             roots
         }
         Platform::Mac => {
@@ -128,6 +136,9 @@ fn forbidden_roots(platform: Platform, env: &impl Fn(&str) -> Option<OsString>, 
                 library.join("Application Support/CADCraft"),
                 library.join("Caches/CADCraft"),
                 library.join("Caches/ai.storyteller.cadcraft"),
+                // Stable's eframe storage folder (`eframe::storage_dir`: `app.ron` in Application
+                // Support), beside the settings folder env.rs uses.
+                library.join("Application Support").join(EFRAME_APP_ID),
                 library.join("Preferences/CADCraft"),
                 library.join("Preferences/ai.storyteller.cadcraft.plist"),
                 library.join("Saved Application State/ai.storyteller.cadcraft.savedState"),
@@ -210,7 +221,9 @@ fn validate_for(
             return Err("nightly-v1 cannot be combined with CADCRAFT_CONFIG_DIR outside its own profile".into());
         }
     }
-    if platform != Platform::Windows && let Some(id) = env("FLATPAK_ID").filter(|v| !v.is_empty()) {
+    if platform != Platform::Windows
+        && let Some(id) = env("FLATPAK_ID").filter(|v| !v.is_empty())
+    {
         // A Flatpak's data folder and runtime socket namespace belong to its app id. The nightly
         // bundle has an id of its own ([`NIGHTLY_FLATPAK_ID`], named by
         // `packaging/linux/flatpak-bundle.sh`), so its profile is already the sandbox's own; any
@@ -255,6 +268,10 @@ fn validate_for(
 /// bundle id differ on purpose, as they do for stable.
 pub const NIGHTLY_FLATPAK_ID: &str = "ai.storyteller.cadcraft.nightly";
 
+/// The app id eframe derives stable's storage folder from ([`crate::main`]'s `persistence_path`).
+/// A profile that sits there would overwrite stable's `app.ron`, so its folder is fenced too.
+const EFRAME_APP_ID: &str = "ai.storyteller.cadcraft";
+
 /// The subfolder autosave and Drawing Recovery write ([`crate::main`], `<settings>/autosave`).
 pub const AUTOSAVE: &str = "autosave";
 
@@ -274,7 +291,8 @@ mod tests {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = loop {
-                let candidate = std::env::temp_dir().join(format!("cadcraft-profile-policy-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+                let candidate =
+                    std::env::temp_dir().join(format!("cadcraft-profile-policy-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
                 match std::fs::create_dir(&candidate) {
                     Ok(()) => break std::fs::canonicalize(candidate).unwrap(),
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -428,6 +446,14 @@ mod tests {
             assert_eq!(std::fs::read(stable.join("stable-sentinel")).unwrap(), b"stable bytes");
         }
         let data = PathBuf::from(fixture.get("XDG_DATA_HOME").unwrap());
+        // Stable's eframe storage folder holds `app.ron`, so a profile may not sit at or inside it.
+        let storage = data.join(EFRAME_APP_ID);
+        std::fs::create_dir_all(&storage).unwrap();
+        std::fs::write(storage.join("app.ron"), b"stable window state").unwrap();
+        for candidate in [storage.clone(), storage.join("nightly")] {
+            assert!(fixture.check(Platform::Linux, &candidate).unwrap_err().contains("overlap"), "{}", candidate.display());
+        }
+        assert_eq!(std::fs::read(storage.join("app.ron")).unwrap(), b"stable window state");
         let nightly = data.join("ArtCraftLauncher/nightly/profiles/cadcraft");
         assert_eq!(fixture.check(Platform::Linux, &nightly).unwrap(), nightly);
         assert_eq!(std::fs::read_dir(nightly).unwrap().count(), 0);
@@ -442,6 +468,7 @@ mod tests {
         let library = fixture.home().join("Library");
         for suffix in [
             "Application Support/CADCraft",
+            "Application Support/ai.storyteller.cadcraft",
             "Caches/CADCraft",
             "Caches/ai.storyteller.cadcraft",
             "Preferences/CADCraft",
@@ -467,6 +494,7 @@ mod tests {
         fixture.env.insert("ProgramFiles".into(), fixture.root.join("program files").into_os_string());
         for stable in [
             fixture.root.join("roaming/CADCraft"),
+            fixture.root.join("roaming/ai.storyteller.cadcraft"),
             fixture.root.join("local/CADCraft"),
             fixture.root.join("program files/ArtCraft/CADCraft"),
         ] {
@@ -531,13 +559,7 @@ mod tests {
     fn a_profile_that_cannot_be_written_is_refused_without_a_stable_fallback() {
         let fixture = Fixture::new();
         let private = fixture.root.join("nightly-unwritable");
-        let result = validate_for(
-            Platform::Linux,
-            &private,
-            |key| fixture.get(key),
-            Some(&fixture.exe),
-            |_| Err(std::io::Error::other("read-only")),
-        );
+        let result = validate_for(Platform::Linux, &private, |key| fixture.get(key), Some(&fixture.exe), |_| Err(std::io::Error::other("read-only")));
         assert!(result.unwrap_err().contains("not writable"));
         assert!(private.exists(), "the profile was created before the probe, and nothing was written into stable");
         assert!(!fixture.home().join(".config/cadcraft").exists());
