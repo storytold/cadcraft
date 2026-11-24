@@ -13,6 +13,7 @@ mod extents;
 mod format;
 mod gdt;
 mod header;
+mod host_reserved;
 pub mod library;
 mod plotstyle;
 mod plotter;
@@ -36,6 +37,9 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
+pub use host_reserved::{
+    clear_host_reserved, host_reserved_current, host_reserved_len, host_reserved_writes, host_reserves, note_host_reserved, replace_host_reserved,
+};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
@@ -252,11 +256,15 @@ impl Drawing {
     /// all in the band, so there only `foreign.handles` is looked up. The scan of every space and
     /// block definition runs only for a candidate in the band. Every handle skipped is a distinct
     /// one something holds, so the walk ends within one step more than the count of held handles.
+    ///
+    /// Handles the host has given to records that are not drawing objects ([`host_reserves`]) are
+    /// skipped too. They are not stored in the drawing: a copy allocates with the same exclusion,
+    /// and remembering them does not change the drawing.
     pub fn next_handle(&self) -> Handle {
         let held = |h: u64| {
             h == 0
                 || self.foreign.handles.contains_key(&Handle(h))
-                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || self.handle_in_use(Handle(h))))
+                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || host_reserves(h) || self.handle_in_use(Handle(h))))
         };
         let mut h = self.handseed;
         // Counted only once a handle is skipped, so the usual first-try answer costs nothing.
@@ -281,6 +289,7 @@ impl Drawing {
             .fold(self.model.len(), usize::saturating_add)
             .saturating_add(self.foreign.handles.len())
             .saturating_add(self.reserved_handles.len())
+            .saturating_add(host_reserved_len())
             .saturating_add(1)
     }
     /// Record a handle a file's record holds in the reserved band, before the record is placed in

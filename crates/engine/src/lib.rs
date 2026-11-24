@@ -231,18 +231,30 @@ impl Session {
         }
     }
 
+    /// Put this thread's handle exclusions on the active drawing's names. The exclusions are not
+    /// part of the drawing, so this does not change saved state or an undo snapshot.
+    fn sync_host_reserved(&self) {
+        let Some(st) = self.docs.get(self.active) else {
+            cadcraft_doc::clear_host_reserved();
+            return;
+        };
+        let uid = st.uid;
+        let len = self.lisp.subents.get(&uid).map(|s| s.issued_count()).unwrap_or(0);
+        if cadcraft_doc::host_reserved_current(uid, len) {
+            return;
+        }
+        match self.lisp.subents.get(&uid) {
+            Some(s) => cadcraft_doc::replace_host_reserved(uid, s.issued_handles()),
+            None => cadcraft_doc::replace_host_reserved(uid, std::iter::empty()),
+        }
+    }
     pub fn state(&self) -> Result<&DocState> {
+        self.sync_host_reserved();
         self.docs.get(self.active).ok_or(EngineError::NoDocument)
     }
     pub fn state_mut(&mut self) -> Result<&mut DocState> {
-        let Self { docs, active, lisp, .. } = self;
-        let st = docs.get_mut(*active).ok_or(EngineError::NoDocument)?;
-        // LISP's names of records without a handle must stay reserved. The engine changes a
-        // drawing through this state, so the drawing gets them before a handle can be given out.
-        if let Some(subents) = lisp.subents.get_mut(&st.uid) {
-            subents.reserve_in(&mut st.doc);
-        }
-        Ok(st)
+        self.sync_host_reserved();
+        self.docs.get_mut(self.active).ok_or(EngineError::NoDocument)
     }
     pub fn doc(&self) -> Result<&Drawing> {
         Ok(&self.state()?.doc)

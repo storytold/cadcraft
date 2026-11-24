@@ -19,6 +19,8 @@ use crate::dxf_ext::{self, DimVal, K};
 mod assoc;
 mod blocks;
 mod common;
+#[cfg(test)]
+pub(crate) use common::{attdef_definition_visits, reset_attdef_definition_visits};
 mod ctx;
 mod entity;
 mod header;

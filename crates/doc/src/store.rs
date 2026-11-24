@@ -6,6 +6,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+fn fresh_store_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    if id == 0 { 1 } else { id }
+}
 
 use crate::{Entity, Handle};
 
@@ -24,11 +31,24 @@ pub struct EntityStore {
     shards: Vec<Arc<HashMap<Handle, u32>>>,
     len: usize,
     next_chunk: u32,
+    /// Identity of this store. A clone keeps it, so a cache of derived data can be shared until
+    /// one side is edited. Not part of [`PartialEq`].
+    id: u64,
+    /// Bumped on every edit. Together with `id` it tells a cache the entities changed. Not part
+    /// of [`PartialEq`]: two stores with the same entities are equal whatever their counters.
+    revision: u64,
 }
 
 impl Default for EntityStore {
     fn default() -> Self {
-        EntityStore { chunks: Vec::new(), shards: (0..SHARDS).map(|_| Arc::new(HashMap::new())).collect(), len: 0, next_chunk: 0 }
+        EntityStore {
+            chunks: Vec::new(),
+            shards: (0..SHARDS).map(|_| Arc::new(HashMap::new())).collect(),
+            len: 0,
+            next_chunk: 0,
+            id: fresh_store_id(),
+            revision: 0,
+        }
     }
 }
 
@@ -46,6 +66,14 @@ fn shard_of(h: Handle) -> usize {
 impl EntityStore {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// A key that changes when the entities change and stays put when they do not. Clones share
+    /// it until one of them is edited.
+    pub fn cache_key(&self) -> (u64, u64) {
+        (self.id, self.revision)
+    }
+    fn revised(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
     pub fn len(&self) -> usize {
         self.len
@@ -101,6 +129,7 @@ impl EntityStore {
             self.replace(e);
             return;
         }
+        self.revised();
         let needs_new = self.chunks.last().is_none_or(|c| c.items.len() >= CHUNK_MAX);
         if needs_new {
             let c = self.new_chunk();
@@ -120,6 +149,7 @@ impl EntityStore {
             self.replace(e);
             return;
         }
+        self.revised();
         let needs_new = self.chunks.first().is_none_or(|c| c.items.len() >= CHUNK_MAX);
         if needs_new {
             let c = self.new_chunk();
@@ -138,27 +168,37 @@ impl EntityStore {
         let Some(id) = self.chunk_id(e.handle) else { return false };
         let Some(pos) = self.chunk_pos(id) else { return false };
         let Some(c) = self.chunks.get_mut(pos) else { return false };
-        let chunk = Arc::make_mut(c);
-        if let Some(slot) = chunk.items.iter_mut().find(|x| x.handle == e.handle) {
-            *slot = Arc::new(e);
-            true
-        } else {
-            false
+        let replaced = {
+            let chunk = Arc::make_mut(c);
+            if let Some(slot) = chunk.items.iter_mut().find(|x| x.handle == e.handle) {
+                *slot = Arc::new(e);
+                true
+            } else {
+                false
+            }
+        };
+        if replaced {
+            self.revised();
         }
+        replaced
     }
     pub fn remove(&mut self, h: Handle) -> Option<Arc<Entity>> {
         let id = self.chunk_id(h)?;
         let pos = self.chunk_pos(id)?;
-        let c = self.chunks.get_mut(pos)?;
-        let chunk = Arc::make_mut(c);
-        let i = chunk.items.iter().position(|x| x.handle == h)?;
-        let e = chunk.items.remove(i);
-        let empty = chunk.items.is_empty();
+        let removed = {
+            let c = self.chunks.get_mut(pos)?;
+            let chunk = Arc::make_mut(c);
+            let i = chunk.items.iter().position(|x| x.handle == h)?;
+            let e = chunk.items.remove(i);
+            Some((e, chunk.items.is_empty()))
+        };
+        let (e, empty) = removed?;
         if empty {
             self.chunks.remove(pos);
         }
         self.set_index(h, None);
         self.len = self.len.saturating_sub(1);
+        self.revised();
         Some(e)
     }
     /// Modify an entity in place through a closure (copy-on-write).
@@ -166,14 +206,20 @@ impl EntityStore {
         let Some(id) = self.chunk_id(h) else { return false };
         let Some(pos) = self.chunk_pos(id) else { return false };
         let Some(c) = self.chunks.get_mut(pos) else { return false };
-        let chunk = Arc::make_mut(c);
-        match chunk.items.iter_mut().find(|x| x.handle == h) {
-            Some(slot) => {
-                f(Arc::make_mut(slot));
-                true
+        let changed = {
+            let chunk = Arc::make_mut(c);
+            match chunk.items.iter_mut().find(|x| x.handle == h) {
+                Some(slot) => {
+                    f(Arc::make_mut(slot));
+                    true
+                }
+                None => false,
             }
-            None => false,
+        };
+        if changed {
+            self.revised();
         }
+        changed
     }
     pub fn bring_to_front(&mut self, h: Handle) -> bool {
         match self.remove(h) {

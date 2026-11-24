@@ -1,8 +1,61 @@
+use std::cell::{Cell, RefCell};
+
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
+    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
     VAlign, Vec3, Version, W, dxf_ext,
 };
+
+struct AttdefIndex {
+    key: (u64, u64),
+    /// First case-insensitive ATTDEF match for each tag: its properties.
+    by_tag: HashMap<String, Common>,
+}
+
+thread_local! {
+    /// Entities of a block definition examined while matching an attribute to its ATTDEF.
+    static ATTDEF_VISITS: Cell<u64> = const { Cell::new(0) };
+    /// The definition index for the block last read on this thread. A new key (another block, or
+    /// an edit of this one) builds it again.
+    static ATTDEF_INDEX: RefCell<Option<AttdefIndex>> = const { RefCell::new(None) };
+}
+
+/// The definition properties of the first ATTDEF in `block` whose tag matches `tag`, ignoring
+/// ASCII case. The block is read once per edit; later attributes of the same block do not scan it.
+fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
+    let key = block.entities.cache_key();
+    let want = tag.to_ascii_uppercase();
+    ATTDEF_INDEX.with(|slot| {
+        let mut g = slot.borrow_mut();
+        if g.as_ref().is_none_or(|ix| ix.key != key) {
+            let mut by_tag = HashMap::new();
+            for e in block.entities.iter() {
+                count_attdef_visit();
+                if let EntityKind::AttDef(ad) = &e.kind {
+                    by_tag.entry(ad.tag.to_ascii_uppercase()).or_insert_with(|| e.common.clone());
+                }
+            }
+            *g = Some(AttdefIndex { key, by_tag });
+        }
+        g.as_ref().and_then(|ix| ix.by_tag.get(&want).cloned())
+    })
+}
+
+fn count_attdef_visit() {
+    ATTDEF_VISITS.with(|n| n.set(n.get().saturating_add(1)));
+}
+
+/// How many definition entities attribute reads have examined on this thread.
+#[cfg(test)]
+pub(crate) fn attdef_definition_visits() -> u64 {
+    ATTDEF_VISITS.with(Cell::get)
+}
+
+/// Start a definition-visit count from zero.
+#[cfg(test)]
+pub(crate) fn reset_attdef_definition_visits() {
+    ATTDEF_VISITS.with(|n| n.set(0));
+}
 
 /// `AcadAnnotative` xdata marking an annotative style.
 pub(super) fn annotative_xdata(w: &mut W) {
@@ -149,10 +202,7 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
 /// definition's; an attribute defined on layer 0 is on the reference's layer. Also the
 /// definition's properties.
 pub(super) fn attrib_common(d: &Drawing, e: &Entity, ins: &Insert, a: &Attrib) -> (Common, Common) {
-    let def = d
-        .block(&ins.block)
-        .and_then(|b| b.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))));
-    let base = def.map(|de| de.common.clone()).unwrap_or_default();
+    let base = d.block(&ins.block).and_then(|b| attdef_base(b, &a.tag)).unwrap_or_default();
     let mut c = a.props.over(&base);
     if c.layer == "0" {
         c.layer.clone_from(&e.common.layer);

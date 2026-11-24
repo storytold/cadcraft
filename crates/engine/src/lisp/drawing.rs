@@ -415,8 +415,6 @@ pub(crate) struct SubEnts {
     /// The same handles, for lookups: a name that no longer holds is told from a real object
     /// that has its handle.
     issued_set: HashSet<Handle>,
-    /// How many of `issued` the drawing already reserves ([`SubEnts::reserve_in`]).
-    reserved: usize,
     /// The name of each record a walk reached, by its INSERT and place.
     by_slot: HashMap<(Handle, usize), Handle>,
     by_name: HashMap<Handle, SubEnt>,
@@ -463,32 +461,24 @@ impl SubEnts {
 
     /// How many handles names were given to over this drawing's session: a lifetime bound for a
     /// routine that keeps walking and editing.
-    pub(super) fn issued_count(&self) -> usize {
+    pub(crate) fn issued_count(&self) -> usize {
         self.issued.len()
     }
 
-    /// Note that `h` was given as a name: it is never given again.
-    fn note_issued(&mut self, h: Handle) {
-        self.issued.push(h);
-        self.issued_set.insert(h);
+    /// The handles given out as names, in the order they were given.
+    pub(crate) fn issued_handles(&self) -> impl Iterator<Item = u64> + '_ {
+        self.issued.iter().map(|h| h.0)
     }
 
-    /// Keep [``Drawing::new_handle``](cadcraft_doc::Drawing::new_handle) from giving out the
-    /// names issued so far. The session calls this with the drawing before any change, so every
-    /// allocator skips them, including the helpers in lower layers that do not see this state.
-    /// A drawing swapped in by undo, redo, a rollback or the Block Editor has none of the names
-    /// issued after it was taken, so they are put in it again: the drawing may show an older
-    /// state, but a handle given out there must still never take one.
-    pub(crate) fn reserve_in(&mut self, doc: &mut Arc<cadcraft_doc::Drawing>) {
-        let Some(&last) = self.issued.last() else { return };
-        if self.reserved == self.issued.len() && doc.reserved_handles.contains(&last.0) {
-            return;
+    /// Note that `h` was given as a name: it is never given again, and `Drawing::new_handle`
+    /// skips it. The skip lives beside the drawing, so a copy allocates with the same exclusion
+    /// and remembering the name does not change the drawing.
+    fn note_issued(&mut self, uid: u64, h: Handle) {
+        self.issued.push(h);
+        self.issued_set.insert(h);
+        if !cadcraft_doc::note_host_reserved(uid, h.0) {
+            cadcraft_doc::replace_host_reserved(uid, self.issued_handles());
         }
-        let d = Arc::make_mut(doc);
-        for &h in &self.issued {
-            d.reserve_handle(h);
-        }
-        self.reserved = self.issued.len();
     }
 
     /// Drop the names of records whose owner `gone` picks: they went with those objects, and
@@ -675,7 +665,7 @@ fn sub_name(ctx: &mut Ctx<'_>, owner: Handle, slot: usize) -> Option<Handle> {
         return None;
     }
     let chosen = subents.name(doc, epoch, owner, slot, attribs, taken)?;
-    subents.note_issued(chosen);
+    subents.note_issued(doc, chosen);
     Some(chosen)
 }
 

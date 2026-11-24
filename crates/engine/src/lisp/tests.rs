@@ -2135,3 +2135,85 @@ fn a_name_steps_past_a_hostile_handle_and_stops_after_1024_tries() {
     assert_eq!(ok(&mut s, "(entnext i)"), "nil");
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
 }
+
+/// A saved drawing with one named attribute. The name comes from the command line, which does
+/// not run the after-command pass.
+fn clean_named() -> Session {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    {
+        let st = s.state_mut().unwrap();
+        st.saved = st.doc.clone();
+        st.undo.clear();
+        st.redo.clear();
+    }
+    s.cmdline("(setq a (entnext i))").unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+    assert!(!s.state().unwrap().is_dirty(), "naming from the command line saves nothing");
+    s
+}
+
+#[test]
+fn issued_name_reads_keep_the_drawing_clean() {
+    let mut s = clean_named();
+    s.cmdline("(getvar \"DBMOD\")").unwrap();
+    assert_eq!(ok(&mut s, "(getvar \"DBMOD\")"), "0");
+    assert!(std::sync::Arc::ptr_eq(&s.state().unwrap().doc, &s.state().unwrap().saved));
+    // A programmatic read runs the after-command pass. That pass must not make a saved drawing dirty.
+    s.execute("lisp", &json!({ "code": "(entget a)" })).unwrap();
+    assert_eq!(ok(&mut s, "(getvar \"DBMOD\")"), "0");
+    assert!(std::sync::Arc::ptr_eq(&s.state().unwrap().doc, &s.state().unwrap().saved));
+    assert_eq!(s.state().unwrap().undo.len(), 0, "a read is not an undo step");
+}
+
+#[test]
+fn issued_name_selection_keeps_the_drawing_clean() {
+    let mut s = clean_named();
+    let saved = s.state().unwrap().saved.clone();
+    s.execute("select", &json!({ "clear": true })).unwrap();
+    assert!(s.state().unwrap().selection.is_empty());
+    assert!(std::sync::Arc::ptr_eq(&s.state().unwrap().doc, &saved));
+    assert!(!s.state().unwrap().is_dirty());
+    assert_eq!(ok(&mut s, "(getvar \"DBMOD\")"), "0");
+    assert_eq!(s.state().unwrap().undo.len(), 0, "clearing an empty selection is not an undo step");
+}
+
+#[test]
+fn issued_name_undo_restores_the_saved_drawing() {
+    let mut s = clean_named();
+    let saved = s.state().unwrap().saved.clone();
+    // A selection change writes no undo step. If it also changes the drawing, the next command
+    // records that copy, and undo cannot return to the saved drawing.
+    s.execute("select", &json!({ "clear": true })).unwrap();
+    assert_eq!(s.state().unwrap().undo.len(), 0);
+    s.execute("line", &json!({ "points": [[0, -3], [1, -3]] })).unwrap();
+    assert!(s.undo().unwrap().is_some());
+    assert!(std::sync::Arc::ptr_eq(&s.state().unwrap().doc, &saved), "undo returns the saved drawing, not a reservation copy");
+    assert!(!s.state().unwrap().is_dirty());
+    assert_eq!(ok(&mut s, "(getvar \"DBMOD\")"), "0");
+}
+
+#[test]
+fn issued_name_reservation_work_is_linear() {
+    const N: usize = 64;
+    let (mut s, _) = drawing_with_attributes(N);
+    ok(&mut s, "(setq e nil)");
+    let before = cadcraft_doc::host_reserved_writes();
+    for _ in 0..N {
+        ok(&mut s, "(setq e (if e (entnext e) (entnext i)))");
+        let _ = s.state_mut().unwrap();
+    }
+    let wrote = cadcraft_doc::host_reserved_writes() - before;
+    assert_eq!(wrote, N as u64, "each new name is one reservation write, not the whole prefix");
+
+    // Replace the drawing (undo), then allocate on a copy before the next mutable access.
+    s.execute("line", &json!({ "points": [[0, -4], [1, -4]] })).unwrap();
+    s.undo().unwrap();
+    let mut copy = s.doc().unwrap().clone();
+    copy.handseed = u64::MAX - N as u64;
+    let handle = copy.new_handle().0;
+    let before = cadcraft_doc::host_reserved_writes();
+    let _ = s.state_mut().unwrap();
+    let replay = cadcraft_doc::host_reserved_writes() - before;
+    assert!(replay == 0 && handle == u64::MAX, "replacement writes {replay}, copy handle {handle:X}, want {:X}", u64::MAX);
+}
