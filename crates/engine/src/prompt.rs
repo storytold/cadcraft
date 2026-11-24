@@ -348,6 +348,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// The attribute values the command waits for, all at once, when the UI should ask for them
+    /// in the Edit Attributes dialog (INSERT with ATTDIA 1). Typed answers still work.
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        None
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
@@ -387,6 +392,48 @@ pub enum EditorKind {
     Line,
     /// A dimension's text: `<>` stands for the measured value, shown as `measured`.
     Dimension { measured: String },
+}
+
+/// See [`Interactive::attribute_entry`]: the block being inserted and the attributes asked for,
+/// in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttribEntry {
+    pub block: String,
+    pub rows: Vec<AttribAsk>,
+    /// The drawing the command runs in ([`crate::DocState::uid`]) and its number in
+    /// [`Session::commands_started`], stamped by [`Session::attribute_entry`]: a dialog draft
+    /// belongs to one command, so a command started afterwards never takes it.
+    pub drawing: u64,
+    pub command: u64,
+}
+
+/// One attribute an INSERT asks for: its tag, prompt and default value; the value of a Verify
+/// one is asked again once every value is in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AttribAsk {
+    pub tag: String,
+    pub prompt: String,
+    pub default: String,
+    pub verify: bool,
+}
+
+impl AttribEntry {
+    /// An entry as the command builds it, before [`Session::attribute_entry`] stamps the drawing
+    /// and command number it belongs to.
+    pub(crate) fn idle(block: String, rows: Vec<AttribAsk>) -> Self {
+        AttribEntry { block, rows, drawing: 0, command: 0 }
+    }
+
+    /// The answers that give the attributes `values` (one per row, in order; a missing one is
+    /// the default) when typed in turn: every value, then each Verify attribute's again, as
+    /// INSERT asks them once the dialog has shown the values.
+    pub fn answers(&self, values: &[String]) -> Vec<String> {
+        let value = |i: usize| values.get(i).cloned().unwrap_or_else(|| self.rows.get(i).map(|r| r.default.clone()).unwrap_or_default());
+        let mut out: Vec<String> = (0..self.rows.len()).map(value).collect();
+        let verify: Vec<String> = self.rows.iter().enumerate().filter(|(_, r)| r.verify).map(|(i, _)| value(i)).collect();
+        out.extend(verify);
+        out
+    }
 }
 
 /// See [`Interactive::drag`].

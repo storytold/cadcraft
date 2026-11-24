@@ -1653,3 +1653,7 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+	Edit Attributes	Редагування атрибутів
+	Block name:	Ім’я блока:
+	Tag: {tag}	Мітка: {tag}
+	Values typed at the command line work too	Значення, введені в командному рядку, теж приймаються
