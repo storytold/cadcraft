@@ -598,24 +598,17 @@ struct PendingAttr {
 /// holds another one — any stored property differs, not only the tag, value and insertion point —
 /// the text is dropped (and `stale` set) rather than written to it.
 fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> Option<String> {
-    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
-    if pending.as_ref().is_some_and(|p| p.row != *a) {
-        // Report it only when text the drawing does not have was waiting: merely focusing a field
-        // loses nothing.
-        if let Some(p) = &pending {
-            *stale |= p.text != p.row.value;
-        }
-        ui.data_mut(|d| d.remove::<PendingAttr>(id));
+    if take_stale_pending(ui, id, a, stale) {
         let te = id.with("te");
         // The field had another attribute when this frame's input was queued, so take none of it:
         // neither a commit nor a new pending buffer may reach the one here now. The field shows
         // the drawing's value, inert for this frame, and editing resumes on the next one.
-        ui.memory_mut(|m| m.surrender_focus(te));
         let mut buf = a.value.clone();
         let w = ui.available_width() - 10.0;
         ui.add_sized([w, 20.0], egui::TextEdit::singleline(&mut buf).id(te).font(crate::theme::body()).interactive(false));
         return None;
     }
+    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
     let mut buf = pending.map_or_else(|| a.value.clone(), |p| p.text);
     let w = ui.available_width() - 10.0;
     let te = id.with("te");
@@ -627,6 +620,24 @@ fn attr_field(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow
         ui.data_mut(|d| d.remove::<PendingAttr>(id));
     }
     (resp.lost_focus() && buf != a.value).then_some(buf)
+}
+
+/// Drop the pending text `id` holds for an attribute other than `a` — the place holds another one
+/// now — reporting text the drawing never got; true when it did.
+fn take_stale_pending(ui: &mut egui::Ui, id: egui::Id, a: &cadcraft_engine::AttributeRow, stale: &mut bool) -> bool {
+    let pending = ui.data(|d| d.get_temp::<PendingAttr>(id));
+    if !pending.as_ref().is_some_and(|p| p.row != *a) {
+        return false;
+    }
+    // Report it only when text the drawing does not have was waiting: merely focusing a field
+    // loses nothing.
+    if let Some(p) = &pending {
+        *stale |= p.text != p.row.value;
+    }
+    ui.data_mut(|d| d.remove::<PendingAttr>(id));
+    // The field had another attribute when this frame's input was queued: take none of it.
+    ui.memory_mut(|m| m.surrender_focus(id.with("te")));
+    true
 }
 
 /// A committed numeric field read as the command line reads numbers (`36`, `3'`, `3'-6 1/2"`,
@@ -1298,6 +1309,10 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                             // A value with line breaks is edited in the Edit Attributes dialog;
                             // a single-line field would join its lines.
                             if !a.editable || a.value.contains('\n') {
+                                // The value cannot be edited here now (it became constant, or it
+                                // gained a line break), but text typed while it could still waits
+                                // under this place: drop and report it, as `attr_field` does.
+                                take_stale_pending(ui, ui.scope_id().with(("attval", uid, e.handle, i)), a, &mut att_stale);
                                 let r = value_box(ui, &a.value.replace('\n', " "), false, false);
                                 r.on_hover_text(if a.editable {
                                     crate::tl!("Multiline: edit it with Edit Attributes")

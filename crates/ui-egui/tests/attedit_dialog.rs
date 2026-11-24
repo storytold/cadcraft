@@ -183,6 +183,37 @@ fn without_a_selected_reference_attedit_asks_at_the_command_line() {
     assert_eq!(value(&app, h, "NO"), "9");
 }
 
+/// A reference on a layer frozen in the active layout viewport is not drawn there, so it is not
+/// the selected reference the dialog opens on; one the viewport does draw still opens it beside
+/// the hidden one.
+#[test]
+fn the_active_viewport_decides_which_selected_reference_attedit_opens() {
+    let (mut app, hidden) = app_with_reference();
+    app.run("layer.new", json!({ "name": "Hidden" })).unwrap();
+    app.run("properties.set", json!({ "handles": [hidden.hex()], "layer": "Hidden" })).unwrap();
+    let shown = Handle::parse_hex(app.run("insert", json!({ "name": "Tag", "at": [300, 0] })).unwrap()["handle"].as_str().unwrap()).unwrap();
+    app.run("layout.set", json!({ "name": "Layout1" })).unwrap();
+    let vp = app.run("mview", json!({ "p1": [20, 20], "p2": [220, 120] })).unwrap()["viewports"][0].as_str().unwrap().to_string();
+    app.run("viewport.set", json!({ "handle": vp, "freeze": ["Hidden"] })).unwrap();
+    app.run("mspace", json!({ "handle": vp })).unwrap();
+    assert_eq!(app.session.viewport_frozen(), ["Hidden".to_string()]);
+
+    // The stored selection holds only the reference the viewport does not draw.
+    app.session.set_selection(vec![hidden]);
+    assert!(app.session.selection().is_empty());
+    menus::activate(&mut app, "attedit");
+    assert!(app.ui.dialog.is_none(), "a reference the viewport does not draw must not open the dialog");
+    assert!(app.session.prompt_text().contains("Select block reference"), "{}", app.session.prompt_text());
+    app.session.cancel();
+
+    // Beside the hidden one, the one the viewport draws is the selected reference.
+    app.session.set_selection(vec![hidden, shown]);
+    assert_eq!(app.session.selection(), [shown]);
+    menus::activate(&mut app, "attedit");
+    assert_eq!(app.ui.dialog.as_deref(), Some("attedit"));
+    assert_eq!(app.attedit.handle, Some(shown), "the reference the viewport draws");
+}
+
 #[test]
 fn the_properties_palette_lists_the_attributes() {
     let (mut app, _) = app_with_reference();
@@ -262,6 +293,24 @@ fn a_stale_dialog_does_not_overwrite_another_attribute() {
     assert_eq!(value(&app, h, "NO"), "7");
 }
 
+/// A stale Apply is refused in the dialog and on the command line, so the refusal is not left
+/// only in a window another command can cover.
+#[test]
+fn a_stale_dialog_refusal_reaches_the_command_line() {
+    let (mut app, _) = app_with_reference();
+    menus::activate(&mut app, "attedit");
+    app.attedit.rows[1].typed = "EG".into();
+    app.run("battman", json!({ "name": "Tag", "action": "order", "order": ["NOTE", "NO"] })).unwrap();
+    assert!(!attedit::apply(&mut app));
+    let error = app.attedit.error.clone().unwrap_or_default();
+    assert!(error.contains("The attributes changed"), "the dialog says so: {error}");
+    assert!(
+        app.session.log.iter().any(|l| l.contains("The attributes changed while this dialog was open")),
+        "the refusal is on the command line: {:?}",
+        app.session.log.last()
+    );
+}
+
 /// The Properties palette's pending text is the drawing's: typed in one drawing and committed
 /// after another (with the same handle and tags) is chosen, it must not be applied there.
 #[test]
@@ -310,6 +359,25 @@ fn a_pending_properties_value_does_not_overwrite_an_edit_from_elsewhere() {
     assert_eq!(value(harness.state(), h, "NOTE"), "other", "the value edited from elsewhere stands");
     assert!(shows(&harness, &["7", "other"], "EG"), "the field shows the value edited from elsewhere: {:?}", fields(&harness));
     assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+}
+
+/// Text waiting in a Properties field is reported when the drawing changes the value so that the
+/// field can no longer edit it (here it gains a line break), rather than left unseen.
+#[test]
+fn a_pending_properties_value_goes_stale_when_the_value_gains_a_line_break() {
+    let (app, h) = app_with_reference();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "n", "EG");
+    harness.state_mut().run("attedit", json!({ "handle": h.hex(), "at": { "1": "other\nline" } })).unwrap();
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NOTE"), "other\nline", "the value edited from elsewhere stands");
+    assert!(!fields(&harness).iter().any(|f| f == "EG"), "the stale text is no longer waiting: {:?}", fields(&harness));
+    assert!(told_the_value_was_not_applied(&harness), "the user is told: {:?}", harness.state().session.log.last());
+    // Nothing is kept for a later Enter either.
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NOTE"), "other\nline", "nothing was applied");
 }
 
 /// Undo can put an older attribute, with its older value, where the typed-into one was: the

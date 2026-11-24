@@ -57,11 +57,12 @@ pub struct State {
     pub error: Option<String>,
 }
 
-/// The block reference the dialog edits: the selection when it is exactly one block reference
-/// with an attribute that can be changed.
+/// The block reference the dialog edits: the selection as the active viewport shows it when that
+/// is exactly one block reference with an attribute that can be changed.
 fn selected_reference(app: &CadApp) -> Option<Handle> {
+    let selection = app.session.selection();
+    let [h] = selection.as_slice() else { return None };
     let st = app.session.state().ok()?;
-    let [h] = st.selection.as_slice() else { return None };
     matches!(st.doc.entity(*h).map(|e| &e.kind), Some(EntityKind::Insert(_))).then_some(*h)?;
     cadcraft_engine::attributes(&st.doc, *h).iter().any(|a| a.editable).then_some(*h)
 }
@@ -159,9 +160,12 @@ pub fn apply(app: &mut CadApp) -> bool {
     }
     if !rows_unchanged(app, h) {
         // Another command reordered, renamed or edited the attributes while the dialog was open:
-        // a row index would address a different attribute now. Show what the drawing has.
+        // a row index would address a different attribute now. Show what the drawing has, and say
+        // in the dialog and on the command line why nothing was written.
         load(app, h);
-        app.attedit.error = Some(crate::tl!("The attributes changed while this dialog was open. Review them and apply again.").into());
+        let msg = crate::tl!("The attributes changed while this dialog was open. Review them and apply again.").to_string();
+        app.session.echo(msg.clone());
+        app.attedit.error = Some(msg);
         return false;
     }
     match app.run("attedit", json!({ "handle": h.hex(), "at": values })) {
