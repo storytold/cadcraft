@@ -370,7 +370,7 @@ fn top_line_kept_objects_and_unknown(handle: Handle) -> Drawing {
         RawTag { code: 100, value: "SyntheticWidget".into() },
         RawTag { code: 1, value: "widget".into() },
     ];
-    let kind = EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags });
+    let kind = EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags, graphics: Vec::new() });
     d.model.push(Entity { handle, common: Common::default(), kind });
     d
 }

@@ -71,7 +71,7 @@ fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
         label: label.unwrap_or(spec.label).to_string(),
         id: id.to_string(),
         shortcut: spec.shortcut.map(str::to_string),
-        enabled: (spec.enabled)(&app.session).is_ok(),
+        enabled: crate::clipboard::offered(&app.session, spec),
     })
 }
 
@@ -97,14 +97,19 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut first = Vec::new();
     if let Some(last) = app.session.last_command.as_deref().and_then(find_command) {
         let label = crate::tf!("Repeat {command}", command = last.id.to_ascii_uppercase());
-        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: (last.enabled)(&app.session).is_ok() });
+        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: crate::clipboard::offered(&app.session, last) });
     }
     let recent: Vec<Entry> = app
         .session
         .recent_commands(RECENT)
         .iter()
         .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
+        .map(|c| Entry::Item {
+            label: c.id.to_ascii_uppercase(),
+            id: c.id.to_string(),
+            shortcut: None,
+            enabled: crate::clipboard::offered(&app.session, c),
+        })
         .collect();
     first.extend(sub("Recent Commands", recent));
     push(&mut groups, first);

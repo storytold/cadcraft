@@ -1,7 +1,7 @@
 use super::{
-    Accept, EntityKind, Input, Interactive, Prompt, Result, Session, Spline, Step, Value, Vec2, added, bad, bool_or, distinct_points, find_command,
-    points_param,
+    Accept, EntityKind, Input, Interactive, Prompt, Result, Session, Spline, Step, Value, Vec2, added, bad, bool_or, distinct_points, points_param,
 };
+use crate::cmd::draw2::SplineCvM;
 
 pub(super) fn run_spline(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("object").is_some() {
@@ -26,11 +26,11 @@ pub(super) fn run_spline(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[derive(Default)]
-pub(super) struct SplineM {
+pub(in crate::cmd) struct SplineM {
     pts: Vec<Vec2>,
     asking_method: bool,
-    /// `Method` > `CV` hands over to the control-vertex machine (`spline.cv`).
-    delegate: Option<Box<dyn Interactive>>,
+    /// Both entry points share Method and Object; CV handles its own points and degree.
+    cv: Option<SplineCvM>,
     /// Knots, end tangents and fit tolerance chosen so far.
     opts: cadcraft_geom::FitOptions,
     /// An option asking a further question (Knots, Tangency, toLerance, Object).
@@ -38,6 +38,10 @@ pub(super) struct SplineM {
 }
 
 impl SplineM {
+    pub(in crate::cmd) fn cv() -> Self {
+        Self { cv: Some(SplineCvM::default()), ..Self::default() }
+    }
+
     fn make(&self, closed: bool) -> Spline {
         Spline::fit_with(&self.pts, closed, self.opts)
     }
@@ -49,18 +53,25 @@ impl Interactive for SplineM {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         self.opts.knots = crate::cmd::spline_opts::current_knots(s);
+        if let Some(cv) = &mut self.cv {
+            return cv.begin(s);
+        }
         s.echo(format!("Current settings: Method=Fit   Knots={}", self.opts.knots.name()));
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        if let Some(d) = &self.delegate {
-            return d.prompt(s);
-        }
         if let Some(a) = &self.ask {
             return a.prompt(&self.opts, &self.pts);
         }
         if self.asking_method {
-            return Prompt::new("Enter spline creation method", crate::cmd::curves::KW).kw(&["Fit", "CV"]).default("Fit");
+            return Prompt::new("Enter spline creation method", crate::cmd::curves::KW).kw(&["Fit", "CV"]).default(if self.cv.is_some() {
+                "CV"
+            } else {
+                "Fit"
+            });
+        }
+        if let Some(cv) = &self.cv {
+            return cv.prompt(s);
         }
         match self.pts.len() {
             0 => Prompt::new("Specify first point", Accept::POINT).kw(&["Method", "Knots", "Object"]),
@@ -72,9 +83,6 @@ impl Interactive for SplineM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if let Some(d) = &mut self.delegate {
-            return d.input(s, i);
-        }
         if let Some(a) = &mut self.ask {
             use crate::cmd::spline_opts::Outcome;
             return match a.input(s, i, &mut self.opts, &self.pts)? {
@@ -96,20 +104,24 @@ impl Interactive for SplineM {
         if self.asking_method {
             match i {
                 Input::Keyword(k) if k == "CV" => {
-                    let Some(factory) = find_command("spline.cv").and_then(|c| c.interactive) else {
-                        return Err(crate::EngineError::Other("CV: not available yet".into()));
-                    };
-                    let mut m = factory(s)?;
                     self.asking_method = false;
-                    let step = m.begin(s)?;
-                    self.delegate = Some(m);
-                    return Ok(step);
+                    return self.cv.get_or_insert_with(SplineCvM::default).begin(s);
                 }
-                Input::Keyword(_) | Input::Enter => self.asking_method = false,
+                Input::Keyword(k) if k == "Fit" => {
+                    self.asking_method = false;
+                    self.cv = None;
+                    return self.begin(s);
+                }
+                Input::Enter => self.asking_method = false,
                 Input::Text(_) => return Err(crate::EngineError::Other("Invalid option keyword.".into())),
                 _ => {}
             }
             return Ok(Step::Continue);
+        }
+        if let Some(cv) = &mut self.cv
+            && !matches!(&i, Input::Keyword(k) if k == "Method" || k == "Object")
+        {
+            return cv.input(s, i);
         }
         match i {
             Input::Point(p) => {
@@ -148,8 +160,8 @@ impl Interactive for SplineM {
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if let Some(d) = &self.delegate {
-            return d.preview(s, c);
+        if let Some(cv) = &self.cv {
+            return cv.preview(s, c);
         }
         if self.pts.is_empty() {
             return Vec::new();
