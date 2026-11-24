@@ -42,7 +42,7 @@ zbus = { version = "=5.19.0", default-features = false, features = ["async-io", 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Floating panels open in their own OS windows on the desktop; the web build keeps them in the page.
-craft-ui = { workspace = true, features = ["native-windows"] }
+craft-ui = { workspace = true }
 craft-update = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
