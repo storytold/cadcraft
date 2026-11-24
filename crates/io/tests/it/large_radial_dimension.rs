@@ -141,6 +141,15 @@ fn a_kept_dimension_draws_its_block_and_saving_keeps_it() {
     let d = read_dxf(file(true).as_bytes()).expect("read");
     // A reference to the block, which holds the arrowhead the proxy graphics lack.
     assert_eq!(graphics_kinds(&d), ["INSERT"]);
+    // ByBlock throughout, so the block's ByBlock objects take the dimension's own.
+    let reference = d.model.iter().find_map(|e| match &e.kind {
+        EntityKind::Unknown(u) => u.graphics.first().map(|g| g.common.clone()),
+        _ => None,
+    });
+    assert!(
+        reference.is_some_and(|c| c.transparency == cadcraft_doc::Transparency::ByBlock && c.plot_style == "ByBlock" && c.layer == "0"),
+        "the reference passes the dimension's traits on"
+    );
     let b = d.extents(&Space::Model);
     assert!(b.max.x >= 353.0 && b.min.x <= 250.0, "{b:?}");
     let again = read_dxf(write_dxf(&d).as_bytes()).expect("reopen");
@@ -329,4 +338,18 @@ fn a_jogged_radius_dimension_draws_the_picture_it_was_saved_with() {
     // The extents reach the leader's start at (250, 150), inside the arc's own box.
     let b = d.extents(&Space::Model);
     assert!(b.min.x <= 250.0 && b.min.y <= 150.0, "{b:?}");
+}
+
+/// A `*D` block whose base point isn't the origin: its contents are in the dimension's
+/// coordinates, so it draws where they are, as a DIMENSION's block does.
+#[test]
+fn a_dimension_block_with_a_base_point_draws_in_place() {
+    let dxf = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\n*D1\n70\n1\n10\n100\n20\n50\n3\n*D1\n0\nLINE\n8\n0\n10\n110\n20\n60\n11\n120\n21\n70\n0\nENDBLK\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLARGE_RADIAL_DIMENSION\n5\n41\n100\nAcDbEntity\n8\n0\n100\nAcDbDimension\n2\n*D1\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(dxf.as_bytes()).expect("read");
+    let b = d.extents(&Space::Model);
+    assert!(
+        (b.min.x - 110.0).abs() < 1e-9 && (b.min.y - 60.0).abs() < 1e-9 && (b.max.x - 120.0).abs() < 1e-9 && (b.max.y - 70.0).abs() < 1e-9,
+        "{b:?}"
+    );
 }

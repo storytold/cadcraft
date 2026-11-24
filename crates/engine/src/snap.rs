@@ -531,6 +531,15 @@ fn gather_in(
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
+        // A dimension kept as read draws its block through a reference in its graphics (#3438),
+        // and snaps to the objects inside it the same way.
+        if let EntityKind::Unknown(u) = &e.kind {
+            for g in &u.graphics {
+                if let EntityKind::Insert(ins) = &g.kind {
+                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+                }
+            }
+        }
     }
     Some((cands, near_prims))
 }
@@ -862,6 +871,14 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
                     EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
+                    k @ EntityKind::Unknown(u) => {
+                        f(k, &mm);
+                        for g in &u.graphics {
+                            if let EntityKind::Insert(inner) = &g.kind {
+                                block_leaves(d, inner, &mm, depth + 1, budget, frozen, f);
+                            }
+                        }
+                    }
                     k => f(k, &mm),
                 }
             }

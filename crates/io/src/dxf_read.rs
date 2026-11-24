@@ -111,12 +111,17 @@ fn draw_kept_dimensions_from_their_blocks(d: &mut Drawing) {
             .filter_map(|e| match &e.kind {
                 EntityKind::Unknown(u) => {
                     let block = d.block(u.dimension_block()?)?;
-                    let reference = Insert { block: block.name.clone(), ..Insert::default() };
+                    // The block holds the dimension as drawn, in the dimension's coordinates: placed
+                    // at its base point it draws where it is, as a DIMENSION's block does.
+                    let reference = Insert { block: block.name.clone(), insert: block.base, ..Insert::default() };
+                    // Everything ByBlock, so what the block gives ByBlock is the dimension's own.
                     let common = Common {
                         layer: "0".into(),
                         color: Color::ByBlock,
                         linetype: "ByBlock".into(),
                         lineweight: Lineweight::ByBlock,
+                        transparency: Transparency::ByBlock,
+                        plot_style: "ByBlock".into(),
                         ..Common::default()
                     };
                     (!block.entities.is_empty()).then(|| (e.handle, Entity { handle: e.handle, common, kind: EntityKind::Insert(reference) }))
