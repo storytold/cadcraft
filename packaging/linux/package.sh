@@ -179,7 +179,7 @@ WRAPPER
     rm -f "$NFPM_STAGE/usr/bin/cadcraft"
     mv "$NFPM_STAGE/usr/bin/cadcraft-cli" "$NFPM_STAGE/usr/bin/$NFPM_CLI"
     mv "$NFPM_STAGE/usr/share/doc/cadcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
-    sed -e "s|^Exec=cadcraft\([[:space:]]\|$\)|Exec=$NFPM_BIN\1|" \
+    sed -e "s#^Exec=cadcraft\([[:space:]]\|$\)#Exec=$NFPM_BIN\1#" \
         -e "s|^TryExec=cadcraft$|TryExec=$NFPM_BIN|" \
         -e "s|^Icon=$APP_ID$|Icon=$NIGHTLY_DESK_ID|" \
         -e "s|^Name=CADCraft$|Name=CADCraft Nightly|" \
@@ -262,6 +262,12 @@ APPRUN
         "$APPDIR/usr/share/applications/$APP_ID.desktop" >"$APPDIR/usr/share/applications/$APPIMAGE_ID.desktop"
     rm -f "$APPDIR/usr/share/applications/$APP_ID.desktop"
     cp "$APPDIR/usr/share/applications/$APPIMAGE_ID.desktop" "$APPDIR/$APPIMAGE_ID.desktop"
+    sed -e "s|<id>$APP_ID</id>|<id>$APPIMAGE_ID</id>|g" \
+        -e "s|<name>CADCraft</name>|<name>CADCraft Nightly</name>|g" \
+        -e "s|<launchable type=\"desktop-id\">$APP_ID.desktop</launchable>|<launchable type=\"desktop-id\">$APPIMAGE_ID.desktop</launchable>|g" \
+        -e "s|<icon type=\"stock\">$APP_ID</icon>|<icon type=\"stock\">$APPIMAGE_ID</icon>|g" \
+        "$APPDIR/usr/share/metainfo/$APP_ID.metainfo.xml" >"$APPDIR/usr/share/metainfo/$APPIMAGE_ID.metainfo.xml"
+    rm -f "$APPDIR/usr/share/metainfo/$APP_ID.metainfo.xml"
     rm -rf "$APPDIR/usr/share/icons/hicolor"
     NIGHTLY_ICON="$ROOT/assets/app-icon/cadcraft-nightly.png"
     [[ -f "$NIGHTLY_ICON" ]] || NIGHTLY_ICON="$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png"
@@ -302,8 +308,8 @@ APPRUN
     UPDATE_ARGS=(-u "$UPDATE_INFO")
   else
     # Nightly releases are GitHub pre-releases (`latest` only selects stable releases), so point
-    # zsync update metadata at pre-release tags matching `-nightly` rather than stable `latest`.
-    UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest-pre|cadcraft-*-nightly*-linux-$ARCH.AppImage.zsync"
+    # zsync update metadata at pre-release tags rather than stable `latest`.
+    UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest-pre|cadcraft-*-linux-$ARCH.AppImage.zsync"
     UPDATE_ARGS=(-u "$UPDATE_INFO")
   fi
   # Extract-and-run: works without FUSE (containers, CI). The output embeds the static runtime,
