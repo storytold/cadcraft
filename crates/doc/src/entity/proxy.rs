@@ -330,18 +330,19 @@ impl Decoder<'_> {
                 self.push(EntityKind::Circle(Circle { center: at.to3(0.0), radius: r }));
             }
             None => {
-                if let Some(e) = ellipse(at, u * r, v * r, 0.0, std::f64::consts::TAU) {
-                    if self.fill {
-                        // Bulges draw circular arcs only: the fill follows the ellipse in 72
-                        // straight sides, finer than a plotted pixel at the sizes proxies use.
-                        let side = |i: u32| {
-                            let a = std::f64::consts::TAU * f64::from(i) / 72.0;
-                            PolyVertex { p: at + u * (r * a.cos()) + v * (r * a.sin()), bulge: 0.0, start_width: 0.0, end_width: 0.0 }
-                        };
-                        self.solid((0..72).map(side).collect());
-                    }
-                    self.push(EntityKind::Ellipse(e));
+                let Some(e) = ellipse(at, u * r, v * r, 0.0, std::f64::consts::TAU) else {
+                    return self.edge_on(at, u * r, v * r, 0.0, std::f64::consts::TAU);
+                };
+                if self.fill {
+                    // Bulges draw circular arcs only: the fill follows the ellipse in 72
+                    // straight sides, finer than a plotted pixel at the sizes proxies use.
+                    let side = |i: u32| {
+                        let a = std::f64::consts::TAU * f64::from(i) / 72.0;
+                        PolyVertex { p: at + u * (r * a.cos()) + v * (r * a.sin()), bulge: 0.0, start_width: 0.0, end_width: 0.0 }
+                    };
+                    self.solid((0..72).map(side).collect());
                 }
+                self.push(EntityKind::Ellipse(e));
             }
         }
     }
@@ -371,8 +372,30 @@ impl Decoder<'_> {
         if round(u * r, v * r).is_some() {
             return self.arc_3p(on(a0), on((a0 + a1) / 2.0), on(a1));
         }
-        if let Some(e) = ellipse(at, u * r, v * r, a0.min(a1), a0.max(a1)) {
-            self.push(EntityKind::Ellipse(e));
+        match ellipse(at, u * r, v * r, a0.min(a1), a0.max(a1)) {
+            Some(e) => self.push(EntityKind::Ellipse(e)),
+            None => self.edge_on(at, u * r, v * r, a0.min(a1), a0.max(a1)),
+        }
+    }
+
+    /// A circle or arc `c + u·cos a + v·sin a` (`a` from `a0` to `a1`) seen edge-on: `u` and `v`
+    /// on one line, so it draws as the line between its two farthest points along it.
+    fn edge_on(&mut self, c: Vec2, u: Vec2, v: Vec2, a0: f64, a1: f64) {
+        use std::f64::consts::{PI, TAU};
+        let d = if u.len() >= v.len() { u } else { v };
+        if !(c.is_finite() && d.is_finite() && v.is_finite() && u.is_finite() && d.len() > 0.0) {
+            return;
+        }
+        let d = d * (1.0 / d.len());
+        // Along d the point is at R·cos(a − φ): farthest out at φ and φ + π, where the sweep has them.
+        let phi = v.dot(d).atan2(u.dot(d));
+        let inside = |a: f64| (a - a0).rem_euclid(TAU) <= a1 - a0;
+        let on = |a: f64| c + u * a.cos() + v * a.sin();
+        let mut ends = [a0, a1, phi, phi + PI].into_iter().filter(|&a| a == a0 || a == a1 || inside(a)).map(on).map(|p| (p - c).dot(d));
+        let first = ends.next().unwrap_or(0.0);
+        let (lo, hi) = ends.fold((first, first), |(lo, hi), t| (lo.min(t), hi.max(t)));
+        if hi > lo {
+            self.push(EntityKind::Line(Line { a: (c + d * lo).to3(0.0), b: (c + d * hi).to3(0.0) }));
         }
     }
 
@@ -865,7 +888,7 @@ mod tests {
         let tiny = mat([1e7, 0.0, 0.0, 0.0, 0.0, 1e7, 0.0, 0.0, 0.0, 0.0, 1e7, 0.0, 0.0, 0.0, 0.0, 1.0]);
         let small = [p3([1e-7, 0.0, 0.0]), p3([0.0, 1e-7, 0.0]), p3([-1e-7, 0.0, 0.0])].concat();
         // The arc's half is the one through the middle point.
-        for (m, pts, mid) in [(turn, across, Vec2::new(1.0, 0.0)), (tiny, small, Vec2::new(0.0, 1.0))] {
+        for (m, pts, mid) in [(turn, across.clone(), Vec2::new(1.0, 0.0)), (tiny, small, Vec2::new(0.0, 1.0))] {
             let es = proxy_entities(&graphics(&[m, chunk(3, &pts), chunk(5, &pts)]), &tables(), Handle(1));
             assert!(matches!(&es[0].kind, EntityKind::Circle(c) if c.center.xy().len() < 1e-9 && near(c.radius, 1.0)), "{es:?}");
             match &es[1].kind {
@@ -876,6 +899,22 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
+        // Seen edge-on (in a vertical plane, no matrix) a circle or arc is a line over all it
+        // covers in plan: for the arc through (0, 1) from (0, 0.6) to (0, 0.6), beyond its ends.
+        let edge = |pts: Vec<u8>, kind: u32| match proxy_entities(&graphics(&[chunk(kind, &pts)]), &tables(), Handle(1)).as_slice() {
+            [Entity { kind: EntityKind::Line(l), .. }] => {
+                let (lo, hi) = (l.a.y.min(l.b.y), l.a.y.max(l.b.y));
+                assert!(near(l.a.x, 0.0) && near(l.b.x, 0.0), "{l:?}");
+                (lo, hi)
+            }
+            other => panic!("{other:?}"),
+        };
+        let (lo, hi) = edge(across.clone(), 3);
+        assert!(near(lo, -1.0) && near(hi, 1.0));
+        let (lo, hi) = edge(across, 5);
+        assert!(near(lo, -1.0) && near(hi, 1.0));
+        let (lo, hi) = edge([p3([0.0, 0.6, 0.8]), p3([0.0, 1.0, 0.0]), p3([0.0, 0.6, -0.8])].concat(), 5);
+        assert!(near(lo, 0.6) && near(hi, 1.0), "{lo} {hi}");
         // Even scaling, mirrored or not, keeps circles and arcs.
         let es = proxy_entities(&graphics(&[push(-3.0, 3.0), chunk(2, &circle), chunk(4, &quarter), chunk(5, &quarter_3p)]), &tables(), Handle(1));
         assert!(matches!(&es[0].kind, EntityKind::Circle(c) if near(c.radius, 3.0)));
