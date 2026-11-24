@@ -100,27 +100,36 @@ fn keep_file_order<T>(items: &mut [T], name: impl Fn(&T) -> &str, order: &[Strin
 
 /// A dimension kept as read (LARGE_RADIAL_DIMENSION, ARC_DIMENSION) draws its `*D` block, as
 /// AutoCAD does, in place of the proxy graphics it may carry: those can differ from what AutoCAD
-/// shows (an exporter's picture without the arrowheads; #3438). The block's contents become the
-/// dimension's graphics, with its handle, so it is drawn, measured and picked like a proxy.
+/// shows (an exporter's picture without the arrowheads; #3438). Its graphics become one reference
+/// to that block, with the dimension's handle, so it is drawn, measured and picked like a proxy.
+/// A reference, not a copy of the contents: nested dimensions, the block's draw order and the
+/// renderer's depth and size limits all apply as for any block reference.
 fn draw_kept_dimensions_from_their_blocks(d: &mut Drawing) {
-    let pictures = |store: &cadcraft_doc::EntityStore, d: &Drawing| -> Vec<(Handle, Vec<Entity>)> {
+    let pictures = |store: &cadcraft_doc::EntityStore, d: &Drawing| -> Vec<(Handle, Entity)> {
         store
             .iter()
             .filter_map(|e| match &e.kind {
                 EntityKind::Unknown(u) => {
                     let block = d.block(u.dimension_block()?)?;
-                    let graphics: Vec<Entity> = block.entities.iter().map(|g| Entity { handle: e.handle, ..g.as_ref().clone() }).collect();
-                    (!graphics.is_empty()).then_some((e.handle, graphics))
+                    let reference = Insert { block: block.name.clone(), ..Insert::default() };
+                    let common = Common {
+                        layer: "0".into(),
+                        color: Color::ByBlock,
+                        linetype: "ByBlock".into(),
+                        lineweight: Lineweight::ByBlock,
+                        ..Common::default()
+                    };
+                    (!block.entities.is_empty()).then(|| (e.handle, Entity { handle: e.handle, common, kind: EntityKind::Insert(reference) }))
                 }
                 _ => None,
             })
             .collect()
     };
-    let apply = |store: &mut cadcraft_doc::EntityStore, found: Vec<(Handle, Vec<Entity>)>| {
-        for (h, graphics) in found {
+    let apply = |store: &mut cadcraft_doc::EntityStore, found: Vec<(Handle, Entity)>| {
+        for (h, reference) in found {
             store.modify(h, |e| {
                 if let EntityKind::Unknown(u) = &mut e.kind {
-                    u.graphics = graphics;
+                    u.graphics = vec![reference];
                 }
             });
         }

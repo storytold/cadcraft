@@ -139,10 +139,13 @@ fn graphics_kinds(d: &cadcraft_doc::Drawing) -> Vec<String> {
 #[test]
 fn a_kept_dimension_draws_its_block_and_saving_keeps_it() {
     let d = read_dxf(file(true).as_bytes()).expect("read");
-    assert_eq!(graphics_kinds(&d), ["SOLID", "LINE", "TEXT"]);
+    // A reference to the block, which holds the arrowhead the proxy graphics lack.
+    assert_eq!(graphics_kinds(&d), ["INSERT"]);
+    let b = d.extents(&Space::Model);
+    assert!(b.max.x >= 353.0 && b.min.x <= 250.0, "{b:?}");
     let again = read_dxf(write_dxf(&d).as_bytes()).expect("reopen");
     assert!(again.block("*D1").is_some_and(|b| b.entities.len() == 3));
-    assert_eq!(graphics_kinds(&again), ["SOLID", "LINE", "TEXT"]);
+    assert_eq!(graphics_kinds(&again), ["INSERT"]);
 }
 
 /// The example from #1161: an ARC_DIMENSION and its `*D1` block survive a save.
@@ -253,12 +256,62 @@ fn an_arc_length_dimensions_block_survives_a_save() {
     let d = read_dxf((lines.join("\n") + "\n").as_bytes()).expect("read");
     let again = read_dxf(write_dxf(&d).as_bytes()).expect("reopen");
     assert!(again.block("*D1").is_some_and(|b| b.entities.len() == 1));
-    // Drawn from the block: its line.
-    let drawn = again.model.iter().find_map(|e| match &e.kind {
-        EntityKind::Unknown(u) if u.dxf_type == "ARC_DIMENSION" => Some(u.graphics.len()),
-        _ => None,
-    });
-    assert_eq!(drawn, Some(1));
+    // Drawn from the block: its line reaches (330, 175).
+    let b = again.extents(&Space::Model);
+    assert!(b.max.x >= 330.0 && b.max.y >= 175.0, "{b:?}");
+}
+
+/// A kept dimension: its record, naming block `block`, at handle `handle`.
+fn kept_dim(handle: &str, block: &str) -> String {
+    format!(
+        "0\nARC_DIMENSION\n5\n{handle}\n100\nAcDbEntity\n8\n0\n100\nAcDbDimension\n2\n{block}\n10\n0\n20\n0\n70\n5\n100\nAcDbArcDimension\n13\n0\n23\n0\n14\n1\n24\n0\n15\n0\n25\n0\n40\n0\n41\n1\n"
+    )
+}
+
+fn block(name: &str, body: &str) -> String {
+    format!("0\nBLOCK\n8\n0\n2\n{name}\n70\n1\n10\n0\n20\n0\n3\n{name}\n{body}0\nENDBLK\n")
+}
+
+/// A dimension whose block holds another kept dimension draws through it: the inner one draws
+/// its own block, here a line to (40, 30).
+#[test]
+fn a_dimension_inside_a_dimension_block_draws_too() {
+    let blocks = block("*D2", "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n40\n21\n30\n") + &block("*D1", &kept_dim("51", "*D2"));
+    let text = format!("0\nSECTION\n2\nBLOCKS\n{blocks}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{}0\nENDSEC\n0\nEOF\n", kept_dim("50", "*D1"));
+    let d = read_dxf(text.as_bytes()).expect("read");
+    let b = d.extents(&Space::Model);
+    assert!(b.max.x >= 40.0 && b.max.y >= 30.0, "{b:?}");
+}
+
+/// 25 blocks, each with two kept dimensions naming the one before: reading doesn't copy the
+/// contents (2^25 lines), and measuring stays within the block depth limit.
+#[test]
+fn nested_dimension_blocks_are_not_multiplied() {
+    let mut blocks = block("*D0", "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n");
+    let mut h = 0x100;
+    for i in 1..25 {
+        let mut body = String::new();
+        for _ in 0..2 {
+            body += &kept_dim(&format!("{h:X}"), &format!("*D{}", i - 1));
+            h += 1;
+        }
+        blocks += &block(&format!("*D{i}"), &body);
+    }
+    let text = format!("0\nSECTION\n2\nBLOCKS\n{blocks}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{}0\nENDSEC\n0\nEOF\n", kept_dim("50", "*D24"));
+    let start = std::time::Instant::now();
+    let d = read_dxf(text.as_bytes()).expect("read");
+    let graphics: usize = d
+        .blocks
+        .values()
+        .flat_map(|b| b.entities.iter())
+        .map(|e| match &e.kind {
+            EntityKind::Unknown(u) => u.graphics.len(),
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(graphics, 48, "one reference per kept dimension");
+    let _ = d.extents(&Space::Model);
+    assert!(start.elapsed().as_secs() < 10);
 }
 
 /// Without a block it draws its proxy graphics.

@@ -134,6 +134,7 @@ mod properties_set_locked;
 mod properties_set_text_dims;
 mod props_bad_lineweight;
 mod props_insert_scale_attribs;
+mod purge_kept_dimension_blocks;
 mod purge_mlinestyles;
 mod purge_prompts;
 mod qdim;
