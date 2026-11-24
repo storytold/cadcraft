@@ -290,11 +290,20 @@ impl Decoder<'_> {
         self.matrices.iter().map(|m| (m[0] * m[5] - m[1] * m[4]).abs().sqrt()).product()
     }
 
-    /// Where the pushed matrices take the unit vectors of the chunk's plane at `c`: the circle of
-    /// radius 1 around `c` is drawn as `c' + u·cos a + v·sin a`.
+    /// Where the pushed matrices take `c` and the unit vectors of the chunk's plane: the circle of
+    /// radius 1 around `c` is drawn as `c' + u·cos a + v·sin a`. The vectors go through the
+    /// matrices' linear parts only, so a small scale isn't lost against a large translation.
     fn axes(&self, c: Vec3) -> (Vec2, Vec2, Vec2) {
-        let at = self.xy(c);
-        (at, self.xy(c + Vec3::new(1.0, 0.0, 0.0)) - at, self.xy(c + Vec3::new(0.0, 1.0, 0.0)) - at)
+        (self.xy(c), self.linear(Vec3::new(1.0, 0.0, 0.0)), self.linear(Vec3::new(0.0, 1.0, 0.0)))
+    }
+
+    /// Direction `v` through the pushed matrices' linear parts, innermost first, in the XY plane.
+    fn linear(&self, v: Vec3) -> Vec2 {
+        let mut v = v;
+        for m in self.matrices.iter().rev() {
+            v = Vec3::new(m[0] * v.x + m[1] * v.y + m[2] * v.z, m[4] * v.x + m[5] * v.y + m[6] * v.z, m[8] * v.x + m[9] * v.y + m[10] * v.z);
+        }
+        v.xy()
     }
 
     /// A full circle around `c`, through the pushed matrices: an ellipse when they scale its
@@ -316,6 +325,15 @@ impl Decoder<'_> {
             }
             None => {
                 if let Some(e) = ellipse(at, u * r, v * r, 0.0, std::f64::consts::TAU) {
+                    if self.fill {
+                        // Bulges draw circular arcs only: the fill follows the ellipse in 72
+                        // straight sides, finer than a plotted pixel at the sizes proxies use.
+                        let side = |i: u32| {
+                            let a = std::f64::consts::TAU * f64::from(i) / 72.0;
+                            PolyVertex { p: at + u * (r * a.cos()) + v * (r * a.sin()), bulge: 0.0, start_width: 0.0, end_width: 0.0 }
+                        };
+                        self.solid((0..72).map(side).collect());
+                    }
                     self.push(EntityKind::Ellipse(e));
                 }
             }
@@ -778,6 +796,26 @@ mod tests {
         let (_, major, ratio, start, end) = ell(&es[0]);
         let at = |t: f64| Vec2::new(10.0, 0.0) + major.xy() * t.cos() + major.xy().perp() * (ratio * t.sin());
         assert!((at(start) - Vec2::new(10.0, 1.0)).len() < 1e-9 && (at(end) - Vec2::new(8.0, 0.0)).len() < 1e-9, "{start} {end}");
+        // A filled circle under it: a solid hatch along the ellipse, under the ellipse.
+        let fill = chunk(20, &1u32.to_le_bytes());
+        let es = proxy_entities(&graphics(&[push(2.0, 1.0), fill, chunk(2, &circle)]), &tables(), Handle(1));
+        match (&es[0].kind, &es[1].kind) {
+            (EntityKind::Hatch(h), EntityKind::Ellipse(_)) => {
+                let xs = h.loops[0].vertices.iter().map(|v| v.p.x);
+                let (lo, hi) = xs.fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+                assert!(near(lo, 8.0) && near(hi, 12.0), "{lo} {hi}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // A tiny scale under a far translation keeps the circle: radius 1e8 at scale 1e-8 is 1.
+        let mut far = [0.0f64; 16];
+        (far[0], far[5], far[10], far[15], far[3], far[7]) = (1e-8, 1e-8, 1.0, 1.0, 1e9, 1e9);
+        let far = chunk(29, &far.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>());
+        let mut big = pt(0.0, 0.0);
+        big.extend(1e8f64.to_le_bytes());
+        big.extend(pt(0.0, 0.0));
+        let es = proxy_entities(&graphics(&[far, chunk(2, &big)]), &tables(), Handle(1));
+        assert!(matches!(&es[..], [e] if matches!(&e.kind, EntityKind::Circle(c) if (c.radius - 1.0).abs() < 1e-6)), "{es:?}");
         // Even scaling, mirrored or not, keeps circles and arcs.
         let es = proxy_entities(&graphics(&[push(-3.0, 3.0), chunk(2, &circle), chunk(4, &quarter), chunk(5, &quarter_3p)]), &tables(), Handle(1));
         assert!(matches!(&es[0].kind, EntityKind::Circle(c) if near(c.radius, 3.0)));
