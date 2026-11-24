@@ -27,6 +27,7 @@ mod mtext_double_click;
 mod named_viewports_dialog;
 mod native_menu_text_keys;
 mod native_windows;
+mod offset_clicks;
 mod options_dialog;
 mod options_right_click;
 mod page_setup_paper_units;
