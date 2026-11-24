@@ -72,6 +72,9 @@ quick-xml = "0.42"
 # ui
 craft-ui = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414" }
 craft-behavior = { git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414" }
+craft-host = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414" }
+craft-keymap = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414" }
+craft-theme = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414" }
 craft-window = { version = "0.1.0", git = "https://github.com/aiongg/craft-libs", rev = "2f8d73e7cf93ec207c5b9e8d8f6630cda1eaa414", features = ["ui"] }
 egui = { version = "0.37", default-features = false, features = ["default_fonts", "monochrome_emoji_fonts"] }
 # Resizable table columns (About ▸ Contributors / Models); no image loaders.

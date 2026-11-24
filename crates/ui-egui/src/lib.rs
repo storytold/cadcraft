@@ -34,6 +34,7 @@ pub mod dialogs;
 pub mod docking;
 mod drawing_fonts;
 pub mod fault;
+pub mod framework;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
@@ -319,9 +320,12 @@ pub struct CadApp {
     forwarded_modifiers: Option<egui::Modifiers>,
     /// The main window's own modifiers, put back the frame after forwarded keys went in.
     restore_modifiers: Option<egui::Modifiers>,
-    /// A panel opened from a menu or command, whose floating window comes to the front on the
-    /// next frame (craft-ui's `DockArea::raise_panel`).
-    pub raise_panel: Option<docking::Panel>,
+    /// The panel arrangement the dock shows and the panels' specs ([`docking::LiveDock`]).
+    pub(crate) dock: docking::LiveDock,
+    /// Who CADCraft is to the framework's dock and dialogs ([`framework`]).
+    framework_host: std::sync::Arc<craft_host::Host>,
+    /// The framework dialogs CADCraft keeps open (the update dialogs), run after its own UI.
+    pub framework_dialogs: craft_ui::dialog::DialogHost,
     /// One synthetic batch has been put into `RawInput` and is waiting for a real `App::ui` call.
     synthetic_injected: bool,
     /// Counts settled UI passes (one per painted frame; never hidden logic-only ticks or
@@ -340,8 +344,6 @@ pub struct CadApp {
     shown_follows_system: bool,
     /// Whether egui was last told to animate (`None` until the first frame).
     shown_animations: Option<bool>,
-    /// The interface scale last handed to egui (`None` until the first frame).
-    shown_interface_scale: Option<f32>,
     pub frame_ms: f64,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
@@ -408,7 +410,9 @@ impl CadApp {
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
-            raise_panel: None,
+            dock: docking::LiveDock::default(),
+            framework_host: framework::host(),
+            framework_dialogs: craft_ui::dialog::DialogHost::default(),
             synthetic_injected: false,
             ui_frames: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -418,7 +422,6 @@ impl CadApp {
             shown_theme: None,
             shown_follows_system: false,
             shown_animations: None,
-            shown_interface_scale: None,
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
@@ -967,11 +970,6 @@ impl CadApp {
         if self.restore_modifiers.is_some() {
             ctx.request_repaint();
         }
-        // Closing the window with unsaved changes asks first. `run_logic` refreshes viewport
-        // close/focus state, so this must also work while hidden.
-        if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        }
         // A long AutoLISP routine runs one bounded slice per frame, including hidden web/native
         // ticks; it must not depend on a paint or `RequestPaintWhileHidden`.
         self.session.lisp_tick();
@@ -1125,13 +1123,6 @@ impl CadApp {
         if !animate {
             animation::unsmooth_scroll(ctx);
         }
-        // Applied only when the saved scale changes, so egui's own keyboard zoom keeps working
-        // within a session (and is never saved).
-        let scale = self.options.interface_scale;
-        if self.shown_interface_scale != Some(scale) {
-            ctx.set_zoom_factor(scale);
-            self.shown_interface_scale = Some(scale);
-        }
         // Wait for the frame cap on a painted pass, where a wait cannot delay a hidden tick.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
@@ -1196,6 +1187,7 @@ impl CadApp {
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         autosave::failure_notice(self, ui.ctx());
+        self.run_framework_dialogs(ui);
         self.frame_ms = now_ms() - t0;
     }
 
@@ -1315,6 +1307,7 @@ mod tests {
         start(&mut single);
         start(&mut twice);
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut single, &ctx, None);
         two_pass_frame(&mut twice, &ctx);
         let counter = |app: &CadApp| match app.session.lisp_var("CC-TWO") {
@@ -1338,6 +1331,7 @@ mod tests {
         let (request, reply) = ControlRequest::new("engine.execute", json!({ "command": "line", "params": { "points": [[0.0, 0.0], [10.0, 0.0]] } }));
         tx.send(request).expect("the request is queued");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         two_pass_frame(&mut app, &ctx);
         let entities = app.session.doc().map(cadcraft_doc::Drawing::entity_count).unwrap_or_default();
         assert_eq!(entities, 1, "one command ran once, in the first pass");
@@ -1350,6 +1344,7 @@ mod tests {
     fn hidden_logic_does_not_run_frame_only_work() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         // A logic-only call (what eframe runs for a hidden window) reports pass index zero too.
         a.logic(&ctx);
         assert_eq!(a.ui_frames, 0, "no real Ui callback ran");
@@ -1366,6 +1361,7 @@ mod tests {
 
         let mut a = CadApp::new(Session::new(), Services::default());
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let started = a
             .session
             .lisp_eval("(setq cc-hidden 0) (while (< cc-hidden 400000) (setq cc-hidden (1+ cc-hidden)))", false, false, Vec::new())
@@ -1389,6 +1385,7 @@ mod tests {
     fn one_synthetic_batch_waits_for_a_real_ui_pass() {
         let mut a = app();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         a.synthetic.push(egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
         let mut first = egui::RawInput::default();
         a.raw_input_hook(&ctx, &mut first);
@@ -1424,6 +1421,7 @@ mod tests {
         assert_eq!(b.ui.theme, ThemePref::Light, "bad prefs are ignored");
         // A fixed choice ignores the OS; the tokens and egui follow the choice.
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut b, &ctx, Some(egui::Theme::Dark));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1441,6 +1439,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         assert_eq!(Tokens::get(), Tokens::LIGHT);
         assert_eq!(ctx.theme(), egui::Theme::Light);
@@ -1459,6 +1458,7 @@ mod tests {
         let mut a = app();
         a.start("ui.theme.system");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut a, &ctx, Some(egui::Theme::Light));
         // A concrete Light would pin the native window appearance and hide later OS changes.
         assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::System);

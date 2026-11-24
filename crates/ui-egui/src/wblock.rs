@@ -277,7 +277,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             });
         });
 
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         cancel = true;
     }
 

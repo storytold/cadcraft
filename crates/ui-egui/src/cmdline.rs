@@ -304,7 +304,11 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         app.cmd.ime_on = false;
         return;
     }
-    let events = ctx.input(|i| i.events.clone());
+    let mut events = ctx.input(|i| i.events.clone());
+    // With nothing focused, Escape is the window's cancel, which the runtime keeps out of egui's events.
+    if crate::framework::window_cancel_pending(ctx) {
+        events.push(egui::Event::Key { key: Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+    }
     let selection = app.session.selection();
     app.cmd.watch_selection(&selection);
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
@@ -839,6 +843,7 @@ mod tests {
         assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
         assert!(app.session.text_editor().is_none(), "no in-place editor at this prompt");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let out = frame(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
         assert!(out.platform_output.ime.is_some());
@@ -873,6 +878,7 @@ mod tests {
             app.session.echo(format!("line {i}"));
         }
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut app, &ctx, Vec::new());
         frame(&mut app, &ctx, Vec::new());
         let canvas = app.canvas.rect.unwrap_or(Rect::NOTHING);

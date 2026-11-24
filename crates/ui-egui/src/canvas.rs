@@ -699,7 +699,7 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
         app.canvas.hover_at = None;
     }
     // The open selection cycling list highlights the object of the row under the pointer.
-    if app.canvas.cycle.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if app.canvas.cycle.is_some() && crate::framework::escape_pressed(ui.ctx()) {
         app.canvas.cycle = None;
     }
     if let Some(c) = &app.canvas.cycle {

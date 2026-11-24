@@ -835,7 +835,7 @@ pub fn activate(app: &mut CadApp, id: &str) {
         run_transparent(app, id);
         return;
     }
-    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+    if id == "xref" && app.ui.docking.layout().contains(&crate::docking::Panel::ExternalRefs) {
         if let Err(e) = crate::xrefs::close_palette(app) {
             app.set_status(e);
         }
@@ -860,14 +860,36 @@ pub fn activate_native(app: &mut CadApp, ctx: &egui::Context, id: &str) {
             app.synthetic.extend(events);
             ctx.request_repaint();
         }
-        TextCommand::Events(events) => craft_ui::docking::send_keys(ctx, window, events),
+        TextCommand::Events(events) => {
+            // The menu took the key from the floating panel's own window: it reaches that window as the key pressed.
+            let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+            let platform = craft_keymap::egui::platform(ctx);
+            for equivalent in events.iter().filter_map(|event| key_equivalent(event, platform)) {
+                host.key_equivalent(window, equivalent);
+            }
+        }
     }
 }
 
-/// The window whose text field has the keyboard: a floating panel's own OS window, or the main
-/// window.
+/// The key equivalent the native menu took for `event`: a copy, a cut, or a key press as a tap of its chord.
+fn key_equivalent(event: &egui::Event, platform: craft_keymap::Platform) -> Option<craft_ui::runtime::windows::KeyEquivalent> {
+    use craft_ui::runtime::windows::KeyEquivalent;
+    match event {
+        egui::Event::Copy => Some(KeyEquivalent::Copy),
+        egui::Event::Cut => Some(KeyEquivalent::Cut),
+        egui::Event::Key { key, pressed: true, modifiers, .. } => {
+            let key = craft_keymap::Key::from_egui(*key)?;
+            Some(KeyEquivalent::Tap(craft_keymap::Chord::new(craft_keymap::Mods::from_egui(modifiers, platform), key)))
+        }
+        _ => None,
+    }
+}
+
+/// The window whose text field has the keyboard: the window that has the keys (a floating panel's own OS window, or
+/// the main window) while a text field there has the focus.
 pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
-    craft_ui::docking::typing_window(ctx).or_else(|| ctx.text_edit_focused().then_some(egui::ViewportId::ROOT))
+    let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+    host.typing().then(|| host.key_window())
 }
 
 /// Whether a focused text field takes the menu command `id` ([`activate_native`]): a native

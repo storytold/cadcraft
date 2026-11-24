@@ -252,7 +252,7 @@ impl State {
 /// Hiding the panel leaves its expression, history and variables intact.
 pub(crate) fn toggle(app: &mut CadApp) -> Result<Value, String> {
     let panel = crate::docking::Panel::QuickCalc;
-    if app.ui.docking.layout.contains(&panel) {
+    if app.ui.docking.layout().contains(&panel) {
         crate::docking::command(app, false, &json!({ "operation": "close", "panel": panel.id() }))
     } else {
         open(app)
@@ -263,7 +263,7 @@ pub(crate) fn toggle(app: &mut CadApp) -> Result<Value, String> {
 /// returns where it was closed.
 pub fn open(app: &mut CadApp) -> Result<Value, String> {
     let panel = crate::docking::Panel::QuickCalc;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
+    let first = !app.ui.docking.layout().contains(&panel) && !app.ui.docking.hidden().iter().any(|(p, _)| *p == panel);
     let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
     if !first {
         return Ok(r);
