@@ -309,10 +309,12 @@ fn a_user_alias_of_hatch_opens_the_dialog() {
     let _aliases = crate::aliasdlg::lock_alias_store();
     let (mut app, _) = app_with_rect();
     app.session.execute("aliasedit", &json!({ "preset": "pl" })).unwrap();
-    for typed in ["KRESKUJ", "kr", "GRA"] {
+    // ΚΡ is KR typed with the Greek keyboard layout active.
+    for (typed, gradient) in [("KRESKUJ", false), ("kr", false), ("ΚΡ", false), ("GRA", true)] {
         app.ui.dialog = None;
         app.cmdline(typed);
         assert_eq!(app.ui.dialog.as_deref(), Some("hatch"), "{typed}");
+        assert_eq!(app.hatch_dlg.clone().unwrap().fill.gradient, gradient, "{typed}");
         assert!(app.session.running.is_none(), "{typed}");
     }
     app.session.execute("aliasedit", &json!({ "clear": true })).unwrap();

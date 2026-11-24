@@ -50,6 +50,13 @@ pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) 
     st.error = None;
 }
 
+/// Whether the Filter field shows the row of `alias` (stored in lower case) and its `command`.
+/// Aliases are kept in full lower case (łuk), so the filter is too: ŁUK finds it.
+pub fn shown_by_filter(filter: &str, alias: &str, command: &str) -> bool {
+    let f = filter.trim().to_lowercase();
+    f.is_empty() || alias.contains(&f) || command.contains(&f)
+}
+
 /// Whether Import… asks first: the file would replace the user's aliases or the edits not applied yet.
 pub fn import_replaces_something(st: &AliasDlgState) -> bool {
     !st.user.is_empty() || !st.applied.is_empty()
@@ -263,7 +270,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             let label = ui.label(crate::tl!("Filter"));
             ui.text_edit_singleline(&mut st.filter).labelled_by(label.id);
         });
-        let f = st.filter.trim().to_ascii_lowercase();
+        let f = st.filter.clone();
         let mut names: Vec<&String> = st.user.keys().chain(built.keys().filter(|a| !st.user.contains_key(*a))).collect();
         names.sort();
         // Edit and Remove act only on a selected row the filter shows.
@@ -279,7 +286,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         Some(c) => (c, true),
                         None => (built.get(name).unwrap_or(name), false),
                     };
-                    if !f.is_empty() && !name.contains(&f) && !command.contains(&f) {
+                    if !shown_by_filter(&f, name, command) {
                         continue;
                     }
                     let selected = st.selected.as_deref() == Some(name.as_str());
@@ -426,6 +433,19 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 pub(crate) fn lock_alias_store() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::shown_by_filter;
+
+    #[test]
+    fn the_filter_matches_aliases_with_polish_letters_in_any_case() {
+        for typed in ["ŁUK", "łuk", "Łuk", "łu", "ARC", ""] {
+            assert!(shown_by_filter(typed, "łuk", "arc"), "{typed}");
+        }
+        assert!(!shown_by_filter("OKRĄG", "łuk", "arc"));
+    }
 }
 
 #[cfg(test)]
