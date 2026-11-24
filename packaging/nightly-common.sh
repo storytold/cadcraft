@@ -36,6 +36,8 @@ nightly_init() {
 # channel from `CADCRAFT_BUILD_CHANNEL` and embeds `CADCRAFT_VERSION` (it does not read the
 # PhotoCraft-style `CADCRAFT_OVERRIDE_VERSION`, so both are passed explicitly rather than inherited).
 nightly_compile_gui() {
+  # Signing material never reaches compilation (the Windows -CheckBuildEnvironment rule).
+  nightly_refuse_signing_env
   (cd "$ROOT" && CADCRAFT_BUILD_CHANNEL=nightly-v1 CADCRAFT_VERSION="$VERSION" \
     cargo build --release --locked -p cadcraft --target "$NIGHTLY_RUST_TARGET")
   NIGHTLY_GUI="$CARGO_TARGET_DIR/$NIGHTLY_RUST_TARGET/release/cadcraft"

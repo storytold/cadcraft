@@ -711,8 +711,9 @@ fn main() -> eframe::Result {
         }),
     );
     // The controlled return path: a start that created no window still finishes its record. On macOS
-    // a quit never reaches here, and the exit hook above has done it.
-    nightly_session::finish_once(&nightly_watch, previous_unclean);
+    // a quit never reaches here, and the exit hook above has done it. No window ran, so no notice was
+    // shown: pass false and an unclean record survives for the next launch to report.
+    nightly_session::finish_once(&nightly_watch, false);
     result
 }
 

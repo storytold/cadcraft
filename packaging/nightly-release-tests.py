@@ -266,6 +266,24 @@ class NightlyEnabledCallers(unittest.TestCase):
                 reviewed_manual_actors(mutated_source, mutated_policy)
 
 
+def push_block(source):
+    """The whole `push:` mapping, blank lines and nested keys included.
+
+    A blank line does not end a YAML mapping, so the block is delimited by indentation rather than
+    by contiguous non-empty lines; a path filter after a blank line stays visible to the check.
+    """
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if re.fullmatch(r"  push:.*", line):
+            block = []
+            for follow in lines[index + 1:]:
+                if follow.strip() and not follow.startswith("    "):
+                    break
+                block.append(follow)
+            return "\n".join(block)
+    return None
+
+
 class NightlyInstalledPolicy(unittest.TestCase):
     """The installed v3 policy matches the callers, the repository and its documented sources."""
 
@@ -329,15 +347,27 @@ class NightlyInstalledPolicy(unittest.TestCase):
                 self.assertIs(type(row["workflow_id"]), int)
                 self.assertNotEqual(row["workflow_path"], self.policy["producer_workflow_path"])
                 source = (ROOT / row["workflow_path"]).read_text()
-                push = re.search(r"(?m)^  push:\n((?:    .*\n)+)", source)
+                push = push_block(source)
                 self.assertIsNotNone(push, "a required workflow must run on main pushes")
-                self.assertIn("    branches: [main]\n", push[1])
-                self.assertNotRegex(push[1], r"paths", "a path filter would leave candidates without a run")
+                self.assertIn("branches: [main]", push)
+                self.assertNotRegex(push, r"(?m)^\s+paths(?:-ignore)?:", "a path filter would leave candidates without a run")
                 names = [job["name"] for job in row["jobs"]]
                 self.assertEqual(len(names), len(set(names)))
                 for job in row["jobs"]:
                     self.assertEqual(set(job), {"name", "app_id", "applicability"})
                     self.assertEqual((job["app_id"], job["applicability"]), (15368, "required"))
+
+    def test_a_path_filter_after_a_blank_line_is_still_rejected(self):
+        workflow = "on:\n  push:\n    branches: [main]\n\n    paths: ['src/**']\n  workflow_dispatch: {}\n"
+        block = push_block(workflow)
+        self.assertIsNotNone(block)
+        self.assertIn("branches: [main]", block)
+        self.assertRegex(block, r"(?m)^\s+paths(?:-ignore)?:")
+        for ignored in ("paths: ['src/**']", "paths-ignore: ['docs/**']"):
+            with self.subTest(ignored=ignored):
+                variant = workflow.replace(ignored.split(":")[0] + ": ['src/**']", ignored)
+                self.assertRegex(push_block(variant), r"(?m)^\s+paths(?:-ignore)?:",
+                                 "a quoted or unquoted filter must not hide behind a blank line")
 
     def test_sonar_identity_and_reviewed_scope(self):
         sonar = self.policy["candidate_policy"]["sonar"]

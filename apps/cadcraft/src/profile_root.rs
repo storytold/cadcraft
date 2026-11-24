@@ -71,11 +71,16 @@ fn canonical_future(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn overlaps(a: &Path, b: &Path, platform: Platform) -> bool {
+    // A component that is not valid UTF-8 keeps its exact bytes: a lossy comparison would fold two
+    // different names into the same replacement character and call them one folder.
     let parts = |p: &Path| {
         p.components()
             .map(|c| {
-                let value = c.as_os_str().to_string_lossy().into_owned();
-                if platform.ignores_case() { value.to_lowercase() } else { value }
+                let value = c.as_os_str();
+                match (platform.ignores_case(), value.to_str()) {
+                    (true, Some(text)) => OsString::from(text.to_lowercase()),
+                    _ => value.to_os_string(),
+                }
             })
             .collect::<Vec<_>>()
     };
@@ -157,6 +162,16 @@ fn private_subdirectory(root: &Path, name: impl AsRef<Path>, label: &str) -> Res
     if child == chosen || !child.starts_with(&chosen) {
         return Err(format!("the nightly {label} must stay inside its selected profile"));
     }
+    // A regular file in a folder's place is not a folder: the readers and sweepers that follow would
+    // fail halfway, so refuse it while the profile is still being validated.
+    match std::fs::symlink_metadata(&child) {
+        Ok(metadata) if !metadata.file_type().is_dir() => {
+            return Err(format!("the nightly {label} must be a directory, not a file or an alias"));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("cannot inspect the nightly {label}: {error}")),
+    }
     Ok(child)
 }
 
@@ -211,10 +226,10 @@ fn validate_for(
 ) -> Result<PathBuf, String> {
     absolute(root.to_path_buf(), "the nightly profile root")?;
     let chosen = canonical_future(root)?;
-    // A Launcher's Linux wrapper names the profile itself in CADCRAFT_CONFIG_DIR (the Arch launcher
-    // and the deb/rpm `Exec` line do). That names the folder this launch already owns, so it is
-    // inert — `env::apply_profile` sets the settings folder from the profile, not from the
-    // variable. Any other value would redirect Nightly's settings folder, so it is refused.
+    // The deb/rpm CLI wrapper exports CADCRAFT_CONFIG_DIR at the folder this launch already owns (the
+    // GUI wrappers name the profile through `--profile-root` instead), so that value is inert:
+    // `env::apply_profile` sets the settings folder from the profile, not from the variable. Any
+    // other value would redirect Nightly's settings folder, so it is refused.
     if let Some(configured) = env("CADCRAFT_CONFIG_DIR").filter(|v| !v.is_empty()) {
         let configured = canonical_future(&absolute(PathBuf::from(configured), "CADCRAFT_CONFIG_DIR")?)?;
         if !configured.starts_with(&chosen) {

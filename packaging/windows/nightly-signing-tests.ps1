@@ -26,6 +26,10 @@ function global:git {
 }
 function global:Invoke-WebRequest { throw 'fixture must not perform signing downloads' }
 $global:SigningFixtureCargoCalls = 0
+# The caller's own values, restored in `finally`: this script may run inside a developer's session.
+$savedEnvironment = foreach ($name in ($names + @('CADCRAFT_VERSION', 'CADCRAFT_BUILD_SHA', 'CADCRAFT_BUILD_DATE'))) {
+  [pscustomobject]@{ Name = $name; Value = [Environment]::GetEnvironmentVariable($name) }
+}
 if (-not [IO.Path]::IsPathRooted($FixtureRoot)) { throw 'use an owned absolute FixtureRoot' }
 $root = Join-Path $FixtureRoot ('signing-policy-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
@@ -90,9 +94,11 @@ try {
   Assert-Policy ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ceq $before) 'optional stable policy changed unsigned bytes'
   Write-Output 'PASS: stable-optional-policy-preserves-owned-bytes'
 } finally {
-  Clear-SigningFixtures
-  # The fixture's own source identity, so it never reaches the caller's environment.
-  [Environment]::SetEnvironmentVariable('CADCRAFT_BUILD_SHA', $null)
-  [Environment]::SetEnvironmentVariable('CADCRAFT_BUILD_DATE', $null)
+  # Put back exactly what the caller had (an unset variable is restored as unset), and drop the
+  # command mocks: a `function global:` binding outlives this script and outranks the real program.
+  foreach ($entry in $savedEnvironment) { [Environment]::SetEnvironmentVariable($entry.Name, $entry.Value) }
+  foreach ($mock in @('cargo', 'git', 'Invoke-WebRequest')) {
+    Remove-Item -LiteralPath "function:global:$mock" -ErrorAction SilentlyContinue
+  }
   Remove-Item -LiteralPath $root -Recurse -Force
 }
