@@ -471,6 +471,11 @@ pub fn set_property(d: &mut Drawing, insert: Handle, name: &str, value: &str) ->
             }
             let v = allowed(set, v);
             let e2 = if second { Vec3::new(e.x, b.y + v, e.z) } else { Vec3::new(b.x + v, e.y, e.z) };
+            // A tiny reference scale can take a finite number past the range: such an end point
+            // would be saved but not read back as the parameter's points.
+            if !(v.is_finite() && e2.is_finite()) {
+                return Err(format!("\"{value}\" is too large for {label}."));
+            }
             plan.set.insert(p.node, Val::Points(b, e2));
             plan.chain(&m, &r.values, p.node)?;
         }
@@ -592,7 +597,7 @@ pub fn drag_grip(d: &mut Drawing, insert: Handle, node: i32, part: super::GripPa
         }
         // The end grip goes where it is dragged (its distance snapped to the value set); the base
         // grip moves the base, keeping the end.
-        (ParameterKind::Polar { values, label, .. }, GripPart::Base | GripPart::End) => {
+        (ParameterKind::Polar { values, angle_values, label, .. }, GripPart::Base | GripPart::End) => {
             let Some(Val::Points(b, e)) = current(&m, &r.values, node) else { return Err(format!("{label} has no points.")) };
             let q3 = Vec3::new(q.x, q.y, b.z);
             let (b2, e2) = if part == GripPart::Base {
@@ -603,7 +608,13 @@ pub fn drag_grip(d: &mut Drawing, insert: Handle, node: i32, part: super::GripPa
                 if !(raw > 1e-12 && dist > 0.0 && dist.is_finite()) {
                     return Err(format!("{label} must be more than 0."));
                 }
-                (b, b + (q3 - b) * (dist / raw))
+                // The angle snaps to its own value set too, as typing it does (in a full turn from
+                // the block's +X); without one, the end goes where it is dragged.
+                let a = allowed(angle_values, (q3 - b).xy().angle().rem_euclid(std::f64::consts::TAU));
+                if !a.is_finite() {
+                    return Err(format!("{label} has no direction there."));
+                }
+                (b, b + Vec2::new(a.cos(), a.sin()).to3(0.0) * dist)
             };
             plan.set.insert(node, Val::Points(b2, e2));
         }

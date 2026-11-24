@@ -296,3 +296,32 @@ fn a_repeated_associative_hatch_follows_its_own_outline() {
     xs.sort_unstable();
     assert_eq!(xs, vec![0, 3000, 6000]);
 }
+
+#[test]
+fn a_polar_end_grip_snaps_its_angle_to_the_angle_value_set() {
+    // Fan with Angle1 limited to 0° and 90° (a list, in radians).
+    let free = "307 Angle1\n308\n140 0\n309\n96 0\n141 0\n142 0\n143 0\n175 0\n410\n97 0\n145 0\n146 0\n147 0\n176 0";
+    let src = include_str!("../data/dynblock_arrays.txt").replace("\r\n", "\n");
+    assert_eq!(src.matches(free).count(), 1);
+    let src = src.replace(free, &free.replace("97 0\n145 0\n146 0\n147 0\n176 0", "97 8\n145 0\n146 0\n147 0\n176 2\n148 0\n148 1.5707963267948966"));
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let ins = cadcraft_doc::Insert {
+        block: "Fan".into(),
+        insert: Vec3::new(100.0, 100.0, 0.0),
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    let r = d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Insert(ins)).unwrap();
+    // Dragged toward 40°: the nearest allowed angle is 0°, the distance kept.
+    drag_grip(&mut d, r, 1, GripPart::End, Vec2::new(100.0 + 6.0 * 40f64.to_radians().cos(), 100.0 + 6.0 * 40f64.to_radians().sin())).unwrap();
+    assert_eq!(props(&d, r), pairs(&[("Distance1", "6.0000"), ("Angle1", "0")]));
+    // Toward 60°: 90°.
+    drag_grip(&mut d, r, 1, GripPart::End, Vec2::new(100.0 + 6.0 * 60f64.to_radians().cos(), 100.0 + 6.0 * 60f64.to_radians().sin())).unwrap();
+    assert_eq!(props(&d, r), pairs(&[("Distance1", "6.0000"), ("Angle1", "90")]));
+}
