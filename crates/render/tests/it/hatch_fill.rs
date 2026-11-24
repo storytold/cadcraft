@@ -9,7 +9,7 @@ use cadcraft_render::{DisplayList, Kind, Options, build};
 
 fn square(lo: f64, hi: f64) -> HatchLoop {
     let v = [(lo, lo), (hi, lo), (hi, hi), (lo, hi)].into_iter().map(|(x, y)| PolyVertex::new(Vec2::new(x, y))).collect();
-    HatchLoop { vertices: v, outer: lo == 0.0, sources: Vec::new() }
+    HatchLoop { vertices: v, outer: lo == 0.0, boundary_flags: None, sources: Vec::new() }
 }
 
 fn hatch(pattern: &str, loops: Vec<HatchLoop>) -> Hatch {

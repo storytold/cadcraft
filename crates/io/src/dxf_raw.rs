@@ -16,9 +16,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number};
+use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number, proxy_has_string_stream};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
-use craft_dxf::{Section, Tag};
+use craft_dxf::{SectionRef, Tag, Version};
 
 /// Named object dictionary entries CADCraft writes itself from its model (plus every key that
 /// starts with `CADCRAFT`): they are read into the model, not kept raw. A change that starts
@@ -36,10 +36,11 @@ const MODELLED_KEYS: &[&str] = &[
     "ACAD_IMAGE_VARS",
 ];
 
-/// Extension dictionary entries not kept raw: dimension associativity (CADCraft reads and
-/// rewrites it), draw order and annotation scale contexts (written from their own models by the
-/// changes that model them; stale copies would contradict the drawing).
-const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
+/// Extension dictionary entries not kept raw: dimension associativity and the LAYER table's layer
+/// states (CADCraft reads and rewrites them), draw order and annotation scale contexts (written
+/// from their own models by the changes that model them; stale copies would contradict the
+/// drawing).
+const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_LAYERSTATES", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
 /// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
@@ -322,8 +323,8 @@ fn put_xdata(d: &mut Drawing, mut xdata: HashMap<Handle, Vec<RawTag>>) {
 }
 
 /// Keep what `secs` holds that the reader did not model in `d.foreign`.
-pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
-    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(&s.tags)).unwrap_or_default();
+pub(crate) fn read(secs: &[SectionRef<'_>], d: &mut Drawing) {
+    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(s.tags)).unwrap_or_default();
     let (classes, tables, blocks, entities, objects) = (get("CLASSES"), get("TABLES"), get("BLOCKS"), get("ENTITIES"), get("OBJECTS"));
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
     let ents = entity_types(d);
@@ -455,13 +456,21 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     if !f.is_empty() {
         f.version = file_version(secs);
+    }
+    // Added after the version: registered applications alone are no kept objects whose groups
+    // the DWG writer must read as the file's version, and nearly every file has some (ACAD).
+    let appids = tables.iter().filter(|(k, _, _)| k == "APPID").filter_map(|(_, _, t)| val(t, 2)).map(|n| n.trim().to_string());
+    f.appids = appids.take(MAX_OBJECTS).collect();
+    // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
+    f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
+    if !f.is_empty() || !f.handles.is_empty() {
         d.foreign = Arc::new(f);
     }
 }
 
 /// The `$ACADVER` the file's own HEADER section declares, if it does. Not the drawing's: a new
 /// drawing starts as AC1032, and a file without the variable would leave that default there.
-fn file_version(secs: &[Section]) -> Option<String> {
+fn file_version(secs: &[SectionRef<'_>]) -> Option<String> {
     let header = secs.iter().find(|s| s.name.eq_ignore_ascii_case("HEADER"))?;
     let at = header.tags.iter().position(|t| t.code == 9 && t.str().trim().eq_ignore_ascii_case("$ACADVER"))?;
     let value = header.tags.get(at + 1).filter(|t| t.code != 9)?.str();
@@ -681,6 +690,102 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
     tags.splice(at..at, out);
 }
 
+/// Most constraint nodes, and connections per node, looked at in one constraint group.
+const MAX_CONSTRAINT_NODES: usize = 100_000;
+
+/// Put the status of every node of the kept 2D constraint groups (`ACDBASSOC2DCONSTRAINTGROUP`)
+/// where a reader of the version the text is read as expects it: AutoCAD 2013 and later
+/// (`modern`) write it after the node's connections, earlier versions right after its id. The
+/// groups are kept as read, so a 2013+ drawing written in an older version's form had them in the
+/// wrong order, and its reader took every node's status from somewhere else: AutoCAD refused the
+/// DWG the bridge made from it ("Error Decrypting Data"). A group whose nodes can't all be found
+/// is left as it is.
+pub(crate) fn constraint_node_order(tags: &mut [Tag], modern: bool) {
+    let mut i = 0;
+    while i < tags.len() {
+        let end = tags.iter().skip(i + 1).position(|t| t.code == 0).map_or(tags.len(), |k| i + 1 + k);
+        if tags.get(i).is_some_and(|t| t.code == 0 && t.str().trim().eq_ignore_ascii_case("ACDBASSOC2DCONSTRAINTGROUP"))
+            && let Some(rec) = tags.get_mut(i + 1..end)
+        {
+            constraint_group_order(rec, modern);
+        }
+        i = end;
+    }
+}
+
+/// [`constraint_node_order`] for one group's groups after its type.
+fn constraint_group_order(rec: &mut [Tag], modern: bool) {
+    let Some(start) = rec.iter().position(|t| t.code == 100 && t.str().trim().eq_ignore_ascii_case("AcDbAssoc2dConstraintGroup")) else {
+        return;
+    };
+    let end = rec.iter().skip(start + 1).position(|t| t.code == 100 || t.code >= 1000).map_or(rec.len(), |k| start + 1 + k);
+    let Some(sec) = rec.get_mut(start + 1..end) else { return };
+    let Some(nodes) = constraint_nodes(sec) else { return };
+    for (at, len, old) in nodes {
+        // Old order: id, status, count, connections; modern: id, count, connections, status.
+        if let Some(head) = sec.get_mut(at + 1..at + len) {
+            match (old, modern) {
+                (true, true) => head.rotate_left(1),
+                (false, false) => head.rotate_right(1),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Where each non-root node of a constraint group section starts: (index of its id, length of its
+/// id, status and connections, whether its status comes right after the id). `None` unless every
+/// node the group lists is found.
+fn constraint_nodes(sec: &[Tag]) -> Option<Vec<(usize, usize, bool)>> {
+    let int = |p: usize, code: i32| sec.get(p).filter(|t| t.code == code).and_then(|t| t.str().trim().parse::<i64>().ok());
+    let count = |p: usize| int(p, 90).and_then(|n| usize::try_from(n).ok()).filter(|n| *n <= MAX_CONSTRAINT_NODES);
+    // Version, flag and work plane, then the dependency and the actions.
+    let mut p = sec.iter().position(|t| t.code == 360)? + 1;
+    p += count(p)? + 1;
+    // The next node id, then the root node: id, connections, status (290).
+    int(p, 90)?;
+    int(p + 1, 90)?;
+    p += count(p + 2)? + 3;
+    int(p, 290)?;
+    p += 1;
+    // The registry: class name and id of each node.
+    let n = count(p)?;
+    p += 1;
+    let mut ids = Vec::with_capacity(n);
+    for _ in 0..n {
+        sec.get(p).filter(|t| t.code == 1)?;
+        ids.push(int(p + 1, 90)?);
+        p += 2;
+    }
+    let known: HashSet<i64> = ids.iter().copied().collect();
+    // Groups looked at while searching for headers, capped so a hostile group can't take long.
+    let budget = std::cell::Cell::new(MAX_CONSTRAINT_NODES.saturating_mul(100));
+    // A node header at `q`: its length and whether it is in the old order. Connections are ids of
+    // nodes (or of the root, 0), which keeps a node's data from passing for the next header.
+    let header = |q: usize, id: i64| -> Option<(usize, bool)> {
+        int(q, 90).filter(|v| *v == id)?;
+        let old = sec.get(q + 1)?.code == 70;
+        let c = q + 1 + usize::from(old);
+        let n = count(c).filter(|n| *n <= known.len())?;
+        budget.set(budget.get().checked_sub(n + 1)?);
+        for k in 0..n {
+            int(c + 1 + k, 90).filter(|v| *v == 0 || known.contains(v))?;
+        }
+        if !old {
+            int(c + 1 + n, 70)?;
+        }
+        Some((n + 3, old))
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let at = (p..sec.len()).find(|q| header(*q, id).is_some())?;
+        let (len, old) = header(at, id)?;
+        out.push((at, len, old));
+        p = at + len;
+    }
+    Some(out)
+}
+
 /// Drop a dictionary's modelled entries (key and handle) from its groups.
 fn strip_entries(tags: &mut Vec<RawTag>) {
     let mut out = Vec::with_capacity(tags.len());
@@ -769,6 +874,33 @@ fn written_records(tags: &[Tag]) -> Vec<Rec> {
         }
     }
     out
+}
+
+/// A non-graphic record as written: its type, its groups after the type (its handle in group 5)
+/// and its role when it has one.
+pub type ObjectRecord = (String, Vec<Tag>, Option<ForeignKey>);
+
+/// The drawing's non-graphic records as a DXF file of it holds them: the tables and their
+/// records, the BLOCK records and the objects, in file order, each with its role (a table record,
+/// a block, the named object dictionary or one of its entries) when it has one. Their handles are
+/// the written file's: the same for the same drawing. AutoLISP's dictionary and table functions
+/// (`namedobjdict`, `dictsearch`, `tblobjname`, `entget` of a non-graphic object) read it.
+pub fn object_records(d: &Drawing) -> Vec<ObjectRecord> {
+    let tags = crate::dxf_write::tags(d, craft_dxf::Version::R2018);
+    let recs = written_records(&tags);
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let by_sec = |name: &str| -> Recs {
+        recs.iter().filter(|r| r.sec == name && r.kind != "SECTION" && r.kind != "ENDSEC").map(|r| (r.kind.clone(), r.start, body(r))).collect()
+    };
+    let (tables, blocks, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("OBJECTS"));
+    let ids = identities(&tables, &blocks, &objects);
+    let tables = tables.iter().filter(|(k, _, _)| k != "ENDTAB");
+    let blocks = blocks.iter().filter(|(k, _, _)| k == "BLOCK");
+    tables
+        .chain(blocks)
+        .chain(objects.iter())
+        .map(|(kind, _, t)| (kind.clone(), t.to_vec(), head(t).handle.and_then(|h| ids.get(&h).cloned())))
+        .collect()
 }
 
 /// Remaps the kept data's handles onto a written file.
@@ -909,13 +1041,61 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
     all_entities(d).filter(|e| matches!(e.kind, EntityKind::Unknown(_))).map(|e| e.handle.hex()).collect()
 }
 
+/// Render settings (`RENDERSETTINGS`, `MENTALRAYRENDERSETTINGS`, `RAPIDRTRENDERSETTINGS`) store
+/// their `AcDbRenderSettings` class version (the first group 90 after that marker) in the form of
+/// the file's version: a 2013+ file stores it one higher, and a 2013 file stores a rapid RT one
+/// one lower, as acadrust reads and writes them (`write_render_settings_dxf` in acadrust 0.6.6's
+/// `io/dxf/writer/section_writer.rs`, and its DWG class-object reader and writer; the test
+/// `render_settings_class_version_matches_what_acadrust_writes` fails if the two drift apart). A
+/// kept object carries the form of the file it was read from ([`Foreign::version`], not the
+/// drawing's `$ACADVER`, which SAVEAS changes); written into a file read as another version, it
+/// takes that version's form. The DWG bridge's R2000 text is read as the version the kept objects
+/// came from (craft-dwg's `encode_kept_noted`), so there they stay as read (#907, #2471).
+///
+/// Only that first group 90 is converted, on purpose: the group 90 that starts a kind's own
+/// subclass (`AcDbMentalRayRenderSettings`, `AcDbRapidRTRenderSettings`) is that kind's version,
+/// stored the same in every file version, and is left as read.
+pub(crate) fn render_settings_versions(tags: &mut [Tag], source: Option<Version>, declared: Version) {
+    let Some(source) = source.filter(|s| *s != declared) else { return };
+    let shift = |rapid: bool, v: Version| if rapid { -i64::from(v == Version::R2013) } else { i64::from(v >= Version::R2013) };
+    let (mut kind, mut in_base) = (String::new(), false);
+    for t in tags.iter_mut() {
+        match t.code {
+            0 => {
+                kind = up(&t.str());
+                in_base = false;
+            }
+            100 if matches!(kind.as_str(), "RENDERSETTINGS" | "MENTALRAYRENDERSETTINGS" | "RAPIDRTRENDERSETTINGS") => {
+                in_base = t.str().trim().eq_ignore_ascii_case("AcDbRenderSettings");
+            }
+            90 if in_base => {
+                let rapid = kind == "RAPIDRTRENDERSETTINGS";
+                let logical = t.i64().saturating_sub(shift(rapid, source));
+                *t = Tag::i(90, logical.saturating_add(shift(rapid, declared)));
+                in_base = false;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>, modern: bool) {
+/// `strings`: whether the file has a form for a proxy's separate string stream (a DXF of 2007 or
+/// later, or the DWG bridge); without one such a proxy is left out (#3229). Returns the foreign
+/// objects written, by their handles in the drawing (the file gives them new ones).
+pub(crate) fn finish(
+    tags: &mut Vec<Tag>,
+    d: &Drawing,
+    reactors: &HashMap<Handle, Vec<String>>,
+    modern: bool,
+    target_modern: bool,
+    strings: bool,
+) -> HashSet<Handle> {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {
-        return;
+        return HashSet::new();
     }
     let recs = written_records(tags);
     let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
@@ -938,14 +1118,21 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
     }
     let renumber = |old| proxy_class_number(f, &numbers, old);
+    // A proxy is dropped when its class isn't written, or when its strings have no place here.
+    let no_room = |t: &[(i32, &str)]| !strings && proxy_has_string_stream(t.iter().copied());
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let mut planned = plan_unknown(d, &recs, tags, &roles, modern);
+    let mut planned = plan_unknown(d, &recs, tags, &roles, modern, target_modern);
     for list in planned.values_mut() {
         list.retain_mut(|(_, t)| {
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
                 return true;
             }
-            let Some(n) = renumber(class_number(t.iter().map(|x| (x.code, x.str())))) else { return false };
+            let groups: Vec<(i32, String)> = t.iter().map(|x| (x.code, x.str())).collect();
+            let groups: Vec<(i32, &str)> = groups.iter().map(|(c, v)| (*c, v.as_str())).collect();
+            if no_room(&groups) {
+                return false;
+            }
+            let Some(n) = renumber(class_number(groups.iter().copied())) else { return false };
             set_class_number(t, n);
             true
         });
@@ -958,20 +1145,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, s, _)| *s);
     let root_keys: HashSet<String> =
         objects.iter().find(|(_, s, _)| Some(*s) == root).map(|(_, _, t)| entries(t).into_iter().map(|(k, _)| up(&k)).collect()).unwrap_or_default();
-    // Extension dictionaries that go on a written record (one without its own).
-    let mut block = String::new();
-    let mut attached: HashSet<String> = HashSet::new();
-    for r in &recs {
-        if r.kind == "BLOCK" {
-            block = up(&val(body(r), 2).unwrap_or_default());
-        }
-        if let Some(x) = extra_for(f, &xd, r, body(r), &block)
-            && let Some(xd) = x.xdict
-            && head(body(r)).xdict.is_none()
-        {
-            attached.insert(xd.hex());
-        }
-    }
+    let (mut attached, merged) = kept_dictionaries(f, &xd, &recs, tags);
     for (_, t) in planned.values().flatten() {
         let x = head(t.get(1..).unwrap_or(&[])).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
         attached.extend(x.and_then(|x| x.xdict).map(Handle::hex));
@@ -996,8 +1170,11 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         // Keep established live paths available to descendants during this pass as well.
         let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
-        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none())
-        {
+        let dropped = |o: &ForeignObject| {
+            let groups: Vec<(i32, &str)> = o.tags.iter().map(|r| (r.code, r.value.as_str())).collect();
+            no_room(&groups) || renumber(class_number(groups.iter().copied())).is_none()
+        };
+        for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && dropped(o)) {
             alive_memo.insert(o.handle.hex(), false);
         }
         for o in &f.objects {
@@ -1019,7 +1196,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
                 if nod.contains(&owner) {
                     break dict_entries.get(&cur).is_some_and(|k| !root_keys.contains(&up(k))) && root.is_some();
                 }
-                if attached.contains(&cur) {
+                if attached.contains(&cur) || merged.contains_key(&cur) {
                     break true;
                 }
                 break unknown.contains(&owner) && written.contains(&owner);
@@ -1031,12 +1208,22 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         alive_memo
     });
     // New handles for the written kept objects, above every written handle and the seed.
-    let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
+    let mut fresh = Fresh::new(tags);
+    // The entities of unmodeled types join the records only below, so their handles are not in
+    // `tags` yet: no kept object may take one of them.
+    let placed = planned.values().flatten().filter_map(|(_, t)| head(t.get(1..).unwrap_or(&[])).handle);
+    fresh.used.extend(placed.filter_map(|h| Handle::parse_hex(&h)).map(|h| h.0));
     let mut alive: HashMap<String, String> = HashMap::new();
     for o in f.objects.iter().filter(|o| alive_memo.get(&o.handle.hex()) == Some(&true)) {
-        alive.insert(o.handle.hex(), format!("{next:X}"));
-        next = next.saturating_add(1);
+        alive.insert(o.handle.hex(), format!("{:X}", fresh.take()));
     }
+    // A merged dictionary is not written: what pointed at it points at the written one.
+    for (kept, own) in &merged {
+        if let Some(h) = alive.get_mut(kept) {
+            h.clone_from(own);
+        }
+    }
+    let merged_into: HashMap<String, &ForeignObject> = merged.iter().filter_map(|(kept, own)| Some((own.clone(), *objs.get(kept)?))).collect();
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
@@ -1050,7 +1237,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
             continue;
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
-            for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
+            for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex()) && !merged.contains_key(&o.handle.hex())) {
                 let number = is_proxy(&o.kind).then(|| renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str()))))).flatten();
                 match number {
                     Some(n) => {
@@ -1074,13 +1261,17 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
-        if x.is_none() && Some(r.start) != root {
+        let joined = joined_into(&merged_into, b);
+        if x.is_none() && Some(r.start) != root && joined.is_none() {
             out.extend(b.iter().cloned());
             continue;
         }
         record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
+        if let Some(kept) = joined {
+            join_entries(&map, b, kept, &mut out);
+        }
     }
-    add_appids(&mut out);
+    add_appids(&mut out, &f.appids);
     let top = max_handle(&out).saturating_add(1);
     if let Some(t) = seed_index(&out).and_then(|i| out.get_mut(i))
         && Handle::parse_hex(&t.str()).is_none_or(|h| h.0 < top)
@@ -1088,6 +1279,33 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+    map.alive.keys().filter_map(|h| handle(h)).collect()
+}
+
+/// Kept extension dictionaries of written records: those that go on a record without its own,
+/// and those whose entries join the one the writer gave a table (the LAYER table's, holding the
+/// layer states) as kept dictionary → the written one.
+fn kept_dictionaries(f: &Foreign, xd: &XdataOf, recs: &[Rec], tags: &[Tag]) -> (HashSet<String>, HashMap<String, String>) {
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let mut block = String::new();
+    let mut attached: HashSet<String> = HashSet::new();
+    let mut merged: HashMap<String, String> = HashMap::new();
+    for r in recs {
+        if r.kind == "BLOCK" {
+            block = up(&val(body(r), 2).unwrap_or_default());
+        }
+        let Some(kept) = extra_for(f, xd, r, body(r), &block).and_then(|x| x.xdict) else { continue };
+        match head(body(r)).xdict {
+            None => {
+                attached.insert(kept.hex());
+            }
+            Some(own) if r.sec == "TABLES" => {
+                merged.insert(kept.hex(), own);
+            }
+            Some(_) => {}
+        }
+    }
+    (attached, merged)
 }
 
 /// Complete source tables keep positional identities even when names repeat.
@@ -1143,6 +1361,7 @@ fn plan_unknown(
     tags: &[Tag],
     roles: &HashMap<ForeignKey, String>,
     modern: bool,
+    target_modern: bool,
 ) -> HashMap<usize, Vec<(String, Vec<Tag>)>> {
     let stored = d.foreign.data_store_entities();
     let mut out: HashMap<usize, Vec<(String, Vec<Tag>)>> = HashMap::new();
@@ -1182,7 +1401,9 @@ fn plan_unknown(
         for e in store.iter() {
             match &e.kind {
                 EntityKind::Unknown(u) => {
-                    if modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored) {
+                    if (modern && cadcraft_doc::foreign::sat_text_acis(u, e.handle, &stored))
+                        || (!target_modern && cadcraft_doc::foreign::acis_left_out(u, e.handle, &stored, false))
+                    {
                         continue;
                     }
                     let t = unknown_entity(u, e, &owner, paper);
@@ -1321,6 +1542,48 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Opti
     }
 }
 
+/// The kept dictionary whose entries join written dictionary `b`, if any.
+fn joined_into<'a>(merged_into: &HashMap<String, &'a ForeignObject>, b: &[Tag]) -> Option<&'a ForeignObject> {
+    if merged_into.is_empty() {
+        return None;
+    }
+    head(b).handle.and_then(|h| merged_into.get(&h).copied())
+}
+
+/// The entries of kept dictionary `kept` that written dictionary `b` doesn't have (by key, without
+/// regard to case), appended to it with their handles remapped; entries whose object is gone are
+/// left out. Then the kept dictionary's xdata of applications `b` doesn't carry, its references
+/// remapped (the kept dictionary's own handle, owner and reactors are not copied).
+fn join_entries(map: &Map, b: &[Tag], kept: &ForeignObject, out: &mut Vec<Tag>) {
+    let has = |key: &str| b.iter().any(|t| t.code == 3 && up(&t.str()) == up(key));
+    let mut key: Option<&str> = None;
+    for t in kept.tags.iter().take_while(|t| t.code < 1000) {
+        match t.code {
+            3 => key = Some(t.value.as_str()),
+            350 | 360 => {
+                if let Some(k) = key.take()
+                    && !has(k)
+                    && let Some(h) = map.get(&t.value).filter(|h| h != "0")
+                {
+                    out.push(Tag::s(3, k));
+                    out.push(Tag::s(t.code, h));
+                }
+            }
+            _ => {}
+        }
+    }
+    let own: HashSet<String> = b.iter().filter(|t| t.code == 1001).map(|t| up(&t.str())).collect();
+    let mut skip = false;
+    for r in kept.tags.iter().skip_while(|t| t.code < 1000) {
+        if r.code == 1001 {
+            skip = own.contains(&up(&r.value));
+        }
+        if !skip {
+            out.push(map.group(r));
+        }
+    }
+}
+
 /// Kept xdata of applications the record doesn't already carry, handles remapped.
 fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>) {
     let mut skip = false;
@@ -1334,9 +1597,13 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
     }
 }
 
-/// APPID records for every application with xdata in the file, added to the APPID table.
-fn add_appids(out: &mut Vec<Tag>) {
-    let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+/// APPID records for every application with xdata in the file and every one the file read had
+/// (`kept`), added to the APPID table.
+fn add_appids(out: &mut Vec<Tag>, kept: &[String]) {
+    let mut used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+    for name in kept.iter().filter(|n| !n.is_empty()) {
+        used.entry(up(name)).or_insert_with(|| name.clone());
+    }
     let recs = written_records(out);
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
@@ -1358,19 +1625,18 @@ fn add_appids(out: &mut Vec<Tag>) {
         return;
     }
     // New handles above the seed, which is then moved past them.
-    let mut next = seed(out).max(max_handle(out).saturating_add(1));
+    let mut fresh = Fresh::new(out);
     let mut add = Vec::new();
     for app in &missing {
         add.extend([
             Tag::s(0, "APPID"),
-            Tag::s(5, format!("{next:X}")),
+            Tag::s(5, format!("{:X}", fresh.take())),
             Tag::s(330, table_h.clone()),
             Tag::s(100, "AcDbSymbolTableRecord"),
             Tag::s(100, "AcDbRegAppTableRecord"),
             Tag::s(2, (*app).clone()),
             Tag::i(70, 0),
         ]);
-        next = next.saturating_add(1);
     }
     let end_at = end.start;
     if let Some(count) = out.get_mut(t.start + 1..t.end).and_then(|b| b.iter_mut().find(|x| x.code == 70)) {
@@ -1387,6 +1653,36 @@ fn seed_index(tags: &[Tag]) -> Option<usize> {
 /// The header's next free handle.
 fn seed(tags: &[Tag]) -> u64 {
     seed_index(tags).and_then(|i| tags.get(i)).and_then(|t| Handle::parse_hex(&t.str())).map_or(0, |h| h.0)
+}
+
+/// New handles for records added to written tags: above the seed and every handle written, and
+/// never one a record already holds. A file may hold the top handle (#913): then counting on from
+/// it would give every added record that same handle, so past the top of the range the numbering
+/// goes on in the reserved band above [`cadcraft_doc::HANDLE_LIMIT`], skipping the handles there.
+struct Fresh {
+    next: u64,
+    used: HashSet<u64>,
+}
+
+impl Fresh {
+    fn new(tags: &[Tag]) -> Self {
+        let used: HashSet<u64> =
+            tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).collect();
+        let above = used.iter().max().map_or(0, |h| h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT));
+        Fresh { next: seed(tags).max(above), used }
+    }
+    /// The next free handle. Each handle skipped is one a record holds, so the walk is bounded
+    /// by their count (and handle 0, which means "none").
+    fn take(&mut self) -> u64 {
+        for _ in 0..self.used.len().saturating_add(2) {
+            let h = self.next;
+            self.next = h.checked_add(1).unwrap_or(cadcraft_doc::HANDLE_LIMIT);
+            if h != 0 && self.used.insert(h) {
+                return h;
+            }
+        }
+        self.next
+    }
 }
 
 /// The largest handle of a record (groups 5 and 105).

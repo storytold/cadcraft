@@ -46,6 +46,7 @@ fn check(d: &Drawing) {
 #[test]
 #[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn table_cell_heights_keep_inheritance_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let bytes = cadcraft_io::write(&drawing(), "height.dwg").unwrap();
     // A style record can be present for metadata without overriding its text height.
     // Write that synthetic representation directly so no earlier DXF conversion can
@@ -79,6 +80,7 @@ use acadrust::entities::table::{CellContent, CellStyle, CellStylePropertyFlags};
 /// text height override.
 #[cfg(not(all(target_os = "freebsd", target_arch = "aarch64")))]
 fn first_cell_height(as_dxf: bool, edit: impl FnOnce(&mut acadrust::entities::table::TableCell)) -> Option<f64> {
+    cadcraft_io::dwg_worker::allow_in_process();
     let bytes = cadcraft_io::write(&drawing(), "height.dwg").unwrap();
     let mut doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(bytes)).read().unwrap();
     let table = doc

@@ -44,18 +44,25 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
+        CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
+            .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
+            .enabled(has_doc)
+            .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
             .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params("{tag, prompt?, default?, at, height?, invisible?, justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR, style? (default the current text style)}")
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
         wblock::wblock_spec(),
         wblock::dash_wblock_spec(),
+        CommandSpec::new("wblockpick", "Write Block Pick", run_wblockpick)
+            .params("{mode: \"objects\"|\"base\"}")
+            .interactive(|_| Ok(Box::new(WblockPickM::default()))),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -92,6 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .into_iter()
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
+    .chain(library::specs())
     .chain(refedit::specs())
     .chain(xclip::specs())
     .chain(bedit::specs())
@@ -110,6 +118,15 @@ fn referenced_block(e: &Entity) -> Option<String> {
         EntityKind::Dimension(dm) => dm.block.clone(),
         EntityKind::MLeader(m) => m.block.as_ref().map(|b| b.block.clone()),
         _ => None,
+    }
+}
+
+/// The attributes an object carries: a block reference's, or those of a multileader's block content.
+pub(crate) fn object_attribs(e: &Entity) -> &[Attrib] {
+    match &e.kind {
+        EntityKind::Insert(i) => &i.attribs,
+        EntityKind::MLeader(m) => m.block.as_ref().map_or(&[][..], |b| b.attribs.as_slice()),
+        _ => &[],
     }
 }
 
@@ -346,6 +363,40 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "block": name, "insert": r.map(|h| h.hex()) }))
 }
 
+/// BLOCKSPALETTE as a JSON call: the drawing's own blocks (no anonymous, layout or xref blocks)
+/// with their descriptions and how many objects draw each (block references, dimensions and
+/// multileader block content). The app opens the palette instead.
+fn run_blockspalette(s: &mut Session, p: &Value) -> Result<Value> {
+    let d = s.doc()?;
+    let counting = bool_or(p, "references", true);
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    if counting {
+        let mut count = |store: &cadcraft_doc::EntityStore| {
+            for e in store.iter() {
+                if let Some(block) = referenced_block(e) {
+                    let n = counts.entry(block.to_ascii_lowercase()).or_insert(0);
+                    *n = n.saturating_add(1);
+                }
+            }
+        };
+        count(&d.model);
+        d.layouts.iter().for_each(|l| count(&l.entities));
+        d.blocks.values().for_each(|b| count(&b.entities));
+    }
+    let (blocks, truncated) = library::library_blocks(d);
+    let list: Vec<Value> = blocks
+        .iter()
+        .map(|b| {
+            let mut block = json!({ "name": b.name, "description": b.description });
+            if counting {
+                block["references"] = json!(counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0));
+            }
+            block
+        })
+        .collect();
+    Ok(json!({ "blocks": list, "truncated": truncated }))
+}
+
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     insert_json(s, p, "insert", Grid::ONE)
 }
@@ -400,21 +451,79 @@ fn insert_json(s: &mut Session, p: &Value, cmd: &str, grid: Grid) -> Result<Valu
     Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
 }
 
-fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
-    let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+/// The current text style (TEXTSTYLE).
+fn current_text_style(s: &Session) -> String {
+    s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into())
+}
+
+/// A text style's name as the table spells it, with the width factor and oblique angle an
+/// attribute definition takes from it (the renderer uses the entity's own values). `None` when
+/// the drawing has no such style.
+fn style_values(s: &Session, name: &str) -> Result<Option<(String, f64, f64)>> {
+    Ok(s.doc()?.text_style(name).map(|t| (t.name.clone(), t.width_factor, t.oblique)))
+}
+
+/// The current text style (TEXTSTYLE) with its width factor and oblique angle.
+fn current_style_values(s: &Session) -> (String, f64, f64) {
+    let name = current_text_style(s);
+    style_values(s, &name).ok().flatten().unwrap_or((name, 1.0, 0.0))
+}
+
+/// A justification code as `-ATTDEF` takes it, typed or in `justify`. Align and Fit run between
+/// two baseline points; `attdef` has one, so it can't express them.
+fn attdef_justify(code: &str) -> Result<(HAlign, VAlign)> {
+    let j = super::draw::justify(code.trim()).ok_or_else(|| bad("attdef", "unknown justification"))?;
+    if matches!(j.0, HAlign::Aligned | HAlign::Fit) {
+        return Err(bad("attdef", "Align and Fit need two points, which attdef doesn't take yet; use L, C, R, M or TL … BR"));
+    }
+    Ok(j)
+}
+
+/// The named text style with its width factor and oblique angle, or the error both the JSON form
+/// and the typed `Style` option give for a style the drawing doesn't have.
+fn resolve_style(s: &Session, name: &str) -> Result<(String, f64, f64)> {
+    style_values(s, name)?.ok_or_else(|| bad("attdef", format!("no text style \"{name}\"")))
+}
+
+/// An optional string parameter: absent or null is `None`, a string is `Some`, anything else is
+/// an error rather than being ignored.
+fn opt_str_param<'a>(cmd: &str, p: &'a Value, key: &str) -> Result<Option<&'a str>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(v)) => Ok(Some(v)),
+        Some(v) => Err(bad(cmd, format!("`{key}` must be a string, got {v}"))),
+    }
+}
+
+/// An attribute definition at `at` with justification `j` (as TEXT: any but Left keeps `at` as
+/// its alignment point) in text style `style`.
+#[allow(clippy::too_many_arguments)]
+fn attdef_kind(
+    tag: &str,
+    prompt: &str,
+    default: &str,
+    at: Vec2,
+    height: f64,
+    invisible: bool,
+    j: (HAlign, VAlign),
+    style: (String, f64, f64),
+) -> EntityKind {
+    let (halign, valign) = j;
+    let (style, width_factor, oblique) = style;
+    let left = halign == HAlign::Left && valign == VAlign::Baseline;
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
             insert: v3(at),
-            align_pt: None,
+            align_pt: if left { None } else { Some(v3(at)) },
             height,
             value: default.into(),
             rotation: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
+            width_factor,
+            oblique,
             style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
+            halign,
+            valign,
         },
         invisible,
         constant: false,
@@ -432,7 +541,14 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let at = point_req("attdef", p, "at")?;
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
+    // Justification and text style as TEXT and MTEXT take them (#1658).
+    let j = attdef_justify(opt_str_param("attdef", p, "justify")?.unwrap_or("L"))?;
+    let style = match opt_str_param("attdef", p, "style")? {
+        Some(n) => resolve_style(s, n)?,
+        None => current_style_values(s),
+    };
+    let (prompt, default) = (str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""));
+    let k = attdef_kind(tag, prompt, default, at, h, bool_or(p, "invisible", false), j, style);
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
@@ -600,7 +716,90 @@ impl BlockM {
     }
 }
 
+// ── WBLOCKPICK ────────────────────────────────────────────────────────────────
+
+/// The result kept for the Write Block dialog after a WBLOCKPICK session ends.
+pub struct WblockPicks {
+    /// Selected handles (mode "objects") — empty for a "base" pick.
+    pub handles: Vec<Handle>,
+    /// Base point picked (mode "base") — `None` for an "objects" pick.
+    pub base: Option<Vec2>,
+}
+
+fn run_wblockpick(_s: &mut Session, _p: &Value) -> Result<Value> {
+    ok()
+}
+
+/// Which pick session WBLOCKPICK is running.
+#[derive(Default)]
+enum WblockPickMode {
+    /// Waiting for the mode keyword ("objects" or "base").
+    #[default]
+    Waiting,
+    Objects(SelectPhase),
+    Base,
+}
+
+#[derive(Default)]
+struct WblockPickM {
+    mode: WblockPickMode,
+}
+
+impl Interactive for WblockPickM {
+    fn name(&self) -> &'static str {
+        "WBLOCKPICK"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match &self.mode {
+            WblockPickMode::Waiting => Prompt::new("Enter pick mode", Accept::TEXT).kw(&["Objects", "Base"]),
+            WblockPickMode::Objects(sel) => sel.prompt(),
+            WblockPickMode::Base => Prompt::new("Specify insertion base point", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match &mut self.mode {
+            WblockPickMode::Waiting => {
+                match &i {
+                    Input::Keyword(k) | Input::Text(k) => {
+                        let k = k.to_ascii_lowercase();
+                        if k.starts_with('o') {
+                            self.mode = WblockPickMode::Objects(SelectPhase::default());
+                        } else {
+                            self.mode = WblockPickMode::Base;
+                        }
+                    }
+                    Input::Cancel | Input::Enter => return Ok(Step::Cancel),
+                    _ => {}
+                }
+                Ok(Step::Continue)
+            }
+            WblockPickMode::Objects(sel) => {
+                if matches!(i, Input::Cancel) {
+                    return Ok(Step::Cancel);
+                }
+                match sel.feed(s, &i)? {
+                    SelOutcome::More => Ok(Step::Continue),
+                    SelOutcome::Empty => Ok(Step::Cancel),
+                    SelOutcome::Done(hs) => {
+                        s.wblock_picks = Some(WblockPicks { handles: hs, base: None });
+                        Ok(Step::Done)
+                    }
+                }
+            }
+            WblockPickMode::Base => match i {
+                Input::Cancel => Ok(Step::Cancel),
+                Input::Point(p) => {
+                    s.wblock_picks = Some(WblockPicks { handles: Vec::new(), base: Some(p) });
+                    Ok(Step::Done)
+                }
+                _ => Ok(Step::Continue),
+            },
+        }
+    }
+}
+
 mod insert_file;
+pub(crate) mod library;
 pub(crate) mod xref;
 
 /// Where the command-line INSERT is in its prompt sequence.
@@ -705,6 +904,9 @@ impl InsertM {
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
+            // Written here, not when the name is given: a cancelled INSERT leaves the drawing as
+            // it was, so it takes no undo step that would undo nothing visible.
+            s.doc_mut()?.header.set_str("INSNAME", &n);
             return Ok(Step::Done);
         }
         Ok(Step::Continue)
@@ -760,13 +962,14 @@ impl InsertM {
                 })
                 .collect()
         };
-        s.doc_mut()?.header.set_str("INSNAME", &b.name);
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
     }
 
-    /// Define the block from a file, then choose it; a file that can't be read is reported.
+    /// Define the block from a file, then choose it; a file that can't be read is reported. The
+    /// definition comes before the insertion point and stays when INSERT is then cancelled, as in
+    /// AutoCAD 2027.
     fn choose_file(&mut self, s: &mut Session, f: &insert_file::FileRef) -> Result<()> {
         match f.define(s) {
             Ok(name) => self.choose(s, &name),

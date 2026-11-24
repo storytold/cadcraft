@@ -102,6 +102,9 @@ pub struct MTextLayout {
     /// Geometry by colour run (strokes plus fillable glyph outlines).
     pub pieces: Vec<MTextPiece>,
     pub bounds: Bounds2,
+    /// The box of each column, in the order the text flows through them, measured like `bounds`
+    /// but without the gutters and to each column's own height. One column: `bounds`.
+    pub column_bounds: Vec<Bounds2>,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
     /// Whether the geometry stops short: the layout reached its allowance of retained points
@@ -731,6 +734,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
     out.bounds = Bounds2::from_points(
         [Vec2::new(x0, top), Vec2::new(x0 + block_w, top), Vec2::new(x0 + block_w, top - block_h), Vec2::new(x0, top - block_h)].map(xf),
     );
+    out.column_bounds = vec![out.bounds];
     out
 }
 
