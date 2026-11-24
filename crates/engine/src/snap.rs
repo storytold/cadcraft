@@ -781,20 +781,7 @@ impl Sink<'_> {
     fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
-                // The block holds world geometry: a reference at its own base point places it as is.
-                let ins = Insert {
-                    block: blk.name.clone(),
-                    insert: blk.base,
-                    scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
-                    rotation: 0.0,
-                    attribs: Vec::new(),
-                    cols: 1,
-                    rows: 1,
-                    col_spacing: 0.0,
-                    row_spacing: 0.0,
-                    clip: None,
-                };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &dimension_reference(blk, dm), &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
@@ -871,6 +858,10 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
                     EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
+                    // A dimension draws its block, as at the top level.
+                    EntityKind::Dimension(dm) if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) => {
+                        block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, budget, frozen, f);
+                    }
                     k @ EntityKind::Unknown(u) => {
                         f(k, &mm);
                         for g in &u.graphics {
@@ -883,6 +874,24 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 }
             }
         }
+    }
+}
+
+/// The reference that places a dimension's block as the renderer draws it: the block holds world
+/// geometry, moved by the insertion point (DXF group 12, which an older AutoCAD sets for a moved
+/// dimension; #2634).
+fn dimension_reference(blk: &cadcraft_doc::Block, dm: &cadcraft_doc::Dimension) -> Insert {
+    Insert {
+        block: blk.name.clone(),
+        insert: blk.base + dm.insertion_point,
+        scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
     }
 }
 
