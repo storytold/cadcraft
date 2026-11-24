@@ -24,7 +24,7 @@ fn dxf(src: &str) -> String {
 /// DOOR with SWING shown in its Open state, and a reference to it at (100, 0) with SWING.
 fn door() -> (Drawing, Handle) {
     let attdef = "0 ATTDEF\n5 33\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbText\n10 2\n20 2\n30 0\n40 1\n1 W\n100 AcDbAttributeDefinition\n3 Swing\n2 SWING\n70 0\n";
-    let src = include_str!("data/dynblock_door.txt")
+    let src = include_str!("../data/dynblock_door.txt")
         .replace("\r\n", "\n")
         .replace("93 2\n331 31\n331 32\n", "93 3\n331 31\n331 32\n331 33\n")
         .replace("94 2\n332 31\n332 32\n", "94 3\n332 31\n332 32\n332 33\n")
@@ -107,7 +107,7 @@ fn door_with_two_swings() -> (Drawing, Handle) {
             "0 ATTDEF\n5 {handle}\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbText\n10 2\n20 2\n30 0\n40 1\n1 W\n100 AcDbAttributeDefinition\n3 Swing\n2 SWING\n70 0\n"
         )
     };
-    let src = include_str!("data/dynblock_door.txt")
+    let src = include_str!("../data/dynblock_door.txt")
         .replace("\r\n", "\n")
         .replace("93 2\n331 31\n331 32\n", "93 4\n331 31\n331 32\n331 33\n331 34\n")
         .replace("94 2\n332 31\n332 32\n", "94 3\n332 31\n332 32\n332 33\n")
