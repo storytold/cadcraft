@@ -233,6 +233,7 @@ fn picks_merge_into_the_state() {
 
 fn frames(app: &mut CadApp) -> egui::Context {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
     // Enough frames for a window that grows each frame to show it.

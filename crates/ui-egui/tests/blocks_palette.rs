@@ -25,13 +25,17 @@ fn drawing() -> CadApp {
 }
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(&ui.ctx().clone());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1400.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(4);
     h
 }
@@ -40,7 +44,7 @@ fn harness(app: CadApp) -> Harness<'static, CadApp> {
 fn blockspalette_opens_the_palette_and_lists_the_blocks() {
     let mut app = drawing();
     assert!(app.cmdline("BLOCKSPALETTE").is_none());
-    assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(app.ui.docking.layout().contains(&Panel::Blocks));
     app.ui.in_window_menu = false;
     let h = harness(app);
     h.get_by_label("Door");
@@ -62,7 +66,7 @@ fn json_blockspalette_lists_and_never_opens_the_palette() {
     // The palette itself asks for no counts, which would read every object.
     let r = app.run("blockspalette", json!({ "references": false })).unwrap();
     assert_eq!(r["blocks"][1], json!({ "name": "Door", "description": "Hinged door" }));
-    assert!(!app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(!app.ui.docking.layout().contains(&Panel::Blocks));
 }
 
 /// A click on a tile starts INSERT and answers the prompts the options settle.
@@ -249,11 +253,11 @@ fn insert_started_by_the_palette_flow_waits_for_the_point() {
 fn the_palette_closes_and_reopens_where_it_was() {
     let mut app = drawing();
     app.cmdline("BLOCKSPALETTE");
-    assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(app.ui.docking.layout().contains(&Panel::Blocks));
     app.run("ui.dock", json!({ "operation": "close", "panel": "blocks" })).unwrap();
-    assert!(!app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(!app.ui.docking.layout().contains(&Panel::Blocks));
     app.cmdline("BLOCKSPALETTE");
-    assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(app.ui.docking.layout().contains(&Panel::Blocks));
 }
 
 /// How many times a library file was parsed.
@@ -376,12 +380,12 @@ fn a_library_is_added_listed_placed_and_removed() {
 fn the_toolbar_icon_and_the_window_menu_open_the_palette_not_a_dialog() {
     let mut app = drawing();
     app.run("ui.dialog.blocks", serde_json::Value::Null).unwrap();
-    assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(app.ui.docking.layout().contains(&Panel::Blocks));
     assert!(app.ui.dialog.is_none(), "the old Blocks window is gone");
     // Like the other ui.dialog.* ids, it opens whatever the parameters are.
     let mut app = drawing();
     app.run("ui.dialog.blocks", json!({})).unwrap();
-    assert!(app.ui.docking.layout.contains(&Panel::Blocks));
+    assert!(app.ui.docking.layout().contains(&Panel::Blocks));
 }
 
 /// An exploded block leaves no reference, and it repeats all the same.

@@ -146,6 +146,7 @@ fn open_on_a_then_switch_to_b(source: wblock::Source, label: &str) -> (CadApp, S
 /// One frame of the whole interface.
 fn frame(app: &mut CadApp) {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
     app.logic(&ctx);
     let mut output = ctx.run_ui(input, |ui| app.ui(ui));
