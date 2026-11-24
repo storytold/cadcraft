@@ -123,8 +123,14 @@ fn a_palette_column_collapses_to_icons_beside_the_drawing() {
     assert!(columns(h.state().ui.docking.layout(), DockEdge::End)[0].iconic);
     let drawing = h.state().canvas.rect.unwrap();
     assert!(h.query_by_role_and_label(egui::accesskit::Role::Tab, "Layers").is_none(), "an iconic column shows no tabs");
-    let layers = h.query_all_by_label("Layers").next().expect("the Layers icon is drawn").rect();
-    let properties = h.query_all_by_label("Properties").next().expect("the Properties icon is drawn").rect();
+    // The toolbar has a Properties button too: the icons are the ones right of the drawing.
+    let icon = |label: &str| {
+        h.query_all_by_label(label)
+            .map(|node| node.rect())
+            .find(|rect| rect.left() >= drawing.right() - 1.0)
+            .unwrap_or_else(|| panic!("no {label} icon"))
+    };
+    let (layers, properties) = (icon("Layers"), icon("Properties"));
     assert!(layers.left() >= drawing.right() - 1.0 && layers.top() < properties.top(), "{layers:?} {properties:?}");
 }
 

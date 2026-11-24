@@ -10,7 +10,6 @@
 use std::sync::mpsc::Sender;
 
 use craft_ui::runtime::windows::{ScreenshotSlot, WindowHost};
-use egui::ViewportCommand;
 use serde_json::{Value, json};
 use web_time::{Duration, Instant};
 
@@ -555,7 +554,7 @@ pub(crate) fn cancel_all(app: &mut CadApp) {
 pub(crate) fn request_hidden_paint(app: &CadApp, ctx: &egui::Context) {
     if app.shots.has_unissued() {
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         ctx.request_repaint();
     }
 }
