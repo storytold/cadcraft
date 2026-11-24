@@ -43,8 +43,16 @@ pub struct AliasDlgState {
 }
 
 /// Adds a shipped language alias set to the edited user aliases (OK or Apply sends them). An alias
-/// the user already has keeps its command; the dialog lists those under its warnings.
+/// the user already has keeps its command; each such one is a warning, in the dialog and (by
+/// [`add_language_set_to`]) on the command line. Nothing changes when the aliases would come to
+/// more than ALIASEDIT keeps.
 pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) {
+    let missing = set.keys().filter(|a| !st.user.contains_key(*a)).count();
+    let max = cadcraft_engine::cmd::file::MAX_ALIASES;
+    if st.user.len().saturating_add(missing) > max {
+        st.error = Some(crate::tf!("More than {n} aliases.", n = max));
+        return;
+    }
     st.warnings.clear();
     for (alias, command) in set {
         match st.user.get(alias) {
@@ -61,6 +69,17 @@ pub fn add_language_set(st: &mut AliasDlgState, set: &BTreeMap<String, String>) 
         }
     }
     st.error = None;
+}
+
+/// [`add_language_set`] for the open dialog, echoing every warning on the command line as Import…
+/// does, since the dialog shows only the first few.
+pub fn add_language_set_to(app: &mut CadApp, set: &BTreeMap<String, String>) {
+    let Some(st) = app.alias_dlg.as_mut() else { return };
+    add_language_set(st, set);
+    let warnings = st.warnings.clone();
+    for w in warnings {
+        app.session.echo(w);
+    }
 }
 
 /// Whether the Filter field shows the row of `alias` (stored in lower case) and its `command`.
@@ -263,7 +282,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     let built = built_in();
     let warn = Tokens::get().warn;
-    let (mut ok, mut cancel, mut apply_clicked, mut import_clicked) = (false, false, false, false);
+    let (mut ok, mut cancel, mut apply_clicked, mut import_clicked, mut add_set_clicked) = (false, false, false, false, false);
     // Without a native file picker (the web) Import… can't open one; ALIASEDIT's `text` form loads a file there.
     let can_pick = app.services.pick_pgp.is_some();
     // The command names CADCraft ships for the interface language, if any (Polish: OKRĄG, ŁUK…).
@@ -339,13 +358,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             {
                 st.user.remove(s);
             }
-            if let Some(set) = &language_set
+            if language_set.is_some()
                 && ui
                     .button(crate::tl!("Add command aliases in this language"))
                     .on_hover_text(crate::tl!("Adds CADCraft's command names in the interface language to your aliases. Your own aliases of the same names stay; some of the set override built-in aliases. OK or Apply keeps them."))
                     .clicked()
             {
-                add_language_set(st, set);
+                add_set_clicked = true;
             }
             let import = ui
                 .add_enabled(can_pick, egui::Button::new(crate::tl!("Import…")))
@@ -430,6 +449,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if import_clicked {
         let _ = pick_and_import(app);
     }
+    if add_set_clicked && let Some(set) = &language_set {
+        add_language_set_to(app, set);
+    }
     if (ok && apply(app)) || cancel {
         *open = false;
     } else if apply_clicked {
@@ -465,6 +487,20 @@ mod filter_tests {
         assert_eq!(st.user.get("zzmine").map(String::as_str), Some("line"));
         assert_eq!(st.warnings.len(), 1, "{:?}", st.warnings);
         assert!(st.warnings[0].contains('O') && st.warnings[0].contains("OFFSET"), "{:?}", st.warnings);
+    }
+
+    #[test]
+    fn a_language_set_that_would_pass_the_cap_changes_nothing() {
+        let max = cadcraft_engine::cmd::file::MAX_ALIASES;
+        let mut st = AliasDlgState::default();
+        for i in 0..max - 1 {
+            st.user.insert(format!("zz{i}"), "line".into());
+        }
+        let before = st.user.clone();
+        let set: BTreeMap<String, String> = [("okrąg", "circle"), ("łuk", "arc")].into_iter().map(|(a, c)| (a.to_string(), c.to_string())).collect();
+        add_language_set(&mut st, &set);
+        assert_eq!(st.user, before);
+        assert!(st.error.is_some());
     }
 
     #[test]
