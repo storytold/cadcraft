@@ -1263,7 +1263,9 @@ pub(crate) fn finish(
         let x = extra_for(f, &xd, r, b, &block);
         let joined = joined_into(&merged_into, b);
         if x.is_none() && Some(r.start) != root && joined.is_none() {
-            out.extend(b.iter().cloned());
+            out.extend(b.iter().map(|tag| {
+                if r.kind == "LAYOUT" && tag.code == 333 { Tag::s(333, map.get(&tag.str()).unwrap_or_else(|| "0".into())) } else { tag.clone() }
+            }));
             continue;
         }
         record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);

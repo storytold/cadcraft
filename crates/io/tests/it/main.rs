@@ -38,6 +38,8 @@ mod layer_states_acad;
 mod layout_limits_roundtrip;
 mod layout_paper_units;
 mod layout_plot_flags;
+#[cfg(not(target_arch = "wasm32"))]
+mod layout_plot_settings;
 mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
