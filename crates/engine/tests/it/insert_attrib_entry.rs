@@ -1,6 +1,6 @@
 //! INSERT and the attribute modes (gap F17): Preset and constant attributes take their values
-//! without asking, ATTREQ 0 gives every attribute its default, ATTDIA 0 (the default) asks at the
-//! command line (a Verify attribute's value again once every value is in) and ATTDIA 1 asks for
+//! without asking, ATTREQ 0 gives every attribute its default, ATTDIA 0 asks at the command line
+//! (a Verify attribute's value again once every value is in) and ATTDIA 1 (the default) asks for
 //! the values all at once in the Edit Attributes dialog (`Session::attribute_entry`), typed
 //! answers still working. The JSON form never asks. ATTREQ and ATTDIA are user settings, as in
 //! AutoCAD (DWG keeps them in its header only before R2000).
@@ -37,7 +37,7 @@ fn def(tag: &str, prompt: &str, default: &str, y: f64, constant: bool, modes: At
 }
 
 /// Block T with the definitions A (Verify), B (Preset), C (plain) and D (constant); ATTREQ and
-/// ATTDIA as given (their defaults, ATTREQ 1 and ATTDIA 0, otherwise).
+/// ATTDIA as given (their defaults, ATTREQ 1 and ATTDIA 1, otherwise).
 fn session(attreq: Option<bool>, attdia: Option<bool>) -> Session {
     let mut d = cadcraft_engine::doc::Drawing::new_imperial();
     let mut b = Block::new("T");
@@ -87,9 +87,17 @@ fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn typed_insert_asks_verify_again_and_skips_preset_and_constant() {
-    // AutoCAD's default, ATTDIA 0, with no value in the drawing: the command line asks.
+fn a_fresh_session_reads_attdia_1() {
+    // AutoCAD 2026's ATTDIA page: Type Integer, Saved in Registry, Initial value 1.
     let mut s = session(None, None);
+    assert_eq!(s.execute("getvar", &json!({ "name": "ATTDIA" })).unwrap()["value"], 1);
+    assert!(s.settings.attdia);
+}
+
+#[test]
+fn typed_insert_asks_verify_again_and_skips_preset_and_constant() {
+    // ATTDIA 0 set explicitly, so the command line asks.
+    let mut s = session(Some(true), Some(false));
     assert_eq!(s.execute("getvar", &json!({ "name": "ATTDIA" })).unwrap()["value"], 0);
     assert_eq!(s.execute("getvar", &json!({ "name": "ATTREQ" })).unwrap()["value"], 1);
     insert_up_to_the_attributes(&mut s);
@@ -117,6 +125,25 @@ fn typed_insert_asks_verify_again_and_skips_preset_and_constant() {
     s.script("-INSERT T 0,50 1 1 0\na\nc\nz\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(values(&s), pairs(&[("A", "z"), ("B", "two"), ("C", "c")]));
+}
+
+#[test]
+fn a_point_does_not_answer_an_attribute_prompt() {
+    // A canvas click reaches INSERT as Input::Point while a text-only attribute prompt waits.
+    // It is no answer: the prompt stays, and only Enter keeps the default.
+    let mut s = session(Some(true), Some(false));
+    insert_up_to_the_attributes(&mut s);
+    assert_eq!(s.prompt_text(), "INSERT First <1>:");
+    s.input(Input::Point(Vec2::new(20.0, 20.0))).unwrap();
+    assert_eq!(s.prompt_text(), "INSERT First <1>:", "the click did not take A's default");
+    assert!(s.attribute_entry().is_none(), "ATTDIA 0: no dialog");
+    s.input(Input::Text("10".into())).unwrap();
+    assert_eq!(s.prompt_text(), "INSERT Third <3>:", "A was answered by the typed text");
+    s.input(Input::Enter).unwrap(); // C takes its default
+    assert_eq!(s.prompt_text(), "INSERT First <10>:", "then A's Verify");
+    s.input(Input::Enter).unwrap(); // Verify keeps the value typed
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), pairs(&[("A", "10"), ("B", "two"), ("C", "3")]));
 }
 
 #[test]

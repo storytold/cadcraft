@@ -139,7 +139,7 @@ pub struct Settings {
     /// (default: 1).
     pub attreq: bool,
     /// ATTDIA: INSERT typed or from a menu asks for attribute values in the Edit Attributes
-    /// dialog; off (the default, as in AutoCAD) asks at the command line.
+    /// dialog; on by default, as in AutoCAD (Initial value 1).
     pub attdia: bool,
 }
 
@@ -208,7 +208,7 @@ impl Default for Settings {
             ucs_angle: 0.0,
             auditctl: false,
             attreq: true,
-            attdia: false,
+            attdia: true,
         }
     }
 }

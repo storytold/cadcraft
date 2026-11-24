@@ -1189,6 +1189,9 @@ impl Interactive for InsertM {
                 let (tag, _, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
+                    // A canvas click is no answer to a text prompt: the dialog stays up and the
+                    // attribute is asked for again, as Verify does. Enter keeps the default.
+                    Input::Point(_) => return Ok(Step::Continue),
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));

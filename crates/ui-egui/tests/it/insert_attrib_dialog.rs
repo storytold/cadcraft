@@ -17,7 +17,7 @@ use egui_kittest::kittest::{Queryable, by};
 use serde_json::{Value, json};
 
 /// Block T with the definitions A ("Room", default "101") and B ("Floor", default "1"), and
-/// ATTDIA 1 (the default is 0, the command line).
+/// ATTDIA 1 (the default, as in AutoCAD).
 fn app() -> CadApp {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.run("setvar", json!({ "name": "ATTDIA", "value": 1 })).unwrap();
@@ -384,18 +384,52 @@ fn a_typed_or_menu_insert_still_opens_the_dialog() {
 }
 
 #[test]
+fn a_fresh_session_starts_with_attdia_1() {
+    // AutoCAD's initial value is 1: a typed INSERT opens the dialog without SETVAR.
+    let mut a = app();
+    a.session.settings = Default::default();
+    assert!(a.session.settings.attdia);
+    insert(&mut a);
+    let h = harness(a);
+    h.get_by_label("Edit Attributes");
+    assert!(h.state().session.attribute_entry().is_some());
+}
+
+#[test]
+fn a_canvas_click_does_not_take_the_first_value_or_close_the_dialog() {
+    let mut a = app();
+    insert(&mut a);
+    // A full frame, not only the dialog, so the click goes through the canvas.
+    let mut h = Harness::builder().with_size(vec2(900.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        a,
+    );
+    h.run_steps(3);
+    h.get_by_label("Edit Attributes");
+    replace(&mut h, "101", "202");
+    // A click on empty canvas away from the dialog reaches INSERT as Input::Point.
+    let rect = h.state().canvas.rect.expect("the canvas is drawn");
+    let pos = rect.left_center() + vec2(10.0, 0.0);
+    h.event(egui::Event::PointerMoved(pos));
+    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.run_steps(1);
+    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.run_steps(3);
+    h.get_by_label("Edit Attributes");
+    assert!(h.state().session.attribute_entry().is_some(), "the point did not close the dialog");
+    field(&h, "202");
+    h.get_by_label("OK").click();
+    h.run_steps(3);
+    assert_eq!(values(h.state()), Some(vec![("A".into(), "202".into()), ("B".into(), "1".into())]));
+}
+
+#[test]
 fn no_dialog_with_attdia_0_or_from_json() {
     let mut a = app();
     a.run("setvar", json!({ "name": "ATTDIA", "value": 0 })).unwrap();
-    insert(&mut a);
-    let h = harness(a);
-    assert!(h.query_by_label("Edit Attributes").is_none());
-    assert!(h.state().session.prompt_text().contains("Room"), "asked at the command line");
-
-    // ATTDIA's default, 0, asks at the command line too.
-    let mut a = app();
-    a.session.settings = Default::default();
-    assert!(!a.session.settings.attdia);
     insert(&mut a);
     let h = harness(a);
     assert!(h.query_by_label("Edit Attributes").is_none());
