@@ -312,7 +312,9 @@ impl Interactive for SplineCvM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.asking_degree {
             if let Input::Text(t) = &i {
-                let d = number(t).filter(|d| (1.0..=10.0).contains(d)).ok_or_else(|| other("Degree must be 1..10."))?;
+                let d = number(t)
+                    .filter(|d| d.fract() == 0.0 && (1.0..=10.0).contains(d))
+                    .ok_or_else(|| other("Degree must be a whole number from 1 to 10."))?;
                 self.degree = Some(d as usize);
             }
             self.asking_degree = false;
