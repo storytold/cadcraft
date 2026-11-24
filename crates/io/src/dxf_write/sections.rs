@@ -411,39 +411,62 @@ struct LayoutWriteData<'a> {
     ucs: Option<&'a Ucs>,
     /// The layout's limits as read (`None`: the default 0,0 to 12,9).
     limits: Option<(Vec2, Vec2)>,
+    /// Whether this is the Model layout (block record *Model_Space).
+    model: bool,
+}
+
+/// The plot layout flags (AcDbPlotSettings group 70) for `page`. The bits CADCraft models come
+/// from the page: 2 display plot styles, 4 centred, 128 lineweights, and 16 standard scale where
+/// the scale decides it (scaled to fit: set; a custom scale: clear). The rest are kept as the file
+/// had them (#3227); a page CADCraft made gets 512 (plot paper space last) and 32 (plot with plot
+/// styles), and 16 when its scale is standard. 1024 ("ModelType", DXF Reference, PLOTSETTINGS
+/// group 70) follows the layout: set for the Model layout, cleared for a paper-space layout even
+/// when the file had it, since it would mark that layout as model space.
+fn plot_layout_flags(page: &PageSetup, standard: bool, model: bool) -> i64 {
+    const MODELED: i64 = 2 | 4 | 128;
+    const STANDARD_SCALE: i64 = 16;
+    const MODEL_TYPE: i64 = 1024;
+    let kept = match page.file_plot_flags {
+        Some(f) if page.scale_to_fit => (f & !MODELED) | STANDARD_SCALE,
+        Some(f) if !standard => f & !MODELED & !STANDARD_SCALE,
+        Some(f) => f & !MODELED,
+        None => 512 | 32 | if standard { STANDARD_SCALE } else { 0 },
+    };
+    let kept = if model { kept | MODEL_TYPE } else { kept & !MODEL_TYPE };
+    kept | if page.lineweights { 128 } else { 0 } | if page.center { 4 } else { 0 } | if page.show_plot_styles { 2 } else { 0 }
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
     let d = context.drawing;
     let layout_dict = context.dictionary;
     let h = data.handle;
-    let name = data.name;
-    let tab = data.tab;
-    let brh = data.block_record;
-    let flags = data.flags;
     let page = data.page;
     let view = data.view;
-    // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
-    // per 143 drawing units).
-    let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
-    let standard = page.scale_to_fit || scale == 1.0;
-    let plot_flags = 512
-        | 32
-        | if standard { 16 } else { 0 }
-        | if page.lineweights { 128 } else { 0 }
-        | if page.center { 4 } else { 0 }
-        | if page.show_plot_styles { 2 } else { 0 };
-    let plot_type = match page.plot_area.as_str() {
-        "display" => 0,
-        "extents" => 1,
-        "limits" => 2,
-        "window" => 4,
-        _ => 5,
-    };
     w.s(0, "LAYOUT");
     w.s(5, h);
     w.s(330, layout_dict.to_string());
     w.s(100, "AcDbPlotSettings");
+    write_plot_settings(w, d, page, data.model);
+    write_layout_data(w, d, data, view);
+}
+
+fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
+    let start = w.t.len();
+    // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
+    // per 143 drawing units).
+    let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
+    // The file's standard scale (such as 1:50) while the scale is still the one read with it.
+    let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
+    let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
+    let plot_flags = plot_layout_flags(page, standard, model);
+    let plot_type = match page.plot_area.as_str() {
+        "display" => 0,
+        "extents" => 1,
+        "limits" => 2,
+        "view" => 3,
+        "window" => 4,
+        _ => 5,
+    };
     w.s(1, "");
     let device = page.device.trim();
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
@@ -474,12 +497,55 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(73, rotation);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
-    w.i(75, if page.scale_to_fit { 0 } else { 16 });
+    w.i(75, if page.scale_to_fit { 0 } else { file_standard.unwrap_or(16) });
     w.f(147, scale);
     // The paper image origin the file had (#2109), else 0,0.
     let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
     w.f(148, origin.x);
     w.f(149, origin.y);
+    if let Some(kept) = &page.file_plot_settings {
+        let current = w.t.split_off(start);
+        write_plot_settings(w, d, &kept.page, model);
+        let baseline = w.t.split_off(start);
+        let changed = |code| {
+            (matches!(code, 142 | 143 | 147) && page.scale != kept.page.scale)
+                || (code == 72
+                    && (page.paper_mm != kept.page.paper_mm
+                        || (page.paper_mm.is_none()
+                            && kept
+                                .tags
+                                .iter()
+                                .find(|tag| tag.code == 72)
+                                .zip(current.iter().find(|tag| tag.code == 72))
+                                .is_some_and(|(old, now)| matches!(old.i64(), 0 | 1) && old.i64() != now.i64()))))
+                || current.iter().find(|tag| tag.code == code) != baseline.iter().find(|tag| tag.code == code)
+        };
+        for tag in &kept.tags {
+            if changed(tag.code) || (tag.code == 73 && !(0..=3).contains(&tag.i64())) {
+                if tag.code == 70
+                    && let Some((now, before)) = current.iter().find(|tag| tag.code == 70).zip(baseline.iter().find(|tag| tag.code == 70))
+                {
+                    let mask = (now.i64() ^ before.i64()) | 1024;
+                    w.i(70, (tag.i64() & !mask) | (now.i64() & mask));
+                    continue;
+                }
+                w.t.extend(current.iter().filter(|new| new.code == tag.code).cloned());
+            } else if tag.code == 70 {
+                w.i(70, if model { tag.i64() | 1024 } else { tag.i64() & !1024 });
+            } else {
+                w.t.push(tag.clone());
+            }
+        }
+        w.t.extend(current.iter().filter(|tag| changed(tag.code) && !kept.tags.iter().any(|old| old.code == tag.code)).cloned());
+    }
+}
+
+fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Option<(Vec2, f64)>) {
+    let name = data.name;
+    let tab = data.tab;
+    let flags = data.flags;
+    let brh = data.block_record;
+    let page = data.page;
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
@@ -578,8 +644,8 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
         w.s(3, &l.name);
         w.s(350, layout_handles.get(i).cloned().unwrap_or_default());
     }
-    // Model space has no page setup of its own: write what PLOT does for it, the drawing extents
-    // fitted to the paper (plot type 1, scaled to fit). The default page's "layout" area is
+    // A new drawing has no saved Model page setup: write the drawing extents fitted to the
+    // paper (plot type 1, scaled to fit), as PLOT does. The default page's "layout" area is
     // plot type 5, "Layout information" (DXF Reference, PLOTSETTINGS group 74), which means
     // nothing for model space: another program's Plot dialog then shows no plot area or scale.
     let model_page = PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..PageSetup::default() };
@@ -592,10 +658,11 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
             tab: 0,
             block_record: ms_br,
             flags: 1,
-            page: &model_page,
+            page: d.model_page.as_ref().unwrap_or(&model_page),
             view: None,
             ucs: None,
             limits: None,
+            model: true,
         },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
@@ -613,6 +680,7 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 view: l.view,
                 ucs: l.ucs.as_ref(),
                 limits: l.limits,
+                model: false,
             },
         );
     }
@@ -1034,7 +1102,7 @@ pub(super) fn tags_kept_for(
         .collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, ..Ctx::default() };
+    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, modern_table_values: !bridge && version >= Version::R2007, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
     let mut dim_defs = dimension_block_definitions(d, &all_spaces, &dim_plan, &mut w, &mut cx);
@@ -1275,7 +1343,47 @@ pub(super) fn tags_kept_for(
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
+    plot_settings_compatibility(&mut w.t, target);
     (w.t, kept)
+}
+
+fn plot_settings_compatibility(tags: &mut Vec<Tag>, target: Version) {
+    let mut objects = HashSet::new();
+    let mut section = String::new();
+    let mut section_start = false;
+    for tag in tags.iter() {
+        if tag.code == 0 {
+            section_start = tag.str() == "SECTION";
+            if tag.str() == "ENDSEC" {
+                section.clear();
+            }
+        } else if section_start && tag.code == 2 {
+            section = tag.str();
+            section_start = false;
+        } else if section == "OBJECTS" && tag.code == 5 {
+            objects.extend(u64::from_str_radix(tag.str().trim(), 16).ok().filter(|handle| *handle != 0));
+        }
+    }
+    let mut kind = String::new();
+    let mut subclass = String::new();
+    tags.retain(|tag| {
+        if tag.code == 0 {
+            kind = tag.str();
+            subclass.clear();
+        } else if tag.code == 100 {
+            subclass = tag.str();
+        }
+        if !matches!(kind.as_str(), "LAYOUT" | "PLOTSETTINGS") {
+            return true;
+        }
+        if subclass == "AcDbPlotSettings" && matches!(tag.code, 76..=78) {
+            return target >= Version::R2004;
+        }
+        if matches!(subclass.as_str(), "AcDbPlotSettings" | "AcDbLayout") && tag.code == 333 {
+            return target >= Version::R2007 && u64::from_str_radix(tag.str().trim(), 16).ok().is_some_and(|handle| objects.contains(&handle));
+        }
+        true
+    });
 }
 
 /// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups

@@ -782,6 +782,10 @@ impl Block {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PageSetup {
+    /// Original plot subclass and the modeled values it was read with.
+    /// Only edits that clone the page retain these original fields; the JSON form does not carry them.
+    #[serde(skip)]
+    pub file_plot_settings: Option<Box<FilePlotSettings>>,
     pub device: String,
     pub paper: String,
     /// Paper size in millimetres (portrait width/height before rotation).
@@ -789,7 +793,7 @@ pub struct PageSetup {
     pub height_mm: f64,
     pub margins_mm: [f64; 4],
     pub landscape: bool,
-    /// "layout" | "extents" | "display" | "window" | "limits".
+    /// "layout" | "extents" | "display" | "window" | "limits" | "view".
     pub plot_area: String,
     /// Plot window corners `[x1, y1, x2, y2]` (DXF plot layout groups 48, 49, 140, 141); used when `plot_area` is "window".
     pub plot_window: [f64; 4],
@@ -821,11 +825,24 @@ pub struct PageSetup {
     /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_origin: Option<Vec2>,
+    /// The plot layout flags (DXF group 70 of AcDbPlotSettings) as the file had them. Saving keeps
+    /// the bits CADCraft doesn't model (plot paper space last, plot with plot styles, standard
+    /// scale and the rest) as read instead of forcing its defaults (#3227); `None` for page setups
+    /// made in CADCraft.
+    #[serde(skip)]
+    pub file_plot_flags: Option<i64>,
+    /// The standard scale the file chose (DXF group 75, such as 25 for 1:50) and the plot scale it
+    /// was read with. While the scale is unchanged, saving keeps that choice and the standard scale
+    /// flag instead of writing the scale as a custom one; `None` for a custom scale, scaled to
+    /// fit, or a page setup made in CADCraft.
+    #[serde(skip)]
+    pub file_standard_scale: Option<(i64, f64)>,
 }
 
 impl Default for PageSetup {
     fn default() -> Self {
         PageSetup {
+            file_plot_settings: None,
             device: "None".into(),
             paper: "ANSI A (8.50 x 11.00 Inches)".into(),
             width_mm: 215.9,
@@ -844,8 +861,19 @@ impl Default for PageSetup {
             paper_mm: None,
             file_paper: None,
             image_origin: None,
+            file_plot_flags: None,
+            file_standard_scale: None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilePlotSettings {
+    /// Groups after AcDbPlotSettings and before AcDbLayout, including unmodeled fields.
+    /// See the Autodesk DXF Reference, LAYOUT and PLOTSETTINGS.
+    pub tags: Vec<craft_dxf::Tag>,
+    /// The interpreted page with no nested file settings, for detecting edits on save.
+    pub page: PageSetup,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

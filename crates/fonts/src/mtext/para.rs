@@ -700,6 +700,14 @@ pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextL
         [Vec2::new(box_x0, top), Vec2::new(box_x0 + total_w, top), Vec2::new(box_x0 + total_w, top - block_h), Vec2::new(box_x0, top - block_h)]
             .map(xf),
     );
+    out.column_bounds = (0..n_cols)
+        .map(|column| {
+            let h = col_bottom.get(column).copied().unwrap_or(0.0).max(col_height(column));
+            let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(column) } else { column };
+            let x0 = box_x0 + slot as f64 * (col_w + gutter);
+            Bounds2::from_points([Vec2::new(x0, top), Vec2::new(x0 + col_w, top), Vec2::new(x0 + col_w, top - h), Vec2::new(x0, top - h)].map(xf))
+        })
+        .collect();
     out
 }
 

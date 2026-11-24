@@ -108,7 +108,10 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
         EntityKind::Line(l) => {
             w.s(0, "LINE");
             common(w, e, owner, paper, "AcDbLine");
-            thickness(w, e);
+            // Along the normal written with it (210 below), as read.
+            if e.common.thickness != 0.0 {
+                w.f(39, e.common.thickness);
+            }
             w.p(10, l.a);
             w.p(11, l.b);
             extrusion(w, e);
@@ -156,8 +159,13 @@ fn write_basic_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             if p.const_width > 0.0 {
                 w.f(43, p.const_width);
             }
-            if p.elevation != 0.0 {
-                w.f(38, p.elevation);
+            // The elevation runs along the polyline's normal, which isn't written: one facing down
+            // Z is at the elevation's negative. That is exact for a normal of 0,0,-1 only; a tilted
+            // one pointing partly down is flipped the same way (the reader brings tilted polylines
+            // into plan with normal Z, so only other sources make one).
+            let elevation = if e.common.extrusion.z < 0.0 { -p.elevation } else { p.elevation };
+            if elevation != 0.0 {
+                w.f(38, elevation);
             }
             thickness(w, e);
             for v in &p.vertices {
@@ -284,7 +292,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
-            text_tags(w, d, t, None, None);
+            text_tags(w, d, t, None, None, (e.handle, 0));
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -304,7 +312,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
         EntityKind::AttDef(a) => {
             w.s(0, "ATTDEF");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt));
+            text_tags(w, d, &a.text, Some((a, cx.target)), Some(&a.prompt), (e.handle, 0));
             if cx.target >= Version::R2007 {
                 multiline_tags(w, a, true);
             }
@@ -364,7 +372,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
             w.f(45, i.row_spacing);
         }
         if !i.attribs.is_empty() {
-            for a in &i.attribs {
+            for (index, a) in i.attribs.iter().enumerate() {
                 let ah = w.h();
                 w.s(0, "ATTRIB");
                 w.s(5, ah);
@@ -377,7 +385,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
                     w.i(60, 1);
                 }
                 w.s(100, "AcDbText");
-                text_tags(w, d, &a.text, Some((a, cx.target)), None);
+                text_tags(w, d, &a.text, Some((a, cx.target)), None, (e.handle, index));
                 if cx.target >= Version::R2007 {
                     multiline_tags(w, a, false);
                 }
@@ -514,26 +522,44 @@ fn write_table_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
                 let merge = cell.and_then(|x| x.merged).filter(|&(a, b)| a >= 1 && b >= 1 && (a, b) != (1, 1));
                 w.i(171, 1);
                 w.i(172, 0);
-                w.i(173, i64::from(covered || merge.is_some()));
+                w.i(173, i64::from(covered || (!cx.modern_table_values && merge.is_some())));
                 w.i(174, 0);
                 let (rs, cs) = if covered { (0, 0) } else { merge.map(|(a, b)| (span(a), span(b))).unwrap_or((1, 1)) };
                 w.i(175, cs);
                 w.i(176, rs);
                 w.i(91, 0);
+                if cx.modern_table_values {
+                    w.i(92, 0);
+                }
                 w.i(178, 0);
                 w.f(145, 0.0);
                 if let Some(h) = cell.and_then(|x| x.text_height).filter(|h| h.is_finite() && *h > 0.0) {
                     w.f(140, h);
                 }
-                // Long text: 250-character code-2 chunks, the rest in code 1.
-                let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
+                if cx.modern_table_values {
+                    w.s(301, "CELL_VALUE");
+                    w.i(93, 4);
+                    w.i(90, 4);
+                }
+                let chars: Vec<char> = cell.filter(|_| !cx.modern_table_values || !covered).map(|x| x.text.chars().collect()).unwrap_or_default();
                 let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
                 let n = chunks.len();
-                for (i, ch) in chunks.into_iter().enumerate() {
+                for (i, ch) in chunks.iter().enumerate() {
                     w.s(if i + 1 == n { 1 } else { 2 }, ch);
                 }
                 if n == 0 {
                     w.s(1, "");
+                }
+                if cx.modern_table_values {
+                    w.i(94, 0);
+                    w.s(300, "");
+                    for (i, ch) in chunks.iter().enumerate() {
+                        w.s(if i + 1 == n { 302 } else { 303 }, ch);
+                    }
+                    if n == 0 {
+                        w.s(302, "");
+                    }
+                    w.s(304, "ACVALUE_END");
                 }
             }
         }
@@ -609,14 +635,17 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
     if let EntityKind::Hatch(h) = &e.kind {
         w.s(0, "HATCH");
         common(w, e, owner, paper, "AcDbHatch");
-        w.p(10, Vec3::new(0.0, 0.0, h.elevation));
+        // Its elevation runs along its normal, written as Z: one facing down is at the negative.
+        // Exact for a normal of 0,0,-1; the reader brings a tilted hatch into plan with normal Z.
+        let elevation = if e.common.extrusion.z < 0.0 { -h.elevation } else { h.elevation };
+        w.p(10, Vec3::new(0.0, 0.0, elevation));
         w.p(210, Vec3::Z);
         w.s(2, &h.pattern);
         w.i(70, i64::from(h.solid));
         w.i(71, i64::from(h.associative));
         w.i(91, h.loops.len() as i64);
         for l in &h.loops {
-            w.i(92, 2 | if l.outer { 1 } else { 0 });
+            w.i(92, 2 | i64::from(l.outer) | (l.boundary_flags.unwrap_or(0) & (4 | 8 | 16)));
             let has_bulge = l.vertices.iter().any(|v| v.bulge != 0.0);
             w.i(72, i64::from(has_bulge));
             w.i(73, 1);
@@ -829,10 +858,14 @@ fn gradient(w: &mut W, g: &Gradient) {
     w.s(1000, g.color2.name());
 }
 
-/// Group 39 (thickness) of the entities whose DXF Reference record has one; only when set.
+/// Group 39 (thickness) of the entities whose DXF Reference record has one; only when set. They
+/// are written with no normal, so they extrude along Z: one whose normal points down Z extrudes
+/// the other way, and its thickness changes sign. That is exact for a normal of 0,0,-1; a tilted
+/// one pointing partly down only gets the closer of the two directions.
 fn thickness(w: &mut W, e: &Entity) {
-    if e.common.thickness != 0.0 {
-        w.f(39, e.common.thickness);
+    let t = if e.common.extrusion.z < 0.0 { -e.common.thickness } else { e.common.thickness };
+    if t != 0.0 {
+        w.f(39, t);
     }
 }
 

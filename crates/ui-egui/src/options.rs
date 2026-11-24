@@ -155,6 +155,9 @@ pub struct UiOptions {
     pub right_click_command: CommandClick,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
+    /// Look for a newer release when the app starts and offer to install it (desktop). Off,
+    /// only Help ▸ Check for Updates… looks.
+    pub check_updates_at_start: bool,
 }
 
 impl Default for UiOptions {
@@ -170,6 +173,7 @@ impl Default for UiOptions {
             right_click_edit: IdleClick::Menu,
             right_click_command: CommandClick::Menu,
             interface_scale: 1.0,
+            check_updates_at_start: true,
         }
     }
 }
@@ -241,6 +245,7 @@ struct UiChanges {
     right_click_edit: Option<IdleClick>,
     right_click_command: Option<CommandClick>,
     interface_scale: Option<f32>,
+    check_updates_at_start: Option<bool>,
 }
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
@@ -294,6 +299,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
         "rightClickCommand" => {
             c.right_click_command = Some(CommandClick::parse(text()?).ok_or("rightClickCommand must be menu, enter or menuWithOptions")?)
         }
+        "checkUpdatesAtStart" => c.check_updates_at_start = Some(v.as_bool().ok_or("checkUpdatesAtStart must be true or false")?),
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -339,6 +345,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("rightClickDefault".into(), json!(o.right_click_default.as_str()));
     m.insert("rightClickEdit".into(), json!(o.right_click_edit.as_str()));
     m.insert("rightClickCommand".into(), json!(o.right_click_command.as_str()));
+    m.insert("checkUpdatesAtStart".into(), json!(o.check_updates_at_start));
     m
 }
 
@@ -416,6 +423,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
         app.options.time_sensitive_right_click = b;
     }
     apply_right_click(&mut app.options, &ui);
+    if let Some(b) = ui.check_updates_at_start {
+        app.options.check_updates_at_start = b;
+    }
     Ok(report(app))
 }
 
@@ -485,6 +495,7 @@ impl CadApp {
             "rightClickEdit": self.options.right_click_edit.as_str(),
             "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
+            "checkUpdatesAtStart": self.options.check_updates_at_start,
         })
         .to_string()
     }
@@ -517,6 +528,7 @@ impl CadApp {
             "rightClickEdit",
             "rightClickCommand",
             "interfaceScale",
+            "checkUpdatesAtStart",
         ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
@@ -544,6 +556,9 @@ impl CadApp {
         apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
+        }
+        if let Some(b) = c.check_updates_at_start {
+            self.options.check_updates_at_start = b;
         }
     }
 }
