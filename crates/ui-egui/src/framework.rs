@@ -25,6 +25,7 @@ use craft_window::system::WindowSystem;
 use egui::ViewportId;
 
 use crate::CadApp;
+use crate::options::INTERFACE_SCALES;
 
 /// Each pass of the root window, first in `App::ui`: hands the runtime the native window it answers the hit test of
 /// (Windows) and fits the window to its monitor once.
@@ -124,6 +125,38 @@ impl CadApp {
         let root = RootEnv::new().mode(mode).scale(Scale::new(self.options.interface_scale));
         let app_modal = crate::docking::native_input_blocked(self, ctx).then_some(ViewportId::ROOT);
         FrameInput::new(root).commands(CommandInput::new().overrides(command_overrides())).host(Arc::clone(&self.framework_host)).app_modal(app_modal)
+    }
+
+    /// The keyboard zoom: Ctrl+=, Ctrl++ and Ctrl+- (Cmd on macOS) step the Options dialog's interface scale by a tenth
+    /// within its limits, and Ctrl+0 sets it back to the system's own size, also while a text field has the keyboard.
+    /// It takes the keys out of `viewport`'s input, so it runs after the shortcuts, where the user may have given one of
+    /// these keys to a command. A shortcut being recorded gets them, and in the browser they zoom the page.
+    pub(crate) fn zoom_keys(&mut self, ctx: &egui::Context, viewport: ViewportId) {
+        use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
+        if cfg!(target_arch = "wasm32") || crate::keys::recording(ctx) {
+            return;
+        }
+        let (smallest, largest) = (*INTERFACE_SCALES.start(), *INTERFACE_SCALES.end());
+        let step = |scale: f32, by: f32| ((scale + by).clamp(smallest, largest) * 10.0).round() / 10.0;
+        let shown = self.options.interface_scale;
+        let scale = ctx.input_mut_for(viewport, |input| {
+            if input.consume_shortcut(&ZOOM_RESET) {
+                return 1.0;
+            }
+            let mut scale = shown;
+            if input.consume_shortcut(&ZOOM_IN) || input.consume_shortcut(&ZOOM_IN_SECONDARY) {
+                scale = step(scale, 0.1);
+            }
+            if input.consume_shortcut(&ZOOM_OUT) {
+                scale = step(scale, -0.1);
+            }
+            scale
+        });
+        if scale != shown {
+            self.options.interface_scale = scale;
+            // The next frame's root values carry it.
+            ctx.request_repaint_of(ViewportId::ROOT);
+        }
     }
 
     /// The framework's part of `App::logic`, after CADCraft's own: the root window's close path. Unsaved drawings hold

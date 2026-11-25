@@ -588,11 +588,16 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         (output, panels.focused_windows)
     };
     app.dock.specs = specs;
-    // Keys typed in a floating panel's own OS window run the main window's shortcuts and command line, unless one of
-    // that window's widgets has the keyboard; files dropped on one open like files dropped on the main window.
+    // Keys typed in a floating panel's own OS window run the main window's shortcuts and command line; while one of that
+    // window's widgets has the keyboard, only the keyboard zoom reads them. Files dropped on one open like files dropped
+    // on the main window.
     let ctx = ui.ctx().clone();
     for (_, viewport) in &output.windows {
-        if *viewport == egui::ViewportId::ROOT || focused_windows.contains(viewport) {
+        if *viewport == egui::ViewportId::ROOT {
+            continue;
+        }
+        if focused_windows.contains(viewport) {
+            app.zoom_keys(&ctx, *viewport);
             continue;
         }
         let (events, modifiers) =

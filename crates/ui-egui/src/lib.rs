@@ -1183,6 +1183,7 @@ impl CadApp {
     /// Input-derived work, once per layout frame.
     fn ui_input(&mut self, ctx: &egui::Context) {
         menus::shortcuts(self, ctx);
+        self.zoom_keys(ctx, egui::ViewportId::ROOT);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
