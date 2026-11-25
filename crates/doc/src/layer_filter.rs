@@ -143,8 +143,14 @@ impl Wildcard {
         if text.len() > MAX_MATCH_TEXT {
             return false;
         }
-        let text: Vec<char> = text.chars().map(fold).collect();
-        self.alternatives.iter().any(|a| run(&a.toks, &text) != a.negate)
+        self.matches_any(&[text])
+    }
+
+    /// Whether any of `texts` (aliases of one value) matches; `~` negates over the whole set.
+    pub fn matches_any<S: AsRef<str>>(&self, texts: &[S]) -> bool {
+        let texts: Vec<Vec<char>> =
+            texts.iter().filter(|t| t.as_ref().len() <= MAX_MATCH_TEXT).map(|t| t.as_ref().chars().map(fold).collect()).collect();
+        self.alternatives.iter().any(|a| texts.iter().any(|t| run(&a.toks, t).0) != a.negate)
     }
 }
 
@@ -154,6 +160,9 @@ fn parse_set(chars: &[char], mut i: usize) -> Result<(Tok, usize), FilterError> 
     while let Some(&c) = chars.get(i) {
         i += 1;
         match c {
+            ']' if (members.is_empty() || members == [('~', false)]) && chars.get(i..).is_some_and(|r| r.contains(&']')) => {
+                members.push((']', true));
+            }
             ']' => {
                 closed = true;
                 break;
@@ -196,12 +205,14 @@ fn parse_set(chars: &[char], mut i: usize) -> Result<(Tok, usize), FilterError> 
     Ok((Tok::Set { negate, items }, i))
 }
 
-fn run(toks: &[Tok], text: &[char]) -> bool {
+fn run(toks: &[Tok], text: &[char]) -> (bool, usize) {
+    let mut steps = 0;
     let mut on = vec![false; toks.len() + 1];
     on[0] = true;
     close_stars(toks, &mut on);
     let mut next = vec![false; toks.len() + 1];
     for &c in text {
+        steps += toks.len() + 1;
         next.iter_mut().for_each(|v| *v = false);
         let mut any = false;
         for (i, tok) in toks.iter().enumerate() {
@@ -213,12 +224,12 @@ fn run(toks: &[Tok], text: &[char]) -> bool {
             any = true;
         }
         if !any {
-            return false;
+            return (false, steps);
         }
         std::mem::swap(&mut on, &mut next);
         close_stars(toks, &mut on);
     }
-    on[toks.len()]
+    (on[toks.len()], steps)
 }
 
 fn close_stars(toks: &[Tok], on: &mut [bool]) {
@@ -254,7 +265,8 @@ pub struct FilterRule {
     /// Whether objects are on the layer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub used: Option<bool>,
-    /// Colour pattern, matched against the colour number, its name and `r,g,b`.
+    /// Colour pattern, matched against the colour number, its name, and for a true colour `r-g-b`
+    /// (`10-20-*`) or `r,g,b` with each comma escaped (`10`,20`,*`).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub color: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -296,7 +308,7 @@ fn flag(want: Option<bool>, have: bool) -> bool {
 fn color_texts(c: cadcraft_color::Color) -> Vec<String> {
     match c {
         cadcraft_color::Color::Index(i) => vec![i.to_string(), c.name()],
-        cadcraft_color::Color::True(cadcraft_color::Rgb(r, g, b)) => vec![format!("{r},{g},{b}")],
+        cadcraft_color::Color::True(cadcraft_color::Rgb(r, g, b)) => vec![format!("{r},{g},{b}"), format!("{r}-{g}-{b}")],
         other => vec![other.name()],
     }
 }
@@ -342,7 +354,7 @@ impl CompiledRule<'_> {
     fn matches(&self, l: &Layer, used: bool) -> bool {
         let r = self.rule;
         let text = |w: &Option<Wildcard>, t: &str| w.as_ref().is_none_or(|w| w.matches(t));
-        let any = |w: &Option<Wildcard>, ts: Vec<String>| w.as_ref().is_none_or(|w| ts.iter().any(|t| w.matches(t)));
+        let any = |w: &Option<Wildcard>, ts: Vec<String>| w.as_ref().is_none_or(|w| w.matches_any(&ts));
         flag(r.on, l.on)
             && flag(r.frozen, l.frozen)
             && flag(r.locked, l.locked)
@@ -629,6 +641,11 @@ mod tests {
             ("`*", "x", false),
             ("a`,b", "a,b", true),
             ("[`]]", "]", true),
+            ("[]a]", "]", true),
+            ("[]a]", "a", true),
+            ("[]a]", "b", false),
+            ("[~]a]", "b", true),
+            ("[~]a]", "]", false),
             ("[~]", "~", true),
             ("*a*a*a*a*a*b", &"a".repeat(60), false),
             ("Mauer*", "MAUER-Süd", true),
@@ -652,10 +669,12 @@ mod tests {
     fn long_text_and_many_stars_match_quickly() {
         let w = Wildcard::parse(&"*a".repeat(400)).unwrap();
         let text = "a".repeat(20_000);
-        let started = std::time::Instant::now();
         assert!(w.matches(&text));
         assert!(!w.matches(&format!("{text}b")));
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let chars: Vec<char> = text.chars().collect();
+        let (hit, steps) = run(&w.alternatives[0].toks, &chars);
+        assert!(hit);
+        assert!(steps <= (chars.len() + 1) * (w.alternatives[0].toks.len() + 1));
         assert!(!Wildcard::parse("*").unwrap().matches(&"a".repeat(MAX_MATCH_TEXT + 1)));
     }
 
@@ -683,7 +702,18 @@ mod tests {
         assert!(rule(FilterRule { transparency: "0".into(), plot_style: "Normal".into(), ..Default::default() }));
         let mut t = layer("T");
         t.color = cadcraft_color::Color::True(cadcraft_color::Rgb(10, 20, 30));
-        assert!(FilterRule { color: "10,20,*".into(), ..Default::default() }.matches(&t, false).unwrap());
+        let rgb = |p: &str, l: &Layer| FilterRule { color: p.into(), ..Default::default() }.matches(l, false).unwrap();
+        let mut o = layer("O");
+        o.color = cadcraft_color::Color::True(cadcraft_color::Rgb(40, 50, 60));
+        assert!(rgb("10-20-30", &t) && !rgb("10-20-30", &o));
+        assert!(rgb("10-20-*", &t) && !rgb("10-20-*", &o));
+        assert!(rgb("10`,20`,30", &t) && !rgb("10`,20`,30", &o));
+        assert!(rgb("10`,20`,*", &t) && !rgb("10`,20`,*", &o));
+        assert!(!rgb("10,20,30", &o) && !rgb("10,20,30", &t));
+        let mut red = layer("R");
+        red.color = cadcraft_color::Color::Index(1);
+        assert!(rgb("red", &red) && rgb("1", &red) && !rgb("~red", &red) && !rgb("~1", &red));
+        assert!(rgb("~red", &t));
         assert!(FilterRule { color: "[x".into(), ..Default::default() }.matches(&t, false).is_err());
     }
 
