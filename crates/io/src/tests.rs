@@ -5003,9 +5003,9 @@ fn the_first_definition_of_a_tag_in_any_case_is_used() {
 }
 
 /// A definition with more distinct tags than the index may store (`1 << 18`) is not cached.
-/// Each read examines it again, and the first ATTDEF of the tag still wins, in any case.
-/// The stated work limit is that many tags stored on the thread, and one scan of at most
-/// that many entities when the definition is past the budget.
+/// The first read builds and drops one bounded index and remembers the state; later reads go
+/// straight to one scan that stops at the first match. The first ATTDEF of the tag still wins,
+/// in any case.
 #[test]
 fn an_oversized_definition_is_not_indexed() {
     const LIMIT: usize = 1 << 18;
@@ -5036,5 +5036,25 @@ fn an_oversized_definition_is_not_indexed() {
     // The failed index walks every entity (the last tag is the one past the budget), then
     // the scan reads the first entity, where the tag matches.
     assert_eq!(first, (LIMIT as u64) + 3, "one bounded pass, then the first match");
-    assert_eq!(second, first, "a definition past the budget is not cached, so the next read scans again");
+    assert_eq!(second, 1, "the state is remembered as too large: the next read scans to the first match only");
+}
+
+/// An attribute whose ATTDEF lies past the index budget, at the end of an oversized definition,
+/// still reads and writes that definition's properties: the scan for a definition past the
+/// budget covers all of it.
+#[test]
+fn a_definition_past_the_index_budget_matches_its_last_tag() {
+    const LIMIT: usize = 1 << 18;
+    let mut block = Block::new("HUGE");
+    for i in 0..=LIMIT {
+        let mut e = Entity::new(Handle(i as u64 + 1), EntityKind::AttDef(plain_attrib(&format!("U{i}"))));
+        e.common.layer = if i == LIMIT { "LAST".into() } else { "OTHER".into() };
+        block.entities.push(e);
+    }
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("HUGE".into(), std::sync::Arc::new(block));
+    let insert = Insert { block: "HUGE".into(), attribs: vec![plain_attrib(&format!("u{LIMIT}"))], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("LAST"), "entget reads the matching definition");
+    assert_eq!(written_attrib_layer(&d).as_deref(), Some("LAST"), "the written ATTRIB keeps the definition's layer");
 }

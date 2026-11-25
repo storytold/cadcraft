@@ -8,14 +8,14 @@ use super::{
 
 /// The most ATTDEF tags the definition indexes on one thread hold in all (a block with none
 /// counts as one). An index that fits but would pass this total drops the indexes already
-/// stored, then takes their place. A definition with more distinct tags than this is not stored:
-/// each read of it scans at most [`MAX_ATTDEF_SCAN`] entities and keeps nothing, so one block
-/// cannot grow the cache past the budget and a repeated read repeats that scan.
+/// stored, then takes their place. A definition with more distinct tags than this is not indexed:
+/// its state is remembered as too large, and each read of it scans the definition for the first
+/// matching ATTDEF and keeps nothing, so one block cannot grow the cache past the budget, and the
+/// written file still takes its properties from the right definition.
 const MAX_INDEXED_TAGS: usize = 1 << 18;
 
-/// Entities one attribute read may examine when the definition is too large to index. The scan
-/// stops at the first ATTDEF whose tag matches, ignoring ASCII case, or at this many entities.
-const MAX_ATTDEF_SCAN: usize = MAX_INDEXED_TAGS;
+/// The most block states remembered as too large to index; past it the list starts again.
+const MAX_TOO_LARGE: usize = 1 << 10;
 
 /// For each state of a block definition's entities read on this thread, by its content token
 /// ([`cadcraft_doc::EntityStore::content_token`]): the handle of the first ATTDEF of each tag
@@ -27,6 +27,9 @@ struct AttdefIndexes {
     by_store: HashMap<u64, HashMap<String, Handle>>,
     /// Tags held in all, for [`MAX_INDEXED_TAGS`].
     tags: usize,
+    /// States of definitions with more distinct tags than [`MAX_INDEXED_TAGS`], so a read of one
+    /// goes straight to [`scan_attdef`] without building and dropping an index again.
+    too_large: std::collections::HashSet<u64>,
 }
 
 thread_local! {
@@ -57,10 +60,10 @@ fn attdef_index_within(block: &Block, budget: usize) -> Option<HashMap<String, H
     Some(by_tag)
 }
 
-/// The first ATTDEF in the first [`MAX_ATTDEF_SCAN`] entities of `block` whose tag matches
-/// `tag`, ignoring ASCII case. Nothing from the scan is stored.
+/// The first ATTDEF of `block` whose tag matches `tag`, ignoring ASCII case: one pass over the
+/// definition at most, stopping at the match. Nothing from the scan is stored.
 fn scan_attdef(block: &Block, tag: &str) -> Option<Handle> {
-    for e in block.entities.iter().take(MAX_ATTDEF_SCAN) {
+    for e in block.entities.iter() {
         count_attdef_visit();
         if let EntityKind::AttDef(ad) = &e.kind
             && ad.tag.eq_ignore_ascii_case(tag)
@@ -74,8 +77,9 @@ fn scan_attdef(block: &Block, tag: &str) -> Option<Handle> {
 /// The definition properties of the first ATTDEF in `block` whose tag matches `tag`, ignoring
 /// ASCII case. Each state of a block's entities that fits in [`MAX_INDEXED_TAGS`] is read once
 /// on a thread: later attributes, of this reference or another, find their definition in its
-/// index. A definition with more distinct tags is not stored, and each read scans at most
-/// [`MAX_ATTDEF_SCAN`] of its entities.
+/// index. A definition with more distinct tags is not stored: the first read of that state builds
+/// at most [`MAX_INDEXED_TAGS`] index entries, then gives up and remembers the state; every read
+/// of it scans the definition once at most, stopping at the first match.
 fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
     let token = block.entities.content_token();
     let want = tag.to_ascii_uppercase();
@@ -85,7 +89,16 @@ fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
             if let Some(by_tag) = ix.by_store.get(&token) {
                 return by_tag.get(&want).copied();
             }
-            let Some(by_tag) = attdef_index_within(block, MAX_INDEXED_TAGS) else { return scan_attdef(block, tag) };
+            if ix.too_large.contains(&token) {
+                return scan_attdef(block, tag);
+            }
+            let Some(by_tag) = attdef_index_within(block, MAX_INDEXED_TAGS) else {
+                if ix.too_large.len() >= MAX_TOO_LARGE {
+                    ix.too_large.clear();
+                }
+                ix.too_large.insert(token);
+                return scan_attdef(block, tag);
+            };
             let found = by_tag.get(&want).copied();
             let cost = by_tag.len().max(1);
             if ix.tags.saturating_add(cost) > MAX_INDEXED_TAGS {
