@@ -53,7 +53,7 @@ pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyface
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop};
 pub use layout::{Image, Table, TableCell, Viewport};
-pub use proxy::{ProxyTables, proxy_entities};
+pub use proxy::{ProxyTables, TableOrder, proxy_entities};
 pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
 pub use wipeout::Wipeout;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

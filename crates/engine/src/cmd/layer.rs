@@ -835,6 +835,36 @@ mod tests {
         assert_eq!(graphics_layer(&s), "0");
     }
 
+    /// The same for linetypes: PURGE keeps one only proxy graphics draw with, and RENAME takes
+    /// the graphics and the file's LTYPE order with it.
+    #[test]
+    fn linetypes_proxy_graphics_draw_with_are_in_use_and_renamed() {
+        let mut s = proxy_on_b();
+        for name in ["DASHED", "HIDDEN"] {
+            s.execute("linetype", &json!({ "load": name })).unwrap();
+        }
+        let d = s.doc_mut().unwrap();
+        d.proxy_linetypes = vec!["Continuous".into(), "DASHED".into(), "HIDDEN".into()];
+        let h = d.model.iter().find(|e| matches!(e.kind, cadcraft_doc::EntityKind::Unknown(_))).unwrap().handle;
+        d.modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Unknown(u) = &mut e.kind {
+                u.graphics[0].common.linetype = "DASHED".into();
+            }
+        })
+        .unwrap();
+        s.execute("purge", &json!({})).unwrap();
+        let d = s.doc().unwrap();
+        assert!(d.linetype("DASHED").is_some() && d.linetype("HIDDEN").is_none());
+        s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": "DASH2" })).unwrap();
+        let d = s.doc().unwrap();
+        let linetype = d.model.iter().find_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Unknown(u) => Some(u.graphics[0].common.linetype.clone()),
+            _ => None,
+        });
+        assert_eq!(linetype.as_deref(), Some("DASH2"));
+        assert_eq!(d.proxy_linetypes, ["Continuous", "DASH2", "HIDDEN"]);
+    }
+
     #[test]
     fn rename_repoints_paper_space_and_block_entities() {
         let mut s = Session::new();

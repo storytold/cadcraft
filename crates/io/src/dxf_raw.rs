@@ -1516,8 +1516,14 @@ fn plan_unknown(
     };
     let br = |name: &str| roles.get(&("BLOCK_RECORD".to_string(), up(name))).cloned();
     let first_at = |s: &cadcraft_doc::EntityStore| s.iter().find_map(|e| at.get(&e.handle.hex()).copied());
-    // The LAYER table as written: proxy graphics name layers by their index in it (#3094).
-    let written_layers: Vec<String> = recs.iter().filter(|r| r.sec == "TABLES" && r.kind == "LAYER").filter_map(|r| val(body(r), 2)).collect();
+    // The LAYER and LTYPE tables as written: proxy graphics name layers and linetypes by their
+    // index in them (#3094), linetypes without ByBlock and ByLayer.
+    let table = |kind: &str| -> Vec<String> { recs.iter().filter(|r| r.sec == "TABLES" && r.kind == kind).filter_map(|r| val(body(r), 2)).collect() };
+    let written_layers = table("LAYER");
+    let mut written_linetypes = table("LTYPE");
+    written_linetypes.retain(|n| !n.eq_ignore_ascii_case("ByBlock") && !n.eq_ignore_ascii_case("ByLayer"));
+    let read_order = cadcraft_doc::TableOrder { layers: &d.proxy_layers, linetypes: &d.proxy_linetypes };
+    let written_order = cadcraft_doc::TableOrder { layers: &written_layers, linetypes: &written_linetypes };
     let layouts = d.paper_space_layouts();
     // (entities, owner, paper space, end of the space, section)
     let mut stores: Vec<(&cadcraft_doc::EntityStore, Option<String>, bool, Option<usize>, &str)> = Vec::new();
@@ -1545,7 +1551,7 @@ fn plan_unknown(
                     {
                         continue;
                     }
-                    let remapped = u.with_proxy_layers(&d.proxy_layers, &written_layers).map(|tags| Unknown { tags, ..u.clone() });
+                    let remapped = u.with_proxy_tables(read_order, written_order).map(|tags| Unknown { tags, ..u.clone() });
                     let t = unknown_entity(remapped.as_ref().unwrap_or(u), e, &owner, paper);
                     if !t.is_empty() {
                         pending.push((sec.to_string(), t));

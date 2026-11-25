@@ -1044,6 +1044,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
             }
+            d.rename_proxy_linetype(&from, &to);
         }
         _ => return Err(bad("rename", "unsupported table")),
     }

@@ -165,6 +165,9 @@ pub struct Drawing {
     /// turns those indices into the written table's (#3094). An empty name stands for a record
     /// without one. Empty for a drawing not read from a file.
     pub proxy_layers: Vec<String>,
+    /// The LTYPE table of that file in the same way, without ByBlock and ByLayer (proxy graphics
+    /// count the others).
+    pub proxy_linetypes: Vec<String>,
 }
 
 impl Default for Drawing {
@@ -230,6 +233,7 @@ impl Drawing {
             portable_fonts: false,
             rasters: Rasters::default(),
             proxy_layers: Vec::new(),
+            proxy_linetypes: Vec::new(),
         }
     }
 

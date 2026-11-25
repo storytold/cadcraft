@@ -1,7 +1,8 @@
 //! Proxy graphics name layers by their index in the file's LAYER table (#3094). AutoCAD keeps
 //! layers that only proxy graphics use, but saves the graphics with their old indices after
 //! PURGE removed a layer before them, which moves the graphics to other layers; CADCraft turns the
-//! indices into the written table's on save.
+//! indices into the written table's on save. Linetype indices (the LTYPE table without ByBlock
+//! and ByLayer) follow it the same way.
 
 use cadcraft_doc::{EntityKind, Unknown};
 use cadcraft_io::{read_dxf, write_dxf};
@@ -147,4 +148,44 @@ fn a_proxy_copied_from_another_drawing_keeps_its_layers() {
     target.add(&cadcraft_doc::Space::Model, proxy.common.clone(), proxy.kind.clone()).expect("add");
     let again = read_dxf(write_dxf(&target).as_bytes()).expect("reopen");
     assert_eq!(circle_layers(&again), ["0", "B_NOTIZ", "C_EXTRA", "C_EXTRA"]);
+}
+
+/// Linetype indices count the LTYPE records other than ByBlock and ByLayer, and follow the
+/// written table the same way: removing an unused linetype before the one the graphics draw
+/// with keeps them on it after a save.
+#[test]
+fn removing_a_linetype_before_the_one_the_graphics_use_keeps_it_on_save() {
+    let mut circle: Vec<u8> = [25.0f64, 70.0, 0.0, 15.0, 0.0, 0.0, 1.0].iter().flat_map(|v| v.to_le_bytes()).collect();
+    circle.truncate(56);
+    let chunks = [chunk(18, &2u32.to_le_bytes()), chunk(2, &circle)];
+    let body = chunks.concat();
+    let mut g = ((8 + body.len()) as u32).to_le_bytes().to_vec();
+    g.extend((chunks.len() as u32).to_le_bytes());
+    g.extend(body);
+    let mut tags: Vec<(i32, String)> = Vec::new();
+    let mut push = |list: &[(i32, &str)]| tags.extend(list.iter().map(|(c, v)| (*c, v.to_string())));
+    push(&[(0, "SECTION"), (2, "CLASSES"), (0, "CLASS"), (1, "SYNLAYERTEST"), (2, "SynLayerTest"), (3, "SyntheticProxyApp")]);
+    push(&[(90, "0"), (280, "0"), (281, "1"), (0, "ENDSEC"), (0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LTYPE")]);
+    for (handle, name) in [("14", "ByBlock"), ("15", "ByLayer"), ("16", "Continuous"), ("17", "UNUSED"), ("18", "HIDDEN")] {
+        let dashes: &[(i32, &str)] = if name == "UNUSED" || name == "HIDDEN" {
+            &[(72, "65"), (73, "2"), (40, "0.375"), (49, "0.25"), (74, "0"), (49, "-0.125"), (74, "0")]
+        } else {
+            &[(72, "65"), (73, "0"), (40, "0")]
+        };
+        push(&[(0, "LTYPE"), (5, handle), (2, name), (70, "0"), (3, "")]);
+        push(dashes);
+    }
+    push(&[(0, "ENDTAB"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES"), (0, "ACAD_PROXY_ENTITY"), (5, "21"), (100, "AcDbEntity"), (8, "0")]);
+    push(&[(100, "AcDbProxyEntity"), (90, "498"), (91, "500"), (95, "0"), (70, "0")]);
+    tags.push((92, g.len().to_string()));
+    tags.extend(g.chunks(127).map(|c| (310, c.iter().map(|b| format!("{b:02X}")).collect())));
+    tags.extend([(93, "0".to_string()), (94, "0".to_string()), (0, "ENDSEC".to_string()), (0, "EOF".to_string())]);
+    let text: String = tags.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect();
+    let linetype = |d: &cadcraft_doc::Drawing| proxy(d).graphics[0].common.linetype.clone();
+    let mut d = read_dxf(text.as_bytes()).expect("read");
+    assert_eq!(linetype(&d), "HIDDEN");
+    d.linetypes.retain(|t| t.name != "UNUSED");
+    let again = read_dxf(write_dxf(&d).as_bytes()).expect("reopen");
+    assert!(again.linetype("UNUSED").is_none());
+    assert_eq!(linetype(&again), "HIDDEN");
 }
