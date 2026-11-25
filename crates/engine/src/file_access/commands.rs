@@ -407,6 +407,8 @@ pub const NO_FILES: &[&str] = &[
     "dist",
     "id",
     "list",
+    "xdlist",
+    "xdedit",
     "area",
     "time",
     "status",
