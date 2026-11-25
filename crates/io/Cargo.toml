@@ -1,6 +1,6 @@
 [package]
 name = "cadcraft-io"
-description = "CADCraft file formats: DXF read/write mapping, SVG, PNG and PDF export"
+description = "CADCraft file formats: DXF/DWG, SVG and PDF import, SVG/PNG/PDF export"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,7 +21,9 @@ cadcraft-fonts = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
-craft-pdf = { workspace = true, features = ["write"] }
+craft-pdf = { workspace = true, features = ["write", "interpret"] }
+kurbo = { workspace = true }
+lyon_tessellation = { workspace = true }
 
 [dev-dependencies]
 miniz_oxide = "0.9"

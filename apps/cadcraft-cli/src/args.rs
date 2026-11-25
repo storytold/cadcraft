@@ -26,12 +26,12 @@ fn with_formats(cell: &'static std::sync::OnceLock<String>, before: &str, list: 
 /// The drawing an input argument names.
 fn read_help() -> &'static str {
     static C: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    with_formats(&C, "The drawing to read ", Format::READ, "")
+    with_formats(&C, "The drawing to read ", Format::READ, ", or a PDF whose first page opens as editable vector content")
 }
 
 fn open_help() -> &'static str {
     static C: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    with_formats(&C, "Drawings to open ", Format::READ, "")
+    with_formats(&C, "Drawings to open ", Format::READ, ", or PDFs (their first page)")
 }
 
 fn write_help() -> &'static str {

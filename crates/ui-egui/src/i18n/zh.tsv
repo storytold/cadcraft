@@ -271,6 +271,7 @@
 	Export to PDF...	导出为 PDF...
 	Expression	表达式
 	Extend	延伸
+	Extended Trim	扩展修剪
 	Extension	延伸线
 	Extents	范围
 	Extrude	拉伸
@@ -525,6 +526,7 @@
 	Parameters Manager	参数管理器
 	Parametric	参数化
 	Paste	粘贴
+	Paste Table	粘贴表格
 	Paste as Block	粘贴为块
 	Paste to Original Coordinates	粘贴到原坐标
 	Path Array	路径阵列
@@ -1035,6 +1037,7 @@
 	Not a number or distance: {text}	不是数字或距离：{text}
 	Plotter Manager...	绘图仪管理器...
 	Import...	导入...
+	Import PDF...	导入 PDF...
 	Export...	导出...
 	Batch Publish...	批量发布...
 	New from Template...	根据样板新建...

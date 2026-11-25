@@ -271,8 +271,10 @@ impl EntityKind {
             EntityKind::Image(i) => vec![Prim::Point(i.insert.xy())],
             EntityKind::Table(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Tolerance(t) => vec![Prim::Point(t.insert.xy())],
-            // What its proxy graphics draw, so a proxy can be picked and snapped to.
-            EntityKind::Unknown(u) => u.graphics.iter().flat_map(|g| g.kind.prims()).collect(),
+            // What its proxy graphics draw, so a proxy can be picked and snapped to. A filled
+            // shape's hatch is left out: its outline is drawn too, and the hatch's sides (72 for an
+            // ellipse) would offer snaps inside it.
+            EntityKind::Unknown(u) => u.graphics.iter().filter(|g| !matches!(g.kind, EntityKind::Hatch(_))).flat_map(|g| g.kind.prims()).collect(),
         }
     }
 
@@ -625,7 +627,7 @@ impl EntityKind {
             EntityKind::Text(t) => vec![t.justify_point()],
             EntityKind::MText(t) => vec![t.insert.xy()],
             EntityKind::AttDef(a) => vec![a.text.justify_point()],
-            EntityKind::Insert(i) => std::iter::once(i.insert.xy()).chain(i.attribs.iter().map(|a| a.text.justify_point())).collect(),
+            EntityKind::Insert(i) => std::iter::once(i.insert.xy()).chain(i.grip_attribs().map(|(_, a)| a.text.justify_point())).collect(),
             EntityKind::Dimension(d) => vec![d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.text_mid.xy()],
             EntityKind::MLine(m) => m.points(),
             EntityKind::Leader(l) => l.vertices.iter().map(|v| v.xy()).collect(),

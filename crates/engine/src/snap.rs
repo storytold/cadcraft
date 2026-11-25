@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -385,7 +385,7 @@ fn osnap_in_with_prims(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<(Vec<SnapHit>, Vec<Prim>)> {
-    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen, None)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
     // that don't reach each other).
@@ -475,9 +475,60 @@ pub(crate) fn gather(
     aperture: f64,
     osmode: u32,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
+    gather_in(d, space, ix, cursor, aperture, osmode, &[], None)
 }
 
+/// The point nearest `cursor` within `aperture` on the visible objects of `space` other than
+/// `skip` (and on the objects inside block references), with the object's direction there (a unit
+/// vector; a circle's or arc's runs counterclockwise): what an alignment grip aligns a dynamic
+/// block reference with. Objects on the layers `frozen` in the active viewport aren't drawn there,
+/// so they are passed over.
+pub(crate) fn nearest_with_direction(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    frozen: &[String],
+    skip: Handle,
+) -> Option<(Vec2, Vec2)> {
+    let ix = crate::spatial::index(d, space);
+    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, frozen, Some(skip))?;
+    let mut best: Option<(f64, Vec2, Vec2)> = None;
+    let mut consider = |at: Vec2, dir: Vec2| {
+        let dd = at.dist(cursor);
+        if at.is_finite() && dir.len() > 1e-12 && dir.is_finite() && dd <= aperture && best.is_none_or(|(bd, _, _)| dd < bd) {
+            best = Some((dd, at, dir * (1.0 / dir.len())));
+        }
+    };
+    for p in prims.iter().take(2000) {
+        if let Prim::Circle(c) = p {
+            let at = c.closest(cursor);
+            consider(at, (at - c.center).perp());
+            continue;
+        }
+        if let Prim::Infinite { base, dir, ray } = p {
+            let len = dir.len();
+            if len > 1e-12 {
+                let u = *dir * (1.0 / len);
+                // A ray runs one way from its base: behind it, its base is the nearest point.
+                let t = (cursor - *base).dot(u);
+                consider(*base + u * if *ray { t.max(0.0) } else { t }, u);
+            }
+            continue;
+        }
+        for seg in prim_segments(p) {
+            let seg = fix_circle(&seg);
+            let at = seg.closest(cursor);
+            match seg {
+                Segment::Line(l) => consider(at, l.b - l.a),
+                Segment::Arc { arc, .. } => consider(at, (at - arc.center).perp()),
+            }
+        }
+    }
+    best.map(|(_, at, dir)| (at, dir))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn gather_in(
     d: &Drawing,
     space: &Space,
@@ -486,6 +537,7 @@ fn gather_in(
     aperture: f64,
     osmode: u32,
     frozen: &[String],
+    skip: Option<Handle>,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
     let probe = Bounds2::new(cursor, cursor).expand(aperture);
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
@@ -493,11 +545,17 @@ fn gather_in(
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
-        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
+        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) || Some(e.handle) == skip {
             continue;
         }
         let inf = crate::select::is_infinite(e);
         if !inf && !crate::select::bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+            continue;
+        }
+        // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
+        // limit nor the intersection slots unless its drawn geometry is in reach, or INS is on and an
+        // insertion point is within the aperture.
+        if !inf && crate::select::blank_frame_only(d, e, &probe, cursor, aperture, osmode & mode::INS != 0) {
             continue;
         }
         count += 1;
@@ -515,6 +573,7 @@ fn gather_in(
                 }
                 EntityKind::AttDef(a) => cands.push((mode::INS, a.text.justify_point())),
                 // A multileader: its text's insertion point, or its block content's.
+                // select.rs blank_snap_points must offer the same points.
                 EntityKind::MLeader(m) => {
                     cands.extend(m.text.iter().map(|t| (mode::INS, t.insert.xy())));
                     cands.extend(m.block.iter().map(|b| (mode::INS, b.insert.xy())));
@@ -530,6 +589,15 @@ fn gather_in(
         }
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
+        }
+        // A dimension kept as read draws its block through a reference in its graphics (#3438),
+        // and snaps to the objects inside it the same way.
+        if let EntityKind::Unknown(u) = &e.kind {
+            for g in &u.graphics {
+                if let EntityKind::Insert(ins) = &g.kind {
+                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+                }
+            }
         }
     }
     Some((cands, near_prims))
@@ -772,20 +840,7 @@ impl Sink<'_> {
     fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
-                // The block holds world geometry: a reference at its own base point places it as is.
-                let ins = Insert {
-                    block: blk.name.clone(),
-                    insert: blk.base,
-                    scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
-                    rotation: 0.0,
-                    attribs: Vec::new(),
-                    cols: 1,
-                    rows: 1,
-                    col_spacing: 0.0,
-                    row_spacing: 0.0,
-                    clip: None,
-                };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &dimension_reference(blk, dm), &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
@@ -862,10 +917,40 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
                     EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
+                    // A dimension draws its block, as at the top level.
+                    EntityKind::Dimension(dm) if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) => {
+                        block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, budget, frozen, f);
+                    }
+                    k @ EntityKind::Unknown(u) => {
+                        f(k, &mm);
+                        for g in &u.graphics {
+                            if let EntityKind::Insert(inner) = &g.kind {
+                                block_leaves(d, inner, &mm, depth + 1, budget, frozen, f);
+                            }
+                        }
+                    }
                     k => f(k, &mm),
                 }
             }
         }
+    }
+}
+
+/// The reference that places a dimension's block as the renderer draws it: the block holds world
+/// geometry, moved by the insertion point (DXF group 12, which an older AutoCAD sets for a moved
+/// dimension; #2634).
+fn dimension_reference(blk: &cadcraft_doc::Block, dm: &cadcraft_doc::Dimension) -> Insert {
+    Insert {
+        block: blk.name.clone(),
+        insert: blk.base + dm.insertion_point,
+        scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
     }
 }
 
@@ -1172,12 +1257,183 @@ mod tests {
     }
 
     #[test]
+    fn alignment_targets_stay_on_a_ray_and_off_frozen_layers() {
+        let mut d = Drawing::new_imperial();
+        let ray = |base: (f64, f64)| EntityKind::Ray(cadcraft_doc::RayLine { base: Vec3::new(base.0, base.1, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), ray((0.0, 0.0))).unwrap();
+        // Behind the ray: its base is the nearest point, out of a small aperture.
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(-5.0, 0.0), 0.5, &[], Handle(0)), None);
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(-0.2, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::ZERO) < 1e-12, "{at:?}");
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::new(5.0, 0.0)) < 1e-12, "{at:?}");
+        // A line on a layer frozen in the viewport isn't a target.
+        let mut d = drawing();
+        d.ensure_layer("Hidden");
+        let c = Common { layer: "Hidden".into(), ..Common::default() };
+        let l = EntityKind::Line(Line { a: Vec3::new(0.0, 30.0, 0.0), b: Vec3::new(10.0, 30.0, 0.0) });
+        d.add(&Space::Model, c, l).unwrap();
+        assert!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &[], Handle(0)).is_some());
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &["HIDDEN".to_string()], Handle(0)), None);
+    }
+
+    #[test]
     fn endpoint_and_mid() {
         let d = drawing();
         let h = osnap(&d, &Space::Model, Vec2::new(9.8, 0.1), 0.5, mode::END | mode::MID, None, false).unwrap();
         assert_eq!(h.point, Vec2::new(10.0, 0.0));
         let m = osnap(&d, &Space::Model, Vec2::new(5.1, 0.1), 0.5, mode::MID, None, false).unwrap();
         assert_eq!(m.point, Vec2::new(5.0, 0.0));
+    }
+
+    /// Blank MTEXT frames over the cursor are for picking: thousands of them, with their insertion
+    /// points out of reach, must not crowd a real endpoint out of the snap candidates (#2810).
+    #[test]
+    fn blank_mtext_frames_do_not_crowd_out_snap_candidates() {
+        for line_first in [true, false] {
+            let mut d = Drawing::new_metric();
+            let line = EntityKind::Line(Line { a: Vec3::new(5.2, -1.0, 0.0), b: Vec3::new(30.0, -1.0, 0.0) });
+            if line_first {
+                d.add(&Space::Model, Common::default(), line.clone()).unwrap();
+            }
+            for _ in 0..2100 {
+                let t = cadcraft_doc::MText {
+                    insert: Vec3::new(0.0, 0.0, 0.0),
+                    height: 2.5,
+                    width: 10.0,
+                    attach: 1,
+                    rotation: 0.0,
+                    style: "Standard".into(),
+                    contents: "  ".into(),
+                    line_spacing: 1.0,
+                    line_spacing_exact: false,
+                    columns: None,
+                };
+                d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+            }
+            if !line_first {
+                d.add(&Space::Model, Common::default(), line).unwrap();
+            }
+            // The cursor is inside every box (x 0..10, y -2.5..0), 0.2 from the line's end.
+            let h = osnap(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.5, mode::END, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(5.2, -1.0), "line first: {line_first}");
+            // A blank MTEXT whose insertion point is in the aperture keeps its INS snap.
+            let h = osnap(&d, &Space::Model, Vec2::new(0.1, -0.1), 0.5, mode::INS, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(0.0, 0.0), "line first: {line_first}");
+        }
+    }
+
+    /// 2001 blank MTEXT frames covering `cursor` (insertion points at `ins_at`), drawn before a
+    /// LINE whose end is at `cursor`: the END snap found with `osmode`.
+    fn crowded_blank_frames_end_snap(ins_at: Vec2, cursor: Vec2, aperture: f64, osmode: u32) -> Option<Vec2> {
+        let mut d = Drawing::new_metric();
+        for _ in 0..2001 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(ins_at.x, ins_at.y, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(cursor.x, cursor.y, 0.0), b: Vec3::new(30.0, cursor.y, 0.0) }))
+            .unwrap();
+        osnap(&d, &Space::Model, cursor, aperture, osmode, None, false).map(|h| h.point)
+    }
+
+    /// An insertion point in a corner of the square probe is farther than the aperture from the
+    /// cursor, so snap would never accept it: its frame must not crowd out an END snap.
+    #[test]
+    fn blank_insertion_points_in_the_probe_corner_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        let ap = 0.5;
+        let corner = Vec2::new(cursor.x - 0.9 * ap, cursor.y + 0.9 * ap);
+        assert!(corner.dist(cursor) > ap, "outside the circle, inside the square probe");
+        assert_eq!(crowded_blank_frames_end_snap(corner, cursor, ap, mode::END | mode::INS), Some(cursor));
+    }
+
+    /// With INS off a blank MTEXT's insertion point is no snap candidate, even right at the cursor.
+    #[test]
+    fn blank_insertion_points_with_ins_off_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        assert_eq!(crowded_blank_frames_end_snap(cursor, cursor, 0.5, mode::END), Some(cursor));
+    }
+
+    /// A blank annotative multileader (text 6 right of its landing, 4 x 2, at 1:2) among 2100 blank
+    /// MTEXT frames over the cursor. `block_at` also gives it a block content at that offset from
+    /// the landing. Returns the INS snap at `landing + probe` (aperture 0.5).
+    fn crowded_blank_mleader_ins(block_at: Option<f64>, probe: Vec2) -> Option<Vec2> {
+        let mut s = crate::Session::new();
+        let r = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let landing = {
+            let d = s.doc_mut().unwrap();
+            if block_at.is_some() {
+                // A block whose geometry (a line 60 long) covers its base point, at the stored insertion
+                // and, drawn at 1:2 about the landing, at the scaled one too.
+                let mut blk = cadcraft_doc::Block::new("BLK");
+                let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(60.0, 0.0, 0.0) });
+                blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line));
+                d.blocks.insert("BLK".into(), std::sync::Arc::new(blk));
+            }
+            d.header.set_str("CANNOSCALE", "1:2");
+            let half = d.anno_scale("1:2").cloned().unwrap();
+            d.modify_entity(h, |e| {
+                e.common.anno_scales = vec![half];
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                let landing = m.landing;
+                let t = m.text.as_mut().unwrap();
+                t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                t.width = 4.0;
+                t.height = 2.0;
+                t.attach = 1;
+                t.rotation = 0.0;
+                if let Some(x) = block_at {
+                    m.block = Some(cadcraft_doc::Insert {
+                        block: "BLK".into(),
+                        insert: landing + Vec3::new(x, 0.0, 0.0),
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        ..Default::default()
+                    });
+                }
+            })
+            .unwrap();
+            let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+            m.landing.xy()
+        };
+        let cursor = landing + probe;
+        // Blank frames (10 x 2.5, top-left at the insert) cover the cursor; their inserts do not.
+        let d = s.doc_mut().unwrap();
+        for _ in 0..2100 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(cursor.x - 5.0, cursor.y + 1.0, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        osnap(d, &Space::Model, cursor, 0.5, mode::INS, None, false).map(|h| h.point - landing)
+    }
+
+    /// An annotative blank multileader keeps its INS snap (the stored, unscaled insertion point)
+    /// among thousands of blank frames, and so does its block content.
+    #[test]
+    fn annotative_blank_mleader_keeps_its_ins_snaps_among_blank_frames() {
+        assert_eq!(crowded_blank_mleader_ins(None, Vec2::new(6.1, -0.1)), Some(Vec2::new(6.0, 0.0)), "text");
+        assert_eq!(crowded_blank_mleader_ins(Some(30.0), Vec2::new(30.1, -0.1)), Some(Vec2::new(30.0, 0.0)), "block");
     }
 
     #[test]
