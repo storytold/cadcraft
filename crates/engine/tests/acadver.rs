@@ -93,3 +93,29 @@ fn a_2000_drawing_saves_as_2000() {
     assert_eq!(cadcraft_io::read_dxf(saved.as_bytes()).unwrap().header.str("ACADVER", ""), "AC1015", "and reopens as 2000");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_dollar_name_cannot_change_the_file_version() {
+    let mut s = Session::new();
+    let e = s.execute("setvar", &json!({ "name": "$ACADVER", "value": "AC1027" })).unwrap_err().to_string();
+    assert!(e.contains("read-only"), "{e}");
+    assert!(lisp(&mut s, "(setvar \"$ACADVER\" \"AC1015\")").is_err(), "AutoLISP's setvar too");
+    assert_eq!(s.state().unwrap().doc.header.str("ACADVER", ""), "AC1032", "the save version did not move");
+    assert!(cadcraft_engine::sysvars::is_read_only("$acadver"), "SETVAR's prompt sees it as read-only too");
+    // Other `$` names still reach the header as before, in LISP's units.
+    assert!(lisp(&mut s, "(setvar \"$ANGBASE\" (/ pi 2))").is_ok());
+    assert!(matches!(lisp(&mut s, "(getvar \"$ANGBASE\")"), Ok(Value::Real(r)) if (r - std::f64::consts::FRAC_PI_2).abs() < 1e-9));
+    let r = s.execute("setvar", &json!({ "name": "$OSMODE", "value": 9 })).unwrap();
+    assert_eq!(r["value"], json!(9), "{r}");
+}
+
+#[test]
+fn listings_show_the_release_text_without_a_drawing() {
+    let mut s = Session::empty();
+    let all = s.execute("sysvars", &json!({})).unwrap();
+    let text = all.to_string();
+    assert!(text.contains(RELEASE), "{text}");
+    let mut s = Session::new();
+    let all = s.execute("sysvars", &json!({})).unwrap().to_string();
+    assert!(all.contains(RELEASE) && !all.contains("\"AC1032\""), "{all}");
+}

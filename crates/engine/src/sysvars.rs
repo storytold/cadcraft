@@ -12,6 +12,8 @@ mod table;
 pub const ACADVER_TEXT: &str = "24.3s (CADCraft)";
 
 const SESSION_VARS: &[&str] = &[
+    // The release text, with or without a drawing (the header's `$ACADVER` is the file version).
+    "ACADVER",
     "AUDITCTL",
     "ATTREQ",
     "OSMODE",
@@ -302,7 +304,10 @@ const READ_ONLY: &[&str] = &[
 ];
 
 pub fn is_read_only(name: &str) -> bool {
-    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim())) || table::is_read_only(&name.trim().to_ascii_uppercase())
+    // A header name's `$` is ignored: the header drops it when it stores a value, so `$ACADVER`
+    // would otherwise change ACADVER, and with it the version a save writes.
+    let n = name.trim().trim_start_matches('$').trim();
+    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(n)) || table::is_read_only(&n.to_ascii_uppercase())
 }
 
 /// POLARADDANG as typed: up to ten angles in degrees separated by `;` (radians out); `None` when
@@ -515,7 +520,7 @@ pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
-            if matches!(k.as_str(), "ACADVER" | "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
+            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
                 m.insert(k.clone(), get(s, k).unwrap_or(Value::Null));
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
