@@ -31,7 +31,7 @@ const TRACE_GAP: f64 = 1e-5;
 pub(super) fn spec() -> CommandSpec {
     CommandSpec::new("extrim", "Extended Trim", run_extrim)
         .menu(&["Tools", "Additional Tools", "Extended Trim"])
-        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, an arc's circle or an elliptical arc's ellipse; one side of an open edge)} → trimmed, handles, skipped: {locked, other, uncut}")
+        .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, an arc's circle or an elliptical arc's ellipse; one side of an open edge)} → trimmed, handles, skipped: {locked, other, uncut, partly (of uncut, those cut in part)}")
         .interactive(|s| Ok(Box::new(ExtrimM::new(s))))
 }
 
