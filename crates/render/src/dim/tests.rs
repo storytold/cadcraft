@@ -561,6 +561,58 @@ fn radial_and_angular_text() {
 }
 
 #[test]
+fn radial_dimpost_replaces_only_automatic_radius_and_diameter_prefixes() {
+    let linear = lin((0.0, 0.0), (5.0, 0.0), (0.0, 4.0), 0.0);
+    let radius = Dimension { kind: DimKind::Radius, defpt: Vec3::ZERO, p15: Vec3::new(5.0, 0.0, 0.0), ..linear.clone() };
+    let diameter = Dimension { kind: DimKind::Diameter, defpt: Vec3::new(-5.0, 0.0, 0.0), ..radius.clone() };
+    let arc = Dimension {
+        kind: DimKind::ArcLength,
+        defpt: Vec3::new(4.0, 4.0, 0.0),
+        p13: Vec3::new(5.0, 0.0, 0.0),
+        p14: Vec3::new(0.0, 5.0, 0.0),
+        ..linear.clone()
+    };
+    let arc_style = DimStyle { arc_symbol: 0, post: "ARC <>".into(), ..DimStyle::default() };
+    assert!(dimension_geometry(&arc, &arc_style, 1.0).value.starts_with("ARC ⌒"));
+
+    for (post, expected) in [
+        ("", ["R5", "%%c10", "5"]),
+        ("<> REF", ["R5 REF", "%%c10 REF", "5 REF"]),
+        (" REF", ["R5 REF", "%%c10 REF", "5 REF"]),
+        ("PAIR <>", ["PAIR 5", "PAIR 10", "PAIR 5"]),
+        ("PAIR R<>", ["PAIR R5", "PAIR R10", "PAIR R5"]),
+        ("%%c<>", ["%%c5", "%%c10", "%%c5"]),
+    ] {
+        let st = DimStyle { decimals: 0, post: post.into(), ..DimStyle::default() };
+        for (d, want) in [&radius, &diameter, &linear].into_iter().zip(expected) {
+            assert_eq!(dimension_geometry(d, &st, 1.0).mtext_contents(), want, "{:?}, DIMPOST {post:?}", d.kind);
+        }
+    }
+}
+
+#[test]
+fn radial_dimpost_keeps_jogged_radius_tolerances_and_alternate_units() {
+    let mut d = lin((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 0.0);
+    d.kind = DimKind::Radius;
+    d.p15 = Vec3::new(5.0, 0.0, 0.0);
+    d.marks.jogged = Some(cadcraft_doc::JoggedRadius { center: Vec3::new(0.0, -4.0, 0.0), jog: Vec3::new(2.5, -2.0, 0.0) });
+    let st = DimStyle {
+        post: "PAIR <> REF".into(),
+        decimals: 1,
+        tolerance: true,
+        tol_plus: 0.1,
+        tol_minus: 0.1,
+        tol_decimals: 1,
+        alt: true,
+        alt_factor: 2.0,
+        alt_decimals: 1,
+        alt_post: "ALT <>".into(),
+        ..DimStyle::default()
+    };
+    assert_eq!(dimension_geometry(&d, &st, 1.0).value, "PAIR 5.0 REF±0.1 REF [ALT 10.0]");
+}
+
+#[test]
 fn hostile_styles_do_not_panic() {
     let d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
     for st in [
