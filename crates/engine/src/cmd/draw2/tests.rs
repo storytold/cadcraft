@@ -756,6 +756,48 @@ fn revcloud_json() {
 }
 
 #[test]
+fn revcloud_json_retains_the_source_at_delobj_zero() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "DELOBJ", "value": 0})).unwrap();
+    let handle = h(&s.execute("circle", &json!({"center": [0, 0], "radius": 5})).unwrap());
+    s.execute("properties.set", &json!({"handles": [handle], "color": 3})).unwrap();
+    let source = s.doc().unwrap().model.last().unwrap().clone();
+
+    s.execute("revcloud", &json!({"handle": source.handle.hex(), "arcLength": 2})).unwrap();
+
+    let drawing = s.doc().unwrap();
+    assert_eq!(drawing.entity(source.handle), Some(&source));
+    let cloud = drawing.model.last().unwrap();
+    assert_eq!(cloud.common.color, source.common.color);
+    assert!(matches!(&cloud.kind, EntityKind::LwPolyline(p) if p.closed && p.vertices.iter().all(|v| v.bulge > 0.0)));
+}
+
+#[test]
+fn revcloud_typed_object_retention_undoes_in_one_step() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "DELOBJ", "value": 0})).unwrap();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 5})).unwrap();
+    let source = s.doc().unwrap().model.last().unwrap().clone();
+    let undo_count = s.state().unwrap().undo.len();
+
+    s.cmdline("revcloud a 2 2 o 5,0 n").unwrap();
+
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let drawing = s.doc().unwrap();
+    assert_eq!(drawing.entity(source.handle), Some(&source));
+    let cloud = drawing.model.last().unwrap().clone();
+    assert!(matches!(&cloud.kind, EntityKind::LwPolyline(p) if p.closed));
+    assert_eq!(s.state().unwrap().undo.len(), undo_count + 1);
+
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().entity(source.handle), Some(&source));
+    assert!(s.doc().unwrap().entity(cloud.handle).is_none());
+    s.redo().unwrap();
+    assert_eq!(s.doc().unwrap().entity(source.handle), Some(&source));
+    assert_eq!(s.doc().unwrap().entity(cloud.handle), Some(&cloud));
+}
+
+#[test]
 fn revcloud_saves_revcloudprops_xdata() {
     let mut s = Session::new();
     let props = |s: &Session| {
