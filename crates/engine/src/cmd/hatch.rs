@@ -15,7 +15,7 @@ use super::helpers::lwpoly;
 use super::machines::SelectRun;
 use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_param, str_param, targets};
 
-use crate::{Accept, EngineError, Input, Interactive, Origin, Picker, Prompt, Result, Session, Step};
+use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
 
 mod assoc;
 pub(crate) use assoc::detach;
@@ -30,14 +30,15 @@ const HATCH_PARAMS: &str = "{points?: [[x,y]] (internal points) and/or handles?:
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        // A script or LISP routine answers HATCH's published command-line questions (pattern, how it
-        // is drawn, then the boundary); a person gets the interface's dialog, or the prompts of
-        // AutoCAD's -HATCH when it is off.
+        // An AutoLISP routine's `(command …)` call answers HATCH's published command-line questions
+        // (pattern, how it is drawn, then the boundary). A person, and a script's own HATCH line,
+        // get the interface's dialog, or the prompts of AutoCAD's -HATCH when it is off: a script
+        // keeps picking the boundary first as it always has.
         CommandSpec::new("hatch", "Hatch...", run_hatch)
             .menu(&["Draw", "Hatch..."])
             .alias(&["h", "bh"])
             .params(HATCH_PARAMS)
-            .interactive(|s| Ok(Box::new(HatchM::new(s, false, s.command_origin() == Origin::Program)))),
+            .interactive(|s| Ok(Box::new(HatchM::new(s, false, s.lisp_program_input())))),
         // -HATCH: the command-line form, a script's too. Its own id, so a dashed start takes its
         // prompts and never the HATCH sequence above.
         CommandSpec::new("-hatch", "Hatch", run_hatch).params(HATCH_PARAMS).interactive(|s| Ok(Box::new(HatchM::new(s, false, false)))),
@@ -578,7 +579,7 @@ fn pattern_exists(name: &str) -> bool {
 }
 
 /// Whether `t` answers the pattern prompt with the user-defined form (U, User, User defined), as
-/// AutoCAD's HATCH takes it from a script or LISP routine.
+/// AutoCAD's HATCH takes it from an AutoLISP routine.
 fn user_pattern_keyword(t: &str) -> bool {
     matches!(t.trim().to_ascii_lowercase().replace([' ', '-', '_'], "").as_str(), "u" | "user" | "userdefined")
 }
@@ -612,9 +613,9 @@ enum HatchAsk {
 
 struct HatchM {
     gradient: bool,
-    /// A script or LISP routine started HATCH: the published command-line sequence (the pattern or
-    /// the user-defined form, then its values, then the objects) instead of picking a boundary
-    /// first as a person does.
+    /// An AutoLISP routine's `(command …)` call started HATCH ([`Session::lisp_program_input`]): the
+    /// published command-line sequence (the pattern or the user-defined form, then its values, then the
+    /// objects) rather than a boundary picked first, as a person and a script's own HATCH line do.
     legacy: bool,
     settings: HatchSettings,
     /// Loops by pick (one hatch each when separate).
@@ -768,8 +769,8 @@ impl Interactive for HatchM {
             self.settings.angle.to_degrees()
         ));
         if self.legacy {
-            // A script or routine answers the published questions first: the pattern, how it is
-            // drawn, then the boundary objects. A person picks the boundary first.
+            // A routine answers the published questions first: the pattern, how it is drawn, then the
+            // boundary objects. A person picks the boundary first, and so does a script's own line.
             self.asking = Some(HatchAsk::Pattern);
             self.properties = true;
             self.selecting = true;
@@ -1203,11 +1204,27 @@ mod tests {
         assert!((h.scale - 1e-9).abs() < 1e-15, "{}", h.scale);
     }
 
-    /// A script is a program too: its answers take the same published order.
+    /// A script's own HATCH line is not a routine's call: it keeps the interface's prompts and picks
+    /// the boundary first, as it did before a routine's answers were published.
     #[test]
-    fn a_script_hatch_takes_pattern_scale_and_angle() {
+    fn a_script_hatch_keeps_the_interface_prompts() {
         let mut s = Session::new();
-        s.script("pline 0,0 4000,0 4000,2000 0,2000 c\nhatch dots 50 0 _l \n").unwrap();
+        s.script("pline 0,0 4000,0 4000,2000 0,2000 c\nhatch\n").unwrap();
+        // The boundary question comes first: no pattern, scale or angle is asked.
+        assert!(s.prompt_text().contains("Pick internal point"), "{}", s.prompt_text());
+        s.cmdline("2000,1000").unwrap();
+        s.cmdline("").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let h = only_hatch(&s).1;
+        assert_eq!((h.pattern.as_str(), h.scale), ("ANSI31", 1.0));
+    }
+
+    /// A routine's `(command …)` inside a script is still a routine's call: it takes the published
+    /// order, though the script's own HATCH line above does not.
+    #[test]
+    fn a_lisp_hatch_call_from_a_script_takes_the_published_order() {
+        let mut s = Session::new();
+        s.script("pline 0,0 4000,0 4000,2000 0,2000 c\n(command \"_.hatch\" \"dots\" 50 0 \"_l\" \"\")\n").unwrap();
         assert!(s.running.is_none(), "{}", s.prompt_text());
         let h = only_hatch(&s).1;
         assert_eq!(h.pattern, "DOTS");

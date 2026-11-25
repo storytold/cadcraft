@@ -78,6 +78,15 @@ impl Session {
         self.command_origin
     }
 
+    /// Whether an AutoLISP routine is feeding the command line now: the `(command …)` call it makes,
+    /// or the token it types into a command that is already running. A script's own lines are the
+    /// program's input too ([`Session::start`] records [`Origin::Program`] for them), so this tells a
+    /// routine's call from a script's line, and a routine's call inside a script is this, not the
+    /// script's.
+    pub fn lisp_program_input(&self) -> bool {
+        self.program_input
+    }
+
     /// Start a command by name or alias as if typed at the command line. A script's commands are
     /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are, and so
     /// is a command started by a token a LISP routine feeds through [`Session::typed`]: `(command
