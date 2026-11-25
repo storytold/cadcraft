@@ -401,7 +401,7 @@ const MAX_SELF_CROSSINGS: usize = 1 << 16;
 /// across it, on lines, arcs and circles too. On open polylines from 1e-3 to 1e9 long it was within
 /// 5e-7, and 5.1e-7 away trimmed at the cut (around a closed rectangle it reached a little further,
 /// to 1e-6; on a line, further still, to 5e-4 on one 10 long).
-const ON_CUT: f64 = 5e-7;
+pub(crate) const ON_CUT: f64 = 5e-7;
 
 /// The refusal when every cut was passed over ([`ON_CUT`]): the object meets an edge, at the pick,
 /// so Quick mode leaves it in place rather than erasing it as one no edge crosses.

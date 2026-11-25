@@ -11,6 +11,7 @@ use cadcraft_geom::{Bounds2, Line, Vec2, line_line, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::offset::offset_points;
+use super::trim::ON_CUT;
 use super::{Edges, trim};
 use crate::cmd::helpers::lwpoly;
 use crate::cmd::{CommandSpec, bad, point_param, targets};
@@ -465,6 +466,13 @@ fn midpoint(pts: &[Vec2]) -> Option<Vec2> {
 }
 
 /// The length of an object's drawn outline.
+/// Whether `e` has no length to speak of: shorter than f64 can tell apart where it is.
+fn degenerate(d: &Drawing, e: &Entity, tol: f64) -> bool {
+    let b = entity_bounds(d, e, 0);
+    let size = [b.min.len(), b.max.len()].into_iter().filter(|v| v.is_finite()).fold(0.0, f64::max);
+    length(d, e, tol) <= 64.0 * f64::EPSILON * (1.0 + size)
+}
+
 fn length(d: &Drawing, e: &Entity, tol: f64) -> f64 {
     crate::select::hit_polylines(d, e, tol).iter().flat_map(|pl| pl.windows(2).filter_map(|w| Some(w.first()?.dist(*w.get(1)?)))).sum()
 }
@@ -495,6 +503,7 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
     let edges = Edges { only: Some(std::slice::from_ref(&edge.handle)), implied: false };
     let tol = edge.gap / 20.0;
     let mut trimmed = 0;
+    let mut partly = 0;
     let mut created = Vec::new();
     // Objects some planned cut failed on, reported rather than counted as done.
     let mut uncut = plan.uncut;
@@ -503,7 +512,17 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
         let mut cut = false;
         // The object as it is before any cut: its lines and arcs, exactly.
         let exact = s.doc()?.entity(h).and_then(|e| exact_outline(&e.kind));
-        for x in stretches.into_iter().map(|st| st.pick) {
+        for st in stretches {
+            // TRIM passes over a cut within ON_CUT of the pick and runs on to the next one, which
+            // would take more than this stretch: a stretch that short is left, and said so.
+            let ends = st.parts.first().and_then(|p| p.first()).into_iter().chain(st.parts.last().and_then(|p| p.last()));
+            if ends.into_iter().any(|e| e.dist(st.pick) <= 2.0 * ON_CUT) {
+                if !uncut.contains(&h) {
+                    uncut.push(h);
+                }
+                continue;
+            }
+            let x = st.pick;
             // The pick lies on the flattened outline, which strays from a large-radius arc by up to
             // a millionth of its radius (far more than `tol` next to a short edge): bring it onto
             // the object itself, and measure the pieces exactly too.
@@ -542,9 +561,10 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
             cut = true;
             live.retain(|l| *l != t);
             for n in pieces {
-                // Never leave a piece of no length behind.
+                // Never leave a piece of no length behind; a short one that has length stays, as
+                // TRIM leaves it.
                 let d = s.doc()?;
-                if d.entity(n).is_some_and(|e| length(d, e, tol) <= tol) {
+                if d.entity(n).is_some_and(|e| degenerate(d, e, tol)) {
                     s.doc_mut()?.remove_entity(n);
                 } else {
                     live.push(n);
@@ -552,7 +572,12 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
             }
         }
         if cut {
-            trimmed += 1;
+            // A partly cut object is counted once, with those not cut everywhere.
+            if uncut.contains(&h) {
+                partly += 1;
+            } else {
+                trimmed += 1;
+            }
             created.extend(live.into_iter().filter(|l| *l != h));
         }
     }
@@ -564,12 +589,13 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
         message.push_str(&format!(" {} that can't be trimmed (blocks, hatches, text…) left as they are.", plan.other));
     }
     if !uncut.is_empty() {
-        message.push_str(&format!(" {} could not be cut everywhere the edge crosses them.", uncut.len()));
+        message.push_str(&format!(" {} could not be cut everywhere the edge crosses them", uncut.len()));
+        message.push_str(&if partly > 0 { format!(" ({partly} of them cut in part).") } else { ".".to_string() });
     }
     Ok(json!({
         "trimmed": trimmed,
         "handles": created.iter().map(|h| h.hex()).collect::<Vec<_>>(),
-        "skipped": { "locked": plan.locked, "other": plan.other, "uncut": uncut.len() },
+        "skipped": { "locked": plan.locked, "other": plan.other, "uncut": uncut.len(), "partly": partly },
         "message": message,
     }))
 }
