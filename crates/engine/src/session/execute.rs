@@ -16,10 +16,8 @@ impl Session {
                 if let Some((doc, sel, uid)) = before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
                 {
-                    st.doc = doc;
+                    st.restore_drawing(doc);
                     st.selection = sel;
-                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-                    st.expire_names();
                 }
                 Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
             }
@@ -52,10 +50,8 @@ impl Session {
                 if let Some((doc, sel, uid)) = &before
                     && let Some(st) = self.docs.iter_mut().find(|d| d.uid == *uid)
                 {
-                    st.doc = doc.clone();
+                    st.restore_drawing(doc.clone());
                     st.selection = sel.clone();
-                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-                    st.expire_names();
                 }
                 return Err(EngineError::Internal(id.into(), msg));
             }

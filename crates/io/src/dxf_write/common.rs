@@ -7,14 +7,21 @@ use super::{
 };
 
 /// The most ATTDEF tags the definition indexes on one thread hold in all (a block with none
-/// counts as one): past it they are dropped and built again as blocks are read, so memory stays
-/// bounded whatever the drawings hold. A block indexed again costs one pass over it.
+/// counts as one). An index that fits but would pass this total drops the indexes already
+/// stored, then takes their place. A definition with more distinct tags than this is not stored:
+/// each read of it scans at most [`MAX_ATTDEF_SCAN`] entities and keeps nothing, so one block
+/// cannot grow the cache past the budget and a repeated read repeats that scan.
 const MAX_INDEXED_TAGS: usize = 1 << 18;
+
+/// Entities one attribute read may examine when the definition is too large to index. The scan
+/// stops at the first ATTDEF whose tag matches, ignoring ASCII case, or at this many entities.
+const MAX_ATTDEF_SCAN: usize = MAX_INDEXED_TAGS;
 
 /// For each state of a block definition's entities read on this thread, by its content token
 /// ([`cadcraft_doc::EntityStore::content_token`]): the handle of the first ATTDEF of each tag
 /// (upper case). A token names one state of one store, so an index is never used for another
-/// copy or another edit of the block, and blocks read in turn keep their indexes.
+/// copy or another edit of the block, and blocks read in turn keep their indexes. A definition
+/// past [`MAX_INDEXED_TAGS`] has no entry here.
 #[derive(Default)]
 struct AttdefIndexes {
     by_store: HashMap<u64, HashMap<String, Handle>>,
@@ -29,31 +36,56 @@ thread_local! {
     static ATTDEF_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// The first ATTDEF of each tag in `block`, by upper-case tag: one pass over the block.
-fn attdef_index(block: &Block) -> HashMap<String, Handle> {
+/// The first ATTDEF of each tag in `block`, by upper-case tag, when there are at most `budget`
+/// distinct tags. `None` when another distinct tag would pass `budget`: the partial map is
+/// dropped, so a prefix is not stored in place of the definition.
+fn attdef_index_within(block: &Block, budget: usize) -> Option<HashMap<String, Handle>> {
     let mut by_tag = HashMap::new();
     for e in block.entities.iter() {
         count_attdef_visit();
         if let EntityKind::AttDef(ad) = &e.kind {
-            by_tag.entry(ad.tag.to_ascii_uppercase()).or_insert(e.handle);
+            let key = ad.tag.to_ascii_uppercase();
+            if by_tag.contains_key(&key) {
+                continue;
+            }
+            if by_tag.len() >= budget {
+                return None;
+            }
+            by_tag.insert(key, e.handle);
         }
     }
-    by_tag
+    Some(by_tag)
+}
+
+/// The first ATTDEF in the first [`MAX_ATTDEF_SCAN`] entities of `block` whose tag matches
+/// `tag`, ignoring ASCII case. Nothing from the scan is stored.
+fn scan_attdef(block: &Block, tag: &str) -> Option<Handle> {
+    for e in block.entities.iter().take(MAX_ATTDEF_SCAN) {
+        count_attdef_visit();
+        if let EntityKind::AttDef(ad) = &e.kind
+            && ad.tag.eq_ignore_ascii_case(tag)
+        {
+            return Some(e.handle);
+        }
+    }
+    None
 }
 
 /// The definition properties of the first ATTDEF in `block` whose tag matches `tag`, ignoring
-/// ASCII case. Each state of a block's entities is read once on a thread: later attributes, of
-/// this reference or another, find their definition in its index.
+/// ASCII case. Each state of a block's entities that fits in [`MAX_INDEXED_TAGS`] is read once
+/// on a thread: later attributes, of this reference or another, find their definition in its
+/// index. A definition with more distinct tags is not stored, and each read scans at most
+/// [`MAX_ATTDEF_SCAN`] of its entities.
 fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
     let token = block.entities.content_token();
     let want = tag.to_ascii_uppercase();
     let found = ATTDEF_INDEXES
         .try_with(|cell| {
-            let Ok(mut ix) = cell.try_borrow_mut() else { return attdef_index(block).get(&want).copied() };
+            let Ok(mut ix) = cell.try_borrow_mut() else { return scan_attdef(block, tag) };
             if let Some(by_tag) = ix.by_store.get(&token) {
                 return by_tag.get(&want).copied();
             }
-            let by_tag = attdef_index(block);
+            let Some(by_tag) = attdef_index_within(block, MAX_INDEXED_TAGS) else { return scan_attdef(block, tag) };
             let found = by_tag.get(&want).copied();
             let cost = by_tag.len().max(1);
             if ix.tags.saturating_add(cost) > MAX_INDEXED_TAGS {
@@ -64,7 +96,7 @@ fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
             ix.by_store.insert(token, by_tag);
             found
         })
-        .unwrap_or_else(|_| attdef_index(block).get(&want).copied());
+        .unwrap_or_else(|_| scan_attdef(block, tag));
     block.entities.get(found?).map(|e| e.common.clone())
 }
 

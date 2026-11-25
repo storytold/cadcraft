@@ -121,12 +121,18 @@ tag, place, flags and properties as they are; any other edit, including one of t
 handle or other groups the entity can't set, a `SEQEND` list, `entdel` and `entmake` of one
 return nil and change nothing. `entupd` of one returns its name while it holds. A selection set
 holds objects of the drawing only: `ssadd`, `ssdel` and `ssmemb` of such a name return nil, and
-`command` given one picks nothing. A name holds while its reference keeps that record in its
+`command` given one picks nothing. `trans` does not take a record name: the coordinate system
+has to be a number, an entity name or an extrusion direction, and a record name is an argument
+error. `eq` and `equal` are true only for the same record name, the one a later walk returns
+while that record holds, and they are false for another record and for an entity name. A fuzz
+distance does not change that result. A name holds while its reference keeps that record in its
 place with that tag: erasing the reference (also when OOPS or `entdel` brings it back), ATTSYNC,
--BLOCKREPLACE, opening and closing the Block Editor, Undo, Redo and a change taken back (a
-refused or failed command) end it (erasing another object does not), and a name that ended names
-nothing (nil), never another record. A drawing holds at most 65,536 such names at once; at the
-limit `entnext` gives no new one (nil) until names end and make room.
+-BLOCKREPLACE, opening and closing the Block Editor, Undo, Redo, a change taken back (a
+refused or failed command) and a command that puts an earlier drawing back (MOCORO's Undo, a
+grip copy's Undo, and the other restores of a saved drawing) end it (erasing another object
+does not), and a name that ended names nothing (nil), never another record. A drawing holds at
+most 65,536 such names at once; at the limit `entnext` gives no new one (nil) until names end
+and make room.
 
 Non-graphic objects (the named object dictionary and its dictionaries, layouts, table records)
 are listed as a DXF file of the drawing holds them, pointers as entity names and group 5 (105 for a DIMSTYLE) as the

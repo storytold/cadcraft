@@ -30,7 +30,8 @@ pub struct DocState {
     pub revision: u64,
     /// How many times the names AutoLISP gave this drawing's INSERTs' ATTRIBs and SEQENDs ended all
     /// at once (#1660): another state of the drawing was shown (Undo, Redo, opening or closing the
-    /// Block Editor, a change taken back), or attribute sets were rebuilt in place (ATTSYNC,
+    /// Block Editor, a change taken back, or a command putting an earlier drawing back through
+    /// [`DocState::restore_drawing`]), or attribute sets were rebuilt in place (ATTSYNC,
     /// -BLOCKREPLACE). A name given before names nothing after one of these, never another
     /// record.
     pub(crate) names_epoch: u64,
@@ -107,6 +108,16 @@ impl DocState {
     /// else.
     pub(crate) fn expire_names(&mut self) {
         self.names_epoch = self.names_epoch.wrapping_add(1);
+    }
+    /// Show `doc` again. It is a drawing this document already showed, so its handle seed can
+    /// give the next object a handle a removed one had. Names of INSERT records end, as they do
+    /// for Undo. The same drawing already on show is left as it is: nothing was given out again.
+    pub(crate) fn restore_drawing(&mut self, doc: Arc<Drawing>) {
+        if Arc::ptr_eq(&self.doc, &doc) {
+            return;
+        }
+        self.doc = doc;
+        self.expire_names();
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,

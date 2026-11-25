@@ -405,9 +405,7 @@ impl Session {
             Err(EngineError::Internal(id, m)) => {
                 // Restore and end the command.
                 if let Ok(st) = self.state_mut() {
-                    st.doc = run.before.clone();
-                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-                    st.expire_names();
+                    st.restore_drawing(run.before.clone());
                 }
                 self.echo(format!("Internal error in {id}: {m}"));
                 self.resume_suspended();
@@ -429,10 +427,8 @@ impl Session {
         let (id, before, selection) = (run.id.clone(), run.before.clone(), run.selection_before.clone());
         if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.finish_guarded(run, cancelled))) {
             if let Ok(st) = self.state_mut() {
-                st.doc = before;
+                st.restore_drawing(before);
                 st.selection = selection;
-                // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-                st.expire_names();
             }
             self.echo(format!("Internal error in {id}: {}", crate::guard::message(&*p)));
         }

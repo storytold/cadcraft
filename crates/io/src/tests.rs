@@ -5001,3 +5001,40 @@ fn the_first_definition_of_a_tag_in_any_case_is_used() {
     let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
     assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
 }
+
+/// A definition with more distinct tags than the index may store (`1 << 18`) is not cached.
+/// Each read examines it again, and the first ATTDEF of the tag still wins, in any case.
+/// The stated work limit is that many tags stored on the thread, and one scan of at most
+/// that many entities when the definition is past the budget.
+#[test]
+fn an_oversized_definition_is_not_indexed() {
+    const LIMIT: usize = 1 << 18;
+    // One extra distinct tag past the budget, plus a second ATTDEF of the first tag in
+    // another case, so the first match is not the only entity of that tag.
+    let mut tags = Vec::with_capacity(LIMIT + 2);
+    tags.push("Ab".to_string());
+    tags.push("AB".to_string());
+    for i in 0..LIMIT {
+        tags.push(format!("U{i}"));
+    }
+    let mut block = Block::new("HUGE");
+    for (i, tag) in tags.iter().enumerate() {
+        let layer = if i == 0 { "FIRST" } else { "SECOND" };
+        let mut e = Entity::new(Handle(i as u64 + 1), EntityKind::AttDef(plain_attrib(tag)));
+        e.common.layer = layer.into();
+        block.entities.push(e);
+    }
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("HUGE".into(), std::sync::Arc::new(block));
+    let insert = Insert { block: "HUGE".into(), attribs: vec![plain_attrib("ab")], ..Insert::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).expect("add");
+    crate::dxf_write::reset_attdef_definition_visits();
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
+    let first = crate::dxf_write::attdef_definition_visits();
+    assert_eq!(read_attrib_layer(&d, h).as_deref(), Some("FIRST"));
+    let second = crate::dxf_write::attdef_definition_visits() - first;
+    // The failed index walks every entity (the last tag is the one past the budget), then
+    // the scan reads the first entity, where the tag matches.
+    assert_eq!(first, (LIMIT as u64) + 3, "one bounded pass, then the first match");
+    assert_eq!(second, first, "a definition past the budget is not cached, so the next read scans again");
+}

@@ -117,8 +117,10 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.state_mut()?;
     let report = crate::audit::fix(Arc::make_mut(&mut st.doc));
     if report.issues.is_empty() {
-        // Nothing to fix: the drawing opens unchanged, like OPEN.
-        st.doc = st.saved.clone();
+        // Nothing to fix: the drawing opens unchanged, like OPEN. `fix` may already
+        // have copied it, so put the saved one back; no record name exists yet.
+        let saved = st.saved.clone();
+        st.restore_drawing(saved);
     }
     if copy && !st.is_dirty() {
         // An unsaved copy (Drawing Recovery): closing it asks to save it under a name.

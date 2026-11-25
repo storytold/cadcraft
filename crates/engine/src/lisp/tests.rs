@@ -2236,3 +2236,55 @@ fn a_drawing_put_back_after_a_refused_change_ends_its_names() {
     assert_eq!(ok(&mut s, "(entget a)"), "nil");
     assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"B1\"");
 }
+
+/// MOCORO's own Undo puts the drawing from before the Copy back, handle seed included.
+/// The next Copy is given that handle again. The name of the removed copy's attribute
+/// must not read it, walk from it, or change it.
+#[test]
+fn mocoro_undo_does_not_let_an_old_record_name_reach_the_next_copy() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(
+        &mut s,
+        r#"(progn
+        (sssetfirst nil nil)
+        (command "_.MOCORO" i "" '(0 0) "_Copy" '(10 0))
+        (setq a (entnext (entlast)))
+        (command "_Undo" "_Copy" '(20 0) "_eXit"))"#,
+    );
+    assert_eq!(
+        ok(
+            &mut s,
+            r#"(progn
+            (setq d (entget a) w (entnext a))
+            (if d (entmod (subst (cons 1 "WRONG") (assoc 1 d) d)))
+            (list (null d) (null w) (cdr (assoc 1 (entget (entnext (entlast)))))))"#
+        ),
+        "(T T \"A1\")"
+    );
+}
+
+/// A grip Copy's Undo is the same kind of restore: the next copy reuses the handle.
+#[test]
+fn grip_copy_undo_does_not_let_an_old_record_name_reach_the_next_copy() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    // Enter leaves STRETCH for MOVE, which copies the reference whole.
+    s.input(crate::Input::Enter).unwrap();
+    s.input(crate::Input::Keyword("Copy".into())).unwrap();
+    s.input(crate::Input::Point(cadcraft_geom::Vec2::new(20.0, 10.0))).unwrap();
+    ok(&mut s, "(setq a (entnext (entlast)))");
+    s.input(crate::Input::Keyword("Undo".into())).unwrap();
+    s.input(crate::Input::Point(cadcraft_geom::Vec2::new(30.0, 10.0))).unwrap();
+    assert_eq!(
+        ok(
+            &mut s,
+            r#"(progn
+            (setq d (entget a) w (entnext a))
+            (if d (entmod (subst (cons 1 "WRONG") (assoc 1 d) d)))
+            (list (null d) (null w) (cdr (assoc 1 (entget (entnext (entlast)))))))"#
+        ),
+        "(T T \"A1\")"
+    );
+}

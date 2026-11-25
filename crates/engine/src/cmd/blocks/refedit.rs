@@ -353,9 +353,7 @@ pub(crate) fn after_command(s: &mut Session, before: &Arc<Drawing>, id: &str) ->
         .iter()
         .any(|store| store.iter().any(|e| !owned.contains(&e.handle) && !st.doc.entity(e.handle).is_some_and(|a| Arc::ptr_eq(a, e))));
     if touched {
-        st.doc = before.clone();
-        // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-        st.expire_names();
+        st.restore_drawing(before.clone());
         return Some("Only the working set can be edited during REFEDIT (REFSET adds objects, REFCLOSE ends the edit).".into());
     }
     let seed = before.handseed;

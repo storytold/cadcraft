@@ -388,10 +388,8 @@ impl Session {
                     if let Some((doc, sel)) = self.lisp.steps.base.as_ref().or(run.before.as_ref())
                         && let Some(st) = self.docs.iter_mut().find(|d| d.uid == run.uid)
                     {
-                        st.doc = doc.clone();
+                        st.restore_drawing(doc.clone());
                         st.selection = sel.clone();
-                        // An earlier state, as after Undo: names of INSERTs' records end (#1660).
-                        st.expire_names();
                     }
                     run.handler = true;
                     Outcome::Error(LispError::quit(format!("internal error: {}", crate::guard::message(&*p))))
