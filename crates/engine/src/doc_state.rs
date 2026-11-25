@@ -139,6 +139,25 @@ impl DocState {
             _ => None,
         }
     }
+    /// The layout viewport under paper point `at` that MSPACE enters: turned on, its clip outline
+    /// honoured, the topmost. `None` on the Model tab and where the sheet has no viewport.
+    pub fn viewport_at(&self, at: Vec2) -> Option<Handle> {
+        let Space::Paper(_) = &self.space else { return None };
+        self.doc
+            .space(&self.space)?
+            .iter()
+            .filter(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Viewport(v) if v.id != 1 && v.on && v.height > 1e-12 && v.view_height > 1e-12 => {
+                    match cadcraft_render::viewport_clip(&self.doc, e.handle, v) {
+                        Some(c) => c.contains(at),
+                        None => (at.x - v.center.x).abs() <= v.width / 2.0 && (at.y - v.center.y).abs() <= v.height / 2.0,
+                    }
+                }
+                _ => false,
+            })
+            .last()
+            .map(|e| e.handle)
+    }
     /// The layers frozen in the active MSPACE viewport (VPLAYER, "VP Freeze"): that viewport does
     /// not draw their objects, so picks, selections and grips made through it leave them out.
     /// Empty in paper space and on the Model tab.

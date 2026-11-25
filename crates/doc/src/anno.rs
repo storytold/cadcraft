@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Common, Drawing, Entity, EntityKind};
+use crate::{Attrib, Common, Drawing, Entity, EntityKind};
 
 /// A named annotation scale: `paper_units` on paper show `drawing_units` of the drawing.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -147,6 +147,24 @@ pub fn anno_draw(e: &Entity, view: f64, all_visible: bool) -> AnnoDraw {
     }
 }
 
+/// Scale attribute `a` of an annotative block reference by `f` about `origin`.
+///
+/// This is the attribute part of [`anno_scaled`]'s block-reference branch. The text position and
+/// height scale, and so do a multiline attribute's position, height and width. Column gutter,
+/// height and manual heights stay as stored. Top-level MTEXT scales its columns in [`anno_scaled`];
+/// this function is only a reference's attributes. The renderer and the attribute pick both call
+/// it, so the two cannot drift.
+pub fn scale_annotative_attrib(a: &mut Attrib, origin: crate::geom::Vec3, f: f64) {
+    a.text.insert = origin + (a.text.insert - origin) * f;
+    a.text.align_pt = a.text.align_pt.map(|p| origin + (p - origin) * f);
+    a.text.height *= f;
+    if let Some(ml) = &mut a.multiline {
+        ml.mtext.insert = origin + (ml.mtext.insert - origin) * f;
+        ml.mtext.height *= f;
+        ml.mtext.width *= f;
+    }
+}
+
 /// `e` as it draws at annotation scale `f`: its paper sizes (text height and width, dimension
 /// overall scale, multileader arrow, landing and content, hatch pattern scale, block scale and
 /// attributes) multiplied by `f`. A dimension is drawn from its definition at that scale, not
@@ -191,14 +209,7 @@ pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
             ins.col_spacing *= f;
             ins.row_spacing *= f;
             for a in &mut ins.attribs {
-                a.text.insert = o + (a.text.insert - o) * f;
-                a.text.align_pt = a.text.align_pt.map(|p| o + (p - o) * f);
-                a.text.height *= f;
-                if let Some(ml) = &mut a.multiline {
-                    ml.mtext.insert = o + (ml.mtext.insert - o) * f;
-                    ml.mtext.height *= f;
-                    ml.mtext.width *= f;
-                }
+                scale_annotative_attrib(a, o, f);
             }
         }
         _ => {}

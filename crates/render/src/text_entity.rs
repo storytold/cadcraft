@@ -45,6 +45,13 @@ fn text_params(d: &Drawing, t: &cadcraft_doc::Text) -> (cadcraft_fonts::TextFont
 
 /// Lay out an MTEXT with its style's font.
 pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fonts::MTextLayout {
+    layout_mtext_contents(d, t, &t.contents)
+}
+
+/// Lay out an MTEXT with `contents` in place of its stored contents: an attribute's value may have
+/// been edited since the multiline text was read, and this lays the edited value out without
+/// cloning the entity (its style and column heights included).
+pub fn layout_mtext_contents(d: &Drawing, t: &cadcraft_doc::MText, contents: &str) -> cadcraft_fonts::MTextLayout {
     let ts = text_style(d, &t.style);
     let params = cadcraft_fonts::MTextParams {
         insert: t.insert.xy(),
@@ -66,7 +73,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
             reversed: c.flow_reversed,
         }),
     };
-    cadcraft_fonts::layout_mtext_with(&t.contents, &params)
+    cadcraft_fonts::layout_mtext_with(contents, &params)
 }
 
 fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {

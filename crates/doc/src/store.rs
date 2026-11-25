@@ -285,6 +285,19 @@ impl EntityStore {
     pub fn last(&self) -> Option<&Arc<Entity>> {
         self.chunks.last().and_then(|c| c.items.last())
     }
+    /// Where `h` is in the draw order (0 at the bottom, the order [`EntityStore::iter`] takes),
+    /// when it is here. It looks at each chunk's length and searches only `h`'s own chunk.
+    pub fn position(&self, h: Handle) -> Option<usize> {
+        let id = self.chunk_id(h)?;
+        let mut below = 0usize;
+        for c in &self.chunks {
+            if c.id == id {
+                return c.items.iter().position(|e| e.handle == h).map(|i| below + i);
+            }
+            below += c.items.len();
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -336,6 +349,22 @@ mod tests {
         s.send_to_back(Handle(5));
         assert_eq!(s.iter().next().map(|e| e.handle), Some(Handle(5)));
         assert_eq!(s.len(), 5);
+    }
+
+    #[test]
+    fn position_follows_the_draw_order_across_chunks() {
+        let mut s = EntityStore::new();
+        for h in 1..=3000 {
+            s.push(ent(h));
+        }
+        s.send_to_back(Handle(2500));
+        s.remove(Handle(10));
+        for (i, e) in s.iter().enumerate() {
+            assert_eq!(s.position(e.handle), Some(i), "handle {}", e.handle.0);
+        }
+        assert_eq!(s.position(Handle(2500)), Some(0));
+        assert_eq!(s.position(Handle(10)), None, "a removed object has no place");
+        assert_eq!(s.position(Handle(9999)), None);
     }
 
     fn order(s: &EntityStore) -> Vec<u64> {
