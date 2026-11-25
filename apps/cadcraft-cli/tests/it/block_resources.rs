@@ -380,11 +380,15 @@ fn lines_at_the_top_of_the_handle_range_walk_as_lines() {
     let mut run = Run::new(&dir, Some(&file));
     let out = run
         .lisp(r#"(progn (setq i (handent "20")) (entnext i))"#)
-        .lisp(r#"(equal (entnext (handent "FFFFFFFFFFFFFFFE")) (handent "FFFFFFFFFFFFFFFF"))"#)
-        .lisp(r#"(entnext (handent "FFFFFFFFFFFFFFFF"))"#)
+        // The line at the top of the range is in the drawing. Without it, the walk from the line
+        // below would end in nil, and nil equals the nil `handent` gives for a handle not there.
+        .lisp(r#"(progn (setq top (handent "FFFFFFFFFFFFFFFF")) (list (cdr (assoc 0 (entget top))) (cdr (assoc 5 (entget top)))))"#)
+        .lisp(r#"(equal (entnext (handent "FFFFFFFFFFFFFFFE")) top)"#)
+        .lisp("(entnext top)")
         .out();
-    assert_eq!(value(&out, 1), "T");
-    assert_eq!(value(&out, 2), "nil");
+    assert_eq!(value(&out, 1), "(\"LINE\" \"FFFFFFFFFFFFFFFF\")");
+    assert_eq!(value(&out, 2), "T");
+    assert_eq!(value(&out, 3), "nil");
 }
 
 #[test]

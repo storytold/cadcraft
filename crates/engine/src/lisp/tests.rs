@@ -2249,9 +2249,12 @@ fn mocoro_undo_does_not_let_an_old_record_name_reach_the_next_copy() {
         r#"(progn
         (sssetfirst nil nil)
         (command "_.MOCORO" i "" '(0 0) "_Copy" '(10 0))
-        (setq a (entnext (entlast)))
+        (setq c (entlast) ch (cdr (assoc 5 (entget c))) a (entnext c) v (cdr (assoc 1 (entget a))))
         (command "_Undo" "_Copy" '(20 0) "_eXit"))"#,
     );
+    // The name was given for a copy with a handle of its own, and it read that copy's attribute.
+    // The copy made after the Undo has the removed copy's handle.
+    assert_eq!(ok(&mut s, "(list (= ch (cdr (assoc 5 (entget i)))) v (= ch (cdr (assoc 5 (entget (entlast))))))"), "(nil \"A1\" T)");
     assert_eq!(
         ok(
             &mut s,
@@ -2274,9 +2277,19 @@ fn grip_copy_undo_does_not_let_an_old_record_name_reach_the_next_copy() {
     s.input(crate::Input::Enter).unwrap();
     s.input(crate::Input::Keyword("Copy".into())).unwrap();
     s.input(crate::Input::Point(cadcraft_geom::Vec2::new(20.0, 10.0))).unwrap();
-    ok(&mut s, "(setq a (entnext (entlast)))");
+    // The name is given for a copy with a handle of its own, and it reads that copy's attribute.
+    assert_eq!(
+        ok(
+            &mut s,
+            r#"(progn
+            (setq c (entlast) ch (cdr (assoc 5 (entget c))) a (entnext c))
+            (list (= ch (cdr (assoc 5 (entget i)))) (cdr (assoc 1 (entget a)))))"#
+        ),
+        "(nil \"A1\")"
+    );
     s.input(crate::Input::Keyword("Undo".into())).unwrap();
     s.input(crate::Input::Point(cadcraft_geom::Vec2::new(30.0, 10.0))).unwrap();
+    assert_eq!(ok(&mut s, "(= ch (cdr (assoc 5 (entget (entlast)))))"), "T", "the next copy takes the removed copy's handle");
     assert_eq!(
         ok(
             &mut s,

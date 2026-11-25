@@ -4919,6 +4919,29 @@ fn set_attdef_layer(d: &mut Drawing, name: &str, layer: &str) {
     assert!(b.entities.modify(h, |e| e.common.layer = layer.into()));
 }
 
+/// Block B with ATTDEF T on layer BASE and ATTDEF U on layer DOOR, and a reference to it with
+/// both attributes. The reference's handle.
+fn add_on_two_layers(d: &mut Drawing) -> Handle {
+    let h = add_attributed(d, "B", 1, &["T".to_string(), "U".to_string()], "DOOR");
+    set_attdef_layer(d, "B", "BASE");
+    h
+}
+
+/// Block `name`'s ATTDEFs given `tags` in their order, so a tag can pass to another ATTDEF's
+/// handle: one edit of the definition's store for each ATTDEF.
+fn set_attdef_tags(d: &mut Drawing, name: &str, tags: &[&str]) {
+    let b = std::sync::Arc::make_mut(d.blocks.get_mut(name).expect("block"));
+    let handles: Vec<Handle> = b.entities.iter().filter(|e| matches!(e.kind, EntityKind::AttDef(_))).map(|e| e.handle).collect();
+    assert_eq!(handles.len(), tags.len(), "a tag for each ATTDEF");
+    for (h, tag) in handles.into_iter().zip(tags) {
+        assert!(b.entities.modify(h, |e| {
+            if let EntityKind::AttDef(ad) = &mut e.kind {
+                ad.tag = (*tag).into();
+            }
+        }));
+    }
+}
+
 /// The layer reference `h`'s first ATTRIB record is read on.
 fn read_attrib_layer(d: &Drawing, h: Handle) -> Option<String> {
     let e = d.entity(h)?;
@@ -4935,15 +4958,17 @@ fn written_attrib_layer(d: &Drawing) -> Option<String> {
     pairs.take_while(|p| p.first() != Some(&"0")).find(|p| p.first() == Some(&"8")).and_then(|p| p.get(1)).map(|s| s.to_string())
 }
 
-/// Two copies of one drawing, each with its definition edited once: each reads and writes its
-/// own definition's properties, whichever was read first.
+/// Two copies of one drawing, each with its definition edited: each reads and writes its own
+/// definition's properties, whichever was read first. T stays with the first ATTDEF in one copy
+/// and passes to the second in the other, so an index kept from one copy names the wrong ATTDEF
+/// in the other.
 #[test]
 fn copies_edited_apart_read_their_own_definitions() {
     let mut d = Drawing::new_metric();
-    let h = add_attributed(&mut d, "B", 1, &["T".to_string()], "BASE");
+    let h = add_on_two_layers(&mut d);
     let (mut a, mut b) = (d.clone(), d.clone());
     set_attdef_layer(&mut a, "B", "WALLS");
-    set_attdef_layer(&mut b, "B", "DOOR");
+    set_attdef_tags(&mut b, "B", &["U", "T"]);
     assert_eq!(read_attrib_layer(&a, h).as_deref(), Some("WALLS"));
     assert_eq!(read_attrib_layer(&b, h).as_deref(), Some("DOOR"), "the other copy's edit is its own");
     assert_eq!(written_attrib_layer(&b).as_deref(), Some("DOOR"));
@@ -4952,17 +4977,18 @@ fn copies_edited_apart_read_their_own_definitions() {
 }
 
 /// Undo back to a state, then a different edit of the definition: the edit that was undone is
-/// not read or written again.
+/// not read or written again. The second edit passes T to the other ATTDEF, so the index of
+/// the undone edit names the wrong one.
 #[test]
 fn an_edit_after_undo_reads_its_own_definition() {
     let mut d = Drawing::new_metric();
-    let h = add_attributed(&mut d, "B", 1, &["T".to_string()], "BASE");
+    let h = add_on_two_layers(&mut d);
     let mut undone = d.clone();
     set_attdef_layer(&mut undone, "B", "WALLS");
     assert_eq!(read_attrib_layer(&undone, h).as_deref(), Some("WALLS"));
     // Undo: the drawing before the edit, then another edit, read nothing in between.
     let mut redone = d.clone();
-    set_attdef_layer(&mut redone, "B", "DOOR");
+    set_attdef_tags(&mut redone, "B", &["U", "T"]);
     assert_eq!(written_attrib_layer(&redone).as_deref(), Some("DOOR"));
     assert_eq!(read_attrib_layer(&redone, h).as_deref(), Some("DOOR"));
 }
