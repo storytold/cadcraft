@@ -400,13 +400,17 @@ fn a_canvas_click_does_not_take_the_first_value_or_close_the_dialog() {
     let mut a = app();
     insert(&mut a);
     // A full frame, not only the dialog, so the click goes through the canvas.
-    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(900.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        a,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(900.0, 700.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            a,
+        );
     h.run_steps(3);
     h.get_by_label("Edit Attributes");
     replace(&mut h, "101", "202");
