@@ -310,3 +310,22 @@ fn a_fence_across_more_objects_than_the_preview_cap_shows_no_part() {
     s.input(Input::Enter).unwrap();
     assert!((before - drawn(&s) - (CAP + 1) as f64 * 10.0).abs() < 1e-6, "every rung lost its middle");
 }
+
+#[test]
+fn a_short_piece_far_from_the_origin_is_highlighted_and_removed_as_near_it() {
+    // #3382 landing review: the tolerance that merges nearby cuts must not grow with the distance
+    // from the origin, or a visible 0.5-unit piece near x = 1e9 is merged away.
+    for x0 in [0.0, 1e9] {
+        let mut s = Session::new();
+        line(&mut s, [x0 + 5.0, -5.0], [x0 + 5.0, 5.0]);
+        line(&mut s, [x0 + 5.5, -5.0], [x0 + 5.5, 5.0]);
+        let l = line(&mut s, [x0, 0.0], [x0 + 10.0, 0.0]);
+        s.zoom_extents().unwrap();
+        s.start("trim").unwrap();
+        let shown = highlight(&s, l, [x0 + 5.25, 0.0]).unwrap_or_else(|| panic!("at {x0}: the whole line is highlighted"));
+        assert!((length(&shown) - 0.5).abs() < 1e-3, "at {x0}: {}", length(&shown));
+        let before = drawn(&s);
+        s.input(Input::Point(Vec2::new(x0 + 5.25, 0.0))).unwrap();
+        assert!((before - drawn(&s) - 0.5).abs() < 1e-3, "at {x0}: the click removes the same 0.5");
+    }
+}

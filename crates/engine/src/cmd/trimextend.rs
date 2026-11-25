@@ -791,7 +791,9 @@ fn uncovered(d: &Drawing, e: &Entity, others: &[EntityKind], tol: f64) -> Vec<En
             let mut ts: Vec<f64> = ends.iter().filter(|p| ab.closest(**p).dist(**p) <= near).map(|p| ab.param_of(*p).clamp(0.0, 1.0)).collect();
             ts.extend([0.0, 1.0]);
             ts.sort_by(f64::total_cmp);
-            ts.dedup_by(|x, y| (*x - *y).abs() * len <= 1e-9 * (1.0 + a.len()));
+            // Only cuts that are one point as far as f64 can tell: a tolerance in drawing units
+            // that grew with the distance from the origin merged real cuts far from it.
+            ts.dedup_by(|x, y| (*x - *y).abs() * len <= 64.0 * f64::EPSILON * (1.0 + a.len()));
             for t in ts.windows(2) {
                 let (Some(&t0), Some(&t1)) = (t.first(), t.get(1)) else { continue };
                 let (p, q) = (ab.at(t0), ab.at(t1));
