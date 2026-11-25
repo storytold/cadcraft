@@ -14,7 +14,7 @@ use craft_host::target::ShellInfo;
 use craft_host::{AppInfo, Host};
 use craft_keymap::Overrides;
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
-use craft_ui::runtime::commands::{CommandInput, CommandSet as _, NavCommand};
+use craft_ui::runtime::commands::{CommandInput, CommandSet as _, EditCommands, FirePhase, FireSource, Fired, NavCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
 use craft_ui::runtime::focus::{EditSet, KeepKeys, KeyUse};
 use craft_ui::runtime::frame::{FrameInput, FrameOutput};
@@ -113,11 +113,37 @@ impl CadApp {
         embed::before_input(ctx, |output| self.frame_input(ctx, output));
     }
 
+    /// Takes the Copy, Cut and Paste chords the runtime ran as its own `edit.*` commands, because nothing in a
+    /// floating panel's window had them (the runtime keeps those clipboard events out of the window's input, so
+    /// [`CadApp::forward_native_input`] never sees them). The shortcuts read them as the clipboard events they stand
+    /// for, with the paste's text. Undo, Redo, Select All and Delete are not read here: their keys are still forwarded.
+    /// A chord with Shift (COPYBASE, PASTEBLOCK) is no `edit.*` command and arrives as a key press.
+    pub fn queue_fired_edits(&mut self, ctx: &egui::Context, fired: &[Fired]) {
+        let before = self.fired_edits.len();
+        for fired in fired.iter().filter(|fired| fired.source == FireSource::Key && fired.phase == FirePhase::Press && !fired.mods.shift) {
+            match fired.command.id.as_str() {
+                id if id == EditCommands::Copy.id() => self.fired_edits.push(egui::Event::Copy),
+                id if id == EditCommands::Cut.id() => self.fired_edits.push(egui::Event::Cut),
+                // A paste with no text (an empty or image clipboard) sends no event in the main window either.
+                id if id == EditCommands::Paste.id() => {
+                    if let Some(text) = fired.pasted.as_ref().and_then(|content| content.text.as_deref()) {
+                        self.fired_edits.push(egui::Event::Paste(text.to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.fired_edits.len() > before {
+            ctx.request_repaint_of(ViewportId::ROOT);
+        }
+    }
+
     /// The root values of this frame. CADCraft registers no commands with the runtime and lets it toggle no chrome, so
-    /// the output carries nothing it acts on. The interface scale is the Options value: the runtime is the one writer
-    /// of egui's zoom factor. While one of CADCraft's own modals shows (Save Changes, the lossy-save warning, Drawing
-    /// Recovery, an egui modal), the runtime blocks the panels floated into windows of their own.
-    fn frame_input(&mut self, ctx: &egui::Context, _output: FrameOutput) -> FrameInput {
+    /// it acts only on the clipboard commands the output carries. The interface scale is the Options value: the runtime
+    /// is the one writer of egui's zoom factor. While one of CADCraft's own modals shows (Save Changes, the lossy-save
+    /// warning, Drawing Recovery, an egui modal), the runtime blocks the panels floated into windows of their own.
+    fn frame_input(&mut self, ctx: &egui::Context, output: FrameOutput) -> FrameInput {
+        self.queue_fired_edits(ctx, &output.fired);
         let mode = match self.ui.theme.resolve(ctx.system_theme()) {
             egui::Theme::Light => craft_theme::Mode::Light,
             egui::Theme::Dark => craft_theme::Mode::Dark,

@@ -117,3 +117,29 @@ fn a_main_window_modifier_change_outlasts_keys_forwarded_meanwhile() {
     pump(&mut app, &ctx);
     assert_eq!(ctx.input(|i| i.modifiers), Modifiers::NONE, "the released Shift is not put back");
 }
+
+/// Cmd/Ctrl+C pressed in a floating panel with nothing focused there is the runtime's `edit.copy`: the window's input
+/// no longer carries the clipboard event, and the app reads the command from the frame's output. It copies once, and
+/// Shift (COPYBASE) is left to the forwarded key.
+#[test]
+fn copy_pressed_in_a_floating_panel_reaches_the_app() {
+    use craft_ui::runtime::commands::{CommandSet as _, EditCommands, FirePhase, FireSource, Fired};
+    let fired = |mods| Fired::new(EditCommands::Copy.id().into(), FireSource::Key, FirePhase::Press, 0.0).mods(mods);
+
+    let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("circle", json!({"center": [0, 0], "radius": 1})).unwrap();
+    let all: Vec<_> = app.session.doc().unwrap().model.iter().map(|e| e.handle).collect();
+    app.session.set_selection(all);
+    pump(&mut app, &ctx);
+    assert!(app.session.clipboard.is_empty());
+
+    app.queue_fired_edits(&ctx, &[fired(craft_keymap::Mods { shift: true, ..craft_keymap::Mods::CMD })]);
+    pump(&mut app, &ctx);
+    assert!(app.session.clipboard.is_empty(), "a chord with Shift is not edit.copy");
+
+    app.queue_fired_edits(&ctx, &[fired(craft_keymap::Mods::CMD)]);
+    pump(&mut app, &ctx);
+    assert_eq!(app.session.clipboard.len(), 1, "copied once");
+}

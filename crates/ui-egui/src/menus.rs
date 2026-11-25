@@ -1000,6 +1000,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
         crate::keys::stop_recording(ctx);
     }
+    let float_edits = std::mem::take(&mut app.fired_edits);
     if crate::keys::recording(ctx) {
         return;
     }
@@ -1020,7 +1021,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
     let mut fire: Vec<String> = Vec::new();
     let mut pasted_table = false;
-    for action in crate::clipboard::shortcut_actions(app, ctx) {
+    for action in crate::clipboard::shortcut_actions(app, ctx, float_edits) {
         match action {
             crate::clipboard::ShortcutAction::Command(id) => {
                 let id = id.to_string();

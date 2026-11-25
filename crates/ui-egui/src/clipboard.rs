@@ -50,10 +50,15 @@ pub enum ShortcutAction {
 /// The actions the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
 /// own last copy (another CADCraft's) becomes the clipboard first; non-DXF tab-separated table text
 /// starts `pastetable`.
-pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAction> {
+///
+/// `fired` holds the events a floating panel's window ran as framework commands ([`CadApp::queue_fired_edits`]); they
+/// come before this window's own.
+pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context, fired: Vec<egui::Event>) -> Vec<ShortcutAction> {
     let (events, shift) = ctx.input(|i| {
-        let ev: Vec<egui::Event> =
-            i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
+        let ev: Vec<egui::Event> = fired
+            .into_iter()
+            .chain(i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned())
+            .collect();
         (ev, i.modifiers.shift)
     });
     let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };

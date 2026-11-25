@@ -330,6 +330,9 @@ pub struct CadApp {
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
     forwarded_modifiers: Option<egui::Modifiers>,
+    /// The Copy, Cut and Paste a floating panel's window fired as framework commands, as the clipboard events the
+    /// shortcuts read ([`Self::queue_fired_edits`]).
+    fired_edits: Vec<egui::Event>,
     /// The main window's own modifiers, put back the frame after forwarded keys went in.
     restore_modifiers: Option<egui::Modifiers>,
     /// The panel arrangement the dock shows and the panels' specs ([`docking::LiveDock`]).
@@ -424,6 +427,7 @@ impl CadApp {
             paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
+            fired_edits: Vec::new(),
             restore_modifiers: None,
             dock: docking::LiveDock::default(),
             framework_host: framework::host(),

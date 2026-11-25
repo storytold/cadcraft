@@ -602,6 +602,10 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         }
         let (events, modifiers) =
             ctx.input_for(*viewport, |input| (input.events.iter().filter(|e| forwarded(e)).cloned().collect::<Vec<_>>(), input.modifiers));
+        // A Copy, Cut or Paste chord is the runtime's command: it reaches the app through the next frame's `FrameOutput`.
+        if modifiers.command {
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
+        }
         let modifiers = (!events.is_empty()).then_some(modifiers);
         app.forward_native_input(&ctx, events, modifiers);
     }
