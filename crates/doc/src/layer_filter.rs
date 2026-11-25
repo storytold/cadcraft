@@ -154,13 +154,26 @@ impl Wildcard {
     }
 }
 
+fn closes_later(chars: &[char], mut i: usize) -> bool {
+    while let Some(&c) = chars.get(i) {
+        match c {
+            ']' => return true,
+            '[' | ',' => return false,
+            '`' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn parse_set(chars: &[char], mut i: usize) -> Result<(Tok, usize), FilterError> {
     let mut members = Vec::new();
     let mut closed = false;
     while let Some(&c) = chars.get(i) {
         i += 1;
         match c {
-            ']' if (members.is_empty() || members == [('~', false)]) && chars.get(i..).is_some_and(|r| r.contains(&']')) => {
+            ']' if (members.is_empty() || members == [('~', false)]) && closes_later(chars, i) => {
                 members.push((']', true));
             }
             ']' => {
@@ -646,6 +659,11 @@ mod tests {
             ("[]a]", "b", false),
             ("[~]a]", "b", true),
             ("[~]a]", "]", false),
+            ("[~],[a]", "~", true),
+            ("[~],[a]", "a", true),
+            ("[~],[a]", "b", false),
+            ("[~],[a]", "]", false),
+            ("[]],[a]", "]", true),
             ("[~]", "~", true),
             ("*a*a*a*a*a*b", &"a".repeat(60), false),
             ("Mauer*", "MAUER-Süd", true),
