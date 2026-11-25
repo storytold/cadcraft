@@ -668,4 +668,44 @@ impl Session {
         let extra = d.extra.iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k.clone() }).collect();
         Some((d, extra))
     }
+    /// The live parameters of the running array command ([`Interactive::array_live`]).
+    pub fn array_live(&self) -> Option<crate::ArrayLive> {
+        self.running.as_ref().and_then(|r| r.machine.array_live())
+    }
+
+    /// Change the running array's live parameters. With no array running this does nothing; an
+    /// invalid value is refused and leaves the command as it was.
+    pub fn set_array_live(&mut self, v: &crate::ArrayLive) -> Result<()> {
+        if self.array_live().is_none() {
+            return Ok(());
+        }
+        let Some(mut run) = self.running.take() else { return Ok(()) };
+        let r = run.machine.set_array_live(self, v);
+        self.running = Some(run);
+        r
+    }
+
+    /// Ask the running polar array for its centre as the next canvas point
+    /// ([`Interactive::array_pick_center`]).
+    pub fn array_pick_center(&mut self) -> bool {
+        self.running.as_mut().is_some_and(|r| r.machine.array_pick_center())
+    }
+
+    /// Finish the running array: `Ok(true)` when the command ended, `Ok(false)` when there is no
+    /// array command or it is still selecting objects.
+    pub fn commit_array(&mut self) -> Result<bool> {
+        if self.array_live().is_none() {
+            return Ok(false);
+        }
+        if self.current_prompt().is_some_and(|p| p.accept.select) {
+            return Ok(false);
+        }
+        if let Some(r) = self.running.as_mut()
+            && !r.machine.array_set_main()
+        {
+            return Ok(false);
+        }
+        self.feed(Some(Input::Keyword("eXit".into())))?;
+        Ok(self.running.is_none())
+    }
 }

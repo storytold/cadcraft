@@ -146,6 +146,39 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_live())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        if let Some(m) = self.broken.get() {
+            return Err(EngineError::Internal(self.inner.name().to_ascii_lowercase(), m.into()));
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.set_array_live(s, v))).unwrap_or_else(|p| Err(self.internal(&*p)))
+    }
+    fn array_set_main(&mut self) -> bool {
+        if self.broken.get().is_some() {
+            return false;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_set_main())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            false
+        })
+    }
+    fn array_pick_center(&mut self) -> bool {
+        if self.broken.get().is_some() {
+            return false;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.array_pick_center())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            false
+        })
+    }
 }
 
 #[cfg(test)]
