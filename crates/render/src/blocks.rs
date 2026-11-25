@@ -66,6 +66,9 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     if let Some(blk) = ctx.d.block(&ins.block) {
         // ATTMODE (ATTDISP) for the block's constant attributes, as for its other attributes.
         let attmode = ctx.d.header.i64("ATTMODE", 1);
+        // The tags the reference carries attributes for, upper-cased, once for all its copies: a
+        // constant definition of one of them is not drawn (that attribute is).
+        let own_tags: std::collections::HashSet<String> = ins.attribs.iter().map(|r| r.tag.to_ascii_uppercase()).collect();
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
         'copies: for r in 0..rows {
@@ -91,7 +94,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                     // Attribute definitions inside blocks are not drawn (the reference's attributes
                     // are), except a constant one: its value draws with the block's geometry.
                     if let EntityKind::AttDef(a) = &be.kind {
-                        if let Some(text) = constant_attribute(be, a, ins, attmode) {
+                        if let Some(text) = constant_attribute(be, a, &own_tags, attmode) {
                             entity(target, &sub, &text);
                         }
                         continue;
@@ -119,13 +122,14 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     }
 }
 
-/// A constant attribute definition `a` (`be`) of reference `ins`'s block as the text it draws:
+/// A constant attribute definition `a` (`be`) of a referenced block as the text it draws:
 /// its value, with the definition's properties. A constant value isn't copied into the reference's
 /// attributes, so it is drawn from the definition. `None` for a variable definition (its attribute
-/// is drawn instead), one ATTMODE hides (0 hides all, 1 the invisible ones), and one the reference
-/// carries an attribute for (that attribute is drawn, not both).
-fn constant_attribute(be: &Entity, a: &cadcraft_doc::Attrib, ins: &cadcraft_doc::Insert, attmode: i64) -> Option<Entity> {
-    if !a.constant || attmode == 0 || (a.invisible && attmode != 2) || ins.attribs.iter().any(|r| r.tag.eq_ignore_ascii_case(&a.tag)) {
+/// is drawn instead), one ATTMODE hides (0 hides all, 1 the invisible ones), and one whose tag is in
+/// `own_tags`, the upper-cased tags of the attributes the reference carries (that attribute is
+/// drawn, not both).
+fn constant_attribute(be: &Entity, a: &cadcraft_doc::Attrib, own_tags: &std::collections::HashSet<String>, attmode: i64) -> Option<Entity> {
+    if !a.constant || attmode == 0 || (a.invisible && attmode != 2) || (!own_tags.is_empty() && own_tags.contains(&a.tag.to_ascii_uppercase())) {
         return None;
     }
     let kind = match a.multiline_text() {
