@@ -209,6 +209,9 @@ struct Run {
     /// Cons cells alive when the run started: cells the drawing's variables already hold don't
     /// stop a run (it can still set them to nil) unless it adds more.
     cells_at_start: usize,
+    /// The automation roots in force where it started: it carries on under them in the frames
+    /// that follow, whoever's frame they are (#1585).
+    roots: Option<Arc<crate::file_access::AutomationRoots>>,
 }
 
 /// Steps per slice before the interface gets a frame.
@@ -309,6 +312,7 @@ impl Session {
             handler: false,
             string_bytes: 0,
             cells_at_start: value::live_cells(),
+            roots: crate::file_access::current(),
         }));
         self.lisp_drive();
         if blocking {
@@ -331,8 +335,9 @@ impl Session {
     }
 
     fn lisp_tick_unguarded(&mut self) {
-        // A drawing seen for the first time gets its startup files.
-        self.lisp_autoload();
+        // A drawing seen for the first time gets its startup files: the person's own, which no
+        // automation roots in force for this frame's input apply to.
+        crate::file_access::confine(None, || self.lisp_autoload());
         if self.lisp.run.as_ref().is_some_and(|r| matches!(r.waiting, Some(Need::Yield))) {
             if let Some(r) = self.lisp.run.as_mut() {
                 r.waiting = None;
@@ -368,11 +373,14 @@ impl Session {
             // [`Session::typed`] first, never opens a dialog. Restored after the slice, a panic
             // in it included, so a person's later command keeps its own origin.
             let program_input = std::mem::replace(&mut self.program_input, true);
-            let outcome = {
+            // Under the roots it started with; a routine the person started that an agent's input
+            // answers carries on under the roots of that input.
+            let roots = run.roots.clone().or_else(crate::file_access::current);
+            let outcome = crate::file_access::confine_if(roots.as_ref(), || {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| machine.run(&mut ctx, SLICE)))
-            };
+            });
             self.program_input = program_input;
             run.string_bytes = value::string_bytes_used();
             let outcome = match outcome {

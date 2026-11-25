@@ -415,9 +415,9 @@ enum UsageError {
     /// The output is one of the input files, so writing it would replace the original.
     #[error("{} is an input file, so the result would replace the original: choose another output, or pass --in-place to overwrite it", .0.display())]
     OutIsInput(PathBuf),
-    /// The automation roots confine the headless server; a running app enforces its own access.
+    /// The automation roots confine the headless server; a running app is confined by its own.
     #[error(
-        "--automation-read-root and --automation-write-root confine the headless MCP server; a running app enforces its own file access (not yet available: see issue #1585)"
+        "--automation-read-root and --automation-write-root confine the headless MCP server; the app does the file access over --connect, so start it with them: cadcraft --control PORT --automation-read-root DIR --automation-write-root DIR"
     )]
     AutomationRootsNeedHeadless,
 }
@@ -498,7 +498,8 @@ fn framing_error(cli: &Cli) -> Option<UsageError> {
     (!cadcraft_io::is_image(out)).then(|| UsageError::FramingNeedsImage { flag, out: out.to_path_buf() })
 }
 
-/// The automation roots confine the headless server only, as the other Craft apps' do.
+/// The automation roots confine the headless server only: over `--connect` the app reads and
+/// writes the files, so the roots are the app's own (`cadcraft --control PORT --automation-read-root`).
 fn roots_need_headless(cli: &Cli) -> Option<UsageError> {
     let Command::Mcp(m) = &cli.command else { return None };
     (m.connect.is_some() && (m.automation_read_root.is_some() || m.automation_write_root.is_some()))
@@ -672,7 +673,7 @@ mod tests {
     }
 
     /// The automation roots confine a headless server; `--connect` is refused with the reason
-    /// (the running app's control channel is not confined yet, #1585).
+    /// (the running app is confined by the roots it was started with, #1585).
     #[test]
     fn mcp_automation_roots_confine_a_headless_server_only() {
         assert_eq!(
@@ -680,7 +681,7 @@ mod tests {
             McpTarget::Headless { read_root: Some("/work".into()), write_root: Some("/work/out".into()) }
         );
         let e = mcp(&["--connect", "127.0.0.1:7979", "--automation-read-root", "/work"]).unwrap_err().to_string();
-        assert!(e.contains("headless MCP server") && e.contains("#1585"), "{e}");
+        assert!(e.contains("headless MCP server") && e.contains("cadcraft --control PORT"), "{e}");
         let e = mcp(&["--automation-write-root=/work", "--connect", "127.0.0.1:7979"]).unwrap_err().to_string();
         assert!(e.contains("headless MCP server"), "{e}");
     }

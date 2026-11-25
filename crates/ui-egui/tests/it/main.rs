@@ -1,4 +1,5 @@
 mod animation_effects;
+mod automation_roots;
 mod block_description_palette;
 mod chrome_geometry;
 mod clipboard_between_drawings;

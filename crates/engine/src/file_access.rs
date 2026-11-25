@@ -1,9 +1,10 @@
 //! The folders automation may read and write (#1472).
 //!
 //! `cadcraft-cli mcp --automation-read-root <dir> --automation-write-root <dir>` confines the files
-//! an agent's commands reach. [`AutomationRoots`] holds the two folders. While they are in force,
-//! every path a command reads goes through [`check_read`] and every path it writes through
-//! [`check_write`]:
+//! an agent's commands reach, and so do the same two flags of `cadcraft --control PORT` for the
+//! running app's control channel (#1585). [`AutomationRoots`] holds the two folders. While they are
+//! in force, every path a command reads goes through [`check_read`] and every path it writes
+//! through [`check_write`]:
 //!
 //! - The path is made absolute against the working directory, as the file system reads it. Its
 //!   links are followed: for a file that doesn't exist yet, the links of its nearest existing
@@ -23,6 +24,8 @@
 //!
 //! Roots are in force on a thread inside [`confine`]. The MCP headless backend runs every call in
 //! it; without roots nothing is checked, so the app and the command line keep working everywhere.
+//! A running app puts only the control channel's work inside ([`confine_if`]): the person at the
+//! keyboard is not an agent, so their own dialogs and typing stay outside.
 //!
 //! A path is checked, then opened: a process that can change the folders in between (swapping in
 //! a link) can still win that race. A network, device or non-disk verbatim path is not opened at
@@ -145,6 +148,15 @@ pub fn confine<T>(roots: Option<&Arc<AutomationRoots>>, f: impl FnOnce() -> T) -
     let previous = ROOTS.with(|r| r.replace(roots.cloned()));
     let _restore = Restore(previous);
     f()
+}
+
+/// [`confine`] with `roots`, or just run `f` when there are none: unlike `confine(None, f)` it
+/// leaves roots already in force on this thread alone.
+pub fn confine_if<T>(roots: Option<&Arc<AutomationRoots>>, f: impl FnOnce() -> T) -> T {
+    match roots {
+        Some(_) => confine(roots, f),
+        None => f(),
+    }
 }
 
 /// This thread's roots, if any.

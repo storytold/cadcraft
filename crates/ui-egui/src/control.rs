@@ -307,8 +307,12 @@ fn key_from(name: &str) -> Option<egui::Key> {
     })
 }
 
+/// Answer one request. Under the app's automation roots (`--automation-read-root`,
+/// `--automation-write-root`) every file it reads or writes is held to them, a command's and the
+/// `path` of `ui.render` and `ui.screenshot` alike.
 pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
-    let out = handle_request(app, ctx, req);
+    let roots = app.automation_roots.clone();
+    let out = cadcraft_engine::file_access::confine_if(roots.as_ref(), || handle_request(app, ctx, req));
     // A command the request ran may have asked for a bar (MENUBAR, TOOLBAR): apply it before
     // the next request, so a later query or `ui.set` sees the bars as they are now.
     app.sync_bars();
@@ -501,7 +505,13 @@ fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w as f32, h as f32)));
             ok(Value::Null)
         }
-        "ui.screenshot" => Outcome::Screenshot { path: s("path").map(str::to_string) },
+        "ui.screenshot" => {
+            // The file is written once the capture is taken, so the roots are asked now.
+            if let Some(Err(e)) = s("path").map(cadcraft_engine::file_access::check_write) {
+                return err(e);
+            }
+            Outcome::Screenshot { path: s("path").map(str::to_string) }
+        }
         "ui.render" => {
             let w = f("width").unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
             let h = f("height").unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
@@ -533,6 +543,9 @@ fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
                 let file = std::path::Path::new(&path);
+                if let Err(e) = cadcraft_engine::file_access::check_write(file) {
+                    return err(e);
+                }
                 let folder = cadcraft_engine::atomic_write::missing_folder(file);
                 if let Err(e) = cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png) {
                     return err(e);
