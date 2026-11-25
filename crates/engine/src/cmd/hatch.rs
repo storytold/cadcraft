@@ -1231,6 +1231,23 @@ mod tests {
         assert!((h.scale - 50.0).abs() < 1e-9, "{}", h.scale);
     }
 
+    /// A script that a routine starts with `(command "_.script" …)` runs its lines as a script: its
+    /// HATCH line takes the interface's options (A for the angle), not the routine's order.
+    #[test]
+    fn a_script_a_routine_starts_keeps_the_interface_prompts() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-hatch-script-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("angle.scr");
+        std::fs::write(&file, "hatch A 45\n\n").unwrap();
+        let mut s = Session::new();
+        let path = file.to_string_lossy().replace('\\', "/");
+        s.cmdline(&format!("(command \"_.script\" \"{path}\")")).unwrap();
+        let a = s.doc().unwrap().header.f64("HPANG", 0.0);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!((a - std::f64::consts::FRAC_PI_4).abs() < 1e-9, "HPANG {a}; {}", s.prompt_text());
+        assert!(!s.lisp_program_input(), "the routine's flag is restored after the script");
+    }
+
     /// -HATCH keeps its own questions, a routine's included: it picks the boundary first, and the
     /// Properties option takes the pattern, scale and angle as before.
     #[test]
