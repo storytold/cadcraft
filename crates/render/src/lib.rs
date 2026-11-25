@@ -123,6 +123,9 @@ struct Builder<'a> {
     named: Option<usize>,
     /// The block-expansion budget shared by the parts of a list built in parallel.
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
+    /// The dash budget a plot's lines share (`None` in a display build, which falls back per
+    /// line instead; see [`linetype::DashBudget`]).
+    shared_dashes: Option<&'a linetype::DashBudget>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
     /// Points (polyline vertices and triangle corners) the whole build has charged so far, shared
@@ -367,6 +370,7 @@ impl<'a> Builder<'a> {
             styles: self.styles,
             named: self.named,
             shared_budget: self.shared_budget,
+            shared_dashes: self.shared_dashes,
             transparency: self.transparency,
             points: self.points,
             max_points: self.max_points,
