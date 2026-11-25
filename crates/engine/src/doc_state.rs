@@ -43,6 +43,10 @@ pub struct DocState {
     pub block_edit: Option<blockedit::BlockEdit>,
     /// The user was told that the current UCS is tilted ([`Session::note_tilted_ucs`]).
     pub ucs_tilted_noted: bool,
+    /// DIMASO remembers the DIMASSOC mode (1 or 2) it turned off in this drawing, so turning DIMASO
+    /// back on restores it (2 when none was seen). DIMASO has no value of its own and is not
+    /// saved, so each open drawing keeps its own mode.
+    pub dimaso_mode: i64,
     /// What the last erase removed, for OOPS.
     pub(crate) erased: crate::cmd::Erased,
     /// The fonts missing on Windows that a save last named: the next save names them again only
@@ -75,6 +79,7 @@ impl DocState {
             binary_dxf: false,
             block_edit: None,
             ucs_tilted_noted: false,
+            dimaso_mode: 2,
             erased: Default::default(),
             fonts_noted: String::new(),
         }

@@ -208,3 +208,78 @@ fn texteval_dimaso_and_popups_are_not_saved() {
     back.open_drawing(cadcraft_io::read_dxf(text.as_bytes()).unwrap(), "no_legacy_vars.dxf", None);
     assert_eq!(getvar(&mut back, "TEXTEVAL"), json!(0));
 }
+
+#[test]
+fn dimaso_remembers_the_mode_of_each_open_drawing() {
+    // The mode DIMASO turns off is the drawing's, not the session's: two open drawings switched
+    // between each put back the DIMASSOC mode they had.
+    let mut s = Session::new();
+    let first = s.active;
+    assert!(setvar(&mut s, "DIMASSOC", json!(1)));
+    assert!(setvar(&mut s, "DIMASO", json!(0)));
+    let second = s.new_drawing(true);
+    assert_eq!(second, first + 1);
+    assert!(setvar(&mut s, "DIMASSOC", json!(2)));
+    assert!(setvar(&mut s, "DIMASO", json!(0)));
+    s.execute("document.switch", &json!({ "index": first })).unwrap();
+    assert!(setvar(&mut s, "DIMASO", json!(1)));
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(1), "the first drawing restores its own mode");
+    s.execute("document.switch", &json!({ "index": second })).unwrap();
+    assert!(setvar(&mut s, "DIMASO", json!(1)));
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(2), "the second drawing restores its own mode");
+}
+
+#[test]
+fn the_dollar_forms_are_the_same_variables() {
+    // The DXF header writes these names with a `$` ($DIMASO, $TEXTEVAL, $REGENMODE, $POPUPS), so
+    // the command line takes them that way too, in any case and with spaces around them.
+    let mut s = Session::new();
+    for name in ["DIMASO", "TEXTEVAL", "REGENMODE", "POPUPS"] {
+        let plain = getvar(&mut s, name);
+        let dollar = format!("${name}");
+        assert_eq!(getvar(&mut s, &dollar), plain, "{dollar} reads like {name}");
+        let typed = format!("  ${}  ", name.to_ascii_lowercase());
+        assert_eq!(getvar(&mut s, &typed), plain, "{typed:?} reads like {name}");
+        assert_eq!(cadcraft_engine::sysvars::is_read_only(&dollar), cadcraft_engine::sysvars::is_read_only(name), "{dollar} read-only as {name}");
+    }
+    // DIMASO through its DXF name still turns DIMASSOC off and puts its mode back.
+    assert!(setvar(&mut s, "DIMASSOC", json!(1)));
+    assert!(setvar(&mut s, "$DIMASO", json!(0)));
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(0), "$DIMASO 0 turns associativity off");
+    assert!(setvar(&mut s, " $dimaso ", json!(1)));
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(1), "$DIMASO 1 puts the mode back");
+    // TEXTEVAL: set under one name, read under the other.
+    assert!(setvar(&mut s, "$TEXTEVAL", json!(1)));
+    assert_eq!(getvar(&mut s, "TEXTEVAL"), json!(1), "$TEXTEVAL set TEXTEVAL");
+    assert!(setvar(&mut s, "TEXTEVAL", json!(0)));
+    assert_eq!(getvar(&mut s, "$TEXTEVAL"), json!(0));
+    // REGENMODE takes only the values its plain name takes, and stores the ones it takes.
+    assert!(!setvar(&mut s, "$REGENMODE", json!(2)), "$REGENMODE 2 is out of range");
+    assert_eq!(getvar(&mut s, "REGENMODE"), json!(1), "a refused $REGENMODE changed nothing");
+    assert!(!setvar(&mut s, "$REGENMODE", json!(-1)), "$REGENMODE -1 is out of range");
+    assert!(setvar(&mut s, "$REGENMODE", json!(0)));
+    assert_eq!(getvar(&mut s, "$REGENMODE"), json!(0));
+    assert_eq!(getvar(&mut s, "REGENMODE"), json!(0));
+    assert_eq!(s.doc().unwrap().header.i64("REGENMODE", 1), 0, "$REGENMODE stored the drawing's value");
+    // POPUPS is read-only under its DXF name too.
+    for v in [json!(0), json!("1")] {
+        let e = s.execute("setvar", &json!({ "name": "$POPUPS", "value": v })).unwrap_err().to_string();
+        assert!(e.contains("read-only"), "$POPUPS {v}: {e}");
+    }
+    assert!(!lisp_setvar(&mut s, "$POPUPS", "0"));
+    assert_eq!(getvar(&mut s, "$POPUPS"), json!(1));
+}
+
+#[test]
+fn other_dollar_names_keep_their_own_handling() {
+    // Only those four take a `$`: LISP's angle variables convert radians for the plain name, and
+    // `$OSMODE` stays a name of its own rather than becoming the session's OSMODE.
+    let mut s = Session::new();
+    assert!(eval(&mut s, "(setvar \"$ANGBASE\" (/ pi 2))").is_ok());
+    let base = eval(&mut s, "(getvar \"$ANGBASE\")").unwrap().as_number().unwrap_or(f64::NAN);
+    assert!((base - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "(getvar \"$ANGBASE\") gives pi/2, not {base}");
+    let osmode = eval(&mut s, "(setvar \"$OSMODE\" 9)").unwrap();
+    assert_eq!(to_text(&osmode, true), "9", "(setvar \"$OSMODE\" 9) returns 9");
+    assert_eq!(getvar(&mut s, "OSMODE"), json!(4133), "$OSMODE is not the session's OSMODE");
+    assert_eq!(getvar(&mut s, "$OSMODE"), json!(9), "$OSMODE still reads back what it was set to");
+}

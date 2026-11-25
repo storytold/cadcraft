@@ -141,9 +141,6 @@ pub struct Settings {
     /// TEXTEVAL: 1 lets a routine's input be read as LISP where it would be text (default: 0).
     /// Kept for routines that switch it around their prompts; no prompt reads it yet.
     pub texteval: bool,
-    /// DIMASO remembers the DIMASSOC mode it turned off (1 or 2), so turning DIMASO back on
-    /// restores it (2 when none was seen). DIMASO has no value of its own and is not saved.
-    pub dimaso_mode: i64,
 }
 
 impl Default for Settings {
@@ -212,7 +209,6 @@ impl Default for Settings {
             auditctl: false,
             attreq: true,
             texteval: false,
-            dimaso_mode: 2,
         }
     }
 }
