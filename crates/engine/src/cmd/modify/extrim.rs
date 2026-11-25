@@ -22,7 +22,7 @@ const MAX_FENCE: usize = 10_000;
 const MAX_OBJECTS: usize = 10_000;
 /// Most stretches one call removes (an object can lose several).
 const MAX_STRETCHES: usize = 10_000;
-/// Most objects the preview draws (beyond that it shows nothing, to keep the cursor smooth).
+/// Most parts the preview draws (beyond that it shows nothing, to keep the cursor smooth).
 const MAX_PREVIEW: usize = 2000;
 /// The traced line's distance from the edge, as a fraction of the edge's size.
 const TRACE_GAP: f64 = 1e-5;
@@ -394,14 +394,16 @@ fn stretches_of(pts: &[Vec2], closed: bool, edge: &Grid, trace: &Grid) -> Option
 }
 
 /// The trim of everything crossing `edge` on `side`, worked out without changing anything.
-fn plan(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, side: Side) -> Result<Plan> {
+/// `frozen`: the layers the active layout viewport freezes, whose objects it doesn't draw and
+/// so leaves alone, as a selection through it does.
+fn plan(d: &Drawing, space: &cadcraft_doc::Space, frozen: &[String], edge: &Edge, side: Side) -> Result<Plan> {
     let trace = edge.trace(side);
     let trace_grid = Grid::new(&trace);
     let edge_grid = Grid::new(&edge.pts);
     let tol = edge.gap / 20.0;
     let mut p = Plan::default();
     let mut stretches_total = 0;
-    for h in crate::select::select_fence(d, space, &trace) {
+    for h in crate::select::select_fence_in(d, space, frozen, &trace) {
         if h == edge.handle {
             continue;
         }
@@ -489,7 +491,7 @@ pub(super) fn run_extrim(s: &mut Session, p: &Value) -> Result<Value> {
 /// Trim every object crossing `edge` on `side`: one undo step, everything checked first.
 fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
     let space = s.space();
-    let plan = plan(s.doc()?, &space, edge, side)?;
+    let plan = plan(s.doc()?, &space, s.viewport_frozen(), edge, side)?;
     let edges = Edges { only: Some(std::slice::from_ref(&edge.handle)), implied: false };
     let tol = edge.gap / 20.0;
     let mut trimmed = 0;
@@ -595,9 +597,11 @@ fn on_outline(segs: &[cadcraft_geom::Segment], p: Vec2) -> Vec2 {
 }
 
 /// The parts the trim would remove, drawn red.
-fn preview(d: &Drawing, space: &cadcraft_doc::Space, edge: &Edge, side: Side) -> Vec<Entity> {
-    let Ok(plan) = plan(d, space, edge, side) else { return Vec::new() };
-    if plan.work.len() > MAX_PREVIEW {
+fn preview(d: &Drawing, space: &cadcraft_doc::Space, frozen: &[String], edge: &Edge, side: Side) -> Vec<Entity> {
+    let Ok(plan) = plan(d, space, frozen, edge, side) else { return Vec::new() };
+    // What costs is what is drawn: an object can lose many stretches, each of several parts.
+    let parts: usize = plan.work.iter().flat_map(|(_, st)| st).map(|st| st.parts.iter().filter(|p| p.len() >= 2).count()).sum();
+    if parts > MAX_PREVIEW {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -700,7 +704,7 @@ impl Interactive for ExtrimM {
             Some(v) => v,
             None => {
                 let Ok(d) = s.doc() else { return Vec::new() };
-                let v = preview(d, &s.space(), edge, side);
+                let v = preview(d, &s.space(), s.viewport_frozen(), edge, side);
                 if let Some(c) = self.previews.borrow_mut().get_mut(slot) {
                     *c = Some(v.clone());
                 }

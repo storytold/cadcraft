@@ -520,3 +520,23 @@ fn large_radius_arcs_weaving_through_a_short_edge_lose_every_stretch_on_the_side
         .fold(f64::NEG_INFINITY, f64::max);
     assert!(above <= 1e-6, "a stretch above the edge was left: {above:e}");
 }
+
+#[test]
+fn the_preview_cap_counts_drawn_parts_not_objects() {
+    // One zigzag polyline with `k` teeth above the edge loses `k` stretches: one object, `k` parts
+    // to draw. The preview draws up to 2000 parts (landing review of #2808).
+    for (k, previewed) in [(1999usize, true), (2001, false)] {
+        let mut s = Session::new();
+        let edge = line(&mut s, [-1.0, 0.0], [2.0 * k as f64 + 1.0, 0.0]);
+        let verts: Vec<[f64; 2]> = (0..=2 * k).map(|i| [i as f64, if i % 2 == 0 { -1.0 } else { 1.0 }]).collect();
+        s.execute("pline", &json!({ "vertices": verts })).unwrap();
+        s.set_selection(Vec::new());
+        s.start("extrim").unwrap();
+        s.input(Input::Pick(vec![Handle::parse_hex(&edge).unwrap()])).unwrap();
+        let shown = s.preview(Vec2::new(5.0, 3.0));
+        assert_eq!(!shown.is_empty(), previewed, "{k} teeth: {} shown", shown.len());
+        // Past the cap the trim itself still takes every tooth.
+        s.input(Input::Point(Vec2::new(5.0, 3.0))).unwrap();
+        assert!(top_but(&s, &edge) <= 1e-6, "{k} teeth: {}", top_but(&s, &edge));
+    }
+}
