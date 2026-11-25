@@ -918,3 +918,18 @@ fn aligned_and_fit_text_extents_span_their_two_points() {
     assert_eq!(ext(HAlign::Fit, None), left);
     assert_eq!(ext(HAlign::Aligned, Some(Vec3::ZERO)), left);
 }
+
+#[test]
+fn aligned_text_extents_keep_the_proportions_of_a_narrow_width_factor() {
+    // The fonts shape with the width factor as stored, so a text ten times narrower fitted over
+    // the same span is drawn ten times taller: its extents grow with it.
+    let top = |width_factor: f64| {
+        let mut t = plain_attrib("T").text;
+        t.value = "AB".into();
+        (t.halign, t.align_pt, t.width_factor) = (HAlign::Aligned, Some(Vec3::new(20.0, 0.0, 0.0)), width_factor);
+        let mut d = Drawing::new_imperial();
+        d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
+        extents_pair(&d).1.y
+    };
+    assert!(top(0.001) > top(0.01) * 5.0, "{} {}", top(0.001), top(0.01));
+}
