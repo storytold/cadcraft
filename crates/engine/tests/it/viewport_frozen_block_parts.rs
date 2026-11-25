@@ -1207,7 +1207,9 @@ fn a_proxy_in_a_block_counts_by_the_graphics_the_viewport_draws() {
 /// nothing before a selection counted the viewport's layers and as AutoCAD answers: the rectangle
 /// around the dimension, which is hit along its sides as the rectangle around a block reference
 /// is (#2991), keeps the room of the text the viewport leaves out, so no side of it runs through
-/// that box.
+/// that box. Its top side, at the top of that room, is hit by a pick, selection cycling, a
+/// crossing window, a fence and a crossing polygon beside the text, as where the text is drawn. A
+/// window polygon takes what a window of the same shape takes.
 ///
 /// One answer of AutoCAD is not matched and not asserted: with the layer frozen for the whole
 /// drawing or turned off it picks nothing in that box either, where CADCraft picks the dimension
@@ -1284,6 +1286,27 @@ fn a_dimension_is_not_picked_on_text_that_is_not_drawn() {
     assert_eq!(crossed(&d, &through, inside_the_text.0, inside_the_text.1), [], "a crossing window inside the box of the text that is not drawn");
     assert_eq!(crossed(&d, &through, [2.5, 39.0], [3.5, 41.0]), [dim], "a crossing window over the dimension line");
     assert_eq!(windowed(&d, &through, [-2.0, 3.0], [42.0, 43.0]), [dim], "a window around all of it");
+    // The top side of the rectangle the dimension is hit along lies at the top of the text's
+    // room, beyond what the viewport draws, where it lay before: a selection that touches that
+    // side beside the text takes the dimension as it does where the text is drawn.
+    let top_side = [31.0, 42.49];
+    let poly = |a: [f64; 2], b: [f64; 2]| [Vec2::new(a[0], a[1]), Vec2::new(b[0], a[1]), Vec2::new(b[0], b[1]), Vec2::new(a[0], b[1])];
+    for frozen in [&through[..], &[]] {
+        let near = |dx: f64, dy: f64| [top_side[0] + dx, top_side[1] + dy];
+        assert_eq!(picked(&d, frozen, top_side), Some(dim), "a pick on the top side, {frozen:?} frozen");
+        assert_eq!(cycled(frozen, top_side), [dim], "selection cycling there, {frozen:?} frozen");
+        assert_eq!(crossed(&d, frozen, near(-1.0, -0.5), near(1.0, 0.5)), [dim], "a crossing window over it, {frozen:?} frozen");
+        assert_eq!(fenced(&d, frozen, near(0.0, -0.5), near(0.0, 0.5)), [dim], "a fence across it, {frozen:?} frozen");
+        let crossing_polygon = select::select_polygon_in(&d, &Space::Model, frozen, &poly(near(-1.0, -0.5), near(1.0, 0.5)), true);
+        assert_eq!(crossing_polygon, [dim], "a crossing polygon over it, {frozen:?} frozen");
+    }
+    // A window polygon takes what a window of the same shape takes, through the viewport too.
+    for (a, b) in [([-1.0, 4.0], [41.0, 41.0]), ([-2.0, 3.0], [42.0, 43.0])] {
+        for frozen in [&through[..], &[]] {
+            let window_polygon = select::select_polygon_in(&d, &Space::Model, frozen, &poly(a, b), false);
+            assert_eq!(window_polygon, windowed(&d, frozen, a, b), "a window polygon from {a:?} to {b:?}, {frozen:?} frozen");
+        }
+    }
 }
 
 /// The selections of a grid across the five references, with what each finds: at every point a

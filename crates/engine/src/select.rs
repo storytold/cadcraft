@@ -8,14 +8,17 @@ use crate::{Accept, Prompt};
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
-    hit_polylines_in(d, e, &mut ViewportBounds::new(&[]), tol)
+    hit_polylines_in(d, e, &mut ViewportBounds::new(&[]), tol, true)
 }
 
 /// [`hit_polylines`] through the layout viewport `view`: the parts of a block reference on the
 /// layers frozen in that viewport are not drawn there, so they are not hit, and the box around
 /// the reference is the box around the parts that are drawn ([`bounds_in`]). A dimension's
-/// definition points and a clipped reference's box stay, as [`ViewportBounds`] says.
-fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, tol: f64) -> Vec<Vec<Vec2>> {
+/// definition points and a clipped reference's box stay, as [`ViewportBounds`] says. With `room`
+/// the rectangle a dimension is hit along keeps the room of the text the viewport leaves out
+/// ([`outline_in`]), as a selection that touches the dimension tests it; without, it is the box
+/// of what the viewport draws, as a selection that must hold the dimension tests it.
+fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, tol: f64, room: bool) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::Text(_)
         | EntityKind::MText(_)
@@ -41,7 +44,7 @@ fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a
                     view.frozen(),
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
-                let c = outline_in(d, e, view, b).corners();
+                let c = if room { outline_in(d, e, view, b) } else { b }.corners();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
             }
             v
@@ -100,9 +103,14 @@ fn hit_polylines_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a
 /// ([`ViewportBounds::leaves_out`]). Without the text the box ends at the dimension line, so a
 /// side of the rectangle would run through the place of the text, and a crossing window there,
 /// which touched nothing while the rectangle held the text, would take the dimension by that
-/// side. A window still needs only what the viewport draws inside it ([`in_window_in`]).
+/// side. A selection that only has to touch the dimension tests this rectangle, its box test first
+/// included ([`touch_box_in`]). A window and a window polygon still need only what the viewport
+/// draws inside them ([`in_window_in`], [`select_polygon_in`]).
 fn outline_in(d: &Drawing, e: &Entity, view: &ViewportBounds<'_>, b: Bounds2) -> Bounds2 {
     let EntityKind::Dimension(dm) = &e.kind else { return b };
+    if view.frozen().is_empty() {
+        return b;
+    }
     let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) else { return b };
     let at = dm.insertion_point.xy();
     let mut out = b;
@@ -130,7 +138,7 @@ pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
 /// [`entity_distance`] through the layout viewport `view`: to what that viewport draws of the
 /// entity ([`hit_polylines_in`]).
 fn entity_distance_in<'a>(d: &'a Drawing, e: &Entity, view: &mut ViewportBounds<'a>, p: Vec2, tol: f64) -> f64 {
-    let polys = hit_polylines_in(d, e, view, tol);
+    let polys = hit_polylines_in(d, e, view, tol, true);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
@@ -238,6 +246,15 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, view: &mut 
     if draws_a_block && !view.frozen().is_empty() { view.entity_bounds(d, e) } else { bounds_of(d, e, known) }
 }
 
+/// The box a selection through `view` that only has to touch `e` (a pick, a crossing window, a
+/// fence, a crossing polygon) tests before its hit geometry: [`bounds_in`] with the room
+/// [`outline_in`] keeps, so a side of the rectangle a dimension is hit along that lies in that
+/// room is not passed over. A selection that must hold `e` tests [`bounds_in`] itself.
+fn touch_box_in<'a>(d: &'a Drawing, e: &Entity, known: Option<Bounds2>, view: &mut ViewportBounds<'a>) -> Bounds2 {
+    let b = bounds_in(d, e, known, view);
+    outline_in(d, e, view, b)
+}
+
 pub(crate) fn is_infinite(e: &Entity) -> bool {
     matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_))
 }
@@ -297,7 +314,7 @@ pub(crate) fn pick_with(
             continue;
         }
         let infinite = is_infinite(e);
-        if !infinite && !bounds_in(d, e, known, &mut view).expand(aperture).intersects(&probe) {
+        if !infinite && !touch_box_in(d, e, known, &mut view).expand(aperture).intersects(&probe) {
             continue;
         }
         if entity_distance_in(d, e, &mut view, p, aperture / 4.0) <= aperture {
@@ -322,7 +339,7 @@ pub fn pick_all_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, apert
     cands
         .filter(|(e, known)| {
             selectable(d, e, frozen)
-                && (is_infinite(e) || bounds_in(d, e, *known, &mut view).expand(aperture).intersects(&probe))
+                && (is_infinite(e) || touch_box_in(d, e, *known, &mut view).expand(aperture).intersects(&probe))
                 && entity_distance_in(d, e, &mut view, p, aperture / 4.0) <= aperture
         })
         .map(|(e, _)| e.handle)
@@ -402,10 +419,10 @@ fn in_window_in<'a>(
     if !infinite && bx.contains_box(&eb) {
         return true;
     }
-    if !crossing || (!infinite && !eb.intersects(bx)) {
+    if !crossing || (!infinite && !outline_in(d, e, view, eb).intersects(bx)) {
         return false;
     }
-    let polys = hit_polylines_in(d, e, view, tol);
+    let polys = hit_polylines_in(d, e, view, tol, true);
     let hit = polys.iter().any(|pl| {
         if pl.len() == 1 {
             pl.first().is_some_and(|p| bx.contains(*p))
@@ -457,10 +474,10 @@ pub(crate) fn select_fence_with(
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e, frozen) || (!is_infinite(e) && !bounds_in(d, e, known, &mut view).intersects(&probe)) {
+        if !selectable(d, e, frozen) || (!is_infinite(e) && !touch_box_in(d, e, known, &mut view).intersects(&probe)) {
             continue;
         }
-        let polys = hit_polylines_in(d, e, &mut view, tol);
+        let polys = hit_polylines_in(d, e, &mut view, tol, true);
         let hit = fence.windows(2).any(|f| {
             let (Some(a), Some(b)) = (f.first(), f.get(1)) else { return false };
             let fl = Line::new(*a, *b);
@@ -498,11 +515,11 @@ pub fn select_polygon_in(d: &Drawing, space: &Space, frozen: &[String], poly: &[
         if !selectable(d, e, frozen) || (infinite && !crossing) {
             continue;
         }
-        let eb = bounds_in(d, e, known, &mut view);
+        let eb = if crossing { touch_box_in(d, e, known, &mut view) } else { bounds_in(d, e, known, &mut view) };
         if !infinite && if crossing { !eb.intersects(&pb) } else { !pb.contains_box(&eb) } {
             continue;
         }
-        let polys = hit_polylines_in(d, e, &mut view, tol);
+        let polys = hit_polylines_in(d, e, &mut view, tol, crossing);
         let crosses = polys.iter().any(|pl| {
             pl.windows(2).any(|w| {
                 w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line(f, &Line::new(*p, *q)).is_some()))
