@@ -104,7 +104,7 @@ fn build_table(st: &TableStyle, at: Vec2, data: &[Vec<String>], text_height: Opt
             if let Some(slot) = col_chars.get_mut(c) {
                 *slot = (*slot).max(max_chars);
             }
-            table_row.push(TableCell { text: raw.replace('\n', "\\P"), ..TableCell::default() });
+            table_row.push(TableCell { text: cadcraft_doc::mtext_literal(raw), ..TableCell::default() });
         }
         row_heights.push(th * (max_lines as f64 * 5.0 / 3.0) + 2.0 * margin);
         cells.push(table_row);
