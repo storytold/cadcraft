@@ -207,6 +207,10 @@ pub struct CanvasState {
     hover_cycle: Option<(Pos2, Vec<Handle>, usize)>,
     /// What the cycling list and the Shift+Space highlight were made for (see [`CycleKey`]).
     cycle_key: Option<CycleKey>,
+    /// The drawing (its uid) shown in the last pass; `None` while the Start page is.
+    pub(crate) shown: Option<u64>,
+    /// A drawing opened or became active and has yet to ask for the keyboard focus ([`focus_opened`]).
+    wants_focus: bool,
 }
 
 /// The command, prompt, drawing (and its revision) and view that the objects under the cursor
@@ -841,6 +845,35 @@ pub(crate) fn right_click_cancels_placing(app: &CadApp) -> bool {
         && app.session.current_prompt().is_some_and(|p| p.message == "Specify insertion point")
 }
 
+/// A press in the drawing gives it the keyboard focus, so Tab reaches the command line. Real presses only: with the
+/// drawing focused, egui makes Enter and Space clicks of it.
+fn focus_on_press(resp: &egui::Response) {
+    if resp.is_pointer_button_down_on() && resp.ctx.input(|i| i.pointer.any_pressed()) {
+        resp.request_focus();
+    }
+}
+
+/// A drawing that opens or becomes active asks for the keyboard focus, because typing goes to its command line. It
+/// waits for a modal dialog, menu or popup to close, and leaves the focus with a text field and with a widget of another
+/// window. Called after [`show`], so a key that opened the drawing is not read again by the command line.
+pub(crate) fn focus_opened(app: &mut CadApp, ctx: &egui::Context) {
+    let doc = app.session.docs.get(app.session.active).map(|doc| doc.uid);
+    if app.canvas.shown != doc {
+        app.canvas.shown = doc;
+        app.canvas.wants_focus = true;
+    }
+    if !app.canvas.wants_focus || crate::framework::overlay_open(app, ctx) {
+        return;
+    }
+    app.canvas.wants_focus = false;
+    let drawing = crate::framework::drawing_id();
+    let layer = |id| ctx.read_response(id).map(|widget| widget.layer_id);
+    let focused = ctx.memory(|memory| memory.focused());
+    if !ctx.text_edit_focused() && focused.is_none_or(|id| layer(id) == layer(drawing)) {
+        ctx.memory_mut(|memory| memory.request_focus(drawing));
+    }
+}
+
 /// Draw the drawing area and handle its input (zoom and pan, picking, the crosshair) for this
 /// frame.
 ///
@@ -857,6 +890,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let tiles = tile_rects(app, full);
     let rect = tiles.iter().find(|(_, tile)| tile.active).map_or(full, |(r, _)| *r);
     let resp = ui.interact(full, crate::framework::drawing_id(), Sense::click_and_drag());
+    focus_on_press(&resp);
     let painter = ui.painter_at(rect);
     app.canvas.rect = Some(rect);
     app.session.viewport_px = (f64::from(rect.width()).max(1.0), f64::from(rect.height()).max(1.0));

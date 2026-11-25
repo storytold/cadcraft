@@ -16,9 +16,10 @@ use craft_keymap::Overrides;
 use craft_ui::fonts::{I18nScripts, SystemFonts, UiFonts};
 use craft_ui::runtime::commands::{CommandInput, CommandSet as _, NavCommand};
 use craft_ui::runtime::env::{RootEnv, Scale};
-use craft_ui::runtime::focus::{EditSet, KeyUse};
+use craft_ui::runtime::focus::{EditSet, KeepKeys, KeyUse};
 use craft_ui::runtime::frame::{FrameInput, FrameOutput};
 use craft_ui::runtime::keys::{Intent, with_window_intents};
+use craft_ui::runtime::overlay::{self, OpenFilter};
 use craft_ui::shell::embed::{self, CloseDecision};
 use craft_window::system::WindowSystem;
 use egui::ViewportId;
@@ -144,11 +145,18 @@ pub(crate) fn drawing_id() -> egui::Id {
 
 /// Declares the drawing, drawn in this pass, as the window's document canvas. With nothing focused it is the window's
 /// key target: Enter, the arrows, Delete, the edit chords and the clipboard events stay in egui's input for the command
-/// line and CADCraft's shortcuts. Tab and Shift+Tab stop at the drawing and move on from it; a click in it takes no
-/// focus.
-pub(crate) fn host_canvas(ctx: &egui::Context) {
+/// line and CADCraft's shortcuts. Tab and Shift+Tab stop at the drawing; with `keeps_tab` the focused drawing keeps
+/// them in egui's input, else they move on from it.
+pub(crate) fn host_canvas(ctx: &egui::Context, keeps_tab: bool) {
     const KEYS: KeyUse = KeyUse::CANVAS.with_edits(EditSet::ALL);
-    craft_ui::runtime::focus::host_canvas(ctx, drawing_id(), KEYS);
+    let keys = if keeps_tab { KEYS.with_keep(KeepKeys::Tab) } else { KEYS };
+    craft_ui::runtime::focus::host_canvas(ctx, drawing_id(), keys);
+}
+
+/// Whether a modal dialog, CADCraft's, egui's or the framework's, or an egui menu or popup is up. A framework menu holds
+/// the focus in its own layer.
+pub(crate) fn overlay_open(app: &CadApp, ctx: &egui::Context) -> bool {
+    crate::docking::native_input_blocked(app, ctx) || egui::Popup::is_any_open(ctx) || overlay::any_open(ctx, OpenFilter::Modal)
 }
 
 /// Whether a widget other than the drawing has the keyboard. The command line and CADCraft's shortcuts have it

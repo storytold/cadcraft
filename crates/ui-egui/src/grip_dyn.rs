@@ -279,8 +279,7 @@ mod tests {
 
         // `20` Tab: the length locks and the next field is active; the grip sits on the circle.
         run_frame(&mut app, &ctx, vec![Event::Text("20".into())]);
-        // (Tab reaches the command line as text: `cmdline::capture_tab`.)
-        run_frame(&mut app, &ctx, vec![Event::Text("\t".into())]);
+        run_frame(&mut app, &ctx, key(egui::Key::Tab));
         assert_eq!(app.canvas.grip_dyn.locked, [(0, "20".to_owned())]);
         assert_eq!(app.canvas.grip_dyn.active, 1);
         assert!(app.cmd.buffer.is_empty());

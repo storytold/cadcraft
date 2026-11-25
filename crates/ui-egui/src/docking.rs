@@ -690,9 +690,13 @@ impl DockPanels<Panel> for Panels<'_> {
         if !panels.contains(&Panel::Canvas) {
             return None;
         }
-        crate::framework::host_canvas(ui.ctx());
+        // Declared before the widgets drawn over it, for its place in Tab order, and again after this pass's input has
+        // changed what Tab has to do.
+        crate::framework::host_canvas(ui.ctx(), crate::cmdline::tab_has_work(self.app));
         ui.painter().rect_filled(rect, 0.0, crate::theme::Tokens::get().canvas);
         crate::canvas::show(self.app, ui);
+        crate::canvas::focus_opened(self.app, ui.ctx());
+        crate::framework::host_canvas(ui.ctx(), crate::cmdline::tab_has_work(self.app));
         Some(rect.height())
     }
 }

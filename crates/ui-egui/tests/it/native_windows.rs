@@ -19,7 +19,6 @@ fn frame_with(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) {
         egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), events, ..Default::default() };
     app.raw_input_hook(ctx, &mut raw);
     app.before_input(ctx);
-    cadcraft_ui_egui::cmdline::capture_tab(ctx, &mut raw);
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
         app.ui(ui);

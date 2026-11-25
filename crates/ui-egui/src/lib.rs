@@ -1222,6 +1222,7 @@ impl CadApp {
             if has_doc {
                 docking::show(self, ui);
             } else {
+                self.canvas.shown = None;
                 chrome::start_page(self, ui);
             }
         });

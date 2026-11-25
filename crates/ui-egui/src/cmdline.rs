@@ -64,34 +64,19 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
     Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
 }
 
-/// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
-/// the command line deaf to typing). While no widget has focus, a pressed Tab becomes a `"\t"`
-/// text event, which keeps its place among the other keystrokes; [`keyboard`] handles it. From a
-/// focused widget, the drawing included, Tab moves on in the window's Tab order.
-pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
-    if ctx.egui_wants_keyboard_input() {
-        return;
-    }
-    raw.events.retain_mut(|e| {
-        let tab = match e {
-            egui::Event::Key { key: Key::Tab, pressed, .. } => Some(*pressed),
-            _ => None,
-        };
-        match tab {
-            Some(true) => {
-                *e = egui::Event::Text("\t".into());
-                true
-            }
-            Some(false) => false,
-            None => true,
-        }
-    });
+/// Whether Tab on the command line has something to act on: a running command or LISP prompt, typed
+/// text, the Dynamic Input or grip value boxes, or a snap marker under the cursor.
+pub(crate) fn tab_has_work(app: &CadApp) -> bool {
+    app.session.prompting() || !app.cmd.buffer.is_empty() || dyn_frame(app).is_some() || app.canvas.snap.is_some()
 }
 
 /// Tab on the command line: cycle the object snaps under the cursor, type the Dynamic Input
 /// separator (`,` or `<`) after a value, cycle between the two Dynamic Input boxes, or complete a
 /// command name.
 fn tab(app: &mut CadApp) {
+    if !tab_has_work(app) {
+        return;
+    }
     // Grip dimensional input: Tab locks the typed value and moves to the next field.
     if crate::grip_dyn::tab(app) {
         return;
@@ -368,7 +353,7 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
     });
 }
 
-/// Handle keyboard input destined for the command line (when no text field has focus).
+/// Handle keyboard input destined for the command line (with nothing or the drawing focused).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if crate::framework::widget_has_keyboard(ctx) {
         app.cmd.preedit.clear();
@@ -427,9 +412,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         }
         match ev {
             egui::Event::Text(t) => {
-                if t == "\t" {
-                    tab(app);
-                } else if t == " " && !text_prompt {
+                if t == " " && !text_prompt {
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
@@ -1203,8 +1186,13 @@ mod dyn_tab_tests {
         out.textures_delta.clear();
     }
 
+    /// The key events of typing `text`, a tab character as a press of Tab.
     fn typed(text: &str) -> Vec<egui::Event> {
-        text.chars().map(|c| egui::Event::Text(c.to_string())).collect()
+        let event = |c: char| match c {
+            '\t' => egui::Event::Key { key: Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+            c => egui::Event::Text(c.to_string()),
+        };
+        text.chars().map(event).collect()
     }
 
     #[test]
@@ -1219,6 +1207,7 @@ mod dyn_tab_tests {
         run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
         app.cmdline("line");
         app.cmdline("0,0");
+        run_frame(&mut app, &ctx, Vec::new());
         run_frame(&mut app, &ctx, typed("40\t90\t"));
         assert!(app.cmd.first_active(), "{:?}", app.cmd.buffer);
         let escape = egui::Key::Escape;
@@ -1251,6 +1240,7 @@ mod dyn_tab_tests {
         run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
         app.cmdline("line");
         app.cmdline("0,0");
+        run_frame(&mut app, &ctx, Vec::new());
         run_frame(&mut app, &ctx, typed("40\t90\t"));
         assert!(app.cmd.first_active(), "{:?}", app.cmd.buffer);
         app.session.settings.dynmode = false;
@@ -1283,6 +1273,7 @@ mod dyn_tab_tests {
         let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
         app.cmdline("line");
         app.cmdline("0,0");
+        run_frame(&mut app, &ctx, Vec::new());
         run_frame(&mut app, &ctx, typed("40\t90\t"));
         let back = egui::Key::Backspace;
         let m = egui::Modifiers::NONE;
@@ -1349,6 +1340,7 @@ mod dyn_tab_tests {
         let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
         app.cmdline("line");
         app.cmdline("0,0");
+        run_frame(&mut app, &ctx, Vec::new());
         run_frame(&mut app, &ctx, typed("40<90\t"));
         assert!(app.cmd.second_locked());
         let at = center + egui::vec2(37.0, -23.0);

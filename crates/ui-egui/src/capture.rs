@@ -234,9 +234,10 @@ fn active_document(app: &CadApp) -> Option<u64> {
     app.session.docs.get(app.session.active).map(|doc| doc.uid)
 }
 
-/// The widget egui currently reports as keyboard-focused, if any.
+/// The widget egui currently reports as keyboard-focused, if any. The drawing's focus shows nothing, so it counts as
+/// none: a command that opens a drawing moves the focus to it in a later frame.
 fn current_focus(ctx: &egui::Context) -> Option<egui::Id> {
-    ctx.memory(|memory| memory.focused())
+    ctx.memory(|memory| memory.focused()).filter(|id| *id != crate::framework::drawing_id())
 }
 
 /// Snapshot the active drawing UID, the monotonic document epoch and the focused widget together.

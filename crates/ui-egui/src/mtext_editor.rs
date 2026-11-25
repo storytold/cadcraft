@@ -592,7 +592,7 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
     out.response.response.clone().accessible_name(crate::tl!("Text"));
     // On opening, and while the text is empty, the editor takes the focus; a field of the toolbar
     // the user clicked keeps it.
-    let free = ui.memory(|m| m.focused().is_none());
+    let free = !crate::framework::widget_has_keyboard(ui.ctx());
     if !out.response.has_focus() && (!st.focused || (buf.is_empty() && st.fmt.is_empty() && free)) {
         out.response.request_focus();
     }

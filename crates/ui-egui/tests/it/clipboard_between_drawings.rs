@@ -75,7 +75,8 @@ fn copy_in_one_drawing_and_paste_in_another() {
     assert_eq!(h.state().session.active, second);
     assert_ne!(second, first);
     assert!(h.state().session.doc().unwrap().model.is_empty());
-    assert!(!h.ctx.egui_wants_keyboard_input(), "the clicked tab doesn't hold the keyboard");
+    let drawing = h.ctx.memory(|memory| memory.has_focus(egui::Id::unique("cadcraft-drawing")));
+    assert!(drawing, "the drawing has the keyboard, not the clicked tab");
     // Ctrl+V: egui reports it as a Paste event with the system clipboard's text.
     h.event(Event::Paste(text));
     h.run_steps(3);

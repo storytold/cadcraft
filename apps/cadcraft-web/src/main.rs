@@ -56,11 +56,9 @@ mod web {
             }
             self.0.close_path(ctx);
         }
-        /// Forward raw input to the web `CadApp`, capture Tab at the command line, and hand the frame's root values
-        /// to the UI runtime.
+        /// Forward raw input to the web `CadApp` and hand the frame's root values to the UI runtime.
         fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
             self.0.raw_input_hook(ctx, raw);
-            cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
             self.0.before_input(ctx);
         }
         /// Preferences and validated panel placement survive reloads; egui memory is not kept.
