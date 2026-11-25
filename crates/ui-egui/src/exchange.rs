@@ -172,6 +172,7 @@ struct FromPlot {
     info: String,
 }
 
+const PREVIEW: &str = "cc_plot_preview";
 const FROM_PLOT: &str = "cc_plot_preview_from_plot";
 
 /// Show the Plot dialog's settings as they plot (PLOT with `params`, a PNG); Print... and Close
@@ -212,7 +213,7 @@ fn preview_texture(ctx: &egui::Context, png: &[u8]) -> Result<TextureHandle, Str
 
 /// The Plot Preview window: the sheet as it plots, with Print and Close.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    let id = egui::Id::unique("cc_plot_preview");
+    let id = egui::Id::unique(PREVIEW);
     let generation = PREVIEW_GEN.load(Ordering::Relaxed);
     let cached = ctx.data(|d| d.get_temp::<Preview>(id)).filter(|p| p.generation == generation);
     let preview = match cached {
@@ -248,14 +249,22 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if close || print {
         *open = false;
     }
-    let from_plot = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))).is_some();
     if !*open {
-        ctx.data_mut(|d| {
-            d.remove::<Preview>(id);
-            d.remove::<FromPlot>(egui::Id::unique(FROM_PLOT));
-        });
+        close_preview(app, ctx, print);
     }
-    if from_plot && !*open {
+}
+
+/// Close the preview through the window controls or the application Close shortcut.
+pub(crate) fn close_preview(app: &mut CadApp, ctx: &egui::Context, print: bool) {
+    let from_plot = ctx.data_mut(|d| {
+        let id = egui::Id::unique(FROM_PLOT);
+        let from_plot = d.get_temp::<FromPlot>(id).is_some();
+        d.remove::<FromPlot>(id);
+        d.remove::<Preview>(egui::Id::unique(PREVIEW));
+        from_plot
+    });
+    app.ui.dialog = None;
+    if from_plot {
         // Back to the Plot dialog with its settings; Print... plots them.
         crate::managers::set_flag(ctx, crate::managers::PLOT_NOW, print);
         app.ui.dialog = Some("plot".into());
@@ -300,6 +309,24 @@ mod tests {
         let texture = super::preview_texture(&ctx, &png).unwrap();
         assert_eq!(texture.size(), [1, 1]);
         assert!(super::preview_texture(&ctx, b"not a PNG").is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn command_w_closes_plot_preview_and_discards_its_transient_settings() {
+        let (mut app, _) = app();
+        let ctx = egui::Context::default();
+        super::preview_plot(&mut app, &ctx, json!({"paper": "A3"}), "Plot settings".into());
+        let modifiers = egui::Modifiers::COMMAND;
+        let event = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed: true, repeat: false, modifiers };
+        let input = egui::RawInput { events: vec![egui::Event::ModifiersChanged(modifiers), event], ..Default::default() };
+
+        ctx.run_ui(input, |_| crate::menus::shortcuts(&mut app, &ctx)).textures_delta.clear();
+
+        assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
+        assert!(ctx.data(|d| d.get_temp::<super::FromPlot>(egui::Id::unique(super::FROM_PLOT))).is_none());
+        super::route(&mut app, "preview").unwrap();
+        assert!(ctx.data(|d| d.get_temp::<super::FromPlot>(egui::Id::unique(super::FROM_PLOT))).is_none());
     }
 
     #[test]

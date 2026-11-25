@@ -1014,9 +1014,25 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     // a field inside the dialog has keyboard focus. File › Close and typed CLOSE still act on the drawing.
     if cfg!(target_os = "macos")
         && app.ui.dialog.is_some()
-        && ctx.input_mut(|i| pairs.iter().any(|(shortcut, id)| id == "close" && i.consume_shortcut(shortcut)))
+        && ctx.input_mut(|input| {
+            let count = input.events.len();
+            input.events.retain(|event| {
+                let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { return true };
+                // egui also matches extra Shift or Alt, so only intercept the same winning
+                // shortcut the specificity-ordered table would dispatch.
+                pairs
+                    .iter()
+                    .find(|(shortcut, _)| shortcut.logical_key == *key && modifiers.matches_logically(shortcut.modifiers))
+                    .is_none_or(|(_, id)| id != "close")
+            });
+            input.events.len() != count
+        })
     {
-        run_transparent(app, "ui.dialog.close");
+        if app.ui.dialog.as_deref() == Some("preview") {
+            crate::exchange::close_preview(app, ctx, false);
+        } else {
+            run_transparent(app, "ui.dialog.close");
+        }
         return;
     }
     // A palette toggle is global even while its expression field owns keyboard focus.
@@ -1149,6 +1165,23 @@ mod tests {
         close(&mut app);
         assert_eq!(app.session.state().unwrap().uid, uid);
         assert!(app.close_prompt().is_some(), "with no dialog, closing a dirty drawing still asks to save it");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_more_specific_command_shift_w_shortcut_does_not_dismiss_the_dialog() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.ui.shortcuts.insert("ui.toggle.history".to_string(), "Cmd+Shift+W".to_string());
+        app.run("ui.dialog.about", Value::Null).unwrap();
+        let ctx = egui::Context::default();
+        let modifiers = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        let event = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed: true, repeat: false, modifiers };
+        let input = egui::RawInput { events: vec![egui::Event::ModifiersChanged(modifiers), event], ..Default::default() };
+
+        ctx.run_ui(input, |_| super::shortcuts(&mut app, &ctx)).textures_delta.clear();
+
+        assert!(app.cmd.expanded, "the user binding wins over Close");
+        assert_eq!(app.ui.dialog.as_deref(), Some("about"));
     }
 
     #[cfg(target_os = "macos")]
