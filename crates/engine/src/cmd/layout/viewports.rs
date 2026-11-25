@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::super::curves::{self, handle_value};
 use super::super::helpers::{lwpoly, rect_vertices};
-use super::super::{bad, bool_or, point_param, points_param, str_param, targets};
+use super::super::{bad, bool_or, point_req, points_param, str_param, targets};
 use super::{fit_view, layout_viewports, mview, printable, split, target_layout};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -103,7 +103,9 @@ fn check_boundary(cmd: &str, d: &Drawing, space: &Space, h: Handle) -> Result<Bo
     // The exact extents (the tessellated outline runs just inside curves).
     let eb = cadcraft_doc::entity_bounds(d, e, 0);
     let b = if eb.is_empty() || !eb.min.is_finite() || !eb.max.is_finite() { b } else { b.union(&eb) };
-    if b.width() > 1e7 || b.height() > 1e7 {
+    if !b.min.is_finite() || !b.max.is_finite() || !b.width().is_finite() || !b.height().is_finite()
+        || b.width() > 1e12 || b.height() > 1e12
+    {
         return Err(bad(cmd, "the viewport is too large"));
     }
     Ok(b)
@@ -245,15 +247,22 @@ fn mview_restore(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).unwrap_or(VportConfig::ACTIVE).to_string();
     let tiles = super::super::view::config_tiles(s, &name)
         .ok_or_else(|| EngineError::Other(format!("Could not find viewport configuration \"{}\".", name.chars().take(64).collect::<String>())))?;
-    let rect = match (point_param(p, "p1"), point_param(p, "p2")) {
-        (Some(a), Some(b)) => Bounds2::new(a, b),
-        _ => printable(s, layout)?,
+    let rect = match (p.get("p1"), p.get("p2")) {
+        (Some(_), Some(_)) => Bounds2::new(point_req("mview", p, "p1")?, point_req("mview", p, "p2")?),
+        (None, None) => printable(s, layout)?,
+        _ => return Err(bad("mview", "`p1` and `p2` must be provided together")),
     };
-    if rect.is_empty() || !rect.min.is_finite() || !rect.max.is_finite() || rect.width() < 1e-6 || rect.height() < 1e-6 {
+    if rect.is_empty()
+        || !rect.min.is_finite()
+        || !rect.max.is_finite()
+        || !rect.width().is_finite()
+        || !rect.height().is_finite()
+        || rect.width() < 1e-6
+        || rect.height() < 1e-6
+        || rect.width() > 1e12
+        || rect.height() > 1e12
+    {
         return Err(bad("mview", "the viewport has no area"));
-    }
-    if rect.width() > 1e7 || rect.height() > 1e7 {
-        return Err(bad("mview", "the viewport is too large"));
     }
     let common = s.current_common();
     let d = s.doc_mut()?;

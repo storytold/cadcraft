@@ -249,7 +249,7 @@ fn layout_sheet_does_not_infer_placement_from_the_image_origin() {
 #[test]
 fn layout_sheet_falls_back_for_unrepresentable_scales() {
     let mut d = sample();
-    for scale in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::from_bits(1)] {
+    for scale in [0.0, -1.0, 1e-7, 2e6, f64::NAN, f64::INFINITY, f64::from_bits(1)] {
         let page = &mut d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
         page.scale = scale;
         let screen = build(&d, &Space::Paper("Layout1".into()), &Options::default()).sheet.unwrap();

@@ -204,7 +204,7 @@ pub fn layout_sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     let l = d.layout(layout)?;
     let page = &l.page;
     let physical = Sheet::from_page(page, page_unit_mm(d, page));
-    if !(page.scale.is_finite() && page.scale > 0.0) {
+    if !(page.scale.is_finite() && (1e-6..=1e6).contains(&page.scale)) {
         warn_invalid_sheet();
         return Some(physical);
     }
