@@ -228,6 +228,11 @@ fn click(h: &mut Harness<'_, CadApp>, at: egui::Pos2) {
     }
 }
 
+fn click_label(h: &mut Harness<'_, CadApp>, label: &str) {
+    let at = h.get_by_label(label).rect().center();
+    click(h, at);
+}
+
 fn nothing_focused(h: &mut Harness<'_, CadApp>) {
     h.ctx.memory_mut(|memory| memory.surrender_focus(memory.focused().unwrap_or(egui::Id::NULL)));
     steps(h, 2);
@@ -324,6 +329,19 @@ fn an_opened_drawing_leaves_the_focus_with_a_text_field_and_a_dialog() {
     h.state_mut().answer_close(cadcraft_ui_egui::closing::Choice::Cancel);
     steps(&mut h, 4);
     assert_eq!(focused(&h), drawing(), "Save changes has closed");
+}
+
+/// A command started with the mouse from the palette, and a status bar toggle clicked during it, leave Tab to the
+/// command line.
+#[test]
+fn tab_stays_with_a_command_started_and_steered_with_the_mouse() {
+    let mut h = harness();
+    click_label(&mut h, "Line");
+    assert_eq!((running(&h), focused(&h)), (Some("line"), drawing()));
+    type_text(&mut h, "10");
+    click_label(&mut h, "Ortho Mode (F8)");
+    press(&mut h, Modifiers::NONE);
+    assert_eq!((h.state().cmd.buffer.as_str(), focused(&h)), ("10,", drawing()));
 }
 
 /// Focuses the text box showing `value` with Tab.

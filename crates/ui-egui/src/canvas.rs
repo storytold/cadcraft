@@ -853,22 +853,25 @@ fn focus_on_press(resp: &egui::Response) {
     }
 }
 
-/// A drawing that opens or becomes active asks for the keyboard focus, because typing goes to its command line. It
-/// waits for a modal dialog, menu or popup to close, and leaves the focus with a text field and with a widget of another
-/// window. Called after [`show`], so a key that opened the drawing is not read again by the command line.
+/// A drawing that opens or becomes active asks for the keyboard focus, because typing goes to its command line. So does
+/// the drawing while nothing is focused and its command line has work for Tab. It waits for a modal dialog, menu or
+/// popup to close, and leaves the focus with a text field and with a widget of another window. Called after [`show`], so
+/// a key that opened the drawing is not read again by the command line.
 pub(crate) fn focus_opened(app: &mut CadApp, ctx: &egui::Context) {
     let doc = app.session.docs.get(app.session.active).map(|doc| doc.uid);
     if app.canvas.shown != doc {
         app.canvas.shown = doc;
         app.canvas.wants_focus = true;
     }
-    if !app.canvas.wants_focus || crate::framework::overlay_open(app, ctx) {
+    let focused = ctx.memory(|memory| memory.focused());
+    // A click on a palette or the status bar takes the focus from the drawing and leaves it nowhere.
+    let tab_work = focused.is_none() && crate::cmdline::tab_has_work(app);
+    if !(app.canvas.wants_focus || tab_work) || crate::framework::overlay_open(app, ctx) {
         return;
     }
     app.canvas.wants_focus = false;
     let drawing = crate::framework::drawing_id();
     let layer = |id| ctx.read_response(id).map(|widget| widget.layer_id);
-    let focused = ctx.memory(|memory| memory.focused());
     if !ctx.text_edit_focused() && focused.is_none_or(|id| layer(id) == layer(drawing)) {
         ctx.memory_mut(|memory| memory.request_focus(drawing));
     }
