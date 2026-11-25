@@ -671,6 +671,132 @@ fn a_stretch_moves_an_arc_end_inside_its_frame_and_keeps_its_height() {
     assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)]);
 }
 
+/// The door block with arc 34 (from (36, 0), inside the stretch's frame, over (28, 4) to (20, 0))
+/// also held by the stretch, and flip parameter Flip state1 (graph id 7, reflection line from the
+/// origin to `end`) with one flip action per entry of `held`, holding those objects. The flip
+/// actions are listed in the evaluation graph before the stretch when `first`, else after it.
+/// Lookup Size's Narrow row also sets Flip state1 to Flipped (Wide to Not flipped).
+fn door_with_flip(end: (f64, f64), held: &[&[&str]], first: bool) -> String {
+    let angle = |x: f64, y: f64| y.atan2(x).to_degrees();
+    let node = |k: usize, id: usize, handle: &str| format!("91 {k}\n93 32\n95 {id}\n360 {handle}\n92 -1\n92 -1\n92 -1\n92 -1\n");
+    let mut nodes = node(6, 7, "6A");
+    let mut objects = format!(
+        "0 BLOCKFLIPPARAMETER\n5 6A\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n100 AcDbBlockElement\n300 Flip\n98 33\n99 232\n1071 0\n\
+         100 AcDbBlockParameter\n280 1\n281 0\n100 AcDbBlock2PtParameter\n1010 0\n1020 0\n1030 0\n1011 {}\n1021 {}\n1031 0\n170 4\n91 0\n91 0\n\
+         91 0\n91 0\n171 0\n172 0\n173 0\n174 0\n177 0\n100 AcDbBlockFlipParameter\n305 Flip state1\n306\n307 Not flipped\n308 Flipped\n\
+         1012 -12\n1022 0\n1032 0\n309 UpdatedFlip\n96 0\n",
+        end.0, end.1
+    );
+    for (k, objs) in held.iter().enumerate() {
+        let handle = format!("6{}", ["B", "C", "D"][k]);
+        nodes.push_str(&node(7 + k, 8 + k, &handle));
+        objects.push_str(&format!(
+            "0 BLOCKFLIPACTION\n5 {handle}\n330 61\n100 AcDbEvalExpr\n90 {}\n98 33\n99 232\n100 AcDbBlockElement\n300 Flip{}\n98 33\n99 232\n\
+             1071 0\n100 AcDbBlockAction\n70 2\n91 0\n91 0\n71 {}\n{}1010 -6\n1020 0\n1030 0\n100 AcDbBlockFlipAction\n92 7\n93 7\n94 7\n\
+             95 7\n301 Flip\n302 UpdatedFlip\n303 UpdatedBase\n304 UpdatedEnd\n",
+            8 + k,
+            k + 1,
+            objs.len(),
+            objs.iter().map(|h| format!("330 {h}\n")).collect::<String>()
+        ));
+    }
+    // The graph's node counts, and its nodes: the new ones first, or after the last.
+    let counts = format!("96 {0}\n97 {0}\n", 7 + held.len());
+    let last = "360 67\n92 -1\n92 -1\n92 -1\n92 -1\n";
+    let src = if first {
+        fixture().replacen("96 6\n97 6\n", &format!("{counts}{nodes}"), 1)
+    } else {
+        fixture().replacen("96 6\n97 6\n", &counts, 1).replacen(last, &format!("{last}{nodes}"), 1)
+    };
+    src.replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 34\n1010 40")
+        .replace("21 25\n31 0\n0 ENDBLK\n", &format!("21 25\n31 0\n{}0 ENDBLK\n", arc("34", 28.0, -6.0, 10.0, angle(8.0, 6.0), angle(-8.0, 6.0))))
+        .replace(
+            "93 2\n301\n302 30\n302 Narrow\n302 36\n302 Wide\n303\n94 2\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedDistance\n",
+            "93 3\n301\n302 30\n302 1\n302 Narrow\n302 36\n302 0\n302 Wide\n303\n94 2\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedDistance\n\
+             303\n94 7\n95 1\n96 0\n282 0\n305 Custom\n281 0\n304 UpdatedFlip\n",
+        )
+        .replace("0 ENDSEC\n0 EOF", &format!("{objects}0 ENDSEC\n0 EOF"))
+}
+
+/// The point halfway round each arc of reference `r`'s block, in its order.
+fn arc_middles(d: &cadcraft_doc::Drawing, r: Handle) -> Vec<(f64, f64)> {
+    let b = d.block(&block_of(d, &r.hex())).unwrap();
+    b.entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Arc(a) => {
+                let sweep = (a.end - a.start).rem_euclid(std::f64::consts::TAU);
+                let m = cadcraft_doc::geom::Vec2::polar(a.center.xy(), a.radius, a.start + sweep / 2.0);
+                Some((m.x, m.y))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether reference `r`'s one arc runs from `start` to `end` with radius `radius` through `mid`.
+fn arc_is(d: &cadcraft_doc::Drawing, r: Handle, start: (f64, f64), end: (f64, f64), radius: f64, mid: (f64, f64)) -> bool {
+    let (got, m) = (arcs(d, r), arc_middles(d, r));
+    got.len() == 1 && near(got[0], (start, end, radius)) && (m[0].0 - mid.0).hypot(m[0].1 - mid.1) < 1e-9
+}
+
+#[test]
+fn a_stretch_moves_the_end_of_a_flipped_arc_that_was_inside_its_frame() {
+    // Flip state1 mirrors arc 34 across the x axis, and a mirror swaps an arc's start and end: in
+    // the flipped reference the arc runs from (20, 0) under (28, -4) to (36, 0). A stretch then
+    // moves the end that was inside its frame in the dynamic block, (36, 0), to (30, 0), and the
+    // arc keeps its height of 4 over its chord, now below it; (20, 0) stays. Not flipped, the
+    // block's start (36, 0) moves and the arc rises over the chord. A selection that repeats the
+    // arc mirrors it once; two flip actions holding it mirror it back; a reflection line of no
+    // length mirrors nothing.
+    let over = ((30.0, 0.0), (20.0, 0.0), 5.125, (25.0, 4.0));
+    let under = ((20.0, 0.0), (30.0, 0.0), 5.125, (25.0, -4.0));
+    let cases: [(&str, (f64, f64), &[&[&str]], &str, _); 5] = [
+        ("not flipped", (-10.0, 0.0), &[&["34"]], "Not flipped", over),
+        ("flipped", (-10.0, 0.0), &[&["34"]], "Flipped", under),
+        ("flipped, the arc held twice", (-10.0, 0.0), &[&["34", "34"]], "Flipped", under),
+        ("flipped by two actions", (-10.0, 0.0), &[&["34"], &["34"]], "Flipped", over),
+        ("flipped across no line", (0.0, 0.0), &[&["34"]], "Flipped", over),
+    ];
+    for (case, end, held, state, (s, e, radius, mid)) in cases {
+        let (mut d, r) = door_reference(&door_with_flip(end, held, false));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Flip state1", state).unwrap();
+        let mirrored = s == under.0;
+        let (s0, e0, m0) = if mirrored { ((20.0, 0.0), (36.0, 0.0), (28.0, -4.0)) } else { ((36.0, 0.0), (20.0, 0.0), (28.0, 4.0)) };
+        assert!(arc_is(&d, r, s0, e0, 10.0, m0), "{case}, before the stretch: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+        assert!(arc_is(&d, r, s, e, radius, mid), "{case}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        assert_eq!(shapes(&d, r)[0], [(0.0, 0.0), (30.0, 0.0)], "{case}");
+    }
+}
+
+#[test]
+fn a_flip_and_a_stretch_in_one_change_move_the_arc_alike_in_either_order() {
+    // Size Narrow sets Width to 30 and flips arc 34 in one change. Whether the flip action comes
+    // before the stretch (the arc is mirrored, so the stretch moves its end) or after it (the
+    // stretch moves its start, then it is mirrored), the arc ends from (20, 0) under (25, -4) to
+    // (30, 0). Size Wide then sets Width back to 36 and flips the flipped reference back in one
+    // change: the flip first mirrors the arc back (the stretch moves its start), the flip after
+    // finds it still mirrored (the stretch moves its end); either way the arc is as the block has
+    // it again.
+    for first in [true, false] {
+        let (mut d, r) = door_reference(&door_with_flip((-10.0, 0.0), &[&["34"]], first));
+        let m = dynamic_block(&d, "Door").unwrap();
+        let order: Vec<i32> = m.actions.iter().filter(|a| matches!(a.kind, ActionKind::Flip | ActionKind::Stretch { .. })).map(|a| a.node).collect();
+        assert_eq!(order, if first { [8, 3] } else { [3, 8] });
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Size", "Narrow").unwrap();
+        let p = props(&d, &r.hex()).1;
+        let shown: Vec<(&str, &str)> = p.iter().map(|(n, v, _)| (n.as_str(), v.as_str())).collect();
+        assert!(shown.contains(&("Width", "30.0000")) && shown.contains(&("Flip state1", "Flipped")), "{shown:?}");
+        assert!(arc_is(&d, r, (20.0, 0.0), (30.0, 0.0), 5.125, (25.0, -4.0)), "flip first {first}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+        cadcraft_doc::dynblock::set_property(&mut d, r, "Size", "Wide").unwrap();
+        let p = props(&d, &r.hex()).1;
+        let shown: Vec<(&str, &str)> = p.iter().map(|(n, v, _)| (n.as_str(), v.as_str())).collect();
+        assert!(shown.contains(&("Width", "36.0000")) && shown.contains(&("Flip state1", "Not flipped")), "{shown:?}");
+        assert!(arc_is(&d, r, (36.0, 0.0), (20.0, 0.0), 10.0, (28.0, 4.0)), "back, flip first {first}: {:?} {:?}", arcs(&d, r), arc_middles(&d, r));
+    }
+}
+
 /// A HATCH `handle` of the door block, associative or not, with one straight loop through
 /// `points` made from boundary objects `sources`.
 fn hatch(handle: &str, associative: bool, points: &[(f64, f64)], sources: &[&str]) -> String {

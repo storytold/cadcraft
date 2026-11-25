@@ -932,6 +932,9 @@ struct ActionRun<'a> {
     param_of: HashMap<Handle, i32>,
     /// The reference's copy of each of the dynamic block's objects.
     copy_map: &'a HashMap<Handle, Handle>,
+    /// The dynamic block's objects whose copies the reference's flips mirror (see
+    /// [`flipped_objects`]).
+    flipped: HashSet<Handle>,
     new: BTreeMap<i32, Val>,
     moves: HashMap<Handle, Vec<Op>>,
 }
@@ -939,6 +942,13 @@ struct ActionRun<'a> {
 impl ActionRun<'_> {
     fn copy_of(&self, dh: &Handle) -> Option<Handle> {
         self.copy_map.get(dh).copied()
+    }
+
+    /// Whether copy `c` of the dynamic block's object `h` is mirrored from it where a move queued
+    /// for it now finds it: by the reference's flips, and by each mirror queued for it so far.
+    fn mirrored(&self, h: &Handle, c: Handle) -> bool {
+        let queued = self.moves.get(&c).map_or(0, |ops| ops.iter().filter(|op| matches!(op, Op::Transform(t) if t.is_mirroring())).count());
+        self.flipped.contains(h) != (queued % 2 == 1)
     }
 
     /// The value of parameter `node` so far: carried along by an action already, else the
@@ -1149,15 +1159,18 @@ impl ActionRun<'_> {
             // extrusion is exactly along z (a mirrored one is read flipped into it). Any tilt, however
             // small, moves them by as much as the elevation times the tilt, so a tilted one keeps the
             // stored list. A wipeout's outline is read into the block's plane. An arc's ends move as
-            // a polyline's vertices do (see `stretch_arc`). When the frame can't be tested, or an arc
-            // is tilted, a wipeout or arc moves whole, as before (their stored lists aren't measured).
+            // a polyline's vertices do (see `stretch_arc`); a copy mirrored from the dynamic block has
+            // them the other way round (a mirror swaps an arc's start and end). When the frame can't
+            // be tested, or an arc is tilted, a wipeout or arc moves whole, as before (their stored
+            // lists aren't measured).
             let idx = match self.def.entities.get(*h).map(|e| (&e.kind, e.common.extrusion)) {
                 Some((EntityKind::Line(l), _)) if framed => inside(frame, [l.a.xy(), l.b.xy()].into_iter()),
                 Some((EntityKind::LwPolyline(pl), n)) if framed && n.x == 0.0 && n.y == 0.0 => inside(frame, pl.vertices.iter().map(|v| v.p)),
                 Some((EntityKind::Wipeout(w), _)) if framed => inside(frame, w.boundary.iter().copied()),
                 Some((EntityKind::Arc(a), n)) if framed && n.x == 0.0 && n.y == 0.0 => {
-                    let c = a.center.xy();
-                    inside(frame, [Vec2::polar(c, a.radius, a.start), Vec2::polar(c, a.radius, a.end)].into_iter())
+                    let o = a.center.xy();
+                    let ends = inside(frame, [Vec2::polar(o, a.radius, a.start), Vec2::polar(o, a.radius, a.end)].into_iter());
+                    if self.mirrored(h, c) { ends.map(|i| i.into_iter().map(|k| 1 - k).collect()) } else { ends }
                 }
                 Some((EntityKind::Wipeout(_) | EntityKind::Arc(_), _)) => None,
                 _ => vtx_by_handle.get(h).map(|i| (*i).clone()),
@@ -1251,6 +1264,7 @@ fn apply(
         set,
         param_of: m.parameters.iter().map(|p| (p.handle, p.node)).collect(),
         copy_map: &copy_map,
+        flipped: flipped_objects(&m, values),
         new: set.clone(),
         moves: HashMap::new(),
     };
@@ -2068,6 +2082,25 @@ fn set_state(tags: &mut Vec<RawTag>, on: bool) {
         }
         None => tags.push(tag(70, i32::from(on).to_string())),
     }
+}
+
+/// The dynamic block's objects whose copies reference values `values` mirror: those held by an
+/// odd number of flip actions whose parameter is flipped. A selection that repeats an object
+/// mirrors it once, as [`ActionRun::transform`] does, and a reflection line of no length mirrors
+/// nothing, as [`transform_of`] makes no mirror across it.
+fn flipped_objects(m: &DynamicBlock, values: &BTreeMap<i32, Value>) -> HashSet<Handle> {
+    let mut out: HashSet<Handle> = HashSet::new();
+    for a in m.actions.iter().filter(|a| matches!(a.kind, ActionKind::Flip)) {
+        let Some(Val::Flip(b, e, true)) = a.connections.first().and_then(|(n, _)| current(m, values, *n)) else { continue };
+        if (e - b).len() > 1e-12 {
+            for h in a.selection.iter().collect::<HashSet<_>>() {
+                if !out.remove(h) {
+                    out.insert(*h);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The transform action `a` makes with the changes `set`, if it is one and they change it: a
