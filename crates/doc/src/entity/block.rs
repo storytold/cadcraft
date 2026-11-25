@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::common::{Common, Lineweight};
 use super::text::{MText, Text};
 use super::{Color, Deserialize, EntityKind, Mat3, Serialize, Vec2, Vec3};
@@ -142,6 +144,32 @@ impl AttribProps {
     }
 }
 
+/// An attribute tag as attributes are matched to their definitions and to each other: ASCII
+/// letters in either case are the same tag, other characters must be equal. As a hash key it finds
+/// the match in one lookup, where comparing each attribute with each definition costs their product
+/// on a block with many of both (#1923).
+#[derive(Clone, Copy, Debug)]
+pub struct TagKey<'a>(pub &'a str);
+
+impl PartialEq for TagKey<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(other.0)
+    }
+}
+
+impl Eq for TagKey<'_> {}
+
+impl std::hash::Hash for TagKey<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Tags equal without ASCII case hash alike: their bytes with ASCII letters in lower case,
+        // then a byte no UTF-8 text holds, as `str` ends its own.
+        for b in self.0.bytes() {
+            state.write_u8(b.to_ascii_lowercase());
+        }
+        state.write_u8(0xff);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Insert {
@@ -203,5 +231,32 @@ impl Insert {
             .then_before(Mat3::rotate(self.rotation))
             .then_before(Mat3::scale(self.scale.x, self.scale.y))
             .then_before(Mat3::translate(-base))
+    }
+
+    /// The reference's attributes by tag: of several with one tag (in any ASCII case), the first.
+    /// Built once, it tells whether the reference carries a definition's tag, and its value, in
+    /// one lookup instead of a pass over the attributes per definition (#1923).
+    pub fn attribs_by_tag(&self) -> HashMap<TagKey<'_>, &Attrib> {
+        let mut by_tag = HashMap::with_capacity(self.attribs.len());
+        for a in &self.attribs {
+            by_tag.entry(TagKey(a.tag.as_str())).or_insert(a);
+        }
+        by_tag
+    }
+}
+
+impl crate::Block {
+    /// The block's attribute definitions by tag: of several with one tag (in any ASCII case), the
+    /// first in the block's order, the one an attribute of that tag takes its properties from.
+    /// Built once for all of a reference's attributes, it matches each in one lookup instead of a
+    /// pass over the block per attribute (#1923).
+    pub fn attdefs_by_tag(&self) -> HashMap<TagKey<'_>, &crate::Entity> {
+        let mut by_tag = HashMap::new();
+        for e in self.entities.iter() {
+            if let EntityKind::AttDef(a) = &e.kind {
+                by_tag.entry(TagKey(a.tag.as_str())).or_insert(e.as_ref());
+            }
+        }
+        by_tag
     }
 }
