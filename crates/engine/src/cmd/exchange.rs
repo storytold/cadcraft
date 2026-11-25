@@ -235,6 +235,11 @@ fn units_per_mm(d: &Drawing) -> f64 {
         18 => 1.0 / 1.495_978_707e14,
         19 => 1.0 / 9.460_730_472_580_8e18,
         20 => std::f64::consts::PI / (648_000.0 * 1.495_978_707e14),
+        // US survey units: a survey foot is 1200/3937 m.
+        21 => 3937.0 / 1_200_000.0,
+        22 => 3937.0 / 100_000.0,
+        23 => 3937.0 / 3_600_000.0,
+        24 => 3937.0 / 6_336_000_000.0,
         _ => 1.0,
     }
 }
@@ -738,6 +743,21 @@ mod tests {
         let import = s.execute("pdfimport", &json!({ "data": data, "name": "scan.pdf" })).unwrap_err().to_string();
         assert!(import.contains("manual tracing") && import.contains("raster image"), "{import}");
         assert_eq!(s.doc().unwrap().model.len(), before, "no empty drawing was opened or imported");
+    }
+
+    #[test]
+    fn survey_units_convert_like_their_international_counterparts() {
+        let per_mm = |insunits: i64| {
+            let mut d = Drawing::new_metric();
+            d.header.set_i64("INSUNITS", insunits);
+            units_per_mm(&d)
+        };
+        // Survey feet, inches, yards and miles beside feet, inches, yards and miles.
+        for (survey, international) in [(21, 2), (22, 1), (23, 10), (24, 3)] {
+            let ratio = per_mm(survey) / per_mm(international);
+            // The survey unit is two parts per million longer.
+            assert!(ratio < 1.0 && ratio > 1.0 - 1e-5, "INSUNITS {survey}: {ratio}");
+        }
     }
 
     fn temp(name: &str) -> std::path::PathBuf {
