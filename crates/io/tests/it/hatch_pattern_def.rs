@@ -226,3 +226,17 @@ fn hostile_pattern_definitions_are_capped() {
     d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).expect("add");
     let _ = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
 }
+
+#[test]
+fn a_hatch_too_small_to_scale_saves_the_same_lines_each_time() {
+    // A spacing at or below 1e-9 is drawn and read at unit scale; the writer uses the same scale,
+    // so saving again does not shrink the lines.
+    let lines = cadcraft_doc::library::user_defined_lines(false);
+    let d = drawing(hatch(cadcraft_doc::library::USER_PATTERN, 1e-9, 0.0, Vec2::ZERO, lines));
+    let once = first_hatch(&write_dxf(&d));
+    let twice = first_hatch(&write_dxf(&drawing(once.clone())));
+    // Compared as a ratio: the values are far below any fixed tolerance.
+    let spacing = |h: &Hatch| h.pattern_lines.first().map(|l| l.delta.1).unwrap_or(f64::NAN);
+    let ratio = spacing(&twice) / spacing(&once);
+    assert!((ratio - 1.0).abs() < 1e-6, "{:?} then {:?}", once.pattern_lines, twice.pattern_lines);
+}

@@ -690,18 +690,21 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             // user-defined exception: its families are listed here as any pattern's are, and a
             // reader given 78 = 0 has no lines to draw.
             w.i(78, lines.len() as i64);
+            // The scale the renderer and the reader use: one too small to draw is 1, so a resave
+            // writes the lines it read back.
+            let k = if h.scale.is_finite() && h.scale > 1e-9 { h.scale } else { 1.0 };
             for pl in lines {
                 let ang = pl.angle.to_radians() + h.angle;
                 w.f(53, ang.to_degrees());
-                let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
+                let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * k;
                 w.f(43, o.x);
                 w.f(44, o.y);
-                let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
+                let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * k;
                 w.f(45, dl.x);
                 w.f(46, dl.y);
                 w.i(79, pl.dashes.len() as i64);
                 for dsh in pl.dashes {
-                    w.f(49, dsh * h.scale);
+                    w.f(49, dsh * k);
                 }
             }
         }
