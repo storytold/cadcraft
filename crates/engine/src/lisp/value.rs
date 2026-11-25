@@ -222,7 +222,7 @@ impl RecordName {
     /// A name never given before, for a record of `owner`; `None` once the count runs out.
     pub(crate) fn fresh(owner: Handle) -> Option<RecordName> {
         static NEXT: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1)).ok()?;
+        let id = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1)).ok()?;
         Some(RecordName { owner, id })
     }
 }
