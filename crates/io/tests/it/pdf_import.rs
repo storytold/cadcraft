@@ -559,6 +559,14 @@ fn a_path_that_doubles_back_along_an_edge_is_not_a_rectangular_clip() {
 }
 
 #[test]
+fn a_clip_of_separate_segments_is_empty_not_a_rectangle() {
+    // Two open segments reach the four corners of a box, but neither encloses any area.
+    let d = import("q 0 0 m 100 0 l 100 100 m 0 100 l W n 0 50 m 150 50 l S Q");
+    assert!(kinds(&d).is_empty(), "{:?}", kinds(&d));
+    assert!(!d.read_notes.iter().any(|n| n.contains("clips by a shape other than a rectangle")), "{:?}", d.read_notes);
+}
+
+#[test]
 fn raster_only_pages_are_identified_without_fabricated_geometry() {
     let d = import("q 100 0 0 100 0 0 cm BI /W 1 /H 1 /CS /RGB /BPC 8 /F /AHx ID FF0000> EI Q");
     assert!(d.model.is_empty());

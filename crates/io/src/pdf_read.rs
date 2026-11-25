@@ -710,16 +710,38 @@ fn translucent(paint: &Paint<'_>) -> bool {
     matches!(paint, Paint::Color(c) if { let [_, _, _, a] = c.to_rgba().to_rgba8(); a > 0 && a < 255 })
 }
 
-/// The rectangle a clip path is, when it is an axis-aligned one (four or five straight points).
+/// The rectangle a clip path is, when it is one axis-aligned subpath of four or five straight
+/// points; a rectangle with no area when its subpaths enclose none, since that clip shows nothing.
 fn rect_of(path: &BezPath) -> Option<Rect> {
-    let mut pts: Vec<Point> = Vec::new();
+    let mut subpaths: Vec<Vec<Point>> = Vec::new();
+    let mut closed = false;
     for el in path.elements() {
         match *el {
-            PathEl::MoveTo(p) | PathEl::LineTo(p) => pts.push(p),
-            PathEl::ClosePath => {}
+            PathEl::MoveTo(p) => {
+                subpaths.push(vec![p]);
+                closed = false;
+            }
+            PathEl::LineTo(p) => {
+                // A line after a close starts a new subpath where the closed one started.
+                if closed {
+                    let start = subpaths.last().and_then(|s| s.first()).copied().unwrap_or(p);
+                    subpaths.push(vec![start]);
+                    closed = false;
+                }
+                match subpaths.last_mut() {
+                    Some(s) => s.push(p),
+                    None => subpaths.push(vec![p]),
+                }
+            }
+            PathEl::ClosePath => closed = true,
             _ => return None,
         }
     }
+    if !subpaths.is_empty() && subpaths.iter().all(|s| collinear(s)) {
+        return Some(Rect::ZERO);
+    }
+    let [pts] = subpaths.as_slice() else { return None };
+    let mut pts = pts.clone();
     if !(4..=5).contains(&pts.len()) {
         return None;
     }
@@ -746,6 +768,14 @@ fn rect_of(path: &BezPath) -> Option<Rect> {
     let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].iter().all(|&(x, y)| pts.iter().filter(|p| at(p, x, y)).count() == 1);
     (pts.iter().all(|p| on(p.x, x0, x1) && on(p.y, y0, y1)) && (flat || corners) && x0.is_finite() && y0.is_finite())
         .then(|| Rect::new(x0, y0, x1, y1))
+}
+
+/// Whether the points lie on one straight line, or at one point, to a millionth of a point.
+fn collinear(pts: &[Point]) -> bool {
+    let Some(&a) = pts.first() else { return true };
+    let far = pts.iter().map(|p| *p - a).max_by(|u, v| u.hypot2().total_cmp(&v.hypot2())).unwrap_or_default();
+    let len = far.hypot();
+    len < 1e-6 || pts.iter().all(|p| (far.cross(*p - a) / len).abs() < 1e-6)
 }
 
 /// How a shape lies against a clip rectangle.
