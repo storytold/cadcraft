@@ -76,7 +76,13 @@ fn measure(paper: bool) {
     let shots = std::env::var_os("CADCRAFT_MEASURE_SHOTS").map(std::path::PathBuf::from);
     let mut h = harness(paper, shots.is_some());
     let dirty_before = h.state().session.state().unwrap().is_dirty();
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Measure Distance").click();
+    // The tool bar's Measure drop-down, then its Distance.
+    let button = h.get_by_role_and_label(egui::accesskit::Role::Button, "Measure").rect();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Measure").click();
+    h.run_steps(3);
+    let under = |r: egui::Rect| r.top() >= button.bottom() - 1.0 && (r.left() - button.left()).abs() < 200.0;
+    let distance = h.get_all_by_label("Distance").map(|n| n.rect()).filter(|r| under(*r)).min_by(|a, b| a.top().total_cmp(&b.top())).unwrap();
+    h.get_all_by_label("Distance").find(|n| n.rect() == distance).unwrap().click();
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().unwrap().id, "dist");
     let (endpoint, intersection) = if paper { (Vec2::new(3.5, 4.0), Vec2::new(5.0, 4.0)) } else { (Vec2::ZERO, Vec2::new(10.0, 0.0)) };

@@ -525,6 +525,7 @@ menu	Modify	Edita
 	Match Layer	Associa layer
 	Match Properties	Copia proprietà
 	Measure	Misura
+	Quick Measure	Misura rapida
 	Measure Distance	Misura distanza
 	Measure Geometry	Misura geometria
 	Merge Cells	Unisci celle
