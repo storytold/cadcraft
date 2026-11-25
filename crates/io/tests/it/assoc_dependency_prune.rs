@@ -223,3 +223,54 @@ fn dependency_listed_by_an_action_with_an_unknown_header_is_not_pruned() {
     assert_eq!(count, entries.len(), "the count matches the written list: {entries:?}");
     assert!(entries.iter().all(|(_, h)| written.contains(h)), "every entry names a written dependency: {entries:?}");
 }
+
+#[test]
+fn dependency_listed_by_an_unknown_action_that_is_pruned_is_pruned() {
+    // Action 507 has an unknown header and lists dangling dependency 508. 507 is owned by XRECORD
+    // 509, which dangling dependency 505 owns: 507 goes when 505 is pruned, and then nothing keeps 508.
+    let extra = "0\nXRECORD\n5\n509\n330\n505\n100\nAcDbXrecord\n280\n1\n1\nLINK_MARKER\n\
+                 0\nACDBASSOCACTION\n5\n507\n330\n509\n\
+                 100\nAcDbAssocAction\n90\n1\n90\n0\n290\n1\n330\n502\n360\n0\n90\n2\n90\n0\n90\n1\n330\n508\n\
+                 0\nACDBASSOCDEPENDENCY\n5\n508\n330\n502\n\
+                 100\nAcDbAssocDependency\n90\n2\n90\n0\n290\n1\n290\n1\n290\n1\n290\n1\n90\n0\n330\n998\n290\n0\n330\n0\n330\n0\n360\n0\n90\n3\n";
+    let dxf = dxf(&Parts { extra_objects: extra, ..PARTS });
+    let doc = cadcraft_io::read(dxf.as_bytes(), "assoc_pruned_lister.dxf").expect("read DXF");
+    let saved = cadcraft_io::write_dxf(&doc);
+
+    let actions = objects_of(&saved, "ACDBASSOCACTION");
+    assert!(actions.iter().all(|a| !a.iter().any(|(c, _)| c == "290")), "the unknown action goes with its owner");
+    let deps = objects_of(&saved, "ACDBASSOCDEPENDENCY");
+    assert_eq!(deps.len(), 1, "both dangling dependencies are dropped, got {deps:?}");
+}
+
+/// `n` dependencies owned by the network, each naming the next one as its `dependentOnObject`; the
+/// last names `end`. File order runs from the head of the chain to its end.
+fn dependency_chain(n: usize, end: &str) -> String {
+    (0..n)
+        .map(|i| {
+            let target = if i + 1 < n { format!("{:X}", 0x1000 + i + 1) } else { end.to_string() };
+            format!(
+                "0\nACDBASSOCDEPENDENCY\n5\n{:X}\n330\n502\n\
+                 100\nAcDbAssocDependency\n90\n2\n90\n0\n290\n1\n290\n1\n290\n1\n290\n1\n90\n0\n330\n{target}\n290\n0\n330\n0\n330\n0\n360\n0\n90\n{}\n",
+                0x1000 + i,
+                i + 10
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn long_dependency_chain_goes_whole_when_its_end_dangles() {
+    let n = 2000;
+    let live = dependency_chain(n, "100");
+    let saved =
+        cadcraft_io::write_dxf(&cadcraft_io::read(dxf(&Parts { extra_objects: &live, ..PARTS }).as_bytes(), "chain_live.dxf").expect("read DXF"));
+    let kept = objects_of(&saved, "ACDBASSOCDEPENDENCY").len();
+    assert!(kept > n, "a chain that ends at a written entity stays whole, {kept} kept");
+
+    let dangling = dependency_chain(n, "999");
+    let saved =
+        cadcraft_io::write_dxf(&cadcraft_io::read(dxf(&Parts { extra_objects: &dangling, ..PARTS }).as_bytes(), "chain.dxf").expect("read DXF"));
+    let deps = objects_of(&saved, "ACDBASSOCDEPENDENCY");
+    assert_eq!(deps.len(), 1, "every dependency of a chain that ends at a missing handle is dropped, {} kept", deps.len());
+}
