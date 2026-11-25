@@ -448,6 +448,10 @@ pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<V
     } else {
         sync(&mut workspace, app)?;
         apply_command(&mut workspace, params)?;
+        // An opened panel's floating window comes to the front, in its own OS window too.
+        if matches!(params.get("operation").and_then(Value::as_str), Some("open" | "activate")) {
+            app.dock.raise = params.get("panel").and_then(|panel| serde_json::from_value(panel.clone()).ok());
+        }
     }
     publish_visibility(app, &workspace);
     app.ui.docking = workspace;
@@ -465,11 +469,13 @@ fn apply_reported(app: &mut crate::CadApp, action: Action<Panel>) -> Result<(), 
     Ok(())
 }
 
-/// The workspace the dock shows and the panels' specs.
+/// The workspace the dock shows, the panels' specs and the panel to raise.
 #[derive(Default)]
 pub struct LiveDock {
     shown: Option<Arc<Workspace>>,
     specs: Tracked<DockSpecs>,
+    /// A panel opened from a menu or command, whose floating window comes to the front on the next frame.
+    raise: Option<Panel>,
 }
 
 impl LiveDock {
@@ -577,6 +583,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     let shown = app.dock.shown(&workspace);
     // The specs leave the app while its panels borrow it, and come back with their revision.
     let specs = std::mem::take(&mut app.dock.specs);
+    let raise = app.dock.raise.take();
     // AutoCAD's palettes dock only in the left and right dock columns: a window edge without a dock makes one, and
     // neither the drawing nor the top and bottom edges take a drop. Floating title bars only move windows. Each
     // closable tab has its close button.
@@ -584,7 +591,11 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         DockConfig::default().side_edge_zones(false).new_dock_zones(true).drop_edges(DockSides::NONE).title_bar_docks(false).tab_close_buttons(true);
     let (output, focused_windows) = {
         let mut panels = Panels { app: &mut *app, focused_windows: Vec::new() };
-        let output = DockArea::new("Panels", Bind::given(shown), &specs, &mut panels, config).show(ui);
+        let mut area = DockArea::new("Panels", Bind::given(shown), &specs, &mut panels, config);
+        if let Some(panel) = raise {
+            area = area.raise(panel);
+        }
+        let output = area.show(ui);
         (output, panels.focused_windows)
     };
     app.dock.specs = specs;
@@ -720,4 +731,25 @@ fn panel_limits(panel: &Panel) -> SizeLimits {
         Panel::Blocks => (vec2(240.0, 260.0), 720.0),
     };
     SizeLimits::new(min, vec2(max_width, SizeLimits::BOUND))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_opened_panel_is_raised_for_one_frame() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
+        command(&mut app, false, &json!({"operation": "open", "panel": Panel::Properties.id()})).unwrap();
+        assert_eq!(app.dock.raise, Some(Panel::Properties));
+
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1600.0, 1000.0))), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+        output.textures_delta.clear();
+
+        assert_eq!(app.dock.raise, None);
+    }
 }
