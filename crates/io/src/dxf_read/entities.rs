@@ -316,6 +316,7 @@ pub(super) fn entity_with_table_budget(
         }
         // The file path comes from the IMAGEDEF object (`dxf_image::resolve`).
         "IMAGE" => EntityKind::Image(crate::dxf_image::read_entity(tags)),
+        "OLE2FRAME" | "OLEFRAME" if crate::dxf_image::has_embedded_ole_image(tags) => EntityKind::Image(crate::dxf_image::read_ole_placeholder(tags)),
         "TOLERANCE" => {
             let dir = t.p(11);
             let dir = if dir.xy().is_finite() && dir.xy().len() > 1e-12 { dir } else { Vec3::new(1.0, 0.0, 0.0) };

@@ -67,6 +67,7 @@ struct App {
     /// Drawings and quit requests from Finder, the Dock and `open -a` (see `apple_events`).
     #[cfg(target_os = "macos")]
     apple_events: fmv_macos_events::Inbox,
+    current_title: String,
 }
 
 impl App {
@@ -120,6 +121,18 @@ impl eframe::App for App {
         apple_events::poll(&self.apple_events, &mut self.cad, ctx);
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
+        let title = match self.cad.session.state() {
+            Ok(st) if !self.cad.ui.start_tab => {
+                let lower = st.title.to_ascii_lowercase();
+                let ext = if lower.ends_with(".dwg") || lower.ends_with(".dxf") { "" } else { ".dwg" };
+                format!("CADCraft - {}{ext}", st.title)
+            }
+            _ => "CADCraft".to_string(),
+        };
+        if self.current_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.current_title = title;
+        }
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
         // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
         // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
@@ -196,11 +209,38 @@ pub fn install_io() {
     });
     // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
     cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+    cadcraft_engine::lisp::input::set_file_dialog(|title, default, ext, flags| {
+        let mut d = rfd::FileDialog::new();
+        if !title.is_empty() {
+            d = d.set_title(title);
+        }
+        if !default.is_empty() {
+            let p = std::path::Path::new(default);
+            if p.is_dir() {
+                d = d.set_directory(p);
+            } else {
+                if let Some(dir) = p.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+                    d = d.set_directory(dir);
+                }
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    d = d.set_file_name(name);
+                }
+            }
+        }
+        let exts: Vec<&str> = ext.split([';', ',']).map(str::trim).filter(|e| !e.is_empty()).collect();
+        if !exts.is_empty() {
+            d = d.add_filter(ext, &exts);
+        }
+        d = d.add_filter("All files", &["*"]);
+        let picked = if flags & 1 != 0 { d.save_file() } else { d.pick_file() };
+        picked.map(|p| p.to_string_lossy().into_owned())
+    });
     // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
     cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
     cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
+/// Build host file-picker and on-demand control services for the desktop UI.
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| file_dialog(&Pick::Open).pick_file().map(|p| p.to_string_lossy().to_string()))),
@@ -210,6 +250,14 @@ fn services() -> Services {
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| file_dialog(&Pick::Lisp(dir.into())).pick_file().map(|p| p.to_string_lossy().to_string()))),
         no_file_system: false,
+        pick_image: Some(Box::new(|| {
+            rfd::FileDialog::new()
+                .add_filter(i18n::t("Raster Images (PNG, JPG, BMP, TIFF)"), &["png", "jpg", "jpeg", "bmp", "tif", "tiff"])
+                .add_filter(i18n::t("All files"), &["*"])
+                .pick_file()
+                .map(|p| p.to_string_lossy().to_string())
+        })),
+        start_control: None,
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
         })),
@@ -223,6 +271,9 @@ fn services() -> Services {
 fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
     match pick {
         Pick::Open => vec![
+            (i18n::t("Drawings & Plugins (DWG, DXF, DLL, LSP, VB, CS)"), vec!["dwg", "dxf", "dwt", "dll", "lsp", "vb", "cs"]),
+            (i18n::t(".NET Plugin / AutoLISP (DLL, LSP, VB, CS)"), vec!["dll", "lsp", "vb", "cs"]),
+            (i18n::t("AutoLISP Routine (LSP)"), vec!["lsp"]),
             (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
             (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
             (i18n::t("PDF files (PDF)"), vec!["pdf"]),
@@ -303,16 +354,19 @@ const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 /// saved by the last session is restored instead of opening centred. `stencil`: the stencil bits of
 /// its render pass ([`stencil_bits`]).
 fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(os_window::name_for(os_window::identity()))
+        .with_inner_size([1600.0, 1000.0])
+        .with_min_inner_size(MIN_INNER_SIZE)
+        .with_drag_and_drop(true)
+        .with_app_id(os_window::app_id());
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(os_window::name_for(os_window::identity()))
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size(MIN_INNER_SIZE)
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(os_window::app_id()),
+        viewport,
         // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
         // restored window on the monitors that are connected now.
         persist_window: true,
@@ -676,6 +730,9 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
+            } else {
+                let ctx = cc.egui_ctx.clone();
+                app.services.start_control = Some(Box::new(move || control_server::start(0, ctx.clone())));
             }
             if sample {
                 let _ = app.run("ui.sample", serde_json::json!({}));
@@ -720,6 +777,7 @@ fn main() -> eframe::Result {
                 movable: None,
                 #[cfg(target_os = "macos")]
                 apple_events,
+                current_title: "CADCraft".to_string(),
             }))
         }),
     );

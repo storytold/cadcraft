@@ -87,7 +87,7 @@ impl Styler {
     pub(crate) fn apply(&self, ink: Ink, named: Option<usize>, lw: f32, lineweights: bool) -> (Ink, f32) {
         let Some(s) = self.style(ink, named) else { return (ink, lw) };
         let lw = match s.lineweight {
-            Some(w) if lineweights => f32::from(w.min(211)) / 100.0,
+            Some(w) if lineweights && lw >= 0.0 => f32::from(w.min(211)) / 100.0,
             _ => lw,
         };
         if s.keeps_color() {

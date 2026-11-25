@@ -287,7 +287,7 @@ mod tests {
                 b.borrow_mut().push(name.to_string());
                 None
             })),
-            ..Services::default()
+            ..Default::default()
         };
         (CadApp::new(Session::new(), services), asked)
     }

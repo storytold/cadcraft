@@ -382,7 +382,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 /// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
-    let drawing = match super::exchange::open_pdf(bytes) {
+    let mut drawing = match super::exchange::open_pdf(bytes) {
         Some(result) => result.map_err(|e| bad("open", e))?,
         None => {
             let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
@@ -408,6 +408,7 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
             }
         }
     }
+    crate::cmd::image::preload_images(&mut drawing, path.as_deref());
     Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
