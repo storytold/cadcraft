@@ -69,7 +69,7 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
         i += 1;
         let outer = flags & 1 != 0;
         let mut verts = if flags & 2 != 0 { polyline_boundary(tags, &mut i)? } else { edge_boundary(tags, &mut i, &mut budget)? };
-        if verts.len() > 1 && verts.first().map(|f| f.p).zip(verts.last().map(|l| l.p)).is_some_and(|(a, b)| a.near(b, 1e-9)) {
+        if verts.len() > 1 && verts.first().map(|f| f.p).zip(verts.last().map(|l| l.p)).is_some_and(|(a, b)| a.near(b, JOIN)) {
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
@@ -154,14 +154,25 @@ fn edge_value(tags: &[Tag], index: usize) -> f64 {
     tags.get(index).map(Tag::f64).unwrap_or(0.0)
 }
 
+/// How close two boundary points must be to be one vertex: where an edge ends and the next one
+/// starts, or where the loop's last point meets its first.
+const JOIN: f64 = 1e-9;
+
+/// Append an edge's points to its loop. The first is left out when the loop already ends there, so
+/// two edges that share a vertex do not write it twice.
+fn extend_deduped(vertices: &mut Vec<PolyVertex>, points: impl IntoIterator<Item = Vec2>) {
+    let mut points = points.into_iter().peekable();
+    if vertices.last().zip(points.peek()).is_some_and(|(last, first)| last.p.near(*first, JOIN)) {
+        points.next();
+    }
+    vertices.extend(points.map(PolyVertex::new));
+}
+
 fn line_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
     let start = Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1));
     let end = Vec2::new(edge_value(tags, *index + 2), edge_value(tags, *index + 3));
     *index += 4;
-    if vertices.last().is_none_or(|last| !last.p.near(start, 1e-9)) {
-        vertices.push(PolyVertex::new(start));
-    }
-    vertices.push(PolyVertex::new(end));
+    extend_deduped(vertices, [start, end]);
 }
 
 fn circular_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
@@ -175,9 +186,7 @@ fn circular_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     let start_point = Vec2::polar(center, radius, start);
     let end_point = Vec2::polar(center, radius, end);
     let sweep = if ccw { cadcraft_geom::ccw_sweep(start, end) } else { -cadcraft_geom::ccw_sweep(end, start) };
-    if vertices.last().is_none_or(|last| !last.p.near(start_point, 1e-9)) {
-        vertices.push(PolyVertex::new(start_point));
-    }
+    extend_deduped(vertices, [start_point]);
     // A full circle needs two bulges because one bulge cannot span coincident endpoints.
     let full = (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9;
     let bulge = cadcraft_geom::arc_to_bulge(if full { sweep / 2.0 } else { sweep });
@@ -215,8 +224,7 @@ fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     if !ccw {
         points.reverse();
     }
-    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
-    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
+    extend_deduped(vertices, points);
 }
 
 fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, budget: &mut EdgeBudget) {
@@ -263,8 +271,7 @@ fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, 
     // the file gives.
     if !budget.sample() {
         let points = if control.is_empty() { fit } else { control };
-        let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
-        vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
+        extend_deduped(vertices, points);
         return;
     }
     let spline = Spline { degree, knots, control, weights, ..Spline::default() };
@@ -277,8 +284,7 @@ fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, 
     };
     let points = spline.tessellate(1e-3);
     budget.spend(points.len());
-    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
-    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
+    extend_deduped(vertices, points);
 }
 
 fn boundary_sources(tags: &[Tag], index: &mut usize) -> Vec<Handle> {
