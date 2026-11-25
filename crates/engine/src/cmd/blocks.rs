@@ -15,7 +15,7 @@ use super::machines::{SelOutcome, SelectPhase, number};
 use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
 
 use super::has_doc;
-use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Origin, Prompt, Result, Session, Step};
 
 mod attdef;
 mod attedit;
@@ -43,14 +43,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
-            .interactive(|_| Ok(Box::new(InsertM::default()))),
+            .interactive(|s| Ok(Box::new(InsertM { person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
             .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
-            .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
+            .interactive(|s| Ok(Box::new(InsertM { minsert: true, person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -73,14 +73,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("blocks.reference.set", "Set Dynamic Property", run_reference_set)
-            .params("{handle (a dynamic block reference), name (a custom property as Properties names it: a visibility state, a lookup, a distance or \"Position1 X\"), value (lengths in drawing units)} → {properties}")
+            .params("{handle (a dynamic block reference), name (a custom property as Properties names it: a visibility state, a lookup, a distance, \"Position1 X\", an angle or a flip state), value (lengths in drawing units, angles in degrees; a flip state by name or 0/1)} → {properties}")
             .enabled(has_doc),
         CommandSpec::new("blocks.reference.grips", "Dynamic Block Grips", dyngrip::run_grips)
-            .params("{handle} → [{node, part: base|end|at, shape: linear|point|list, at: [x,y], dir: [x,y], property, choices?}] (empty: not a dynamic block reference)")
+            .params("{handle} → [{node, part: base|end|at|basex-endy|basey-endx, shape: linear|point|list|rotation|flip, at: [x,y], dir: [x,y], property, choices?}] (empty: not a dynamic block reference)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("blocks.reference.grip", "Drag Dynamic Grip", dyngrip::run_grip)
-            .params("{handle, node (the parameter's graph id), part: base|end|at, to: [x,y] (drawing coordinates)} → {properties}: a distance's arrow changes the distance (snapped to its values), a position's square moves it")
+            .params("{handle, node (the parameter's graph id), part: base|end|at|basex-endy|basey-endx, to: [x,y] (drawing coordinates)} → {properties}: a distance's arrow changes the distance (snapped to its values), a position's square moves it, a rotation's circle turns its angle, a polar or XY parameter's squares move its base, end or corners")
             .enabled(has_doc),
         CommandSpec::new("purge", "Purge", purge::run)
             .alias(&["pu", "-purge"])
@@ -858,6 +858,16 @@ struct InsertM {
     rotation: Option<f64>,
     /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
     attdefs: Vec<(String, String, String, bool)>,
+    /// How many of `attdefs` have their value: counted here, not by `values`, whose key is the
+    /// tag, so two definitions with one tag are still each asked once.
+    asked: usize,
+    /// ATTDIA 1 and a person started the command: the values are asked for in the Edit
+    /// Attributes dialog. A script, LISP routine or JSON call that opened INSERT has nobody to
+    /// answer a dialog, so it asks at the command line, even after the program is done.
+    dialog: bool,
+    /// A person started this command ([`Session::command_origin`]), fixed for its whole life:
+    /// only then may ATTDIA 1 open the dialog.
+    person: bool,
     values: serde_json::Map<String, Value>,
     /// Verify attributes asked again so far.
     verified: usize,
@@ -889,7 +899,7 @@ impl InsertM {
             s.echo("Enter attribute values");
         }
         // Then the Verify attributes are asked again, with the values typed.
-        if self.stage == InsStage::Attribs && self.values.len() >= self.attdefs.len() && self.verified < self.verifying().len() {
+        if self.stage == InsStage::Attribs && self.asked >= self.attdefs.len() && self.verified < self.verifying().len() {
             if self.verified == 0 {
                 s.echo("Verify attribute values");
             }
@@ -897,7 +907,7 @@ impl InsertM {
             return Ok(Step::Continue);
         }
         if self.stage == InsStage::Attribs
-            && self.values.len() >= self.attdefs.len()
+            && self.asked >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
             let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values, self.grid())?;
@@ -948,6 +958,8 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
+        // A program cannot click the dialog: it asks at the command line, as ATTDIA 0 does.
+        self.dialog = s.settings.attdia && self.person;
         self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {
@@ -962,6 +974,7 @@ impl InsertM {
                 })
                 .collect()
         };
+        self.asked = 0;
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
@@ -1051,7 +1064,7 @@ impl Interactive for InsertM {
             InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
             InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
             InsStage::Attribs => {
-                let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (_, prompt, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
                 let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
                 // No default shown when there is none ("Value:", AutoCAD 2024), not "<>".
                 if default.is_empty() { p } else { p.default(default) }
@@ -1258,12 +1271,16 @@ impl Interactive for InsertM {
                 }
             }
             InsStage::Attribs => {
-                let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (tag, _, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
+                    // A canvas click is no answer to a text prompt: the dialog stays up and the
+                    // attribute is asked for again, as Verify does. Enter keeps the default.
+                    Input::Point(_) => return Ok(Step::Continue),
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                self.asked += 1;
                 return self.advance(s);
             }
             // Enter keeps the value typed.
@@ -1300,6 +1317,18 @@ impl Interactive for InsertM {
         let mut ins = insert_entity(b, at, self.scale3(scale), rot, self.base);
         self.grid().apply(&mut ins);
         vec![EntityKind::Insert(ins)]
+    }
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        // Only before the first answer: values typed at the command line go on there.
+        if !self.dialog || self.stage != InsStage::Attribs || self.asked > 0 || self.attdefs.is_empty() {
+            return None;
+        }
+        let rows = self
+            .attdefs
+            .iter()
+            .map(|(tag, prompt, default, verify)| AttribAsk { tag: tag.clone(), prompt: prompt.clone(), default: default.clone(), verify: *verify })
+            .collect();
+        Some(AttribEntry::idle(self.name.clone().unwrap_or_default(), rows))
     }
 }
 

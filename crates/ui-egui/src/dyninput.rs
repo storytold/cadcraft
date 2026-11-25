@@ -6,7 +6,10 @@
 //! - `40,` locks X = 40 and moves to Y; `40<` locks the distance and moves to the angle. A locked
 //!   value holds the cursor.
 //! - Tab types the separator for the format on show, so `40` Tab `90` reads `40<90`; Tab after the
-//!   second value locks it too (both boxes show a lock and the cursor sits on the point).
+//!   second value locks it too (both boxes show a lock and the cursor sits on the point) and wraps
+//!   around to the first box, so the first value can be changed; Tab there moves on to the second
+//!   box again. Typing and Backspace in the first box edit only the first value
+//!   ([`type_in_first`], [`backspace_in_first`]); a separator typed there moves to the second box.
 //! - Enter sends the entry with `@` in front when it is measured from the last point (relative is
 //!   the default; DYNPICOORDS = 1 makes it absolute), and fills an empty box from the cursor.
 //! - A plain number and Enter stays direct distance entry; `@`/`#` entries, keywords and command
@@ -139,17 +142,96 @@ pub fn tab_separator(text: &str, frame: &Frame) -> Option<char> {
     parse(text, frame).filter(|e| !e.split).map(|e| e.format.separator())
 }
 
+/// Whether `text` is a pointer-input entry with a separator typed (both boxes are on show).
+pub fn is_split(text: &str, frame: &Frame) -> bool {
+    parse(text, frame).is_some_and(|e| e.split)
+}
+
+/// The text of a split entry around its separator: (first value, separator, second value), or
+/// `None` when no separator is typed.
+fn split_raw(text: &str) -> Option<(&str, char, &str)> {
+    let at = text.find([',', '<'])?;
+    let sep = text.get(at..)?.chars().next()?;
+    Some((text.get(..at)?, sep, text.get(at + sep.len_utf8()..)?))
+}
+
+/// The result of typing in the first box once Tab has moved back to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FirstEdit {
+    /// The new command-line text.
+    pub text: String,
+    /// A separator was typed: the first value is done and the second box is active again.
+    pub done: bool,
+}
+
+/// Type `typed` in the first box of the split entry `text`: the characters go before the
+/// separator and the second value is kept. A separator (`,` or `<`) ends the first value again,
+/// picks the format, and anything typed after it goes to the second box. `None` when `text` has no
+/// separator (the first box is the end of the text, so plain typing already edits it). A separator
+/// that switches the format is refused when the second value does not read in the new format
+/// (`40<N` to `,`: `N` is an angle, not a distance): the entry and the first box stay as they were.
+pub fn type_in_first(text: &str, typed: &str, frame: &Frame) -> Option<FirstEdit> {
+    let (first, sep0, second) = split_raw(text)?;
+    let mut sep = sep0;
+    let mut first = first.to_owned();
+    let mut second = second.to_owned();
+    let mut done = false;
+    for c in typed.chars() {
+        match c {
+            ',' | '<' if !done => {
+                sep = c;
+                done = true;
+            }
+            _ if done => second.push(c),
+            _ => first.push(c),
+        }
+    }
+    let edited = format!("{first}{sep}{second}");
+    if sep != sep0 && parse(&edited, frame).is_none() {
+        return Some(FirstEdit { text: text.to_owned(), done: false });
+    }
+    Some(FirstEdit { text: edited, done })
+}
+
+/// Backspace in the first box of the split entry `text`: erase the first value's last character
+/// and keep the separator and the second value (an empty first box stays empty). `None` when
+/// `text` has no separator.
+pub fn backspace_in_first(text: &str) -> Option<String> {
+    let (first, sep, second) = split_raw(text)?;
+    let mut first = first.trim_end().to_owned();
+    first.pop();
+    Some(format!("{first}{sep}{second}"))
+}
+
 /// Whether Tab locks the second value too: both values are typed.
 pub fn can_lock_second(text: &str, frame: &Frame) -> bool {
     parse(text, frame).is_some_and(|e| e.split && e.first_locked().is_some() && e.second_value().is_some())
 }
 
+/// Whether the entry holds the cursor: a first value is locked, or Tab locked the second value
+/// (`second_locked`) and it is still typed while the first box is empty (`<90` after the first
+/// value was erased).
+pub fn holds_cursor(entry: &Entry<'_>, second_locked: bool) -> bool {
+    entry.first_locked().is_some() || (second_locked && entry.second_value().is_some())
+}
+
 /// Hold the cursor to the locked values: the first one once a separator follows it, and both
 /// when Tab has locked the second one too (`second_locked`), which pins the cursor to the point.
+/// With the first box empty, a locked second value alone holds the cursor: Y stays at the typed
+/// value, or the cursor's distance is laid along the typed angle.
 pub fn constrain(entry: &Entry<'_>, frame: &Frame, p: Vec2, second_locked: bool) -> Vec2 {
-    let Some(v) = entry.first_locked() else { return p };
     // In UCS coordinates; `p` and the result are world points.
     let (o, u) = (frame.origin(), frame.ucs.to_ucs(p));
+    let Some(v) = entry.first_locked() else {
+        let held = match (second_locked, entry.second_value()) {
+            (true, Some(w)) => match entry.format {
+                Format::Cartesian => Vec2::new(u.x, o.y + w),
+                Format::Polar => o + Vec2::from_angle(w) * (u - o).len(),
+            },
+            _ => return p,
+        };
+        return if held.is_finite() { frame.ucs.to_wcs(held) } else { p };
+    };
     if second_locked && let Some(w) = entry.second_value() {
         let q = match entry.format {
             Format::Cartesian => o + Vec2::new(v, w),
@@ -265,7 +347,7 @@ mod tests {
         assert_eq!(tab_separator("40", &polar), Some('<'));
         // `40` Tab `90` Enter: 40 units straight up.
         assert!(close(sent("40<90", &polar, Vec2::ZERO, base), Vec2::new(10.0, 50.0)));
-        // Already split: Tab does nothing more.
+        // Already split: Tab types no second separator.
         assert_eq!(tab_separator("40<", &polar), None);
         let cart = Frame { cartesian: true, ..polar };
         assert_eq!(tab_separator("40", &cart), Some(','));
@@ -311,6 +393,43 @@ mod tests {
         assert!(close(sent_in("3,", &f, Vec2::new(80.0, 99.0), base), Vec2::new(80.0, 63.0)));
         let e = parse("4<", &f).unwrap();
         assert!(close(Some(constrain(&e, &f, Vec2::new(100.0, 90.0), false)), Vec2::new(100.0, 64.0)));
+        // A Tab-locked angle with the first box empty (#3201) is read from the UCS X axis too: the
+        // cursor keeps its distance from the base and turns onto the typed angle.
+        let e = parse("<90", &f).unwrap();
+        assert!(close(Some(constrain(&e, &f, Vec2::new(100.0, 65.0), true)), Vec2::new(95.0, 60.0)));
+    }
+
+    #[test]
+    fn typing_in_the_first_box_keeps_the_second_value() {
+        // #3201: back in the first box of `40<90`, Backspace twice and `50` gives `50<90`.
+        let t = backspace_in_first("40<90");
+        assert_eq!(t.as_deref(), Some("4<90"));
+        let t = backspace_in_first("4<90");
+        assert_eq!(t.as_deref(), Some("<90"));
+        // An empty first box stays empty; the separator and the angle are not erased.
+        assert_eq!(backspace_in_first("<90").as_deref(), Some("<90"));
+        let f = second_point(Vec2::ZERO);
+        let e = type_in_first("<90", "50", &f);
+        assert_eq!(e, Some(FirstEdit { text: "50<90".into(), done: false }));
+        // A separator ends the first value again; what follows goes to the second box.
+        let e = type_in_first("50<90", ",3", &f);
+        assert_eq!(e, Some(FirstEdit { text: "50,903".into(), done: true }));
+        // Nothing split: plain typing already edits the first box.
+        assert_eq!(type_in_first("40", "5", &f), None);
+        assert_eq!(backspace_in_first("40"), None);
+        assert!(is_split("40<", &second_point(Vec2::ZERO)));
+        assert!(!is_split("40", &second_point(Vec2::ZERO)));
+    }
+
+    #[test]
+    fn a_format_switch_that_breaks_the_second_value_is_refused() {
+        // #3231 review: `40<N` keeps its bearing; `,` would make `40,N`, which reads as nothing.
+        let f = second_point(Vec2::ZERO);
+        let e = type_in_first("40<N", ",", &f);
+        assert_eq!(e, Some(FirstEdit { text: "40<N".into(), done: false }));
+        // A second value that reads in both formats still switches.
+        let e = type_in_first("40<90", ",", &f);
+        assert_eq!(e, Some(FirstEdit { text: "40,90".into(), done: true }));
     }
 
     #[test]
@@ -363,6 +482,25 @@ mod tests {
         assert!(close(Some(constrain(&e, &f, Vec2::new(100.0, 1.0), true)), Vec2::new(1.0, 6.0)));
         let e = parse("3,4", &f).unwrap();
         assert_eq!(constrain(&e, &f, Vec2::new(-7.0, 9.0), true), Vec2::new(4.0, 5.0));
+    }
+
+    #[test]
+    fn a_locked_second_value_holds_the_cursor_with_the_first_box_empty() {
+        // #3201: `40<90` locked by Tab, then the 40 erased: `<90` still holds the angle.
+        let base = Vec2::new(1.0, 1.0);
+        let f = second_point(base);
+        let e = parse("<90", &f).unwrap();
+        assert!(holds_cursor(&e, true));
+        assert!(!holds_cursor(&e, false));
+        // Pointer at (3,4) from the base: the live distance 5 is laid along 90 degrees.
+        assert!(close(Some(constrain(&e, &f, Vec2::new(4.0, 5.0), true)), Vec2::new(1.0, 6.0)));
+        // Not locked: a typed angle alone does not hold the cursor.
+        assert_eq!(constrain(&e, &f, Vec2::new(4.0, 5.0), false), Vec2::new(4.0, 5.0));
+        let e = parse(",7", &f).unwrap();
+        assert_eq!(constrain(&e, &f, Vec2::new(4.0, 5.0), true), Vec2::new(4.0, 8.0));
+        // Nothing typed in either box holds nothing.
+        let e = parse("<", &f).unwrap();
+        assert!(!holds_cursor(&e, true));
     }
 
     #[test]

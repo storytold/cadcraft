@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases, user_alias_command};
 pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -382,11 +382,16 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 /// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
-    let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let drawing = match super::exchange::open_pdf(bytes) {
+        Some(result) => result.map_err(|e| bad("open", e))?,
+        None => {
+            let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
+            (hooks.read)(bytes, name).map_err(|e| bad("open", e))?
+        }
+    };
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
-    let path = path.filter(|p| is_drawing_file(p));
+    let path = path.filter(|p| is_drawing_file(p) && !bytes.starts_with(b"%PDF-"));
     // The SHX fonts its text styles name are looked for beside the drawing too.
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.

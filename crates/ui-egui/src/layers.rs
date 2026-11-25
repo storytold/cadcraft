@@ -718,6 +718,10 @@ fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
         if !set.contains(&e.common.layer.to_ascii_lowercase()) {
             set.insert(e.common.layer.to_ascii_lowercase());
         }
+        // Layers proxy graphics draw on are in use too (as in the engine's PURGE scan).
+        if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
+            set.extend(u.graphics.iter().map(|g| g.common.layer.to_ascii_lowercase()));
+        }
     }
     set
 }
