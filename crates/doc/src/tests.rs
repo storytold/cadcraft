@@ -890,3 +890,31 @@ fn constant_values_count_in_extents_as_attmode_shows_them() {
     assert!(top(1, true) < 40.0);
     assert!(top(2, true) > 40.0, "ATTMODE 2 shows an invisible one");
 }
+
+#[test]
+fn aligned_and_fit_text_extents_span_their_two_points() {
+    // Drawn from the first point to the second whatever rotation is stored: Fit at its own height,
+    // Aligned at the height that keeps its proportions.
+    let ext = |halign: HAlign, second: Option<Vec3>| {
+        let mut t = plain_attrib("T").text;
+        t.value = "AB".into();
+        (t.halign, t.align_pt) = (halign, second);
+        let mut d = Drawing::new_imperial();
+        d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
+        extents_pair(&d)
+    };
+    let left = ext(HAlign::Left, None);
+    // Along x to a far second point: both reach it; only Aligned grows taller.
+    let far = Some(Vec3::new(20.0, 0.0, 0.0));
+    let (fit, aligned) = (ext(HAlign::Fit, far), ext(HAlign::Aligned, far));
+    assert!((fit.1.x - 20.0).abs() < 1e-9 && (aligned.1.x - 20.0).abs() < 1e-9, "{fit:?} {aligned:?}");
+    assert!(fit.1.x > left.1.x + 10.0, "wider than the same text left-justified");
+    assert_eq!(fit.1.y, left.1.y, "Fit keeps its height");
+    assert!(aligned.1.y > left.1.y * 5.0, "Aligned scales its height with its width");
+    // Straight up: the line turns to run to the second point.
+    let up = ext(HAlign::Fit, Some(Vec3::new(0.0, 20.0, 0.0)));
+    assert!((up.1.y - 20.0).abs() < 1e-9 && up.1.x < 1.0 && up.0.x < -0.5, "{up:?}");
+    // No second point, or one on the first: placed like left-justified text.
+    assert_eq!(ext(HAlign::Fit, None), left);
+    assert_eq!(ext(HAlign::Aligned, Some(Vec3::ZERO)), left);
+}

@@ -246,23 +246,34 @@ pub fn ole_frame_accepts(m: &cadcraft_geom::Mat3) -> bool {
 /// the same way the renderer places it (the stroke font is about 0.88 of the height per character).
 fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
     use crate::{HAlign, VAlign};
-    let w = t.height * 0.9 * t.width_factor.abs().max(0.01) * len.max(1) as f64;
+    let natural = t.height * 0.9 * t.width_factor.abs().max(0.01) * len.max(1) as f64;
     // Justified text (TL, ML and BL too) hangs from its alignment point (DXF group 11).
     let origin = t.justify_point();
+    // Aligned and Fit text span their two points (groups 10 and 11) whatever rotation is stored:
+    // the line runs from the first to the second, Fit at its own height with its width stretched,
+    // Aligned at the height that keeps its proportions. With no second point, or one on the
+    // first, they are placed like left-justified text, as the renderer places them.
+    let second = t.align_pt.map(|p| p.xy()).filter(|_| matches!(t.halign, HAlign::Aligned | HAlign::Fit));
+    let span = second.map(|p| origin.dist(p)).filter(|d| d.is_finite() && *d > 1e-12);
+    let (w, h, rotation) = match (span, second) {
+        (Some(d), Some(p)) if t.halign == HAlign::Fit => (d, t.height, origin.angle_to(p)),
+        (Some(d), Some(p)) => (d, t.height * d / natural, origin.angle_to(p)),
+        _ => (natural, t.height, t.rotation),
+    };
     let dx = match t.halign {
         HAlign::Left | HAlign::Aligned | HAlign::Fit => 0.0,
         HAlign::Center | HAlign::Middle => -w / 2.0,
         HAlign::Right => -w,
     };
     let dy = match (t.halign, t.valign) {
-        (HAlign::Middle, _) => -t.height / 2.0,
+        (HAlign::Middle, _) => -h / 2.0,
         (_, VAlign::Baseline) => 0.0,
-        (_, VAlign::Bottom) => t.height / 3.0,
-        (_, VAlign::Middle) => -t.height / 2.0,
-        (_, VAlign::Top) => -t.height,
+        (_, VAlign::Bottom) => h / 3.0,
+        (_, VAlign::Middle) => -h / 2.0,
+        (_, VAlign::Top) => -h,
     };
-    let local = [Vec2::new(dx, dy), Vec2::new(dx + w, dy), Vec2::new(dx + w, dy + t.height), Vec2::new(dx, dy + t.height)];
-    Bounds2::from_points(local.map(|p| origin + p.rotate(t.rotation)))
+    let local = [Vec2::new(dx, dy), Vec2::new(dx + w, dy), Vec2::new(dx + w, dy + h), Vec2::new(dx, dy + h)];
+    Bounds2::from_points(local.map(|p| origin + p.rotate(rotation)))
 }
 
 /// Whether an entity inside a block definition shows: its own invisible flag and its layer count,
