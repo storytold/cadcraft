@@ -445,6 +445,7 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
         Some(0) => "display",
         Some(1) => "extents",
         Some(2) => "limits",
+        Some(3) => "view",
         Some(4) => "window",
         _ => "layout",
     }
@@ -455,6 +456,9 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     // 0,0 is what a page without one writes, so it reads back as none.
     p.image_origin =
         t.f(148).zip(t.f(149)).map(|(x, y)| Vec2::new(x, y)).filter(|o| o.is_finite() && o.x.abs() < 1e12 && o.y.abs() < 1e12 && *o != Vec2::ZERO);
+    if let Some(start) = t.0.iter().position(|tag| tag.code == 100 && tag.str() == "AcDbPlotSettings") {
+        p.file_plot_settings = Some(Box::new(cadcraft_doc::FilePlotSettings { tags: t.0[start + 1..].to_vec(), page: p.clone() }));
+    }
     p
 }
 

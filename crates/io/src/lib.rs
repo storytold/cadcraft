@@ -1,4 +1,4 @@
-//! CADCraft file formats: DXF/DWG read, SVG and SVGZ import, SVG/PNG/PDF export (plotting).
+//! CADCraft file formats: DXF/DWG read, SVG/SVGZ import, PDF page conversion and SVG/PNG/PDF plotting.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -18,6 +18,7 @@ mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pdf_read;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;
@@ -37,7 +38,7 @@ pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::{entity_groups, proxies_lost};
+pub use dxf_write::{dwg_compat_lost, entity_groups, proxies_lost};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.
@@ -164,8 +165,13 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
-    let bridge = dxf_write::dwg_bridge(d, version);
-    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
+    let (bridge, omitted) = dxf_write::dwg_bridge(d, version);
+    let (bytes, mut unwritten) = craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)?;
+    for (kind, omitted) in omitted {
+        let count = unwritten.entry(kind).or_default();
+        *count = count.saturating_add(omitted);
+    }
+    Ok((bytes, unwritten))
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in

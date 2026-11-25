@@ -35,6 +35,9 @@ pub(super) fn dim_block_plan(d: &Drawing) -> DimBlockPlan {
         }
         EntityKind::MLeader(m) => used.extend(m.block.as_ref().map(|b| b.block.to_ascii_uppercase())),
         EntityKind::Dimension(dm) if dims => used.extend(dm.block.as_ref().map(|n| n.to_ascii_uppercase())),
+        // A dimension kept as read (LARGE_RADIAL_DIMENSION, ARC_DIMENSION) is written with the
+        // block it names, which AutoCAD needs to read it (#1161).
+        EntityKind::Unknown(u) => used.extend(u.dimension_block().map(str::to_ascii_uppercase)),
         _ => {}
     };
     for e in spaces.iter().flat_map(|s| s.iter()) {

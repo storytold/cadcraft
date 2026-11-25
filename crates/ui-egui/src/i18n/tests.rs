@@ -732,3 +732,24 @@ fn polish_plural_forms() {
         assert_eq!(plural_pl(n), expected, "n={n}");
     }
 }
+
+/// Arabic gives Stretch, Trim and Point words of their own: Stretch read «تمديد» like Extend,
+/// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
+#[test]
+fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    // The words themselves: a pair that merely differs also differs when a row is missing and both
+    // fall back to English, and Point and Dimension already differed before.
+    for (key, word) in [("Stretch", "تمطيط"), ("Trim", "تشذيب"), ("Point", "نقطة")] {
+        assert_eq!(tr("ar", key), word, "{key}");
+    }
+    for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
+        assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
+    }
+    for (prompt, verb) in [
+        ("Select object to trim or shift-select to extend", "تشذيب"),
+        ("Select object to extend or shift-select to trim", "تشذيب"),
+        ("Select objects to stretch by crossing-window or crossing-polygon...", "تمطيط"),
+    ] {
+        assert!(tr("ar", prompt).contains(verb), "{prompt}");
+    }
+}

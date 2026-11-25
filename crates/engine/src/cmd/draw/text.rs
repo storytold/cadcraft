@@ -232,7 +232,7 @@ impl Interactive for MTextM {
             None => Prompt::new("Specify first corner", Accept::POINT),
             Some(a) if !self.boxed() => Prompt::new("Specify opposite corner", Accept::POINT)
                 .kw(&["Height", "Justify", "Line spacing", "Rotation", "Style", "Width", "Columns"])
-                .base(a),
+                .corner(a),
             _ if self.lines.is_empty() => Prompt::new("Enter text (use \\P for new paragraphs)", Accept::TEXT),
             _ => Prompt::new("Enter next line of text (empty line to finish)", Accept::TEXT),
         }

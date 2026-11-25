@@ -578,6 +578,15 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     if right_click {
         right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
     }
+    // The web build is always the latest: there is nothing to check for there.
+    if !cfg!(target_arch = "wasm32") {
+        ui.add_space(6.0);
+        let mut check = app.options.check_updates_at_start;
+        if ui.checkbox(&mut check, crate::tl!("Check for updates when CADCraft starts")).changed() {
+            changes.insert("checkUpdatesAtStart".into(), json!(check));
+        }
+        hint(ui, crate::tl!("Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks."));
+    }
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
 }
 
