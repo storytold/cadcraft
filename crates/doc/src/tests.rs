@@ -851,3 +851,25 @@ fn a_constant_value_that_matches_the_layout_orientation_is_measured_upright() {
     assert_eq!(extents_pair(&drawing_with_block(def(std::f64::consts::FRAC_PI_2, true))), flat);
     assert_ne!(extents_pair(&drawing_with_block(def(std::f64::consts::FRAC_PI_2, false))), flat, "a plain one keeps its rotation");
 }
+
+#[test]
+fn a_constant_value_the_reference_has_an_attribute_for_does_not_count() {
+    // Such a reference draws its attribute, not the definition's value, so a far-off definition
+    // does not stretch its extents; a reference without that attribute still shows the value.
+    let with = |attribs: Vec<Attrib>| {
+        let mut d = Drawing::new_imperial();
+        let mut blk = Block::new("B");
+        blk.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+        let mut a = plain_attrib("C");
+        a.text.insert = Vec3::new(0.0, 5000.0, 0.0);
+        a.constant = true;
+        blk.entities.push(Entity::new(Handle(2), EntityKind::AttDef(a)));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+        ins.attribs = attribs;
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        extents_pair(&d).1
+    };
+    assert!(with(vec![]).y > 4000.0);
+    assert!(with(vec![plain_attrib("c")]).y < 100.0);
+}
