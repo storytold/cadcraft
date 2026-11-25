@@ -445,3 +445,76 @@ fn shortcuts_and_paste_work_with_the_drawing_focused() {
     steps(&mut h, 2);
     assert_eq!((running(&h), h.state().session.settings.orthomode), (None, before), "Escape");
 }
+
+/// Presses and releases the right button at `at` with `modifiers` held.
+fn right_click(h: &mut Harness<'_, CadApp>, at: egui::Pos2, modifiers: Modifiers) {
+    move_to(h, at);
+    h.input_mut().events.push(egui::Event::ModifiersChanged(modifiers));
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers });
+        steps(h, 2);
+    }
+    h.input_mut().events.push(egui::Event::ModifiersChanged(Modifiers::NONE));
+    steps(h, 2);
+    assert!(drawing_menu(h), "the right-click opens the menu");
+    assert_eq!(focused(h), drawing());
+}
+
+/// Whether a right-click menu of the drawing is open.
+fn drawing_menu(h: &Harness<'_, CadApp>) -> bool {
+    drawing().is_some_and(|id| egui::Popup::is_id_open(&h.ctx, id.with("popup")))
+}
+
+/// Presses Enter or Space as the keyboard does, Space with its text.
+fn enter_or_space(h: &mut Harness<'_, CadApp>, key: Key) {
+    let event = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
+    let events = &mut h.input_mut().events;
+    events.push(event(true));
+    if key == Key::Space {
+        events.push(egui::Event::Text(" ".into()));
+    }
+    events.push(event(false));
+    steps(h, 3);
+}
+
+/// Enter and Space with a menu of the focused drawing open go to the command line and close no menu.
+#[test]
+fn enter_and_space_leave_the_drawings_menus_open() {
+    let mut h = harness();
+    h.state_mut().options.time_sensitive_right_click = false;
+    let empty = at(&h, -150.0, -120.0);
+    // The shortcut menu, with nothing typed and no command to repeat.
+    right_click(&mut h, empty, Modifiers::NONE);
+    for key in [Key::Enter, Key::Space] {
+        enter_or_space(&mut h, key);
+        assert!(drawing_menu(&h), "{key:?} with the shortcut menu open");
+    }
+    type_text(&mut h, "LINE");
+    enter_or_space(&mut h, Key::Space);
+    assert_eq!(running(&h), Some("line"), "Space enters what was typed");
+    tap(&mut h, Key::Escape, Modifiers::NONE);
+    steps(&mut h, 3);
+    // The object snap menu stays through the command Enter or Space repeats.
+    for key in [Key::Enter, Key::Space] {
+        right_click(&mut h, empty, Modifiers::SHIFT);
+        enter_or_space(&mut h, key);
+        assert_eq!((running(&h), drawing_menu(&h)), (Some("line"), true), "{key:?} with the object snap menu open");
+        tap(&mut h, Key::Escape, Modifiers::NONE);
+        steps(&mut h, 3);
+        assert_eq!((running(&h), drawing_menu(&h)), (None, false), "Escape");
+    }
+    // The menu of a line's end grip.
+    let (from, to) = (world(&h, 100.0, 0.0), world(&h, 200.0, -60.0));
+    h.state_mut().run("line", serde_json::json!({"points": [from, to]})).unwrap();
+    let line = h.state().session.doc().unwrap().model.handles();
+    h.state_mut().session.set_selection(line);
+    h.state_mut().session.last_command = None;
+    steps(&mut h, 2);
+    let others = h.query_all_by_label("Lengthen").count();
+    let grip = at(&h, 100.0, 0.0);
+    right_click(&mut h, grip, Modifiers::NONE);
+    for key in [Key::Enter, Key::Space] {
+        enter_or_space(&mut h, key);
+        assert!(drawing_menu(&h) && h.query_all_by_label("Lengthen").count() > others, "{key:?} with the grip menu open");
+    }
+}
