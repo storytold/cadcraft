@@ -22,6 +22,7 @@ fn install() {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
     set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
 /// A proxy entity of class 500 (WIDGETX) in `owner`, with a string stream of `strings` bytes.
@@ -85,6 +86,35 @@ fn three_proxies(owner: &str) -> Vec<Vec<(String, String)>> {
 
 fn not_saved(r: &Value) -> Value {
     r.get("notSaved").cloned().unwrap_or(Value::Null)
+}
+
+#[test]
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+fn legacy_visualstyles_warn_only_for_2007_dwg() {
+    install();
+    cadcraft_io::dwg_worker::allow_in_process();
+    let source = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1021\n9\n$HANDSEED\n5\n100\n0\nENDSEC\n\
+                  0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n30\n100\nAcDbEntity\n8\n0\n100\nAcDbLine\n10\n0\n20\n0\n30\n0\n11\n10\n21\n5\n31\n0\n0\nENDSEC\n\
+                  0\nSECTION\n2\nOBJECTS\n0\nDICTIONARY\n5\nC\n330\n0\n100\nAcDbDictionary\n3\nACAD_VISUALSTYLE\n350\n20\n\
+                  0\nDICTIONARY\n5\n20\n330\nC\n100\nAcDbDictionary\n281\n1\n3\nSynthetic\n350\n21\n\
+                  0\nVISUALSTYLE\n5\n21\n330\n20\n100\nAcDbVisualStyle\n2\nSynthetic\n70\n0\n71\n1\n72\n1\n73\n1\n90\n0\n40\n1.0\n41\n0.5\n63\n7\n\
+                  74\n2\n91\n0\n64\n7\n65\n7\n75\n1\n175\n1\n42\n30.0\n92\n0\n66\n7\n43\n1.0\n76\n1\n77\n0\n78\n0\n67\n7\n79\n1\n\
+                  170\n0\n171\n0\n290\n0\n174\n0\n93\n0\n44\n0.0\n173\n0\n291\n0\n0\nENDSEC\n0\nEOF\n";
+    let drawing = cadcraft_io::read_dxf(source.as_bytes()).unwrap();
+    let mut session = Session::empty();
+    session.open_drawing(drawing, "styles.dxf", None);
+    assert_eq!(cadcraft_engine::cmd::file::loss_on_save(&session, "styles.dwg").get("VISUALSTYLE"), Some(&1));
+    for (format, version) in [("dwg", 2007), ("dwg", 2013), ("dxf", 2007)] {
+        let start = session.log.len();
+        let result = session.execute("document.bytes", &json!({"format": format, "version": version})).unwrap();
+        if format == "dwg" && version == 2007 {
+            assert_eq!(not_saved(&result), json!({"VISUALSTYLE": 1}));
+            assert!(session.log[start..].iter().any(|message| message.contains("VISUALSTYLE")));
+        } else {
+            assert_eq!(not_saved(&result), Value::Null);
+            assert!(!session.log[start..].iter().any(|message| message.contains("VISUALSTYLE")));
+        }
+    }
 }
 
 #[test]

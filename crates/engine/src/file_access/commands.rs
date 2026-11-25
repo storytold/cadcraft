@@ -238,6 +238,7 @@ pub const NO_FILES: &[&str] = &[
     "hatchedit",
     "hatchgenerateboundary",
     "hatchpick",
+    "wblockpick",
     "overkill",
     "block",
     "-block",

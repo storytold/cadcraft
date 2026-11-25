@@ -19,7 +19,9 @@ Generated-in-code assets are original and have no file to list:
 - the standard linetype and hatch-pattern libraries (`crates/doc/src/library.rs`; industry-common
   names, our own dash/spacing values);
 - the colour index palette, generated from its structure (`crates/color/src/lib.rs`);
-- the sample drawings (`crates/engine/src/sample.rs`).
+- the sample drawings (`crates/engine/src/sample.rs`);
+- the synthetic two-hexagon hatch logo (`crates/io/tests/it/hatch_loop_flags.rs`, `logo`):
+  original contributor geometry, generated in code from invented points, under MIT OR Apache-2.0.
 
 | Asset | Author | Source | Licence | Notes |
 |---|---|---|---|---|
@@ -43,6 +45,12 @@ Generated-in-code assets are original and have no file to list:
 | `assets/app-icon/cadcraft-256.png` | CADCraft contributors | generated | MIT OR Apache-2.0 | |
 | `assets/app-icon/cadcraft-1024.png` | CADCraft contributors | generated | MIT OR Apache-2.0 | |
 | `assets/app-icon/cadcraft-macos-512.png` | CADCraft contributors | generated (macOS margin variant) | MIT OR Apache-2.0 | |
+| `assets/app-icon/README.md` | CADCraft contributors | original work for this repository | MIT OR Apache-2.0 | How each icon is generated and which mark each channel uses |
+| `assets/app-icon/cadcraft-nightly.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Nightly mark: same glyph, deeper background `#0c657b`; the Linux nightly tar's icon |
+| `assets/app-icon/cadcraft-nightly-1024.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | 1024 master the nightly `.icns` is generated from |
+| `assets/app-icon/cadcraft-nightly.ico` | CADCraft contributors | generated from `assets/app-icon/cadcraft-nightly-1024.png` | MIT OR Apache-2.0 | Windows nightly icon (16–256 px entries) for `build.rs` |
+| `assets/app-icon/cadcraft-nightly.icns` | CADCraft contributors | generated from `assets/app-icon/cadcraft-nightly-1024.png` | MIT OR Apache-2.0 | macOS nightly bundle icon (`CFBundleIconFile cadcraft-nightly`) |
+| `assets/app-icon/nightly-provenance.json` | CADCraft contributors | original work for this repository | MIT OR Apache-2.0 | The exact background transform that produced the nightly set |
 | `packaging/macos/dmg/background.svg` | @XusBadia | original work for this repository (2026-10-08), "CADCraft macOS DMG window background"; derived from the CADCraft app icon (`assets/app-icon/`, referenced via `<image>`, not copied); text is outlined Inter / JetBrains Mono glyph paths (OFL fonts the project already uses); no third-party material modified | MIT OR Apache-2.0 (same as the code: `LICENSE-MIT`, `LICENSE-APACHE`) | Finder window background of the macOS DMG; `packaging/macos/dmg/generate.py` renders it to `background.tiff` (see `packaging/macos/dmg/README.md`) |
 | `packaging/macos/dmg/background.tiff` | @XusBadia | Rendered from `packaging/macos/dmg/background.svg` by `packaging/macos/dmg/generate.py` | MIT OR Apache-2.0 (same as the code: `LICENSE-MIT`, `LICENSE-APACHE`) | 1x + 2x HiDPI TIFF for the macOS DMG window; includes the app icon (see its row) and LittleCMS's built-in sRGB profile ("No copyright, use freely") |
 | `examples/apartment.dxf` | CADCraft contributors | sample drawing made with cadcraft-cli commands | MIT OR Apache-2.0 | Original |
@@ -70,7 +78,7 @@ Generated-in-code assets are original and have no file to list:
 | `crates/ui-egui/src/i18n/bs.tsv` | Nine (@nine-codes) with Claude Code (AI-assisted) | Original Bosnian translations of CADCraft English strings, shared with storytold/craft-i18n `locales/bs/` | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; not yet reviewed by a native speaker |
 | `crates/ui-egui/src/i18n/cs.tsv` | @Losminek (AI-assisted) | Original Czech translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/ru.tsv` | @pechnikov2026-star | Original Russian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
-| `crates/ui-egui/src/i18n/fr.tsv` | @pechnikov2026-star | Original French translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
+| `crates/ui-egui/src/i18n/fr.tsv` | @pechnikov2026-star; terminology pass by @YannFR81 | Original French translations of CADCraft English strings; AI-assisted consistency pass (imperative prompts, cote/espace objet/réseau/présentation) | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/zh.tsv` | @mayloglog | Original Simplified Chinese translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied |
 | `crates/ui-egui/src/i18n/sv.tsv` | Erik Holmbom (@holmbom) with Claude Code (AI-assisted) | Original Swedish translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; terminology and the running app reviewed by a native speaker |
 | `crates/ui-egui/src/i18n/it.tsv` | Emanuele Bottelli (AI-assisted); terminology corrections: Andrea Brandi (@starise) with OpenAI Codex (AI-assisted) | Original Italian translations of CADCraft English strings | MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`) | No proprietary localization resources copied; targeted Chamfer terminology review by a native speaker |
