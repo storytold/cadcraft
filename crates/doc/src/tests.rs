@@ -779,3 +779,75 @@ fn dim_style_spellings_of_one_field_apply_once() {
     assert!(st.apply_fields(m).is_empty());
     assert_eq!(st.text_height, want);
 }
+
+/// A dimension's block in a parent block: `first` the dimension, or the reference to the same
+/// block "B" (a line and a visible constant attribute definition at y = 50).
+fn parent_of_dimension_and_insert(dimension_first: bool) -> Drawing {
+    // Only "P" is referenced from model space, so "B" is measured inside it and nowhere else.
+    let mut d = Drawing::new_imperial();
+    let mut b = Block::new("B");
+    b.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+    let mut a = plain_attrib("C");
+    a.text.insert = Vec3::new(0.0, 50.0, 0.0);
+    a.constant = true;
+    b.entities.push(Entity::new(Handle(2), EntityKind::AttDef(a)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(b));
+    let dim = EntityKind::Dimension(Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        defpt: Vec3::new(1.0, 1.0, 0.0),
+        text_mid: Vec3::new(0.5, 1.0, 0.0),
+        p13: Vec3::ZERO,
+        p14: Vec3::new(1.0, 0.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: String::new(),
+        style: "Standard".into(),
+        measurement: 1.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: Some("B".into()),
+        overrides: Default::default(),
+        assoc: vec![],
+        marks: Default::default(),
+        insertion_point: Vec3::ZERO,
+    });
+    let mut kids = vec![dim, plain_insert("B")];
+    if !dimension_first {
+        kids.reverse();
+    }
+    let mut parent = Block::new("P");
+    for (i, k) in kids.into_iter().enumerate() {
+        parent.entities.push(Entity::new(Handle(i as u64 + 10), k));
+    }
+    d.blocks.insert("P".into(), std::sync::Arc::new(parent));
+    d.add(&Space::Model, Common::default(), plain_insert("P")).unwrap();
+    d
+}
+
+#[test]
+fn constant_values_count_whichever_reference_measures_the_block_first() {
+    // A dimension's block draws no constant value, a block reference does, and both read one
+    // cache of block bounds: the reference's extents must not depend on which comes first.
+    let first = extents_pair(&parent_of_dimension_and_insert(true));
+    assert_eq!(first, extents_pair(&parent_of_dimension_and_insert(false)));
+    assert!(first.1.y > 40.0, "the constant value at y = 50 counts: {first:?}");
+}
+
+#[test]
+fn a_constant_value_that_matches_the_layout_orientation_is_measured_upright() {
+    // Drawn upright whatever rotation is stored (#2498), so the extents are those of rotation 0.
+    let def = |rotation: f64, upright: bool| {
+        let mut a = plain_attrib("C");
+        a.text.value = "a long constant value".into();
+        a.text.rotation = rotation;
+        a.constant = true;
+        let mut e = Entity::new(Handle(2), EntityKind::AttDef(a));
+        if upright {
+            e.common.xdata = vec![RawTag { code: 1001, value: "AcadAnnoPO".into() }, RawTag { code: 1070, value: "1".into() }];
+        }
+        e
+    };
+    let flat = extents_pair(&drawing_with_block(def(0.0, false)));
+    assert_eq!(extents_pair(&drawing_with_block(def(std::f64::consts::FRAC_PI_2, true))), flat);
+    assert_ne!(extents_pair(&drawing_with_block(def(std::f64::consts::FRAC_PI_2, false))), flat, "a plain one keeps its rotation");
+}

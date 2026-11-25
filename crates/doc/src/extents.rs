@@ -292,21 +292,42 @@ fn attrib_layer<'a>(d: &'a Drawing, ins: &crate::Insert, a: &'a crate::Attrib) -
     })
 }
 
-/// The bounds of `be` as a block reference draws it (at `depth`): nothing for what it doesn't
-/// draw, the value of a visible constant attribute definition.
-fn insert_part_bounds<'a>(d: &'a Drawing, be: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
-    match &be.kind {
-        EntityKind::AttDef(a) if a.constant && !a.invisible && be.common.visible && layer_counts(d, &be.common.layer, off_counts) => constant_box(a),
-        _ if in_block_visible(d, be, off_counts) => bounds_in(d, be, depth, blocks, off_counts),
-        _ => Bounds2::EMPTY,
-    }
+/// The bounds of a block's contents, in block coordinates: its geometry, which every reference to
+/// the block shows, and the values of its visible constant attribute definitions, which only a
+/// block reference draws (a dimension's block does not). They are kept apart so that the one
+/// cache serves both kinds of reference, whichever asks first.
+#[derive(Clone, Copy)]
+struct Contents {
+    geometry: Bounds2,
+    constants: Bounds2,
 }
 
-/// The box of a constant attribute definition's value, as a block reference draws it.
-fn constant_box(a: &crate::Attrib) -> Bounds2 {
+/// [`Contents`] of `blk` referenced at `depth`, from `blocks` when it is there.
+fn contents<'a>(d: &'a Drawing, blk: &'a crate::Block, depth: usize, blocks: &mut HashMap<(&'a str, usize), Contents>, off_counts: bool) -> Contents {
+    if let Some(c) = blocks.get(&(blk.name.as_str(), depth)) {
+        return *c;
+    }
+    let mut c = Contents { geometry: Bounds2::EMPTY, constants: Bounds2::EMPTY };
+    for be in blk.entities.iter() {
+        match &be.kind {
+            EntityKind::AttDef(a) if a.constant && !a.invisible && be.common.visible && layer_counts(d, &be.common.layer, off_counts) => {
+                c.constants = c.constants.union(&constant_box(a, be.common.matches_layout_orientation()));
+            }
+            _ if in_block_visible(d, be, off_counts) => c.geometry = c.geometry.union(&bounds_in(d, be, depth + 1, blocks, off_counts)),
+            _ => {}
+        }
+    }
+    blocks.insert((blk.name.as_str(), depth), c);
+    c
+}
+
+/// The box of a constant attribute definition's value, as a block reference draws it: upright
+/// when the definition matches the layout's orientation, like other text (#2498).
+fn constant_box(a: &crate::Attrib, upright: bool) -> Bounds2 {
+    let turn = |r: f64| if upright { 0.0 } else { r };
     match a.multiline_text() {
-        Some(m) if !blank(&m.contents) => mtext_box(&m),
-        None if !blank(&a.text.value) => text_box(&a.text, a.text.value.chars().count()),
+        Some(m) if !blank(&m.contents) => mtext_box(&crate::MText { rotation: turn(m.rotation), ..m }),
+        None if !blank(&a.text.value) => text_box(&crate::Text { rotation: turn(a.text.rotation), ..a.text.clone() }, a.text.value.chars().count()),
         _ => Bounds2::EMPTY,
     }
 }
@@ -364,9 +385,9 @@ pub fn extent_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
 #[derive(Default)]
 pub struct BlockBoundsCache<'a> {
     /// By block name and depth, block contents on layers turned off left out ([`entity_bounds`]).
-    drawn: HashMap<(&'a str, usize), Bounds2>,
+    drawn: HashMap<(&'a str, usize), Contents>,
     /// The same with those contents counted ([`extent_bounds`]).
-    extents: HashMap<(&'a str, usize), Bounds2>,
+    extents: HashMap<(&'a str, usize), Contents>,
 }
 
 /// [`entity_bounds`] reusing the block bounds `cache` holds from earlier calls on drawing `d`.
@@ -379,7 +400,7 @@ pub fn extent_bounds_cached<'a>(d: &'a Drawing, e: &Entity, cache: &mut BlockBou
     bounds_of(d, e, 0, true, &mut cache.extents)
 }
 
-fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blocks: &mut HashMap<(&'a str, usize), Bounds2>) -> Bounds2 {
+fn bounds_of<'a>(d: &'a Drawing, e: &Entity, depth: usize, off_counts: bool, blocks: &mut HashMap<(&'a str, usize), Contents>) -> Bounds2 {
     // A top-level annotative object measures as it draws at the current annotation scale.
     if depth == 0 {
         match d.anno_draw(e) {
@@ -398,7 +419,7 @@ fn unknown_bounds<'a>(
     d: &'a Drawing,
     u: &crate::Unknown,
     depth: usize,
-    blocks: &mut HashMap<(&'a str, usize), Bounds2>,
+    blocks: &mut HashMap<(&'a str, usize), Contents>,
     off_counts: bool,
 ) -> Bounds2 {
     if u.graphics.is_empty() {
@@ -419,7 +440,7 @@ fn unknown_bounds<'a>(
 /// definition per depth instead of one per reference (which grows exponentially with the nesting
 /// depth). The depth is part of the key because [`MAX_BLOCK_DEPTH`] cuts a deep visit short: its
 /// bounds must not stand in for a shallower reference to the same block (#706).
-fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
+fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Contents>, off_counts: bool) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
         EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
@@ -442,17 +463,8 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             let mut b = Bounds2::EMPTY;
             if let Some(blk) = d.block(&ins.block) {
                 let m = ins.transform(blk.base.xy());
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(b) => *b,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter() {
-                            inner = inner.union(&insert_part_bounds(d, be, depth + 1, blocks, off_counts));
-                        }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
-                    }
-                };
+                let c = contents(d, blk, depth, blocks, off_counts);
+                let inner = c.geometry.union(&c.constants);
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
                 // XCLIP: the reference app takes the boundary's box, also where it reaches past the
                 // block or misses it (an inverted clip can show anything, so it keeps the block's).
@@ -511,17 +523,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 // Reuse the shared block-bounds cache (as the Insert branch does) so a dimension
                 // block with branching or self-referencing children costs one pass per definition
                 // per depth, not one per reference (which grows exponentially) (CWE-400).
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(cached) => *cached,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
-                        }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
-                    }
-                };
+                let inner = contents(d, blk, depth, blocks, off_counts).geometry;
                 // The block draws translated by the insertion point (group 12), so its bounds
                 // move with it (#2634); the cache above keeps the block's own bounds.
                 let off = dm.insertion_point.xy();
