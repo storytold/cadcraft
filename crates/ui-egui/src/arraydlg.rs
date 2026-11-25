@@ -277,10 +277,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut action = Action::None;
     let mut changed = false;
     let mut lost_focus = false;
-    // `Id::new` is the stable-id constructor; the deprecation is a newer alias nudge.
-    #[allow(deprecated)]
     egui::Window::new(title)
-        .id(egui::Id::new("array_dialog"))
+        .id(egui::Id::unique("array_dialog"))
         .open(open)
         .collapsible(false)
         .resizable(true)

@@ -318,11 +318,10 @@ fn ok_commits_once_the_polar_centre_is_given() {
 }
 
 #[test]
-#[allow(deprecated)] // Id::new is the stable-id constructor under test
 fn suspended_array_keeps_the_window_and_draws_nothing() {
     let (mut app, _) = ready(ArrayLiveKind::Rectangular);
     let ctx = frames(&mut app);
-    assert!(ctx.memory(|m| m.area_rect(egui::Id::new("array_dialog"))).is_some());
+    assert!(ctx.memory(|m| m.area_rect(egui::Id::unique("array_dialog"))).is_some());
     // A transparent 'ZOOM suspends the array.
     app.session.start("'zoom").unwrap();
     assert!(app.session.array_live().is_none());
@@ -337,7 +336,7 @@ fn suspended_array_keeps_the_window_and_draws_nothing() {
 
     // A full frame draws no array window while the array is suspended.
     let ctx = frames(&mut app);
-    assert!(ctx.memory(|m| m.area_rect(egui::Id::new("array_dialog"))).is_none());
+    assert!(ctx.memory(|m| m.area_rect(egui::Id::unique("array_dialog"))).is_none());
     assert!(app.array_dlg.is_some());
 }
 

@@ -673,6 +673,17 @@ impl CadApp {
             if !first.is_empty() && !self.paste.running {
                 self.paste.cancel();
             }
+            // A user alias typed alone routes as its command does: an alias of HATCH opens the Hatch
+            // dialog, typed as is or with the Greek layout active. With more on the line
+            // (`KR P ANSI31`) it goes to the engine, which runs the command with those inputs.
+            let alone = text.split_whitespace().nth(1).is_none();
+            let name = if alone {
+                cadcraft_engine::cmd::file::user_alias_command(first)
+                    .or_else(|| cadcraft_engine::cmd::file::user_alias_command(&name))
+                    .unwrap_or(name)
+            } else {
+                name
+            };
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }
