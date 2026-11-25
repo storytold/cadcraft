@@ -12,8 +12,8 @@ use cadcraft_doc::{
     Drawing, Entity, EntityKind, EntityStore, MAX_MLINE_CUTS, MAX_MLINE_ELEMENTS, MAX_MLINE_VERTICES, MLine, MLineCaps, MLineCut, MLineElement,
     MLineJust, MLineStyle, MLineVertex, STANDARD_MLINE_STYLE,
 };
-use cadcraft_dxf::{Section, Tag};
 use cadcraft_geom::{Vec2, Vec3};
+use craft_dxf::{SectionRef, Tag};
 
 /// Most groups 41 kept per element and vertex (start, then break pairs).
 const MAX_PARAMS: usize = 2 * MAX_MLINE_CUTS + 2;
@@ -333,10 +333,10 @@ fn has_mlines(store: &EntityStore) -> bool {
 }
 
 /// Read the multiline styles, then give every multiline its style's elements, caps and fill.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing) {
     let mut styles: Vec<MLineStyle> = Vec::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if kind == "MLINESTYLE"
                 && styles.len() < MAX_STYLES
                 && let Some(st) = read_style(tags)

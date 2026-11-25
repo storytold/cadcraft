@@ -54,9 +54,30 @@ fn store() -> MutexGuard<'static, Aliases> {
     USER.get_or_init(|| Mutex::new(Aliases::default())).lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The command a user alias stands for, `name` typed in any case; `None` when it is no user alias.
+/// The interface resolves a lone typed alias with this before its own command routes, so a user
+/// alias of HATCH opens the Hatch dialog as HATCH does.
+pub fn user_alias_command(name: &str) -> Option<String> {
+    // Keys are stored with their ASCII letters in lower case. Past ASCII, the key and the name
+    // are compared in lower case, so `ΚΡ` finds `κρ` and `éx` finds a key stored as `Éx`.
+    let name = name.trim();
+    if let Some(command) = user_alias(&name.to_ascii_lowercase()) {
+        return Some(command);
+    }
+    let lower = name.to_lowercase();
+    let aliases = store();
+    aliases.map.iter().find(|(key, _)| key.to_lowercase() == lower).map(|(_, command)| command.clone())
+}
+
 /// The command a user alias stands for (`name` in lower case).
 pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
+}
+
+/// The user alias that is the Greek word `word` in another case or accent.
+pub(crate) fn greek_alias(word: &str) -> Option<String> {
+    let same = crate::keyboard::same_greek_word_as(word)?;
+    store().map.keys().find(|alias| same(alias)).cloned()
 }
 
 /// The user aliases and the file REINIT reads, as the host's user profile keeps them:
@@ -122,8 +143,8 @@ pub fn alias_name(a: &str) -> std::result::Result<String, String> {
 }
 
 /// The aliases of a `.pgp` file's text, and its problems.
-fn parse(text: &str) -> (Vec<(String, String)>, Vec<String>) {
-    let mut out: Vec<(String, String)> = Vec::new();
+fn parse(text: &str) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut out = BTreeMap::new();
     let mut warnings = Vec::new();
     let mut warn = |no: usize, msg: String| {
         if warnings.len() < MAX_WARNINGS {
@@ -159,13 +180,13 @@ fn parse(text: &str) -> (Vec<(String, String)>, Vec<String>) {
             warn(no, format!("{}: unknown command {}; skipped", alias.trim(), target.trim()));
             continue;
         };
+        // Once full, stop at the next valid definition, even if it repeats an alias.
         if out.len() >= MAX_ALIASES {
             warn(no, format!("more than {MAX_ALIASES} aliases; the rest are skipped"));
             break;
         }
-        // A later line for the same alias wins, as it would when typed into the file twice.
-        out.retain(|(a, _)| *a != name);
-        out.push((name, id));
+        // A later definition wins without scanning all the aliases accumulated so far.
+        out.insert(name, id);
     }
     (out, warnings)
 }
@@ -179,7 +200,7 @@ fn listing(warnings: &[String], added: usize) -> Value {
 fn load(text: &str, path: Option<String>) -> (usize, Vec<String>) {
     let (aliases, warnings) = parse(text);
     let mut st = store();
-    st.map = aliases.into_iter().collect();
+    st.map = aliases;
     if path.is_some() {
         st.file = path;
     }

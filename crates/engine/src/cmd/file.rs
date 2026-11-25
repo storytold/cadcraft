@@ -8,7 +8,7 @@ mod template;
 use std::sync::OnceLock;
 
 use cadcraft_doc::{Drawing, Format};
-pub use cadcraft_dxf::Version;
+pub use craft_dxf::Version;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, ok, str_param};
@@ -16,8 +16,8 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
-pub(crate) use pgp::{specs as alias_specs, user_alias};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases, user_alias_command};
+pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
 /// Largest drawing accepted from a local path, matching the per-file xref limit. A path naming an
@@ -53,9 +53,9 @@ pub fn io() -> Option<&'static IoHooks> {
 /// (installed by the app with the DXF reader and writer, a lower layer).
 pub struct EntityCodec {
     /// The entity's type name and the groups of its record, without its `0` group.
-    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
+    pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<craft_dxf::Tag>),
     /// An entity from a type name and groups.
-    pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
+    pub entity: fn(&str, &[craft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();
@@ -65,6 +65,56 @@ pub fn set_entity_codec(c: EntityCodec) {
 }
 pub fn entity_codec() -> Option<&'static EntityCodec> {
     CODEC.get()
+}
+
+/// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
+/// type, groups after the type and role (see [`cadcraft_doc::foreign::ForeignKey`]). AutoLISP's
+/// `namedobjdict`, `tblobjname` and `handent` of non-graphic objects read them (installed by the
+/// app with the DXF writer, a lower layer; kept apart from [`EntityCodec`] so hosts that only
+/// need entities don't have to provide it).
+pub type ObjectRecords = fn(&Drawing) -> Vec<(String, Vec<craft_dxf::Tag>, Option<cadcraft_doc::foreign::ForeignKey>)>;
+
+static OBJECT_RECORDS: OnceLock<ObjectRecords> = OnceLock::new();
+
+pub fn set_object_records(f: ObjectRecords) {
+    let _ = OBJECT_RECORDS.set(f);
+}
+pub fn object_records() -> Option<ObjectRecords> {
+    OBJECT_RECORDS.get().copied()
+}
+
+/// What a DXF of a version before 2007 leaves out of a drawing because it has no form for a
+/// proxy's separate string stream, counted by DXF type (installed by the app with the DXF writer,
+/// a lower layer, which finds it by writing; see `cadcraft_io::proxies_lost`). Without it the
+/// proxies themselves are counted ([`cadcraft_doc::foreign::proxies_dropped_before_2007`]).
+pub type ProxiesLost = fn(&Drawing, Version) -> std::collections::BTreeMap<String, usize>;
+
+static PROXIES_LOST: OnceLock<ProxiesLost> = OnceLock::new();
+
+pub fn set_proxies_lost(f: ProxiesLost) {
+    let _ = PROXIES_LOST.set(f);
+}
+
+/// Version-specific DWG compatibility omissions, counted by the host's actual writer.
+pub type DwgCompatLost = fn(&Drawing, Version) -> std::collections::BTreeMap<String, usize>;
+
+static DWG_COMPAT_LOST: OnceLock<DwgCompatLost> = OnceLock::new();
+
+pub fn set_dwg_compat_lost(f: DwgCompatLost) {
+    let _ = DWG_COMPAT_LOST.set(f);
+}
+
+/// What a DXF of `version` leaves out of `d` for its proxies' string streams (#3229): empty from
+/// 2007 on. `d` is written as committed (a reference edit's working copies are not in the file).
+fn proxies_lost(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if version >= Version::R2007 {
+        return Default::default();
+    }
+    let d = d.committed();
+    match PROXIES_LOST.get() {
+        Some(f) => f(&d, version),
+        None => cadcraft_doc::foreign::proxies_dropped_before_2007(&d),
+    }
 }
 
 /// COMPARE (drawing comparison).
@@ -224,6 +274,7 @@ fn run_script(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("script", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_SCRIPT_BYTES).map_err(|e| bad("script", format!("{path}: {e}")))?;
             String::from_utf8_lossy(&bytes).into_owned()
@@ -304,6 +355,7 @@ pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String
             let Some(text_path) = path.to_str() else {
                 return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
             };
+            crate::file_access::check_read(text_path).map_err(|e| bad("open", e))?;
             let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
             read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
@@ -328,19 +380,35 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     Ok(opened(s, i, true))
 }
 
+/// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
-    let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let drawing = match super::exchange::open_pdf(bytes) {
+        Some(result) => result.map_err(|e| bad("open", e))?,
+        None => {
+            let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
+            (hooks.read)(bytes, name).map_err(|e| bad("open", e))?
+        }
+    };
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
-    let path = path.filter(|p| is_drawing_file(p));
+    let path = path.filter(|p| is_drawing_file(p) && !bytes.starts_with(b"%PDF-"));
     // The SHX fonts its text styles name are looked for beside the drawing too.
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
         let dir = if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir };
-        cadcraft_fonts::shx::add_drawing_dir(&std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf()));
+        let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+        match crate::file_access::current() {
+            None => cadcraft_fonts::shx::add_drawing_dir(&dir),
+            // The folder holds no record of the roots, and a font's name there can be a link leading
+            // out of them: the search asks the roots about each file before it opens one.
+            Some(roots) => {
+                let owner = format!("{:?}|{:?}", roots.read_root(), roots.write_root());
+                let guard = std::sync::Arc::new(move |font: &std::path::Path| roots.check(font, crate::file_access::Access::Read).is_ok());
+                cadcraft_fonts::shx::add_drawing_dir_guarded(&dir, &owner, guard);
+            }
+        }
     }
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { drawing, binary_dxf: craft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -381,6 +449,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            crate::file_access::check_read(path).map_err(|e| bad("open", e))?;
             let bytes =
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
@@ -408,6 +477,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.cancel();
     s.docs.remove(i);
+    s.lisp_forget_closed();
     if i < s.active {
         // An earlier drawing went away: the active one shifted down by one.
         s.active -= 1;
@@ -423,6 +493,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
     s.cancel();
     s.docs.clear();
+    s.lisp_forget_closed();
     s.active = 0;
     s.bump_doc_epoch();
     ok()
@@ -464,6 +535,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::file_access::check_write(path).map_err(|e| bad("save", e))?;
         // A file in a folder still to be made has nothing to back up.
         if is_drawing_file(path) && crate::autosave::isavebak() && crate::atomic_write::missing_folder(std::path::Path::new(path)).is_none() {
             backup(std::path::Path::new(path))
@@ -503,7 +575,7 @@ pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
 pub fn looks_like_drawing(bytes: &[u8]) -> bool {
     // DWG: a version tag like `AC1032` (R12 is `AC1009`).
     let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
-    if dwg || cadcraft_dxf::is_binary(bytes) {
+    if dwg || craft_dxf::is_binary(bytes) {
         return true;
     }
     // ASCII DXF: optional comments (999), then group 0 SECTION.
@@ -533,7 +605,7 @@ pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
         // Too short for any DWG's header: cut off, not unknown.
         return if head.len() < 256 { Some(false) } else { dwg_complete(head, len) };
     }
-    if cadcraft_dxf::is_binary(head) {
+    if craft_dxf::is_binary(head) {
         return Some(tail.ends_with(b"EOF\0"));
     }
     let text = String::from_utf8_lossy(tail);
@@ -625,6 +697,40 @@ pub fn save_keeps_current(_path: &std::path::Path) -> bool {
     false
 }
 
+/// The mode of a new backup: no more open than the drawing (`src_mode`, group `src_gid`) nor than the
+/// `.bak` it replaces (`old`: mode and group). The backup keeps the old `.bak`'s group, so when that
+/// differs from the drawing's group, its group bits are dropped and its other bits are capped by
+/// the drawing's group bits: a member of the drawing's group must not gain access through `other`.
+#[cfg(unix)]
+fn backup_mode(src_mode: u32, src_gid: u32, old: Option<(u32, u32)>) -> u32 {
+    let mut mode = src_mode & 0o777;
+    if let Some((old_mode, old_gid)) = old {
+        mode &= old_mode;
+        if old_gid != src_gid {
+            mode = without_group(src_mode, mode);
+        }
+    }
+    mode
+}
+
+/// `mode` for a backup that is not in the drawing's group: no group bits, and `other` capped by the
+/// drawing's group bits (`src_mode`).
+#[cfg(unix)]
+fn without_group(src_mode: u32, mode: u32) -> u32 {
+    (mode & !0o070) & (!0o007 | ((src_mode & 0o070) >> 3))
+}
+
+/// A first backup is created in the process's (or folder's) group, not the drawing's: move it to the
+/// drawing's group before any data is written, else drop its group bits ([`without_group`]).
+#[cfg(unix)]
+fn adopt_source_group(out: &std::fs::File, src: &std::fs::Metadata) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    if out.metadata()?.gid() == src.gid() || fchown(out, None, Some(src.gid())).is_ok() {
+        return Ok(());
+    }
+    out.set_permissions(std::fs::Permissions::from_mode(without_group(src.mode(), src.mode() & 0o777)))
+}
+
 /// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
@@ -639,7 +745,9 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     };
     let (head, tail, len) = ends(&mut src)?;
     let bak = backup_path(path);
-    if !backup_replaced(&head, &tail, len, bak.exists()) {
+    // Whether the .bak name is taken is asked without following a link there: a link leading out of
+    // the roots (or to another computer) isn't looked at.
+    if !backup_replaced(&head, &tail, len, std::fs::symlink_metadata(&bak).is_ok()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
         return Ok(());
     }
@@ -648,19 +756,23 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
     // failed write leaves the old .bak as it was; a symlink at the .bak is replaced, never
     // written through.
     #[cfg(unix)]
-    let permissions = {
-        use std::os::unix::fs::PermissionsExt;
-        let mut mode = src.metadata()?.permissions().mode() & 0o777;
-        if let Ok(m) = std::fs::symlink_metadata(&bak)
-            && m.is_file()
-        {
-            mode &= m.permissions().mode();
-        }
-        Some(std::fs::Permissions::from_mode(mode))
+    let source_metadata = src.metadata()?;
+    #[cfg(unix)]
+    let first_backup = std::cell::Cell::new(false);
+    #[cfg(unix)]
+    let permissions = || {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let old = std::fs::symlink_metadata(&bak).ok().filter(|m| m.is_file());
+        first_backup.set(old.is_none());
+        Ok(Some(std::fs::Permissions::from_mode(backup_mode(source_metadata.mode(), source_metadata.gid(), old.map(|m| (m.mode(), m.gid()))))))
     };
     #[cfg(not(unix))]
-    let permissions = None;
-    crate::atomic_write::write_atomic_with(&bak, permissions, |out| {
+    let permissions = || Ok(None);
+    crate::atomic_write::write_atomic_with_permissions(&bak, permissions, |out| {
+        #[cfg(unix)]
+        if first_backup.get() {
+            adopt_source_group(out, &source_metadata)?;
+        }
         std::io::Write::write_all(out, &head)?;
         std::io::copy(&mut src, out).map(|_| ())
     })
@@ -719,13 +831,21 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
-fn drawing_version(s: &Session, path: &str) -> Version {
-    let v = s
-        .state()
-        .ok()
-        .and_then(|st| st.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
-        .unwrap_or_default();
+pub fn drawing_version(s: &Session, path: &str) -> Version {
+    let v = s.state().ok().and_then(|st| acadver(st.drawing())).unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
+}
+
+/// The version `d` is saved in at `path` when none is asked for, as [`drawing_version`] says for
+/// the active drawing.
+pub(crate) fn own_version(d: &Drawing, path: &str) -> Version {
+    let v = acadver(d).unwrap_or_default();
+    if is_dxf(path) { v } else { v.max(Version::R2004) }
+}
+
+/// The version `d`'s `$ACADVER` names.
+fn acadver(d: &Drawing) -> Option<Version> {
+    d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver)
 }
 
 /// `document.switch index`: require the index, cancel the running command, activate that drawing and bump the epoch even if it was already active (screenshot identity).
@@ -753,8 +873,9 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
-    } else if version >= Version::R2013 && is_dxf_file(format!("drawing.{fmt}")) {
-        report_sat_text_dropped(s, &mut r);
+    } else if is_dxf_file(format!("drawing.{fmt}")) {
+        let lost = host_dxf_lost(s, version);
+        report_lost(s, &mut r, "drawing.dxf", version, &lost);
     }
     Ok(r)
 }
@@ -789,10 +910,12 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
-            // A DWG before 2013 writes a solid's SAT text as it is; from 2013 the geometry has to be
-            // in the data store, and SAT text alone is lost (#2334).
+            // A DWG before 2013 keeps a solid's SAT text of ACIS 7.0 and later; from 2013 the geometry
+            // has to be in the data store, and SAT text alone is lost. Older SAT (ACIS 4.0, as ZWCAD
+            // writes to DXF 2000) reaches the DWG without usable geometry: ZWCAD 2025 opens such a
+            // solid as a proxy or an empty body (#2334).
             if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t))
-                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::has_sat_text(&u.tags)))
+                && (stored.contains(&e.handle) || (version < Version::R2013 && cadcraft_doc::foreign::sat_version(&u.tags).is_some_and(|v| v >= 700)))
             {
                 continue;
             }
@@ -812,6 +935,12 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
         if version < Version::R2013 || d.foreign.proxy_class(&o.tags).is_none() {
             let n = out.entry("ACAD_PROXY_OBJECT".to_string()).or_insert(0);
             *n = n.saturating_add(1);
+        }
+    }
+    if let Some(compatibility) = DWG_COMPAT_LOST.get() {
+        for (kind, count) in compatibility(d, version) {
+            let total = out.entry(kind).or_default();
+            *total = total.saturating_add(count);
         }
     }
     out
@@ -834,9 +963,8 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 /// reports the same list afterwards to callers that never get a dialog.
 pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
     let version = drawing_version(s, path);
-    if is_dxf_file(path) && version >= Version::R2013 {
-        // The drawing a file holds: the host while the Block Editor is open.
-        return s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
+    if is_dxf_file(path) {
+        return host_dxf_lost(s, version);
     }
     if !drops_unknown(path) {
         return Default::default();
@@ -844,16 +972,85 @@ pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<Strin
     s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
 }
 
-/// Report what the file `path`, just written at the drawing's own version, left out.
-pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
-    if is_dxf_file(path) {
-        if drawing_version(s, path) >= Version::R2013 {
-            report_sat_text_dropped(s, r);
-        }
-    } else {
-        let lost = loss_on_save(s, path);
-        report_not_saved(s, r, &lost);
+/// What a DXF of `version` leaves out of the drawing a save writes: the host while the Block
+/// Editor is open ([`dxf_lost`]).
+fn host_dxf_lost(s: &Session, version: Version) -> std::collections::BTreeMap<String, usize> {
+    s.state().map(|st| dxf_lost(st.drawing(), version)).unwrap_or_default()
+}
+
+/// What a DXF of `version` leaves out of `d`: solid modeler entities whose ACIS geometry that
+/// version has no place for (#2334: SAT text alone from 2013, data store geometry alone before),
+/// and before 2007 proxies whose strings it can't hold, with the objects that go with them
+/// (#3229). The two never name the same record: a solid lost before 2013 is lost in 2007 too.
+fn dxf_lost(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
+    let mut lost = cadcraft_doc::foreign::acis_dropped(d, version >= Version::R2013);
+    for (kind, n) in proxies_lost(d, version) {
+        let m = lost.entry(kind).or_insert(0);
+        *m = m.saturating_add(n);
     }
+    lost
+}
+
+/// What a file at `path` leaves out of `d`, written at `version`: empty when it keeps everything.
+pub(crate) fn lost_writing(d: &Drawing, path: &str, version: Version) -> std::collections::BTreeMap<String, usize> {
+    if !is_dxf_file(path) {
+        return if drops_unknown(path) { not_saved_as(d, version) } else { Default::default() };
+    }
+    dxf_lost(d, version)
+}
+
+/// Report what the file `path`, just written from the active document (what EXPORT writes: the
+/// block while the Block Editor is open) at its own version, left out.
+pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
+    let Ok(d) = s.doc() else { return };
+    let version = own_version(d, path);
+    let lost = lost_writing(d, path, version);
+    report_lost(s, r, path, version, &lost);
+}
+
+/// Say on the command line what the file `path`, written at `version`, couldn't keep (`lost`),
+/// in the words for that kind of file, and list it in the result's `notSaved`.
+pub(crate) fn report_lost(s: &mut Session, r: &mut Value, path: &str, version: Version, lost: &std::collections::BTreeMap<String, usize>) {
+    match lost_message(path, version, lost) {
+        Some(msg) => s.echo(msg),
+        None => return,
+    }
+    if let Some(o) = r.as_object_mut() {
+        o.insert("notSaved".into(), json!(lost));
+    }
+}
+
+/// The command-line warning for what a file at `path` written at `version` left out, or `None`
+/// when it kept everything.
+pub(crate) fn lost_message(path: &str, version: Version, lost: &std::collections::BTreeMap<String, usize>) -> Option<String> {
+    if !is_dxf_file(path) {
+        return not_saved_message(lost);
+    }
+    if lost.is_empty() {
+        return None;
+    }
+    // Solids (#2334) and, before 2007, proxies and what goes with them (#3229), each with its reason.
+    let list = |solids: bool| -> Vec<String> {
+        lost.iter().filter(|(t, _)| MODELER_TYPES.iter().any(|m| t.eq_ignore_ascii_case(m)) == solids).map(|(t, n)| format!("{n} {t}")).collect()
+    };
+    let mut parts = Vec::new();
+    let solids = list(true);
+    if !solids.is_empty() {
+        let why = if version >= Version::R2013 {
+            "2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them"
+        } else {
+            "2010 and earlier have no data store, where these entities keep their ACIS geometry; save as 2013 or later to keep them"
+        };
+        parts.push(format!("Not saved in the DXF file ({why}): {}", solids.join(", ")));
+    }
+    let others = list(false);
+    if !others.is_empty() {
+        parts.push(format!(
+            "Not saved in the DXF file (proxies that keep their strings apart from their data, which DXF before 2007 can't hold, and the objects that go with them; save as 2007 or later to keep them): {}",
+            others.join(", ")
+        ));
+    }
+    Some(parts.join(" "))
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
@@ -870,24 +1067,6 @@ fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
 /// Whether `path` is a DXF file.
 fn is_dxf_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path) == Some(Format::Dxf)
-}
-
-/// Say on the command line which solid modeler entities a DXF of 2013 or later left out because
-/// they hold SAT-text ACIS data, which such files keep in a data store instead (#2334).
-fn report_sat_text_dropped(s: &mut Session, r: &mut Value) {
-    // The drawing a file holds: the host while the Block Editor is open.
-    let lost = s.state().map(|st| cadcraft_doc::foreign::sat_text_dropped(st.drawing())).unwrap_or_default();
-    if lost.is_empty() {
-        return;
-    }
-    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
-    s.echo(format!(
-        "Not saved in the DXF file (2013 and later keep ACIS geometry in a data store these entities have no record in; save as 2010 or earlier to keep them): {}",
-        list.join(", ")
-    ));
-    if let Some(o) = r.as_object_mut() {
-        o.insert("notSaved".into(), json!(lost));
-    }
 }
 
 /// The folder a write to `path` has to create, asked before writing so it can be reported after.
@@ -933,8 +1112,9 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
-    } else if version >= Version::R2013 && r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
-        report_sat_text_dropped(s, &mut r);
+    } else if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
+        let lost = host_dxf_lost(s, version);
+        report_lost(s, &mut r, "drawing.dxf", version, &lost);
     }
     if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
         report_fonts(s, &mut r);
@@ -982,46 +1162,14 @@ fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
     save_reporting(s, p, run_saveas, asked)
 }
 
-const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
+/// Encode bytes with the standard padded Base64 alphabet.
 pub fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(char::from(B64[((n >> (18 - 6 * i)) & 63) as usize]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
+    craft_mime::base64::STANDARD.encode(data)
 }
 
+/// Decode the legacy file/control Base64 form, retaining its permissive alphabet and padding.
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let mut buf = 0u32;
-    let mut bits = 0;
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' | b'-' => 62,
-            b'/' | b'_' => 63,
-            b'=' | b'\n' | b'\r' | b' ' => continue,
-            _ => return None,
-        };
-        buf = (buf << 6) | u32::from(v);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buf >> bits) & 0xff) as u8);
-        }
-    }
-    Some(out)
+    craft_mime::base64_compat::decode(s).ok()
 }
 
 #[cfg(test)]
@@ -1030,6 +1178,66 @@ mod tests {
 
     use crate::Session;
     use crate::temp_dir::TempDir;
+
+    /// Whether the `.bak` name is taken is asked without following a link there: a dangling link
+    /// counts as taken, so a file that doesn't look like a drawing leaves it alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_bak_name_counts_as_a_backup_without_being_followed() {
+        let dir = TempDir::new("cc-bak-link");
+        let path = dir.join("plain.dxf");
+        std::fs::write(&path, "just some text, not a drawing").unwrap();
+        let bak = super::backup_path(&path);
+        std::os::unix::fs::symlink(dir.join("nowhere"), &bak).unwrap();
+        super::backup(&path).unwrap();
+        assert!(std::fs::symlink_metadata(&bak).unwrap().file_type().is_symlink(), "the link is left as it was");
+    }
+
+    /// A backup is never more open than the drawing or the old `.bak`, and loses the group bits when
+    /// it would keep the old `.bak`'s group while the drawing is in another.
+    #[cfg(unix)]
+    #[test]
+    fn backup_mode_drops_group_bits_for_a_different_group() {
+        use super::backup_mode;
+        assert_eq!(backup_mode(0o640, 10, None), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 10))), 0o640);
+        assert_eq!(backup_mode(0o640, 10, Some((0o664, 20))), 0o600);
+        assert_eq!(backup_mode(0o644, 10, Some((0o644, 20))), 0o604);
+        assert_eq!(backup_mode(0o600, 10, Some((0o664, 10))), 0o600);
+    }
+
+    /// With no `.bak` yet, the first backup takes the drawing's group (when the user is in another
+    /// group, as `id -G` says), never the group the new file would be created in.
+    #[cfg(unix)]
+    #[test]
+    fn first_backup_takes_the_drawings_group() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = TempDir::new("first-bak-grp");
+        let src = dir.join("a.dxf");
+        std::fs::write(&src, "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n").unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&src).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&src, None, Some(gid)).unwrap();
+        }
+        super::backup(&src).unwrap();
+        let (s, b) = (std::fs::metadata(&src).unwrap(), std::fs::metadata(super::backup_path(&src)).unwrap());
+        assert_eq!((b.gid(), b.mode() & 0o777), (s.gid(), 0o640));
+    }
+
+    /// The fail-safe when the group cannot be adopted: no group bits, `other` capped by the group's.
+    #[cfg(unix)]
+    #[test]
+    fn without_group_drops_group_bits_and_caps_other() {
+        assert_eq!(super::without_group(0o640, 0o640), 0o600);
+        assert_eq!(super::without_group(0o604, 0o604), 0o600);
+        assert_eq!(super::without_group(0o644, 0o644), 0o604);
+    }
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()

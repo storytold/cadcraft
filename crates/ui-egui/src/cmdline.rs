@@ -29,6 +29,9 @@ pub struct CmdLine {
     pub options: Option<crate::dyninput::OptionsMenu>,
     /// The text whose second Dynamic Input value Tab locked; the lock holds while it is unchanged.
     locked_second: Option<String>,
+    /// The text at which Tab wrapped around to the first Dynamic Input box of a split entry
+    /// (`40<90`); the first box stays active while the command line holds that text.
+    first_active: Option<String>,
     /// Where the options menu's rows were drawn last frame (screen), for clicks on them.
     pub option_rows: Vec<(Rect, String)>,
     /// Where the Dynamic Input tooltip stays while the options menu is open.
@@ -57,7 +60,8 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
         return None;
     }
     let p = app.session.current_prompt().filter(cadcraft_engine::pointmod::accepts)?;
-    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
+    let ucs = app.session.input_ucs();
+    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute, ucs })
 }
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
@@ -84,7 +88,8 @@ pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
 }
 
 /// Tab on the command line: cycle the object snaps under the cursor, type the Dynamic Input
-/// separator (`,` or `<`) after a value, or complete a command name.
+/// separator (`,` or `<`) after a value, cycle between the two Dynamic Input boxes, or complete a
+/// command name.
 fn tab(app: &mut CadApp) {
     // Grip dimensional input: Tab locks the typed value and moves to the next field.
     if crate::grip_dyn::tab(app) {
@@ -98,11 +103,20 @@ fn tab(app: &mut CadApp) {
     {
         app.cmd.buffer.push(sep);
     } else if let Some(f) = dyn_frame(app)
-        && crate::dyninput::can_lock_second(&app.cmd.buffer, &f)
+        && crate::dyninput::is_split(&app.cmd.buffer, &f)
     {
-        // Both values typed: Tab locks the second one as well.
-        app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
+        if app.cmd.first_active() {
+            // Back in the first box: Tab moves on to the second one again.
+            app.cmd.first_active = None;
+        } else {
+            // Leaving the second box: a typed value locks as well (both values typed), and Tab
+            // wraps around to the first box so its value can be changed.
+            if crate::dyninput::can_lock_second(&app.cmd.buffer, &f) {
+                app.cmd.locked_second = Some(app.cmd.buffer.clone());
+            }
+            app.cmd.first_active = Some(app.cmd.buffer.clone());
+        }
+    } else if let Some(s) = suggestions_in(&app.session, &app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
 }
@@ -118,12 +132,26 @@ pub struct Suggestion {
     pub label: &'static str,
 }
 
-/// Matching command names/aliases for AutoComplete.
-fn suggestions(prefix: &str) -> Vec<Suggestion> {
+/// [`suggestions`] for what `session` can run: a Greek word that is a command of its own there (an
+/// alias, a command the drawing's LISP defines) stays as typed.
+fn suggestions_in(session: &cadcraft_engine::Session, prefix: &str) -> Vec<Suggestion> {
+    suggestions(prefix, &|word| session.greek_word_is_a_command(word))
+}
+
+/// Matching command names/aliases for AutoComplete. `is_own_command` tells whether a Greek-layout
+/// word is a command of its own rather than the Latin name its keys type.
+fn suggestions(prefix: &str, is_own_command: &dyn Fn(&str) -> bool) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
-    let p = prefix.to_ascii_lowercase();
+    // Typed with the Greek keyboard layout (ΛΙΝ), it completes as the Latin name (LINE), unless the word
+    // as typed already names a command, alias or LISP command: that is what Enter runs.
+    let typed = prefix.to_ascii_lowercase();
+    let p = if cadcraft_engine::cmd::find_command(&cadcraft_engine::cmd::resolve_alias(&typed)).is_some() {
+        typed
+    } else {
+        cadcraft_engine::keyboard::latin_keys(prefix).filter(|_| !is_own_command(prefix)).unwrap_or(typed)
+    };
 
     let mut out: Vec<Suggestion> = Vec::new();
     let mut seen_ids: HashSet<&'static str> = HashSet::new();
@@ -193,6 +221,63 @@ impl CmdLine {
     /// Tab locked the second Dynamic Input value and nothing was typed since.
     pub fn second_locked(&self) -> bool {
         self.locked_second.as_deref() == Some(self.buffer.as_str())
+    }
+
+    /// Tab wrapped around to the first Dynamic Input box and it is still the active one.
+    pub fn first_active(&self) -> bool {
+        self.first_active.as_deref() == Some(self.buffer.as_str())
+    }
+
+    /// Forget the first-box record once the command line no longer holds its text (Escape, history
+    /// recall, a picked option or a click cleared or replaced it), so typing the same text again later
+    /// does not reactivate the first box without Tab. `dyn_live` is false while the Dynamic Input
+    /// boxes are not on screen (F12 turned it off): the record goes too, and Backspace and typing
+    /// edit the end of the command line again.
+    fn forget_stale_first(&mut self, dyn_live: bool) {
+        if !dyn_live || !self.first_active() {
+            self.first_active = None;
+        }
+    }
+
+    /// Type `text` at the command line: at the end, or into the first Dynamic Input box when Tab
+    /// wrapped around to it (the second value, and its lock, are kept). `frame` is the Dynamic
+    /// Input frame on screen (`dyn_frame`), which decides whether a separator may switch formats.
+    fn type_text(&mut self, text: &str, frame: Option<crate::dyninput::Frame>) {
+        if self.first_active()
+            && let Some(f) = frame
+            && let Some(edit) = crate::dyninput::type_in_first(&self.buffer, text, &f)
+        {
+            let keep_lock = self.second_locked() && !edit.done;
+            self.buffer = edit.text;
+            self.first_active = (!edit.done).then(|| self.buffer.clone());
+            self.locked_second = keep_lock.then(|| self.buffer.clone());
+            return;
+        }
+        self.buffer.push_str(text);
+    }
+
+    /// The typed entry is used up or thrown away (a click placed the point, or Escape): the text
+    /// goes, and so do the first-box record and the second value's lock, so typing the same text
+    /// again later does not lock anything without Tab.
+    pub fn clear_entry(&mut self) {
+        self.buffer.clear();
+        self.first_active = None;
+        self.locked_second = None;
+    }
+
+    /// Backspace at the command line: erase the last character, or the first Dynamic Input
+    /// value's last character while its box is active (the separator and second value stay).
+    fn backspace(&mut self) {
+        if self.first_active()
+            && let Some(text) = crate::dyninput::backspace_in_first(&self.buffer)
+        {
+            let keep_lock = self.second_locked();
+            self.buffer = text;
+            self.first_active = Some(self.buffer.clone());
+            self.locked_second = keep_lock.then(|| self.buffer.clone());
+            return;
+        }
+        self.buffer.pop();
     }
 
     /// The options menu row under `at` (screen), if the menu is open.
@@ -303,6 +388,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     }
     options_still_fit(app);
     for ev in events {
+        app.cmd.forget_stale_first(dyn_frame(app).is_some());
         // The options menu takes the arrows, Enter and Escape; typing closes it.
         if app.cmd.options.is_some() {
             let space = matches!(&ev, egui::Event::Text(t) if t == " ") && !text_prompt;
@@ -342,7 +428,8 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
-                    app.cmd.buffer.push_str(&t);
+                    let f = dyn_frame(app);
+                    app.cmd.type_text(&t, f);
                 }
             }
             // IME composition: the pre-edit is shown but stays out of the buffer; the commit is
@@ -352,17 +439,14 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
             egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                 app.cmd.preedit.clear();
                 if text != "\n" && text != "\r" {
-                    app.cmd.buffer.push_str(&text);
+                    let f = dyn_frame(app);
+                    app.cmd.type_text(&text, f);
                 }
             }
             egui::Event::Ime(_) => {}
             egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
                 Key::Enter => submit(app),
-                Key::Escape => {
-                    app.cmd.buffer.clear();
-                    app.cmd.preedit.clear();
-                    app.session.cancel();
-                }
+                Key::Escape => escape(app),
                 Key::Backspace => {
                     let press = KeyPress { repeat, plain: !(modifiers.alt || modifiers.ctrl || modifiers.command) };
                     let erase = backspace_erases(
@@ -376,7 +460,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     if erase {
                         let _ = app.run("erase.selection", serde_json::json!({}));
                     } else {
-                        app.cmd.buffer.pop();
+                        app.cmd.backspace();
                     }
                 }
                 Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
@@ -384,6 +468,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
                     app.cmd.history_pos = Some(pos);
                     app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
+                    app.cmd.first_active = None;
                 }
                 Key::ArrowDown if !modifiers.any() => {
                     if !options_key(app, 1)
@@ -396,6 +481,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         } else {
                             app.cmd.history_pos = Some(np);
                             app.cmd.buffer = app.cmd.history.get(np).cloned().unwrap_or_default();
+                            app.cmd.first_active = None;
                         }
                     }
                 }
@@ -409,6 +495,16 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         }
         app.cmd.note_typing();
     }
+    app.cmd.forget_stale_first(dyn_frame(app).is_some());
+}
+
+/// What Escape does, and the right-click or menu "Cancel" that stand for it: what was typed so far
+/// goes, and so does the running command.
+pub fn escape(app: &mut CadApp) {
+    app.paste.cancel();
+    app.cmd.clear_entry();
+    app.cmd.preedit.clear();
+    app.session.cancel();
 }
 
 pub fn submit(app: &mut CadApp) {
@@ -429,6 +525,7 @@ pub fn submit(app: &mut CadApp) {
     }
     let text = std::mem::take(&mut app.cmd.buffer);
     app.cmd.locked_second = None;
+    app.cmd.first_active = None;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
         app.cmd.history.push(text.clone());
@@ -443,8 +540,12 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
+    // OPEN with a file name reads it in the background, as File ▸ Open does (no frozen window).
+    if !app.session.prompting() && app.open_typed(&text) {
+        return;
+    }
     // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
-    let completion = if app.session.prompting() { None } else { suggestions(text.trim()).into_iter().next() };
+    let completion = if app.session.prompting() { None } else { suggestions_in(&app.session, text.trim()).into_iter().next() };
     app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
 }
 
@@ -585,7 +686,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     );
     // AutoComplete list.
     if !app.session.prompting() {
-        let sug = suggestions(&app.cmd.buffer);
+        let sug = suggestions_in(&app.session, &app.cmd.buffer);
         if !sug.is_empty() {
             let rh = 20.0;
             let lr = Rect::from_min_size(
@@ -647,7 +748,7 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
     let mut all = bar.union(grip);
     if !app.session.prompting() {
-        let k = suggestions(&app.cmd.buffer).len();
+        let k = suggestions_in(&app.session, &app.cmd.buffer).len();
         if k > 0 {
             let above = if n == 0 { 0.0 } else { LINE_H * n as f32 + 6.0 };
             all = all.union(Rect::from_min_size(pos2(bar.left(), bar.top() - 6.0 - 20.0 * k as f32 - above), vec2(bar.width(), 1.0)));
@@ -757,14 +858,64 @@ mod tests {
         frame(app, ctx, vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() }]);
     }
 
+    /// A Greek-layout prefix completes like its Latin keys; a prefix in another script is matched
+    /// as it is.
+    #[test]
+    fn autocomplete_reads_a_greek_layout_prefix_as_its_latin_keys() {
+        // ΛΙΝ is the keys L-I-N on the Greek layout: it completes like the Latin prefix does.
+        let latin: Vec<String> = suggestions("lin", &|_| false).into_iter().map(|s| s.id).collect();
+        assert!(latin.iter().any(|id| id == "LINE"), "{latin:?}");
+        let greek: Vec<String> = suggestions("ΛΙΝ", &|_| false).into_iter().map(|s| s.id).collect();
+        assert_eq!(greek, latin);
+        // A prefix that is not Greek-layout typing is matched as it is.
+        assert!(suggestions("ЖЖЖ", &|_| false).is_empty());
+    }
+
+    /// A Greek word the user made an alias is offered as that alias's command, which is what Enter
+    /// runs.
+    #[test]
+    fn autocomplete_offers_the_greek_alias_the_user_defined_that_enter_would_run() {
+        // Enter runs a word that is an alias as typed, so AutoComplete must not read it as Latin keys first:
+        // Ξ is the J key (JOIN's alias), but the user made Ξ an alias of QSAVE. The alias store is
+        // process-wide and the alias dialog's tests clear it, so this test takes its turn with them.
+        let _alone = crate::aliasdlg::lock_alias_store();
+        let mut session = Session::empty();
+        session.execute("aliasedit", &serde_json::json!({ "set": { "Ξ": "qsave" } })).unwrap();
+        let first = suggestions("Ξ", &|_| false).into_iter().next().map(|s| s.id);
+        session.execute("aliasedit", &serde_json::json!({ "remove": ["Ξ"] })).unwrap();
+        assert_eq!(first.as_deref(), Some("QSAVE"));
+    }
+
+    /// A Greek word the drawing's LISP defines as a command is not completed to the Latin name of
+    /// its keys.
+    #[test]
+    fn autocomplete_leaves_a_greek_word_the_drawings_lisp_defines_as_typed() {
+        // ΛΙΝΕ is the keys of LINE, but the drawing defines a command of that Greek name: Enter runs that
+        // command, so Tab must not replace the word with LINE.
+        let mut session = Session::new();
+        session.cmdline("(defun c:ΛΙΝΕ () (princ))").unwrap();
+        for word in ["ΛΙΝΕ", "λινε", "λίνε"] {
+            assert!(suggestions_in(&session, word).is_empty(), "{word}: {:?}", suggestions_in(&session, word));
+        }
+        // Another word of the same keys is still read as Latin: Enter would start LINE for it too.
+        assert!(suggestions_in(&session, "ΛΙΝ").iter().any(|s| s.id == "LINE"));
+        // Without the definition ΛΙΝΕ completes as LINE.
+        let plain = Session::new();
+        assert!(suggestions_in(&plain, "ΛΙΝΕ").iter().any(|s| s.id == "LINE"));
+    }
+
     #[test]
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
         use cadcraft_engine::geom::Vec2;
+        // TEXT's own text prompt: the command line collects it (TEXTEDIT on a TEXT edits it in
+        // place instead, #842, with the IME going into that box).
         let mut app = CadApp::new(Session::new(), crate::Services::default());
-        app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
-        app.start("textedit");
-        app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
-        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
+        app.start("text");
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        app.session.input(Input::Text("2.5".into())).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
+        assert!(app.session.text_editor().is_none(), "no in-place editor at this prompt");
         let ctx = egui::Context::default();
         let out = frame(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
@@ -784,7 +935,10 @@ mod tests {
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
-        // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
+        // An empty line ends TEXT.
+        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        assert!(app.session.running.is_none());
+        // No text asked for: the next frame lets the IME go, so it can't swallow ASCII typing.
         let out = frame(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
@@ -890,7 +1044,7 @@ mod autocomplete_tests {
 
     #[test]
     fn exact_alias_is_first_suggestion_with_alias_display() {
-        let rec = suggestions("rec");
+        let rec = suggestions("rec", &|_| false);
         assert!(!rec.is_empty());
         assert_eq!(rec[0].id, "RECTANG");
         assert_eq!(rec[0].display, "REC (RECTANG)");
@@ -900,26 +1054,26 @@ mod autocomplete_tests {
         assert_eq!(rec[1].id, "RECOVER");
         assert_eq!(rec[1].display, "RECOVER");
 
-        let l = suggestions("l");
+        let l = suggestions("l", &|_| false);
         assert_eq!(l[0].id, "LINE");
         assert_eq!(l[0].display, "L (LINE)");
 
-        let c = suggestions("c");
+        let c = suggestions("c", &|_| false);
         assert_eq!(c[0].id, "CIRCLE");
         assert_eq!(c[0].display, "C (CIRCLE)");
 
-        let co = suggestions("co");
+        let co = suggestions("co", &|_| false);
         assert_eq!(co[0].id, "COPY");
         assert_eq!(co[0].display, "CO (COPY)");
     }
 
     #[test]
     fn prefix_without_alias_shows_command_id() {
-        let rect = suggestions("rect");
+        let rect = suggestions("rect", &|_| false);
         assert_eq!(rect[0].id, "RECTANG");
         assert_eq!(rect[0].display, "RECTANG");
 
-        let line = suggestions("line");
+        let line = suggestions("line", &|_| false);
         assert_eq!(line[0].id, "LINE");
         assert_eq!(line[0].display, "LINE");
     }
@@ -965,5 +1119,237 @@ mod autocomplete_tests {
         submit(&mut app);
         assert!(app.session.running.is_none());
         assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+}
+
+#[cfg(test)]
+mod dyn_tab_tests {
+    use super::*;
+    use cadcraft_doc::EntityKind;
+    use cadcraft_geom::Vec2;
+
+    /// LINE with Dynamic Input on, at its second point (from the origin).
+    fn line_from_origin() -> CadApp {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        app.cmdline("line");
+        app.cmdline("0,0");
+        assert!(dyn_frame(&app).is_some_and(|f| f.base.is_some()), "a second point prompt");
+        app
+    }
+
+    /// Type `text` at the command line with the Dynamic Input frame on screen.
+    fn type_in(app: &mut CadApp, text: &str) {
+        let f = dyn_frame(app);
+        app.cmd.type_text(text, f);
+    }
+
+    fn line_end(app: &CadApp) -> Option<Vec2> {
+        app.session.doc().ok()?.model.iter().find_map(|e| match &e.kind {
+            EntityKind::Line(l) => Some(l.b.xy()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn tab_wraps_back_to_the_first_box_and_keeps_the_second_value() {
+        // #3201: `40` Tab `90`, Tab back to the length, change it to 50, Enter.
+        let mut app = line_from_origin();
+        type_in(&mut app, "40");
+        tab(&mut app);
+        assert_eq!(app.cmd.buffer, "40<");
+        assert!(!app.cmd.first_active());
+        type_in(&mut app, "90");
+        // Tab locks the angle and wraps around to the length box.
+        tab(&mut app);
+        assert!(app.cmd.first_active() && app.cmd.second_locked());
+        // Backspace and typing edit only the length; the angle and its lock stay.
+        app.cmd.backspace();
+        app.cmd.backspace();
+        app.cmd.backspace();
+        assert_eq!(app.cmd.buffer, "<90");
+        type_in(&mut app, "50");
+        assert_eq!(app.cmd.buffer, "50<90");
+        assert!(app.cmd.first_active() && app.cmd.second_locked());
+        // Tab moves on to the angle box again, and again wraps around.
+        tab(&mut app);
+        assert!(!app.cmd.first_active());
+        assert_eq!(app.cmd.buffer, "50<90");
+        tab(&mut app);
+        assert!(app.cmd.first_active());
+        submit(&mut app);
+        let b = line_end(&app);
+        assert!(b.is_some_and(|b| b.dist(Vec2::new(0.0, 50.0)) < 1e-9), "{b:?}");
+        assert!(!app.cmd.first_active());
+    }
+
+    fn run_frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn typed(text: &str) -> Vec<egui::Event> {
+        text.chars().map(|c| egui::Event::Text(c.to_string())).collect()
+    }
+
+    #[test]
+    fn escape_forgets_the_first_box() {
+        // Retyping the text the first box was active at must not reactivate it without Tab.
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
+        app.cmdline("line");
+        app.cmdline("0,0");
+        run_frame(&mut app, &ctx, typed("40\t90\t"));
+        assert!(app.cmd.first_active(), "{:?}", app.cmd.buffer);
+        let escape = egui::Key::Escape;
+        let m = egui::Modifiers::NONE;
+        run_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::Key { key: escape, physical_key: None, pressed: true, repeat: false, modifiers: m },
+                egui::Event::Key { key: escape, physical_key: None, pressed: false, repeat: false, modifiers: m },
+            ],
+        );
+        app.cmdline("line");
+        app.cmdline("0,0");
+        run_frame(&mut app, &ctx, typed("40<90"));
+        assert!(!app.cmd.first_active());
+        run_frame(&mut app, &ctx, typed("1"));
+        assert_eq!(app.cmd.buffer, "40<901");
+    }
+
+    #[test]
+    fn dynamic_input_off_edits_the_end_of_the_command_line() {
+        // F12 with the first box active: Backspace and typing must edit the end again.
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
+        app.cmdline("line");
+        app.cmdline("0,0");
+        run_frame(&mut app, &ctx, typed("40\t90\t"));
+        assert!(app.cmd.first_active(), "{:?}", app.cmd.buffer);
+        app.session.settings.dynmode = false;
+        let back = egui::Key::Backspace;
+        let m = egui::Modifiers::NONE;
+        run_frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::Key { key: back, physical_key: None, pressed: true, repeat: false, modifiers: m },
+                egui::Event::Key { key: back, physical_key: None, pressed: false, repeat: false, modifiers: m },
+            ],
+        );
+        assert_eq!(app.cmd.buffer, "40<9");
+        assert!(!app.cmd.first_active());
+        run_frame(&mut app, &ctx, typed("5"));
+        assert_eq!(app.cmd.buffer, "40<95");
+    }
+
+    #[test]
+    fn the_locked_angle_holds_the_click_once_the_length_is_erased() {
+        // #3201: `40` Tab `90` Tab, erase the 40: the angle box keeps its lock, so the canvas
+        // cursor lies along 90 degrees at the pointer's distance, and a click places the line's
+        // end there.
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
+        app.cmdline("line");
+        app.cmdline("0,0");
+        run_frame(&mut app, &ctx, typed("40\t90\t"));
+        let back = egui::Key::Backspace;
+        let m = egui::Modifiers::NONE;
+        let key = |pressed| egui::Event::Key { key: back, physical_key: None, pressed, repeat: false, modifiers: m };
+        run_frame(&mut app, &ctx, vec![key(true), key(false), key(true), key(false)]);
+        assert_eq!(app.cmd.buffer, "<90");
+        assert!(app.cmd.first_active() && app.cmd.second_locked());
+        let at = center + egui::vec2(37.0, -23.0);
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let c = app.canvas.cursor;
+        assert!(c.is_some_and(|c| c.x.abs() < 1e-9 && c.y > 0.0), "{c:?}");
+        let click = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: m };
+        run_frame(&mut app, &ctx, vec![click(true)]);
+        run_frame(&mut app, &ctx, vec![click(false)]);
+        let b = line_end(&app);
+        assert!(b.zip(c).is_some_and(|(b, c)| b.dist(c) < 1e-9), "{b:?} {c:?}");
+    }
+
+    #[test]
+    fn tab_from_an_empty_second_box_wraps_without_locking() {
+        let mut app = line_from_origin();
+        type_in(&mut app, "40");
+        tab(&mut app);
+        tab(&mut app);
+        assert!(app.cmd.first_active() && !app.cmd.second_locked());
+        // A separator typed in the first box moves to the second box again.
+        type_in(&mut app, "5<");
+        assert_eq!(app.cmd.buffer, "405<");
+        assert!(!app.cmd.first_active());
+        type_in(&mut app, "0");
+        assert_eq!(app.cmd.buffer, "405<0");
+    }
+
+    #[test]
+    fn escape_and_a_click_drop_the_second_value_lock() {
+        // #3231 review: after Escape or a click, retyping `40<90` must not be locked without Tab.
+        for click in [false, true] {
+            let mut app = line_from_origin();
+            type_in(&mut app, "40<90");
+            tab(&mut app);
+            assert!(app.cmd.second_locked());
+            if click {
+                app.cmd.clear_entry();
+            } else {
+                escape(&mut app);
+                app.cmdline("line");
+                app.cmdline("0,0");
+            }
+            type_in(&mut app, "40<90");
+            assert!(!app.cmd.second_locked(), "click: {click}");
+            assert!(!app.cmd.first_active(), "click: {click}");
+        }
+    }
+
+    #[test]
+    fn a_canvas_click_drops_the_second_value_lock() {
+        // #3231: the click is taken when the button goes down; using up the typed `40<90` there
+        // must drop the Tab lock too, or retyping `40<90` comes back locked without Tab.
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.session.settings.dynmode = true;
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
+        app.cmdline("line");
+        app.cmdline("0,0");
+        run_frame(&mut app, &ctx, typed("40<90\t"));
+        assert!(app.cmd.second_locked());
+        let at = center + egui::vec2(37.0, -23.0);
+        let m = egui::Modifiers::NONE;
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let click = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: m };
+        run_frame(&mut app, &ctx, vec![click(true)]);
+        run_frame(&mut app, &ctx, vec![click(false)]);
+        assert!(app.cmd.buffer.is_empty(), "{:?}", app.cmd.buffer);
+        assert!(!app.cmd.second_locked());
+        run_frame(&mut app, &ctx, typed("40<90"));
+        assert!(!app.cmd.second_locked());
+        assert!(!app.cmd.first_active());
     }
 }

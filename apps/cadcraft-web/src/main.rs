@@ -123,11 +123,17 @@ mod web {
         cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
             cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
         });
+        cadcraft_engine::cmd::exchange::set_pdf_import(|bytes, options| cadcraft_io::pdf_read::read_json(bytes, options).map_err(|e| e.to_string()));
         // AutoLISP's entget, entmake and entmod see entities as DXF groups.
         cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
             groups: cadcraft_io::entity_groups,
             entity: cadcraft_io::entity_from_groups,
         });
+        // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+        cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+        // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
+        cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+        cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
         let Some(canvas) = app_canvas() else {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;

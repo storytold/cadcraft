@@ -1534,3 +1534,240 @@ menu	View	Näytä
 	While a command runs:	Komennon ollessa käynnissä:
 	milliseconds	millisekuntia
 	{n} more warnings; see the command line.	{n} varoitusta lisää; katso komentoriviltä.
+	3 Point	3 pistettä
+	<style overrides>	<tyylin ohitukset>
+	A dimension style with this name already exists.	Tämänniminen mittatyyli on jo olemassa.
+	Above	Yläpuolella
+	Above text	Tekstin yläpuolella
+	Add a drawing file as a block library	Lisää piirustustiedosto lohkokirjastoksi
+	Add a folder of drawings or a drawing file to use its blocks.	Lisää piirustuskansio tai piirustustiedosto, jotta voit käyttää sen lohkoja.
+	Additional Tools	Lisätyökalut
+	All properties of {style}	Tyylin {style} kaikki ominaisuudet
+	All styles	Kaikki tyylit
+	Alt enabled	Vaihtoehtoiset yksiköt käytössä
+	Alt format	Vaihtoehtoisten yksiköiden muoto
+	Alt precision	Vaihtoehtoisten yksiköiden tarkkuus
+	Alt prefix	Vaihtoehtoisten yksiköiden etuliite
+	Alt prefix and suffix	Vaihtoehtoisten yksiköiden etu- ja jälkiliite
+	Alt round	Vaihtoehtoisten yksiköiden pyöristys
+	Alt scale factor	Vaihtoehtoisten yksiköiden skaalauskerroin
+	Alt suffix	Vaihtoehtoisten yksiköiden jälkiliite
+	Alt zero suppression	Vaihtoehtoisten yksiköiden nollien piilotus
+	Alternate Units	Vaihtoehtoiset yksiköt
+	Angle between	Välikulma
+	Angle format	Kulman muoto
+	Angle precision	Kulman tarkkuus
+	Angular zero suppression	Kulmamittojen nollien piilotus
+	Annotative	Merkintäobjekti
+	Arc length symbol	Kaaren pituuden symboli
+	Architectural stacked	Arkkitehtoninen (pinottu murtoluku)
+	Architectural tick	Arkkitehtoninen vinoviiva
+	Arrow 1	Nuoli 1
+	Arrow 2	Nuoli 2
+	Arrowheads	Nuolenkärjet
+	Arrows	Nuolet
+	At Ext Line 1	Apuviivan 1 kohdalla
+	At Ext Line 2	Apuviivan 2 kohdalla
+	At least	Vähintään
+	Baseline spacing	Perusviivamittojen väli
+	Before text	Ennen tekstiä
+	Below	Alapuolella
+	Best fit	Paras sovitus
+	Block Libraries	Lohkokirjastot
+	Block Library	Lohkokirjasto
+	Blocks Palette	Lohkopaletti
+	Bottom	Ala
+	Bottom center	Alakeski
+	Box blank	Tyhjä neliö
+	Box filled	Täytetty neliö
+	Center mark size	Keskimerkin koko
+	Check for updates when CADCraft starts	Tarkista päivitykset, kun CADCraft käynnistyy
+	Click a block, then pick its insertion point.	Napsauta lohkoa ja valitse sitten sen lisäyspiste.
+	Close panel	Sulje paneeli
+	Close {panel}	Sulje {panel}
+	Closed blank	Suljettu tyhjä
+	Closed filled	Suljettu täytetty
+	Column spacing	Sarakkeiden väli
+	Columns	Sarakkeet
+	Comma	Pilkku
+	Compare	Vertaa
+	Compare Dimension Styles	Mittatyylien vertailu
+	Compare...	Vertaa...
+	Create New Dimension Style	Uuden mittatyylin luonti
+	Current Drawing	Nykyinen piirustus
+	Current dimension style: {style}	Nykyinen mittatyyli: {style}
+	Datum triangle	Peruskolmio
+	Datum triangle filled	Täytetty peruskolmio
+	Decimal degrees	Desimaaliasteet
+	Decimal separator	Desimaalierotin
+	Degrees Minutes Seconds	Asteet, minuutit, sekunnit
+	Describe Properties	Kuvaile ominaisuudet
+	Details	Tiedot
+	Diagonal stacking	Vinottain pinottu
+	Dim line color	Mittaviivan väri
+	Dim line ext	Mittaviivan jatke
+	Dim line forced	Pakotettu mittaviiva
+	Dim line linetype	Mittaviivan viivatyyppi
+	Dim line lineweight	Mittaviivan viivanpaksuus
+	Dim prefix	Mitan etuliite
+	Dim roundoff	Mitan pyöristys
+	Dim scale linear	Lineaarinen mittakaava
+	Dim suffix	Mitan jälkiliite
+	Dim units	Mitan yksiköt
+	Dimension Style	Mittatyyli
+	Dimension Style Manager	Mittatyylien hallinta
+	Dimension Style Overrides	Mittatyylin ohitukset
+	Dot	Piste
+	Dot blank	Tyhjä piste
+	Dot small	Pieni piste
+	Exactly	Tarkalleen
+	Ext line 1 linetype	Apuviivan 1 viivatyyppi
+	Ext line 2 linetype	Apuviivan 2 viivatyyppi
+	Ext line color	Apuviivan väri
+	Ext line ext	Apuviivan jatke
+	Ext line fixed	Kiinteäpituinen apuviiva
+	Ext line length	Apuviivan pituus
+	Ext line lineweight	Apuviivan viivanpaksuus
+	Ext line offset	Apuviivan siirtymä
+	Extended Trim	Laajennettu katkaisu
+	Extra Large Icons	Erittäin suuret kuvakkeet
+	Fill angle	Täyttökulma
+	Fit	Sovitus
+	Folder or file	Kansio tai tiedosto
+	Fraction format	Murtoluvun muoto
+	Fractional stacked	Murtoluku (pinottu)
+	Generate Boundary	Luo reuna
+	Gradians	Graadit
+	Hide dim line 1	Piilota mittaviiva 1
+	Hide dim line 2	Piilota mittaviiva 2
+	Hide ext line 1	Piilota apuviiva 1
+	Hide ext line 2	Piilota apuviiva 2
+	Horizontal stacking	Vaakasuoraan pinottu
+	Import Library Block	Tuo kirjastolohko
+	Import PDF...	Tuo PDF...
+	Insert and Explode	Lisää ja hajota
+	Integral	Integraali
+	Items	Kohteet
+	JIS	JIS
+	Jog angle	Taitekulma
+	Justification	Tasaus
+	Keep dim line with text	Siirrä mittaviiva tekstin mukana
+	Large Icons	Suuret kuvakkeet
+	Leader arrow	Johtoviivan nuoli
+	Leading	Alkunollat
+	Level spacing	Kerrosväli
+	Levels	Kerrokset
+	Libraries	Kirjastot
+	Line space distance	Rivivälin etäisyys
+	Line space factor	Rivivälikerroin
+	Line space style	Rivivälityyli
+	Lines	Viivat
+	Lines & Arrows	Viivat ja nuolet
+	Lower tolerance	Alatoleranssi
+	Measurement	Mittaus
+	Medium Icons	Keskikokoiset kuvakkeet
+	Menu Bar	Valikkorivi
+	Middle	Keskellä
+	Middle center	Keskikeski
+	Middle left	Keskivasen
+	Middle right	Keskioikea
+	Misc	Muut
+	Modify Dimension Style: {style}	Muuta mittatyyliä: {style}
+	Modify...	Muuta...
+	Move text, add leader	Siirrä teksti, lisää johtoviiva
+	Move text, no leader	Siirrä teksti ilman johtoviivaa
+	New Dimension Style: {style}	Uusi mittatyyli: {style}
+	New UCS	Uusi UCS
+	New style name	Uuden tyylin nimi
+	New...	Uusi...
+	No block matches the filter.	Mikään lohko ei vastaa suodatinta.
+	Not stacked	Ei pinottu
+	Obliquing	Kallistuskulma
+	Only the first {n} are shown.	Vain ensimmäiset {n} näytetään.
+	Open 30	Avoin 30
+	Open Library...	Avaa kirjasto...
+	Open arrow	Avoin nuoli
+	Origin	Origo
+	Origin indicator	Origon merkki
+	Origin indicator 2	Origon merkki 2
+	Outside	Ulkopuolella
+	Over Ext Line 1	Apuviivan 1 yläpuolella
+	Over Ext Line 2	Apuviivan 2 yläpuolella
+	Override Current Style: {style}	Ohita nykyinen tyyli: {style}
+	Override...	Ohita...
+	Overrides the dimension style. Right-click to use the style's value.	Ohittaa mittatyylin. Käytä tyylin arvoa napsauttamalla hiiren oikealla.
+	Paste Table	Liitä taulukko
+	Period	Piste
+	Pick center	Poimi keskipiste
+	Prefix and suffix	Etuliite ja jälkiliite
+	Preview of: {style}	Esikatselu: {style}
+	Preview of: {style} (overrides)	Esikatselu: {style} (ohitukset)
+	Primary Units	Ensisijaiset yksiköt
+	Read the library again	Lue kirjasto uudelleen
+	Reading the library...	Luetaan kirjastoa...
+	Refresh	Päivitä
+	Remove Style Overrides	Poista tyylin ohitukset
+	Remove from the list	Poista luettelosta
+	Rename	Nimeä uudelleen
+	Repeat Placement	Toista sijoitus
+	Right angle	Suora kulma
+	Rotate items	Kierrä kohteet
+	Row elevation	Rivien korkeusero
+	Row spacing	Riviväli
+	Rows	Rivit
+	Save as New Style...	Tallenna uutena tyylinä...
+	Save to current style	Tallenna nykyiseen tyyliin
+	Select objects first	Valitse ensin objektit
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Määräytyy tekstityylistä "{style}", jolla on kiinteä korkeus. Anna tyylin korkeudeksi 0, jotta mittatekstin korkeutta käytetään.
+	Small	Pieni
+	Small Icons	Pienet kuvakkeet
+	Some of these dimensions take their text height from a fixed-height text style.	Osa näistä mitoista saa tekstin korkeuden kiinteäkorkuisesta tekstityylistä.
+	Space	Välilyönti
+	Start with	Pohjana
+	Style	Tyyli
+	Styles	Tyylit
+	Styles in use	Käytössä olevat tyylit
+	Suppress arrows	Piilota nuolet
+	Symbols and Arrows	Symbolit ja nuolet
+	Text alignment X	Tekstin kohdistus X
+	Text alignment Y	Tekstin kohdistus Y
+	Text and arrows	Teksti ja nuolet
+	Text inside	Teksti sisäpuolella
+	Text inside align	Tekstin tasaus sisäpuolella
+	Text movement	Tekstin siirto
+	Text offset	Tekstin siirtymä
+	Text outside align	Tekstin tasaus ulkopuolella
+	Text pos hor	Tekstin vaakasijainti
+	Text pos vert	Tekstin pystysijainti
+	Text position X	Tekstin sijainti X
+	Text position Y	Tekstin sijainti Y
+	Text rotation	Tekstin kierto
+	Text vertical position	Tekstin pystysijainti
+	This block is already in the drawing, so its definition is used.	Lohko on jo piirustuksessa, joten sen määritystä käytetään.
+	This drawing has no blocks.	Tässä piirustuksessa ei ole lohkoja.
+	This library has no drawings or blocks.	Tässä kirjastossa ei ole piirustuksia eikä lohkoja.
+	Tick size	Vinoviivan koko
+	Tolerance height	Toleranssin korkeus
+	Tolerance pos vert	Toleranssin pystysijainti
+	Tolerance precision	Toleranssin tarkkuus
+	Tolerance zero suppression	Toleranssin nollien piilotus
+	Tolerances	Toleranssit
+	Top	Ylhäällä
+	Top center	Yläkeski
+	Trailing	Loppunollat
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Kun tämä on pois päältä, CADCraft ei koskaan tarjoa päivitystä itse; Ohje ▸ Tarkista päivitykset… tarkistaa silti.
+	UCS	UCS
+	UCS Icon at Origin	UCS-kuvake origossa
+	Unnamed	Nimetön
+	Upper tolerance	Ylätoleranssi
+	Use the style's value	Käytä tyylin arvoa
+	Variable	Muuttuja
+	Windows desktop	Windows-työpöytä
+	With	Verrattuna
+	With no command running, a quick click repeats the last command or runs what was typed.	Kun komentoa ei ole käynnissä, nopea napsautus toistaa edellisen komennon tai suorittaa kirjoitetun.
+	World	Maailma
+	Write Block Pick	Lohkon kirjoituksen poiminta
+	Z	Z
+	Zero suppression	Nollien piilotus
+	{count} differences	Eroja: {count}
+	{property}: that value can't be used here.	{property}: arvoa ei voi käyttää tässä.

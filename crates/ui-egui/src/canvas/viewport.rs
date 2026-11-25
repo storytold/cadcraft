@@ -138,6 +138,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             view: Some(area),
             skip_viewport: None,
             transparency,
+            on_screen: true,
             cancel: None,
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
@@ -271,7 +272,9 @@ pub(super) fn viewport_highlight_tolerance(scale: f64) -> f64 {
 /// The selected or the hovered objects tessellated in model units for the active MSPACE
 /// viewport, whose contents can't be looked up by handle in the layout's lists. The selection and
 /// the hover are kept apart, so moving the cursor over objects doesn't tessellate the selection
-/// again; each is rebuilt only when the drawing, the objects or the zoom band change.
+/// again; each is rebuilt only when the drawing, the objects, the zoom band or the layers frozen
+/// in the viewport change. An object on one of those layers is not drawn in the viewport, so it
+/// is not highlighted there either.
 #[derive(Default)]
 pub(super) struct VpHighlight {
     key: Option<u64>,
@@ -286,15 +289,59 @@ impl VpHighlight {
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles, super::list::font_generation())
+            // Entering another viewport changes what is drawn without changing the drawing.
+            let frozen = st.viewport_frozen();
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles, frozen, super::list::font_generation())
                 .hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {
-            let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).map(|e| e.as_ref());
+            let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).filter(|e| !st.hidden_in_viewport(e)).map(|e| e.as_ref());
             self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, ..Default::default() });
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
         }
+    }
+}
+
+/// The part of the object under the cursor that the running command highlights instead of all of
+/// it (TRIM: the piece a click there removes; EXTEND: what it adds; see
+/// [`cadcraft_engine::Session::highlight`]). Worked out again only when the object, the cursor,
+/// the zoom, the drawing or the prompt changed, not on every frame with the cursor at rest.
+#[derive(Default)]
+pub(super) struct HoverPart {
+    key: Option<u64>,
+    pub(super) list: Option<DisplayList>,
+    /// Bumped on each computation.
+    pub(super) list_gen: u64,
+}
+
+impl HoverPart {
+    /// What a running command will change wherever the cursor is (TRIM's Fence and Crossing,
+    /// [`cadcraft_engine::Session::highlight_all`]) comes first; otherwise the part of the object
+    /// under the cursor ([`cadcraft_engine::Session::highlight`]).
+    pub(super) fn update(&mut self, session: &cadcraft_engine::Session, hover: Option<Handle>, cursor: Option<Vec2>, scale: f64) {
+        let (Some(c), Ok(st)) = (cursor, session.state()) else {
+            self.key = None;
+            self.list = None;
+            return;
+        };
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hs = std::collections::hash_map::DefaultHasher::new();
+            let doc = (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize);
+            // Every answer the running command is given counts, not only those that change the
+            // prompt: a fence point taken back with Undo leaves the same prompt but a shorter fence.
+            let answers = (session.commands_started, session.inputs);
+            (hover, c.x.to_bits(), c.y.to_bits(), scale.to_bits(), doc, answers, session.prompt_text(), super::list::font_generation()).hash(&mut hs);
+            hs.finish()
+        };
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        let ents = session.highlight_all(c).or_else(|| hover.and_then(|h| session.highlight(h, c)));
+        self.list = ents.map(|ents| super::list::rebuilt_preview(&st.doc, ents.iter(), scale));
+        self.list_gen = self.list_gen.wrapping_add(1);
     }
 }

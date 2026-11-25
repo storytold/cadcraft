@@ -108,8 +108,9 @@ fn property(d: &Drawing, e: &Entity, name: &str) -> Option<Value> {
 
 /// Glob match, case-insensitive: `*` any run, `?` one character, `#` one digit.
 pub fn wildcard(pat: &str, text: &str) -> bool {
-    let p: Vec<char> = pat.to_lowercase().chars().take(1024).collect();
-    let t: Vec<char> = text.to_lowercase().chars().take(4096).collect();
+    // Only the characters that can match are lower-cased, so a huge text isn't copied whole.
+    let p: Vec<char> = pat.chars().take(1024).flat_map(char::to_lowercase).collect();
+    let t: Vec<char> = text.chars().take(4096).flat_map(char::to_lowercase).collect();
     // Iterative matcher with single back-track point (linear-ish, no recursion).
     let (mut pi, mut ti) = (0usize, 0usize);
     let mut star: Option<(usize, usize)> = None;
@@ -218,14 +219,18 @@ fn type_matches(e: &Entity, ty: Option<&str>) -> bool {
     }
 }
 
-/// The candidate objects: the whole edit space, or the current selection.
+/// The candidate objects: the whole edit space (without proxies, which no selection takes in), or
+/// the current selection.
 fn candidates(s: &Session, p: &Value) -> Result<Vec<Handle>> {
     let apply = str_param(p, "applyTo").unwrap_or("drawing").to_ascii_lowercase();
     if apply.starts_with("sel") || apply == "current" {
         return Ok(s.selection());
     }
     let space = s.space();
-    Ok(s.doc()?.space(&space).map(|st| st.iter().take(MAX_SCAN).map(|e| e.handle).collect()).unwrap_or_default())
+    Ok(s.doc()?
+        .space(&space)
+        .map(|st| st.iter().take(MAX_SCAN).filter(|e| !crate::select::kept_as_read(&e.kind)).map(|e| e.handle).collect())
+        .unwrap_or_default())
 }
 
 fn run_qselect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -279,7 +284,7 @@ fn run_qselect(s: &mut Session, p: &Value) -> Result<Value> {
     let sel = match mode.as_str() {
         "exclude" => excluded,
         "append" => {
-            let mut cur = s.selection();
+            let mut cur = s.stored_selection();
             for h in matched {
                 if !cur.contains(&h) {
                     cur.push(h);

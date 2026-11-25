@@ -1,6 +1,6 @@
 //! CADCraft desktop app.
 //!
-//! Usage: `cadcraft [--control <port>] [--sample] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
+//! Usage: `cadcraft [--control <port>] [--sample] [--new-window] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
 //!
 //! `--control <port>` (or `CADCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"cmdline.input","params":{"text":"circle 0,0 5"}}` → `{"id":1,"ok":true,…}`.
@@ -14,22 +14,34 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_os = "macos", test))]
+mod apple_events;
+#[cfg(test)]
+mod build_channel;
+mod build_flavor;
 mod control_server;
 mod desktop_theme;
 mod env;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod launch_args;
+mod launch_profile;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod nightly_session;
+mod portable;
+mod process_identity;
+mod profile_root;
 #[cfg(target_os = "macos")]
 mod sheet;
+mod single_instance;
 mod spacemouse;
 mod system_animations;
 mod workspace;
 
 use cadcraft_engine::Session;
+use cadcraft_ui_egui::os_window::{self, LaunchIdentity};
 use cadcraft_ui_egui::switch::Switch;
 use cadcraft_ui_egui::{CadApp, Pick, Services, i18n};
 
@@ -42,6 +54,8 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// The first CADCraft of this sign-in: files that later launches hand over (Windows).
+    single_instance: Option<single_instance::Server>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -50,6 +64,9 @@ struct App {
     /// The `movable` flag last set on the main window.
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
+    /// Drawings and quit requests from Finder, the Dock and `open -a` (see `apple_events`).
+    #[cfg(target_os = "macos")]
+    apple_events: fmv_macos_events::Inbox,
 }
 
 impl App {
@@ -87,6 +104,20 @@ impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
+        // Files another launch handed over open as tabs here, and the window comes forward.
+        if let Some(server) = &self.single_instance {
+            let paths = server.take_paths();
+            if !paths.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                for p in &paths {
+                    self.cad.open_path(p);
+                }
+            }
+        }
+        // Drawings and quit requests from Finder, the Dock and `open -a` (macOS).
+        #[cfg(target_os = "macos")]
+        apple_events::poll(&self.apple_events, &mut self.cad, ctx);
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.guarded_logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
@@ -128,6 +159,11 @@ impl eframe::App for App {
         self.persist_workspace(None);
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
+        // The host's last step, once: on macOS Cmd+Q ends the process here, after this, so the
+        // Nightly session record is finished by this hook and never by the code after `run_native`.
+        if let Some(at_exit) = self.cad.services.at_exit.take() {
+            at_exit();
+        }
     }
     /// Preferences (the interface theme) survive restarts; eframe saves the window state itself
     /// (`persist_window`); egui state is not kept.
@@ -152,11 +188,17 @@ pub fn install_io() {
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
+    cadcraft_engine::cmd::exchange::set_pdf_import(|bytes, options| cadcraft_io::pdf_read::read_json(bytes, options).map_err(|e| e.to_string()));
     // AutoLISP's entget, entmake and entmod see entities as DXF groups.
     cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
     });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
+    // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
+    cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
 fn services() -> Services {
@@ -171,6 +213,8 @@ fn services() -> Services {
         pick_pgp: Some(Box::new(|dir: Option<&str>| {
             file_dialog(&Pick::Pgp(dir.unwrap_or_default().into())).pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        // Set in `main` once the Nightly session record exists.
+        at_exit: None,
     }
 }
 
@@ -181,6 +225,7 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
         Pick::Open => vec![
             (i18n::t("Drawings (DWG, DXF)"), vec!["dwg", "dxf", "dwt"]),
             (i18n::t("SVG drawings (SVG, SVGZ)"), vec!["svg", "svgz"]),
+            (i18n::t("PDF files (PDF)"), vec!["pdf"]),
             (i18n::t("All files"), vec!["*"]),
         ],
         Pick::Save(name) => filters_for_save(name).iter().map(|(label, ext)| (i18n::t(label), vec![*ext])).collect(),
@@ -217,24 +262,57 @@ fn saved_window(app_ron: &str) -> bool {
     ron::from_str::<std::collections::HashMap<String, String>>(app_ron).is_ok_and(|kv| kv.contains_key(WINDOW_KEY))
 }
 
-/// The window state from the last session is saved and will be restored (#2595).
-fn restores_window() -> bool {
-    eframe::storage_dir(APP_ID).and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok()).is_some_and(|ron| saved_window(&ron))
+/// The window state from the last session is saved and will be restored (#2595). A saved size
+/// below the minimum (seen on Windows: 64×64 points, which eframe restores un-maximized and
+/// unusable) is dropped first, so the window opens at its default size. `portable_file`: the
+/// portable copy's settings file, read instead of the user profile's.
+fn restores_window(portable_file: Option<&std::path::Path>) -> bool {
+    let Some(path) = portable_file.map(std::path::PathBuf::from).or_else(|| eframe::storage_dir(os_window::app_id()).map(|dir| dir.join("app.ron")))
+    else {
+        return false;
+    };
+    let Ok(mut ron) = std::fs::read_to_string(&path) else { return false };
+    // Through a temporary file: a failed write (a full disk) keeps the other saved settings.
+    if let Some(fixed) = without_tiny_window(&ron)
+        && cadcraft_engine::atomic_write::write_atomic(&path, fixed.as_bytes()).is_ok()
+    {
+        ron = fixed;
+    }
+    saved_window(&ron)
 }
 
+/// `app_ron` without its window entry when that entry's inner size is below `MIN_INNER_SIZE`;
+/// `None` when there is nothing to drop (no entry, a usable size, or an unreadable file).
+fn without_tiny_window(app_ron: &str) -> Option<String> {
+    let mut kv = ron::from_str::<std::collections::BTreeMap<String, String>>(app_ron).ok()?;
+    let w = kv.get(WINDOW_KEY)?;
+    let size = &w[w.find("inner_size_points:")?..];
+    let num = |k: &str| size[size.find(k)? + k.len()..].split([',', ')']).next()?.trim().parse::<f32>().ok();
+    let (x, y) = (num("x:")?, num("y:")?);
+    if x >= MIN_INNER_SIZE[0] && y >= MIN_INNER_SIZE[1] {
+        return None;
+    }
+    kv.remove(WINDOW_KEY);
+    ron::ser::to_string_pretty(&kv, ron::ser::PrettyConfig::default()).ok()
+}
+
+/// The smallest main window, in points.
+const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
+
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
-/// saved by the last session is restored instead of opening centred.
-fn window_options(restoring: bool) -> eframe::NativeOptions {
+/// saved by the last session is restored instead of opening centred. `stencil`: the stencil bits of
+/// its render pass ([`stencil_bits`]).
+fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
+            .with_title(os_window::name_for(os_window::identity()))
             .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
+            .with_min_inner_size(MIN_INNER_SIZE)
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
             .with_title_shown(false)
-            .with_app_id(APP_ID),
+            .with_app_id(os_window::app_id()),
         // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
         // restored window on the monitors that are connected now.
         persist_window: true,
@@ -246,18 +324,24 @@ fn window_options(restoring: bool) -> eframe::NativeOptions {
         // system-font discovery as a hidden fallback.
         system_font_fallback: false,
         // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
+        stencil_buffer: stencil,
         ..Default::default()
     }
 }
-
-const APP_ID: &str = "ai.storyteller.cadcraft";
 
 /// The key eframe saves the main window state under in its storage.
 const WINDOW_KEY: &str = "window";
 
 /// Stencil bits of the window's render pass (see `NativeOptions::stencil_buffer`).
 const STENCIL_BITS: u8 = 8;
+
+/// The stencil bits of the window's render pass: none when `CADCRAFT_STENCIL` is off. Some old
+/// drivers (Mesa on Intel HD 4000, old Intel drivers on Windows) accept a stencil pass without an
+/// error and then present a black window, so only an explicit opt-out drops it. Without a stencil
+/// buffer, clipped layout viewports draw unclipped.
+fn stencil_bits(stencil: Switch) -> u8 {
+    if stencil == Switch::Off { 0 } else { STENCIL_BITS }
+}
 
 #[cfg(target_os = "macos")]
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-macos-512.png");
@@ -268,22 +352,118 @@ fn app_icon() -> Option<egui::IconData> {
     eframe::icon_data::from_png_bytes(APP_ICON_PNG).map_err(|e| log::warn!("app icon: {e}")).ok()
 }
 
+/// The version this build reports: the prepared nightly identity, or the workspace version.
+fn built_version() -> &'static str {
+    env!("CADCRAFT_BUILT_VERSION")
+}
+
+/// The stable line, exactly what clap prints for `--version`: `cadcraft <workspace version>`.
 fn version_string() -> String {
     format!("cadcraft {}", cadcraft_engine::build_version())
 }
 
+/// The Nightly identity line every nightly script checks: `<App> <version> (nightly-v1)`, with the
+/// prepared nightly version embedded at build time. The app name never gains a "Nightly".
+fn nightly_version_line() -> String {
+    format!("CADCraft {}", build_flavor::version(build_flavor::BuildFlavor::NightlyV1, built_version()))
+}
+
+/// The identity this build reports in its log: the Nightly line on that channel, stable's otherwise.
+fn reported_version() -> String {
+    match build_flavor::COMPILED {
+        build_flavor::BuildFlavor::Stable => version_string(),
+        build_flavor::BuildFlavor::NightlyV1 => nightly_version_line(),
+    }
+}
+
+/// The reported line with the commit, for the log: a bug report's log names the build it came from.
+fn log_version() -> String {
+    format!("{} ({})", reported_version(), option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev"))
+}
+
+/// Whether this start runs the isolated Nightly flavor.
+fn is_nightly() -> bool {
+    launch_profile::current().is_nightly()
+}
+
+fn initialize_nightly_process_identity() -> Result<(), process_identity::IdentityError> {
+    process_identity::initialize(build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1, os_window::id_for(LaunchIdentity::NightlyV1))
+}
+
+/// A refused launch profile ends with a native dialog on a desktop, and with the reason on standard
+/// error everywhere else (a headless runner must never wait for a modal).
+fn report_launch_profile_error(error: &str) {
+    eprintln!("CADCraft launch profile: {error}");
+    let desktop_session = cfg!(windows)
+        || cfg!(target_os = "macos")
+        || (cfg!(target_os = "linux") && ["DISPLAY", "WAYLAND_DISPLAY"].into_iter().any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty())));
+    if build_flavor::needs_native_error(build_flavor::COMPILED, desktop_session) {
+        if let Err(error) = initialize_nightly_process_identity() {
+            eprintln!("CADCraft launch profile: {error}");
+            return;
+        }
+        let _ = rfd::MessageDialog::new()
+            .set_title(os_window::name_for(LaunchIdentity::NightlyV1))
+            .set_description(error)
+            .set_level(rfd::MessageLevel::Error)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+}
+
+/// Select the immutable launch profile before logging, updates, fonts or saved state, and answer
+/// the version query before any of that: `None` means the query has been answered and the process
+/// should return success without opening a window.
+fn prepare_launch() -> Option<Vec<std::ffi::OsString>> {
+    let argv: Vec<_> = std::env::args_os().skip(1).collect();
+    // Plain `--version`, or the Launcher's `--launch-profile nightly-v1 --profile-root <dir>
+    // --version`: answered before root validation, process identity, logging, IPC or any window.
+    if build_flavor::COMPILED == build_flavor::BuildFlavor::NightlyV1 && (build_flavor::version_query(&argv) || launch_profile::version_query(&argv))
+    {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), "{}", nightly_version_line());
+        return None;
+    }
+    let early = launch_profile::parse(argv)
+        .and_then(|launch| {
+            build_flavor::require_profile(build_flavor::COMPILED, &launch.profile)?;
+            initialize_nightly_process_identity().map_err(|error| error.to_string())?;
+            Ok(launch)
+        })
+        .and_then(|launch| {
+            launch_profile::prepare(launch, |root| {
+                launch_profile::validate_root(root, |key| std::env::var_os(key), std::env::current_exe().ok().as_deref())
+            })
+        })
+        .unwrap_or_else(|error| {
+            report_launch_profile_error(&error);
+            std::process::exit(2)
+        });
+    let identity = if early.profile.is_nightly() { LaunchIdentity::NightlyV1 } else { LaunchIdentity::Stable };
+    if let Err(error) = launch_profile::install(early.profile).and_then(|()| os_window::select_identity(identity)) {
+        report_launch_profile_error(&error);
+        std::process::exit(2);
+    }
+    Some(early.args)
+}
+
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
-    // A copy of this program started to read or write a DWG file does only that.
+    // A copy of this program started to read or write a DWG file does only that. It is started
+    // with `--dwg-worker` alone, so it is answered before the launch profile is required.
     if let Some(code) = cadcraft_io::dwg_worker::serve_if_asked() {
         std::process::exit(code);
     }
+    let Some(arguments) = prepare_launch() else { return Ok(()) };
     cadcraft_io::dwg_worker::use_own_worker();
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
-    // The update helper relaunches this binary after a self-update; it runs and exits here.
+    // The update helper relaunches this binary after a self-update; it runs and exits here. A
+    // nightly build is updated by the Launcher only, so it never finishes a stable helper.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(done) = craft_update::self_update::finish(&cadcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if !is_nightly()
+        && let Some(done) = craft_update::self_update::finish(&cadcraft_ui_egui::UPDATE_APP, &arguments)
+    {
         if let Err(e) = done {
             eprintln!("CADCraft update helper failed: {e}");
             std::process::exit(1);
@@ -293,14 +473,25 @@ fn main() -> eframe::Result {
     // `--help` and `--version` print to standard output and exit 0. A usage error (an unknown or
     // repeated flag, a missing or bad value, a bad CADCRAFT_CONTROL_PORT) names the argument on
     // standard error and exits 2 before the window opens.
-    let launch = launch_args::parse(launch_args::command(), std::env::args_os().skip(1)).unwrap_or_else(|e| e.exit());
+    let launch = launch_args::parse(launch_args::command(), arguments).unwrap_or_else(|e| e.exit());
     let vars = env::Env::read();
     let (control_port, sample, files) = (launch.control, launch.sample, launch.files);
+    // A nightly launch accepts no control server: the inherited CADCRAFT_CONTROL_PORT and the
+    // Launcher's agent link belong to the stable app, and a second unauthenticated surface over
+    // the nightly profile is not part of the protocol.
+    let control_port = if is_nightly() {
+        if control_port.is_some() {
+            eprintln!("CADCraft Nightly: the control server is off in this channel; the option is ignored");
+        }
+        None
+    } else {
+        control_port
+    };
     // The log file lives under the settings directory; opened after the arguments, so `--version`
     // leaves no file behind. Records logged until now are written to it first.
     if let Some(logger) = logger {
         match vars.config_dir.as_ref().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
-            Some(Ok(path)) => log::info!("{} ({} {}), log file {}", version_string(), std::env::consts::OS, std::env::consts::ARCH, path.display()),
+            Some(Ok(path)) => log::info!("{} ({} {}), log file {}", log_version(), std::env::consts::OS, std::env::consts::ARCH, path.display()),
             Some(Err(e)) => log::warn!("no log file: {e}"),
             None => {
                 logger.stderr_only();
@@ -308,8 +499,35 @@ fn main() -> eframe::Result {
             }
         }
     }
+    // A launch that only names files hands them to the CADCraft already running and exits.
+    let handed = single_instance::absolute(&files);
+    let may_hand_off = handed.is_some() && !launch.new_window && !files.is_empty() && control_port.is_none() && !sample;
+    let instance = match single_instance::claim(handed.as_deref().unwrap_or_default(), may_hand_off, launch_profile::current().root()) {
+        single_instance::Claim::HandedOff => return Ok(()),
+        single_instance::Claim::Primary(server) => Some(server),
+        single_instance::Claim::Alone => None,
+    };
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
+    // Nightly session health: the owner's lease and unclean-exit record live in the profile, and the
+    // record is finished on the way out (on macOS in `on_exit`, see `nightly_session`).
+    let (nightly_watch, previous_unclean) =
+        match nightly_session::Session::begin_with_health(launch_profile::current().root(), built_version(), option_env!("CADCRAFT_BUILD_SHA")) {
+            Ok((watch, unavailable)) => {
+                if unavailable {
+                    log::warn!("another CADCraft Nightly holds this profile's session lease; this window keeps no health record");
+                }
+                let unclean = watch.as_ref().is_some_and(nightly_session::Session::previous_unclean);
+                (std::sync::Arc::new(std::sync::Mutex::new(watch)), unclean)
+            }
+            Err(error) => {
+                log::warn!("Nightly session state: {error}");
+                (std::sync::Arc::new(std::sync::Mutex::new(None)), false)
+            }
+        };
+    if previous_unclean {
+        log::warn!("the previous CADCraft Nightly ended without finishing its session record");
+    }
     if let Some(dir) = &vars.config_dir {
         cadcraft_ui_egui::fault::install_report_hook(dir.join(cadcraft_ui_egui::fault::REPORT_DIR));
     }
@@ -320,11 +538,22 @@ fn main() -> eframe::Result {
         cadcraft_engine::fonts::ttf::set_fallback_fonts(list);
     }
     let surface = cadcraft_ui_egui::gpu::surface_config(vars.vsync, cfg!(all(unix, not(target_os = "macos"))));
+    // The window's render pass and the canvas's pipelines must agree on it; a mismatch is a wgpu
+    // validation error.
+    let stencil = stencil_bits(vars.stencil);
+    if stencil == 0 {
+        log::warn!("CADCRAFT_STENCIL is off: the window has no stencil buffer; clipped layout viewports draw unclipped");
+    }
+    let persistence_path = vars
+        .portable_storage_file
+        .clone()
+        .or_else(|| std::env::var_os("CADCRAFT_CONFIG_DIR").and_then(|_| vars.config_dir.as_ref().map(|d| d.join("app.ron"))));
     let mut options = eframe::NativeOptions {
         // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        ..window_options(restores_window())
+        persistence_path: persistence_path.clone(),
+        ..window_options(restores_window(persistence_path.as_deref()), stencil)
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -363,11 +592,25 @@ fn main() -> eframe::Result {
             b.with_close_requested_on_terminate(true);
         }));
     }
-    eframe::run_native(
-        "CADCraft",
+    // Registered before the event loop starts, so it catches the Finder event that launched us as
+    // well as later ones. Lives until the event loop returns; the app creator only borrows it.
+    #[cfg(target_os = "macos")]
+    let apple_events = apple_events::AppleEvents::install();
+    #[cfg(target_os = "macos")]
+    let apple_events = &apple_events;
+    // The exit hook's own handle: the app creator is a `move` closure, so the watch is cloned before it.
+    let exit_watch = std::sync::Arc::clone(&nightly_watch);
+    let result = eframe::run_native(
+        os_window::name_for(os_window::identity()),
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            // The exit hook runs in `on_exit`: macOS ends the process inside AppKit's terminate after
+            // it, so nothing after `run_native` can be relied on there.
+            app.services.at_exit = Some(Box::new(move || nightly_session::finish_once(&exit_watch, previous_unclean)));
+            if previous_unclean {
+                app.set_status("CADCraft Nightly ended unexpectedly last time; your drawings were recovered where autosave had them.");
+            }
             // File dialogs are sheets on macOS: a modal loop inside the event handler crashes the
             // app when the dialog is resized (#1527).
             #[cfg(target_os = "macos")]
@@ -379,6 +622,20 @@ fn main() -> eframe::Result {
                 app.ui = ui;
             }
             app.set_system_cursor_default(vars.system_cursor == Switch::On);
+            // Native Wayland answers a clipboard request asynchronously; every other backend in the
+            // next frame (egui-winit).
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                use eframe::egui_wgpu::wgpu::rwh::{HasDisplayHandle, RawDisplayHandle};
+                if let Ok(display) = cc.display_handle() {
+                    app.set_clipboard_late_answers(matches!(display.as_raw(), RawDisplayHandle::Wayland(_)));
+                }
+            }
+            #[cfg(any(not(unix), target_os = "macos"))]
+            app.set_clipboard_late_answers(false);
+            // macOS: CADCRAFT_NO_NATIVE_MENU=1 keeps the menus inside the window.
+            #[cfg(target_os = "macos")]
+            app.set_native_menus(vars.no_native_menu != Switch::On);
             if let Some(error) = &workspace_error {
                 eprintln!("CADCraft workspace: {error}");
                 app.set_status(error);
@@ -397,7 +654,10 @@ fn main() -> eframe::Result {
             // Autosave files (SAVEFILEPATH) default to `<settings dir>/autosave`.
             if let Some(dir) = &vars.config_dir {
                 app.enable_autosave(&dir.join("autosave"));
-                app.enable_update_check();
+                // A nightly build is updated by the Launcher, never by the app's own update check.
+                if !is_nightly() {
+                    app.enable_update_check();
+                }
                 // Startup LISP (acad.lsp, acaddoc.lsp) is read from `<settings>/support`; the
                 // folder is made so it is there to put them in.
                 let support = dir.join("support");
@@ -411,7 +671,7 @@ fn main() -> eframe::Result {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
             if let Some(rs) = &cc.wgpu_render_state {
-                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, STENCIL_BITS));
+                app.set_wgpu(rs, eframe::egui_wgpu::depth_format_from_bits(0, stencil));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
@@ -423,10 +683,22 @@ fn main() -> eframe::Result {
             for f in &files {
                 app.open_path(f);
             }
+            // Start reading any launch-time documents before the first frame. Later events use
+            // this same inbox, including the normal unsaved-changes handling for quit requests.
+            #[cfg(target_os = "macos")]
+            let apple_events = {
+                let inbox = apple_events.connect(&cc.egui_ctx);
+                apple_events::poll(&inbox, &mut app, &cc.egui_ctx);
+                inbox
+            };
             if app.session.docs.is_empty() {
                 // In the units the profile asks for (MEASUREINIT, restored above).
                 let metric = app.session.settings.measureinit;
                 app.session.new_drawing(metric);
+            }
+            if let Some(server) = &instance {
+                let ctx = cc.egui_ctx.clone();
+                server.set_wake(move || ctx.request_repaint());
             }
             let ctx = cc.egui_ctx.clone();
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
@@ -439,20 +711,31 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                single_instance: instance,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
                 movable: None,
+                #[cfg(target_os = "macos")]
+                apple_events,
             }))
         }),
-    )
+    );
+    // The controlled return path: a start that created no window still finishes its record. On macOS
+    // a quit never reaches here, and the exit hook above has done it. No window ran, so no notice was
+    // shown: pass false and an unclean record survives for the next launch to report.
+    nightly_session::finish_once(&nightly_watch, false);
+    result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop, saved_window, window_options};
+    use super::{
+        STENCIL_BITS, filters_for_save, follow_desktop, nightly_version_line, saved_window, stencil_bits, version_string, window_options,
+        without_tiny_window,
+    };
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
@@ -473,7 +756,7 @@ mod tests {
     /// #1129: the first launch opens centred, not cascaded from the top-left corner.
     #[test]
     fn the_first_launch_opens_centred() {
-        let o = window_options(false);
+        let o = window_options(false, STENCIL_BITS);
         assert!(o.centered, "centred on launch");
         assert!(o.persist_window, "the window state is saved for the next launch");
     }
@@ -481,9 +764,37 @@ mod tests {
     /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
     #[test]
     fn a_saved_window_reopens_where_it_was() {
-        let o = window_options(true);
+        let o = window_options(true, STENCIL_BITS);
         assert!(!o.centered, "centring would move a restored window");
         assert!(o.persist_window);
+    }
+
+    /// `CADCRAFT_STENCIL=0` (also `no`, `false`, any case) opens the window without a stencil
+    /// buffer; unset, blank, `1` or anything else keeps it.
+    #[test]
+    fn the_stencil_buffer_is_dropped_only_when_asked() {
+        let bits = |value: Option<&str>| {
+            let vars = crate::env::Env::from_vars(|k| (k == "CADCRAFT_STENCIL").then_some(value).flatten().map(Into::into));
+            stencil_bits(vars.stencil)
+        };
+        for off in ["0", "no", "NO", "false", "False", " 0 "] {
+            assert_eq!(bits(Some(off)), 0, "{off:?}");
+        }
+        for on in [None, Some(""), Some("1"), Some("yes"), Some("8"), Some("maybe")] {
+            assert_eq!(bits(on), STENCIL_BITS, "{on:?}");
+        }
+    }
+
+    /// The window's render pass carries the chosen stencil bits, and the canvas gets the same.
+    #[test]
+    fn the_window_carries_the_chosen_stencil_bits() {
+        for bits in [0, STENCIL_BITS] {
+            assert_eq!(window_options(false, bits).stencil_buffer, bits);
+            assert_eq!(window_options(true, bits).stencil_buffer, bits);
+        }
+        let format = |bits| eframe::egui_wgpu::depth_format_from_bits(0, bits);
+        assert_eq!(format(0), None, "no stencil: the canvas builds no clip pipelines");
+        assert!(format(STENCIL_BITS).is_some_and(|f| f.has_stencil_aspect()));
     }
 
     /// Only a readable `app.ron` with a window entry counts as a saved window state.
@@ -494,6 +805,28 @@ mod tests {
         assert!(!saved_window(""));
         assert!(!saved_window("{\"window\": "), "truncated");
         assert!(!saved_window("not ron at all"));
+    }
+
+    /// A saved 64×64 window (below the minimum) is dropped; a usable one is kept.
+    #[test]
+    fn a_tiny_saved_window_is_dropped() {
+        let tiny = r#"{"window": "(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.25,inner_size_points:(x:64.0,y:64.0)),fullscreen:false,maximized:true)", "cadcraft.prefs": "{}"}"#;
+        let fixed = without_tiny_window(tiny).expect("dropped");
+        assert!(!saved_window(&fixed) && fixed.contains("cadcraft.prefs"));
+        let ok = tiny.replace("x:64.0,y:64.0)),", "x:1600.0,y:1000.0)),");
+        assert_eq!(without_tiny_window(&ok), None);
+        assert_eq!(without_tiny_window("not ron"), None);
+    }
+
+    /// The two identity lines. Nightly prints the kit's `<App> <version> (nightly-v1)` -- the app
+    /// name never gains a "Nightly" -- while stable keeps exactly the line clap prints, which
+    /// `launch_args` asserts against its own `-V` output.
+    #[test]
+    fn the_version_lines_name_the_app_and_its_channel() {
+        let nightly = nightly_version_line();
+        assert_eq!(nightly, format!("CADCraft {} (nightly-v1)", super::built_version()));
+        assert!(!nightly.contains("Nightly "), "the version line must not rename the app: {nightly}");
+        assert_eq!(version_string(), format!("cadcraft {}", cadcraft_engine::build_version()));
     }
 
     /// View ▸ Theme ▸ System on Linux: winit reports no theme, so the desktop's answer stands in;

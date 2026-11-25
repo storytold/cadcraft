@@ -1,11 +1,60 @@
 use super::common::T;
 use super::{Color, EntityKind, Gradient, Handle, Hatch, HatchLoop, PolyVertex, Rgb, Spline, Tag, Vec2};
 
-pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
+/// Upper bound on the points the elliptic and spline edges of one HATCH's boundary are sampled
+/// into: the point budget the renderer gives one hatch's loops
+/// ([`cadcraft_geom::MAX_TESSELLATED_POINTS`]).
+const MAX_HATCH_CURVE_POINTS: usize = cadcraft_geom::MAX_TESSELLATED_POINTS;
+
+/// Upper bound on the points the elliptic and spline edges of all HATCH boundaries in one file
+/// are sampled into. Each such edge is a few groups in the file but up to about 4,000 points
+/// (40 bytes each) once read, so a file of many small hatches could otherwise need hundreds of
+/// gigabytes (#1922). 16 million points is 640 MB; a large real drawing (thousands of hatches
+/// bounded by curves, a few hundred points an edge) is expected to sample a few million.
+pub(super) const MAX_READ_CURVE_POINTS: usize = 16_000_000;
+
+/// The curve-point allowance of one read, shared by every HATCH in it.
+pub(super) struct CurvePoints {
+    /// Points still to be sampled.
+    pub(super) left: usize,
+    /// Hatches with an edge read coarsely because the allowance was spent.
+    pub(super) cut: usize,
+}
+
+impl Default for CurvePoints {
+    fn default() -> Self {
+        CurvePoints { left: MAX_READ_CURVE_POINTS, cut: 0 }
+    }
+}
+
+/// The allowance of the hatch being read: what is left of the file's, at most
+/// [`MAX_HATCH_CURVE_POINTS`].
+struct EdgeBudget {
+    left: usize,
+    /// An edge was read coarsely.
+    cut: bool,
+}
+
+impl EdgeBudget {
+    /// Whether an edge may still be sampled in full; when not, it is read coarsely, from its
+    /// own groups only. Checked before each edge, so the last one sampled may pass the budget
+    /// by that one edge's points.
+    fn sample(&mut self) -> bool {
+        self.cut |= self.left == 0;
+        self.left > 0
+    }
+    fn spend(&mut self, n: usize) {
+        self.left = self.left.saturating_sub(n);
+    }
+}
+
+pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<EntityKind> {
     let (origin, background) = hatch_xdata(tags);
     let pattern = t.s(2).unwrap_or_else(|| "SOLID".into());
     let solid = t.i(70).unwrap_or(0) == 1;
     let n_loops = t.i(91).unwrap_or(0).clamp(0, 100_000) as usize;
+    let mut budget = EdgeBudget { left: curves.left.min(MAX_HATCH_CURVE_POINTS), cut: false };
+    let start_left = budget.left;
     let mut loops = Vec::new();
     // Walk the boundary data after the 91 tag.
     let start = tags.iter().position(|x| x.code == 91).map(|i| i + 1)?;
@@ -19,12 +68,16 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         let flags = get(i)?.i64();
         i += 1;
         let outer = flags & 1 != 0;
-        let mut verts = if flags & 2 != 0 { polyline_boundary(tags, &mut i)? } else { edge_boundary(tags, &mut i)? };
+        let mut verts = if flags & 2 != 0 { polyline_boundary(tags, &mut i)? } else { edge_boundary(tags, &mut i, &mut budget)? };
         if verts.len() > 1 && verts.first().map(|f| f.p).zip(verts.last().map(|l| l.p)).is_some_and(|(a, b)| a.near(b, 1e-9)) {
             verts.pop();
         }
         let sources = boundary_sources(tags, &mut i);
-        loops.push(HatchLoop { vertices: verts, outer, sources });
+        loops.push(HatchLoop { vertices: verts, outer, boundary_flags: Some(flags), sources });
+    }
+    curves.left = curves.left.saturating_sub(start_left.saturating_sub(budget.left));
+    if budget.cut {
+        curves.cut = curves.cut.saturating_add(1);
     }
     let solid = solid || pattern.eq_ignore_ascii_case("SOLID");
     let (scale, angle) = (t.fd(41, 1.0), t.fd(52, 0.0).to_radians());
@@ -76,7 +129,7 @@ fn polyline_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>>
     Some(vertices)
 }
 
-fn edge_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>> {
+fn edge_boundary(tags: &[Tag], index: &mut usize, budget: &mut EdgeBudget) -> Option<Vec<PolyVertex>> {
     let get = |i: usize| tags.get(i);
     seek_code(tags, index, 93);
     let count = get(*index)?.i64().clamp(0, 1_000_000) as usize;
@@ -89,8 +142,8 @@ fn edge_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>> {
         match kind {
             1 => line_edge(tags, index, &mut vertices),
             2 => circular_edge(tags, index, &mut vertices),
-            3 => elliptic_edge(tags, index, &mut vertices),
-            4 => spline_edge(tags, index, &mut vertices),
+            3 => elliptic_edge(tags, index, &mut vertices, budget),
+            4 => spline_edge(tags, index, &mut vertices, budget),
             _ => {}
         }
     }
@@ -137,7 +190,11 @@ fn circular_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     vertices.push(PolyVertex::new(end_point));
 }
 
-fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+/// Most points an elliptic edge is read as once the curve-point allowance is spent: about as many
+/// as the edge has groups.
+const COARSE_ELLIPSE_POINTS: u32 = 8;
+
+fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, budget: &mut EdgeBudget) {
     let center = Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1));
     let major = Vec2::new(edge_value(tags, *index + 2), edge_value(tags, *index + 3));
     let ratio = edge_value(tags, *index + 4);
@@ -148,14 +205,21 @@ fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>
     let (start, end) = if ccw { (start_angle, end_angle) } else { (-end_angle, -start_angle) };
     let ellipse = cadcraft_geom::Ellipse { center, major, ratio, start, end };
     let mut points = Vec::new();
-    ellipse.tessellate(major.len() * 1e-3, &mut points);
+    if budget.sample() {
+        ellipse.tessellate(major.len() * 1e-3, &mut points);
+        budget.spend(points.len());
+    } else {
+        let sweep = ellipse.sweep();
+        points.extend((0..=COARSE_ELLIPSE_POINTS).map(|k| ellipse.at_param(start + sweep * f64::from(k) / f64::from(COARSE_ELLIPSE_POINTS))));
+    }
     if !ccw {
         points.reverse();
     }
-    vertices.extend(points.into_iter().map(PolyVertex::new));
+    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
+    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
 }
 
-fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>, budget: &mut EdgeBudget) {
     let get = |i: usize| tags.get(i);
     let mut degree = 3;
     let (mut knot_count, mut control_count) = (0, 0);
@@ -195,6 +259,14 @@ fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) 
     if weights.len() != control.len() {
         weights.clear();
     }
+    // Past the allowance the edge is its control polygon (or fit points): no more points than
+    // the file gives.
+    if !budget.sample() {
+        let points = if control.is_empty() { fit } else { control };
+        let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
+        vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
+        return;
+    }
     let spline = Spline { degree, knots, control, weights, ..Spline::default() };
     let spline = if spline.is_valid() {
         spline
@@ -204,6 +276,7 @@ fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) 
         Spline::from_control(spline.control, degree)
     };
     let points = spline.tessellate(1e-3);
+    budget.spend(points.len());
     let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
     vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
 }

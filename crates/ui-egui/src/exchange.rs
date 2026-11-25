@@ -26,12 +26,130 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => app
             .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
+        "pdfimport" | "pdfi" => app
+            .pick_then(Pick::Open, |app, path| {
+                let doc = app.session.state().ok().map(|s| s.uid);
+                PDF_PENDING.with(|pending| {
+                    *pending.borrow_mut() = Some(PdfImport {
+                        doc,
+                        path,
+                        page: 1,
+                        scale: 1.0,
+                        at: [0.0, 0.0],
+                        password: String::new(),
+                        text: true,
+                        fills: true,
+                        lineweights: true,
+                        focus_page: true,
+                        error: None,
+                    });
+                });
+                app.ui.dialog = Some("pdfimport".into());
+                Ok(Value::Null)
+            })
+            .unwrap_or_else(|| no_picker(app, "PDFIMPORT", r#"pdfimport {"path": "plan.pdf", "page": 1}"#)),
         "publish" => app
             .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
         _ => app
             .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| app.run("export", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "EXPORT", r#"export {"format": "svg"}"#)),
+    }
+}
+
+/// A chosen PDF and the editable content requested from its page.
+struct PdfImport {
+    /// The drawing the window was opened for; the page goes there even if another is shown now.
+    doc: Option<u64>,
+    path: String,
+    page: u32,
+    scale: f64,
+    at: [f64; 2],
+    password: String,
+    text: bool,
+    fills: bool,
+    lineweights: bool,
+    focus_page: bool,
+    error: Option<String>,
+}
+
+thread_local! {
+    static PDF_PENDING: std::cell::RefCell<Option<PdfImport>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Show page and content options before adding the selected PDF page to the drawing.
+pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let Some(mut state) = PDF_PENDING.with(|pending| pending.borrow_mut().take()) else {
+        *open = false;
+        return;
+    };
+    let name = std::path::Path::new(&state.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (mut import, mut cancel) = (false, false);
+    egui::Window::new(crate::tl!("Import PDF")).id(egui::Id::unique("cc_pdf_import")).open(open).collapsible(false).resizable(false).show(
+        ctx,
+        |ui| {
+            ui.label(&name);
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Page number"));
+                let page = ui.add(egui::DragValue::new(&mut state.page).range(1..=100_000)).labelled_by(label.id);
+                if state.focus_page {
+                    page.request_focus();
+                    state.focus_page = false;
+                }
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Scale factor"));
+                ui.add(egui::DragValue::new(&mut state.scale).speed(0.1).range(1e-9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Insertion X"));
+                ui.add(egui::DragValue::new(&mut state.at[0]).speed(1.0).range(-1e9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+                let label = ui.label(crate::tl!("Insertion Y"));
+                ui.add(egui::DragValue::new(&mut state.at[1]).speed(1.0).range(-1e9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Password"));
+                ui.add(egui::TextEdit::singleline(&mut state.password).password(true)).labelled_by(label.id);
+            });
+            ui.checkbox(&mut state.text, crate::tl!("Import text as TEXT"));
+            ui.checkbox(&mut state.fills, crate::tl!("Import filled shapes as solid hatches"));
+            ui.checkbox(&mut state.lineweights, crate::tl!("Use the PDF's line widths"));
+            if let Some(error) = &state.error {
+                let t = crate::theme::Tokens::get();
+                let shown = ui.label(egui::RichText::new(crate::tf!("Import failed: {error}", error = error)).color(t.warn));
+                // Focus stays on the Import button, so the failure is announced.
+                ui.ctx().accesskit_node_builder(shown.id, |node| node.set_live(egui::accesskit::Live::Assertive));
+            }
+            ui.horizontal(|ui| {
+                import = ui.button(crate::tl!("Import Page")).clicked();
+                cancel = ui.button(crate::tl!("Cancel")).clicked();
+            });
+        },
+    );
+    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        cancel = true;
+    }
+    if import {
+        let mut params = json!({ "path": state.path, "page": state.page, "scale": state.scale, "at": state.at, "text": state.text, "fills": state.fills, "lineweights": state.lineweights });
+        if !state.password.is_empty() {
+            params["password"] = json!(state.password);
+        }
+        let index = state.doc.and_then(|uid| app.session.docs.iter().position(|d| d.uid == uid));
+        let result = match index {
+            None => Err(crate::tl!("The drawing this window was opened for is closed; nothing was imported.").to_string()),
+            Some(i) if i != app.session.active => app.run("document.switch", json!({ "index": i })).and_then(|_| app.run("pdfimport", params)),
+            Some(_) => app.run("pdfimport", params),
+        };
+        match result {
+            Ok(_) => *open = false,
+            Err(error) => state.error = Some(error),
+        }
+    }
+    if cancel {
+        *open = false;
+    }
+    if *open {
+        PDF_PENDING.with(|pending| *pending.borrow_mut() = Some(state));
     }
 }
 
@@ -70,21 +188,26 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> Result<(TextureHandle, Strin
     if let Some(f) = ctx.data(|d| d.get_temp::<FromPlot>(egui::Id::unique(FROM_PLOT))) {
         let r = app.session.execute("plot", &f.params).map_err(|e| e.to_string())?;
         let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
-        let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
-        let size = [img.width() as usize, img.height() as usize];
-        let tex = ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR);
+        let tex = preview_texture(ctx, &png)?;
         return Ok((tex, f.info));
     }
     let r = app.session.execute("preview", &json!({ "width": 1600 })).map_err(|e| e.to_string())?;
     let png = r["data"].as_str().and_then(cadcraft_engine::cmd::file::base64_decode).ok_or("the preview has no image")?;
-    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).map_err(|e| e.to_string())?.to_rgba8();
-    let size = [img.width() as usize, img.height() as usize];
-    let tex = ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR);
+    let tex = preview_texture(ctx, &png)?;
     let mut info = format!("{} · {}", r["layout"].as_str().unwrap_or(""), r["paper"].as_str().unwrap_or(""));
     if r["landscape"].as_bool() == Some(true) {
         info.push_str(" · landscape");
     }
     Ok((tex, info))
+}
+
+fn preview_texture(ctx: &egui::Context, png: &[u8]) -> Result<TextureHandle, String> {
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("the preview is not a PNG".into());
+    }
+    let img = cadcraft_io::raster::decode(png).map_err(|e| e.to_string())?;
+    let size = [img.width() as usize, img.height() as usize];
+    Ok(ctx.load_texture("plot-preview", egui::ColorImage::from_rgba_unmultiplied(size, img.rgba()), egui::TextureOptions::LINEAR))
 }
 
 /// The Plot Preview window: the sheet as it plots, with Print and Close.
@@ -167,6 +290,16 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked)
+    }
+
+    #[test]
+    fn plot_preview_reads_shared_png_and_rejects_other_bytes() {
+        let ctx = egui::Context::default();
+        let mut png = Vec::new();
+        cadcraft_render::raster::write_rgba_png(&mut png, 1, 1, &[10, 20, 30, 255]).unwrap();
+        let texture = super::preview_texture(&ctx, &png).unwrap();
+        assert_eq!(texture.size(), [1, 1]);
+        assert!(super::preview_texture(&ctx, b"not a PNG").is_err());
     }
 
     #[test]
