@@ -165,12 +165,23 @@ fn wide_polyline_within(p: &LwPolyline, tol: f64, budget: &mut usize) -> Vec<Vec
     out
 }
 
-/// The triangles that fill a corner: the vertex, the arriving band's outer edge point, the miter
-/// tip if there is one, and the leaving band's outer edge point.
+/// The triangles that fill a corner, all counter-clockwise like those of a band of positive width:
+/// the fill uses the non-zero rule, so a clockwise corner would cancel a band it lies over (where a
+/// polyline folds back over its own corner) and leave a hole.
 fn corner(out: &mut Vec<Vec2>, j: &BandJoin) {
+    let mut tri = |a: Vec2, b: Vec2| {
+        if (a - j.centre).cross(b - j.centre) >= 0.0 {
+            out.extend_from_slice(&[j.centre, a, b]);
+        } else {
+            out.extend_from_slice(&[j.centre, b, a]);
+        }
+    };
     match j.tip {
-        Some(tip) => out.extend_from_slice(&[j.centre, j.from, tip, j.centre, tip, j.to]),
-        None => out.extend_from_slice(&[j.centre, j.from, j.to]),
+        Some(tip) => {
+            tri(j.from, tip);
+            tri(tip, j.to);
+        }
+        None => tri(j.from, j.to),
     }
 }
 
@@ -364,6 +375,25 @@ pub(crate) mod tests {
     fn straight_runs_add_no_corner() {
         let tris = wide_polyline(&wide(&[(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)], false, 2.0), 0.01);
         assert!((area(&tris) - 20.0).abs() < 1e-9, "{}", area(&tris));
+    }
+
+    /// The winding number of the triangles around `p`, as the non-zero fill rule counts it.
+    fn winding(tris: &[Vec2], p: Vec2) -> i32 {
+        tris.chunks(3).filter(|t| cover(t, p) > 0).map(|t| if (t[1] - t[0]).cross(t[2] - t[0]) >= 0.0 { 1 } else { -1 }).sum()
+    }
+
+    /// Where a polyline folds back over its own corner, that corner stays filled: wound against
+    /// the band over it, the corner would cancel it under the non-zero fill rule and leave a hole.
+    #[test]
+    fn a_band_over_a_corner_keeps_it_filled() {
+        // A right turn at (10, 0) whose miter the last segment runs back up through, and its
+        // mirror image, a left turn.
+        for flip in [1.0, -1.0] {
+            let pts = [(0.0, 0.0), (10.0, 0.0), (10.0, -10.0), (10.5, -10.0), (10.5, 5.0)].map(|(x, y)| (x, y * flip));
+            let tris = wide_polyline(&wide(&pts, false, 2.0), 0.01);
+            assert!(winding(&tris, Vec2::new(10.7, 0.5 * flip)) != 0, "flip {flip}");
+            assert!(tris.chunks(3).all(|t| (t[1] - t[0]).cross(t[2] - t[0]) >= 0.0), "flip {flip}");
+        }
     }
 
     #[test]
