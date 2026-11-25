@@ -306,3 +306,28 @@ fn repeated_dollars_are_the_same_variables() {
     assert!(!setvar(&mut s, "$$$POPUPS", json!(0)), "read-only under any number of $");
     assert!(cadcraft_engine::sysvars::is_read_only("$$POPUPS"));
 }
+
+#[test]
+fn dimaso_on_while_already_on_leaves_the_drawing_unmodified() {
+    let mut s = Session::new();
+    assert_eq!(getvar(&mut s, "DBMOD"), json!(0), "a fresh drawing");
+    assert!(setvar(&mut s, "DIMASO", json!(1)), "already on");
+    assert_eq!(getvar(&mut s, "DBMOD"), json!(0), "nothing changed, so not modified");
+}
+
+#[test]
+fn the_remembered_mode_is_not_a_variable_and_is_not_reported_lost() {
+    let mut s = Session::new();
+    assert!(setvar(&mut s, "DIMASSOC", json!(1)));
+    assert!(setvar(&mut s, "DIMASO", json!(0)));
+    for name in ["CADCRAFT_DIMASO_MODE", "$CADCRAFT_DIMASO_MODE", "cadcraft_dimaso_mode"] {
+        assert!(s.execute("getvar", &json!({ "name": name })).is_err(), "{name} is not a variable");
+        assert!(!setvar(&mut s, name, json!(2)), "{name} cannot be set");
+    }
+    assert!(eval(&mut s, "(getvar \"CADCRAFT_DIMASO_MODE\")").map_or(true, |v| to_text(&v, false) == "nil"));
+    // Saved and read back, the drawing has lost nothing a save keeps.
+    let before = s.doc().unwrap().clone();
+    let after = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&before).as_bytes()).unwrap();
+    let cmp = cadcraft_io::roundtrip::compare(&before, &after, &cadcraft_io::roundtrip::Options::default());
+    assert!(!cmp.differences.iter().any(|d| d.place.contains("DIMASO")), "{:?}", cmp.differences.iter().map(|d| &d.place).collect::<Vec<_>>());
+}

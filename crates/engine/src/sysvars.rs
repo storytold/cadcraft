@@ -86,6 +86,11 @@ const SESSION_VARS: &[&str] = &[
 /// `CADCRAFT_` names are not listed by SYSVARS and no file writes this one.
 const DIMASO_MODE: &str = "CADCRAFT_DIMASO_MODE";
 
+/// The header key above, under any number of `$`: no variable of that name exists.
+fn is_internal(n: &str) -> bool {
+    n.trim_start_matches('$') == DIMASO_MODE
+}
+
 const DOLLAR_VARS: &[&str] = &["DIMASO", "TEXTEVAL", "REGENMODE", "POPUPS"];
 
 /// `name` trimmed and upper case, without the `$` those names take. Every other name keeps the
@@ -100,6 +105,9 @@ fn bare_name(name: &str) -> String {
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
     let n = bare_name(name);
+    if is_internal(&n) {
+        return None;
+    }
     let st = &s.settings;
     let v = match n.as_str() {
         "OSMODE" => json!(st.osmode),
@@ -347,6 +355,9 @@ pub fn format_angle_list(angles: &[f64]) -> String {
 /// Set a system variable, refusing values out of its range and folders the automation roots can't hold.
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = bare_name(name);
+    if is_internal(&n) {
+        return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("unknown variable `{n}`") });
+    }
     if is_read_only(&n) {
         return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("{n} is read-only") });
     }
@@ -454,17 +465,19 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "DIMASO" => {
             let on = as_i(v).filter(|i| matches!(i, 0 | 1)).ok_or_else(bad)? == 1;
             let mode = dimassoc(s).ok_or_else(bad)?;
-            let h = &mut s.doc_mut()?.header;
+            // The drawing is touched only when DIMASSOC changes, so it is not marked modified
+            // and no undo step is left for a value it already has.
             match (on, mode) {
-                // Turned back on after DIMASO turned it off: the mode it had. Nothing is written
-                // while it is already on.
+                // Turned back on after DIMASO turned it off: the mode it had.
                 (true, 0) => {
+                    let h = &mut s.doc_mut()?.header;
                     // Only a mode DIMASSOC takes: a file's value of anything else restores 2.
                     let restore = h.i64(DIMASO_MODE, 2);
                     h.set_i64("DIMASSOC", if matches!(restore, 1 | 2) { restore } else { 2 });
                 }
-                (true, _) => {}
+                (true, _) | (false, 0) => {}
                 (false, _) => {
+                    let h = &mut s.doc_mut()?.header;
                     if matches!(mode, 1 | 2) {
                         h.set_i64(DIMASO_MODE, mode);
                     }
