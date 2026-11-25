@@ -35,6 +35,8 @@ pub enum Preference {
     French,
     #[serde(rename = "zh")]
     Chinese,
+    #[serde(rename = "zh-TW")]
+    TraditionalChinese,
     #[serde(rename = "it")]
     Italian,
     #[serde(rename = "ko")]
@@ -55,7 +57,7 @@ pub enum Preference {
     Vietnamese,
 }
 impl Preference {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -68,6 +70,7 @@ impl Preference {
         Self::Russian,
         Self::French,
         Self::Chinese,
+        Self::TraditionalChinese,
         Self::Italian,
         Self::Korean,
         Self::Swedish,
@@ -119,6 +122,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::TraditionalChinese => "zh-TW",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -145,6 +149,7 @@ impl Preference {
             Self::Russian => "Русский",
             Self::French => "Français",
             Self::Chinese => "简体中文",
+            Self::TraditionalChinese => "繁體中文",
             Self::Italian => "Italiano",
             Self::Korean => {
                 if crate::theme::shows_hangul(CURRENT.with(Cell::get)) {
@@ -200,6 +205,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::TraditionalChinese => "zh-TW",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -225,7 +231,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 20] = [
+pub static LANGUAGES: [Language; 21] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language { code: "pl", name: "Polski", source: include_str!("i18n/pl.tsv"), plural: plural_pl, plural_forms: 3, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
@@ -257,6 +263,7 @@ pub static LANGUAGES: [Language; 20] = [
     // Chinese has no grammatical plural: both `@plural` forms read the same. Its glyphs come from
     // an installed CJK font (`theme::cjk_font`); without one the interface stays English.
     Language { code: "zh", name: "简体中文", source: include_str!("i18n/zh.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "zh-TW", name: "繁體中文", source: include_str!("i18n/zh_tw.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Italian integer plurals (CLDR `it`) follow the English rule: one (1), other.
     Language { code: "it", name: "Italiano", source: include_str!("i18n/it.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Korean has one integer plural form and needs a Hangul-capable interface font.
@@ -290,7 +297,18 @@ pub static LANGUAGES: [Language; 20] = [
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
 /// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
 pub fn locale_language(tag: &str) -> Option<&'static str> {
-    let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
+    let normalized = tag.trim().split(['.', '@']).next()?.replace('_', "-").to_ascii_lowercase();
+    if normalized.starts_with("zh") {
+        if normalized.contains("hant")
+            || normalized.ends_with("-tw")
+            || normalized.ends_with("-hk")
+            || normalized.ends_with("-mo")
+        {
+            return Some("zh-TW");
+        }
+        return Some("zh");
+    }
+    let primary = normalized.split('-').next()?;
     LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
 }
 
