@@ -101,6 +101,7 @@ pub const NO_FILES: &[&str] = &[
     "pasteclip",
     "pasteblock",
     "pasteorig",
+    "pastetable",
     "erase.selection",
     "selectall",
     "ai_deselect",
