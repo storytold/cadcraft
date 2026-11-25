@@ -193,8 +193,6 @@ fn same(cell: &str, value: &str) -> bool {
 struct Current<'a> {
     m: &'a DynamicBlock,
     values: &'a BTreeMap<i32, Value>,
-    /// The block's base point (table cells give positions from it).
-    base: Vec3,
 }
 
 impl Current<'_> {
@@ -251,7 +249,7 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
     let m = dynamic_block(d, &r.definition)?;
     let base = d.block(&r.definition).map(|b| b.base).unwrap_or_default();
     let (sx, sy) = (ins.scale.x.abs(), ins.scale.y.abs());
-    let cur = Current { m: &m, values: &r.values, base };
+    let cur = Current { m: &m, values: &r.values };
     let mut out = Vec::new();
     for p in m.parameters.iter().filter(|p| p.show_properties) {
         let v = r.values.get(&p.node);

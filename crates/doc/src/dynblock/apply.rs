@@ -594,8 +594,6 @@ pub fn drag_grip(d: &mut Drawing, insert: Handle, node: i32, part: super::GripPa
         (ParameterKind::Point { label, .. }, GripPart::At) => {
             let Some(Val::Point(at)) = current(&m, &r.values, node) else { return Err(format!("{label} has no position.")) };
             plan.set.insert(node, Val::Point(Vec3::new(q.x, q.y, at.z)));
-            plan.chain(&m, &r.values, node, "UpdatedX")?;
-            plan.chain(&m, &r.values, node, "UpdatedY")?;
         }
         // The end grip goes where it is dragged (its distance snapped to the value set); the base
         // grip moves the base, keeping the end.
