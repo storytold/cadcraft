@@ -367,6 +367,23 @@ pub trait Interactive: Send {
     fn attribute_entry(&self) -> Option<AttribEntry> {
         None
     }
+    /// The live parameters of the running array (ARRAYRECT / ARRAYPOLAR), for the array window.
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        None
+    }
+    /// Replace the running array's live parameters, as the array window's fields change them.
+    fn set_array_live(&mut self, _s: &mut Session, _v: &crate::ArrayLive) -> Result<()> {
+        Err(crate::EngineError::Other("this command has no live array parameters".into()))
+    }
+    /// Put the command back at its Main option loop (the state eXit/Enter finishes from).
+    /// False when the command cannot commit yet (e.g. the polar centre is still unspecified).
+    fn array_set_main(&mut self) -> bool {
+        false
+    }
+    /// Ask the next canvas point to be the polar centre. False when the command has no centre.
+    fn array_pick_center(&mut self) -> bool {
+        false
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
