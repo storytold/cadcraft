@@ -250,6 +250,25 @@ pub fn pattern_for(d: &Drawing, name: &str) -> Option<HatchPattern> {
     Some(if d.header.i64("MEASUREMENT", 0) == 1 { scaled_pattern(p, 25.4) } else { p })
 }
 
+/// The pattern name of a user-defined hatch, as the DXF Reference writes it (group 2). Its lines
+/// are not a pattern definition but the hatch's angle, spacing and double flag (groups 52, 41 and
+/// 77 of a DXF file), so [`user_defined_lines`] makes them.
+pub const USER_PATTERN: &str = "_USER";
+
+/// Whether `name` is a user-defined hatch's pattern name ([`USER_PATTERN`], in any case).
+pub fn is_user_pattern(name: &str) -> bool {
+    name.eq_ignore_ascii_case(USER_PATTERN)
+}
+
+/// The line families of a user-defined hatch at unit scale, as a pattern definition has them: lines
+/// along the hatch's angle, its scale apart, and with `double` a second family at right angles to
+/// them. The hatch's angle turns the families and its scale spaces them, so a hatch of spacing
+/// `s` and lines at `a` stores angle `a`, scale `s` and these families.
+pub fn user_defined_lines(double: bool) -> Vec<PatternLine> {
+    let family = || PatternLine { angle: 0.0, origin: (0.0, 0.0), delta: (0.0, 1.0), dashes: Vec::new() };
+    if double { vec![family(), PatternLine { angle: 90.0, ..family() }] } else { vec![family()] }
+}
+
 /// `p` with every length (origins, offsets, dashes) multiplied by `k`.
 fn scaled_pattern(mut p: HatchPattern, k: f64) -> HatchPattern {
     for l in &mut p.lines {

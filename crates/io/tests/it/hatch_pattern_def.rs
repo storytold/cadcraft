@@ -58,6 +58,12 @@ fn pattern_data(p: &[(i32, String)]) -> usize {
     p.iter().skip(hatch).position(|(c, _)| *c == 78).map(|k| hatch + k).expect("78")
 }
 
+/// The first value of group `code` in the first HATCH of a DXF text.
+fn hatch_group(p: &[(i32, String)], code: i32) -> Option<String> {
+    let hatch = p.iter().position(|(c, v)| *c == 0 && v == "HATCH")?;
+    p.iter().skip(hatch).find(|(c, _)| *c == code).map(|(_, v)| v.clone())
+}
+
 fn join(p: &[(i32, String)]) -> String {
     p.iter().map(|(c, v)| format!("{c}\n{v}\n")).collect()
 }
@@ -95,6 +101,35 @@ fn custom_pattern_lines_roundtrip_scaled_and_rotated() {
     let h = first_hatch(&text);
     assert!(near(&h.pattern_lines, &custom_lines()), "{:?}", h.pattern_lines);
     assert!(near(&first_hatch(&save(h)).pattern_lines, &custom_lines()));
+}
+
+#[test]
+fn user_defined_hatches_save_their_type_and_double_flag_and_read_back() {
+    let lines = cadcraft_doc::library::user_defined_lines(true);
+    let text = save(hatch(cadcraft_doc::library::USER_PATTERN, 2.0, 30f64.to_radians(), Vec2::new(1.0, 2.0), lines.clone()));
+    let p = pairs(&text);
+    assert_eq!(hatch_group(&p, 2).as_deref(), Some("_USER"));
+    assert_eq!(hatch_group(&p, 76).as_deref(), Some("0"), "pattern type 0: user-defined");
+    assert_eq!(hatch_group(&p, 77).as_deref(), Some("1"), "double hatch area");
+    assert_eq!(hatch_group(&p, 78).as_deref(), Some("0"), "a user-defined hatch lists no lines");
+    // Read back to the same angle, spacing and families, and saved again unchanged.
+    let h = first_hatch(&text);
+    assert_eq!(h.pattern, "_USER");
+    assert!((h.scale - 2.0).abs() < 1e-12 && (h.angle - 30f64.to_radians()).abs() < 1e-12, "{} {}", h.scale, h.angle);
+    assert!(near(&h.pattern_lines, &lines), "{:?}", h.pattern_lines);
+    assert!(near(&first_hatch(&save(h)).pattern_lines, &lines));
+
+    // One family is not doubled, and a predefined pattern is type 1 with its lines listed.
+    let single = save(hatch(cadcraft_doc::library::USER_PATTERN, 2.0, 0.0, Vec2::ZERO, cadcraft_doc::library::user_defined_lines(false)));
+    let p = pairs(&single);
+    assert_eq!(hatch_group(&p, 76).as_deref(), Some("0"));
+    assert_eq!(hatch_group(&p, 77).as_deref(), Some("0"));
+    assert_eq!(first_hatch(&single).pattern_lines.len(), 1);
+    let ansi = save(hatch("ANSI31", 1.0, 0.0, Vec2::ZERO, custom_lines()));
+    let p = pairs(&ansi);
+    assert_eq!(hatch_group(&p, 76).as_deref(), Some("1"));
+    assert_eq!(hatch_group(&p, 77).as_deref(), Some("0"));
+    assert_eq!(hatch_group(&p, 78).as_deref(), Some("2"));
 }
 
 #[test]

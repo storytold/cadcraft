@@ -84,7 +84,18 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
     // Keep the file's definition lines even for a name the library knows: the library's versions
     // of some patterns (AR-CONC) only approximate AutoCAD's, and drawing them at the file's scale
     // could be hundreds of times denser than the hatch the author saw.
-    let pattern_lines = if solid { Vec::new() } else { pattern_definition(tags, scale, angle, origin) };
+    let pattern_lines = if solid {
+        Vec::new()
+    } else {
+        let lines = pattern_definition(tags, scale, angle, origin);
+        // A user-defined hatch's lines are not in the file: they are its angle, spacing and double
+        // flag, which AutoCAD writes instead of a pattern definition (group 78 is 0).
+        if lines.is_empty() && cadcraft_doc::library::is_user_pattern(&pattern) {
+            cadcraft_doc::library::user_defined_lines(t.i(77).unwrap_or(0) != 0)
+        } else {
+            lines
+        }
+    };
     Some(EntityKind::Hatch(Hatch {
         pattern: pattern.to_ascii_uppercase(),
         solid,

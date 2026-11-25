@@ -15,7 +15,7 @@ use super::helpers::lwpoly;
 use super::machines::SelectRun;
 use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_param, str_param, targets};
 
-use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
+use crate::{Accept, EngineError, Input, Interactive, Origin, Picker, Prompt, Result, Session, Step};
 
 mod assoc;
 pub(crate) use assoc::detach;
@@ -25,10 +25,23 @@ use super::has_doc;
 pub(crate) use assoc::update as refill_associative;
 pub use pick::{HatchPicks, PickMode};
 
+/// HATCH's parameters, for its JSON form and its catalog entry (the same for -HATCH).
+const HATCH_PARAMS: &str = "{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close";
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
-        CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true)))),
+        // A script or LISP routine answers HATCH's published command-line questions (pattern, how it
+        // is drawn, then the boundary); a person gets the interface's dialog, or the prompts of
+        // AutoCAD's -HATCH when it is off.
+        CommandSpec::new("hatch", "Hatch...", run_hatch)
+            .menu(&["Draw", "Hatch..."])
+            .alias(&["h", "bh"])
+            .params(HATCH_PARAMS)
+            .interactive(|s| Ok(Box::new(HatchM::new(s, false, s.command_origin() == Origin::Program)))),
+        // -HATCH: the command-line form, a script's too. Its own id, so a dashed start takes its
+        // prompts and never the HATCH sequence above.
+        CommandSpec::new("-hatch", "Hatch", run_hatch).params(HATCH_PARAMS).interactive(|s| Ok(Box::new(HatchM::new(s, false, false)))),
+        CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true, false)))),
         CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM { region: false }))),
         CommandSpec::new("region", "Region", run_region)
             .menu(&["Draw", "Region"])
@@ -301,6 +314,9 @@ struct HatchSettings {
     pattern: String,
     scale: f64,
     angle: f64,
+    /// A user-defined pattern is doubled ("Double hatch area?", DXF group 77): a second family of
+    /// lines at right angles to the first.
+    double: bool,
     gradient: Option<Gradient>,
     associative: bool,
     /// HPSEPARATE: one hatch per picked point or selected object.
@@ -329,6 +345,7 @@ impl HatchSettings {
             pattern,
             scale: f64_or(p, "scale", hdr.1).max(1e-9),
             angle: p.get("angle").and_then(Value::as_f64).map(f64::to_radians).unwrap_or(hdr.2),
+            double: false,
             gradient: g,
             associative: bool_or(p, "associative", s.doc().map_or(true, |d| d.header.i64("HPASSOC", 1) != 0)),
             separate: bool_or(p, "separate", s.doc().is_ok_and(|d| d.header.i64("HPSEPARATE", 0) != 0)),
@@ -364,7 +381,13 @@ impl HatchSettings {
             elevation: 0.0,
             gradient: self.gradient.clone(),
             background: None,
-            pattern_lines: patfile::lines_for(&self.pattern),
+            // A user-defined hatch's families come from its angle, spacing and double flag, not
+            // from a pattern definition; any other hatch takes the loaded pattern's, if any.
+            pattern_lines: if cadcraft_doc::library::is_user_pattern(&self.pattern) {
+                cadcraft_doc::library::user_defined_lines(self.double)
+            } else {
+                patfile::lines_for(&self.pattern)
+            },
         })
     }
 }
@@ -554,6 +577,12 @@ fn pattern_exists(name: &str) -> bool {
     cadcraft_doc::library::pattern(name).is_some() || patfile::user_pattern(name).is_some()
 }
 
+/// Whether `t` answers the pattern prompt with the user-defined form (U, User, User defined), as
+/// AutoCAD's HATCH takes it from a script or LISP routine.
+fn user_pattern_keyword(t: &str) -> bool {
+    matches!(t.trim().to_ascii_lowercase().replace([' ', '-', '_'], "").as_str(), "u" | "user" | "userdefined")
+}
+
 /// The existing pattern `name` means, typed at the pattern prompt: read upper-cased, else a loaded
 /// pattern's own name when only its Greek spelling differs in case or accent (σολιδ for ΣΟΛΙΔ).
 pub(crate) fn pattern_named(name: &str) -> Option<String> {
@@ -571,11 +600,22 @@ enum HatchAsk {
     Pattern,
     Scale,
     Angle,
+    /// The user-defined pattern's line angle: the same answer as [`HatchAsk::Angle`], asked as
+    /// AutoCAD's user-defined hatch asks it.
+    UserAngle,
+    /// The user-defined pattern's spacing between its lines (stored as the hatch's scale).
+    Spacing,
+    /// "Double hatch area?": a second family of lines at right angles.
+    Double,
     Origin,
 }
 
 struct HatchM {
     gradient: bool,
+    /// A script or LISP routine started HATCH: the published command-line sequence (the pattern or
+    /// the user-defined form, then its values, then the objects) instead of picking a boundary
+    /// first as a person does.
+    legacy: bool,
     settings: HatchSettings,
     /// Loops by pick (one hatch each when separate).
     loops: Vec<Vec<HatchLoop>>,
@@ -588,9 +628,10 @@ struct HatchM {
 }
 
 impl HatchM {
-    fn new(s: &Session, gradient: bool) -> Self {
+    fn new(s: &Session, gradient: bool, legacy: bool) -> Self {
         HatchM {
             gradient,
+            legacy: legacy && !gradient,
             settings: HatchSettings::from(s, &Value::Null, gradient),
             loops: Vec::new(),
             asking: None,
@@ -620,30 +661,57 @@ impl HatchM {
     fn answer(&mut self, s: &mut Session, a: HatchAsk, t: &str) -> Result<bool> {
         match a {
             HatchAsk::Pattern => {
-                let up = match patfile::typed_file(s, t.trim()) {
+                let t = t.trim();
+                // "?": the patterns there are, as AutoCAD lists them; the pattern is asked again.
+                if t == "?" {
+                    s.echo(format!("Available patterns: {}", patfile::names().join(", ")));
+                    return Ok(false);
+                }
+                // The user-defined form asks for its lines next, not a named pattern's scale and angle.
+                if self.legacy && user_pattern_keyword(t) {
+                    self.settings.pattern = cadcraft_doc::library::USER_PATTERN.to_string();
+                    self.settings.double = false;
+                    return Ok(true);
+                }
+                let up = match patfile::typed_file(s, t) {
                     // Nothing loaded from it: the pattern is asked again.
                     Some(n) if n.is_empty() => return Ok(false),
                     Some(n) => n,
-                    None => t.trim().to_ascii_uppercase(),
+                    None => t.to_ascii_uppercase(),
                 };
                 if pattern_exists(&up) {
                     self.settings.pattern = up.clone();
+                    // A named pattern, SOLID included, is not the user-defined one.
+                    self.settings.double = false;
                     s.doc_mut()?.header.set_str("HPNAME", &up);
                 } else {
                     s.echo(format!("Unknown pattern {up}. Available: {}", patfile::names().join(", ")));
                     return Ok(false);
                 }
             }
-            HatchAsk::Scale => {
-                let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) else { return Ok(false) };
+            // The user-defined pattern's spacing is stored as the hatch's scale (HPSCALE). More
+            // lines than a drawing can hold are bounded where the hatch is drawn; a zero, a
+            // negative number, NaN or text is refused here.
+            HatchAsk::Scale | HatchAsk::Spacing => {
+                let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) else {
+                    s.echo("Value must be positive and nonzero.");
+                    return Ok(false);
+                };
                 self.settings.scale = v;
                 s.doc_mut()?.header.set_f64("HPSCALE", v);
             }
-            HatchAsk::Angle => {
+            HatchAsk::Angle | HatchAsk::UserAngle => {
                 // Turns the pattern from the X axis (not from ANGBASE), clockwise when ANGDIR is 1.
                 let Some(a) = s.angle_settings().rotation(t).filter(|a| a.is_finite()) else { return Ok(false) };
                 self.settings.angle = a;
                 s.doc_mut()?.header.set_f64("HPANG", a);
+            }
+            HatchAsk::Double => {
+                self.settings.double = match t.trim().to_ascii_lowercase().as_str() {
+                    "y" | "yes" => true,
+                    "n" | "no" => false,
+                    _ => return Ok(false),
+                };
             }
             HatchAsk::Origin => {
                 let mode = match t {
@@ -660,15 +728,27 @@ impl HatchM {
         Ok(true)
     }
 
+    /// The angle prompt `msg` with the current angle as its default, offered as it would be typed.
+    fn angle_prompt(&self, s: &Session, msg: &str) -> Prompt {
+        let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
+        // Offered as it would be typed: clockwise is positive when ANGDIR is 1.
+        let a = if s.angle_settings().clockwise { -self.settings.angle } else { self.settings.angle };
+        Prompt::new(msg, Accept::NUMBER).default(crate::units::format_angle(a, au, ap))
+    }
+
     /// The sub-prompt that follows `a` (`taken`: its answer was taken). The Pattern option goes
     /// on, as AutoCAD 2024's -HATCH Properties does, from the pattern name to its scale and then
     /// its angle (a solid fill has neither), and asks again for a pattern or a value it refused.
+    /// The user-defined form goes instead to its lines' angle, their spacing and the double answer.
     fn after(&self, a: HatchAsk, taken: bool) -> Option<HatchAsk> {
         if !self.properties {
             return None;
         }
         match a {
             _ if !taken => Some(a),
+            HatchAsk::Pattern if cadcraft_doc::library::is_user_pattern(&self.settings.pattern) => Some(HatchAsk::UserAngle),
+            HatchAsk::UserAngle => Some(HatchAsk::Spacing),
+            HatchAsk::Spacing => Some(HatchAsk::Double),
             HatchAsk::Pattern if self.settings.pattern != "SOLID" => Some(HatchAsk::Scale),
             HatchAsk::Scale => Some(HatchAsk::Angle),
             _ => None,
@@ -687,6 +767,13 @@ impl Interactive for HatchM {
             self.settings.scale,
             self.settings.angle.to_degrees()
         ));
+        if self.legacy {
+            // A script or routine answers the published questions first: the pattern, how it is
+            // drawn, then the boundary objects. A person picks the boundary first.
+            self.asking = Some(HatchAsk::Pattern);
+            self.properties = true;
+            self.selecting = true;
+        }
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
@@ -696,18 +783,25 @@ impl Interactive for HatchM {
                 let p = Prompt::new("Enter a pattern name", Accept::TEXT)
                     .default(self.settings.pattern.clone())
                     .picker(Picker::HatchPattern(self.settings.pattern.clone()));
-                return if self.gradient { p } else { p.kw(&["Solid"]) };
+                return if self.gradient {
+                    p
+                } else if self.legacy {
+                    // The published command-line answers: a pattern, a solid fill, the user-defined
+                    // form, or the pattern list.
+                    p.kw(&["?", "Solid", "User defined"])
+                } else {
+                    p.kw(&["Solid"])
+                };
             }
             Some(HatchAsk::Scale) => {
                 return Prompt::new("Specify a scale for the hatch pattern", Accept::NUMBER).default(format!("{:.4}", self.settings.scale));
             }
-            Some(HatchAsk::Angle) => {
-                let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
-                // Offered as it would be typed: clockwise is positive when ANGDIR is 1.
-                let a = if s.angle_settings().clockwise { -self.settings.angle } else { self.settings.angle };
-                let d = crate::units::format_angle(a, au, ap);
-                return Prompt::new("Specify an angle for the hatch pattern", Accept::NUMBER).default(d);
+            Some(HatchAsk::Angle) => return self.angle_prompt(s, "Specify an angle for the hatch pattern"),
+            Some(HatchAsk::UserAngle) => return self.angle_prompt(s, "Specify an angle for the hatch lines"),
+            Some(HatchAsk::Spacing) => {
+                return Prompt::new("Specify a spacing between the lines", Accept::NUMBER).default(format!("{:.4}", self.settings.scale));
             }
+            Some(HatchAsk::Double) => return Prompt::new("Double hatch area?", Accept::TEXT).kw(&["Yes", "No"]).default("N"),
             Some(HatchAsk::Origin) => return Prompt::new("Specify the pattern origin", Accept::POINT).kw(&ORIGIN_KW).default("Use current"),
             None => {}
         }
@@ -744,6 +838,11 @@ impl Interactive for HatchM {
                 }
                 Input::Keyword(k) if a == HatchAsk::Pattern && k == "Solid" => self.answer(s, a, "SOLID")?,
                 Input::Text(t) | Input::Keyword(t) => self.answer(s, a, t)?,
+                // Enter on "Double hatch area?" is its default, No.
+                Input::Enter if a == HatchAsk::Double => {
+                    self.settings.double = false;
+                    true
+                }
                 // Enter keeps the current value; a point or a pick answers none of these prompts.
                 Input::Enter => true,
                 _ => false,
@@ -854,6 +953,16 @@ mod tests {
         d.model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some((e.handle.hex(), h.clone())) } else { None }).unwrap()
     }
 
+    /// How many hatches the drawing has.
+    fn hatch_count(s: &Session) -> usize {
+        s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Hatch(_))).count()
+    }
+
+    /// The closed 4000 × 2000 polyline the older LISP routines draw before they hatch it.
+    fn lisp_rectangle(s: &mut Session) {
+        s.cmdline("(command \"_.pline\" '(0 0) '(4000 0) '(4000 2000) '(0 2000) \"_c\")").unwrap();
+    }
+
     #[test]
     fn hatchedit_pattern_replaces_gradient() {
         let mut s = Session::new();
@@ -961,6 +1070,180 @@ mod tests {
         s.input(crate::Input::Pick(vec![h])).unwrap();
         assert!(s.prompt_text().contains("Specify a scale for the hatch pattern"), "{}", s.prompt_text());
         s.cancel();
+    }
+
+    /// HATCH started by a LISP routine takes the published command-line answers in order: the
+    /// pattern name, its scale and angle, then the boundary objects (issue #3498).
+    #[test]
+    fn lisp_hatch_takes_pattern_scale_and_angle_then_the_objects() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"dots\" 50 0 \"_l\" \"\")").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        assert_eq!(hatch_count(&s), 1);
+        let h = only_hatch(&s).1;
+        assert_eq!((h.pattern.as_str(), h.loops.len()), ("DOTS", 1));
+        assert!((h.scale - 50.0).abs() < 1e-9, "{}", h.scale);
+        assert!(h.angle.abs() < 1e-12, "{}", h.angle);
+    }
+
+    /// The user-defined answer (U) asks for the lines' angle, their spacing and whether to double
+    /// them, as AutoCAD's HATCH does, and makes one hatch of the selection.
+    #[test]
+    fn lisp_user_defined_hatch_takes_angle_spacing_and_double() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"_u\" 45 100 \"_n\" \"_l\" \"\")").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        assert_eq!(hatch_count(&s), 1);
+        let h = only_hatch(&s).1;
+        assert_eq!(h.pattern, cadcraft_doc::library::USER_PATTERN);
+        assert!(!h.solid);
+        assert!((h.angle - 45f64.to_radians()).abs() < 1e-12, "{}", h.angle);
+        assert!((h.scale - 100.0).abs() < 1e-9, "{}", h.scale);
+        assert_eq!(h.pattern_lines.len(), 1, "not doubled");
+        let absolute = h.pattern_lines[0].angle + h.angle.to_degrees();
+        assert!((absolute - 45.0).abs() < 1e-9, "lines at {absolute} degrees");
+    }
+
+    /// A doubled user-defined hatch has a second family of lines at right angles to the first.
+    #[test]
+    fn a_doubled_user_defined_hatch_has_a_second_family_at_right_angles() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"_u\" 45 100 \"_y\" \"_l\" \"\")").unwrap();
+        let h = only_hatch(&s).1;
+        assert_eq!(h.pattern_lines.len(), 2, "double hatch area: two families");
+        let absolute = |i: usize| h.pattern_lines[i].angle + h.angle.to_degrees();
+        assert!((absolute(1) - absolute(0) - 90.0).abs() < 1e-9, "{} and {}", absolute(0), absolute(1));
+    }
+
+    /// Enter at each question takes its default: the current pattern, scale and angle (the
+    /// user-defined form's angle, spacing and double flag too).
+    #[test]
+    fn lisp_hatch_enter_takes_the_current_values() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"\" \"\" \"\" \"_l\" \"\")").unwrap();
+        let h = only_hatch(&s).1;
+        assert_eq!((h.pattern.as_str(), h.scale, h.angle), ("ANSI31", 1.0, 0.0));
+
+        // The user-defined questions too: ANSI31 is replaced, the current angle and spacing kept,
+        // and "Double hatch area?" defaults to No.
+        s.cmdline("(command \"_.hatch\" \"_u\" \"\" \"\" \"\" \"_l\" \"\")").unwrap();
+        let h = s
+            .doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None })
+            .find(|h| h.pattern == cadcraft_doc::library::USER_PATTERN)
+            .unwrap();
+        assert_eq!(h.pattern, cadcraft_doc::library::USER_PATTERN);
+        assert!((h.scale - 1.0).abs() < 1e-12 && h.angle.abs() < 1e-12, "{} {}", h.scale, h.angle);
+        assert_eq!(h.pattern_lines.len(), 1, "not doubled");
+    }
+
+    /// Solid asks neither a scale nor an angle, as it never has.
+    #[test]
+    fn lisp_hatch_solid_takes_no_scale_or_angle() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"_s\" \"_l\" \"\")").unwrap();
+        let h = only_hatch(&s).1;
+        assert!(h.solid);
+        assert_eq!(h.pattern, "SOLID");
+    }
+
+    /// "?" lists the patterns and asks again, as AutoCAD does.
+    #[test]
+    fn lisp_hatch_question_mark_lists_patterns_and_asks_again() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"?\")").unwrap();
+        assert!(s.log.iter().any(|l| l.contains("Available patterns") && l.contains("ANSI31")), "{:?}", s.log);
+        assert!(s.prompt_text().contains("Enter a pattern name"), "{}", s.prompt_text());
+        for answer in ["ansi31", "", "", "_l", ""] {
+            s.cmdline(answer).unwrap();
+        }
+        assert_eq!(only_hatch(&s).1.pattern, "ANSI31");
+    }
+
+    /// A zero, a negative number, NaN or text answers a scale or spacing question again, changing
+    /// nothing; the answers after it are read as the values they are, and nothing panics.
+    #[test]
+    fn a_refused_hatch_scale_or_spacing_changes_nothing() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"ansi31\" \"0\" \"-5\" \"nan\" \"x\" 2 30 \"_l\" \"\")").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let h = only_hatch(&s).1;
+        assert_eq!(h.pattern, "ANSI31");
+        assert!((h.scale - 2.0).abs() < 1e-9, "{}", h.scale);
+        assert!((h.angle - 30f64.to_radians()).abs() < 1e-12, "{}", h.angle);
+        assert!(s.log.iter().any(|l| l.contains("Value must be positive and nonzero.")), "{:?}", s.log);
+
+        // A spacing refused and then cancelled leaves no hatch behind.
+        let before = hatch_count(&s);
+        s.cmdline("(command \"_.hatch\" \"_u\" 45 \"0\")").unwrap();
+        assert!(s.running.is_some(), "still asking for the spacing");
+        assert!(s.prompt_text().contains("spacing"), "{}", s.prompt_text());
+        s.cancel();
+        assert_eq!(hatch_count(&s), before);
+    }
+
+    /// A tiny spacing is stored (the renderer bounds the lines it draws) and is not a panic or a
+    /// refused number.
+    #[test]
+    fn a_very_small_user_defined_spacing_makes_a_hatch() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"_u\" 0 \"1e-9\" \"_n\" \"_l\" \"\")").unwrap();
+        let h = only_hatch(&s).1;
+        assert!((h.scale - 1e-9).abs() < 1e-15, "{}", h.scale);
+    }
+
+    /// A script is a program too: its answers take the same published order.
+    #[test]
+    fn a_script_hatch_takes_pattern_scale_and_angle() {
+        let mut s = Session::new();
+        s.script("pline 0,0 4000,0 4000,2000 0,2000 c\nhatch dots 50 0 _l \n").unwrap();
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        let h = only_hatch(&s).1;
+        assert_eq!(h.pattern, "DOTS");
+        assert!((h.scale - 50.0).abs() < 1e-9, "{}", h.scale);
+    }
+
+    /// -HATCH keeps its own questions, a routine's included: it picks the boundary first, and the
+    /// Properties option takes the pattern, scale and angle as before.
+    #[test]
+    fn dash_hatch_keeps_its_pick_boundary_prompts() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+        s.cmdline("(command \"_.-hatch\")").unwrap();
+        assert!(s.prompt_text().contains("Pick internal point"), "{}", s.prompt_text());
+        s.cancel();
+        // Typed by a person (the interface's dialog off) it is the same command line.
+        s.start("hatch").unwrap();
+        assert!(s.prompt_text().contains("Pick internal point"), "{}", s.prompt_text());
+        s.cancel();
+    }
+
+    /// A user-defined hatch is saved as one (pattern `_USER`, pattern type 0, its double flag) and
+    /// read back with its angle, spacing and families.
+    #[test]
+    fn a_user_defined_hatch_survives_a_dxf_save_and_read() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(command \"_.hatch\" \"_u\" 45 100 \"_y\" \"_l\" \"\")").unwrap();
+        let text = cadcraft_io::write_dxf(s.doc().unwrap());
+        let d = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+        let h = d.model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).unwrap();
+        assert_eq!(h.pattern, cadcraft_doc::library::USER_PATTERN);
+        assert!(!h.solid);
+        assert!((h.scale - 100.0).abs() < 1e-9, "{}", h.scale);
+        assert!((h.angle - 45f64.to_radians()).abs() < 1e-12, "{}", h.angle);
+        assert_eq!(h.pattern_lines.len(), 2, "the doubled families are made again");
     }
 
     #[test]
