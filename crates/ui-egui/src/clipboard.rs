@@ -51,9 +51,6 @@ pub enum ShortcutAction {
 /// own last copy (another CADCraft's) becomes the clipboard first; non-DXF tab-separated table text
 /// starts `pastetable`.
 pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAction> {
-    if ctx.egui_wants_keyboard_input() || app.cmd.expanded {
-        return Vec::new();
-    }
     let (events, shift) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
