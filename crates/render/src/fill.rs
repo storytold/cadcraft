@@ -396,6 +396,30 @@ pub(crate) mod tests {
         }
     }
 
+    /// A wide polyline's extents are what it draws: they take in every corner and no more, at any
+    /// sampling tolerance (#3443).
+    #[test]
+    fn drawn_corners_match_the_extents() {
+        let cases = [
+            // A sharp mitred bend, a bevelled one, a fold back over a corner, and a closed
+            // polyline (a corner at its first vertex).
+            wide(&[(0.0, 0.0), (20.0, 0.0), (0.0, 8.0)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 0.0), (0.0, 0.5)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 0.0), (10.0, -10.0), (10.5, -10.0), (10.5, 5.0)], false, 2.0),
+            wide(&[(0.0, 0.0), (10.0, 3.0), (2.0, 9.0)], true, 1.5),
+        ];
+        for p in cases {
+            let mut d = cadcraft_doc::Drawing::new_metric();
+            d.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), cadcraft_doc::EntityKind::LwPolyline(p.clone())).unwrap();
+            let ext = d.extents(&cadcraft_doc::Space::Model);
+            for tol in [1.0, 0.1, 0.01] {
+                let drawn = cadcraft_geom::Bounds2::from_points(wide_polyline(&p, tol).iter().copied());
+                let gap = (drawn.min - ext.min).len().max((drawn.max - ext.max).len());
+                assert!(gap < 1e-9, "tol {tol}: drawn {drawn:?}, extents {ext:?}");
+            }
+        }
+    }
+
     #[test]
     fn degenerate_input() {
         assert!(triangulate_evenodd(&[vec![Vec2::ZERO, Vec2::X]]).is_empty());
