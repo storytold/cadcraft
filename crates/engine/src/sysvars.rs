@@ -82,6 +82,10 @@ const SESSION_VARS: &[&str] = &[
 
 /// The names this session also answers with DXF's `$` in front: the header writes them that way
 /// (`$DIMASO`, `$TEXTEVAL`, `$REGENMODE`, `$POPUPS`), so a routine may type either form.
+/// The DIMASSOC mode DIMASO turned off, kept in the drawing's header so undo restores it.
+/// `CADCRAFT_` names are not listed by SYSVARS and no file writes this one.
+const DIMASO_MODE: &str = "CADCRAFT_DIMASO_MODE";
+
 const DOLLAR_VARS: &[&str] = &["DIMASO", "TEXTEVAL", "REGENMODE", "POPUPS"];
 
 /// `name` trimmed and upper case, without the `$` those names take. Every other name keeps the
@@ -89,10 +93,9 @@ const DOLLAR_VARS: &[&str] = &["DIMASO", "TEXTEVAL", "REGENMODE", "POPUPS"];
 /// plain name) and `$OSMODE` is not the session's OSMODE.
 fn bare_name(name: &str) -> String {
     let n = name.trim().to_ascii_uppercase();
-    match n.strip_prefix('$') {
-        Some(rest) if DOLLAR_VARS.contains(&rest) => rest.to_string(),
-        _ => n,
-    }
+    // Every leading `$`, as the header drops them all when it stores a value.
+    let rest = n.trim_start_matches('$');
+    if rest.len() < n.len() && DOLLAR_VARS.contains(&rest) { rest.to_string() } else { n }
 }
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -446,25 +449,26 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
         // DIMASO has no value of its own: 0 turns DIMASSOC off (remembering the mode it had),
         // 1 restores that mode (2 when none was seen), and 1 while it is on changes nothing. The
-        // mode it remembers is the drawing's, so each open drawing keeps its own.
+        // mode it remembers is in the drawing's header ([`DIMASO_MODE`]), so each open drawing
+        // keeps its own and undo restores it with DIMASSOC; no file writes it.
         "DIMASO" => {
             let on = as_i(v).filter(|i| matches!(i, 0 | 1)).ok_or_else(bad)? == 1;
             let mode = dimassoc(s).ok_or_else(bad)?;
-            let d = s.state_mut()?;
+            let h = &mut s.doc_mut()?.header;
             match (on, mode) {
                 // Turned back on after DIMASO turned it off: the mode it had. Nothing is written
                 // while it is already on.
                 (true, 0) => {
                     // Only a mode DIMASSOC takes: a file's value of anything else restores 2.
-                    let restore = if matches!(d.dimaso_mode, 1 | 2) { d.dimaso_mode } else { 2 };
-                    std::sync::Arc::make_mut(&mut d.doc).header.set_i64("DIMASSOC", restore);
+                    let restore = h.i64(DIMASO_MODE, 2);
+                    h.set_i64("DIMASSOC", if matches!(restore, 1 | 2) { restore } else { 2 });
                 }
                 (true, _) => {}
                 (false, _) => {
                     if matches!(mode, 1 | 2) {
-                        d.dimaso_mode = mode;
+                        h.set_i64(DIMASO_MODE, mode);
                     }
-                    std::sync::Arc::make_mut(&mut d.doc).header.set_i64("DIMASSOC", 0);
+                    h.set_i64("DIMASSOC", 0);
                 }
             }
         }

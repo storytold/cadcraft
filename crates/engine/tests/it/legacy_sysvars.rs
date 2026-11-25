@@ -283,3 +283,26 @@ fn other_dollar_names_keep_their_own_handling() {
     assert_eq!(getvar(&mut s, "OSMODE"), json!(4133), "$OSMODE is not the session's OSMODE");
     assert_eq!(getvar(&mut s, "$OSMODE"), json!(9), "$OSMODE still reads back what it was set to");
 }
+
+#[test]
+fn undo_puts_back_the_mode_dimaso_remembers() {
+    // The mode DIMASO remembers goes back with DIMASSOC when the changes are undone.
+    let mut s = Session::new();
+    for (name, v) in [("DIMASSOC", 1), ("DIMASO", 0), ("DIMASSOC", 2), ("DIMASO", 0)] {
+        assert!(setvar(&mut s, name, json!(v)), "{name} {v}");
+    }
+    s.cmdline("u").unwrap();
+    s.cmdline("u").unwrap();
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(0), "back to after the first DIMASO 0");
+    assert!(setvar(&mut s, "DIMASO", json!(1)));
+    assert_eq!(getvar(&mut s, "DIMASSOC"), json!(1), "the mode remembered then, not the later 2");
+}
+
+#[test]
+fn repeated_dollars_are_the_same_variables() {
+    let mut s = Session::new();
+    assert!(!lisp_setvar(&mut s, "$$REGENMODE", "2"), "out of range under any number of $");
+    assert_eq!(getvar(&mut s, "REGENMODE"), json!(1), "a refused $$REGENMODE changed nothing");
+    assert!(!setvar(&mut s, "$$$POPUPS", json!(0)), "read-only under any number of $");
+    assert!(cadcraft_engine::sysvars::is_read_only("$$POPUPS"));
+}
