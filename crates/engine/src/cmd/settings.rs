@@ -1,4 +1,4 @@
-//! Drafting settings and system variables: ORTHO, OSNAP, GRID, SNAP, POLAR, SETVAR/GETVAR.
+//! Drafting settings and system variables: ORTHO, OSNAP, GRID, SNAP, POLAR, FILL, SETVAR/GETVAR.
 
 use serde_json::{Value, json};
 
@@ -76,6 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{on?: bool}")
             .enabled(always)
             .noundo(),
+        CommandSpec::new("fill", "Fill Mode", run_fill).params("{on: bool}").interactive(|_| Ok(Box::new(FillM))),
         CommandSpec::new("qpmode", "Quick Properties", |s, p| toggle(s, p, |st| &mut st.qpmode, "Quick Properties"))
             .params("{on?: bool}")
             .enabled(always)
@@ -166,6 +167,43 @@ fn run_dsettings(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.touch();
     Ok(serde_json::to_value(s.drafting_settings()).unwrap_or(Value::Null))
+}
+
+/// Change the drawing's existing fill display setting.
+fn run_fill(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("fill", "`on` must be a boolean"))?;
+    let value = json!(i64::from(on));
+    if crate::sysvars::get(s, "FILLMODE").as_ref() != Some(&value) {
+        crate::sysvars::set(s, "FILLMODE", &value)?;
+    }
+    Ok(json!({ "on": on }))
+}
+
+/// The FILL command-line prompt uses the current drawing's mode as its default.
+struct FillM;
+
+impl Interactive for FillM {
+    fn name(&self) -> &'static str {
+        "FILL"
+    }
+
+    fn prompt(&self, s: &Session) -> Prompt {
+        let mode = s.doc().map_or(1, |d| d.header.i64("FILLMODE", 1));
+        let default = if mode == 0 { "Off" } else { "On" };
+        Prompt::new("Fill Mode", Accept { enter: true, ..Accept::default() }).kw(&["On", "Off"]).default(default)
+    }
+
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let on = match i {
+            Input::Keyword(k) | Input::Text(k) if k.trim().eq_ignore_ascii_case("On") => true,
+            Input::Keyword(k) | Input::Text(k) if k.trim().eq_ignore_ascii_case("Off") => false,
+            Input::Enter => return Ok(Step::Done),
+            Input::Cancel => return Ok(Step::Cancel),
+            _ => return Err(bad("fill", "choose On or Off")),
+        };
+        run_fill(s, &json!({ "on": on }))?;
+        Ok(Step::Done)
+    }
 }
 
 fn run_setvar(s: &mut Session, p: &Value) -> Result<Value> {

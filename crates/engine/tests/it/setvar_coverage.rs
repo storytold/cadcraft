@@ -71,6 +71,55 @@ fn values_reach_the_commands() {
 }
 
 #[test]
+fn fill_typed_options_update_the_drawing_variable() {
+    let mut s = Session::new();
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+    s.cmdline("FILL Off").unwrap();
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0));
+    assert!(s.current_prompt().is_none());
+
+    s.cmdline("FILL").unwrap();
+    let prompt = s.current_prompt().unwrap();
+    assert_eq!(prompt.keywords, ["On", "Off"]);
+    assert_eq!(prompt.default.as_deref(), Some("Off"));
+    s.cmdline("").unwrap();
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0));
+    assert!(s.current_prompt().is_none());
+
+    s.cmdline("FILL").unwrap();
+    s.cmdline("maybe").unwrap();
+    assert!(s.current_prompt().is_some());
+    s.cancel();
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0));
+
+    s.cmdline("fill on").unwrap();
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+    assert!(s.undo().unwrap().is_some());
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0));
+    assert!(s.undo().unwrap().is_some());
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+}
+
+#[test]
+fn fill_json_uses_the_same_drawing_variable() {
+    let mut s = Session::new();
+    assert!(setvar(&mut s, "FILLMODE", json!(0)));
+    assert_eq!(s.execute("fill", &json!({ "on": true })).unwrap()["on"], true);
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+    assert!(s.execute("fill", &json!({})).is_err());
+    assert!(s.execute("fill", &json!({ "on": "Off" })).is_err());
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+
+    s.execute("fill", &json!({ "on": true })).unwrap();
+    assert!(s.undo().unwrap().is_some());
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0), "the repeated value creates no undo step");
+    assert!(s.redo().unwrap().is_some());
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(1));
+    assert_eq!(s.execute("fill", &json!({ "on": false })).unwrap()["on"], false);
+    assert_eq!(getvar(&mut s, "FILLMODE"), json!(0));
+}
+
+#[test]
 fn bad_values_and_unknown_names_are_refused() {
     let mut s = Session::new();
     for (name, v) in [
