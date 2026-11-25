@@ -54,16 +54,14 @@ pub enum ShortcutAction {
 /// `fired` holds the events a floating panel's window ran as framework commands ([`CadApp::queue_fired_edits`]); they
 /// come before this window's own.
 pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context, fired: Vec<egui::Event>) -> Vec<ShortcutAction> {
-    let (events, shift) = ctx.input(|i| {
-        let ev: Vec<egui::Event> = fired
-            .into_iter()
-            .chain(i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned())
-            .collect();
-        (ev, i.modifiers.shift)
+    // Each event with its Shift: the fired chords have none, whatever is held by the time this window reads them.
+    let events: Vec<(egui::Event, bool)> = ctx.input(|i| {
+        let own = i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)));
+        fired.into_iter().map(|e| (e, false)).chain(own.map(|e| (e.clone(), i.modifiers.shift))).collect()
     });
-    let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };
     let mut out = Vec::new();
-    for e in events {
+    for (e, shift) in events {
+        let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };
         match e {
             egui::Event::Copy => out.push(ShortcutAction::Command(if shift { "copybase" } else { "copyclip" })),
             egui::Event::Cut => out.push(ShortcutAction::Command("cutclip")),
