@@ -180,7 +180,7 @@ impl SelectThen {
         match (self.ref_len, self.ref_points, self.ref_from) {
             (None, _, None) => Prompt::new("Specify reference length", Accept::POINT_OR_NUMBER).kw(&["Copy"]).default("1"),
             (None, _, Some(p)) | (Some(_), true, Some(p)) => Prompt::new("Specify second point", Accept::POINT).base(p),
-            (Some(_), false, _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).kw(&["Points", "Copy"]).base_opt(base),
+            (Some(_), false, _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).kw(&["Points", "Copy"]).base_opt(base).distance(),
             (Some(_), true, None) => Prompt::new("Specify first point", Accept::POINT),
         }
     }
