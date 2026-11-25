@@ -533,6 +533,97 @@ fn scale_reference_typed_and_picked() {
 }
 
 #[test]
+fn scale_reference_points_and_copy() {
+    fn line_ends(s: &Session) -> Vec<Vec2> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Line(l) => Some(l.b.xy()),
+                _ => None,
+            })
+            .collect()
+    }
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    // Reference 10 via two points, then Points option with two points of length 30 -> (30, 0).
+    for t in ["scale", "all", "", "0,0", "r", "0,0", "10,0"] {
+        s.cmdline(t).unwrap();
+    }
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Specify new length");
+    assert!(p.keywords.contains(&"Points".to_string()));
+    assert!(p.keywords.contains(&"Copy".to_string()));
+    s.cmdline("p").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify first point");
+    s.cmdline("5,5").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify second point");
+    s.cmdline("5,35").unwrap();
+    assert!(s.running.is_none());
+    assert!(line_ends(&s)[0].near(Vec2::new(30.0, 0.0), 1e-9));
+
+    // Coinciding Points are rejected without leaving the second-point prompt; a valid point completes.
+    for t in ["scale", "all", "", "0,0", "r", "30", "p", "5,5", "5,5"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_some());
+    assert_eq!(s.current_prompt().unwrap().message, "Specify second point");
+    s.cmdline("5,25").unwrap();
+    assert!(s.running.is_none());
+    assert!(line_ends(&s)[0].near(Vec2::new(20.0, 0.0), 1e-9));
+
+    // Copy entered inside Reference mode before reference length keeps the original and adds a scaled copy.
+    for t in ["scale", "all", "", "0,0", "r", "c", "20", "40"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_none());
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 2);
+    assert!(ends.iter().any(|p| p.near(Vec2::new(20.0, 0.0), 1e-9)));
+    assert!(ends.iter().any(|p| p.near(Vec2::new(40.0, 0.0), 1e-9)));
+
+    // Copy entered at "Specify new length" combined with Points scales a copy.
+    for t in ["scale", "l", "", "0,0", "r", "40", "c", "p", "0,0", "10,0"] {
+        s.cmdline(t).unwrap();
+    }
+    assert!(s.running.is_none());
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 3);
+    assert!(ends.iter().any(|p| p.near(Vec2::new(10.0, 0.0), 1e-9)));
+}
+
+#[test]
+fn hot_grip_scale_scales_heights_and_thickness() {
+    let mut s = Session::new();
+    let r = s.execute("text", &json!({"at": [10, 0], "height": 2.0, "text": "H"})).unwrap();
+    let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            e.common.thickness = 3.0;
+            if let EntityKind::Text(t) = &mut e.kind {
+                t.insert.z = 5.0;
+            }
+        })
+        .unwrap();
+    s.set_selection(vec![h]);
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    // STRETCH -> MOVE -> ROTATE -> SCALE
+    for _ in 0..3 {
+        s.input(Input::Enter).unwrap();
+    }
+    assert!(s.current_prompt().unwrap().message.contains("** SCALE **"));
+    s.cmdline("2").unwrap();
+    assert!(s.running.is_none());
+    let e = s.doc().unwrap().entity(h).unwrap();
+    assert_eq!(e.common.thickness, 6.0);
+    let EntityKind::Text(t) = &e.kind else { panic!("expected text") };
+    assert_eq!(t.height, 4.0);
+    assert_eq!(t.insert.z, 10.0);
+}
+
+#[test]
 fn layers_and_properties() {
     let mut s = Session::new();
     s.execute("layer.new", &json!({"name": "Walls", "color": "red", "current": true})).unwrap();

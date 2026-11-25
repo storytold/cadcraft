@@ -27,12 +27,11 @@ pub(super) struct SelectThen {
     objs: Vec<Handle>,
     pts: Vec<Vec2>,
     reference: bool,
-    /// ROTATE Reference: the reference angle (radians), once known. Its first point, and the
-    /// first of the two new-angle points, are kept in `ref_from`.
+    /// ROTATE Reference: the reference angle (radians), once known.
     ref_angle: Option<f64>,
-    /// ROTATE Reference: the new angle is given by two points (the `Points` option).
+    /// ROTATE/SCALE Reference: the new angle/length is given by two points (the `Points` option).
     ref_points: bool,
-    /// SCALE Reference: first point of a reference length given by two points.
+    /// ROTATE/SCALE Reference: first point of a reference or `Points` pair given by two points.
     ref_from: Option<Vec2>,
     /// SCALE Reference: the reference length, once known.
     ref_len: Option<f64>,
@@ -127,34 +126,71 @@ impl SelectThen {
         }
     }
 
-    /// SCALE Reference: reference length (typed, or two points), then new length (typed, or a
-    /// point measured from the base point). The scale factor is new length / reference length.
+    /// SCALE Reference: reference length (typed, or two points), then new length (typed, a point
+    /// measured from the base point, or two points after `Points`). The scale factor is new length /
+    /// reference length.
     fn scale_reference(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let Some(base) = self.pts.first().copied() else { return Ok(Step::Done) };
-        match (self.ref_len, self.ref_from, i) {
-            (None, None, Input::Point(p)) => {
+        if matches!(&i, Input::Keyword(k) if k == "Copy") {
+            self.copy_mode = true;
+            s.echo("Scaling a copy of the selected objects.");
+            return Ok(Step::Continue);
+        }
+        let Some(r) = self.ref_len else {
+            match (self.ref_from, i) {
+                (None, Input::Point(p)) => self.ref_from = Some(p),
+                (None, Input::Text(t)) => self.ref_len = Some(require_length(number(&t))?),
+                (None, Input::Enter) => self.ref_len = Some(1.0),
+                (Some(a), Input::Point(p)) => {
+                    self.ref_len = Some(require_length(Some(a.dist(p)))?);
+                    self.ref_from = None;
+                }
+                (_, Input::Enter) => return Ok(Step::Done),
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        };
+        match (self.ref_points, self.ref_from, i) {
+            (false, _, Input::Keyword(k)) if k == "Points" => {
+                self.ref_points = true;
+                self.ref_from = None;
+                Ok(Step::Continue)
+            }
+            (false, _, Input::Point(p)) => self.scale_by(s, base, base.dist(p) / r),
+            (false, _, Input::Text(t)) => {
+                let n = require_length(number(&t))?;
+                self.scale_by(s, base, n / r)
+            }
+            (true, None, Input::Point(p)) => {
                 self.ref_from = Some(p);
                 Ok(Step::Continue)
             }
-            (None, None, Input::Text(t)) => {
-                self.ref_len = Some(require_length(number(&t))?);
-                Ok(Step::Continue)
-            }
-            (None, None, Input::Enter) => {
-                self.ref_len = Some(1.0);
-                Ok(Step::Continue)
-            }
-            (None, Some(a), Input::Point(p)) => {
-                self.ref_len = Some(require_length(Some(a.dist(p)))?);
-                Ok(Step::Continue)
-            }
-            (Some(r), _, Input::Point(p)) => self.scale_by(s, base, base.dist(p) / r),
-            (Some(r), _, Input::Text(t)) => {
-                let n = require_length(number(&t))?;
+            (true, Some(a), Input::Point(p)) => {
+                let n = require_length(Some(a.dist(p)))?;
                 self.scale_by(s, base, n / r)
             }
             (_, _, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
+        }
+    }
+
+    /// The prompt while SCALE Reference collects its lengths.
+    fn scale_reference_prompt(&self) -> Prompt {
+        let base = self.pts.first().copied();
+        match (self.ref_len, self.ref_points, self.ref_from) {
+            (None, _, None) => Prompt::new("Specify reference length", Accept::POINT_OR_NUMBER).kw(&["Copy"]).default("1"),
+            (None, _, Some(p)) | (Some(_), true, Some(p)) => Prompt::new("Specify second point", Accept::POINT).base(p),
+            (Some(_), false, _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).kw(&["Points", "Copy"]).base_opt(base).distance(),
+            (Some(_), true, None) => Prompt::new("Specify first point", Accept::POINT),
+        }
+    }
+
+    /// Live factor and rubber-band anchor while SCALE Reference previews with the cursor at `c`.
+    fn scale_reference_factor(&self, base: Vec2, c: Vec2) -> Option<(f64, Vec2)> {
+        match (self.ref_len, self.ref_points, self.ref_from) {
+            (Some(r), false, _) => positive_length(Some(base.dist(c) / r)).map(|f| (f, base)),
+            (Some(r), true, Some(a)) => positive_length(Some(a.dist(c) / r)).map(|f| (f, a)),
+            _ => None,
         }
     }
 
@@ -316,11 +352,7 @@ impl Interactive for SelectThen {
         let k = self.pts.len();
         let base = self.pts.first().copied();
         if self.op == Op::Scale && self.reference {
-            return match (self.ref_len, self.ref_from) {
-                (Some(_), _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).base_opt(base),
-                (None, Some(p)) => Prompt::new("Specify second point", Accept::POINT).base(p),
-                (None, None) => Prompt::new("Specify reference length", Accept::POINT_OR_NUMBER).default("1"),
-            };
+            return self.scale_reference_prompt();
         }
         if self.op == Op::Rotate && self.reference {
             return self.rotate_reference_prompt();
@@ -468,16 +500,15 @@ impl Interactive for SelectThen {
             return Vec::new();
         }
         let Some(base) = self.pts.first().copied() else { return Vec::new() };
-        let m = match self.op {
-            Op::Move | Op::Copy => Mat3::translate(c - base),
-            Op::Rotate => Mat3::rotate_about(base, base.angle_to(c)),
-            Op::Scale if !self.reference => Mat3::scale_about(base, base.dist(c).max(1e-9)),
-            Op::Scale => match self.ref_len.and_then(|r| positive_length(Some(base.dist(c) / r))) {
-                Some(f) => Mat3::scale_about(base, f),
-                None if self.ref_len.is_some() => return Vec::new(),
+        let (m, rubber_from) = match self.op {
+            Op::Move | Op::Copy => (Mat3::translate(c - base), base),
+            Op::Rotate => (Mat3::rotate_about(base, base.angle_to(c)), base),
+            Op::Scale if !self.reference => (Mat3::scale_about(base, base.dist(c).max(1e-9)), base),
+            Op::Scale => match self.scale_reference_factor(base, c) {
+                Some((f, from)) => (Mat3::scale_about(base, f), from),
                 None => return self.ref_from.map(|a| vec![line(a, c)]).unwrap_or_default(),
             },
-            Op::Mirror if !self.ask_erase => Mat3::mirror(base, c),
+            Op::Mirror if !self.ask_erase => (Mat3::mirror(base, c), base),
             _ => return Vec::new(),
         };
         let Ok(d) = s.doc() else { return Vec::new() };
@@ -496,7 +527,7 @@ impl Interactive for SelectThen {
                 k
             })
             .collect();
-        out.push(line(base, c));
+        out.push(line(rubber_from, c));
         out
     }
     /// Separate shared GPU transforms from objects that need an individual MIRROR preview.
@@ -505,15 +536,18 @@ impl Interactive for SelectThen {
             return None;
         }
         let base = self.pts.first().copied()?;
-        let matrix = match self.op {
-            Op::Move | Op::Copy => Mat3::translate(c - base),
-            Op::Rotate => Mat3::rotate_about(base, base.angle_to(c)),
-            Op::Scale if !self.reference => Mat3::scale_about(base, base.dist(c).max(1e-9)),
-            Op::Scale => Mat3::scale_about(base, self.ref_len.and_then(|r| positive_length(Some(base.dist(c) / r)))?),
-            Op::Mirror if !self.ask_erase => Mat3::mirror(base, c),
+        let (matrix, rubber_from) = match self.op {
+            Op::Move | Op::Copy => (Mat3::translate(c - base), base),
+            Op::Rotate => (Mat3::rotate_about(base, base.angle_to(c)), base),
+            Op::Scale if !self.reference => (Mat3::scale_about(base, base.dist(c).max(1e-9)), base),
+            Op::Scale => {
+                let (f, from) = self.scale_reference_factor(base, c)?;
+                (Mat3::scale_about(base, f), from)
+            }
+            Op::Mirror if !self.ask_erase => (Mat3::mirror(base, c), base),
             _ => return None,
         };
-        let mut extra = vec![line(base, c)];
+        let mut extra = vec![line(rubber_from, c)];
         if self.op != Op::Mirror {
             return Some(crate::prompt::Drag { handles: self.objs.clone(), matrix, extra, clipboard: false });
         }
