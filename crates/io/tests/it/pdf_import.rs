@@ -372,6 +372,24 @@ fn text_drawn_as_fill_and_stroke_is_one_text() {
 }
 
 #[test]
+fn text_drawn_as_fill_and_stroke_is_one_text_when_it_splits_into_runs() {
+    // The whole TJ is filled before it is stroked: fill Left, fill Right, stroke Left, stroke Right.
+    let d = import("BT /F1 12 Tf 50 100 Td 2 Tr [(Left) -30000 (Right)] TJ ET");
+    assert_eq!(texts(&d), ["Left", "Right"]);
+    // Text that is only stroked is kept.
+    let d = import("BT /F1 12 Tf 50 100 Td 1 Tr [(Left) -30000 (Right)] TJ ET");
+    assert_eq!(texts(&d), ["Left", "Right"]);
+}
+
+#[test]
+fn the_same_text_filled_again_in_another_colour_is_kept() {
+    // A black label, then the same label in red over it, with nothing drawn between.
+    let d = import("BT /F1 12 Tf 20 20 Td (Label) Tj ET 1 0 0 rg BT /F1 12 Tf 20 20 Td (Label) Tj ET");
+    assert_eq!(texts(&d), ["Label", "Label"]);
+    assert_eq!(kinds(&d).last().map(|e| e.common.color), Some(Color::True(Rgb(255, 0, 0))));
+}
+
+#[test]
 fn a_plot_of_a_drawing_imports_back_as_its_geometry() {
     let mut d = Drawing::new_metric();
     d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(100.0, 0.0, 0.0) })).unwrap();

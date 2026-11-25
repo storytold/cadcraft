@@ -20,7 +20,7 @@
 //! Adapted from CADCraft PR #2787, commit ec17f63f189d1dccf91357701f9bba243ca88dd5
 //! (MIT OR Apache-2.0). PDF interpretation stays in craft-pdf; this module maps it to CAD entities.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
@@ -237,9 +237,13 @@ struct Collector {
     /// Characters of text the page may still add.
     text_left: usize,
     run: Option<Run>,
-    /// The text last added: where it starts, its string and its size, so the same text drawn again
-    /// at the same place (a fill and then its stroke, render mode 2) is not added twice.
-    last_text: Option<(Vec2, String, f64)>,
+    /// The glyphs filled since the last shape, image or stroked glyph, in paint order: where each
+    /// starts and its characters. Render mode 2 fills a whole text show and then draws it again for
+    /// its stroke; a stroke glyph that repeats the next one here is that replay and is skipped.
+    /// Each was charged to the page's text budget, which bounds the queue.
+    filled: VecDeque<(Vec2, String)>,
+    /// Whether a glyph was stroked since the last fill: the next fill starts a new queue.
+    stroking: bool,
     left_out: BTreeMap<LeftOut, usize>,
     failure: Option<String>,
     /// The clips in force, outermost first: a rectangle in page points, or `None` for another shape.
@@ -297,7 +301,8 @@ impl Collector {
             glyphs: 0,
             text_left: MAX_TEXT_CHARS,
             run: None,
-            last_text: None,
+            filled: VecDeque::new(),
+            stroking: false,
             left_out: BTreeMap::new(),
             failure: None,
             clips: Vec::new(),
@@ -554,9 +559,14 @@ impl Collector {
         self.add(LAYER_FILLS, color, Lineweight::ByLayer, EntityKind::Hatch(hatch), verts);
     }
 
-    fn glyph_text(&mut self, glyph: &Glyph<'_>, to_page: Affine, glyph_to_text: Affine, paint: &Paint<'_>) {
+    fn glyph_text(&mut self, glyph: &Glyph<'_>, to_page: Affine, glyph_to_text: Affine, paint: &Paint<'_>, stroke: bool) {
         if !self.opts.text || self.failure.is_some() {
             return;
+        }
+        if stroke {
+            self.stroking = true;
+        } else if std::mem::take(&mut self.stroking) {
+            self.filled.clear();
         }
         self.glyphs += 1;
         if self.glyphs > MAX_GLYPHS {
@@ -602,15 +612,25 @@ impl Collector {
         {
             return;
         }
+        if stroke {
+            if self.filled.front().is_some_and(|(at, s)| (*at - origin).len() <= 1e-9 * em.max(1.0) && *s == ch) {
+                self.filled.pop_front();
+                return;
+            }
+            self.filled.clear();
+        }
         // The characters this glyph adds, and a space before them, against the page's text budget.
         let Some(left) = self.text_left.checked_sub(ch.chars().count().saturating_add(1)) else {
             return self.fail(&format!("more than {MAX_TEXT_CHARS} characters of text on the page"));
         };
         self.text_left = left;
+        if !stroke {
+            self.filled.push_back((origin, ch.clone()));
+        }
 
         if let Some(run) = &mut self.run {
-            // A fill and its stroke (render mode 2) arrive as two calls for one glyph at one origin;
-            // this is tested first, since the gap measured from where the glyph ended is negative.
+            // The same glyph drawn again at the same origin adds nothing; this is tested first,
+            // since the gap measured from where the glyph ended is negative.
             if run.color == color && (origin - run.last).len() <= 1e-9 * em.max(1.0) && run.text.ends_with(&ch) {
                 return;
             }
@@ -630,7 +650,7 @@ impl Collector {
                 if gap > 0.15 * em && !run.text.ends_with(' ') && !ch.starts_with(' ') {
                     run.text.push(' ');
                 }
-                // A fill and its stroke arrive as two calls for one glyph.
+                // The same glyph drawn again where the last one started adds nothing.
                 if !(along.abs() < 1e-9 * em.max(1.0) && run.text.ends_with(&ch)) {
                     run.text.push_str(&ch);
                     run.glyphs += 1;
@@ -650,14 +670,6 @@ impl Collector {
         if value.trim().is_empty() {
             return;
         }
-        if let Some((at, text, em)) = &self.last_text
-            && *text == value
-            && (*at - run.start).len() <= 1e-9 * run.em.max(1.0)
-            && (*em - run.em).abs() <= 1e-9 * run.em.max(1.0)
-        {
-            return;
-        }
-        self.last_text = Some((run.start, value.clone(), run.em));
         let fit_end = run.end.filter(|e| run.glyphs >= 2 && (*e - run.start).len() > 1e-9);
         let text = Text {
             insert: v3(run.start),
@@ -934,7 +946,7 @@ impl<'a> Device<'a> for Collector {
         }
         self.flush_text();
         // Text drawn again after a shape is a new label on top, not the stroke of the text before.
-        self.last_text = None;
+        self.filled.clear();
         match mode {
             PathDrawMode::Fill(rule) => self.fill(path, transform, paint, rule),
             PathDrawMode::Stroke(p) => {
@@ -962,13 +974,15 @@ impl<'a> Device<'a> for Collector {
         }
     }
     fn draw_glyph(&mut self, glyph: &Glyph<'a>, transform: Affine, glyph_transform: Affine, paint: &Paint<'a>, mode: &GlyphDrawMode) {
-        if matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_)) {
-            self.glyph_text(glyph, transform, glyph_transform, paint);
+        match mode {
+            GlyphDrawMode::Fill => self.glyph_text(glyph, transform, glyph_transform, paint, false),
+            GlyphDrawMode::Stroke(_) => self.glyph_text(glyph, transform, glyph_transform, paint, true),
+            _ => {}
         }
     }
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {
         self.flush_text();
-        self.last_text = None;
+        self.filled.clear();
         self.left_out(LeftOut::Image);
     }
     fn pop_clip_path(&mut self) {
