@@ -187,6 +187,7 @@ mod trim_cut_at_the_pick;
 mod trim_cut_where_an_arc_span_starts;
 mod trim_extend_json_pick;
 mod trim_extend_options;
+mod trim_highlight;
 mod trim_keeps_z_and_width;
 mod undo_count;
 mod undo_layout_tab;

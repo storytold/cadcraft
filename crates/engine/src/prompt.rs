@@ -340,6 +340,19 @@ pub trait Interactive: Send {
     fn live_value(&self, _s: &Session, _cursor: Vec2) -> Option<String> {
         None
     }
+    /// What the rollover highlight shows of the object `h` under the cursor, when it is not the
+    /// whole object (TRIM: the piece a click there removes; EXTEND: what it adds). `None`: the
+    /// whole object, as for any other command.
+    fn highlight(&self, _s: &Session, _h: cadcraft_doc::Handle, _cursor: Vec2) -> Option<Vec<EntityKind>> {
+        None
+    }
+    /// What the running command will change wherever the cursor is, highlighted in place of the
+    /// object under it (TRIM's Fence and Crossing: every piece the fence or the window will
+    /// remove), each with the handle of the object it is part of. `None`: nothing of the kind,
+    /// and the object under the cursor is highlighted as [`Interactive::highlight`] says.
+    fn highlight_all(&self, _s: &Session, _cursor: Vec2) -> Option<Vec<(cadcraft_doc::Handle, EntityKind)>> {
+        None
+    }
     /// The preview as existing objects under one transform, when it is that (MOVE, COPY,
     /// ROTATE, SCALE). The UI then draws them from geometry uploaded once instead of rebuilding
     /// the transformed copies every frame; `None` falls back to [`Interactive::preview`].
