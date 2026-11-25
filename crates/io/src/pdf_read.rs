@@ -637,7 +637,9 @@ impl Collector {
             }
             let rel = origin - run.last;
             let along = rel.x * run.dir.x + rel.y * run.dir.y;
-            let across = (rel.x * run.dir.y - rel.y * run.dir.x).abs();
+            // Measured from the first glyph, so a run cannot drift off its baseline a step at a time.
+            let from_start = origin - run.start;
+            let across = (from_start.x * run.dir.y - from_start.y * run.dir.x).abs();
             let same = run.color == color && (run.em - em).abs() <= 0.02 * em && run.dir.x * dir.x + run.dir.y * dir.y > 0.9999 && across <= 0.1 * em;
             // Where the previous glyph ended, else the previous origin plus an average glyph.
             let gap = match run.end {

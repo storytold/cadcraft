@@ -169,6 +169,16 @@ fn rotated_text_keeps_its_angle() {
 }
 
 #[test]
+fn text_that_climbs_a_step_each_glyph_leaves_its_first_baseline() {
+    // Each glyph is 0.08 em above the one before: close enough to join it, but after a few the
+    // glyphs are well off the baseline the text is placed on.
+    let d = import("BT /F1 10 Tf 100 100 Td (A) Tj 0.8 Ts (B) Tj 1.6 Ts (C) Tj 2.4 Ts (D) Tj 3.2 Ts (E) Tj 4 Ts (F) Tj ET");
+    assert_eq!(texts(&d).concat(), "ABCDEF");
+    let rises: Vec<f64> = kinds(&d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.insert.y) } else { None }).collect();
+    assert!(rises.len() > 1 && rises.windows(2).all(|w| w[1] > w[0]), "{:?}: {rises:?}", texts(&d));
+}
+
+#[test]
 fn words_far_apart_on_a_line_are_separate_texts() {
     let d = import("BT /F1 10 Tf 50 100 Td (Left) Tj 400 0 Td (Right) Tj ET");
     let texts: Vec<_> = kinds(&d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
