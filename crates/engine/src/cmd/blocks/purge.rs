@@ -171,6 +171,8 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
                 frontier.extend(override_arrows(dm));
             }
             EntityKind::MLeader(m) => frontier.extend(m.block.as_ref().map(|b| b.block.clone())),
+            // A dimension kept as read draws, and is saved with, the block it names (#3438).
+            EntityKind::Unknown(u) => frontier.extend(u.dimension_block().map(str::to_string)),
             _ => {}
         }
     }
@@ -188,6 +190,7 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
                         frontier.extend(override_arrows(dm));
                     }
                     EntityKind::MLeader(m) => frontier.extend(m.block.as_ref().map(|b| b.block.clone())),
+                    EntityKind::Unknown(u) => frontier.extend(u.dimension_block().map(str::to_string)),
                     _ => {}
                 }
             }

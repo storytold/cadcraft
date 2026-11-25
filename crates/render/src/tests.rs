@@ -901,6 +901,54 @@ fn attributes_draw_with_their_own_transparency() {
     assert!(build(&d, &Space::Model, &Options::default()).prims.iter().all(|p| p.transparency == 0));
 }
 
+/// A block "K" with a line along y = 0 and the definition `def` (its text at y = 1), referenced
+/// at `at` with `attribs`, under ATTMODE `attmode`: the points drawn above the line.
+fn drawn_above_line(def: cadcraft_doc::Attrib, attribs: Vec<cadcraft_doc::Attrib>, attmode: i64, at: Vec3) -> Vec<cadcraft_geom::Vec2> {
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("ATTMODE", attmode);
+    let mut blk = cadcraft_doc::Block::new("K");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    blk.entities.push(block_entity(2, Common::default(), EntityKind::AttDef(def)));
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.insert = at;
+    ins.attribs = attribs;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    l.prims.iter().flat_map(|p| l.points(p).iter().copied()).filter(|p| p.y > at.y + 0.5).collect()
+}
+
+fn constant(invisible: bool) -> cadcraft_doc::Attrib {
+    cadcraft_doc::Attrib { constant: true, invisible, ..attrib("C") }
+}
+
+#[test]
+fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
+    // #3413: a constant value isn't copied into the reference's attributes; the block draws it.
+    let at = Vec3::new(100.0, 200.0, 0.0);
+    let pts = drawn_above_line(constant(false), vec![], 1, at);
+    assert!(!pts.is_empty(), "the constant value is drawn");
+    // Where the definition puts it, moved with the reference.
+    assert!(pts.iter().all(|p| p.x > at.x && p.x < at.x + 10.0 && p.y < at.y + 3.0), "{pts:?}");
+    // A variable definition draws nothing from the block (its attribute is drawn instead).
+    assert!(drawn_above_line(attrib("C"), vec![], 1, at).is_empty());
+    // A reference that carries an attribute for the constant (placed, as attributes are, in
+    // drawing coordinates where the definition's text lands) draws it once, not twice.
+    let mut own = attrib("c");
+    own.text.insert = own.text.insert + at;
+    assert_eq!(drawn_above_line(constant(false), vec![own], 1, at).len(), pts.len());
+}
+
+#[test]
+fn constant_attribute_definitions_follow_attmode() {
+    let at = Vec3::ZERO;
+    // ATTMODE 0 hides every attribute; 1 the invisible ones; 2 shows them all.
+    assert!(drawn_above_line(constant(false), vec![], 0, at).is_empty());
+    assert!(drawn_above_line(constant(true), vec![], 1, at).is_empty());
+    assert!(!drawn_above_line(constant(true), vec![], 2, at).is_empty());
+}
+
 #[test]
 fn attributes_follow_the_reference_layer_and_have_no_definition() {
     use cadcraft_doc::Transparency::Percent;

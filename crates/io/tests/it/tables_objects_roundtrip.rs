@@ -112,7 +112,13 @@ fn layout_page_setup_and_paper_view_round_trip() {
     for (a, b) in d.layouts.iter().zip(&r.layouts) {
         assert_eq!(a.name, b.name);
         // The groups 44, 45 and 73 the file stored are provenance, not a setting.
-        let read = cadcraft_doc::PageSetup { file_paper: None, file_plot_flags: None, file_standard_scale: None, ..b.page.clone() };
+        let read = cadcraft_doc::PageSetup {
+            file_plot_settings: None,
+            file_paper: None,
+            file_plot_flags: None,
+            file_standard_scale: None,
+            ..b.page.clone()
+        };
         assert_eq!(a.page, read, "{}", a.name);
         assert_eq!(a.view, b.view, "{}", a.name);
     }

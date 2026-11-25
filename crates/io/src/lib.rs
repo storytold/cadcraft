@@ -1,4 +1,4 @@
-//! CADCraft file formats: DXF/DWG read, SVG and SVGZ import, SVG/PNG/PDF export (plotting).
+//! CADCraft file formats: DXF/DWG read, SVG/SVGZ import, PDF page conversion and SVG/PNG/PDF plotting.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -18,6 +18,7 @@ mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pdf_read;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;
