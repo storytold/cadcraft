@@ -39,6 +39,8 @@ craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-l
 craft-pdf = { version = "=0.1.0", git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc", default-features = false }
 # TrueType embedding-permission classification for plotted fonts (craft-libs#778).
 craft-font-catalog = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc", default-features = false }
+# Delimited text (CSV/TSV) parsing (shared Craft library).
+craft-csv = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = { version = "0.3.3", features = ["env"] }

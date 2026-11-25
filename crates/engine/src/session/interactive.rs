@@ -41,6 +41,37 @@ impl Session {
         blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
+    /// Launch a non-nested interactive state machine through the standard command-start checks
+    /// (`enabled`, `refused_in_editor`, `commands_started`, `last_command`, `Guarded`, `feed`).
+    pub(crate) fn launch_interactive(
+        &mut self,
+        id: &str,
+        enabled: fn(&Session) -> std::result::Result<(), String>,
+        machine: Box<dyn crate::Interactive>,
+    ) -> Result<()> {
+        self.last_polar = None;
+        self.pick_hint = None;
+        if self.running.is_some() {
+            self.cancel();
+        }
+        self.commands_started = self.commands_started.wrapping_add(1);
+        self.command_origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        enabled(self).map_err(|m| EngineError::Disabled(id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
+            return Err(EngineError::Disabled(id.into(), why));
+        }
+        self.last_command = Some(id.to_string());
+        self.echo(format!("Command: {}", id.to_ascii_uppercase()));
+        let guarded = guard::Guarded::wrap(machine);
+        let st = self.state()?;
+        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
+        self.running = Some(Running { id: id.to_string(), machine: guarded, before, selection_before });
+        self.pending_window = None;
+        self.point_mods.clear();
+        self.feed(None)?;
+        Ok(())
+    }
+
     /// Who started the command running now ([`Origin`]): fixed when it started, so a scripted or
     /// LISP-started command keeps its origin while it prompts.
     pub fn command_origin(&self) -> Origin {

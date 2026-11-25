@@ -40,19 +40,28 @@ pub fn mirror(app: &CadApp, ctx: &egui::Context) {
     }
 }
 
-/// The commands the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
-/// own last copy (another CADCraft's) becomes the clipboard first.
-pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static str> {
+/// What a Cut/Copy/Paste clipboard event on the canvas asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShortcutAction {
+    Command(&'static str),
+    PasteTable(String),
+}
+
+/// The actions the Cut/Copy/Paste events of this frame ask for. Pasted DXF text that isn't our
+/// own last copy (another CADCraft's) becomes the clipboard first; non-DXF tab-separated table text
+/// starts `pastetable`.
+pub fn shortcut_actions(app: &mut CadApp, ctx: &egui::Context) -> Vec<ShortcutAction> {
     let (events, shift) = ctx.input(|i| {
         let ev: Vec<egui::Event> =
             i.events.iter().filter(|e| matches!(e, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))).cloned().collect();
         (ev, i.modifiers.shift)
     });
+    let paste_cmd = || if shift { "pasteblock" } else { "pasteclip" };
     let mut out = Vec::new();
     for e in events {
         match e {
-            egui::Event::Copy => out.push(if shift { "copybase" } else { "copyclip" }),
-            egui::Event::Cut => out.push("cutclip"),
+            egui::Event::Copy => out.push(ShortcutAction::Command(if shift { "copybase" } else { "copyclip" })),
+            egui::Event::Cut => out.push(ShortcutAction::Command("cutclip")),
             egui::Event::Paste(text) => {
                 // The oldest request sent in an earlier frame and still unanswered gets this
                 // `Paste`. It completes the held command only if the command asked for that
@@ -66,17 +75,30 @@ pub fn shortcut_commands(app: &mut CadApp, ctx: &egui::Context) -> Vec<&'static 
                 let held = if mine { app.paste.wait.take().map(|(p, _, _)| p) } else { None };
                 // The text is the system clipboard's either way, so a stale answer still counts.
                 let h = hash(&text);
-                if ctx.data(|d| d.get_temp::<u64>(text_id())) != Some(h) && clipboard::load_system_text(&mut app.session, &text) {
+                let is_dxf = if ctx.data(|d| d.get_temp::<u64>(text_id())) == Some(h) {
+                    true
+                } else if clipboard::load_system_text(&mut app.session, &text) {
                     ctx.data_mut(|d| d.insert_temp(text_id(), h));
-                }
+                    true
+                } else {
+                    false
+                };
                 if held.is_none() && answered.is_some() {
+                    continue;
+                }
+                if !is_dxf
+                    && !shift
+                    && cadcraft_engine::cmd::table::is_tsv_table(&text)
+                    && (held.is_none() || held.as_ref().is_some_and(|p| p.id == "pasteclip"))
+                {
+                    out.push(ShortcutAction::PasteTable(text));
                     continue;
                 }
                 // A paste asked for from a menu or the command line is the command that was held.
                 match held {
                     Some(p) if p.line.is_some() => run_now(app, p),
-                    Some(p) => out.push(p.id),
-                    None => out.push(if shift { "pasteblock" } else { "pasteclip" }),
+                    Some(p) => out.push(ShortcutAction::Command(p.id)),
+                    None => out.push(ShortcutAction::Command(paste_cmd())),
                 }
             }
             _ => {}
@@ -215,7 +237,7 @@ pub fn run_read(app: &mut CadApp, id: &'static str) {
 }
 
 /// Once per frame: ask the window for the system clipboard for a newly held paste, and give up on
-/// one it never delivered. The text arrives as a `Paste` event ([`shortcut_commands`]).
+/// one it never delivered. The text arrives as a `Paste` event ([`shortcut_actions`]).
 pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     let (now, pasted) = ctx.input(|i| (i.time, i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))));
     if ctx.current_pass_index() == 0 {
@@ -252,7 +274,7 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
         }
     }
     // A request that can no longer be answered, or the time to give up, ends the wait; a `Paste`
-    // in this frame completes the held command first ([`shortcut_commands`]).
+    // in this frame completes the held command first ([`shortcut_actions`]).
     let gone = |app: &CadApp| app.paste.wait.as_ref().is_some_and(|(_, id, _)| !app.paste.sent.iter().any(|r| r.id == *id));
     if (gone(app) || (!pasted && app.paste.wait.as_ref().is_some_and(|(_, _, deadline)| now >= *deadline)))
         && let Some((p, _, _)) = app.paste.wait.take()
