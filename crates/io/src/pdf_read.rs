@@ -604,11 +604,12 @@ impl Collector {
         let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0))).filter(|e| e.x.is_finite() && e.y.is_finite());
         // A glyph is kept when its middle (half its advance along, half the cap height up) lies in
         // the clip. Its origin is no test: a plotter often clips each text to a box drawn through
-        // that origin (or ends the page clip there), and rounding then puts it a hair outside.
+        // that origin (or ends the page clip there), and rounding then puts it a hair outside. A clip
+        // with no area (two clips that only touch) shows nothing.
         let half = end.map_or(dir * (0.25 * em), |e| (e - origin) * 0.5);
         let middle = origin + half + ey * (0.5 * CAP_HEIGHT);
         if let Some((lo, hi)) = self.clip()
-            && !((lo.x..=hi.x).contains(&middle.x) && (lo.y..=hi.y).contains(&middle.y))
+            && !(lo.x < hi.x && lo.y < hi.y && (lo.x..=hi.x).contains(&middle.x) && (lo.y..=hi.y).contains(&middle.y))
         {
             return;
         }

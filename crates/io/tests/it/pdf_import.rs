@@ -227,6 +227,17 @@ fn text_starting_on_a_clip_edge_is_kept() {
 }
 
 #[test]
+fn text_inside_a_clip_with_no_area_is_left_out() {
+    // A 1000 point 0 is 556 points wide, so its middle lies on x = 300, where the two clips touch.
+    let content = |clips: &str| format!("q {clips} BT /F1 1000 Tf 22 100 Td (0) Tj ET Q");
+    let points = PdfImportOptions { unit: 1.0, ..Default::default() };
+    let (d, _) = read(&page(&content("0 0 300 800 re W n")), &points).unwrap();
+    assert_eq!(texts(&d), ["0"], "a glyph whose middle lies on the clip's edge is kept");
+    let (d, _) = read(&page(&content("0 0 300 800 re W n 300 0 300 800 re W n")), &points).unwrap();
+    assert!(texts(&d).is_empty(), "{:?}", texts(&d));
+}
+
+#[test]
 fn a_shape_outside_its_clip_is_left_out() {
     let d = import("q 100 100 50 50 re W n 0 0 m 10 10 l S Q");
     assert_eq!(kinds(&d).len(), 0);
