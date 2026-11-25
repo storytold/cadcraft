@@ -7,6 +7,7 @@
 //! [`Session::input`], [`Session::cmdline`]) exactly like typing at AutoCAD's command line.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
+pub mod array_live;
 
 pub mod assoc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +49,7 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use array_live::{ArrayLive, ArrayLiveKind};
 pub use cadcraft_doc as doc;
 pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
@@ -103,6 +105,9 @@ pub struct Session {
     pub running: Option<Running>,
     /// How many commands were started, nested transparent ones left out.
     pub commands_started: u64,
+    /// How many inputs the session was given ([`Session::input`]): answers to a running command or
+    /// to a LISP routine waiting for one, and the Enter that repeats the last command.
+    pub inputs: u64,
     /// Who started the command running now ([`Origin`]): a command keeps the origin it started
     /// with, so a scripted or LISP-started INSERT never opens a dialog, even when the user then
     /// answers its prompts by hand.
@@ -213,6 +218,7 @@ impl Session {
             settings: Settings::default(),
             running: None,
             commands_started: 0,
+            inputs: 0,
             command_origin: Origin::Person,
             last_finished: None,
             in_script: false,

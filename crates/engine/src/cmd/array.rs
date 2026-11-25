@@ -368,6 +368,19 @@ fn preview_copies(s: &Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) 
 fn other(m: impl Into<String>) -> EngineError {
     EngineError::Other(m.into())
 }
+/// The fill angle (degrees) that gives `b` between `items` items, with the command
+/// line's own rule and error messages.
+fn fill_for_between(items: u64, b: f64) -> Result<f64> {
+    if !b.is_finite() || b.abs() < 1e-9 {
+        return Err(other("Requires a nonzero angle."));
+    }
+    let n = items.max(1) as f64;
+    let fill = if (b.abs() * n - 360.0).abs() < 1e-9 { 360.0 * b.signum() } else { b * (n - 1.0).max(1.0) };
+    if fill.abs() > 360.0 + 1e-9 {
+        return Err(other("The items would span more than 360 degrees; enter a smaller angle or fewer items."));
+    }
+    Ok(fill.clamp(-360.0, 360.0))
+}
 
 fn fmt(v: f64) -> String {
     format!("{v:.4}")
@@ -692,6 +705,45 @@ impl RectM {
         };
         Ok(Step::Continue)
     }
+
+    fn live(&self) -> crate::ArrayLive {
+        crate::ArrayLive {
+            kind: crate::ArrayLiveKind::Rectangular,
+            cols: self.cols,
+            rows: self.rows,
+            col_spacing: self.cs,
+            row_spacing: self.rs,
+            levels: self.levels,
+            level_spacing: self.ls,
+            row_elevation: self.elev,
+            associative: self.assoc,
+            items: 0,
+            fill: 0.0,
+            rotate: false,
+            center: None,
+            between: None,
+        }
+    }
+
+    /// Apply the array window's values: they are validated first, so a refused value leaves the
+    /// command exactly as it was.
+    fn apply_live(&mut self, s: &Session, v: &crate::ArrayLive) -> Result<()> {
+        if v.kind != crate::ArrayLiveKind::Rectangular {
+            return Err(other("That is a polar array; these are the rectangular parameters."));
+        }
+        if v.cols < 1 || v.rows < 1 || v.levels < 1 {
+            return Err(other("Requires at least one column, row and level."));
+        }
+        let levels = if v.associative { v.levels } else { 1 };
+        check_size(s, v.rows.saturating_mul(v.cols).saturating_mul(levels), self.objs.len())?;
+        if ![v.col_spacing, v.row_spacing, v.level_spacing, v.row_elevation].iter().all(|d| d.is_finite()) {
+            return Err(other("Requires finite distances."));
+        }
+        (self.cols, self.rows, self.levels) = (v.cols, v.rows, v.levels);
+        (self.cs, self.rs, self.ls, self.elev) = (v.col_spacing, v.row_spacing, v.level_spacing, v.row_elevation);
+        self.assoc = v.associative;
+        Ok(())
+    }
 }
 
 fn yes(b: bool) -> &'static str {
@@ -704,6 +756,16 @@ fn assoc_prompt(cur: bool) -> Prompt {
 }
 
 impl Interactive for RectM {
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        Some(self.live())
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        self.apply_live(s, v)
+    }
+    fn array_set_main(&mut self) -> bool {
+        self.stage = RStage::Main;
+        true
+    }
     fn name(&self) -> &'static str {
         "ARRAYRECT"
     }
@@ -996,9 +1058,15 @@ impl PolarM {
     fn ready(&mut self, s: &mut Session) -> Step {
         self.stage = PStage::Center;
         self.assoc = assoc_default(s);
+        // Start at the centre prompt, pre-filled with the selection's centre.
+        self.center = Vec2::ZERO;
         // Rows and levels default to 1.5 × the selection's size apart.
         if let Ok(d) = s.doc() {
             let b = bounds(d, &self.objs);
+            let c = b.center();
+            if c.is_finite() {
+                self.center = c;
+            }
             let size = b.width().max(b.height());
             if size.is_finite() && size > 1e-9 {
                 (self.rs, self.ls) = (size * 1.5, size * 1.5);
@@ -1083,9 +1151,89 @@ impl PolarM {
         };
         d.filter(|d| d.is_finite() && d.abs() > 1e-12).map(Some).ok_or_else(|| other("Requires a nonzero distance."))
     }
+    fn live(&self) -> crate::ArrayLive {
+        crate::ArrayLive {
+            kind: crate::ArrayLiveKind::Polar,
+            cols: 0,
+            rows: self.rows,
+            col_spacing: 0.0,
+            row_spacing: self.rs,
+            levels: self.levels,
+            level_spacing: self.ls,
+            row_elevation: self.elev,
+            associative: self.assoc,
+            items: self.items,
+            fill: self.fill,
+            rotate: self.rotate,
+            center: Some(self.center),
+            between: Some(self.between()),
+        }
+    }
+
+    /// Apply the array window's values: they are validated first, so a refused value leaves the
+    /// command exactly as it was.
+    fn apply_live(&mut self, s: &Session, v: &crate::ArrayLive) -> Result<()> {
+        if v.kind != crate::ArrayLiveKind::Polar {
+            return Err(other("That is a rectangular array; these are the polar parameters."));
+        }
+        if v.items < 1 || v.rows < 1 || v.levels < 1 {
+            return Err(other("Requires at least one item, row and level."));
+        }
+        let levels = if v.associative { v.levels } else { 1 };
+        check_size(s, v.rows.saturating_mul(v.items).saturating_mul(levels), self.objs.len())?;
+        // The Angle between field derives the fill; an edited Fill angle always wins.
+        let between_changed = v.between.is_some_and(|b| !b.is_finite() || (b - self.between()).abs() > 1e-9);
+        let fill_changed = (v.fill - self.fill).abs() > 1e-9;
+        let fill = match v.between {
+            Some(b) if between_changed && !fill_changed => fill_for_between(v.items, b)?,
+            _ => v.fill,
+        };
+        if !fill.is_finite() || fill.abs() <= 0.0 || fill.abs() > 360.0 {
+            return Err(other("Requires a fill angle between -360 and 360 degrees (not 0)."));
+        }
+        if ![v.row_spacing, v.level_spacing, v.row_elevation].iter().all(|d| d.is_finite()) {
+            return Err(other("Requires finite distances."));
+        }
+        if let Some(c) = v.center
+            && !c.is_finite()
+        {
+            return Err(other("Requires a finite center point."));
+        }
+        (self.items, self.rows, self.levels) = (v.items, v.rows, v.levels);
+        (self.rs, self.ls, self.elev) = (v.row_spacing, v.level_spacing, v.row_elevation);
+        self.fill = fill;
+        self.rotate = v.rotate;
+        self.assoc = v.associative;
+        // The centre is always taken, but the command only moves on when it actually changed;
+        // the window copying the prefilled centre straight back never advances.
+        if let Some(c) = v.center {
+            if c != self.center && self.stage == PStage::Center {
+                self.stage = PStage::Main;
+            }
+            self.center = c;
+        }
+        Ok(())
+    }
 }
 
 impl Interactive for PolarM {
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        Some(self.live())
+    }
+    fn set_array_live(&mut self, s: &mut Session, v: &crate::ArrayLive) -> Result<()> {
+        self.apply_live(s, v)
+    }
+    fn array_set_main(&mut self) -> bool {
+        if matches!(self.stage, PStage::Center | PStage::CenterBase | PStage::CenterBaseKey) {
+            return false;
+        }
+        self.stage = PStage::Main;
+        true
+    }
+    fn array_pick_center(&mut self) -> bool {
+        self.stage = PStage::Center;
+        true
+    }
     fn name(&self) -> &'static str {
         "ARRAYPOLAR"
     }
@@ -1241,15 +1389,7 @@ impl Interactive for PolarM {
             (Between, Input::Enter) => Main,
             (Between, _) => match angle(&i, self.between(), &s.angle_settings())? {
                 Some(b) => {
-                    if b.abs() < 1e-9 {
-                        return Err(other("Requires a nonzero angle."));
-                    }
-                    let n = self.items as f64;
-                    let fill = if (b.abs() * n - 360.0).abs() < 1e-9 { 360.0 * b.signum() } else { b * (n - 1.0).max(1.0) };
-                    if fill.abs() > 360.0 + 1e-9 {
-                        return Err(other("The items would span more than 360 degrees; enter a smaller angle or fewer items."));
-                    }
-                    self.fill = fill;
+                    self.fill = fill_for_between(self.items, b)?;
                     Main
                 }
                 None => stage,

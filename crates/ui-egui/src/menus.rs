@@ -355,6 +355,7 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
             "ka" => "This build has no Georgian font, so the interface stays in English. Build with craft-fonts (its Geor face) to use Georgian.",
+            "ta" => "No Tamil font is installed, so the interface stays in English. Install one (Noto Sans Tamil or Lohit Tamil, for example) to use Tamil.",
             _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
@@ -498,7 +499,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.start_tab = false;
             Ok(Value::Null)
         }
-        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+        "export" | "exp" | "import" | "imp" | "pdfimport" | "pdfi" | "publish" | "preview" | "pre"
+            if params.is_null() && app.session.state().is_ok() =>
+        {
             return Some(crate::exchange::route(app, id));
         }
         "ui.hidepalettes" => {
@@ -598,6 +601,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         // Hatch Edit dialog. -HATCH, -HATCHEDIT and JSON calls keep the command line and the JSON form.
         "hatch" | "h" | "bh" | "gradient" | "gd" if params.is_null() && crate::hatchdlg::dialog_on(app) => {
             crate::hatchdlg::open_create(app, matches!(id, "gradient" | "gd"));
+            Ok(Value::Null)
+        }
+        // Typed or from a menu (no parameters): ARRAYRECT and ARRAYPOLAR start the real command and
+        // open the Array window on it. ARRAY and -ARRAY stay on the command line, and JSON calls
+        // keep the JSON form.
+        "arrayrect" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Rectangular);
+            Ok(Value::Null)
+        }
+        "arraypolar" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Polar);
             Ok(Value::Null)
         }
         // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
@@ -982,12 +996,30 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    let mut fire: Vec<String> = Vec::new();
+    let mut pasted_table = false;
+    for action in crate::clipboard::shortcut_actions(app, ctx) {
+        match action {
+            crate::clipboard::ShortcutAction::Command(id) => {
+                let id = id.to_string();
+                if !fire.contains(&id) {
+                    fire.push(id);
+                }
+            }
+            crate::clipboard::ShortcutAction::PasteTable(tsv) => {
+                pasted_table = true;
+                app.cmd.buffer.clear();
+                if let Err(e) = app.session.start_paste_table(&tsv, None) {
+                    app.session.echo(e.to_string());
+                }
+            }
+        }
+    }
     // The first `read` commands come from this frame's clipboard events, whose `Paste` has been read.
     let read = fire.len();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
-            if i.consume_shortcut(s) && !fire.contains(id) {
+            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
                 fire.push(id.clone());
             }
         }

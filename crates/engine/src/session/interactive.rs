@@ -41,6 +41,37 @@ impl Session {
         blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
+    /// Launch a non-nested interactive state machine through the standard command-start checks
+    /// (`enabled`, `refused_in_editor`, `commands_started`, `last_command`, `Guarded`, `feed`).
+    pub(crate) fn launch_interactive(
+        &mut self,
+        id: &str,
+        enabled: fn(&Session) -> std::result::Result<(), String>,
+        machine: Box<dyn crate::Interactive>,
+    ) -> Result<()> {
+        self.last_polar = None;
+        self.pick_hint = None;
+        if self.running.is_some() {
+            self.cancel();
+        }
+        self.commands_started = self.commands_started.wrapping_add(1);
+        self.command_origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        enabled(self).map_err(|m| EngineError::Disabled(id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
+            return Err(EngineError::Disabled(id.into(), why));
+        }
+        self.last_command = Some(id.to_string());
+        self.echo(format!("Command: {}", id.to_ascii_uppercase()));
+        let guarded = guard::Guarded::wrap(machine);
+        let st = self.state()?;
+        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
+        self.running = Some(Running { id: id.to_string(), machine: guarded, before, selection_before });
+        self.pending_window = None;
+        self.point_mods.clear();
+        self.feed(None)?;
+        Ok(())
+    }
+
     /// Who started the command running now ([`Origin`]): fixed when it started, so a scripted or
     /// LISP-started command keeps its origin while it prompts.
     pub fn command_origin(&self) -> Origin {
@@ -188,6 +219,7 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        self.inputs = self.inputs.wrapping_add(1);
         if self.lisp_input(input.clone()) {
             return Ok(());
         }
@@ -666,5 +698,45 @@ impl Session {
         let common = self.current_common();
         let extra = d.extra.iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k.clone() }).collect();
         Some((d, extra))
+    }
+    /// The live parameters of the running array command ([`Interactive::array_live`]).
+    pub fn array_live(&self) -> Option<crate::ArrayLive> {
+        self.running.as_ref().and_then(|r| r.machine.array_live())
+    }
+
+    /// Change the running array's live parameters. With no array running this does nothing; an
+    /// invalid value is refused and leaves the command as it was.
+    pub fn set_array_live(&mut self, v: &crate::ArrayLive) -> Result<()> {
+        if self.array_live().is_none() {
+            return Ok(());
+        }
+        let Some(mut run) = self.running.take() else { return Ok(()) };
+        let r = run.machine.set_array_live(self, v);
+        self.running = Some(run);
+        r
+    }
+
+    /// Ask the running polar array for its centre as the next canvas point
+    /// ([`Interactive::array_pick_center`]).
+    pub fn array_pick_center(&mut self) -> bool {
+        self.running.as_mut().is_some_and(|r| r.machine.array_pick_center())
+    }
+
+    /// Finish the running array: `Ok(true)` when the command ended, `Ok(false)` when there is no
+    /// array command or it is still selecting objects.
+    pub fn commit_array(&mut self) -> Result<bool> {
+        if self.array_live().is_none() {
+            return Ok(false);
+        }
+        if self.current_prompt().is_some_and(|p| p.accept.select) {
+            return Ok(false);
+        }
+        if let Some(r) = self.running.as_mut()
+            && !r.machine.array_set_main()
+        {
+            return Ok(false);
+        }
+        self.feed(Some(Input::Keyword("eXit".into())))?;
+        Ok(self.running.is_none())
     }
 }

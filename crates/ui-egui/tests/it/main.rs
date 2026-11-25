@@ -34,6 +34,7 @@ mod options_dialog;
 mod options_right_click;
 mod page_setup_paper_units;
 mod parameters_rename;
+mod pdf_import_dialog;
 mod pickdrag;
 mod press_first_clicks;
 mod properties_described;
