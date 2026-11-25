@@ -88,6 +88,7 @@ mod layer_state_cmdline;
 mod layoff_repeat;
 mod layout_prompts;
 mod leader_command;
+mod legacy_sysvars;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lisp_corpus;
 mod lisp_findfile;

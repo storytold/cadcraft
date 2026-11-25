@@ -50,6 +50,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("PSTYLEMODE", 290),
     ("INSUNITS", 70),
     ("MEASUREMENT", 70),
+    ("REGENMODE", 70),
     ("PSLTSCALE", 70),
     // The model view the drawing is saved at, as DXF keeps it in HEADER (the `*ACTIVE` VPORT
     // record below repeats it). Written so a drawing opened on its saved view saves it back.

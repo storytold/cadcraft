@@ -75,6 +75,9 @@ const SESSION_VARS: &[&str] = &[
     "SAVETIME",
     "SAVEFILEPATH",
     "ISAVEBAK",
+    "DIMASO",
+    "TEXTEVAL",
+    "POPUPS",
 ];
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -163,6 +166,12 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
         "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
+        // DIMASO is obsolete in AutoCAD and has no value of its own: it reports DIMASSOC.
+        "DIMASO" => json!(i32::from(dimassoc(s)? != 0)),
+        // Whether a prompt reads typed text as LISP (routines switch it around their prompts).
+        "TEXTEVAL" => json!(i32::from(st.texteval)),
+        // Dialogs are available (read-only; a batch session is still told 1, as AutoCAD does).
+        "POPUPS" => json!(1),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
@@ -243,6 +252,11 @@ fn dwg_prefix(path: &str) -> String {
     }
 }
 
+/// DIMASSOC's value (0 off, 1 or 2 associative), read where DIMASO reports it from.
+fn dimassoc(s: &Session) -> Option<i64> {
+    table::get(s, "DIMASSOC")?.as_i64()
+}
+
 fn as_bool(v: &Value) -> Option<bool> {
     v.as_bool().or_else(|| v.as_i64().map(|i| i != 0)).or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()).map(|i| i != 0))
 }
@@ -290,6 +304,8 @@ const READ_ONLY: &[&str] = &[
     "UCSXDIR",
     "UCSYDIR",
     "WORLDUCS",
+    // Dialogs: a session always has them, so the variable is fixed (not saved).
+    "POPUPS",
 ];
 
 pub fn is_read_only(name: &str) -> bool {
@@ -412,6 +428,30 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
         "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
+        // DIMASO has no value of its own: 0 turns DIMASSOC off (remembering the mode it had),
+        // 1 restores that mode (2 when none was seen), and 1 while it is on changes nothing.
+        "DIMASO" => {
+            let on = as_i(v).filter(|i| matches!(i, 0 | 1)).ok_or_else(bad)? == 1;
+            let mode = dimassoc(s).ok_or_else(bad)?;
+            match (on, mode) {
+                // Turned back on after DIMASO turned it off: the mode it had. Nothing is written
+                // while it is already on.
+                (true, 0) => {
+                    // Only a mode DIMASSOC takes: a file's value of anything else restores 2.
+                    let restore = if matches!(s.settings.dimaso_mode, 1 | 2) { s.settings.dimaso_mode } else { 2 };
+                    s.doc_mut()?.header.set_i64("DIMASSOC", restore);
+                }
+                (true, _) => {}
+                (false, _) => {
+                    if matches!(mode, 1 | 2) {
+                        s.settings.dimaso_mode = mode;
+                    }
+                    s.doc_mut()?.header.set_i64("DIMASSOC", 0);
+                }
+            }
+        }
+        // Stored for routines that switch it around their prompts; no prompt reads it yet.
+        "TEXTEVAL" => st.texteval = small(v, 1).ok_or_else(bad)? == 1,
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
         "ANGBASE" => {
             let a = match v {
