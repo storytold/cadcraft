@@ -73,7 +73,7 @@ pub const OPEN_RECENT: &str = "Open Recent";
 /// The last item of File ▸ Open Recent.
 pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
-const RECENT_CLEAR: &str = "ui.recent.clear";
+pub const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
@@ -102,6 +102,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.toggle.ucsicon.origin", "UCS Icon at Origin", &["View", "UCS Icon", "Origin"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -160,6 +161,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
         return Some(r);
     }
     if let Some(r) = crate::bedit::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::wblock::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::managers::route(app, id, params) {
@@ -307,9 +311,16 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
         }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
+        // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
+        "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            // The icon is a setting of the drawing: with none open there is nothing to toggle.
+            if app.session.doc().is_err() {
+                return Some(Err("No drawing open.".into()));
+            }
+            let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
+            let mut on = app.session.ucsicon_bits() & bit != 0;
+            toggle(&mut on, params);
+            app.run("ucsicon", json!({ key: on }))
         }
         "ui.toggle.menubar" => {
             toggle(&mut app.ui.in_window_menu, params);
@@ -451,7 +462,13 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             .unwrap_or(Ok(Value::Null)),
         "ui.saveas" | "saveas" if no_path => {
             let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
+            // `format` ("dxf" or "dwg") is only this dialog's suggestion. Without it, Save As uses
+            // the user's default format, and neither call changes that default.
+            let format = match suggested_save_format(params, app.ui.save_format) {
+                Ok(format) => format,
+                Err(e) => return Some(Err(e)),
+            };
+            let name = format.suggested_name(title.as_deref());
             // Bound to this drawing: the answer saves it, not whichever drawing is active then.
             app.pick_then(Pick::Save(name), |app, p| {
                 app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string())
@@ -600,6 +617,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     Some(r)
 }
 
+/// The format a Save dialog suggests: `format` when the call names `dxf` or `dwg`, otherwise the
+/// user's default. Naming one does not change the default.
+fn suggested_save_format(params: &Value, default: crate::SaveFormat) -> Result<crate::SaveFormat, String> {
+    let Some(v) = params.get("format").filter(|v| !v.is_null()) else { return Ok(default) };
+    let Some(name) = v.as_str() else { return Err("save format must be \"dxf\" or \"dwg\"".into()) };
+    crate::SaveFormat::parse(name).ok_or_else(|| {
+        let shown: String = name.chars().take(40).collect();
+        format!("unknown save format \"{shown}\" (dxf or dwg)")
+    })
+}
+
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved
 /// in the default save version; one opened from a file keeps that file's version.
 fn saveas_params(ui: &crate::UiState, session: &cadcraft_engine::Session, path: &str) -> Value {
@@ -687,12 +715,14 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     };
     for c in cadcraft_engine::command_specs() {
         if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
+            add(c.menu, c.label, c.id, c.shortcut, crate::clipboard::offered(&app.session, c));
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
         if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
+            // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
+            let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
+            add(menu, label, id, *sc, enabled);
         }
     }
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
@@ -942,6 +972,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.closing.is_some() {
         return;
     }
+    crate::clipboard::pump(app, ctx);
     // A palette toggle is global even while its expression field owns keyboard focus.
     let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
@@ -952,6 +983,8 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
     let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    // The first `read` commands come from this frame's clipboard events, whose `Paste` has been read.
+    let read = fire.len();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
             if i.consume_shortcut(s) && !fire.contains(id) {
@@ -959,8 +992,13 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
             }
         }
     });
-    for id in fire {
+    for (n, id) in fire.into_iter().enumerate() {
         let id = id.as_str();
+        // A paste command bound to another key has read nothing yet: it is held like a menu paste.
+        if let Some(id) = crate::clipboard::paste_id(id).filter(|_| n < read) {
+            crate::clipboard::run_read(app, id);
+            continue;
+        }
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {

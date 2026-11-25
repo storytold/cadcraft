@@ -111,6 +111,8 @@ pub struct Drawing {
     pub mline_styles: Vec<MLineStyle>,
     pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
     pub model: EntityStore,
+    /// Model layout's page setup, or the default extents-to-fit setup for a new drawing.
+    pub model_page: Option<PageSetup>,
     pub layouts: Vec<Layout>,
     /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
     /// written active again. `None`, or a layout that no longer exists: the first by tab order.
@@ -139,6 +141,10 @@ pub struct Drawing {
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
+    /// Model space's earlier UCSs for UCS Previous, oldest first (each layout keeps its own,
+    /// [`Layout::ucs_previous`]). Part of the drawing so undo restores them with the UCS. Never
+    /// written to a file.
+    pub ucs_previous: Vec<Ucs>,
     /// What reading the file left out (a DWG's object records the reader couldn't decode), told
     /// to the user when the drawing opens. Never written to a file.
     pub read_notes: Vec<String>,
@@ -154,6 +160,11 @@ pub struct Drawing {
     pub portable_fonts: bool,
     /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
     pub rasters: Rasters,
+    /// The LAYER table of the file this drawing was read from, in the file's order and under
+    /// the layers' current names: proxy graphics name layers by their index in it, and saving
+    /// turns those indices into the written table's (#3094). An empty name stands for a record
+    /// without one. Empty for a drawing not read from a file.
+    pub proxy_layers: Vec<String>,
 }
 
 impl Default for Drawing {
@@ -197,6 +208,7 @@ impl Drawing {
             mline_styles: vec![MLineStyle::default()],
             blocks: BTreeMap::new(),
             model: EntityStore::new(),
+            model_page: None,
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
             active_layout: None,
             views: Vec::new(),
@@ -211,11 +223,13 @@ impl Drawing {
             handseed: 0x100,
             reserved_handles: BTreeSet::new(),
             hidden_objects: BTreeSet::new(),
+            ucs_previous: Vec::new(),
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
             rasters: Rasters::default(),
+            proxy_layers: Vec::new(),
         }
     }
 

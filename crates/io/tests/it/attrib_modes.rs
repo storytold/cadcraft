@@ -77,6 +77,7 @@ fn pairs(bytes: &[u8]) -> Vec<(i32, String)> {
 
 #[test]
 fn modes_survive_dxf_and_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = drawing();
     let want = (vec![ALL, AttribModes::default()], vec![LOCKED, AttribModes::default()]);
     assert_eq!(modes(&d), want);
@@ -122,6 +123,7 @@ fn a_280_before_the_tag_is_the_version_not_lock_position() {
 /// The Constant mode (flag 2) of an ATTRIB attached to an INSERT, not only of an ATTDEF (#2246).
 #[test]
 fn constant_attached_attrib_survives_dxf_and_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = drawing_c(true);
     let constants = |d: &Drawing| -> Vec<bool> {
         d.model

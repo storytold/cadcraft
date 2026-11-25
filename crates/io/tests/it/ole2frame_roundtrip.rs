@@ -85,6 +85,7 @@ fn assert_kept(rec: &[(String, String)]) {
 
 #[test]
 fn dwg_keeps_ole_objects() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
     let ole = |d: &cadcraft_doc::Drawing| d.model.iter().filter(|e| matches!(&e.kind, EntityKind::Unknown(u) if u.dxf_type == "OLE2FRAME")).count();
     assert_eq!(ole(&d), 1);

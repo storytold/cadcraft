@@ -1359,6 +1359,14 @@
 	Justify	За шириною
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
+	3 Point	3 точки
+	New UCS	Нова СКК
+	Origin	Початок координат
+	UCS	СКК
+	UCS Icon at Origin	Піктограма СКК на початку координат
+	World	Світова
+	Z	Z
+	Unnamed	Без назви
 	Select using two clicks only	Вибирати лише двома клацаннями
 	Define each corner of the selection window with a separate click.	Задайте кожен кут рамки вибору окремим клацанням.
 	Type an alias name.	Введіть назву псевдоніма.
@@ -1453,6 +1461,8 @@
 	ENTER	Клавіша Enter
 	Shortcut Menu: always enabled	Контекстне меню: завжди
 	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри
+	Check for updates when CADCraft starts	Перевіряти оновлення під час запуску CADCraft
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	Якщо вимкнено, CADCraft ніколи сам не пропонує оновлення; Довідка ▸ Перевірити оновлення… усе одно перевіряє.
 
 # ArtCraft feature naming
 	Additional Tools	Додаткові інструменти
@@ -1645,3 +1655,7 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+	Edit Attributes	Редагування атрибутів
+	Block name:	Ім’я блока:
+	Tag: {tag}	Мітка: {tag}
+	Values typed at the command line work too	Значення, введені в командному рядку, теж приймаються

@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -32,10 +33,12 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+mod drawing_fonts;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
+mod line_editor;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
@@ -71,6 +74,7 @@ pub mod theme;
 pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
+pub mod wblock;
 
 pub mod exchange;
 
@@ -103,7 +107,6 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
-    pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
@@ -201,7 +204,6 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
-            show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,
             toolset_tab: "Drafting".into(),
@@ -312,6 +314,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -370,6 +374,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Write Block dialog ([`wblock`]).
+    pub wblock: wblock::State,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -402,6 +408,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -431,6 +438,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
@@ -612,6 +620,13 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -642,7 +657,15 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }
@@ -746,6 +769,12 @@ impl CadApp {
         }
     }
 
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
+    }
+
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
     /// resets never turn it off then.
     pub fn set_system_cursor_default(&mut self, on: bool) {
@@ -775,7 +804,8 @@ impl CadApp {
 
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
-    /// web it opens at once.
+    /// web it opens at once. An already open drawing is selected without re-reading it, retaining
+    /// its unsaved edits and view; window drops and Open Recent use this same entry point.
     pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
@@ -783,6 +813,9 @@ impl CadApp {
                 Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
+            return;
+        }
+        if self.select_open_drawing(path) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -799,10 +832,26 @@ impl CadApp {
         }
     }
 
+    /// OPEN typed at the command line with the file to open (`OPEN C:\plans\big.dwg`, or the JSON
+    /// form with only a path, `open {"path": "…"}`): read in the background as File ▸ Open reads it
+    /// ([`Self::open_path`]), so a large drawing doesn't freeze the window. False, and the line runs
+    /// as before, for anything else: other parameters (`data`), a LISP file, and on the web, which
+    /// has no threads. Only the keyboard's Enter calls this; programmatic calls (the control
+    /// channel, MCP, scripts, LISP) keep getting their answer at once.
+    pub(crate) fn open_typed(&mut self, line: &str) -> bool {
+        let Some(path) = typed_open_path(line).filter(|p| !is_lisp_file(p)) else { return false };
+        self.open_path(Path::new(&path));
+        true
+    }
+
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
         for (path, outcome) in self.opening.poll() {
+            // A drawing may have been opened or saved at this path while the read was pending.
+            if self.select_open_drawing(&path) {
+                continue;
+            }
             // A recent file that is gone can never be opened again: drop it from the list. A path
             // whose existence can't be checked (a folder that denies access) stays.
             if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
@@ -818,6 +867,22 @@ impl CadApp {
             }
             self.opened(r);
         }
+    }
+
+    /// Reuse the existing document through the normal tab-switch command, including symlink paths.
+    fn select_open_drawing(&mut self, path: &Path) -> bool {
+        let existing = self.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| opening::same_path(Path::new(p), path)));
+        let Some(index) = existing else { return false };
+        match self.run("document.switch", json!({"index": index})) {
+            Ok(_) => {
+                self.ui.start_tab = false;
+                if let Some(path) = self.session.docs.get(index).and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+            }
+            Err(error) => self.open_failed(error),
+        }
+        true
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
@@ -919,6 +984,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        wblock::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;
@@ -1054,6 +1120,7 @@ impl CadApp {
         let ctx = &ctx;
         let language = self.language();
         if self.fonts_language != Some(language) {
+            drawing_fonts::install(ctx);
             theme::install_fonts(ctx, language);
             self.fonts_language = Some(language);
         }
@@ -1200,6 +1267,27 @@ pub fn now_ms() -> f64 {
 /// A LISP source file, by its name.
 fn is_lisp_file(name: impl AsRef<Path>) -> bool {
     name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+}
+
+/// The file an `OPEN <path>` or `open {"path": "…"}` line names ([`CadApp::open_typed`]). `None`
+/// for other lines, JSON with other keys, and on the web.
+fn typed_open_path(line: &str) -> Option<String> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let (name, rest) = line.trim().split_once(char::is_whitespace)?;
+    if !name.trim_start_matches(['_', '.']).eq_ignore_ascii_case("open") {
+        return None;
+    }
+    let rest = rest.trim();
+    let path = if rest.starts_with('{') {
+        let v: Value = serde_json::from_str(rest).ok()?;
+        let o = v.as_object().filter(|o| o.len() == 1)?;
+        o.get("path")?.as_str()?.to_string()
+    } else {
+        rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(rest).to_string()
+    };
+    (!path.trim().is_empty()).then_some(path)
 }
 
 #[cfg(test)]

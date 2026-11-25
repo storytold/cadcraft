@@ -47,6 +47,7 @@ fn ole(d: &cadcraft_doc::Drawing) -> Option<cadcraft_doc::Unknown> {
 
 #[test]
 fn a_dwg_keeps_an_ole_frame_with_its_data_and_position() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read_dxf(dxf().as_bytes()).unwrap();
     assert!(ole(&d).is_some());
     let want: String = blob().iter().map(|b| format!("{b:02X}")).collect();
@@ -65,6 +66,7 @@ fn a_dwg_keeps_an_ole_frame_with_its_data_and_position() {
 /// and read-back (review on #2587).
 #[test]
 fn a_moved_ole_frame_keeps_its_position_in_a_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = read_dxf(dxf().as_bytes()).unwrap();
     for h in d.model.handles() {
         d.model.modify(h, |e| e.kind.transform(&cadcraft_geom::Mat3::translate(cadcraft_geom::Vec2::new(100.0, -50.0))));

@@ -204,3 +204,37 @@ fn reverse_keeps_a_closed_spline_seam() {
     let again = last_spline(&s);
     assert!(again.control.iter().zip(&sp.control).all(|(a, b)| a.near(*b, 1e-9)), "{:?} vs {:?}", again.control, sp.control);
 }
+
+#[test]
+fn cv_method_keeps_cv_on_enter_and_can_switch_back_to_fit() {
+    for entry in ["spline.cv", "spline m cv"] {
+        let mut s = Session::new();
+        s.cmdline(&format!("{entry} d 2 m")).unwrap();
+        s.cmdline("").unwrap();
+        s.cmdline("m fit 0,0 1,2 3,1").unwrap();
+        s.cmdline("").unwrap();
+        assert_eq!(last_spline(&s).fit.len(), 3, "{entry}");
+
+        s.cmdline(&format!("{entry} d 2 m")).unwrap();
+        s.cmdline("").unwrap();
+        s.cmdline("0,0 1,2 3,1 4,0").unwrap();
+        s.cmdline("").unwrap();
+        let cv = last_spline(&s);
+        assert!(cv.fit.is_empty() && cv.degree == 2, "{entry}");
+    }
+}
+
+#[test]
+fn cv_object_converts_the_picked_polyline() {
+    for entry in ["spline.cv", "spline m cv"] {
+        let mut s = Session::new();
+        s.execute("pline", &json!({"vertices":[[0,0],[1,2],[3,1]]})).unwrap();
+        let h = s.doc().unwrap().model.iter().next().unwrap().handle;
+        s.cmdline(&format!("{entry} o")).unwrap();
+        assert!(s.current_prompt().unwrap().picks_objects(), "{entry}");
+        s.input(cadcraft_engine::Input::Pick(vec![h])).unwrap();
+        s.cmdline("").unwrap();
+        assert!(s.running.is_none() && s.doc().unwrap().model.len() == 1);
+        assert_eq!(last_spline(&s).fit.len(), 3);
+    }
+}
