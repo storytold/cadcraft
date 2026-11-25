@@ -117,6 +117,14 @@ fn two_line_angular_measures_the_angle_that_holds_the_arc_location() {
         let inside = g.text_pos.normalized().dot(a.p16.xy().normalized());
         assert!(inside > (angle / 2.0).cos(), "p16 at {at}°: text at {:?}", g.text_pos);
     }
+    // Lines 4e-9 rad apart, p16 in the narrow angle west of the vertex and near the second line:
+    // both legs turn west, so the angle is the narrow one.
+    let mut a = dim(DimKind::Angular);
+    a.p14 = Vec3::new(1.0, 0.0, 0.0);
+    a.p15 = Vec3::new(1.0, 4e-9, 0.0);
+    a.p16 = Vec3::new(-1.0, -3.6e-9, 0.0);
+    let g = dimension_geometry(&a, &st, 1.0);
+    assert!(g.measurement < 1e-8, "narrow angle: measured {}", g.measurement);
 }
 
 /// Lines that end at their crossing (p14 and p15 on the vertex) measure the angle between them,

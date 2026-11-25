@@ -222,12 +222,12 @@ fn two_line_legs(line1: (Vec2, Vec2), line2: (Vec2, Vec2), arc_pt: Vec2) -> (Vec
     let vertex = cadcraft_geom::line_line_infinite(line1.0, line1.1, line2.0, line2.1).map(|x| x.0).unwrap_or(line1.1);
     // Directions come from the lines, not from the vertex to an end, which may be the vertex.
     let (u1, u2) = ((line1.1 - line1.0).normalized(), (line2.1 - line2.0).normalized());
-    // arc_pt - vertex = a·u1 + b·u2: the signs of a and b give each line's side. When the arc
-    // location is on one line, the other line keeps its own direction.
+    // arc_pt - vertex = (a·u1 + b·u2) / |u1 × u2|: the signs of a and b give each line's side.
+    // When the arc location is on one line, the other line keeps its own direction.
     let w = arc_pt - vertex;
-    let orientation = u1.cross(u2).signum();
-    let (a, b) = (w.cross(u2) * orientation, u1.cross(w) * orientation);
-    let tolerance = 1e-9 * w.len();
+    let det = u1.cross(u2);
+    let (a, b) = (w.cross(u2) * det.signum(), u1.cross(w) * det.signum());
+    let tolerance = 1e-9 * w.len() * det.abs();
     let leg = |c: f64, u: Vec2, (p, q): (Vec2, Vec2)| {
         let ray = if c < -tolerance { -u } else { u };
         (ray.angle(), (p - vertex).dot(ray).max((q - vertex).dot(ray)).max(0.0))
