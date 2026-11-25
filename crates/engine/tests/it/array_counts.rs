@@ -1,7 +1,7 @@
 //! The counts the ARRAY commands ask for take a whole number as typed, as AutoCAD 2024's do
 //! (measured in its core console at ARRAYRECT's rows and columns, ARRAYPOLAR's items and rows,
-//! -ARRAY's rows and items, and ARRAYEDIT's columns, rows and items): +3 and 03 are three, and
-//! 5.0, 1e1 and 8/2 are refused and asked for again, as 3' is where it was typed (all but ARRAYEDIT).
+//! and -ARRAY's rows and items): +3 and 03 are three, and 5.0, 1e1, 8/2 and 3' are refused and
+//! asked for again.
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::{ArrayKind, EntityKind, Handle};
@@ -88,8 +88,10 @@ fn arraypolar_items() {
     assert_eq!(lines(&s), 5);
 }
 
-/// ARRAYEDIT's counts follow the same rule: AutoCAD 2024 refuses 5.0, 5., 4.5, 1e1 and 8/2 at a
-/// rectangular array's columns and rows and a polar array's items, and takes +5, 05 and 5.
+/// ARRAYEDIT's counts go through the same count parser as ARRAYRECT's, ARRAYPOLAR's and -ARRAY's
+/// (`count()` in `crates/engine/src/cmd/array.rs`), so they refuse and take the same texts: here 5.0,
+/// 5., 4.5, 1e1 and 8/2 are refused at a rectangular array's columns and rows and a polar array's
+/// items, and +5, 05 and 5 are taken. No AutoCAD measurement of ARRAYEDIT is claimed.
 #[test]
 fn arrayedit_counts() {
     let refused = ["5.0", "5.", "4.5", "1e1", "8/2"];
