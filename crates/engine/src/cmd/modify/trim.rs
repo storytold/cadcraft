@@ -49,7 +49,16 @@ pub(crate) fn edge_segments_over(s: &Session, edges: Edges, exclude: Handle, ove
     // its first piece under the object's handle and the others under new ones, so only the first
     // stays one of the picked edges, as in a run of trims on the drawing itself.
     let is_edge = |h: &Handle| edges.only.is_none_or(|es| es.contains(h));
-    for e in store.iter() {
+    // Only the given edges: look them up rather than scan the whole space for them. A piece of
+    // one is keyed by its handle in the overlay, and the other pieces are never edges.
+    let given: Vec<&Entity> = match edges.only {
+        Some(es) => {
+            let mut seen = std::collections::HashSet::new();
+            es.iter().filter(|h| seen.insert(**h) && store.contains(**h)).filter_map(|h| d.entity(*h).map(|e| &**e)).collect()
+        }
+        None => store.iter().map(|e| &**e).collect(),
+    };
+    for e in given {
         if !d.is_visible(e) {
             continue;
         }
