@@ -63,6 +63,7 @@ pub mod menus;
 pub mod modal;
 pub mod opening;
 pub mod options;
+pub mod os_window;
 pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
@@ -246,7 +247,14 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// The app binary's last step as the app leaves, run once at the end of its `on_exit`. On
+    /// macOS every quit ends the process inside AppKit's terminate, after `on_exit`, so code
+    /// after `eframe::run_native` never runs there (the Nightly session record is finished here).
+    pub at_exit: Option<AtExitFn>,
 }
+
+/// Runs once when the app leaves ([`Services::at_exit`]).
+pub type AtExitFn = Box<dyn FnOnce()>;
 
 /// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
 /// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
