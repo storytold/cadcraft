@@ -188,6 +188,7 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        self.inputs = self.inputs.wrapping_add(1);
         if self.lisp_input(input.clone()) {
             return Ok(());
         }
