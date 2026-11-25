@@ -1525,3 +1525,17 @@ menu	View	视图
 
 # ArtCraft feature naming
 	Additional Tools	其他工具
+	3D Orbit	三维动态观察
+	3D Views	三维视图
+	Back	后视图
+	Front	前视图
+	Model Tab	模型选项卡
+	NE Isometric	东北等轴测
+	NW Isometric	西北等轴测
+	SE Isometric	东南等轴测
+	SW Isometric	西南等轴测
+	Top (2D Plan)	俯视图（二维平面）
+	View Resolution	视图分辨率
+	Load LISP / Application (NETLOAD)...	加载 LISP / 应用程序 (NETLOAD)...
+	AutoLISP / VBA IDE...	AutoLISP / VBA 集成开发环境...
+	Load Application (NETLOAD)...	加载应用程序 (NETLOAD)...

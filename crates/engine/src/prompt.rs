@@ -375,6 +375,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// Whether this command collects points on the model work plane (`z = 0`) rather than
+    /// picking objects or selection areas in the 2D view plane.
+    fn collects_work_points(&self) -> bool {
+        true
+    }
     /// The attribute values the command waits for, all at once, when the UI should ask for them
     /// in the Edit Attributes dialog (INSERT with ATTDIA 1). Typed answers still work.
     fn attribute_entry(&self) -> Option<AttribEntry> {

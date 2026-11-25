@@ -157,6 +157,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::lisp_ide::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::blocks_palette::route(app, id, params) {
         return Some(r);
     }
@@ -996,6 +999,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
+    let had_paste_event = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
     let mut fire: Vec<String> = Vec::new();
     let mut pasted_table = false;
     for action in crate::clipboard::shortcut_actions(app, ctx) {
@@ -1020,6 +1024,9 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
             if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
+                if had_paste_event && (id == "pasteclip" || id == "pasteblock") {
+                    continue;
+                }
                 fire.push(id.clone());
             }
         }
