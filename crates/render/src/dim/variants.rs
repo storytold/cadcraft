@@ -164,15 +164,16 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
 
     // Angular3P: p15 vertex, p13/p14 on the legs, defpt on the arc.
     // Angular (2 lines): lines p13-p14 and defpt-p15; p16 on the arc.
-    let (vertex, a1, a2, arc_pt) = if matches!(d.kind, DimKind::Angular3P) {
-        (d.p15.xy(), d.p13.xy(), d.p14.xy(), d.defpt.xy())
+    // Each leg is its angle from the vertex and how far the measured object reaches along it.
+    let (vertex, (s, reach1), (e, reach2), arc_pt) = if matches!(d.kind, DimKind::Angular3P) {
+        let v = d.p15.xy();
+        let leg = |p: Vec2| (v.angle_to(p), v.dist(p));
+        (v, leg(d.p13.xy()), leg(d.p14.xy()), d.defpt.xy())
     } else {
-        let v = cadcraft_geom::line_line_infinite(d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.p15.xy()).map(|x| x.0).unwrap_or(d.p14.xy());
-        (v, d.p14.xy(), d.p15.xy(), d.p16.xy())
+        let (v, leg1, leg2) = two_line_legs((d.p13.xy(), d.p14.xy()), (d.defpt.xy(), d.p15.xy()), d.p16.xy());
+        (v, leg1, leg2, d.p16.xy())
     };
     let r = vertex.dist(arc_pt).max(1e-9);
-    let s = vertex.angle_to(a1);
-    let e = vertex.angle_to(a2);
     let arc = if cadcraft_geom::angle_in_sweep(vertex.angle_to(arc_pt), s, e) { Arc::new(vertex, r, s, e) } else { Arc::new(vertex, r, e, s) };
     let sweep = ccw_sweep(arc.start, arc.end);
     g.measurement = sweep;
@@ -193,10 +194,10 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
     let (start, finish) = ((sp, -(sp - vertex).perp().normalized()), (ep, (ep - vertex).perp().normalized()));
     let ((p1, dir1), (p2, dir2)) = if cadcraft_geom::angle_in_sweep(vertex.angle_to(arc_pt), s, e) { (start, finish) } else { (finish, start) };
     if !st.suppress_ext1 {
-        g.ext_n(ext_line(vertex + (p1 - vertex).normalized() * vertex.dist(a1).min(r), p1, st, k), false);
+        g.ext_n(ext_line(vertex + (p1 - vertex).normalized() * reach1.min(r), p1, st, k), false);
     }
     if !st.suppress_ext2 {
-        g.ext_n(ext_line(vertex + (p2 - vertex).normalized() * vertex.dist(a2).min(r), p2, st, k), true);
+        g.ext_n(ext_line(vertex + (p2 - vertex).normalized() * reach2.min(r), p2, st, k), true);
     }
     end(g, blk1, p1, dir1);
     end(g, blk2, p2, dir2);
@@ -211,6 +212,27 @@ pub(super) fn draw_angular(config: &DimConfig<'_>, g: &mut DimGeometry, text_ang
     }
     *text_angle_out = text_angle;
     *text_mid_out = text_mid;
+}
+
+/// The vertex and legs of a two-line angular dimension, measured as AutoCAD does: the lines cross
+/// at the vertex, and each leg runs along its line toward the side of the arc location, so the
+/// angle between the legs is the one under 180° that holds it. A leg is its angle and how far its
+/// line reaches along it from the vertex (0 when the line lies on the other side).
+fn two_line_legs(line1: (Vec2, Vec2), line2: (Vec2, Vec2), arc_pt: Vec2) -> (Vec2, (f64, f64), (f64, f64)) {
+    let vertex = cadcraft_geom::line_line_infinite(line1.0, line1.1, line2.0, line2.1).map(|x| x.0).unwrap_or(line1.1);
+    // Directions come from the lines, not from the vertex to an end, which may be the vertex.
+    let (u1, u2) = ((line1.1 - line1.0).normalized(), (line2.1 - line2.0).normalized());
+    // arc_pt - vertex = a·u1 + b·u2: the signs of a and b give each line's side. When the arc
+    // location is on one line, the other line keeps its own direction.
+    let w = arc_pt - vertex;
+    let orientation = u1.cross(u2).signum();
+    let (a, b) = (w.cross(u2) * orientation, u1.cross(w) * orientation);
+    let tolerance = 1e-9 * w.len();
+    let leg = |c: f64, u: Vec2, (p, q): (Vec2, Vec2)| {
+        let ray = if c < -tolerance { -u } else { u };
+        (ray.angle(), (p - vertex).dot(ray).max((q - vertex).dot(ray)).max(0.0))
+    };
+    (vertex, leg(a, u1, line1), leg(b, u2, line2))
 }
 
 pub(super) fn draw_ordinate(config: &DimConfig<'_>, g: &mut DimGeometry, text_angle_out: &mut f64, text_mid_out: &mut Vec2, x_type: bool) {
