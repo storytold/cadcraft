@@ -19,7 +19,11 @@ use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Ori
 
 mod attdef;
 mod attedit;
+mod bauthor;
+mod belement;
+mod blookup;
 mod burst;
+mod bvstate;
 mod description;
 mod dyngrip;
 mod extract;
@@ -103,6 +107,10 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(refedit::specs())
     .chain(xclip::specs())
     .chain(bedit::specs())
+    .chain(bauthor::specs())
+    .chain(belement::specs())
+    .chain(bvstate::specs())
+    .chain(blookup::specs())
     .collect()
 }
 

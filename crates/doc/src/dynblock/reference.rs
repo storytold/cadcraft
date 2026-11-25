@@ -321,9 +321,9 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
     Some((r.definition, out))
 }
 
-/// Whether every lookup table that sets lookup parameter `node` sets only what
-/// [`super::set_property`] can apply with it: visibility states, distances, angles, positions and
-/// flip states.
+/// Whether every lookup table that sets lookup parameter `node` allows reverse lookup and sets
+/// only what [`super::set_property`] can apply with it: visibility states, distances, angles,
+/// positions and flip states.
 fn lookup_sets_what_changes(m: &DynamicBlock, node: i32) -> bool {
     let mut any = false;
     for a in &m.actions {
@@ -335,7 +335,7 @@ fn lookup_sets_what_changes(m: &DynamicBlock, node: i32) -> bool {
         let settable = |c: &super::LookupColumn| {
             m.parameters.iter().find(|p| p.node == c.node).is_some_and(|p| super::apply::column(&p.kind, &c.property).is_some())
         };
-        if !columns.iter().all(settable) {
+        if !columns.iter().any(|c| c.lookup && c.node == node && c.reverse) || !columns.iter().all(settable) {
             return false;
         }
     }
