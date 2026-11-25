@@ -26,13 +26,14 @@ pub(super) fn wheel_zoom_points(events: &[egui::Event], opts: &egui::InputOption
 }
 
 /// The model space tiles on screen (none without tiling): each tile's rectangle in `full`.
-/// Start TEXTEDIT on the text, mtext, attribute definition or multileader text at `p` (the objects
-/// its shortcut menu offers Edit Text for, and multileaders, #1081); false when there is none.
+/// Start TEXTEDIT on the text, mtext, attribute definition, dimension or multileader text at `p`
+/// (the objects its shortcut menu offers Edit Text for, multileaders, #1081, and dimensions, #842);
+/// false when there is none.
 pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
     let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
         app.session.doc().ok()?.entity(h).map(|e| match &e.kind {
-            EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) => true,
+            EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Dimension(_) => true,
             EntityKind::MLeader(m) => m.text.is_some(),
             _ => false,
         })

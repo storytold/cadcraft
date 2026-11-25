@@ -211,7 +211,9 @@ fn status_icon(p: &egui::Painter, r: Rect, current: bool, used: bool) {
     }
 }
 
-fn natural_lower(s: &str) -> String {
+/// The key layer lists sort by: the name, ignoring case (the Layer Properties Manager and the
+/// Layers palette list layers in the same order, #2858).
+pub(crate) fn natural_lower(s: &str) -> String {
     s.to_lowercase()
 }
 
@@ -715,6 +717,10 @@ fn used_layers(d: &cadcraft_doc::Drawing) -> std::collections::HashSet<String> {
     for e in ents.take(5_000_000) {
         if !set.contains(&e.common.layer.to_ascii_lowercase()) {
             set.insert(e.common.layer.to_ascii_lowercase());
+        }
+        // Layers proxy graphics draw on are in use too (as in the engine's PURGE scan).
+        if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
+            set.extend(u.graphics.iter().map(|g| g.common.layer.to_ascii_lowercase()));
         }
     }
     set

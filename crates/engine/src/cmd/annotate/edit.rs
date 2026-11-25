@@ -161,17 +161,22 @@ pub(super) fn run_dimtedit(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// DIMSPACE: equal spacing of parallel linear dimensions from a base dimension.
+/// [Auto spacing](https://help.autodesk.com/cloudhelp/2023/ENU/AutoCAD-LT-MAC/files/GUID-18DF8B02-3E43-4531-ACE0-75FA7161F209.htm)
+/// uses twice the base dimension's text height.
 pub(super) fn run_dimspace(s: &mut Session, p: &Value) -> Result<Value> {
     let base = hex_param(p, "base").ok_or_else(|| bad("dimspace", "`base` dimension is required"))?;
     let hs: Vec<Handle> = dims_of(s, &targets(s, p)?).into_iter().filter(|h| *h != base).collect();
     let d = s.doc()?;
     let Some(EntityKind::Dimension(b)) = d.entity(base).map(|e| e.kind.clone()) else { return Err(bad("dimspace", "`base` is not a dimension")) };
-    let st = d.dim_style(&b.style).cloned().unwrap_or_default().with_overrides(&b.overrides);
-    let spacing = p
-        .get("spacing")
-        .and_then(Value::as_f64)
-        .filter(|v| v.is_finite() && *v >= 0.0)
-        .unwrap_or(st.baseline_spacing * st.effective_scale(d.header.f64("DIMSCALE", 1.0)) * 2.0);
+    let spacing = p.get("spacing").and_then(Value::as_f64).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or_else(|| {
+        let st = d.dim_style(&b.style).cloned().unwrap_or_default().with_overrides(&b.overrides);
+        let text_height = d
+            .text_style(&st.text_style)
+            .map(|style| style.height)
+            .filter(|height| height.is_finite() && *height > 0.0)
+            .unwrap_or_else(|| st.text_height * st.effective_scale(d.header.f64("DIMSCALE", 1.0)));
+        2.0 * text_height
+    });
     let dir = match b.kind {
         DimKind::Linear { rotation } => Vec2::from_angle(rotation),
         DimKind::Aligned => (b.p14.xy() - b.p13.xy()).normalized(),
@@ -209,7 +214,7 @@ pub(super) fn run_dimspace(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// DIMSPACE at the command line: select the base dimension, select the dimensions to space, then
-/// the spacing (Enter or Auto takes the DIMDLI-based default).
+/// the spacing (Enter or Auto uses the base dimension's text height).
 #[derive(Default)]
 pub(super) struct DimSpaceM {
     base: Option<Handle>,

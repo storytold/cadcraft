@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -32,10 +33,12 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+mod drawing_fonts;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
 pub mod finddlg;
 pub mod hatchdlg;
+mod line_editor;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
@@ -44,6 +47,8 @@ pub mod switch;
 pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
+
+pub mod blocks_palette;
 
 pub mod dyngrips;
 pub mod dyninput;
@@ -69,6 +74,7 @@ pub mod theme;
 pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
+pub mod wblock;
 
 pub mod exchange;
 
@@ -101,7 +107,6 @@ pub struct UiState {
     pub show_status_bar: bool,
     pub show_command_line: bool,
     pub show_viewcube: bool,
-    pub show_ucs_icon: bool,
     pub show_layer_list: bool,
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
@@ -199,7 +204,6 @@ impl Default for UiState {
             show_status_bar: true,
             show_command_line: true,
             show_viewcube: true,
-            show_ucs_icon: true,
             show_layer_list: false,
             system_cursor: false,
             toolset_tab: "Drafting".into(),
@@ -281,6 +285,9 @@ pub struct CadApp {
     pub system_animations: Option<bool>,
     /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
     pub system_cursor_default: bool,
+    /// Whether the host has a native menu bar: off where the menus stay in the window
+    /// ([`Self::set_native_menus`]).
+    pub native_menus: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -307,6 +314,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -365,6 +374,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Write Block dialog ([`wblock`]).
+    pub wblock: wblock::State,
     /// A file dialog shown with [`Services::start_pick`]: its answer, and what to do with it.
     pending_pick: Option<PendingPick>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -379,6 +390,7 @@ impl CadApp {
             system_languages: Vec::new(),
             system_animations: None,
             system_cursor_default: false,
+            native_menus: cfg!(target_os = "macos"),
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
@@ -396,6 +408,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -425,6 +438,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_pick: None,
@@ -586,7 +600,11 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        // The bars as the interface shows them now (a `ui.set` may have just changed one), and any
+        // MENUBAR or TOOLBAR request applied at once.
+        self.sync_bars();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        self.sync_bars();
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -602,9 +620,17 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        self.sync_bars();
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -620,6 +646,7 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        self.sync_bars();
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -630,17 +657,39 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
                 return None;
             }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
+                return None;
+            }
         }
-        let e = match (self.session.cmdline(text), fallback) {
+        let r = self.session.cmdline(text);
+        self.sync_bars();
+        let e = match (r, fallback) {
             (Ok(()), _) => return None,
             (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
             (Err(e), _) => e.to_string(),
         };
         self.session.echo(e.clone());
         Some(e)
+    }
+
+    /// Apply a menu bar / tool bar change MENUBAR or TOOLBAR asked for, and report the bars shown.
+    fn sync_bars(&mut self) {
+        let b = std::mem::take(&mut self.session.bars_request);
+        if let Some(on) = b.menubar {
+            self.ui.in_window_menu = on;
+        }
+        if let Some(show) = b.toolbar {
+            self.ui.show_toolbar = show;
+        }
+        self.session.bars_shown = cadcraft_engine::cmd::interface::InterfaceBars { menubar: self.ui.in_window_menu, toolbar: self.ui.show_toolbar };
     }
 
     /// The theme the interface shows now (the choice resolved against the OS appearance).
@@ -720,12 +769,27 @@ impl CadApp {
         }
     }
 
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
+    }
+
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
     /// resets never turn it off then.
     pub fn set_system_cursor_default(&mut self, on: bool) {
         self.system_cursor_default = on;
         if on {
             self.ui.system_cursor = true;
+        }
+    }
+
+    /// Tell the interface whether the host has a native menu bar. Where it has none, the
+    /// in-window menu is the only menu, so it is shown and a reset keeps it.
+    pub fn set_native_menus(&mut self, on: bool) {
+        self.native_menus = on;
+        if !on {
+            self.ui.in_window_menu = true;
         }
     }
 
@@ -740,7 +804,8 @@ impl CadApp {
 
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
-    /// web it opens at once.
+    /// web it opens at once. An already open drawing is selected without re-reading it, retaining
+    /// its unsaved edits and view; window drops and Open Recent use this same entry point.
     pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
@@ -748,6 +813,9 @@ impl CadApp {
                 Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
+            return;
+        }
+        if self.select_open_drawing(path) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -764,10 +832,26 @@ impl CadApp {
         }
     }
 
+    /// OPEN typed at the command line with the file to open (`OPEN C:\plans\big.dwg`, or the JSON
+    /// form with only a path, `open {"path": "…"}`): read in the background as File ▸ Open reads it
+    /// ([`Self::open_path`]), so a large drawing doesn't freeze the window. False, and the line runs
+    /// as before, for anything else: other parameters (`data`), a LISP file, and on the web, which
+    /// has no threads. Only the keyboard's Enter calls this; programmatic calls (the control
+    /// channel, MCP, scripts, LISP) keep getting their answer at once.
+    pub(crate) fn open_typed(&mut self, line: &str) -> bool {
+        let Some(path) = typed_open_path(line).filter(|p| !is_lisp_file(p)) else { return false };
+        self.open_path(Path::new(&path));
+        true
+    }
+
     /// Add the files whose background read has finished; report the ones that failed as a failed
     /// OPEN is reported. Called every frame.
     pub fn finish_opening(&mut self) {
         for (path, outcome) in self.opening.poll() {
+            // A drawing may have been opened or saved at this path while the read was pending.
+            if self.select_open_drawing(&path) {
+                continue;
+            }
             // A recent file that is gone can never be opened again: drop it from the list. A path
             // whose existence can't be checked (a folder that denies access) stays.
             if outcome.is_err() && matches!(path.try_exists(), Ok(false)) {
@@ -783,6 +867,22 @@ impl CadApp {
             }
             self.opened(r);
         }
+    }
+
+    /// Reuse the existing document through the normal tab-switch command, including symlink paths.
+    fn select_open_drawing(&mut self, path: &Path) -> bool {
+        let existing = self.session.docs.iter().position(|d| d.path.as_deref().is_some_and(|p| opening::same_path(Path::new(p), path)));
+        let Some(index) = existing else { return false };
+        match self.run("document.switch", json!({"index": index})) {
+            Ok(_) => {
+                self.ui.start_tab = false;
+                if let Some(path) = self.session.docs.get(index).and_then(|d| d.path.clone()) {
+                    self.remember_recent(path);
+                }
+            }
+            Err(error) => self.open_failed(error),
+        }
+        true
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
@@ -884,6 +984,7 @@ impl CadApp {
         self.gpu_fault_tick(ctx);
         managers::plot_window_resume(self, ctx);
         hatchdlg::resume(self);
+        wblock::resume(self);
         // What follows is frame work, once per layout frame or hidden tick.
         if ctx.current_pass_index() != 0 {
             return;
@@ -1019,6 +1120,7 @@ impl CadApp {
         let ctx = &ctx;
         let language = self.language();
         if self.fonts_language != Some(language) {
+            drawing_fonts::install(ctx);
             theme::install_fonts(ctx, language);
             self.fonts_language = Some(language);
         }
@@ -1085,6 +1187,7 @@ impl CadApp {
     /// Draw one UI pass: title/toolbar, optional menu/status bar/file tabs, the standalone tool-set strip when a drawing is shown but Tool Sets is not docked, docking or the start page, and the floating overlays; record `frame_ms`. Runs on every pass, including one egui later discards.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        self.sync_bars();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
@@ -1164,6 +1267,27 @@ pub fn now_ms() -> f64 {
 /// A LISP source file, by its name.
 fn is_lisp_file(name: impl AsRef<Path>) -> bool {
     name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+}
+
+/// The file an `OPEN <path>` or `open {"path": "…"}` line names ([`CadApp::open_typed`]). `None`
+/// for other lines, JSON with other keys, and on the web.
+fn typed_open_path(line: &str) -> Option<String> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let (name, rest) = line.trim().split_once(char::is_whitespace)?;
+    if !name.trim_start_matches(['_', '.']).eq_ignore_ascii_case("open") {
+        return None;
+    }
+    let rest = rest.trim();
+    let path = if rest.starts_with('{') {
+        let v: Value = serde_json::from_str(rest).ok()?;
+        let o = v.as_object().filter(|o| o.len() == 1)?;
+        o.get("path")?.as_str()?.to_string()
+    } else {
+        rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')).unwrap_or(rest).to_string()
+    };
+    (!path.trim().is_empty()).then_some(path)
 }
 
 #[cfg(test)]
@@ -1405,5 +1529,55 @@ mod tests {
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
         assert_eq!(ui.save_format, SaveFormat::Dwg);
+    }
+
+    #[test]
+    fn options_reset_brings_the_interface_back() {
+        // Hiding the interface (View/Window toggles) can leave no way back — on Windows the
+        // in-window menu bar is the only menu there is. Options > Reset must restore it (#1240).
+        let mut a = app();
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("ui.toggle.menubar", json!({ "on": cfg!(target_os = "macos") })).unwrap();
+        a.start("ui.hidepalettes");
+        assert!(!a.ui.show_toolbar && !a.ui.show_palettes && !a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, cfg!(target_os = "macos"), "the test did not hide the menu bar");
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert!(a.ui.show_palettes, "the palettes are still hidden");
+        assert!(a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, !cfg!(target_os = "macos"), "the menu bar did not come back");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_menu_where_the_host_has_no_native_one() {
+        // With CADCRAFT_NO_NATIVE_MENU=1 the menus stay in the window: the host reports no native
+        // menu bar, so the in-window one is the only menu and the reset must leave it (#1240).
+        let mut a = app();
+        a.set_native_menus(false);
+        assert!(a.ui.in_window_menu, "the host's setting did not show the in-window menu");
+        a.run("ui.toggle.menubar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.in_window_menu, "the only menu bar did not come back");
+        // Beside a native menu bar, the reset returns to the platform default.
+        a.set_native_menus(true);
+        a.run("ui.toggle.menubar", json!({ "on": true })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(!a.ui.in_window_menu, "the in-window menu is not the default beside a native one");
+    }
+
+    #[test]
+    fn options_reset_keeps_the_users_shortcuts_and_folders() {
+        // The reset brings hidden bars back (#1240); it must not also lose the user's own
+        // keyboard shortcuts or the folders the file pickers remember.
+        let mut a = app();
+        a.ui.shortcuts.insert("line".into(), "Ctrl+Shift+L".into());
+        a.ui.last_lisp_dir = Some("lisp-folder".into());
+        a.ui.last_pgp_dir = Some("pgp-folder".into());
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert_eq!(a.ui.shortcuts.get("line").map(String::as_str), Some("Ctrl+Shift+L"), "the reset lost a user shortcut");
+        assert_eq!(a.ui.last_lisp_dir.as_deref(), Some("lisp-folder"));
+        assert_eq!(a.ui.last_pgp_dir.as_deref(), Some("pgp-folder"));
     }
 }
