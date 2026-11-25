@@ -13,7 +13,6 @@ mod extents;
 mod format;
 mod gdt;
 mod header;
-mod host_reserved;
 pub mod library;
 mod plotstyle;
 mod plotter;
@@ -37,9 +36,6 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
-pub use host_reserved::{
-    clear_host_reserved, host_reserved_current, host_reserved_len, host_reserved_writes, host_reserves, note_host_reserved, replace_host_reserved,
-};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
@@ -136,11 +132,9 @@ pub struct Drawing {
     pub scales: Vec<AnnoScale>,
     /// Next free handle.
     pub handseed: u64,
-    /// Handles held in the reserved band: a file's records, recorded while reading before the
-    /// record is placed, and names a session gave to records that have no handle of their own
-    /// (#1660). [`Drawing::new_handle`] skips them. [`Drawing::bump_handseed`] does not follow a
-    /// file's (#913), and the reader empties those once the file is read (the records hold their
-    /// handles by then); a session's stay. Never written to a file.
+    /// Handles a file's records hold in the reserved band, recorded while reading before the
+    /// record is placed: [`Drawing::new_handle`] skips them meanwhile. [`Drawing::bump_handseed`]
+    /// does not follow them (#913). Emptied once the file is read; never written to a file.
     pub reserved_handles: BTreeSet<u64>,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
@@ -256,15 +250,11 @@ impl Drawing {
     /// all in the band, so there only `foreign.handles` is looked up. The scan of every space and
     /// block definition runs only for a candidate in the band. Every handle skipped is a distinct
     /// one something holds, so the walk ends within one step more than the count of held handles.
-    ///
-    /// Handles the host has given to records that are not drawing objects ([`host_reserves`]) are
-    /// skipped too. They are not stored in the drawing: a copy allocates with the same exclusion,
-    /// and remembering them does not change the drawing.
     pub fn next_handle(&self) -> Handle {
         let held = |h: u64| {
             h == 0
                 || self.foreign.handles.contains_key(&Handle(h))
-                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || host_reserves(h) || self.handle_in_use(Handle(h))))
+                || (h >= HANDLE_LIMIT && (self.reserved_handles.contains(&h) || self.handle_in_use(Handle(h))))
         };
         let mut h = self.handseed;
         // Counted only once a handle is skipped, so the usual first-try answer costs nothing.
@@ -289,7 +279,6 @@ impl Drawing {
             .fold(self.model.len(), usize::saturating_add)
             .saturating_add(self.foreign.handles.len())
             .saturating_add(self.reserved_handles.len())
-            .saturating_add(host_reserved_len())
             .saturating_add(1)
     }
     /// Record a handle a file's record holds in the reserved band, before the record is placed in
@@ -303,6 +292,7 @@ impl Drawing {
             self.reserved_handles.insert(h.0);
         }
     }
+
     /// Make sure future handles don't collide with `h` (after loading a file).
     ///
     /// A handle at or above [`HANDLE_LIMIT`] is the file's own and stays as it is: it is not

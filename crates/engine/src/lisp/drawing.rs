@@ -8,7 +8,7 @@
 //! [`crate::cmd::file::entity_codec`]), so what `entget` shows is what a DXF file holds, except
 //! for angles, which are radians in a list and degrees in a file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,7 @@ use craft_dxf::Tag;
 
 use super::builtins::args_err;
 use super::eval::{Ctx, Flow, Need};
-use super::value::{PickSet, Value, equal, to_text};
+use super::value::{PickSet, RecordName, Value, equal, to_text};
 use super::{BlockSlots, LispError};
 use crate::{Input, Session};
 
@@ -114,6 +114,8 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                 }
             }
             Value::Ename(h) => named(ctx.s, *h, None),
+            // An INSERT's record (#1660) is no object of the drawing: it picks nothing.
+            Value::Record(_) => feed(ctx.s, Input::Pick(Vec::new())),
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
@@ -321,7 +323,7 @@ pub(super) fn groups_to_list(tags: &[Tag]) -> Vec<Value> {
 const MAX_GROUP_TEXT: usize = 32 << 20;
 
 /// An association list back to DXF groups (points split into x, y, z groups). The type
-/// (`0`), the entity name (`-1`), the owner of a subrecord (`-2`) and of the entity (`330`), the
+/// (`0`), the entity name (`-1`), the owner of a record (`-2`) and of the entity (`330`), the
 /// handle (`5`) and the layout (`410`) are left out: they aren't the entity's to set.
 fn list_to_groups(list: &Value) -> Result<(String, Vec<Tag>), LispError> {
     let mut kind = None;
@@ -371,28 +373,13 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
 
 // ---------------- an INSERT's ATTRIBs and SEQEND ----------------
 
-/// The most names a drawing's LISP keeps for an INSERT's records at once: a routine can't fill
-/// memory by walking. At the limit `entnext` gives no *new* names (`nil`) until an edit that
-/// expires names (Undo, ATTSYNC) makes room; the names already given still name their records.
-const MAX_SUB_NAMES: usize = 65_536;
-/// The most handles a drawing reserves for names over its life (sixteen full walks' worth): once
-/// it has that many, `entnext` gives no more *new* names, so a routine that keeps editing cannot
-/// grow the set without bound. The names it already gave still name their records.
-#[cfg(not(test))]
-const MAX_SUB_HANDLES: usize = MAX_SUB_NAMES * 16;
-/// The same bound, two full walks' worth, in test builds: a test reaches it in bounded time.
-#[cfg(test)]
-const MAX_SUB_HANDLES: usize = MAX_SUB_NAMES * 2;
-/// How many names a lookup tries past taken ones before giving up: a hostile file may hold any
-/// handle, including one this range gives out.
-const SUB_NAME_PROBES: u64 = 1_024;
-/// The top of the range names are taken from, exclusive: the first is one below it, and the
-/// drawing's top handle itself is always left to [`cadcraft_doc::Drawing::new_handle`], which
-/// cannot step past a reserved handle at the end of the range.
-const FIRST_SUB_NAME: u64 = u64::MAX;
+/// The most names one drawing's LISP holds for an INSERT's records at once: a routine can't fill
+/// memory by walking. At the limit `entnext` gives no *new* name (`nil`) until names end (an
+/// erased reference, Undo, ATTSYNC) and make room; the names already given still hold.
+const MAX_RECORD_NAMES: usize = 65_536;
 
 /// What a name given to an INSERT's ATTRIB or SEQEND stands for, while it holds.
-struct SubEnt {
+struct Record {
     owner: Handle,
     /// The record's place after the INSERT's own: an ATTRIB's index, or `attribs.len()` for the
     /// SEQEND.
@@ -402,33 +389,109 @@ struct SubEnt {
     tag: String,
 }
 
-/// Names given to an INSERT's ATTRIBs and SEQEND (#1660): records with no handle of their own in
-/// the drawing, so a routine can reach one only by a name LISP gives out. A name holds while its
-/// reference keeps the record in that place with that tag and the drawing's name epoch is the one
-/// it was given in; otherwise it names nothing (`nil`), never another record.
+impl Record {
+    /// Whether the reference's attributes still have this record in its place, with its tag.
+    fn holds(&self, attribs: &[cadcraft_doc::Attrib]) -> bool {
+        match attribs.get(self.slot) {
+            Some(a) => a.tag.eq_ignore_ascii_case(&self.tag),
+            None => self.slot == attribs.len() && self.tag.is_empty(),
+        }
+    }
+}
+
+/// The names a drawing's LISP gave to INSERTs' ATTRIBs and SEQENDs (#1660). These records have no
+/// handle of their own in the drawing, and their names are not handles ([`RecordName`]): nothing
+/// a drawing, a copy of it or another session gives out can ever be one. A name holds while its
+/// reference keeps the record in that place with that tag, in the drawing's name epoch it was
+/// given in (`DocState::expire_names`); otherwise it names nothing (`nil`), never another record.
 #[derive(Default)]
-pub(crate) struct SubEnts {
-    /// Every handle a name was given to in this drawing's session, also after its name stopped
-    /// holding and through undo or redo (and the Block Editor swapping the drawing): a name is
-    /// never given to another record. Bounded by [`MAX_SUB_HANDLES`].
-    issued: Vec<Handle>,
-    /// The same handles, for lookups: a name that no longer holds is told from a real object
-    /// that has its handle.
-    issued_set: HashSet<Handle>,
-    /// The name of each record a walk reached, by its INSERT and place.
-    by_slot: HashMap<(Handle, usize), Handle>,
-    by_name: HashMap<Handle, SubEnt>,
-    /// Names dropped in this epoch because their record moved or another object took their
-    /// handle. They name nothing, even when a real entity now has the handle.
-    retired: HashSet<Handle>,
-    /// The next handle to try, counting down from just below the top. It only descends: a name
-    /// given once is never given to another record. `None` when names are exhausted, or before
-    /// the first is given (`started` false).
-    cursor: Option<u64>,
-    started: bool,
-    /// The drawing it gave the names in: its session id and name epoch.
-    doc: u64,
+pub(crate) struct RecordNames {
+    /// The name of each record a walk reached, by its INSERT and place: walking again gives the
+    /// same names.
+    by_slot: HashMap<(Handle, usize), RecordName>,
+    /// What each name that still holds stands for, by its number.
+    by_name: HashMap<u64, Record>,
+    /// The drawing's name epoch the names were given in.
     epoch: u64,
+}
+
+impl RecordNames {
+    /// Forget every name once the drawing's name epoch moved on: the records they named may be
+    /// gone or rebuilt.
+    fn expire(&mut self, epoch: u64) {
+        if self.epoch != epoch {
+            self.by_slot.clear();
+            self.by_name.clear();
+            self.epoch = epoch;
+        }
+    }
+
+    /// Drop the name numbered `id`: it names nothing from now on.
+    fn retire(&mut self, id: u64) {
+        if let Some(r) = self.by_name.remove(&id)
+            && self.by_slot.get(&(r.owner, r.slot)).is_some_and(|n| n.id == id)
+        {
+            self.by_slot.remove(&(r.owner, r.slot));
+        }
+    }
+
+    /// The reference `e` was erased: the names of its records went with it, and OOPS or `entdel`
+    /// bringing it back brings none back. The names of other references keep holding. One lookup
+    /// per record of `e`.
+    pub(crate) fn erased(&mut self, e: &Entity) {
+        let cadcraft_doc::EntityKind::Insert(i) = &e.kind else { return };
+        if self.by_name.is_empty() {
+            return;
+        }
+        for slot in 0..=i.attribs.len() {
+            if let Some(n) = self.by_slot.remove(&(e.handle, slot)) {
+                self.by_name.remove(&n.id);
+            }
+        }
+    }
+
+    /// How many names hold now (tests).
+    #[cfg(test)]
+    pub(crate) fn count(&self) -> usize {
+        self.by_name.len()
+    }
+
+    /// The INSERT and place `name` stands for in `d` now. A name that no longer holds is dropped:
+    /// it names nothing from then on, also if its record comes back.
+    fn lookup(&mut self, epoch: u64, d: &cadcraft_doc::Drawing, name: RecordName) -> Option<(Handle, usize)> {
+        self.expire(epoch);
+        let r = self.by_name.get(&name.id)?;
+        let at = insert_attribs(d, r.owner).filter(|attribs| r.holds(attribs)).map(|_| (r.owner, r.slot));
+        if at.is_none() {
+            self.retire(name.id);
+        }
+        at
+    }
+
+    /// The name of record `slot` after INSERT `owner`'s own (its attributes, then its SEQEND),
+    /// given now if it has none that holds: the same one while the record holds, so a repeated
+    /// walk is stable. None past the SEQEND, at the limit of names, or when the numbers run out.
+    fn name(&mut self, epoch: u64, attribs: &[cadcraft_doc::Attrib], owner: Handle, slot: usize) -> Option<RecordName> {
+        self.expire(epoch);
+        if let Some(n) = self.by_slot.get(&(owner, slot)).copied() {
+            if self.by_name.get(&n.id).is_some_and(|r| r.holds(attribs)) {
+                return Some(n);
+            }
+            self.retire(n.id);
+        }
+        let tag = match attribs.get(slot) {
+            Some(a) => a.tag.clone(),
+            None if slot == attribs.len() => String::new(),
+            None => return None,
+        };
+        if self.by_name.len() >= MAX_RECORD_NAMES {
+            return None;
+        }
+        let name = RecordName::fresh(owner)?;
+        self.by_slot.insert((owner, slot), name);
+        self.by_name.insert(name.id, Record { owner, slot, tag });
+        Some(name)
+    }
 }
 
 /// The attributes of the block reference `h` in `d` (none for anything else, and for a reference
@@ -440,267 +503,37 @@ fn insert_attribs(d: &cadcraft_doc::Drawing, h: Handle) -> Option<&[cadcraft_doc
     }
 }
 
-/// The drawing and the epoch its names were given in, without holding a borrow of the session
-/// while the names are looked at: the drawing, its session id, and its name epoch.
-fn doc_and_epoch(ctx: &Ctx<'_>) -> Option<(Arc<cadcraft_doc::Drawing>, u64, u64)> {
+/// The drawing and its name epoch, without holding a borrow of the session.
+fn doc_and_epoch(ctx: &Ctx<'_>) -> Option<(Arc<cadcraft_doc::Drawing>, u64)> {
     let st = ctx.s.state().ok()?;
-    Some((st.doc.clone(), st.uid, st.names_epoch))
+    Some((st.doc.clone(), st.names_epoch))
 }
 
-impl SubEnts {
-    /// Whether a name was dropped in this epoch because another object took its handle: it names
-    /// nothing, not that object.
-    fn retired(&self, h: Handle) -> bool {
-        self.retired.contains(&h)
-    }
-
-    /// Whether `h` was given to one of the drawing's records as a name in this session.
-    pub(super) fn was_issued(&self, h: Handle) -> bool {
-        self.issued_set.contains(&h)
-    }
-
-    /// How many handles names were given to over this drawing's session: a lifetime bound for a
-    /// routine that keeps walking and editing.
-    pub(crate) fn issued_count(&self) -> usize {
-        self.issued.len()
-    }
-
-    /// The handles given out as names, in the order they were given.
-    pub(crate) fn issued_handles(&self) -> impl Iterator<Item = u64> + '_ {
-        self.issued.iter().map(|h| h.0)
-    }
-
-    /// Note that `h` was given as a name: it is never given again, and `Drawing::new_handle`
-    /// skips it. The skip lives beside the drawing, so a copy allocates with the same exclusion
-    /// and remembering the name does not change the drawing.
-    fn note_issued(&mut self, uid: u64, h: Handle) {
-        self.issued.push(h);
-        self.issued_set.insert(h);
-        if !cadcraft_doc::note_host_reserved(uid, h.0) {
-            cadcraft_doc::replace_host_reserved(uid, self.issued_handles());
-        }
-    }
-
-    /// Drop the names of records whose owner `gone` picks: they went with those objects, and
-    /// OOPS or undo bringing an owner back must not revive its names. Other names keep holding.
-    pub(crate) fn retire_owned_by(&mut self, gone: impl Fn(Handle) -> bool) {
-        let dropped: Vec<Handle> = self.by_name.iter().filter(|(_, e)| gone(e.owner)).map(|(h, _)| *h).collect();
-        for h in dropped {
-            self.retire(h);
-        }
-    }
-
-    /// The next handle to try. It only descends, so a name given once is never given to another
-    /// record, also after it stopped holding.
-    fn next_candidate(&mut self) -> Option<u64> {
-        let c = match self.cursor {
-            Some(c) => c,
-            None if !self.started => FIRST_SUB_NAME.checked_sub(1)?,
-            None => return None,
-        };
-        self.started = true;
-        self.cursor = c.checked_sub(1);
-        Some(c)
-    }
-
-    /// Whether the record a name was given for is still there, with that tag for an attribute.
-    fn holds(&self, attribs: &[cadcraft_doc::Attrib], h: Handle) -> bool {
-        let Some(e) = self.by_name.get(&h) else { return false };
-        match attribs.get(e.slot) {
-            Some(a) => a.tag.eq_ignore_ascii_case(&e.tag),
-            None => e.slot == attribs.len() && e.tag.is_empty(),
-        }
-    }
-
-    /// Drop `h` as a name; it names nothing now, also if another object takes its handle.
-    fn retire(&mut self, h: Handle) {
-        if let Some(e) = self.by_name.remove(&h)
-            && self.by_slot.get(&(e.owner, e.slot)) == Some(&h)
-        {
-            self.by_slot.remove(&(e.owner, e.slot));
-        }
-        self.retired.insert(h);
-    }
-
-    /// Forget every name: the drawing it was given in changed (undo or redo, ATTSYNC,
-    /// -BLOCKREPLACE, closing the Block Editor). The handles given stay issued, and the cursor is
-    /// kept: a name given once is never given again.
-    fn expire(&mut self, doc: u64, epoch: u64) {
-        if self.doc != doc || self.epoch != epoch {
-            self.by_slot.clear();
-            self.by_name.clear();
-            self.retired.clear();
-            self.doc = doc;
-            self.epoch = epoch;
-        }
-    }
-
-    /// The INSERT and record `h` names now, if it still names one (a stale name is dropped).
-    fn lookup(&mut self, doc: u64, epoch: u64, attribs: &[cadcraft_doc::Attrib], h: Handle) -> Option<(Handle, usize)> {
-        self.expire(doc, epoch);
-        if !self.holds(attribs, h) {
-            self.retire(h);
-            return None;
-        }
-        self.by_name.get(&h).map(|e| (e.owner, e.slot))
-    }
-
-    /// The name record `slot` after INSERT `owner`'s own already has, if it still holds one: a
-    /// stale name, or one whose handle another object took, is retired and answers `None`. A
-    /// record no earlier walk named gets none: this never reserves a new name.
-    fn issued(
-        &mut self,
-        doc: u64,
-        epoch: u64,
-        owner: Handle,
-        slot: usize,
-        attribs: &[cadcraft_doc::Attrib],
-        mut taken: impl FnMut(Handle) -> bool,
-    ) -> Option<Handle> {
-        self.expire(doc, epoch);
-        let h = self.by_slot.get(&(owner, slot)).copied()?;
-        self.lookup(doc, epoch, attribs, h)?;
-        if taken(h) {
-            // Another object took the handle: the name is retired, never given back.
-            self.retire(h);
-            return None;
-        }
-        Some(h)
-    }
-
-    /// The name of record `slot` after INSERT `owner`'s own (its attributes, then its SEQEND),
-    /// given out now if it has none: the same one while the record holds, so a repeated walk is
-    /// stable. `taken` says whether the drawing already gives a candidate handle a meaning; a
-    /// cached name is checked again, so a name is never left on a handle another object took.
-    fn name(
-        &mut self,
-        doc: u64,
-        epoch: u64,
-        owner: Handle,
-        slot: usize,
-        attribs: &[cadcraft_doc::Attrib],
-        mut taken: impl FnMut(Handle) -> bool,
-    ) -> Option<Handle> {
-        if let Some(h) = self.issued(doc, epoch, owner, slot, attribs, &mut taken) {
-            return Some(h);
-        }
-        let tag = match attribs.get(slot) {
-            Some(a) => a.tag.clone(),
-            None if slot == attribs.len() => String::new(),
-            None => return None,
-        };
-        if self.by_name.len() >= MAX_SUB_NAMES {
-            return None;
-        }
-        for _ in 0..SUB_NAME_PROBES {
-            let Some(c) = self.next_candidate() else { break };
-            let h = Handle(c);
-            if self.by_name.contains_key(&h) || self.retired.contains(&h) || taken(h) {
-                continue;
-            }
-            self.by_slot.insert((owner, slot), h);
-            self.by_name.insert(h, SubEnt { owner, slot, tag });
-            return Some(h);
-        }
-        None
-    }
-}
-
-/// Whether the drawing already gives `h` a meaning: an entity, a block definition's entity, an
-/// object kept from a file, or one `entdel` took (which `entdel` brings back).
-fn name_taken(d: &cadcraft_doc::Drawing, slots: &BlockSlots, deleted: &HashMap<Handle, (Space, Arc<Entity>)>, h: Handle) -> bool {
-    deleted.contains_key(&h) || slots.contains_key(&h) || d.entity(h).is_some() || d.foreign.handles.contains_key(&h)
-}
-
-/// The INSERT and record the name `h` stands for now (none for anything else).
-fn sub_of(ctx: &mut Ctx<'_>, h: Handle) -> Option<(Handle, usize)> {
-    let (d, doc, epoch) = doc_and_epoch(ctx)?;
-    // Every issued name stays issued in the session, also after its epoch passed; a handle that
-    // was merely probed (the INSERT's own, or a real entity's) is not a name.
-    if !name_given(ctx, h) {
-        return None;
-    }
-    // A real entity always wins: names are given only where the drawing has nothing.
-    if d.entity(h).is_some() {
-        return None;
-    }
-    let owner = ctx.s.subents()?.by_name.get(&h)?.owner;
-    let attribs = insert_attribs(&d, owner)?;
-    ctx.s.subents_mut()?.lookup(doc, epoch, attribs, h)
-}
-
-/// Whether `h` was given as a name in this session (whether or not it still holds).
-fn name_given(ctx: &Ctx<'_>, h: Handle) -> bool {
-    ctx.s.subents().is_some_and(|s| s.was_issued(h))
-}
-
-/// Whether the name `h` was dropped because another object took its handle: it names nothing,
-/// not that object.
-fn name_retired(ctx: &Ctx<'_>, h: Handle) -> bool {
-    ctx.s.subents().is_some_and(|s| s.retired(h))
+/// The INSERT and record the name `name` stands for now (none when it no longer holds).
+fn record_of(ctx: &mut Ctx<'_>, name: RecordName) -> Option<(Handle, usize)> {
+    let (d, epoch) = doc_and_epoch(ctx)?;
+    ctx.s.record_names()?.lookup(epoch, &d, name)
 }
 
 /// The name of record `slot` after INSERT `owner`'s own (#1660): an ATTRIB, or its SEQEND (one
-/// past the last attribute). None when it has no such record, or when no name is left to give.
-fn sub_name(ctx: &mut Ctx<'_>, owner: Handle, slot: usize) -> Option<Handle> {
-    let (d, doc, epoch) = doc_and_epoch(ctx)?;
-    let attribs = insert_attribs(&d, owner)?;
-    if slot > attribs.len() {
-        return None;
-    }
-    // A host without the writer's record mapping has no records to name.
+/// past the last attribute). None when it has no such record, when the host has no record
+/// mapping, or when no name is left to give.
+fn name_record(ctx: &mut Ctx<'_>, owner: Handle, slot: usize) -> Option<RecordName> {
     crate::cmd::file::entity_sub_record()?;
-    let slots = block_slots(ctx);
-    let deleted = &ctx.env.deleted;
-    let objects = &ctx.env.objects;
-    let mut taken = |h| name_taken(&d, &slots, deleted, h) || objects.names_handle(h);
-    let subents = ctx.s.subents_mut()?;
-    // The name a walk gave this record holds, also when the drawing's lifetime cap is reached.
-    if let Some(h) = subents.issued(doc, epoch, owner, slot, attribs, &mut taken) {
-        return Some(h);
-    }
-    // A routine that keeps walking and editing gets no more new names once its drawing issued
-    // this many: memory stays bounded. The cap stops new names only.
-    if subents.issued_count() >= MAX_SUB_HANDLES {
-        return None;
-    }
-    let chosen = subents.name(doc, epoch, owner, slot, attribs, taken)?;
-    subents.note_issued(doc, chosen);
-    Some(chosen)
+    let (d, epoch) = doc_and_epoch(ctx)?;
+    let attribs = insert_attribs(&d, owner)?;
+    ctx.s.record_names()?.name(epoch, attribs, owner, slot)
 }
 
-/// What follows the record an INSERT's name stands for (#1660).
-enum SubNext {
-    /// Not the name of such a record.
-    NotSub,
-    /// The next record's name, or none when the session gives out no more.
-    Record(Option<Handle>),
-    /// The run ended (the SEQEND): the main order goes on from this INSERT.
-    Ended(Handle),
-}
-
-fn sub_next(ctx: &mut Ctx<'_>, h: Handle) -> SubNext {
-    let Some((owner, slot)) = sub_of(ctx, h) else { return SubNext::NotSub };
-    let len = ctx.s.doc().ok().and_then(|d| insert_attribs(d, owner)).map(<[cadcraft_doc::Attrib]>::len);
-    match len {
-        Some(len) if slot < len => SubNext::Record(sub_name(ctx, owner, slot.saturating_add(1))),
-        Some(_) => SubNext::Ended(owner),
-        None => SubNext::Record(None),
-    }
-}
-
-/// An entity list: its name (`-1`), type (`0`), the owner of an INSERT's ATTRIB or SEQEND (`-2`)
-/// and the groups of its record, with the layout name after the AcDbEntity marker, as AutoCAD
-/// lists it. Without a layout of its own (an entity of a block definition) it has none.
-fn entity_list(d: &cadcraft_doc::Drawing, h: Handle, kind: &str, tags: &[Tag], owner: Option<Handle>, in_block: bool) -> Value {
-    let layout = match space_of(d, owner.unwrap_or(h)) {
+/// An entity list: `head` (its name, type and, for an INSERT's record, its owner), then the
+/// groups of its record with the layout name after the AcDbEntity marker, as AutoCAD lists it.
+/// The layout is the one object `at` is in; without a layout of its own (an entity of a block
+/// definition) it has none.
+fn entity_list(d: &cadcraft_doc::Drawing, mut items: Vec<Value>, at: Handle, tags: &[Tag], in_block: bool) -> Value {
+    let layout = match space_of(d, at) {
         Some(Space::Paper(name)) => name,
         _ => "Model".into(),
     };
-    let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(kind))];
-    if let Some(o) = owner {
-        items.push(Value::cons(Value::Int(-2), Value::Ename(o)));
-    }
     let mut placed_layout = in_block;
     for v in groups_to_list(tags) {
         // The layout name follows the AcDbEntity marker, as AutoCAD lists it.
@@ -714,14 +547,25 @@ fn entity_list(d: &cadcraft_doc::Drawing, h: Handle, kind: &str, tags: &[Tag], o
     Value::list(items)
 }
 
-/// `entget` of an INSERT's ATTRIB or SEQEND (#1660), when `h` names one now.
-fn sub_entget(ctx: &mut Ctx<'_>, h: Handle) -> Option<Value> {
-    let (owner, slot) = sub_of(ctx, h)?;
-    let d = ctx.s.doc().ok()?;
+/// The list of record `slot` of the reference `owner` named `name`: the DXF writer's record,
+/// its name (`-1`), type (`0`) and reference (`-2`). None when the host has no record mapping.
+fn record_list(d: &cadcraft_doc::Drawing, name: RecordName, owner: Handle, slot: usize) -> Option<(Value, Vec<Tag>)> {
     let e = d.entity(owner)?;
     let (kind, mut tags) = (crate::cmd::file::entity_sub_record()?)(d, e, slot)?;
     convert_angles(&kind, &mut tags, f64::to_radians);
-    Some(entity_list(d, h, &kind, &tags, Some(owner), false))
+    let head = vec![
+        Value::cons(Value::Int(-1), Value::Record(name)),
+        Value::cons(Value::Int(0), Value::str(&kind)),
+        Value::cons(Value::Int(-2), Value::Ename(owner)),
+    ];
+    Some((entity_list(d, head, owner, &tags, false), tags))
+}
+
+/// `entget` of an INSERT's ATTRIB or SEQEND (#1660), while `name` names one.
+fn record_entget(ctx: &mut Ctx<'_>, name: RecordName) -> Option<Value> {
+    let (owner, slot) = record_of(ctx, name)?;
+    let d = ctx.s.doc().ok()?;
+    record_list(d, name, owner, slot).map(|(list, _)| list)
 }
 
 /// What an ATTRIB's submitted list asks to change: `Some(None)` when it asks for nothing, and
@@ -779,12 +623,12 @@ fn only_value_diff(expected: &Value, asked: &Value) -> bool {
     }
 }
 
-/// `entmod` of the INSERT's record the name `h` stands for (#1660): only an ATTRIB's value may
-/// change, the group 1 value; its tag, place, flags and properties are the reference's. A SEQEND
-/// holds nothing to change, and a name that no longer holds names nothing: both give `nil`, the
-/// drawing as it is.
-fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, h: Handle) -> Value {
-    let Some((owner, slot)) = sub_of(ctx, h) else { return Value::Nil };
+/// `entmod` of the INSERT's record `name` stands for (#1660): only an ATTRIB's value may change,
+/// the group 1 value; its tag, place, flags and properties are the reference's. A SEQEND holds
+/// nothing to change, and a name that no longer holds names nothing: both give `nil`, the drawing
+/// as it is.
+fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, name: RecordName) -> Value {
+    let Some((owner, slot)) = record_of(ctx, name) else { return Value::Nil };
     // An outer list with an atom tail is not the list `entget` returned: iterating it would drop
     // the tail and accept the malformed list. The group pairs inside are dotted, as DXF has them.
     if !list.is_list() {
@@ -795,16 +639,10 @@ fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, h: Handle) -> Value {
         return Value::Nil;
     }
     let Ok(d) = ctx.s.doc() else { return Value::Nil };
-    let Some(e) = d.entity(owner) else { return Value::Nil };
-    let Some(sub_record) = crate::cmd::file::entity_sub_record() else { return Value::Nil };
-    let Some((now_kind, mut now)) = sub_record(d, e, slot) else { return Value::Nil };
-    if !now_kind.eq_ignore_ascii_case(&kind) {
-        return Value::Nil;
-    }
-    convert_angles(&now_kind, &mut now, f64::to_radians);
-    // The layout, owner, handle and any other group are not the attribute's to change: a list
-    // that differs from `entget` anywhere but its group 1 value is refused, the drawing untouched.
-    let expected = entity_list(d, h, &now_kind, &now, Some(owner), false);
+    let Some((expected, now)) = record_list(d, name, owner, slot) else { return Value::Nil };
+    // The type, layout, owner, handle and any other group are not the attribute's to change: a
+    // list that differs from `entget` anywhere but its group 1 value is refused (a SEQEND's
+    // list too), the drawing untouched.
     if !only_value_diff(&expected, list) {
         return Value::Nil;
     }
@@ -832,11 +670,11 @@ fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, h: Handle) -> Value {
 
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
-    let h = ename(&a[0])?;
-    // An INSERT's ATTRIB or SEQEND (#1660) is not an entity of the drawing: LISP's name reaches it.
-    if let Some(v) = sub_entget(ctx, h) {
-        return Ok(Flow::Value(v));
+    // An INSERT's ATTRIB or SEQEND (#1660) is not an entity of the drawing: its name reaches it.
+    if let Value::Record(r) = &a[0] {
+        return Ok(Flow::Value(record_entget(ctx, *r).unwrap_or_default()));
     }
+    let h = ename(&a[0])?;
     let drawn = ctx.s.doc().is_ok_and(|d| d.entity(h).is_some());
     let from_block = if drawn { None } else { block_entity(ctx, h) };
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
@@ -849,7 +687,8 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
-    Ok(Flow::Value(entity_list(d, h, &kind, &tags, None, in_block)))
+    let head = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
+    Ok(Flow::Value(entity_list(d, head, h, &tags, in_block)))
 }
 
 /// The entity a list describes, as the reader makes it; a missing layer (8) is the current one.
@@ -975,18 +814,14 @@ fn end_block(ctx: &mut Ctx<'_>) -> Value {
 pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let list = &a[0];
-    let Some(Value::Ename(h)) = list.iter().find(|v| v.car().as_number() == Some(-1.0)).map(|v| v.cdr()) else {
+    let name = list.iter().find(|v| v.car().as_number() == Some(-1.0)).map(|v| v.cdr());
+    // An INSERT's record takes a value edit only (#1660); any other edit of one is refused.
+    if let Some(Value::Record(r)) = name {
+        return Ok(Flow::Value(entmod_attrib(ctx, list, r)));
+    }
+    let Some(Value::Ename(h)) = name else {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
-    // A name retired because another object took its handle names nothing, not that object.
-    if name_retired(ctx, h) {
-        return Ok(Flow::Value(Value::Nil));
-    }
-    // An INSERT's record takes a value edit only (#1660); any other edit of one is refused. A
-    // real entity with a handle in the names' range (a hostile file's) is still its own.
-    if name_given(ctx, h) && ctx.s.doc().is_ok_and(|d| d.entity(h).is_none()) {
-        return Ok(Flow::Value(entmod_attrib(ctx, list, h)));
-    }
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
     let (kind_name, common, mut kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
@@ -1017,9 +852,15 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     Ok(Flow::Value(if ok { list.clone() } else { Value::Nil }))
 }
 
-/// `(entupd ename)`: redraw an entity (the canvas redraws on its own).
+/// `(entupd ename)`: redraw an entity (the canvas redraws on its own). For an INSERT's record
+/// (#1660) its reference: the record's name while it holds.
 pub fn entupd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
+    if let Value::Record(r) = &a[0] {
+        let holds = record_of(ctx, *r).is_some();
+        ctx.s.touch();
+        return Ok(Flow::Value(if holds { a[0].clone() } else { Value::Nil }));
+    }
     let h = ename(&a[0])?;
     ctx.s.touch();
     Ok(Flow::Value(if ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) { Value::Ename(h) } else { Value::Nil }))
@@ -1028,35 +869,27 @@ pub fn entupd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 /// `(entdel ename)`: delete an entity, or bring back one this routine's drawing deleted.
 pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
-    let h = ename(&a[0])?;
-    // A name retired because another object took its handle names nothing, not that object.
-    if name_retired(ctx, h) {
-        return Ok(Flow::Value(Value::Nil));
-    }
     // An INSERT's ATTRIB or SEQEND is the reference's: it is not deleted on its own (#1660).
-    if name_given(ctx, h) && ctx.s.doc().is_ok_and(|d| d.entity(h).is_none()) {
+    if matches!(a[0], Value::Record(_)) {
         return Ok(Flow::Value(Value::Nil));
     }
-    let space = ctx.s.doc().ok().and_then(|d| d.space_of(h));
-    if let Some(space) = space {
-        let removed = ctx.s.doc_mut().ok().and_then(|d| d.remove_entity(h));
-        return Ok(match removed {
-            Some(e) => {
-                ctx.env.deleted.insert(h, (space, e));
-                ctx.s.touch();
-                // The names of records that went with it must not come back on `entdel`; names of
-                // other references keep holding.
-                if let Some(subents) = ctx.s.subents_mut() {
-                    subents.retire_owned_by(|owner| owner == h);
-                }
-                Flow::Value(Value::Ename(h))
+    let h = ename(&a[0])?;
+    let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
+    if let Some(space) = d.space_of(h) {
+        if let Some(e) = d.remove_entity(h) {
+            // The names of its records went with it: `entdel` bringing it back brings none back.
+            if let Some(names) = ctx.s.record_names() {
+                names.erased(&e);
             }
-            None => Flow::Value(Value::Nil),
-        });
+            ctx.env.deleted.insert(h, (space, e));
+            ctx.s.touch();
+            return Ok(Flow::Value(Value::Ename(h)));
+        }
+        return Ok(Flow::Value(Value::Nil));
     }
     match ctx.env.deleted.remove(&h) {
         Some((space, e)) => {
-            let restored = ctx.s.doc_mut().ok().and_then(|d| d.space_mut(&space)).map(|store| store.push(Entity::clone(&e))).is_some();
+            let restored = d.space_mut(&space).map(|store| store.push(Entity::clone(&e))).is_some();
             ctx.s.touch();
             Ok(Flow::Value(if restored { Value::Ename(h) } else { Value::Nil }))
         }
@@ -1143,37 +976,36 @@ pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
-    let mut after = None;
-    if let Some(v) = a.first().filter(|v| !v.is_nil()) {
-        let h = ename(v)?;
-        // From an entity of a block definition: the next one in that block, nil after the last (#1700).
-        if ctx.s.doc().is_ok_and(|d| d.entity(h).is_none())
-            && let Some((_, next)) = block_slots(ctx).get(&h)
-        {
-            return Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()));
-        }
-        // An INSERT's own record is followed by its ATTRIBs and SEQEND (#1660), and each record of
-        // that run by the next; after the SEQEND the main order goes on from the INSERT.
-        match sub_next(ctx, h) {
-            SubNext::Record(name) => return Ok(Flow::Value(name.map(Value::Ename).unwrap_or_default())),
-            SubNext::Ended(owner) => after = Some(owner),
-            SubNext::NotSub => {
-                // An INSERT with attributes: its first ATTRIB, or nil when no name is left to give
-                // (the walk stops rather than skipping the records it can't name). A host without
-                // the optional sub-record provider has no such records: the walk goes on to the
-                // next main entity as it always did.
-                if crate::cmd::file::entity_sub_record().is_some() && ctx.s.doc().is_ok_and(|d| insert_attribs(d, h).is_some()) {
-                    return Ok(Flow::Value(sub_name(ctx, h, 0).map(Value::Ename).unwrap_or_default()));
-                }
-                // A name that no longer holds names nothing. A real entity with a handle in the
-                // names' range (a hostile file's) is never filtered: the walk goes on from it.
-                if name_given(ctx, h) && ctx.s.doc().is_ok_and(|d| d.entity(h).is_none()) {
-                    return Ok(Flow::Value(Value::Nil));
-                }
-                after = Some(h);
+    let after = match a.first() {
+        None | Some(Value::Nil) => None,
+        // From a record of an INSERT (#1660): the next record of its run, and after its SEQEND the
+        // next main entity after the INSERT. A name that no longer holds names nothing.
+        Some(Value::Record(r)) => {
+            let Some((owner, slot)) = record_of(ctx, *r) else { return Ok(Flow::Value(Value::Nil)) };
+            let attribs = ctx.s.doc().ok().and_then(|d| insert_attribs(d, owner)).map_or(0, <[cadcraft_doc::Attrib]>::len);
+            if slot < attribs {
+                return Ok(Flow::Value(name_record(ctx, owner, slot.saturating_add(1)).map(Value::Record).unwrap_or_default()));
             }
+            Some(owner)
         }
-    }
+        Some(v) => {
+            let h = ename(v)?;
+            // From an entity of a block definition: the next one in that block, nil after the last (#1700).
+            if ctx.s.doc().is_ok_and(|d| d.entity(h).is_none())
+                && let Some((_, next)) = block_slots(ctx).get(&h)
+            {
+                return Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()));
+            }
+            // An INSERT with attributes is followed by its ATTRIBs and its SEQEND (#1660): its
+            // first ATTRIB, or nil when no name is left to give (the walk stops rather than skip
+            // records it can't name). A host without the optional record mapping has no such
+            // records: the walk goes on to the next entity, as it always did.
+            if crate::cmd::file::entity_sub_record().is_some() && ctx.s.doc().is_ok_and(|d| insert_attribs(d, h).is_some()) {
+                return Ok(Flow::Value(name_record(ctx, h, 0).map(Value::Record).unwrap_or_default()));
+            }
+            Some(h)
+        }
+    };
     let order = handles_in_order(ctx);
     let next = match after {
         Some(h) => order.get(order.partition_point(|x| *x <= h)).copied(),
@@ -1460,6 +1292,13 @@ fn compare(h: f64, w: f64, op: &str) -> bool {
 
 pub fn ssadd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 2)?;
+    // A selection set holds objects of the drawing; an INSERT's record (#1660) is not one.
+    if matches!(a.first(), Some(Value::Record(_))) {
+        if let Some(ss) = a.get(1) {
+            pickset(ss)?;
+        }
+        return Ok(Flow::Value(Value::Nil));
+    }
     match (a.first(), a.get(1)) {
         (None, _) => Ok(Flow::Value(new_pickset(ctx, Vec::new()))),
         (Some(e), None) => {
@@ -1481,6 +1320,11 @@ pub fn ssadd(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn ssdel(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 2)?;
+    // Never in a selection set (#1660).
+    if matches!(a[0], Value::Record(_)) {
+        pickset(&a[1])?;
+        return Ok(Flow::Value(Value::Nil));
+    }
     let h = ename(&a[0])?;
     let p = pickset(&a[1])?;
     let removed = p.items.lock().map(|mut v| {
@@ -1508,6 +1352,11 @@ pub fn ssname(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn ssmemb(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 2)?;
+    // Never in a selection set (#1660).
+    if matches!(a[0], Value::Record(_)) {
+        pickset(&a[1])?;
+        return Ok(Flow::Value(Value::Nil));
+    }
     let h = ename(&a[0])?;
     Ok(Flow::Value(if items(&pickset(&a[1])?).contains(&h) { Value::Ename(h) } else { Value::Nil }))
 }

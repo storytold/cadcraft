@@ -406,6 +406,8 @@ impl Session {
                 // Restore and end the command.
                 if let Ok(st) = self.state_mut() {
                     st.doc = run.before.clone();
+                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
+                    st.expire_names();
                 }
                 self.echo(format!("Internal error in {id}: {m}"));
                 self.resume_suspended();
@@ -429,6 +431,8 @@ impl Session {
             if let Ok(st) = self.state_mut() {
                 st.doc = before;
                 st.selection = selection;
+                // An earlier state, as after Undo: names of INSERTs' records end (#1660).
+                st.expire_names();
             }
             self.echo(format!("Internal error in {id}: {}", crate::guard::message(&*p)));
         }

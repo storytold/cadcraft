@@ -28,10 +28,11 @@ pub struct DocState {
     pub title: String,
     pub saved: Arc<Drawing>,
     pub revision: u64,
-    /// How many times this drawing's names of things without handles stopped holding: an undo or
-    /// redo showed another drawing state, or an attribute set was rebuilt in place (ATTSYNC,
-    /// -BLOCKREPLACE). AutoLISP's `entnext` names an INSERT's ATTRIBs and SEQEND from it, so a
-    /// name it gave stops naming anything after one of these changes (#1660).
+    /// How many times the names AutoLISP gave this drawing's INSERTs' ATTRIBs and SEQENDs ended all
+    /// at once (#1660): another state of the drawing was shown (Undo, Redo, opening or closing the
+    /// Block Editor, a change taken back), or attribute sets were rebuilt in place (ATTSYNC,
+    /// -BLOCKREPLACE). A name given before names nothing after one of these, never another
+    /// record.
     pub(crate) names_epoch: u64,
     pub space: Space,
     /// Tiled model viewports (VPORTS).

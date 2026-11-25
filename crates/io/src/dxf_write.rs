@@ -167,10 +167,11 @@ fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::Hash
 
 /// One record written after an entity's own, at `index`: an INSERT's ATTRIB, then its SEQEND
 /// (items of a POLYLINE's sequence are not records `entnext` reaches yet). The record's type name
-/// and groups without its `0` group; its handle (5) and owner (330) are left out, as for
-/// [`entity_groups`], since it has none of its own in the drawing. `None` past the last record,
-/// and for an entity written as a single record. AutoLISP's `entnext` and `entget` read one
-/// record at a time through it, never writing the entity's other records.
+/// and groups without its `0` group; its handle (5) and owner (330) are left out: it has no
+/// handle of its own in the drawing (the writer makes one per file), and its owner is the entity.
+/// `None` past the last record, and for an entity written as a single record. AutoLISP's
+/// `entnext` and `entget` read one record at a time through it, never writing the entity's other
+/// records.
 pub fn entity_sub_record(d: &Drawing, e: &Entity, index: usize) -> Option<(String, Vec<Tag>)> {
     let cadcraft_doc::EntityKind::Insert(i) = &e.kind else { return None };
     if i.attribs.is_empty() {

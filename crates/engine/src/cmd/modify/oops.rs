@@ -55,14 +55,14 @@ pub(crate) fn erase_kept(s: &mut Session, hs: &[Handle]) -> Result<usize> {
     // (`refedit::after_command`), so what OOPS had stays.
     let refused = taken.iter().any(|t| crate::cmd::blocks::refedit::locked(d, t.entity.handle));
     if n > 0 && !refused {
-        let gone: HashSet<Handle> = taken.iter().map(|t| t.entity.handle).collect();
-        s.state_mut()?.erased = Erased(taken);
-        // The names of the records that went with these objects must not come back on OOPS.
-        // Names of records of other references keep holding: erasing something else does not
-        // change the reference they belong to.
-        if let Some(subents) = s.subents_mut() {
-            subents.retire_owned_by(|owner| gone.contains(&owner));
+        // The names of the erased references' records went with them: OOPS bringing them back
+        // brings none back. Other references' names keep holding (#1660).
+        if let Some(names) = s.record_names() {
+            for t in &taken {
+                names.erased(&t.entity);
+            }
         }
+        s.state_mut()?.erased = Erased(taken);
     }
     Ok(n)
 }

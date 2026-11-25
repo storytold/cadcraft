@@ -112,22 +112,21 @@ An INSERT in the drawing (not one inside a block definition) has its attributes 
 after it, and `entnext` reaches them: from the block reference to its first ATTRIB, from an
 ATTRIB to the next, and from the last one to the SEQEND (group `-2`, its reference's name), then
 on to the next main entity or nil. `entget` of an ATTRIB lists its groups with `-2` (its
-reference) beside its name (group `-1`). CADCraft keeps no handle of its own for them (a DXF
-file's are the writer's), so LISP names them from `FFFFFFFFFFFFFFFE` down, and the session
-reserves each name in the drawing: a handle `new_handle` gives out can never take one, also after
-Undo lowers the handseed. Those names are the routine's way to reach them: `entmod` of an ATTRIB
-takes its value (group 1) only, as one undo step, and leaves its tag, place, flags and
-properties as they are; any other edit, including one of the layout, owner, handle or other
-groups the entity can't set, a `SEQEND` list, `entdel` and `entmake` of one return nil and
-change nothing. A name holds while its reference keeps that record in its place with that tag:
-erasing the reference, ATTSYNC, -BLOCKREPLACE, closing the Block Editor, Undo and Redo end it
-(erasing another object does not), and a name that ended names nothing (nil), never another
-record. A drawing's session gives out at most 65,536 such names at
-once, at handles that no entity, block definition, object or `entdel` uses (1,024 tries); at the
-limit `entnext` stops naming (nil) until an edit that expires names makes room. Expired names
-stay reserved, so a drawing reserves at most 1,048,576 names in all while it is open; after
-that, names already given still work, but `entnext` gives no new ones (nil) until the drawing
-is opened again. `handent` of a name returns nil: these names aren't handles.
+reference) beside its name (group `-1`). CADCraft keeps no handle of its own for these records (a
+DXF file's are the writer's), so their names are not handles: such a name is an entity name
+(`type` gives `ENAME`) that no object of any drawing can ever have, printed as the reference's
+handle, a dot and a number (`<Entity name: 2a.5>`). `handent` never returns one, and its list has
+no group 5. `entmod` of an ATTRIB takes its value (group 1) only, as one undo step, and leaves its
+tag, place, flags and properties as they are; any other edit, including one of the layout, owner,
+handle or other groups the entity can't set, a `SEQEND` list, `entdel` and `entmake` of one
+return nil and change nothing. `entupd` of one returns its name while it holds. A selection set
+holds objects of the drawing only: `ssadd`, `ssdel` and `ssmemb` of such a name return nil, and
+`command` given one picks nothing. A name holds while its reference keeps that record in its
+place with that tag: erasing the reference (also when OOPS or `entdel` brings it back), ATTSYNC,
+-BLOCKREPLACE, opening and closing the Block Editor, Undo, Redo and a change taken back (a
+refused or failed command) end it (erasing another object does not), and a name that ended names
+nothing (nil), never another record. A drawing holds at most 65,536 such names at once; at the
+limit `entnext` gives no new one (nil) until names end and make room.
 
 Non-graphic objects (the named object dictionary and its dictionaries, layouts, table records)
 are listed as a DXF file of the drawing holds them, pointers as entity names and group 5 (105 for a DIMSTYLE) as the

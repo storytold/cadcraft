@@ -28,6 +28,8 @@ impl Session {
         let Some(h) = first_non_finite(before, &st.doc) else { return Ok(()) };
         st.doc = before.clone();
         st.selection = selection.to_vec();
+        // An earlier state, as after Undo: names of INSERTs' records end (#1660).
+        st.expire_names();
         Err(EngineError::BadParams {
             cmd: cmd.into(),
             msg: format!("the result is too large: object {} would get infinite or undefined coordinates. Nothing was changed", h.hex()),

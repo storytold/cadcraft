@@ -2006,69 +2006,6 @@ fn drawing_with_attributes(attribs: usize) -> (Session, Handle) {
 const COUNT: &str = "(progn (setq e (entnext i) n 0) (while e (setq n (1+ n) e (entnext e))) n)";
 
 #[test]
-fn a_new_entity_never_takes_an_issued_name() {
-    // A hostile $HANDSEED at the first handle a name is taken from: the name takes it, and the
-    // line made next has to go past it rather than take it.
-    let (mut s, _) = drawing_with_attributes(1);
-    s.doc_mut().unwrap().handseed = u64::MAX - 1;
-    ok(&mut s, "(setq a (entnext i))");
-    assert_eq!(
-        ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
-        "\"FFFFFFFFFFFFFFFF\""
-    );
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
-    assert_eq!(ok(&mut s, "(entdel a)"), "nil");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"LINE\"");
-}
-
-#[test]
-fn a_lowered_handseed_never_takes_an_issued_name() {
-    // An undo can lower the handseed below a name given before it: the handle stays reserved.
-    let (mut s, _) = drawing_with_attributes(1);
-    s.doc_mut().unwrap().handseed = u64::MAX;
-    ok(&mut s, "(setq a (entnext i))");
-    s.doc_mut().unwrap().handseed = u64::MAX - 1;
-    assert_eq!(
-        ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
-        "\"FFFFFFFFFFFFFFFF\""
-    );
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
-}
-
-#[test]
-fn a_real_entity_in_the_name_range_is_never_filtered() {
-    let (mut s, _) = drawing_with_attributes(1);
-    {
-        let d = s.doc_mut().unwrap();
-        d.handseed = u64::MAX;
-        for handle in [Handle(u64::MAX - 1), Handle(u64::MAX)] {
-            let line =
-                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) });
-            d.model.push(cadcraft_doc::Entity { handle, common: cadcraft_doc::Common::default(), kind: line });
-        }
-    }
-    // The names skip both lines (below the handseed); `entnext` of the first must still find the
-    // second: a real entity's handle is the drawing's, not a stale name.
-    ok(&mut s, "(setq a (entnext i))");
-    assert_eq!(ok(&mut s, "(equal (entnext (handent \"FFFFFFFFFFFFFFFE\")) (handent \"FFFFFFFFFFFFFFFF\"))"), "T");
-    assert_eq!(ok(&mut s, "(entnext (handent \"FFFFFFFFFFFFFFFF\"))"), "nil");
-}
-
-#[test]
-fn an_issued_attrib_name_does_not_take_a_non_graphic_object_name() {
-    let (mut s, _) = drawing_with_attributes(1);
-    // The layer's object name is the file's handle at the top of the range: the ATTRIB name skips
-    // it, so each name still reaches its own object.
-    let mut foreign = cadcraft_doc::foreign::Foreign::default();
-    foreign.handles.insert(Handle(u64::MAX - 1), ("LAYER".into(), "0".into()));
-    s.doc_mut().unwrap().foreign = std::sync::Arc::new(foreign);
-    ok(&mut s, "(setq a (entnext i))");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (tblobjname \"LAYER\" \"0\"))))"), "\"LAYER\"");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
-    assert_ne!(ok(&mut s, "(equal (tblobjname \"LAYER\" \"0\") a)"), "T");
-}
-
-#[test]
 fn a_session_names_at_most_65536_records_and_nothing_changes() {
     let (mut s, h) = drawing_with_attributes(65_537);
     assert_eq!(ok(&mut s, COUNT), "65536");
@@ -2089,51 +2026,120 @@ fn a_session_names_at_most_65536_records_and_nothing_changes() {
 }
 
 #[test]
-fn names_already_given_still_hold_at_the_lifetime_cap() {
-    // Two full walks, the names expired between them, reserve the lifetime cap (two walks' worth
-    // in tests, so this reaches it in bounded time).
-    let (mut s, _) = drawing_with_attributes(65_537);
-    assert_eq!(ok(&mut s, COUNT), "65536");
-    ok(&mut s, "(progn (entdel i) (entdel i))");
-    assert_eq!(ok(&mut s, COUNT), "65536");
-    let uid = s.state().unwrap().uid;
-    assert_eq!(s.lisp.subents.get(&uid).map_or(0, |e| e.issued_count()), 131_072, "the cap is two walks' worth in tests");
-    // The names the last walk gave still hold: a repeated walk is the same, and `entget` reaches
-    // a record through the name it was given.
-    assert_eq!(ok(&mut s, COUNT), "65536");
+fn a_new_object_at_any_handle_is_never_a_record() {
+    // A hostile $HANDSEED at the top of the range: the line made after the walk takes that
+    // handle, and the record keeps its own name, which is no handle.
+    let (mut s, _) = drawing_with_attributes(1);
+    s.doc_mut().unwrap().handseed = u64::MAX - 1;
     ok(&mut s, "(setq a (entnext i))");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
-    // The cap stops new names only: a new epoch names nothing, and the drawing is as it was.
-    ok(&mut s, "(progn (entdel i) (entdel i))");
-    assert_eq!(ok(&mut s, COUNT), "0");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
-}
-
-/// Entities in `s`'s drawing holding the first `n` handles names are taken from, so a lookup has
-/// to probe past them.
-fn hold_names_at_top(s: &mut Session, n: u64) {
-    let d = s.doc_mut().unwrap();
-    for i in 0..n {
-        let handle = Handle(u64::MAX - 1 - i);
-        let line = cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) });
-        d.model.push(cadcraft_doc::Entity { handle, common: cadcraft_doc::Common::default(), kind: line });
-    }
+    assert_eq!(
+        ok(&mut s, r#"(progn (entmake '((0 . "LINE") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (cdr (assoc 5 (entget (entlast)))))"#),
+        "\"FFFFFFFFFFFFFFFE\""
+    );
+    assert_eq!(
+        ok(&mut s, "(list (cdr (assoc 0 (entget a))) (eq a (entlast)) (entdel a) (cdr (assoc 0 (entget (entlast)))))"),
+        "(\"ATTRIB\" nil nil \"LINE\")"
+    );
 }
 
 #[test]
-fn a_name_steps_past_a_hostile_handle_and_stops_after_1024_tries() {
-    // 1,023 handles taken: the 1,024th try finds a free handle.
+fn objects_at_the_top_of_the_handle_range_walk_as_objects() {
     let (mut s, _) = drawing_with_attributes(1);
-    hold_names_at_top(&mut s, 1_023);
-    assert_eq!(ok(&mut s, "(entnext i)"), "<Entity name: fffffffffffffbff>");
-    // Each name is given once: the same record keeps its name.
-    assert_eq!(ok(&mut s, "(equal (entnext i) (entnext i))"), "T");
-    // 1,024 taken, and the lookup gives up: nil, and the drawing is as it was (`entget` of the
-    // reference still works, and one of its own records is not lost).
-    let (mut s, _) = drawing_with_attributes(1);
-    hold_names_at_top(&mut s, 1_024);
-    assert_eq!(ok(&mut s, "(entnext i)"), "nil");
-    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
+    {
+        let d = s.doc_mut().unwrap();
+        d.handseed = u64::MAX;
+        for handle in [Handle(u64::MAX - 1), Handle(u64::MAX)] {
+            let line =
+                cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) });
+            d.model.push(cadcraft_doc::Entity { handle, common: cadcraft_doc::Common::default(), kind: line });
+        }
+    }
+    ok(&mut s, "(setq a (entnext i))");
+    // The lines' handles are theirs: `entnext` of the first finds the second, then the end.
+    assert_eq!(ok(&mut s, "(equal (entnext (handent \"FFFFFFFFFFFFFFFE\")) (handent \"FFFFFFFFFFFFFFFF\"))"), "T");
+    assert_eq!(ok(&mut s, "(entnext (handent \"FFFFFFFFFFFFFFFF\"))"), "nil");
+    // The record, a table record and the lines each keep their own name.
+    assert_eq!(
+        ok(&mut s, "(list (cdr (assoc 0 (entget a))) (equal a (tblobjname \"LAYER\" \"0\")) (equal a (handent \"FFFFFFFFFFFFFFFE\")))"),
+        "(\"ATTRIB\" nil nil)"
+    );
+}
+
+#[test]
+fn a_record_name_is_an_entity_name_but_no_handle() {
+    let mut s = with_attributes(&[("T1", 0, "D1"), ("T2", 0, "D2")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) b (entnext a))");
+    assert_eq!(ok(&mut s, "(type a)"), "ENAME");
+    // The same record has the same name on every walk; another record and the reference have
+    // their own.
+    assert_eq!(ok(&mut s, "(list (eq a (entnext i)) (equal a (entnext i)) (eq a b) (eq a i) (equal a i))"), "(T T nil nil nil)");
+    // It prints as the reference's handle, a dot and its number: never a handle's text.
+    let printed = ok(&mut s, "a");
+    assert!(printed.starts_with(&format!("<Entity name: {:x}.", h.0)) && printed.ends_with('>'), "{printed}");
+    // No handle reaches it: its list has no group 5, and `handent` of the reference's handle is
+    // the reference.
+    assert_eq!(ok(&mut s, "(list (assoc 5 (entget a)) (eq a (handent (cdr (assoc 5 (entget i))))))"), "(nil nil)");
+    // A DXF group cannot point at it: `entmake` of a list that does is refused.
+    assert_eq!(ok(&mut s, "(entmake (list '(0 . \"LINE\") '(10 0.0 0.0 0.0) '(11 1.0 0.0 0.0) (cons 340 a)))"), "nil");
+}
+
+#[test]
+fn selection_sets_and_commands_take_no_record() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) ss (ssadd i))");
+    // A selection set holds objects of the drawing; a record is not one on its own.
+    assert_eq!(ok(&mut s, "(list (ssadd a) (ssadd a ss) (sslength ss) (ssmemb a ss) (ssdel a ss) (sslength ss))"), "(nil nil 1 nil nil 1)");
+    // A command given the name picks nothing: the reference stays, and the name holds.
+    ok(&mut s, "(command \"_.ERASE\" a \"\")");
+    assert!(s.doc().unwrap().entity(h).is_some());
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"A1\"");
+}
+
+#[test]
+fn entupd_of_a_record_answers_its_name_while_it_holds() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) d (entget a))");
+    assert_eq!(ok(&mut s, "(progn (entmod (subst (cons 1 \"A2\") (assoc 1 d) d)) (eq (entupd a) a))"), "T");
+    s.execute("erase", &json!({ "handles": [h.hex()] })).unwrap();
+    assert_eq!(ok(&mut s, "(entupd a)"), "nil");
+}
+
+#[test]
+fn a_record_name_holds_while_commands_keep_its_record() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    // Moving the reference, or changing its colour, keeps its records in their places.
+    s.execute("move", &json!({ "handles": [h.hex()], "delta": [5, 5] })).unwrap();
+    s.execute("chprop", &json!({ "handles": [h.hex()], "color": 1 })).unwrap();
+    assert_eq!(ok(&mut s, "(list (cdr (assoc 1 (entget a))) (eq a (entnext i)))"), "(\"A1\" T)");
+}
+
+#[test]
+fn each_record_name_is_one_entry_and_walking_again_adds_none() {
+    const N: usize = 64;
+    let (mut s, _) = drawing_with_attributes(N);
+    let before = s.state().unwrap().doc.clone();
+    ok(&mut s, "(setq e nil)");
+    // The R3 pattern: each new name, then state access. Nothing is copied or replayed.
+    for _ in 0..=N {
+        ok(&mut s, "(setq e (if e (entnext e) (entnext i)))");
+        let _ = s.state_mut().unwrap();
+    }
+    let uid = s.state().unwrap().uid;
+    let held = |s: &Session| s.lisp.records.get(&uid).map_or(0, super::drawing::RecordNames::count);
+    assert_eq!(held(&s), N + 1, "the attributes and the SEQEND, one entry each");
+    assert_eq!(ok(&mut s, COUNT), (N + 1).to_string());
+    assert_eq!(held(&s), N + 1, "a walk again gives the same names");
+    assert!(std::sync::Arc::ptr_eq(&before, &s.state().unwrap().doc), "naming changes nothing in the drawing");
+    // Undo or redo ends them: the next walk starts over with as many.
+    s.execute("line", &json!({ "points": [[0, -4], [1, -4]] })).unwrap();
+    s.undo().unwrap();
+    assert_eq!(ok(&mut s, COUNT), (N + 1).to_string());
+    assert_eq!(held(&s), N + 1);
 }
 
 /// A saved drawing with one named attribute. The name comes from the command line, which does
@@ -2194,26 +2200,39 @@ fn issued_name_undo_restores_the_saved_drawing() {
 }
 
 #[test]
-fn issued_name_reservation_work_is_linear() {
-    const N: usize = 64;
-    let (mut s, _) = drawing_with_attributes(N);
-    ok(&mut s, "(setq e nil)");
-    let before = cadcraft_doc::host_reserved_writes();
-    for _ in 0..N {
-        ok(&mut s, "(setq e (if e (entnext e) (entnext i)))");
-        let _ = s.state_mut().unwrap();
+fn a_name_given_in_the_host_never_resolves_in_the_block_editor() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    let mut same = cadcraft_doc::Entity::clone(s.doc().unwrap().entity(h).unwrap());
+    if let cadcraft_doc::EntityKind::Insert(ins) = &mut same.kind
+        && let Some(at) = ins.attribs.first_mut()
+    {
+        at.text.value = "E1".into();
     }
-    let wrote = cadcraft_doc::host_reserved_writes() - before;
-    assert_eq!(wrote, N as u64, "each new name is one reservation write, not the whole prefix");
+    s.execute("bedit", &json!({ "name": "K" })).unwrap();
+    // An object of the editor's drawing with the handle the host's reference has: the host's
+    // name must not reach its ATTRIB.
+    s.doc_mut().unwrap().model.push(same);
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    s.execute("bclose", &json!({ "save": false })).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"A1\"");
+}
 
-    // Replace the drawing (undo), then allocate on a copy before the next mutable access.
-    s.execute("line", &json!({ "points": [[0, -4], [1, -4]] })).unwrap();
-    s.undo().unwrap();
-    let mut copy = s.doc().unwrap().clone();
-    copy.handseed = u64::MAX - N as u64;
-    let handle = copy.new_handle().0;
-    let before = cadcraft_doc::host_reserved_writes();
-    let _ = s.state_mut().unwrap();
-    let replay = cadcraft_doc::host_reserved_writes() - before;
-    assert!(replay == 0 && handle == u64::MAX, "replacement writes {replay}, copy handle {handle:X}, want {:X}", u64::MAX);
+#[test]
+fn a_drawing_put_back_after_a_refused_change_ends_its_names() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let before = s.state().unwrap().doc.clone();
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    // A change with a number that is not finite: the drawing goes back as it was, without the
+    // reference the name was given for.
+    let bad = cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: cadcraft_geom::Vec3::new(f64::NAN, 0.0, 0.0), b: cadcraft_geom::Vec3::ZERO });
+    s.doc_mut().unwrap().add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), bad).unwrap();
+    assert!(s.refuse_non_finite(None, &before, &[], "line").is_err());
+    assert!(s.doc().unwrap().entity(h).is_none());
+    // The next reference takes the handle back: the old name names nothing in it.
+    assert_eq!(inserted(&mut s, json!({ "T1": "B1" })), h);
+    assert_eq!(ok(&mut s, "(entget a)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget (entnext i))))"), "\"B1\"");
 }

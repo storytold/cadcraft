@@ -18,6 +18,8 @@ impl Session {
                 {
                     st.doc = doc;
                     st.selection = sel;
+                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
+                    st.expire_names();
                 }
                 Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
             }
@@ -52,6 +54,8 @@ impl Session {
                 {
                     st.doc = doc.clone();
                     st.selection = sel.clone();
+                    // An earlier state, as after Undo: names of INSERTs' records end (#1660).
+                    st.expire_names();
                 }
                 return Err(EngineError::Internal(id.into(), msg));
             }

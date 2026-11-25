@@ -298,10 +298,10 @@ fn insert_dxf(attribs: usize, before: &str) -> String {
 const COUNT: &str = r#"(progn (setq e (entnext i) n 0) (while e (setq n (1+ n) e (entnext e))) n)"#;
 
 #[test]
-fn a_walk_is_stable_and_a_hostile_handle_takes_no_attribute_name() {
+fn a_walk_is_stable_and_its_names_are_no_handles() {
     let dir = Dir::new("stable");
-    // A file's handle at the first one a name is taken from (one below the top of the range):
-    // the ATTRIB must skip it for another name, and the line must keep its own.
+    // A file's line one below the top of the handle range: it keeps its handle, and the
+    // records' names, which are no handles, never name it.
     let before = "0\nLINE\n5\nFFFFFFFFFFFFFFFE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n5\n21\n5\n31\n0\n";
     let file = dir.path("hostile.dxf");
     std::fs::write(&file, insert_dxf(2, before)).expect("write the DXF");
@@ -351,13 +351,13 @@ fn a_restored_reference_does_not_revive_an_old_name() {
 }
 
 #[test]
-fn a_new_line_never_takes_an_issued_name() {
+fn a_new_line_is_never_a_record() {
     let dir = Dir::new("handseed");
     let file = dir.path("hostile.dxf");
     // A file's $HANDSEED in the reserved band is the file's own handle and is not followed (#913),
-    // so the line made after the walk gets the drawing's seed: never the name given below the top
-    // of the range. The engine's `a_new_entity_never_takes_an_issued_name` sets the seed at the top
-    // and checks the same rule where the seed can reach the names.
+    // so the line made after the walk gets the drawing's seed. The record's name is no handle:
+    // the line is the line, and the name still names the attribute. The engine's
+    // `a_new_object_at_any_handle_is_never_a_record` puts the seed at the top of the range.
     std::fs::write(&file, insert_dxf_seed(1, "", Some("FFFFFFFFFFFFFFFF"))).expect("write the DXF");
     let mut run = Run::new(&dir, Some(&file));
     let out = run
@@ -371,7 +371,7 @@ fn a_new_line_never_takes_an_issued_name() {
 }
 
 #[test]
-fn a_real_entity_in_the_name_range_is_not_filtered() {
+fn lines_at_the_top_of_the_handle_range_walk_as_lines() {
     let dir = Dir::new("walkrange");
     let file = dir.path("hostile.dxf");
     let before = "0\nLINE\n5\nFFFFFFFFFFFFFFFE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n5\n21\n5\n31\n0\n\

@@ -20,7 +20,7 @@ use cadcraft_doc::{Drawing, Handle};
 use craft_dxf::Tag;
 
 use super::LispError;
-use super::drawing::{SubEnts, arity, ename, groups_to_list, string};
+use super::drawing::{arity, ename, groups_to_list, string};
 use super::eval::{Ctx, Flow};
 use super::value::Value;
 
@@ -49,14 +49,6 @@ struct Records {
     by_handle: HashMap<String, usize>,
     /// Role → written handle.
     by_role: HashMap<ForeignKey, String>,
-}
-
-impl Names {
-    /// Whether the drawing already names one of its non-graphic objects `h`: an INSERT's record
-    /// must not be given the same handle, or one name would resolve to another object.
-    pub(crate) fn names_handle(&self, h: Handle) -> bool {
-        self.by_name.contains_key(&h)
-    }
 }
 
 impl Records {
@@ -113,12 +105,11 @@ fn records(names: &mut Names, d: &Arc<Drawing>) -> Option<Arc<Records>> {
 }
 
 /// The entity name of the object with `key`, given out now if it has none yet.
-fn name_of(names: &mut Names, subents: Option<&SubEnts>, d: &Drawing, key: &ForeignKey) -> Option<Handle> {
+fn name_of(names: &mut Names, d: &Drawing, key: &ForeignKey) -> Option<Handle> {
     if let Some(h) = names.by_key.get(key) {
         return Some(*h);
     }
-    // A handle LISP named an INSERT's record at is taken too: names never resolve to another object.
-    let free = |names: &Names, h: Handle| d.entity(h).is_none() && !names.by_name.contains_key(&h) && !subents.is_some_and(|s| s.was_issued(h));
+    let free = |names: &Names, h: Handle| d.entity(h).is_none() && !names.by_name.contains_key(&h);
     let file = (key.0 != BY_HANDLE).then(|| d.foreign.handles.iter().find(|(_, k)| *k == key).map(|(h, _)| *h)).flatten();
     let h = match file.filter(|h| free(names, *h)) {
         Some(h) => h,
@@ -154,7 +145,7 @@ fn pointer_group(code: i32) -> bool {
 
 /// The object `written` as an entity list: `(-1 . name)`, its type and its groups, with its
 /// handle (group 5, a DIMSTYLE's 105) as its name's and pointers as entity names.
-fn object_list(names: &mut Names, subents: Option<&SubEnts>, d: &Drawing, recs: &Records, name: Handle, written: &str) -> Value {
+fn object_list(names: &mut Names, d: &Drawing, recs: &Records, name: Handle, written: &str) -> Value {
     let Some((kind, tags, _)) = recs.record(written) else { return Value::Nil };
     let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(name)), Value::cons(Value::Int(0), Value::str(kind))];
     for v in groups_to_list(tags) {
@@ -168,7 +159,7 @@ fn object_list(names: &mut Names, subents: Option<&SubEnts>, d: &Drawing, recs: 
             (Some(c), Some(t)) if pointer_group(c) => {
                 let Some(h) = norm(&t).filter(|h| h != "0") else { continue };
                 let target = Handle::parse_hex(&h).filter(|e| d.entity(*e).is_some());
-                let target = target.or_else(|| recs.key(&h).and_then(|k| name_of(names, subents, d, &k)));
+                let target = target.or_else(|| recs.key(&h).and_then(|k| name_of(names, d, &k)));
                 items.push(match target {
                     Some(e) => Value::cons(Value::Int(c), Value::Ename(e)),
                     None => v,
@@ -191,9 +182,8 @@ pub fn entget(ctx: &mut Ctx<'_>, h: Handle) -> Value {
     let Ok(st) = ctx.s.state() else { return Value::Nil };
     let names = &mut ctx.env.objects;
     let Some(recs) = records(names, &st.doc) else { return Value::Nil };
-    let subents = ctx.s.subents();
     let Some(w) = written_of(names, &st.doc, &recs, h) else { return Value::Nil };
-    object_list(names, subents, &st.doc, &recs, h, &w)
+    object_list(names, &st.doc, &recs, h, &w)
 }
 
 /// `handent` of a non-graphic object: whether `h` names one that exists.
@@ -210,7 +200,7 @@ pub fn namedobjdict(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError>
     let Ok(st) = ctx.s.state() else { return Ok(Flow::Value(Value::Nil)) };
     let names = &mut ctx.env.objects;
     let key: ForeignKey = ("NOD".into(), String::new());
-    let found = records(names, &st.doc).filter(|r| r.written(&key).is_some()).and_then(|_| name_of(names, ctx.s.subents(), &st.doc, &key));
+    let found = records(names, &st.doc).filter(|r| r.written(&key).is_some()).and_then(|_| name_of(names, &st.doc, &key));
     Ok(Flow::Value(found.map(Value::Ename).unwrap_or_default()))
 }
 
@@ -224,7 +214,7 @@ pub fn tblobjname(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let Ok(st) = ctx.s.state() else { return Ok(Flow::Value(Value::Nil)) };
     let names = &mut ctx.env.objects;
     let key: ForeignKey = (table, name);
-    let found = records(names, &st.doc).filter(|r| r.written(&key).is_some()).and_then(|_| name_of(names, ctx.s.subents(), &st.doc, &key));
+    let found = records(names, &st.doc).filter(|r| r.written(&key).is_some()).and_then(|_| name_of(names, &st.doc, &key));
     Ok(Flow::Value(found.map(Value::Ename).unwrap_or_default()))
 }
 
@@ -259,9 +249,8 @@ fn entry(ctx: &mut Ctx<'_>, dict: Handle, pick: impl Fn(&[(String, String)]) -> 
     let list = entries(kind, tags);
     let Some(i) = pick(&list) else { return (Value::Nil, None) };
     let Some((_, eh)) = list.get(i) else { return (Value::Nil, None) };
-    let Some(name) = recs.key(eh).and_then(|k| name_of(names, ctx.s.subents(), &st.doc, &k)) else { return (Value::Nil, Some(i)) };
-    let subents = ctx.s.subents();
-    (object_list(names, subents, &st.doc, &recs, name, eh), Some(i))
+    let Some(name) = recs.key(eh).and_then(|k| name_of(names, &st.doc, &k)) else { return (Value::Nil, Some(i)) };
+    (object_list(names, &st.doc, &recs, name, eh), Some(i))
 }
 
 /// `(dictsearch dict key [setnext])`: the entity list of the entry `key` (any case) of a

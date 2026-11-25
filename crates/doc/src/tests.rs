@@ -764,20 +764,3 @@ fn dim_style_spellings_of_one_field_apply_once() {
     assert!(st.apply_fields(m).is_empty());
     assert_eq!(st.text_height, want);
 }
-
-/// A drawing's reserved handles are plain data: comparing two drawings, or a drawing and its
-/// clone, is ordinary field comparison. It takes no lock (the model holds no `Arc<Mutex<..>>`),
-/// so opposite comparisons cannot wait for each other, and `Drawing` stays `Send + Sync`.
-#[test]
-fn comparing_two_drawings_takes_no_lock() {
-    fn send_and_sync<T: Send + Sync>() {}
-    send_and_sync::<Drawing>();
-    let mut a = Drawing::new_metric();
-    let mut b = Drawing::new_metric();
-    assert_eq!(a, b);
-    a.reserve_handle(Handle(HANDLE_LIMIT + 1));
-    assert_ne!(a, b, "a reserved handle is part of the drawing");
-    assert_eq!(a, a.clone(), "a drawing and its clone compare by their reservations");
-    b.reserve_handle(Handle(HANDLE_LIMIT + 1));
-    assert_eq!(a, b);
-}
