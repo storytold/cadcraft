@@ -873,3 +873,20 @@ fn a_constant_value_the_reference_has_an_attribute_for_does_not_count() {
     assert!(with(vec![]).y > 4000.0);
     assert!(with(vec![plain_attrib("c")]).y < 100.0);
 }
+
+#[test]
+fn constant_values_count_in_extents_as_attmode_shows_them() {
+    // The renderer shows no constant value at ATTMODE 0, and the invisible ones too at 2.
+    let top = |attmode: i64, invisible: bool| {
+        let mut a = plain_attrib("C");
+        a.text.insert = Vec3::new(0.0, 50.0, 0.0);
+        (a.constant, a.invisible) = (true, invisible);
+        let mut d = drawing_with_block(Entity::new(Handle(2), EntityKind::AttDef(a)));
+        d.header.set_i64("ATTMODE", attmode);
+        extents_pair(&d).1.y
+    };
+    assert!(top(1, false) > 40.0);
+    assert!(top(0, false) < 40.0, "ATTMODE 0 hides it");
+    assert!(top(1, true) < 40.0);
+    assert!(top(2, true) > 40.0, "ATTMODE 2 shows an invisible one");
+}

@@ -293,7 +293,7 @@ fn attrib_layer<'a>(d: &'a Drawing, ins: &crate::Insert, a: &'a crate::Attrib) -
 }
 
 /// The bounds of a block's contents, in block coordinates: its geometry, which every reference to
-/// the block shows, and the value of each visible constant attribute definition by tag, which
+/// the block shows, and the value of each constant attribute definition ATTMODE shows, by tag, which
 /// only a block reference draws (a dimension's block does not), and only when the reference
 /// carries no attribute of that tag. They are kept apart so that the one cache serves every
 /// reference, whichever asks first.
@@ -324,9 +324,18 @@ fn contents<'a, 'm>(
     let key = (blk.name.as_str(), depth);
     if !blocks.contains_key(&key) {
         let mut c = Contents { geometry: Bounds2::EMPTY, constants: Vec::new() };
+        // ATTMODE, as the renderer applies it to a constant value: 0 shows none, 1 the visible
+        // ones, 2 all of them.
+        let attmode = d.header.i64("ATTMODE", 1);
         for be in blk.entities.iter() {
             match &be.kind {
-                EntityKind::AttDef(a) if a.constant && !a.invisible && be.common.visible && layer_counts(d, &be.common.layer, off_counts) => {
+                EntityKind::AttDef(a)
+                    if a.constant
+                        && attmode != 0
+                        && (!a.invisible || attmode == 2)
+                        && be.common.visible
+                        && layer_counts(d, &be.common.layer, off_counts) =>
+                {
                     c.constants.push((a.tag.as_str(), constant_box(a, be.common.matches_layout_orientation())));
                 }
                 _ if in_block_visible(d, be, off_counts) => c.geometry = c.geometry.union(&bounds_in(d, be, depth + 1, blocks, off_counts)),
