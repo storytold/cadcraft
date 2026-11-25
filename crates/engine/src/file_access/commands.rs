@@ -280,6 +280,7 @@ pub const NO_FILES: &[&str] = &[
     "stretch",
     "offset",
     "trim",
+    "extrim",
     "extend",
     "fillet",
     "chamfer",

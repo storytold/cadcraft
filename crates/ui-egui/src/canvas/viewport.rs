@@ -303,3 +303,45 @@ impl VpHighlight {
         }
     }
 }
+
+/// The part of the object under the cursor that the running command highlights instead of all of
+/// it (TRIM: the piece a click there removes; EXTEND: what it adds; see
+/// [`cadcraft_engine::Session::highlight`]). Worked out again only when the object, the cursor,
+/// the zoom, the drawing or the prompt changed, not on every frame with the cursor at rest.
+#[derive(Default)]
+pub(super) struct HoverPart {
+    key: Option<u64>,
+    pub(super) list: Option<DisplayList>,
+    /// Bumped on each computation.
+    pub(super) list_gen: u64,
+}
+
+impl HoverPart {
+    /// What a running command will change wherever the cursor is (TRIM's Fence and Crossing,
+    /// [`cadcraft_engine::Session::highlight_all`]) comes first; otherwise the part of the object
+    /// under the cursor ([`cadcraft_engine::Session::highlight`]).
+    pub(super) fn update(&mut self, session: &cadcraft_engine::Session, hover: Option<Handle>, cursor: Option<Vec2>, scale: f64) {
+        let (Some(c), Ok(st)) = (cursor, session.state()) else {
+            self.key = None;
+            self.list = None;
+            return;
+        };
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hs = std::collections::hash_map::DefaultHasher::new();
+            let doc = (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize);
+            // Every answer the running command is given counts, not only those that change the
+            // prompt: a fence point taken back with Undo leaves the same prompt but a shorter fence.
+            let answers = (session.commands_started, session.inputs);
+            (hover, c.x.to_bits(), c.y.to_bits(), scale.to_bits(), doc, answers, session.prompt_text(), super::list::font_generation()).hash(&mut hs);
+            hs.finish()
+        };
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        let ents = session.highlight_all(c).or_else(|| hover.and_then(|h| session.highlight(h, c)));
+        self.list = ents.map(|ents| super::list::rebuilt_preview(&st.doc, ents.iter(), scale));
+        self.list_gen = self.list_gen.wrapping_add(1);
+    }
+}
