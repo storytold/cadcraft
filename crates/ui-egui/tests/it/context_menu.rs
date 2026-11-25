@@ -257,7 +257,6 @@ fn menu_and_typed_paste_ask_the_window_for_the_system_clipboard() {
     app.session.set_selection(h);
     app.run("copyclip", json!({})).unwrap();
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
         now += dt;
@@ -298,7 +297,6 @@ fn a_held_paste_is_cancelled_by_escape_and_runs_once() {
     app.session.set_selection(h);
     app.run("copyclip", json!({})).unwrap();
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
         now += dt;
@@ -425,7 +423,6 @@ fn without_late_answers_a_paste_after_the_next_frame_is_ordinary() {
     app.session.set_selection(h);
     app.run("copyclip", json!({})).unwrap();
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         now += 0.01;
@@ -476,7 +473,6 @@ fn a_paste_bound_to_another_key_asks_the_window_for_the_system_clipboard() {
     app.run("copyclip", json!({})).unwrap();
     app.ui.shortcuts.insert("pasteclip".into(), "F9".into());
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         now += 0.01;
@@ -508,7 +504,6 @@ fn a_held_paste_does_not_run_in_another_drawing() {
     app.session.set_selection(h);
     app.run("copyclip", json!({})).unwrap();
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
         now += dt;
@@ -557,7 +552,6 @@ fn input_to_the_running_command_drops_a_held_paste() {
     app.session.set_selection(h);
     app.run("copyclip", json!({})).unwrap();
     let ctx = egui::Context::default();
-    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut now = 0.0;
     let mut frame = |app: &mut CadApp, events: Vec<egui::Event>, dt: f64| {
         now += dt;
