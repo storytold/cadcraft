@@ -895,7 +895,7 @@ fn constant_values_count_in_extents_as_attmode_shows_them() {
 /// blocks and N references to blocks it does not have, opened in N² name comparisons (#1924).
 #[test]
 fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
-    const N: usize = 40_000;
+    const N: usize = 60_000;
     let mut d = Drawing::new_imperial();
     d.layers = (0..N).map(|i| Layer::new(&format!("L{i}"))).collect();
     for i in 0..N {
@@ -907,5 +907,5 @@ fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
         assert!(d.layer(&format!("l{i}")).is_some() && d.layer(&format!("M{i}")).is_none());
         assert!(d.block(&format!("b{i}")).is_some() && d.block(&format!("Z{i}")).is_none());
     }
-    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
 }

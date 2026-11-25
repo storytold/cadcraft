@@ -1,65 +1,63 @@
-//! The layer and block tables, whose names are looked up without case in about constant time.
+//! The layer and block tables, whose names are looked up without case through an index instead of a
+//! scan once a table is large and looked up often.
 //!
 //! [`Drawing::layer`](crate::Drawing::layer) and [`Drawing::block`](crate::Drawing::block) run for
 //! every entity while a drawing is read, measured and drawn. Scanning the table on each made a file
 //! of N layers, or of N blocks and N references to blocks it does not have, cost N² name
 //! comparisons: tens of seconds to open at a few tens of thousands (#1924, F-04).
 //!
-//! Each table keeps an index from the hash of a name with its ASCII letters lower-cased to the
-//! table's first entry of that hash, so a lookup returns what a scan in table order returns.
+//! Each table keeps an index from a name with its ASCII letters lower-cased to the table's first
+//! entry of that name, so a lookup returns what a scan in table order returns. The index is ordered
+//! by those bytes, not hashed: a lookup costs a logarithmic number of name comparisons whatever
+//! the names are, also where a file could predict a hash's keys (the web build's `RandomState`).
 //! Every change to a table goes through `DerefMut`, which drops the index, so it can never be
 //! stale. The index is built only once a table has been scanned [`SCANS_BEFORE_INDEX`] times since
-//! it last changed: a table changed between every few lookups costs what scanning it always did,
-//! and one looked up many times in between is indexed once.
+//! it last changed: a table changed between every few hundred lookups costs at most about 2.5 times
+//! what scanning it always did, and one looked up many times in between is indexed once.
 
-use std::collections::{BTreeMap, HashMap, btree_map};
-use std::hash::{BuildHasher, Hasher};
+use std::collections::{BTreeMap, btree_map};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
-/// Tables with fewer entries than this are always scanned: comparing a few names costs less than
-/// hashing one.
-const MIN_INDEXED: usize = 64;
-/// Lookups that scan a table after it changed before its index is built. A build costs about as
-/// much as some tens of scans.
-const SCANS_BEFORE_INDEX: u32 = 32;
+/// Tables with fewer entries than this are always scanned: a search of the index costs about what a
+/// scan of 100 names does (measured), so a smaller table gains nothing from one.
+const MIN_INDEXED: usize = 128;
+/// Lookups that scan a table after it changed before its index is built. A build costs about 100
+/// to 350 scans (measured on tables of 100 to 40 000 names), so a table changed after every few
+/// hundred lookups costs at most about 2.5 times what scanning it always did.
+const SCANS_BEFORE_INDEX: u32 = 256;
 
-/// From the hash of a name without case to the first entry, in table order, of a name with that
-/// hash. The hash is keyed per index (the map's `RandomState`), so a file cannot choose names that
-/// collide.
-struct Index<V>(HashMap<u64, V>);
+/// From a name with its ASCII letters lower-cased to the first entry, in table order, of that name.
+struct Index<V>(BTreeMap<Box<[u8]>, V>);
 
 impl<V> Index<V> {
     fn build<'a>(entries: impl Iterator<Item = (&'a str, V)>) -> Self {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         for (name, v) in entries {
-            map.entry(folded_hash(map.hasher(), name)).or_insert(v);
+            map.entry(name.to_ascii_lowercase().into_bytes().into_boxed_slice()).or_insert(v);
         }
         Index(map)
     }
 
-    /// The first entry whose name hashes as `name` does: the first named `name` without case when
-    /// its name is that, else another name with the same hash, and the caller scans.
+    /// The first entry named `name`, without case.
     fn get(&self, name: &str) -> Option<&V> {
-        self.0.get(&folded_hash(self.0.hasher(), name))
+        with_folded(name, |folded| self.0.get(folded))
     }
 }
 
-/// The hash of `name` with its ASCII letters lower-cased: names that `eq_ignore_ascii_case` finds
-/// equal hash the same.
-fn folded_hash(state: &impl BuildHasher, name: &str) -> u64 {
-    let mut h = state.build_hasher();
+/// `f` of the bytes of `name` with its ASCII letters lower-cased, which are equal for the names
+/// `eq_ignore_ascii_case` finds equal. A short name is folded on the stack.
+fn with_folded<R>(name: &str, f: impl FnOnce(&[u8]) -> R) -> R {
     let mut buf = [0u8; 64];
-    for chunk in name.as_bytes().chunks(buf.len()) {
-        if let Some(part) = buf.get_mut(..chunk.len()) {
-            part.copy_from_slice(chunk);
-            part.make_ascii_lowercase();
-            h.write(part);
+    match buf.get_mut(..name.len()) {
+        Some(short) => {
+            short.copy_from_slice(name.as_bytes());
+            short.make_ascii_lowercase();
+            f(short)
         }
+        None => f(name.to_ascii_lowercase().as_bytes()),
     }
-    h.write_usize(name.len());
-    h.finish()
 }
 
 /// A table's index: built on demand, shared by copies of the unchanged table (an undo snapshot),
@@ -123,14 +121,9 @@ pub struct NamedList<T> {
 impl<T: Named> NamedList<T> {
     /// The position of the first entry named `name`, without case.
     pub fn position_by_name(&self, name: &str) -> Option<usize> {
-        let scan = || self.list.iter().position(|t| t.name().eq_ignore_ascii_case(name));
-        let Some(ix) = self.index.get(self.list.len(), || Index::build(self.list.iter().enumerate().map(|(i, t)| (t.name(), i)))) else {
-            return scan();
-        };
-        match ix.get(name) {
-            None => None,
-            Some(&i) if self.list.get(i).is_some_and(|t| t.name().eq_ignore_ascii_case(name)) => Some(i),
-            Some(_) => scan(),
+        match self.index.get(self.list.len(), || Index::build(self.list.iter().enumerate().map(|(i, t)| (t.name(), i)))) {
+            Some(ix) => ix.get(name).copied(),
+            None => self.list.iter().position(|t| t.name().eq_ignore_ascii_case(name)),
         }
     }
 
@@ -240,14 +233,9 @@ impl<V> NamedMap<V> {
         if let Some(v) = self.map.get(name) {
             return Some(v);
         }
-        let scan = || self.map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v);
-        let Some(ix) = self.index.get(self.map.len(), || Index::build(self.map.keys().map(|k| (k.as_str(), Box::from(k.as_str()))))) else {
-            return scan();
-        };
-        match ix.get(name) {
-            None => None,
-            Some(k) if k.eq_ignore_ascii_case(name) => self.map.get(&**k).or_else(scan),
-            Some(_) => scan(),
+        match self.index.get(self.map.len(), || Index::build(self.map.keys().map(|k| (k.as_str(), Box::from(k.as_str()))))) {
+            Some(ix) => ix.get(name).and_then(|k| self.map.get(&**k)),
+            None => self.map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v),
         }
     }
 }
@@ -366,14 +354,45 @@ mod tests {
     }
 
     /// Every block lookup finds what `Drawing::block` always found: the block of that exact name,
-    /// else the first in name order of that name without case.
+    /// else the first in name order of that name without case. Only names that miss an exact name
+    /// count towards building the index, so the names are looked up twice.
     fn check_blocks(d: &Drawing, extra: &[&str]) {
         let names: Vec<String> = d.blocks.keys().cloned().collect();
-        for p in probes(names.iter().map(String::as_str).chain(extra.iter().copied())) {
+        for p in probes(names.iter().chain(&names).map(String::as_str).chain(extra.iter().copied())) {
             let want = d.blocks.get(&p).or_else(|| d.blocks.iter().find(|(k, _)| k.eq_ignore_ascii_case(&p)).map(|(_, v)| v));
             assert_eq!(d.block(&p).map(std::ptr::from_ref), want.map(std::ptr::from_ref), "{p}");
         }
         assert_eq!(blocks_indexed(d), d.blocks.len() >= MIN_INDEXED);
+    }
+
+    /// The index answers by itself, with no scan to fall back on: every name finds the first entry
+    /// of its name without case, also names that differ only after a long shared prefix, names
+    /// that fill the stack buffer or are longer, and names with non-ASCII letters (which keep their
+    /// case). Names are compared, not hashed, so no two names can share a slot.
+    #[test]
+    fn the_index_alone_finds_the_first_entry_of_every_name() {
+        let long = "x".repeat(100);
+        let names: Vec<String> = vec![
+            "Door".into(),
+            "DOOR".into(),
+            "door2".into(),
+            format!("{long}A"),
+            format!("{long}a"),
+            format!("{long}B"),
+            format!("{}b", "P".repeat(63)),
+            format!("{}B", "p".repeat(63)),
+            "Ärea".into(),
+            "ärea".into(),
+            "ÄREA".into(),
+            String::new(),
+        ];
+        let ix = super::Index::build(names.iter().enumerate().map(|(i, n)| (n.as_str(), i)));
+        for p in names.iter().flat_map(|n| [n.clone(), n.to_ascii_uppercase(), n.to_ascii_lowercase(), format!("{n}?")]) {
+            let want = names.iter().position(|n| n.eq_ignore_ascii_case(&p));
+            assert_eq!(ix.get(&p).copied(), want, "{p:?}");
+        }
+        assert_eq!(ix.get(&format!("{long}a")), Some(&3));
+        assert_eq!(ix.get("ärea"), Some(&9));
     }
 
     #[test]
@@ -431,7 +450,7 @@ mod tests {
     fn block_lookups_find_an_exact_name_else_the_first_without_case_through_every_change() {
         let block = |name: &str| Arc::new(Block::new(name));
         let mut d = Drawing::new_imperial();
-        for name in (0..100).map(|i| format!("B{i}")).chain(["Door", "DOOR", "door"].map(String::from)) {
+        for name in (0..150).map(|i| format!("B{i}")).chain(["Door", "DOOR", "door"].map(String::from)) {
             d.blocks.insert(name.clone(), block(&name));
         }
         check_blocks(&d, &["dOOR", "missing"]);
