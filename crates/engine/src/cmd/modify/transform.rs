@@ -7,7 +7,10 @@ use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, er
 
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
     refuse_ole_frames(s, hs, m, copy)?;
-    edit_entities(s, hs, copy, |e| e.kind.transform(m))
+    edit_entities(s, hs, copy, |e| {
+        e.kind.transform(m);
+        e.common.transform_moves(m);
+    })
 }
 
 /// MIRROR's default hatch policy retains the fill direction while reflecting its boundary.
@@ -40,6 +43,7 @@ pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64,
     refuse_ole_frames(s, hs, &m, copy)?;
     edit_entities(s, hs, copy, |e| {
         e.kind.transform(&m);
+        e.common.transform_moves(&m);
         e.kind.scale_heights(base.z, f);
         e.common.thickness *= f;
     })

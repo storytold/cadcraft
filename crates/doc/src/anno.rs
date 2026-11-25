@@ -7,8 +7,14 @@
 //! it draws at paper size × that view's annotation scale, and only in views whose scale it
 //! supports unless `ANNOALLVISIBLE` is 1. Model space is seen at `CANNOSCALE`, a layout viewport
 //! at its viewport scale, and paper space itself at 1:1.
+//!
+//! An object supporting several scales can sit somewhere else at one of them ([`AnnoMove`]): its
+//! grips move it at the current scale only, and ANNORESET puts every scale back where the current
+//! one is. What moves is the object's position ([`shift_position`]).
 
 use serde::{Deserialize, Serialize};
+
+use cadcraft_geom::{Mat3, Vec2};
 
 use crate::{Common, Drawing, Entity, EntityKind};
 
@@ -87,6 +93,13 @@ pub fn imperial_scales() -> Vec<AnnoScale> {
     v
 }
 
+/// How far an annotative object sits from its shared position at the scale named `scale`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AnnoMove {
+    pub scale: String,
+    pub by: Vec2,
+}
+
 /// Kinds that can be annotative.
 pub fn can_be_annotative(k: &EntityKind) -> bool {
     matches!(
@@ -105,6 +118,7 @@ pub fn is_annotative(e: &Entity) -> bool {
 pub fn set_annotative(e: &mut Entity, on: bool, current: &AnnoScale) {
     if !on {
         e.common.anno_scales.clear();
+        e.common.anno_moves.clear();
     } else if can_be_annotative(&e.kind) && e.common.anno_scales.is_empty() {
         e.common.anno_scales.push(current.clone());
     }
@@ -115,8 +129,9 @@ pub fn set_annotative(e: &mut Entity, on: bool, current: &AnnoScale) {
 pub enum AnnoDraw {
     /// Not annotative: as stored.
     Plain,
-    /// Annotative, at this factor (drawing units per paper unit).
-    Scaled(f64),
+    /// Annotative, at `factor` (drawing units per paper unit), its position moved `by` at that
+    /// scale.
+    Scaled { factor: f64, by: Vec2 },
     /// Annotative and not supporting the view's scale, with `ANNOALLVISIBLE` 0.
     Hidden,
 }
@@ -130,6 +145,76 @@ impl Common {
     pub fn supports_scale(&self, name: &str) -> bool {
         self.anno_scales.iter().any(|s| s.name.eq_ignore_ascii_case(name))
     }
+    /// How far the object sits from its shared position at the scale named `name`.
+    pub fn moved_at(&self, name: &str) -> Vec2 {
+        self.anno_moves.iter().find(|m| m.scale.eq_ignore_ascii_case(name)).map(|m| m.by).filter(|v| v.is_finite()).unwrap_or(Vec2::ZERO)
+    }
+    /// How far the object sits from its shared position at its scale with the ratio `factor`.
+    pub fn moved_at_factor(&self, factor: f64) -> Vec2 {
+        self.anno_scales.iter().find(|s| s.has_factor(factor)).map_or(Vec2::ZERO, |s| self.moved_at(&s.name))
+    }
+    /// Move the object `by` at the scale named `name` only (an offset that comes to nothing is
+    /// dropped).
+    pub fn move_at(&mut self, name: &str, by: Vec2) {
+        if !by.is_finite() {
+            return;
+        }
+        let to = self.moved_at(name) + by;
+        self.anno_moves.retain(|m| !m.scale.eq_ignore_ascii_case(name));
+        if to.len() > 1e-12 * (1.0 + by.len()) && self.anno_moves.len() < MAX_SCALES {
+            self.anno_moves.push(AnnoMove { scale: name.to_string(), by: to });
+        }
+    }
+    /// Turn the offsets with `m`'s linear part (MOVE leaves them, ROTATE turns them, SCALE sizes
+    /// them, MIRROR mirrors them), as the shared position goes through `m`.
+    pub fn transform_moves(&mut self, m: &Mat3) {
+        for mv in &mut self.anno_moves {
+            let v = m.apply_vec(mv.by);
+            mv.by = if v.is_finite() { v } else { Vec2::ZERO };
+        }
+    }
+}
+
+/// Move the position of `k` by `by`: a text's, MText's or block reference's whole object, a
+/// multileader's landing and content (its arrowheads stay), a dimension's text. Other kinds stay.
+pub fn shift_position(k: &mut EntityKind, by: Vec2) {
+    if !by.is_finite() || by == Vec2::ZERO {
+        return;
+    }
+    let add = |p: &mut cadcraft_geom::Vec3| {
+        p.x += by.x;
+        p.y += by.y;
+    };
+    match k {
+        EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_) => k.transform(&Mat3::translate(by)),
+        EntityKind::MLeader(m) => {
+            add(&mut m.landing);
+            if let Some(t) = &mut m.text {
+                add(&mut t.insert);
+            }
+            if let Some(b) = &mut m.block {
+                add(&mut b.insert);
+            }
+        }
+        EntityKind::Dimension(d) => {
+            add(&mut d.text_mid);
+            d.user_text_pos = true;
+            d.block = None;
+        }
+        _ => {}
+    }
+}
+
+/// Whether grip `index` of `k` is its position grip: moving it moves what [`shift_position`]
+/// moves.
+pub fn is_position_grip(k: &EntityKind, index: usize) -> bool {
+    match k {
+        EntityKind::Text(_) | EntityKind::MText(_) => true,
+        EntityKind::Insert(_) => index == 0,
+        EntityKind::Dimension(_) => index == 3,
+        EntityKind::MLeader(m) => index == m.leaders.iter().map(Vec::len).sum::<usize>(),
+        _ => false,
+    }
 }
 
 /// How `e` draws in a view whose annotation scale is `view` (drawing units per paper unit). An
@@ -139,12 +224,46 @@ pub fn anno_draw(e: &Entity, view: f64, all_visible: bool) -> AnnoDraw {
         return AnnoDraw::Plain;
     }
     if e.common.supports_factor(view) {
-        return AnnoDraw::Scaled(if view.is_finite() && view > 0.0 { view } else { 1.0 });
+        let factor = if view.is_finite() && view > 0.0 { view } else { 1.0 };
+        return AnnoDraw::Scaled { factor, by: e.common.moved_at_factor(view) };
     }
     match e.common.anno_scales.first() {
-        Some(s) if all_visible => AnnoDraw::Scaled(s.factor()),
+        Some(s) if all_visible => AnnoDraw::Scaled { factor: s.factor(), by: e.common.moved_at(&s.name) },
         _ => AnnoDraw::Hidden,
     }
+}
+
+/// `e` at each of its scales other than the one it shows at in a view of scale `view` (see
+/// [`anno_draw`]): at that scale's size and position, no longer annotative (so it draws as it
+/// is). AutoCAD shows these faded while the object is selected (SELECTIONANNODISPLAY). Empty when
+/// `e` isn't annotative, supports one scale or doesn't show in that view; scales of the same
+/// ratio come once.
+pub fn anno_others(e: &Entity, view: f64, all_visible: bool) -> Vec<Entity> {
+    let AnnoDraw::Scaled { factor, .. } = anno_draw(e, view, all_visible) else {
+        return Vec::new();
+    };
+    let mut seen = vec![factor];
+    let mut out = Vec::new();
+    for s in e.common.anno_scales.iter().take(MAX_SCALES).filter(|s| s.is_valid()) {
+        let f = s.factor();
+        if seen.iter().any(|g| same_factor(*g, f)) {
+            continue;
+        }
+        seen.push(f);
+        let mut other = anno_placed(e, f, e.common.moved_at(&s.name));
+        other.common.anno_scales.clear();
+        other.common.anno_moves.clear();
+        out.push(other);
+    }
+    out
+}
+
+/// `e` as it draws at annotation scale `f` with its position moved `by` there: [`anno_scaled`],
+/// then [`shift_position`].
+pub fn anno_placed(e: &Entity, f: f64, by: Vec2) -> Entity {
+    let mut out = anno_scaled(e, f);
+    shift_position(&mut out.kind, by);
+    out
 }
 
 /// `e` as it draws at annotation scale `f`: its paper sizes (text height and width, dimension
@@ -225,13 +344,52 @@ impl Drawing {
     /// (paper space shows every annotative object), elsewhere (model space, or an object not in
     /// the drawing yet) as [`anno_draw`] at the current annotation scale.
     pub fn anno_draw(&self, e: &Entity) -> AnnoDraw {
+        self.anno_draw_in(e, None)
+    }
+    /// How top-level object `e` draws where it is edited: through an active viewport whose
+    /// annotation scale is `view` (drawing units per paper unit, the viewport's scale, as the
+    /// renderer draws model space there), else as [`Drawing::anno_draw`].
+    pub fn anno_draw_in(&self, e: &Entity, view: Option<f64>) -> AnnoDraw {
         if !is_annotative(e) {
             return AnnoDraw::Plain;
         }
         if !self.model.contains(e.handle) && self.layouts.iter().any(|l| l.entities.contains(e.handle)) {
-            return AnnoDraw::Scaled(1.0);
+            return AnnoDraw::Scaled { factor: 1.0, by: e.common.moved_at_factor(1.0) };
         }
-        anno_draw(e, self.current_anno_scale().factor(), self.anno_all_visible())
+        let view = view.filter(|f| f.is_finite() && *f > 0.0).unwrap_or_else(|| self.current_anno_scale().factor());
+        anno_draw(e, view, self.anno_all_visible())
+    }
+    /// The scale `e` shows at outside a viewport (see [`Drawing::anno_draw`]): its name and
+    /// factor, `None` when `e` isn't annotative or doesn't show.
+    pub fn anno_shown_scale(&self, e: &Entity) -> Option<AnnoScale> {
+        self.anno_shown_scale_in(e, None)
+    }
+    /// The scale `e` shows at in view `view` (see [`Drawing::anno_draw_in`]).
+    pub fn anno_shown_scale_in(&self, e: &Entity, view: Option<f64>) -> Option<AnnoScale> {
+        match self.anno_draw_in(e, view) {
+            AnnoDraw::Scaled { factor, .. } => e.common.anno_scales.iter().find(|s| s.has_factor(factor)).cloned(),
+            _ => None,
+        }
+    }
+    /// `e` at its other scales outside a viewport (see [`anno_others`]); none in a layout's paper
+    /// space, which shows annotative objects at 1:1 only.
+    pub fn anno_others(&self, e: &Entity) -> Vec<Entity> {
+        if !is_annotative(e) || (!self.model.contains(e.handle) && self.layouts.iter().any(|l| l.entities.contains(e.handle))) {
+            return Vec::new();
+        }
+        anno_others(e, self.current_anno_scale().factor(), self.anno_all_visible())
+    }
+    /// `e` as it draws outside a viewport: an annotative object at its scale and position there,
+    /// anything else (and a hidden annotative object) as stored.
+    pub fn anno_shown(&self, e: &Entity) -> EntityKind {
+        self.anno_shown_in(e, None)
+    }
+    /// `e` as it draws in view `view` (see [`Drawing::anno_draw_in`]).
+    pub fn anno_shown_in(&self, e: &Entity, view: Option<f64>) -> EntityKind {
+        match self.anno_draw_in(e, view) {
+            AnnoDraw::Scaled { factor, by } => anno_placed(e, factor, by).kind,
+            _ => e.kind.clone(),
+        }
     }
     /// Whether new objects of this kind are annotative: text and MText with an annotative text
     /// style, dimensions with an annotative dimension style, multileaders with an annotative

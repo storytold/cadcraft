@@ -84,6 +84,7 @@ pub(crate) fn paste(s: &mut Session, m: &Mat3) -> Result<Vec<Handle>> {
     for e in &ents {
         let mut e = adopt(d, e, &renames);
         e.kind.transform(m);
+        e.common.transform_moves(m);
         d.ensure_layer(&e.common.layer);
         out.push(e.handle);
         if let Some(st) = d.space_mut(&space) {

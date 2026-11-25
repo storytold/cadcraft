@@ -57,6 +57,10 @@ pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use prompt::{Accept, AttribAsk, AttribEntry, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
+/// The most selected objects [`Session::selection_anno_others`] shows at their other scales (as
+/// grips, a big selection is drawn without them).
+pub const MAX_ANNO_OTHERS: usize = 200;
+
 mod doc_state;
 mod error;
 mod last_used;
@@ -365,6 +369,11 @@ impl Session {
         }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)
+    }
+
+    /// The annotation scale of the active MSPACE viewport ([`DocState::anno_view`]).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.state().ok().and_then(DocState::anno_view)
     }
 
     /// World units per pixel at the current view.

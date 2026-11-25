@@ -81,7 +81,7 @@ fn unsupported_scale_hides_unless_annoallvisible() {
     let (mut s, h) = with_text();
     setvar(&mut s, "CANNOSCALE", json!("1:20"));
     // ANNOALLVISIBLE 1 (the default): shown, at the object's own scale.
-    assert_eq!(s.doc().unwrap().anno_draw(&entity(&s, h)), AnnoDraw::Scaled(1.0));
+    assert_eq!(s.doc().unwrap().anno_draw(&entity(&s, h)), AnnoDraw::Scaled { factor: 1.0, by: cadcraft_engine::geom::Vec2::ZERO });
     assert!(drawn_height(s.doc().unwrap(), h).is_some());
     s.execute("annovisible.current", &json!({})).unwrap();
     assert_eq!(s.doc().unwrap().header.i64("ANNOALLVISIBLE", 1), 0);
