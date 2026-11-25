@@ -108,6 +108,8 @@ struct Pending {
     line: Option<String>,
     /// The drawing it was asked for in (its `uid`): it pastes there or not at all.
     doc: Option<u64>,
+    /// The inputs the session had been given when it was asked for (`Session::inputs`).
+    inputs: u64,
 }
 
 /// Paste commands waiting for the system clipboard ([`defer`], [`pump`]).
@@ -188,7 +190,7 @@ pub fn offered(session: &Session, spec: &CommandSpec) -> bool {
 pub fn defer(app: &mut CadApp, id: &str, line: Option<&str>) -> bool {
     let Some(id) = paste_id(id).filter(|_| ON_DEMAND && !app.paste.running) else { return false };
     app.paste.cancel();
-    app.paste.request = Some(Pending { id, line: line.map(str::to_string), doc: active_doc(app) });
+    app.paste.request = Some(Pending { id, line: line.map(str::to_string), doc: active_doc(app), inputs: app.session.inputs });
     true
 }
 
@@ -209,7 +211,7 @@ fn run_now(app: &mut CadApp, p: Pending) {
 
 /// Run `id`, a paste command whose `Paste` event has been read.
 pub fn run_read(app: &mut CadApp, id: &'static str) {
-    run_now(app, Pending { id, line: None, doc: active_doc(app) });
+    run_now(app, Pending { id, line: None, doc: active_doc(app), inputs: app.session.inputs });
 }
 
 /// Once per frame: ask the window for the system clipboard for a newly held paste, and give up on
@@ -228,6 +230,13 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     if held.is_some_and(|p| p.doc != active_doc(app)) {
         app.paste.cancel();
         app.session.echo("Paste cancelled: another drawing became active before the clipboard was read.");
+    }
+    // Input that reached the session since it was asked for answered the prompt of the command
+    // still running (a coordinate for LINE), which the paste would now cancel: that input stands,
+    // and the held paste is dropped like one a newly started command replaces.
+    let held = app.paste.request.as_ref().or(app.paste.wait.as_ref().map(|(p, _, _)| p));
+    if held.is_some_and(|p| p.inputs != app.session.inputs) {
+        app.paste.cancel();
     }
     if let Some(p) = app.paste.request.take() {
         // A focused text field would take the `Paste` itself.
