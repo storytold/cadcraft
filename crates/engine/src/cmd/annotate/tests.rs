@@ -481,6 +481,31 @@ fn table_create_edit_merge() {
 }
 
 #[test]
+fn covered_text_survives_save_and_unmerge() {
+    let text = "CoveredText".repeat(30);
+    let table = cadcraft_doc::Table {
+        col_widths: vec![2.0, 2.0],
+        row_heights: vec![0.5],
+        cells: vec![vec![
+            cadcraft_doc::TableCell { text: "Title".into(), merged: Some((1, 2)), ..Default::default() },
+            cadcraft_doc::TableCell { text: text.clone(), ..Default::default() },
+        ]],
+        ..Default::default()
+    };
+    let mut drawing = cadcraft_doc::Drawing::new_imperial();
+    drawing.add(&cadcraft_doc::Space::Model, cadcraft_doc::Common::default(), EntityKind::Table(table)).unwrap();
+    let bytes = cadcraft_io::write(&drawing, "table.dxf").unwrap();
+    let drawing = cadcraft_io::read(&bytes, "table.dxf").unwrap();
+    let handle = drawing.model.iter().find(|e| matches!(e.kind, EntityKind::Table(_))).unwrap().handle;
+    let mut session = Session::new();
+    session.open_drawing(drawing, "table.dxf", None);
+    session.execute("table.unmerge", &json!({ "handle": handle.hex(), "row": 0, "col": 1 })).unwrap();
+    let EntityKind::Table(table) = &session.doc().unwrap().entity(handle).unwrap().kind else { panic!("expected table") };
+    assert_eq!(table.cells[0][0].merged, None);
+    assert_eq!(table.cells[0][1].text, text);
+}
+
+#[test]
 fn table_interactive() {
     let mut s = Session::new();
     s.cmdline("table").unwrap();
