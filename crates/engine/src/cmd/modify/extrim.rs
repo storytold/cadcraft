@@ -29,7 +29,7 @@ const TRACE_GAP: f64 = 1e-5;
 
 pub(super) fn spec() -> CommandSpec {
     CommandSpec::new("extrim", "Extended Trim", run_extrim)
-        .menu(&["Tools", "Express Tools", "Extended Trim"])
+        .menu(&["Tools", "Additional Tools", "Extended Trim"])
         .params("{edge: hex (line, arc, circle, ellipse, polyline or spline), side: [x,y] (inside or outside a closed edge, an arc's circle or an elliptical arc's ellipse; one side of an open edge)} → trimmed, handles, skipped: {locked, other, uncut}")
         .interactive(|s| Ok(Box::new(ExtrimM::new(s))))
 }
@@ -499,7 +499,13 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
     for (h, stretches) in plan.work {
         let mut live = vec![h];
         let mut cut = false;
+        // The object as it is before any cut: its lines and arcs, exactly.
+        let exact = s.doc()?.entity(h).and_then(|e| exact_outline(&e.kind));
         for x in stretches.into_iter().map(|st| st.pick) {
+            // The pick lies on the flattened outline, which strays from a large-radius arc by up to
+            // a millionth of its radius (far more than `tol` next to a short edge): bring it onto
+            // the object itself, and measure the pieces exactly too.
+            let x = exact.as_deref().map_or(x, |segs| on_outline(segs, x));
             // A trim replaces the object with pieces: the pick goes to the piece it lies on (none:
             // that part is already gone). The pick is on the outline traced within `tol`, so 3 tol
             // allows for that and for rounding, and is far less than the distance to any other
@@ -507,12 +513,24 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
             let target = {
                 let d = s.doc()?;
                 live.iter()
-                    .filter_map(|l| d.entity(*l).map(|e| (*l, crate::select::entity_distance(d, e, x, tol))))
+                    .filter_map(|l| {
+                        let e = d.entity(*l)?;
+                        let dist =
+                            exact_outline(&e.kind).map_or_else(|| crate::select::entity_distance(d, e, x, tol), |segs| on_outline(&segs, x).dist(x));
+                        Some((*l, dist))
+                    })
                     .filter(|(_, dist)| *dist <= 3.0 * tol)
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(l, _)| l)
             };
-            let Some(t) = target else { continue };
+            // No piece there: a planned stretch the trim can't find. Say so rather than count
+            // the object as trimmed through.
+            let Some(t) = target else {
+                if !uncut.contains(&h) {
+                    uncut.push(h);
+                }
+                continue;
+            };
             let Ok(pieces) = trim(s, t, x, edges) else {
                 if !uncut.contains(&h) {
                     uncut.push(h);
@@ -544,7 +562,7 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
         message.push_str(&format!(" {} that can't be trimmed (blocks, hatches, text…) left as they are.", plan.other));
     }
     if !uncut.is_empty() {
-        message.push_str(&format!(" {} could not be cut there and left as they are.", uncut.len()));
+        message.push_str(&format!(" {} could not be cut everywhere the edge crosses them.", uncut.len()));
     }
     Ok(json!({
         "trimmed": trimmed,
@@ -552,6 +570,28 @@ fn trim_side(s: &mut Session, edge: &Edge, side: Side) -> Result<Value> {
         "skipped": { "locked": plan.locked, "other": plan.other, "uncut": uncut.len() },
         "message": message,
     }))
+}
+
+/// An object's outline as exact lines and arcs, when it is made of nothing else (lines, arcs,
+/// circles, polylines); `None` for ellipses, splines and the rest.
+fn exact_outline(k: &EntityKind) -> Option<Vec<cadcraft_geom::Segment>> {
+    let mut out = Vec::new();
+    for p in k.prims() {
+        match p {
+            cadcraft_doc::Prim::Seg(sg) => out.push(sg),
+            cadcraft_doc::Prim::Circle(c) => out.push(cadcraft_geom::Segment::Arc {
+                arc: cadcraft_geom::Arc { center: c.center, radius: c.radius, start: 0.0, end: std::f64::consts::TAU },
+                ccw: true,
+            }),
+            _ => return None,
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The point of `segs` nearest `p`.
+fn on_outline(segs: &[cadcraft_geom::Segment], p: Vec2) -> Vec2 {
+    segs.iter().map(|sg| sg.closest(p)).min_by(|a, b| a.dist(p).total_cmp(&b.dist(p))).unwrap_or(p)
 }
 
 /// The parts the trim would remove, drawn red.

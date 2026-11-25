@@ -485,3 +485,38 @@ fn takes_exactly_one_cutting_edge() {
     s.input(Input::Pick(vec![Handle::parse_hex(&a).unwrap()])).unwrap();
     assert!(s.prompt_text().contains("side"), "{}", s.prompt_text());
 }
+
+#[test]
+fn large_radius_arcs_weaving_through_a_short_edge_lose_every_stretch_on_the_side() {
+    // #2808 review: a large arc's flattened outline strays from the arc by up to a millionth of its
+    // radius, far more than the tolerance next to a short edge, so the stretches must be found on
+    // the arc itself. Each arc weaves through the teeth of a short zigzag several times.
+    let mut s = Session::new();
+    let zig = |x: f64| {
+        let t = (x * 10.0).fract();
+        0.004 * if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+    };
+    let verts: Vec<[f64; 2]> = (0..=20).map(|i| [i as f64 * 0.05, zig(i as f64 * 0.05)]).collect();
+    let edge = h(&s.execute("pline", &json!({ "vertices": verts })).unwrap());
+    let radii = [50.0f64, 200.0, 1e3, 5e3, 2e4, 1e5];
+    for (k, r) in radii.iter().enumerate() {
+        // The arc's top a little above the middle of the teeth, its ends past the edge's.
+        let top = 0.002 + k as f64 * 1e-5;
+        let a = (0.6 / r).asin().to_degrees();
+        s.execute("arc", &json!({ "center": [0.5, top - r], "radius": r, "start": 90.0 - a, "end": 90.0 + a })).unwrap();
+    }
+    let v = extrim(&mut s, &edge, [0.5, 1.0]);
+    assert_eq!(v["trimmed"], radii.len(), "{v}");
+    assert_eq!(v["skipped"]["uncut"], 0, "{v}");
+    let d = s.doc().unwrap();
+    let skip = Handle::parse_hex(&edge).unwrap();
+    let above = d
+        .model
+        .iter()
+        .filter(|e| e.handle != skip)
+        .flat_map(|e| cadcraft_engine::select::hit_polylines(d, e, 1e-9).into_iter().flatten())
+        .filter(|p| p.x > 0.0 && p.x < 1.0)
+        .map(|p| p.y - zig(p.x))
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(above <= 1e-6, "a stretch above the edge was left: {above:e}");
+}
