@@ -255,13 +255,17 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
     // first, they are placed like left-justified text, as the renderer places them.
     let second = t.align_pt.map(|p| p.xy()).filter(|_| matches!(t.halign, HAlign::Aligned | HAlign::Fit));
     let span = second.map(|p| origin.dist(p)).filter(|d| d.is_finite() && *d > 1e-12);
-    // Aligned text keeps the proportions the fonts shape it with: the width factor as it is, not
-    // floored like the fallback width above, and 1 when it is unusable.
-    let wf = if t.width_factor.is_finite() && t.width_factor.abs() > 1e-6 { t.width_factor.abs() } else { 1.0 };
-    let shaped = t.height * 0.9 * wf * len.max(1) as f64;
+    // The fonts shape with the width factor as it is, not floored like the fallback width above,
+    // with 1 when it is unusable, and with a height of 1 when the height is.
+    let usable = t.width_factor.is_finite() && t.width_factor.abs() > 1e-6;
+    let wf = if usable { t.width_factor.abs() } else { 1.0 };
+    let height = if t.height.is_finite() && t.height > 0.0 { t.height } else { 1.0 };
+    let shaped = height * 0.9 * wf * len.max(1) as f64;
     let (w, h, rotation) = match (span, second) {
-        (Some(d), Some(p)) if t.halign == HAlign::Fit => (d, t.height, origin.angle_to(p)),
-        (Some(d), Some(p)) => (d, t.height * d / shaped, origin.angle_to(p)),
+        // Fit text with an unusable width factor is not stretched: it is drawn at its own width.
+        (Some(_), Some(p)) if t.halign == HAlign::Fit && !usable => (shaped, height, origin.angle_to(p)),
+        (Some(d), Some(p)) if t.halign == HAlign::Fit => (d, height, origin.angle_to(p)),
+        (Some(d), Some(p)) => (d, height * d / shaped, origin.angle_to(p)),
         _ => (natural, t.height, t.rotation),
     };
     let dx = match t.halign {

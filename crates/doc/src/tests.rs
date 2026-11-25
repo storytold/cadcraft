@@ -933,3 +933,22 @@ fn aligned_text_extents_keep_the_proportions_of_a_narrow_width_factor() {
     };
     assert!(top(0.001) > top(0.01) * 5.0, "{} {}", top(0.001), top(0.01));
 }
+
+#[test]
+fn aligned_and_fit_text_extents_follow_how_unusable_sizes_are_drawn() {
+    let ext = |halign: HAlign, height: f64, width_factor: f64| {
+        let mut t = plain_attrib("T").text;
+        t.value = "AB".into();
+        (t.halign, t.align_pt, t.height, t.width_factor) = (halign, Some(Vec3::new(1000.0, 0.0, 0.0)), height, width_factor);
+        let mut d = Drawing::new_imperial();
+        d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
+        extents_pair(&d)
+    };
+    // A height of 0 is drawn as a height of 1: Aligned text still spans its points and has room.
+    let flat = ext(HAlign::Aligned, 0.0, 1.0);
+    assert!((flat.1.x - 1000.0).abs() < 1e-9 && flat.1.y > flat.0.y, "{flat:?}");
+    assert_eq!(flat, ext(HAlign::Aligned, 1.0, 1.0));
+    // Fit text with a width factor of 0 is not stretched to the second point.
+    assert!(ext(HAlign::Fit, 1.0, 0.0).1.x < 100.0);
+    assert!((ext(HAlign::Fit, 1.0, 1.0).1.x - 1000.0).abs() < 1e-9);
+}
