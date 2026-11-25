@@ -149,6 +149,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "docking",
         "dialogs",
         "hatchdlg",
+        "arraydlg",
         "aliasdlg",
         "keys",
         "mtext_editor",
@@ -272,6 +273,7 @@ fn assert_additional_locale_aliases() {
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
+        ("ta", &["ta", "ta-IN", "ta_IN.UTF-8", "TA-in", " ta-LK ", "ta-SG", "ta_MY.UTF-8"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -284,7 +286,8 @@ fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
     let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
-    for tag in look_alikes.into_iter().chain(others) {
+    let tamil = ["tam", "tamil", "தமிழ்"];
+    for tag in look_alikes.into_iter().chain(others).chain(tamil) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
 }
@@ -553,7 +556,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi", "ka", "ta"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -706,6 +709,36 @@ fn bosnian_counts_take_one_few_other() {
     assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
 }
 
+/// Tamil counts take the English forms (one, other). Tamil shows only with a font that has its
+/// letters, an installed Tamil font or the craft-fonts Tamil face, and only the Tamil interface
+/// loads one, so the picker writes தமிழ் there and Tamil in every other. Without a font the
+/// interface stays English and choosing Tamil says why.
+#[test]
+fn tamil_takes_two_forms_and_needs_a_tamil_font() {
+    assert_eq!(Preference::parse("ta"), Some(Preference::Tamil));
+    assert_eq!(Preference::Tamil.native_name(), "தமிழ்");
+    let ta = LANGUAGES.iter().find(|l| l.code == "ta").unwrap();
+    assert_eq!(ta.plural_forms, 2);
+    with_language("ta", || {
+        assert_eq!(count(1, "{n} commit", "{n} commits"), "1 கமிட்");
+        assert_eq!(count(5, "{n} commit", "{n} commits"), "5 கமிட்கள்");
+        assert_eq!(t("Layers"), "அடுக்குகள்");
+    });
+    assert_eq!(with_language("en", || Preference::Tamil.name()), "Tamil");
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.run("ui.language", json!({"lang": "ta"})).unwrap();
+    let shown = crate::theme::can_show("ta");
+    assert_eq!(r["interfaceLanguage"], "ta");
+    assert_eq!(r["shown"], if shown { "ta" } else { "en" });
+    assert_eq!(app.ui.interface_language, Preference::Tamil);
+    if shown {
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "தமிழ்");
+    } else {
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Tamil font")));
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "Tamil");
+    }
+}
+
 /// Vietnamese has one form for every count, and shows only with an interface font that has its
 /// tone-marked letters; without one it stays English and says why.
 #[test]
@@ -730,5 +763,26 @@ fn polish_plural_forms() {
     for (n, expected) in [(0, 2), (1, 0), (2, 1), (4, 1), (5, 2), (12, 2), (14, 2), (21, 2), (22, 1), (24, 1), (25, 2), (101, 2), (102, 1), (112, 2)]
     {
         assert_eq!(plural_pl(n), expected, "n={n}");
+    }
+}
+
+/// Arabic gives Stretch, Trim and Point words of their own: Stretch read «تمديد» like Extend,
+/// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
+#[test]
+fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    // The words themselves: a pair that merely differs also differs when a row is missing and both
+    // fall back to English, and Point and Dimension already differed before.
+    for (key, word) in [("Stretch", "تمطيط"), ("Trim", "تشذيب"), ("Point", "نقطة")] {
+        assert_eq!(tr("ar", key), word, "{key}");
+    }
+    for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
+        assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
+    }
+    for (prompt, verb) in [
+        ("Select object to trim or shift-select to extend", "تشذيب"),
+        ("Select object to extend or shift-select to trim", "تشذيب"),
+        ("Select objects to stretch by crossing-window or crossing-polygon...", "تمطيط"),
+    ] {
+        assert!(tr("ar", prompt).contains(verb), "{prompt}");
     }
 }

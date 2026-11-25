@@ -9,3 +9,26 @@ This file describes how CADCraft is released.
 - **Windows installer:** `packaging/windows/cadcraft.wxs` (WiX v5 + `WixToolset.UI.wixext`). Its wizard has a Shortcuts page: the Start Menu shortcut is always created, the desktop shortcut is opt-in (`DESKTOPSHORTCUT=1` for silent installs, `DESKTOPSHORTCUT=0` drops it on an upgrade; otherwise upgrades keep the previous choice).
 - **File types:** `.dxf` and `.dwg` (macOS document types, Windows "Open with", Linux MIME types).
 - **Local packaging test:** `packaging/macos/package.sh` (ad-hoc signed DMG), `packaging/linux/package.sh`, `packaging/web/package.sh`.
+
+## Release-ref nightly
+
+CADCraft's Windows, Linux and macOS nightly is documented in
+[`nightly-release-preparation.md`](nightly-release-preparation.md). `.github/workflows/nightly.yml`
+and `nightly-sign.yml` are enabled for **supervised manual runs only** by the reviewed release
+managers: there is no schedule, and there is no automatic transport yet — a run is dispatched by
+hand, and the completion step is manual too. No platform secret is granted to the producer. Stable `release.yml`, its triggers, environment and secrets are unchanged.
+
+The signer-owned files (`.github/workflows/nightly-sign.yml`,
+`.github/nightly-signing-policy.json`, `packaging/windows/sign.ps1`, the macOS nightly signing
+scripts `nightly-sign.sh`/`nightly-verify.sh`/`nightly-lib.sh`/`import-cert.sh` and their
+entitlements, `.github/nightly-linux-signing-key.asc`, and every transitive reusable pin) travel
+on a reviewed `main` → `release` sync and are compared against the previous trusted release, not a
+manifest from `main`. Nightlies share the existing Windows signing identity with stable, so a
+suspected key compromise affects both channels: stop nightlies too, and have the identity's owner
+revoke/rotate it.
+
+Before the first run, the shared `craft-common-actions` caller must admit CADCraft (its jobs are
+still gated on PhotoCraft), and the app-side flavor must be in the built channel: a nightly binary
+is refused without `--launch-profile nightly-v1 --profile-root <dir>`, so every Launcher wrapper
+must pass them (see the preparation doc).
+

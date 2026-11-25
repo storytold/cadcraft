@@ -133,6 +133,13 @@ fn bad_input_is_refused_and_changes_nothing() {
         json!({ "path": "a.png", "data": data, "width": -3 }),
         json!({ "path": "a.png", "data": data, "width": "wide" }),
         json!({ "path": "a.png", "data": data, "width": 1e-320 }),
+        // A value of the wrong type is refused, not taken as omitted.
+        json!({ "path": "a.png", "data": data, "scale": "big" }),
+        json!({ "path": "a.png", "data": data, "width": 2, "scale": "big" }),
+        json!({ "path": "a.png", "data": data, "rotation": "right" }),
+        json!({ "path": "a.png", "data": data, "at": "nowhere" }),
+        json!({ "path": "a.png", "data": data, "at": [1] }),
+        json!({ "path": "a.png", "data": data, "name": 7 }),
         json!({ "path": "x".repeat(5000), "data": data }),
     ] {
         assert!(s.execute("imageattach", &p).is_err(), "{p}");
