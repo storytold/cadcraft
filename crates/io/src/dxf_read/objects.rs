@@ -421,6 +421,8 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     // Plot layout flags: 2 display plot styles, 4 centred, 16 standard scale (75 = 0: scaled
     // to fit), 128 lineweights.
     if let Some(flags) = t.i(70) {
+        // Kept to be written back (a 16-bit group: only those bits).
+        p.file_plot_flags = Some(flags & 0xFFFF);
         p.show_plot_styles = flags & 2 != 0;
         p.center = flags & 4 != 0;
         p.lineweights = flags & 128 != 0;
@@ -432,10 +434,18 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     if let Some(s) = pos(ratio).or_else(|| pos(t.f(147))) {
         p.scale = s;
     }
+    // A standard scale (flag 16, group 75 above 0: 0 is scaled to fit, the DXF Reference lists
+    // 1 to 32), kept with the scale it stands for so a save can tell it was not changed.
+    if t.i(70).is_some_and(|f| f & 16 != 0)
+        && let Some(code) = t.i(75).filter(|c| (1..=32).contains(c))
+    {
+        p.file_standard_scale = Some((code, p.scale));
+    }
     p.plot_area = match t.i(74) {
         Some(0) => "display",
         Some(1) => "extents",
         Some(2) => "limits",
+        Some(3) => "view",
         Some(4) => "window",
         _ => "layout",
     }
@@ -446,6 +456,9 @@ pub(super) fn page_setup(t: &T, tags: &[Tag]) -> PageSetup {
     // 0,0 is what a page without one writes, so it reads back as none.
     p.image_origin =
         t.f(148).zip(t.f(149)).map(|(x, y)| Vec2::new(x, y)).filter(|o| o.is_finite() && o.x.abs() < 1e12 && o.y.abs() < 1e12 && *o != Vec2::ZERO);
+    if let Some(start) = t.0.iter().position(|tag| tag.code == 100 && tag.str() == "AcDbPlotSettings") {
+        p.file_plot_settings = Some(Box::new(cadcraft_doc::FilePlotSettings { tags: t.0[start + 1..].to_vec(), page: p.clone() }));
+    }
     p
 }
 

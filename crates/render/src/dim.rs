@@ -4,7 +4,8 @@
 //! fixed-length extension lines (DIMFXL/DIMFXLON), text placement (DIMTAD, DIMTVP, DIMJUST,
 //! DIMTIH/DIMTOH, DIMGAP, DIMTMOVE) and text formatting (DIMLUNIT, DIMDEC, DIMZIN, DIMRND,
 //! DIMPOST, DIMTOL/DIMLIM with DIMTZIN and DIMTOLJ, DIMALT with DIMALTU/DIMALTZ/DIMALTRND,
-//! DIMAZIN, DIMARCSYM) with its background (DIMTFILL).
+//! DIMAZIN, DIMARCSYM) with its background (DIMTFILL). DIMPOST wraps angles as well, as
+//! AutoCAD does (#1653).
 
 use cadcraft_doc::{DimKind, DimStyle, Dimension};
 use cadcraft_fonts::{MTextParams, TextFont};

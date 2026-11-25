@@ -297,6 +297,7 @@
 	Freeze/Thaw in the current viewport	在当前视口中冻结/解冻
 	From	自
 	General	常规
+	Generate Boundary	生成边界
 	Geometric Center	几何中心
 	Geometric Constraint	几何约束
 	Geometric Constraints	几何约束
@@ -982,6 +983,7 @@
 	Wipeout	区域覆盖
 	Workspace Switching	工作空间切换
 	Write Block	写块
+	Write Block Pick	写块选取
 	Xline	构造线
 	Yellow	黄色
 	Yes	是
@@ -1034,6 +1036,7 @@
 	Not a number or distance: {text}	不是数字或距离：{text}
 	Plotter Manager...	绘图仪管理器...
 	Import...	导入...
+	Import PDF...	导入 PDF...
 	Export...	导出...
 	Batch Publish...	批量发布...
 	New from Template...	根据样板新建...
