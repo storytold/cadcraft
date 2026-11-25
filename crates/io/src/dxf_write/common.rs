@@ -1,54 +1,83 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
-    VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Handle, HashMap, Insert, Lineweight, Text,
+    Transparency, VAlign, Vec3, Version, W, dxf_ext,
 };
 
-struct AttdefIndex {
-    key: (u64, u64),
-    /// First case-insensitive ATTDEF match for each tag: its properties.
-    by_tag: HashMap<String, Common>,
+/// The most ATTDEF tags the definition indexes on one thread hold in all (a block with none
+/// counts as one): past it they are dropped and built again as blocks are read, so memory stays
+/// bounded whatever the drawings hold. A block indexed again costs one pass over it.
+const MAX_INDEXED_TAGS: usize = 1 << 18;
+
+/// For each state of a block definition's entities read on this thread, by its content token
+/// ([`cadcraft_doc::EntityStore::content_token`]): the handle of the first ATTDEF of each tag
+/// (upper case). A token names one state of one store, so an index is never used for another
+/// copy or another edit of the block, and blocks read in turn keep their indexes.
+#[derive(Default)]
+struct AttdefIndexes {
+    by_store: HashMap<u64, HashMap<String, Handle>>,
+    /// Tags held in all, for [`MAX_INDEXED_TAGS`].
+    tags: usize,
 }
 
 thread_local! {
+    static ATTDEF_INDEXES: RefCell<AttdefIndexes> = RefCell::new(AttdefIndexes::default());
     /// Entities of a block definition examined while matching an attribute to its ATTDEF.
-    static ATTDEF_VISITS: Cell<u64> = const { Cell::new(0) };
-    /// The definition index for the block last read on this thread. A new key (another block, or
-    /// an edit of this one) builds it again.
-    static ATTDEF_INDEX: RefCell<Option<AttdefIndex>> = const { RefCell::new(None) };
+    #[cfg(test)]
+    static ATTDEF_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The first ATTDEF of each tag in `block`, by upper-case tag: one pass over the block.
+fn attdef_index(block: &Block) -> HashMap<String, Handle> {
+    let mut by_tag = HashMap::new();
+    for e in block.entities.iter() {
+        count_attdef_visit();
+        if let EntityKind::AttDef(ad) = &e.kind {
+            by_tag.entry(ad.tag.to_ascii_uppercase()).or_insert(e.handle);
+        }
+    }
+    by_tag
 }
 
 /// The definition properties of the first ATTDEF in `block` whose tag matches `tag`, ignoring
-/// ASCII case. The block is read once per edit; later attributes of the same block do not scan it.
+/// ASCII case. Each state of a block's entities is read once on a thread: later attributes, of
+/// this reference or another, find their definition in its index.
 fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
-    let key = block.entities.cache_key();
+    let token = block.entities.content_token();
     let want = tag.to_ascii_uppercase();
-    ATTDEF_INDEX.with(|slot| {
-        let mut g = slot.borrow_mut();
-        if g.as_ref().is_none_or(|ix| ix.key != key) {
-            let mut by_tag = HashMap::new();
-            for e in block.entities.iter() {
-                count_attdef_visit();
-                if let EntityKind::AttDef(ad) = &e.kind {
-                    by_tag.entry(ad.tag.to_ascii_uppercase()).or_insert_with(|| e.common.clone());
-                }
+    let found = ATTDEF_INDEXES
+        .try_with(|cell| {
+            let Ok(mut ix) = cell.try_borrow_mut() else { return attdef_index(block).get(&want).copied() };
+            if let Some(by_tag) = ix.by_store.get(&token) {
+                return by_tag.get(&want).copied();
             }
-            *g = Some(AttdefIndex { key, by_tag });
-        }
-        g.as_ref().and_then(|ix| ix.by_tag.get(&want).cloned())
-    })
+            let by_tag = attdef_index(block);
+            let found = by_tag.get(&want).copied();
+            let cost = by_tag.len().max(1);
+            if ix.tags.saturating_add(cost) > MAX_INDEXED_TAGS {
+                ix.by_store.clear();
+                ix.tags = 0;
+            }
+            ix.tags = ix.tags.saturating_add(cost);
+            ix.by_store.insert(token, by_tag);
+            found
+        })
+        .unwrap_or_else(|_| attdef_index(block).get(&want).copied());
+    block.entities.get(found?).map(|e| e.common.clone())
 }
 
+/// One more definition entity examined (counted in tests).
 fn count_attdef_visit() {
+    #[cfg(test)]
     ATTDEF_VISITS.with(|n| n.set(n.get().saturating_add(1)));
 }
 
 /// How many definition entities attribute reads have examined on this thread.
 #[cfg(test)]
 pub(crate) fn attdef_definition_visits() -> u64 {
-    ATTDEF_VISITS.with(Cell::get)
+    ATTDEF_VISITS.with(std::cell::Cell::get)
 }
 
 /// Start a definition-visit count from zero.
