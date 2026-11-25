@@ -378,7 +378,7 @@ fn tessellate_nonzero(polygons: &[Vec<Vec2>], sampled_vertices: usize, max_verti
                         .ok_or("PDF fill tessellation returned an invalid index")
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(HatchLoop { vertices, outer: true, sources: Vec::new() })
+            Ok(HatchLoop { vertices, outer: true, boundary_flags: None, sources: Vec::new() })
         })
         .collect()
 }
@@ -426,7 +426,12 @@ mod tests {
     use super::*;
 
     fn polygon(points: &[(f64, f64)]) -> HatchLoop {
-        HatchLoop { vertices: points.iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(), outer: false, sources: Vec::new() }
+        HatchLoop {
+            vertices: points.iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(),
+            outer: false,
+            boundary_flags: None,
+            sources: Vec::new(),
+        }
     }
 
     fn square(x0: f64, y0: f64, x1: f64, y1: f64, clockwise: bool) -> HatchLoop {
@@ -451,6 +456,7 @@ mod tests {
                 .map(|&(x, y)| PolyVertex { bulge: quarter * turn, ..PolyVertex::new(Vec2::new(x, y)) })
                 .collect(),
             outer: false,
+            boundary_flags: None,
             sources: Vec::new(),
         }
     }
@@ -470,7 +476,7 @@ mod tests {
     #[test]
     fn a_disc_of_two_half_circles_is_kept() {
         let half = |x: f64| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(x, 0.0)) };
-        let disc = HatchLoop { vertices: vec![half(-1.0), half(1.0)], outer: false, sources: Vec::new() };
+        let disc = HatchLoop { vertices: vec![half(-1.0), half(1.0)], outer: false, boundary_flags: None, sources: Vec::new() };
         for rule in [FillRule::EvenOdd, FillRule::NonZero] {
             let result = normalize(vec![disc.clone()], rule, 10_000, TOL).expect("valid contour");
             assert_eq!(result.len(), 1);

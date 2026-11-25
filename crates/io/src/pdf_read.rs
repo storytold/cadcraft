@@ -522,7 +522,7 @@ impl Collector {
                 }
             })
             .enumerate()
-            .map(|(i, (vertices, _))| HatchLoop { vertices, outer: i == 0, sources: Vec::new() })
+            .map(|(i, (vertices, _))| HatchLoop { vertices, outer: i == 0, boundary_flags: None, sources: Vec::new() })
             .collect();
         if kept_whole {
             self.approximated("curved filled shapes crossing a clip kept whole");
