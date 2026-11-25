@@ -1205,6 +1205,40 @@ mod tests {
         assert_eq!(Some(&ml.mtext), full.multiline.as_ref().map(|m| &m.mtext), "the multiline text scales as the renderer scales it");
     }
 
+    /// A scaled text copies its style name as well as its value, so the auxiliary single-line
+    /// style of a multiline attribute is paid for before its layout, even though only the
+    /// multiline style is read. An oversized single-line style stops `text_box` at that charge:
+    /// the pick runs out and lays nothing out rather than laying the text out and reporting its box.
+    #[test]
+    fn a_scaled_multiline_attributes_auxiliary_is_paid_for_before_its_layout() {
+        let d = Drawing::default();
+        let mtext = cadcraft_doc::MText {
+            insert: Vec3::new(10.0, 0.0, 0.0),
+            height: 1.0,
+            width: 4.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: "A".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        let mut a = attrib(text(Vec3::new(10.0, 0.0, 0.0), "A", 1.0));
+        a.multiline = Some(cadcraft_doc::MultilineAttrib { mtext, read_as: "A".into() });
+        // The single-line style is not the multiline one; `scaled_text_copy` copies both texts.
+        a.text.style = "S".repeat(2_000_000);
+        let ins = Insert { block: "B".into(), insert: Vec3::new(2.0, 0.0, 0.0), attribs: vec![], ..Insert::default() };
+        // Enough for the layout of a one-byte value without that copy (about 1,500 units), far
+        // too little for the style's 2,000,000 bytes at 16 units each.
+        let mut pick = AttribPick::with_budget(100_000);
+        let laid = pick.text_box(&d, &ins, &a, 0.5);
+        let stats = pick.stats();
+        assert_eq!(stats.text_layouts, 0, "the layout was not paid for: {stats:?}");
+        assert!(stats.exhausted, "the auxiliary style's charge did not run out the budget: {stats:?}");
+        assert_eq!(laid, None, "a budget that cannot pay for the copy lays nothing out");
+    }
+
     /// One store chunk of 1,024 references costs more than a 1,500-unit budget. Later clicks
     /// continue that chunk and finish it; each object is read once.
     #[test]
