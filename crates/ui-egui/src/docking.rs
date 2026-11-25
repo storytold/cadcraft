@@ -444,7 +444,7 @@ fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
 pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<Value, String> {
     let mut workspace = app.ui.docking.clone();
     if reset {
-        workspace = default_workspace();
+        workspace.replace(default_workspace());
     } else {
         sync(&mut workspace, app)?;
         apply_command(&mut workspace, params)?;
@@ -751,5 +751,16 @@ mod tests {
         output.textures_delta.clear();
 
         assert_eq!(app.dock.raise, None);
+    }
+
+    #[test]
+    fn a_reset_replaces_the_workspace() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::default(), crate::Services::default());
+        let start = app.ui.docking.generation();
+        command(&mut app, false, &json!({"operation": "open", "panel": Panel::Blocks.id()})).unwrap();
+        assert_eq!(app.ui.docking.generation(), start);
+        command(&mut app, true, &Value::Null).unwrap();
+        assert_ne!(app.ui.docking.generation(), start);
+        assert_eq!(app.ui.docking, default_workspace());
     }
 }
