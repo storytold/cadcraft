@@ -6,7 +6,7 @@
 //! of nested xrefs (`xref|nested|name`) bind with every `|` written `$0$`.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, EntityStore, MAX_BLOCK_DEPTH, XrefStatus};
@@ -20,6 +20,16 @@ fn split(name: &str) -> Option<(&str, &str)> {
 
 /// Whether table `sym` of `d` has a symbol called `name`.
 fn taken(d: &Drawing, sym: Sym, name: &str) -> bool {
+    taken_with(d, sym, name, None)
+}
+
+/// [`taken`], answering for blocks from `blocks` (the upper-cased names of `d`'s blocks, kept
+/// current by the caller) when given: a lookup that misses scans every block, which a bind
+/// naming thousands of blocks would repeat for each.
+fn taken_with(d: &Drawing, sym: Sym, name: &str, blocks: Option<&HashSet<String>>) -> bool {
+    if let (Sym::Block, Some(set)) = (sym, blocks) {
+        return set.contains(&name.to_ascii_uppercase());
+    }
     match sym {
         Sym::Layer => d.layer(name).is_some(),
         Sym::Linetype => d.linetype(name).is_some(),
@@ -32,12 +42,12 @@ fn taken(d: &Drawing, sym: Sym, name: &str) -> bool {
 }
 
 /// The bound name of `key|rest`: `key$n$rest` with the first free `n`, or `rest` (Insert type).
-fn bound_name(d: &Drawing, sym: Sym, key: &str, rest: &str, insert: bool) -> String {
+fn bound_name(d: &Drawing, sym: Sym, key: &str, rest: &str, insert: bool, blocks: Option<&HashSet<String>>) -> String {
     let rest = rest.replace('|', "$0$");
     if insert {
         return rest;
     }
-    (0..10_000).map(|n| format!("{key}${n}${rest}")).find(|c| !taken(d, sym, c)).unwrap_or_else(|| format!("{key}$${rest}"))
+    (0..10_000).map(|n| format!("{key}${n}${rest}")).find(|c| !taken_with(d, sym, c, blocks)).unwrap_or_else(|| format!("{key}$${rest}"))
 }
 
 /// Every table's symbol names, for one table at a time.
@@ -53,9 +63,8 @@ fn names(d: &Drawing, sym: Sym) -> Vec<String> {
     }
 }
 
-/// Rename symbol `old` of table `sym` to `new`, or drop it (`new` already exists: Insert type).
-fn rename_symbol(d: &mut Drawing, sym: Sym, old: &str, new: &str) {
-    let merge = !new.eq_ignore_ascii_case(old) && taken(d, sym, new);
+/// Rename symbol `old` of table `sym` to `new`, or drop it (`merge`: `new` already exists, Insert type).
+fn rename_symbol(d: &mut Drawing, sym: Sym, old: &str, new: &str, merge: bool) {
     macro_rules! table {
         ($v:expr) => {{
             if merge {
@@ -101,12 +110,17 @@ pub(crate) fn bind(d: &mut Drawing, key: &str, insert: bool) -> Result<(), Strin
     let mut map: HashMap<(Sym, String), String> = HashMap::new();
     let mut bound_blocks = vec![key.clone()];
     for sym in TABLES {
+        let mut blocks: Option<HashSet<String>> = (sym == Sym::Block).then(|| d.blocks.keys().map(|k| k.to_ascii_uppercase()).collect());
         for old in names(d, sym).into_iter().filter(|n| has_prefix(n, &prefix)) {
             let rest = old.get(prefix.len()..).unwrap_or_default();
-            let new = bound_name(d, sym, &key, rest, insert);
+            let new = bound_name(d, sym, &key, rest, insert, blocks.as_ref());
             // Insert type: a host symbol of the bound name is used instead of the xref's.
-            let merged = taken(d, sym, &new);
-            rename_symbol(d, sym, &old, &new);
+            let merged = taken_with(d, sym, &new, blocks.as_ref());
+            rename_symbol(d, sym, &old, &new, !new.eq_ignore_ascii_case(&old) && merged);
+            if let Some(set) = &mut blocks {
+                set.remove(&old.to_ascii_uppercase());
+                set.insert(new.to_ascii_uppercase());
+            }
             if sym == Sym::Block && !merged {
                 bound_blocks.push(new.clone());
             }
@@ -243,13 +257,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_block_name_set_answers_as_the_scan_does() {
+        let mut d = Drawing::new_imperial();
+        for n in ["SITE$0$Plan", "Other"] {
+            d.blocks.insert(n.into(), Arc::new(cadcraft_doc::Block::new(n)));
+        }
+        let set: HashSet<String> = d.blocks.keys().map(|k| k.to_ascii_uppercase()).collect();
+        for n in ["site$0$plan", "SITE$0$Plan", "OTHER", "SITE$1$Plan", "nothing"] {
+            assert_eq!(taken_with(&d, Sym::Block, n, Some(&set)), taken(&d, Sym::Block, n), "{n}");
+        }
+        assert_eq!(bound_name(&d, Sym::Block, "SITE", "plan", false, Some(&set)), "SITE$1$plan");
+    }
+
+    #[test]
     fn bound_names() {
         let mut d = Drawing::new_imperial();
-        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "Walls", false), "SITE$0$Walls");
+        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "Walls", false, None), "SITE$0$Walls");
         d.ensure_layer("SITE$0$Walls");
-        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "walls", false), "SITE$1$walls");
-        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "Walls", true), "Walls");
-        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "TREES|Oak", false), "SITE$0$TREES$0$Oak");
+        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "walls", false, None), "SITE$1$walls");
+        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "Walls", true, None), "Walls");
+        assert_eq!(bound_name(&d, Sym::Layer, "SITE", "TREES|Oak", false, None), "SITE$0$TREES$0$Oak");
         assert_eq!(split("A|b|c"), Some(("A", "b|c")));
         assert_eq!(split("|b"), None);
     }
