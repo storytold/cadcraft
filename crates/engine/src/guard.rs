@@ -92,6 +92,15 @@ impl Interactive for Guarded {
             Vec::new()
         })
     }
+    fn live_value(&self, s: &Session, cursor: Vec2) -> Option<String> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.live_value(s, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
     fn drag(&self, s: &Session, cursor: Vec2) -> Option<crate::prompt::Drag> {
         if self.broken.get().is_some() {
             return None;
@@ -110,12 +119,30 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.text_editor())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
     fn display_only(&self, s: &Session) -> Option<crate::prompt::DisplayOnly> {
         if self.broken.get().is_some() {
             return None;
         }
         catch_unwind(AssertUnwindSafe(|| self.inner.display_only(s))).unwrap_or_else(|_| {
             self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
+    fn attribute_entry(&self) -> Option<crate::prompt::AttribEntry> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.attribute_entry())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
             None
         })
     }

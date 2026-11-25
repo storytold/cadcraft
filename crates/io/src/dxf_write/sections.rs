@@ -3,13 +3,14 @@ use super::blocks::{arrow_block_entities, dim_block_entities, dim_block_plan, re
 use super::common::annotative_xdata;
 use super::ctx::{AssocObj, Ctx};
 use super::entity::{entity, hatch_reactors};
-use super::header::{code_page, header_vars};
-use super::layout::{paper_views, record_head, sheet_first, table_head, vport_table};
+use super::header::{code_page, header_vars, model_ucs};
+use super::layout::{paper_views, record_head, sheet_first, table_head, table_head_x, vport_table};
 use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
-    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
-    TableStyle, Tag, Vec2, Vec3, Version, W, dxf_ext,
+    Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, HashSet, Layout, MLeaderStyle, PageSetup,
+    Space, TableStyle, Tag, Ucs, Vec2, Vec3, Version, W, dxf_ext,
 };
+use super::{entity_handles, structural_start};
 
 struct TableWritePlan<'a> {
     d: &'a Drawing,
@@ -68,7 +69,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         }
     }
     w.s(0, "ENDTAB");
-    write_layer_table(w, d);
+    write_layer_table(w, d, &mut cx.layer_states);
     // STYLE. Linetype shapes from a shape file that isn't a text style get an unnamed shape
     // style record (70 bit 1) naming the file.
     let mut shape_files: Vec<String> = Vec::new();
@@ -163,7 +164,8 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     // UCS: named user coordinate systems (DXF Reference, UCS).
     let th = table_head(w, "UCS", d.ucss.len());
     for u in &d.ucss {
-        record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        let h = record_head(w, "UCS", &th, "AcDbUCSTableRecord");
+        w.ucss.insert(u.name.to_ascii_uppercase(), h);
         w.s(2, &u.name);
         w.i(70, 0);
         w.p(10, u.origin);
@@ -173,6 +175,13 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
+    // The active VPORT's named UCS (written before this table had handles).
+    for (i, name) in std::mem::take(&mut w.vport_ucs) {
+        let h = w.ucss.get(&name).cloned();
+        if let (Some(h), Some(t)) = (h, w.t.get_mut(i)) {
+            *t = Tag::s(345, h);
+        }
+    }
     let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
@@ -185,8 +194,12 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     ltype_handles
 }
 
-fn write_layer_table(w: &mut W, d: &Drawing) {
-    let th = table_head(w, "LAYER", d.layers.len());
+/// The LAYER table; when the drawing has layer states AutoCAD can hold, the table's extension
+/// dictionary holds them (written with the objects, [`crate::dxf_layer_states`]).
+fn write_layer_table(w: &mut W, d: &Drawing, states: &mut crate::dxf_layer_states::Plan) {
+    let xdict = (!states.is_empty()).then(|| states.xdict.clone());
+    let th = table_head_x(w, "LAYER", d.layers.len(), xdict.as_deref());
+    states.table.clone_from(&th);
     for l in &d.layers {
         let lh = record_head(w, "LAYER", &th, "AcDbLayerTableRecord");
         w.layers.insert(l.name.to_ascii_uppercase(), lh);
@@ -245,7 +258,16 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W {
+            t: Vec::new(),
+            next: 0,
+            used: HashSet::new(),
+            pstyles: HashMap::new(),
+            layers: HashMap::new(),
+            ucss: HashMap::new(),
+            vport_ucs: Vec::new(),
+            reactors: HashMap::new(),
+        };
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -385,41 +407,66 @@ struct LayoutWriteData<'a> {
     flags: i64,
     page: &'a PageSetup,
     view: Option<(Vec2, f64)>,
+    /// The layout's current UCS (none for model space, whose UCS is in the header).
+    ucs: Option<&'a Ucs>,
     /// The layout's limits as read (`None`: the default 0,0 to 12,9).
     limits: Option<(Vec2, Vec2)>,
+    /// Whether this is the Model layout (block record *Model_Space).
+    model: bool,
+}
+
+/// The plot layout flags (AcDbPlotSettings group 70) for `page`. The bits CADCraft models come
+/// from the page: 2 display plot styles, 4 centred, 128 lineweights, and 16 standard scale where
+/// the scale decides it (scaled to fit: set; a custom scale: clear). The rest are kept as the file
+/// had them (#3227); a page CADCraft made gets 512 (plot paper space last) and 32 (plot with plot
+/// styles), and 16 when its scale is standard. 1024 ("ModelType", DXF Reference, PLOTSETTINGS
+/// group 70) follows the layout: set for the Model layout, cleared for a paper-space layout even
+/// when the file had it, since it would mark that layout as model space.
+fn plot_layout_flags(page: &PageSetup, standard: bool, model: bool) -> i64 {
+    const MODELED: i64 = 2 | 4 | 128;
+    const STANDARD_SCALE: i64 = 16;
+    const MODEL_TYPE: i64 = 1024;
+    let kept = match page.file_plot_flags {
+        Some(f) if page.scale_to_fit => (f & !MODELED) | STANDARD_SCALE,
+        Some(f) if !standard => f & !MODELED & !STANDARD_SCALE,
+        Some(f) => f & !MODELED,
+        None => 512 | 32 | if standard { STANDARD_SCALE } else { 0 },
+    };
+    let kept = if model { kept | MODEL_TYPE } else { kept & !MODEL_TYPE };
+    kept | if page.lineweights { 128 } else { 0 } | if page.center { 4 } else { 0 } | if page.show_plot_styles { 2 } else { 0 }
 }
 
 fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<'_>) {
     let d = context.drawing;
     let layout_dict = context.dictionary;
     let h = data.handle;
-    let name = data.name;
-    let tab = data.tab;
-    let brh = data.block_record;
-    let flags = data.flags;
     let page = data.page;
     let view = data.view;
-    // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
-    // per 143 drawing units).
-    let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
-    let standard = page.scale_to_fit || scale == 1.0;
-    let plot_flags = 512
-        | 32
-        | if standard { 16 } else { 0 }
-        | if page.lineweights { 128 } else { 0 }
-        | if page.center { 4 } else { 0 }
-        | if page.show_plot_styles { 2 } else { 0 };
-    let plot_type = match page.plot_area.as_str() {
-        "display" => 0,
-        "extents" => 1,
-        "limits" => 2,
-        "window" => 4,
-        _ => 5,
-    };
     w.s(0, "LAYOUT");
     w.s(5, h);
     w.s(330, layout_dict.to_string());
     w.s(100, "AcDbPlotSettings");
+    write_plot_settings(w, d, page, data.model);
+    write_layout_data(w, d, data, view);
+}
+
+fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
+    let start = w.t.len();
+    // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
+    // per 143 drawing units).
+    let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
+    // The file's standard scale (such as 1:50) while the scale is still the one read with it.
+    let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
+    let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
+    let plot_flags = plot_layout_flags(page, standard, model);
+    let plot_type = match page.plot_area.as_str() {
+        "display" => 0,
+        "extents" => 1,
+        "limits" => 2,
+        "view" => 3,
+        "window" => 4,
+        _ => 5,
+    };
     w.s(1, "");
     let device = page.device.trim();
     w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
@@ -450,12 +497,55 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.i(73, rotation);
     w.i(74, plot_type);
     w.s(7, &page.plot_style_table);
-    w.i(75, if page.scale_to_fit { 0 } else { 16 });
+    w.i(75, if page.scale_to_fit { 0 } else { file_standard.unwrap_or(16) });
     w.f(147, scale);
     // The paper image origin the file had (#2109), else 0,0.
     let origin = page.image_origin.filter(|o| o.is_finite()).unwrap_or(Vec2::ZERO);
     w.f(148, origin.x);
     w.f(149, origin.y);
+    if let Some(kept) = &page.file_plot_settings {
+        let current = w.t.split_off(start);
+        write_plot_settings(w, d, &kept.page, model);
+        let baseline = w.t.split_off(start);
+        let changed = |code| {
+            (matches!(code, 142 | 143 | 147) && page.scale != kept.page.scale)
+                || (code == 72
+                    && (page.paper_mm != kept.page.paper_mm
+                        || (page.paper_mm.is_none()
+                            && kept
+                                .tags
+                                .iter()
+                                .find(|tag| tag.code == 72)
+                                .zip(current.iter().find(|tag| tag.code == 72))
+                                .is_some_and(|(old, now)| matches!(old.i64(), 0 | 1) && old.i64() != now.i64()))))
+                || current.iter().find(|tag| tag.code == code) != baseline.iter().find(|tag| tag.code == code)
+        };
+        for tag in &kept.tags {
+            if changed(tag.code) || (tag.code == 73 && !(0..=3).contains(&tag.i64())) {
+                if tag.code == 70
+                    && let Some((now, before)) = current.iter().find(|tag| tag.code == 70).zip(baseline.iter().find(|tag| tag.code == 70))
+                {
+                    let mask = (now.i64() ^ before.i64()) | 1024;
+                    w.i(70, (tag.i64() & !mask) | (now.i64() & mask));
+                    continue;
+                }
+                w.t.extend(current.iter().filter(|new| new.code == tag.code).cloned());
+            } else if tag.code == 70 {
+                w.i(70, if model { tag.i64() | 1024 } else { tag.i64() & !1024 });
+            } else {
+                w.t.push(tag.clone());
+            }
+        }
+        w.t.extend(current.iter().filter(|tag| changed(tag.code) && !kept.tags.iter().any(|old| old.code == tag.code)).cloned());
+    }
+}
+
+fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Option<(Vec2, f64)>) {
+    let name = data.name;
+    let tab = data.tab;
+    let flags = data.flags;
+    let brh = data.block_record;
+    let page = data.page;
     w.s(100, "AcDbLayout");
     w.s(1, name);
     w.i(70, flags);
@@ -467,20 +557,50 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(12, Vec3::ZERO);
     w.p(14, Vec3::ZERO);
     w.p(15, Vec3::ZERO);
+    // The layout's current UCS: origin, X and Y axes, orthographic type, then (after the
+    // block record) the named UCS it is.
+    // Usable by the rule the reader applies, so what is written reads back.
+    let u = data.ucs.filter(|u| u.origin.is_finite() && dxf_ext::usable_axes(u.x_axis, u.y_axis));
     w.f(146, 0.0);
-    w.p(13, Vec3::ZERO);
-    w.p(16, Vec3::new(1.0, 0.0, 0.0));
-    w.p(17, Vec3::new(0.0, 1.0, 0.0));
+    w.p(13, u.map_or(Vec3::ZERO, |u| u.origin));
+    w.p(16, u.map_or(Vec3::new(1.0, 0.0, 0.0), |u| u.x_axis));
+    w.p(17, u.map_or(Vec3::new(0.0, 1.0, 0.0), |u| u.y_axis));
     w.i(76, 0);
     w.s(330, brh);
-    // The saved paper-space view (centre, height) as CADCraft xdata.
-    if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+    // The named UCS it is, only while its frame is still that record's (as for model space).
+    let named = u.and_then(|u| dxf_ext::named_ucs(&d.ucss, &u.name, u.origin, u.x_axis, u.y_axis));
+    if let Some(h) = named.and_then(|u| w.ucss.get(&u.name.to_ascii_uppercase())).cloned() {
+        w.s(345, h);
+    }
+    // CADCraft xdata: the saved paper-space view (centre, height), and the layout's paper units.
+    // Group 72 cannot carry the choice on its own: 0 means inches, but it is also what earlier
+    // CADCraft versions wrote for a layout that follows MEASUREMENT, and 1 is what a layout that
+    // inherits a metric MEASUREMENT writes too. PSUNITS keeps the three states apart: 0 inches,
+    // 1 millimetres, 2 follows MEASUREMENT (#3249).
+    let view = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite());
+    let unit_marker = match page.paper_mm {
+        Some(false) => Some(0),
+        Some(true) => Some(1),
+        // An inherited imperial layout writes group 72 = 0, which already reads back as
+        // inherited; only group 72 = 1 is ambiguous and needs the marker.
+        None if cadcraft_render::paper::page_unit_mm(d, page) == 1.0 => Some(2),
+        None => None,
+    };
+    if view.is_some() || unit_marker.is_some() {
         w.s(1001, dxf_ext::APP);
-        w.s(1000, "PSVIEW");
-        w.s(1002, "{");
-        w.p(1010, c.to3(0.0));
-        w.f(1040, height);
-        w.s(1002, "}");
+        if let Some((c, height)) = view {
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
+        if let Some(units) = unit_marker {
+            w.s(1000, "PSUNITS");
+            w.s(1002, "{");
+            w.i(1070, units);
+            w.s(1002, "}");
+        }
     }
 }
 
@@ -524,15 +644,26 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
         w.s(3, &l.name);
         w.s(350, layout_handles.get(i).cloned().unwrap_or_default());
     }
-    // Model space has no page setup of its own: write what PLOT does for it, the drawing extents
-    // fitted to the paper (plot type 1, scaled to fit). The default page's "layout" area is
+    // A new drawing has no saved Model page setup: write the drawing extents fitted to the
+    // paper (plot type 1, scaled to fit), as PLOT does. The default page's "layout" area is
     // plot type 5, "Layout information" (DXF Reference, PLOTSETTINGS group 74), which means
     // nothing for model space: another program's Plot dialog then shows no plot area or scale.
     let model_page = PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..PageSetup::default() };
     layout_obj(
         w,
         LayoutWriteContext { drawing: d, dictionary: layout_dict },
-        LayoutWriteData { handle: model_layout, name: "Model", tab: 0, block_record: ms_br, flags: 1, page: &model_page, view: None, limits: None },
+        LayoutWriteData {
+            handle: model_layout,
+            name: "Model",
+            tab: 0,
+            block_record: ms_br,
+            flags: 1,
+            page: d.model_page.as_ref().unwrap_or(&model_page),
+            view: None,
+            ucs: None,
+            limits: None,
+            model: true,
+        },
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
@@ -547,7 +678,9 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 flags: 1,
                 page: &l.page,
                 view: l.view,
+                ucs: l.ucs.as_ref(),
                 limits: l.limits,
+                model: false,
             },
         );
     }
@@ -749,6 +882,16 @@ fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     write_root_group_objects(w, &plan, &groups, &group_owner, &written, &mleader_dict);
     write_style_objects(w, &plan, &mleader_dict, &mleader_handles);
     write_named_objects(w, &plan);
+    let layer_states = {
+        let refs = crate::dxf_layer_states::Refs {
+            layers: &w.layers,
+            ltypes: &plan.cx.ltypes,
+            pstyles: &w.pstyles,
+            colour_dependent: plan.d.header.i64("PSTYLEMODE", 1) != 0,
+        };
+        crate::dxf_layer_states::objects(&plan.cx.layer_states, &plan.d.layer_states, &refs)
+    };
+    w.t.extend(layer_states);
     write_associative_objects(w, plan.cx);
     write_layout_objects(w, &plan);
     // Raster image definitions.
@@ -903,10 +1046,24 @@ fn plan_dimension_associations(d: &Drawing, all_spaces: &[&EntityStore], w: &mut
     }
 }
 
-/// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
-/// file ends up in: `version`, or the DWG version the bridge writes) has.
+/// The DWG bridge's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the DWG
+/// version the bridge writes) has.
 /// `frozen_341`: see [`Ctx::frozen_341`].
 pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_341: bool) -> Vec<Tag> {
+    tags_kept_for(d, version, target, frozen_341, true).0
+}
+
+/// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
+/// file ends up in) has, and the foreign objects the file keeps, by their handles in the drawing.
+/// `bridge`: the text is for the DWG bridge, not a DXF file. The versions alone can't say so: an
+/// R2000 DWG is bridged from R2000 text.
+pub(super) fn tags_kept_for(
+    d: &Drawing,
+    version: Version,
+    target: Version,
+    frozen_341: bool,
+    bridge: bool,
+) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -916,9 +1073,12 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // Structural handles start above every entity handle.
     let mut w = W {
         t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
+        next: structural_start(d),
+        used: entity_handles(d).collect(),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
         reactors: hatch_reactors(d),
     };
     // Pre-allocate handles for block records.
@@ -942,7 +1102,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         .collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, ..Ctx::default() };
+    let mut cx = Ctx { paper_views: paper_views(d), target, frozen_341, modern_table_values: !bridge && version >= Version::R2007, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
     let mut dim_defs = dimension_block_definitions(d, &all_spaces, &dim_plan, &mut w, &mut cx);
@@ -976,10 +1136,16 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     if let Some(name) = d.header.get("CMLEADERSTYLE").and_then(HVal::as_str) {
         xrecords.push((dxf_ext::MLEADER_STYLE_KEY, w.h(), vec![name.to_string()]));
     }
+    let ucs_name = model_ucs(d).name;
+    if !ucs_name.is_empty() {
+        xrecords.push((dxf_ext::UCS_NAME_KEY, w.h(), vec![ucs_name]));
+    }
     if let Some(chunks) = dxf_ext::constraint_chunks(&d.constraints, &d.parametric) {
         xrecords.push((dxf_ext::CONSTRAINTS_KEY, w.h(), chunks));
     }
-    if let Some(chunks) = dxf_ext::layer_state_chunks(&d.layer_states) {
+    // Saved layer states: AutoCAD's dictionary holds those it can, CADCraft's record the others.
+    cx.layer_states = crate::dxf_layer_states::Plan::new(&d.layer_states, || w.h());
+    if let Some(chunks) = dxf_ext::layer_state_chunks(&crate::dxf_layer_states::own(&d.layer_states)) {
         xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
     }
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
@@ -991,14 +1157,19 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();
     let scales: Vec<(&cadcraft_doc::AnnoScale, String)> = d.scales.iter().filter(|s| s.is_valid()).map(|s| (s, w.h())).collect();
-    // Plot style names used by layers and objects (Normal always), each a placeholder object.
+    // Plot style names used by layers and objects (Normal always), each a placeholder object; in
+    // a drawing of named plot styles also those of the layers of saved layer states, which name
+    // theirs by placeholder.
     let pstyle_dict = w.h();
     let mut pstyle_names: Vec<String> = vec![cadcraft_doc::NORMAL_STYLE.to_string()];
-    let named = d.layers.iter().map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
+    let mut seen: std::collections::HashSet<String> = pstyle_names.iter().map(|n| n.to_ascii_uppercase()).collect();
+    let named_styles = d.header.i64("PSTYLEMODE", 1) == 0;
+    let in_states = d.layer_states.iter().filter(|_| named_styles).flat_map(|s| s.layers.iter());
+    let named = d.layers.iter().chain(in_states).map(|l| l.plot_style.as_str()).chain(every.iter().map(|e| e.common.plot_style.as_str()));
     for n in named {
         let n = n.trim();
         let logical = n.is_empty() || n.eq_ignore_ascii_case("bylayer") || n.eq_ignore_ascii_case("byblock");
-        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && !pstyle_names.iter().any(|x| x.eq_ignore_ascii_case(n)) {
+        if !logical && pstyle_names.len() < dxf_ext::MAX_PLOT_STYLE_NAMES && seen.insert(n.to_ascii_uppercase()) {
             pstyle_names.push(n.to_string());
         }
     }
@@ -1040,7 +1211,12 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         br_rec(&mut w, h, n, None, Some(b));
     }
-    for (n, h, _) in dim_defs.iter().chain(arrow_defs.iter()).chain(table_defs.iter()) {
+    // A block with another name that a dimension was read with keeps its record's properties
+    // (insertion units, explodability) as read (#3299).
+    for (n, h, _) in &dim_defs {
+        br_rec(&mut w, h, n, None, super::blocks::kept_named_dim_block(d, n));
+    }
+    for (n, h, _) in arrow_defs.iter().chain(table_defs.iter()) {
         br_rec(&mut w, h, n, None, None);
     }
     w.s(0, "ENDTAB");
@@ -1093,15 +1269,23 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
     for (n, h, b) in &user_blocks {
         block(&mut w, (n, &b.description), h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
-    // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
+    // Generated geometry entities (dimension, arrowhead and table blocks) need handles; take
+    // them from the writer's allocator, which skips the drawing's own handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
         for e in ents.iter_mut().filter(|e| e.handle.0 == 0) {
-            e.handle = Handle(w.next);
-            w.next = w.next.saturating_add(1);
+            e.handle = Handle(w.next_handle());
         }
     }
     for (n, h, ents) in &dim_defs {
-        block(&mut w, (n, ""), h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        // A block with another name that a dimension was read with keeps its description, flags
+        // and base point as read (#3299); `*D` blocks are anonymous at the origin. A picture
+        // regenerated into an empty read block is drawn in world coordinates, so it is at the
+        // origin too.
+        let (desc, base, flags) = match super::blocks::kept_named_dim_block(d, n) {
+            Some(b) => (b.description.as_str(), if b.entities.is_empty() { Vec3::ZERO } else { b.base }, i64::from(b.anonymous)),
+            None => ("", Vec3::ZERO, 1),
+        };
+        block(&mut w, (n, desc), h, base, flags, &mut ents.iter(), false);
     }
     for (n, h, ents) in &arrow_defs {
         block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut ents.iter(), false);
@@ -1143,12 +1327,63 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
         *t = Tag::s(5, seed);
     }
     // Only a DXF declares the version it is written for: the DWG bridge writes R2000 text for the
-    // DWG writer, which keeps SAT-text solids (#2334).
-    crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013);
+    // DWG writer, which keeps SAT-text solids (#2334). A file of 2010 or earlier, DXF or DWG, has
+    // no data store, so a solid whose geometry is only there is left out of it.
+    // The DWG bridge keeps proxies in the DWG's own layout.
+    let strings = bridge || version >= Version::R2007;
+    let kept = crate::dxf_raw::finish(&mut w.t, d, &w.reactors, version >= Version::R2013, target >= Version::R2013, strings);
+    // Kept constraint groups go in the order their reader expects: a DXF's own version. The
+    // bridge's R2000 text is read as the version its kept groups came from when that is newer
+    // (craft-dwg's `encode_kept_noted` declares it), so there they stay as read.
+    let read_as =
+        if !bridge { version } else { d.foreign.version.as_deref().and_then(Version::for_acadver).filter(|from| *from > version).unwrap_or(version) };
+    crate::dxf_raw::constraint_node_order(&mut w.t, read_as >= Version::R2013);
+    // Kept render settings take the class-version form of the version the text is read as (#907).
+    crate::dxf_raw::render_settings_versions(&mut w.t, d.foreign.version.as_deref().and_then(Version::for_acadver), read_as);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
-    w.t
+    plot_settings_compatibility(&mut w.t, target);
+    (w.t, kept)
+}
+
+fn plot_settings_compatibility(tags: &mut Vec<Tag>, target: Version) {
+    let mut objects = HashSet::new();
+    let mut section = String::new();
+    let mut section_start = false;
+    for tag in tags.iter() {
+        if tag.code == 0 {
+            section_start = tag.str() == "SECTION";
+            if tag.str() == "ENDSEC" {
+                section.clear();
+            }
+        } else if section_start && tag.code == 2 {
+            section = tag.str();
+            section_start = false;
+        } else if section == "OBJECTS" && tag.code == 5 {
+            objects.extend(u64::from_str_radix(tag.str().trim(), 16).ok().filter(|handle| *handle != 0));
+        }
+    }
+    let mut kind = String::new();
+    let mut subclass = String::new();
+    tags.retain(|tag| {
+        if tag.code == 0 {
+            kind = tag.str();
+            subclass.clear();
+        } else if tag.code == 100 {
+            subclass = tag.str();
+        }
+        if !matches!(kind.as_str(), "LAYOUT" | "PLOTSETTINGS") {
+            return true;
+        }
+        if subclass == "AcDbPlotSettings" && matches!(tag.code, 76..=78) {
+            return target >= Version::R2004;
+        }
+        if matches!(subclass.as_str(), "AcDbPlotSettings" | "AcDbLayout") && tag.code == 333 {
+            return target >= Version::R2007 && u64::from_str_radix(tag.str().trim(), 16).ok().is_some_and(|handle| objects.contains(&handle));
+        }
+        true
+    });
 }
 
 /// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups

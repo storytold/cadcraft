@@ -44,7 +44,6 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "showStatusBar": ui.show_status_bar,
         "showCommandLine": ui.show_command_line,
         "showViewcube": ui.show_viewcube,
-        "showUcsIcon": ui.show_ucs_icon,
         "showLayerList": ui.show_layer_list,
         "toolsetTab": ui.toolset_tab,
         "collapsedGroups": ui.collapsed_groups,

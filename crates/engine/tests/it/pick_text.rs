@@ -265,9 +265,9 @@ fn mtext_glyph_hit_picks_successfully() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(15.0, 18.0), 0.5), Some(mtext_h), "direct hit on MText glyphs should pick");
 }
 
-/// An MText with empty contents does not panic or get picked.
+/// An MText with empty contents does not panic and is picked inside its blank frame (#2810) only.
 #[test]
-fn mtext_empty_content_does_not_panic_or_pick() {
+fn mtext_empty_content_does_not_panic_and_picks_inside_frame() {
     let mut s = Session::new();
     s.execute(
         "mtext",
@@ -281,10 +281,14 @@ fn mtext_empty_content_does_not_panic_or_pick() {
     )
     .unwrap();
     let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
 
-    // Clicking anywhere in the empty MText box should not panic and must return None
-    assert_eq!(pick(d, &Space::Model, Vec2::new(0.0, 0.0), 0.5), None);
-    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None);
+    // Clicking inside the blank MText's width x height frame (x in 0..100, y in -5..0) picks it;
+    // clicking outside returns None.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(0.0, 0.0), 0.5), Some(mtext_h));
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), Some(mtext_h));
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 5.0), 0.5), None);
+    assert_eq!(pick(d, &Space::Model, Vec2::new(120.0, -2.5), 0.5), None);
 }
 
 /// Two-column MText keeps each column's lines in separate hit boxes so clicking the gutter does not pick it.

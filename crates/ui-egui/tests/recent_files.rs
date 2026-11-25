@@ -70,11 +70,11 @@ fn opened_drawings_are_listed_newest_first_and_survive_a_restart() {
     let labels: Vec<_> = items.iter().map(|(l, _)| l.as_str()).collect();
     assert_eq!(labels, ["plan.dxf", "section.dwg", "Clear Recent Files"]);
 
-    // Choosing an item opens that file and moves it to the top.
+    // Choosing an already open item selects its tab and moves it to the top.
     let before = app.session.docs.len();
     menus::activate(&mut app, &items[1].1);
     settle(&mut app);
-    assert_eq!(app.session.docs.len(), before + 1);
+    assert_eq!(app.session.docs.len(), before);
     assert_eq!(app.session.state().ok().and_then(|s| s.path.clone()), Some(section.clone()));
     assert_eq!(app.ui.recent_files, [section.clone(), plan.clone()]);
 
