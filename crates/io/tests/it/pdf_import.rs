@@ -393,6 +393,13 @@ fn text_drawn_as_fill_and_stroke_is_one_text() {
 }
 
 #[test]
+fn fill_only_text_before_fill_and_stroke_text_does_not_double_it() {
+    // Note is only filled; Label's strokes must find Label's fills behind Note's.
+    let d = import("BT /F1 12 Tf 50 200 Td (Note) Tj ET BT /F1 12 Tf 50 100 Td 2 Tr (Label) Tj ET");
+    assert_eq!(texts(&d), ["Note", "Label"]);
+}
+
+#[test]
 fn text_drawn_as_fill_and_stroke_is_one_text_when_it_splits_into_runs() {
     // The whole TJ is filled before it is stroked: fill Left, fill Right, stroke Left, stroke Right.
     let d = import("BT /F1 12 Tf 50 100 Td 2 Tr [(Left) -30000 (Right)] TJ ET");

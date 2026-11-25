@@ -614,8 +614,10 @@ impl Collector {
             return;
         }
         if stroke {
-            if self.filled.front().is_some_and(|(at, s)| (*at - origin).len() <= 1e-9 * em.max(1.0) && *s == ch) {
-                self.filled.pop_front();
+            // The fill of this glyph may wait behind fills that are never stroked (fill-only text
+            // drawn before it): those go with it.
+            if let Some(i) = self.filled.iter().position(|(at, s)| (*at - origin).len() <= 1e-9 * em.max(1.0) && *s == ch) {
+                self.filled.drain(..=i);
                 return;
             }
             self.filled.clear();
