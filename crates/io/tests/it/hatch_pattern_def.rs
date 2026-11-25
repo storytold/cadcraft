@@ -177,6 +177,33 @@ fn a_user_defined_hatch_keeps_its_line_definitions_through_dxf_and_dwg() {
     }
 }
 
+/// A user-defined hatch a file lists with 78 = 0 (AutoCAD writes its own so) has no definition
+/// lines: the reader makes its families from the double flag (77), and keeps the hatch's angle
+/// (52) and spacing (41) to turn and space them.
+#[test]
+fn a_user_defined_hatch_listing_no_lines_gets_its_families_from_the_double_flag() {
+    let lines = cadcraft_doc::library::user_defined_lines(false);
+    let text = save(hatch(cadcraft_doc::library::USER_PATTERN, 2.0, 30f64.to_radians(), Vec2::new(1.0, 2.0), lines));
+    let p = pairs(&text);
+    let at = pattern_data(&p);
+    let end = p.iter().skip(at).position(|(c, _)| *c == 98).map(|k| at + k).expect("98");
+    for double in [false, true] {
+        // The hatch as such a file has it: its double flag, then 78 = 0 and no lines.
+        let mut q = p.clone();
+        q.splice(at..end, [(78, "0".to_string())]);
+        let flag = q[..at].iter().rposition(|(c, _)| *c == 77).expect("77");
+        q[flag].1 = u8::from(double).to_string();
+        assert_eq!(hatch_group(&q, 78).as_deref(), Some("0"));
+        assert_eq!(hatch_group(&q, 53), None, "no definition line is left in the file");
+
+        let h = first_hatch(&join(&q));
+        assert_eq!(h.pattern, cadcraft_doc::library::USER_PATTERN);
+        assert!((h.scale - 2.0).abs() < 1e-12 && (h.angle - 30f64.to_radians()).abs() < 1e-12, "{} {}", h.scale, h.angle);
+        assert_eq!(h.pattern_lines.len(), if double { 2 } else { 1 }, "double = {double}: {:?}", h.pattern_lines);
+        assert!(near(&h.pattern_lines, &cadcraft_doc::library::user_defined_lines(double)), "double = {double}: {:?}", h.pattern_lines);
+    }
+}
+
 #[test]
 fn library_named_patterns_keep_the_files_definition() {
     // The library's AR-CONC only approximates AutoCAD's: the file's own lines are kept and saved.
