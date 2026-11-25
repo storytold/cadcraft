@@ -359,6 +359,46 @@ fn dimspace_auto_uses_the_base_dimension_fixed_text_style_height() {
 }
 
 #[test]
+fn dimspace_counts_only_parallel_dimension_lines() {
+    let mut s = Session::new();
+    let base = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [12, 0], "at": [6, 4] })).unwrap());
+    let angled = h(&s.execute("dimaligned", &json!({ "p1": [20, 0], "p2": [30, 10], "at": [20, 10] })).unwrap());
+    let reversed = h(&s.execute("dimaligned", &json!({ "p1": [20, 0], "p2": [0, 0], "at": [10, 12] })).unwrap());
+    let rotated = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [30, 5], "at": [15, 16], "rotation": 180 })).unwrap());
+    let original = dim(&s, angled);
+    let spacing = 2.0;
+    let result =
+        s.execute("dimspace", &json!({ "base": base.hex(), "handles": [rotated.hex(), angled.hex(), reversed.hex()], "spacing": spacing })).unwrap();
+
+    assert_eq!(dim(&s, angled), original);
+    assert_eq!(result["spaced"], json!(2));
+    let base_y = dim(&s, base).defpt.y;
+    assert_eq!(dim(&s, reversed).defpt.y - base_y, spacing);
+    assert_eq!(dim(&s, rotated).defpt.y - base_y, 2.0 * spacing);
+}
+
+#[test]
+fn typed_dimspace_with_only_nonparallel_targets_preserves_redo() {
+    let mut s = Session::new();
+    let base = h(&s.execute("dimaligned", &json!({ "p1": [0, 0], "p2": [12, 12], "at": [3, 6] })).unwrap());
+    let target = h(&s.execute("dimlinear", &json!({ "p1": [20, 0], "p2": [30, 10], "at": [20, 10], "rotation": 0 })).unwrap());
+    let original = dim(&s, target);
+    let line = line(&mut s, [30.0, 2.0], [40.0, 2.0]);
+    s.execute("undo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().entity(line).is_none());
+
+    s.start("dimspace").unwrap();
+    s.input(Input::Pick(vec![base])).unwrap();
+    s.input(Input::Pick(vec![target])).unwrap();
+    s.input(Input::Enter).unwrap();
+    s.input(Input::Text("2".into())).unwrap();
+
+    assert_eq!(dim(&s, target), original);
+    s.execute("redo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().entity(line).is_some());
+}
+
+#[test]
 fn text_style_rename_follows_block_definition_text() {
     let mut s = Session::new();
     s.execute("style", &json!({ "name": "SRC", "height": 1, "backwards": true })).unwrap();

@@ -1,7 +1,7 @@
 use super::common::{hex_param, style};
 use super::{
-    Accept, DimKind, EntityKind, Handle, Input, Interactive, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Value, Vec2, bad, json,
-    point_param, str_param, targets, v3,
+    Accept, DimKind, Dimension, EntityKind, Handle, Input, Interactive, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Value, Vec2, bad,
+    json, point_param, str_param, targets, v3,
 };
 
 pub(super) fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
@@ -160,6 +160,16 @@ pub(super) fn run_dimtedit(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "changed": hs.len() }))
 }
 
+/// The direction of a linear or aligned dimension line, independent of its extension lines.
+fn dimension_line_direction(dimension: &Dimension) -> Option<Vec2> {
+    match dimension.kind {
+        DimKind::Linear { rotation } => Some(Vec2::from_angle(rotation)),
+        DimKind::Aligned => Some((dimension.p14.xy() - dimension.p13.xy()).normalized()),
+        _ => None,
+    }
+    .filter(|dir| *dir != Vec2::ZERO && dir.is_finite())
+}
+
 /// DIMSPACE: equal spacing of parallel linear dimensions from a base dimension.
 /// [Auto spacing](https://help.autodesk.com/cloudhelp/2023/ENU/AutoCAD-LT-MAC/files/GUID-18DF8B02-3E43-4531-ACE0-75FA7161F209.htm)
 /// uses twice the base dimension's text height.
@@ -177,11 +187,7 @@ pub(super) fn run_dimspace(s: &mut Session, p: &Value) -> Result<Value> {
             .unwrap_or_else(|| st.text_height * st.effective_scale(d.header.f64("DIMSCALE", 1.0)));
         2.0 * text_height
     });
-    let dir = match b.kind {
-        DimKind::Linear { rotation } => Vec2::from_angle(rotation),
-        DimKind::Aligned => (b.p14.xy() - b.p13.xy()).normalized(),
-        _ => return Err(bad("dimspace", "base must be a linear or aligned dimension")),
-    };
+    let dir = dimension_line_direction(&b).ok_or_else(|| bad("dimspace", "base must be a linear or aligned dimension"))?;
     let n = dir.perp();
     let base_off = (b.defpt.xy() - b.p13.xy()).dot(n);
     let side = if base_off >= 0.0 { 1.0 } else { -1.0 };
@@ -189,12 +195,15 @@ pub(super) fn run_dimspace(s: &mut Session, p: &Value) -> Result<Value> {
     let mut others: Vec<(Handle, f64)> = hs
         .iter()
         .filter_map(|h| match d.entity(*h).map(|e| &e.kind) {
-            Some(EntityKind::Dimension(o)) if matches!(o.kind, DimKind::Linear { .. } | DimKind::Aligned) => {
+            Some(EntityKind::Dimension(o)) if dimension_line_direction(o).is_some_and(|target| dir.cross(target).abs() <= cadcraft_geom::EPS) => {
                 Some((*h, (o.defpt.xy() - b.defpt.xy()).dot(n) * side))
             }
             _ => None,
         })
         .collect();
+    if others.is_empty() {
+        return Ok(json!({ "spaced": 0 }));
+    }
     others.sort_by(|a, c| a.1.total_cmp(&c.1));
     let line_pt = b.defpt.xy();
     let dm = s.doc_mut()?;
