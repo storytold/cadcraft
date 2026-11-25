@@ -864,7 +864,7 @@ pub(crate) fn focus_opened(app: &mut CadApp, ctx: &egui::Context) {
         app.canvas.wants_focus = true;
     }
     let focused = ctx.memory(|memory| memory.focused());
-    // A click on a palette or the status bar takes the focus from the drawing and leaves it nowhere.
+    // Escape in a palette's field leaves the focus nowhere.
     let tab_work = focused.is_none() && crate::cmdline::tab_has_work(app);
     if !(app.canvas.wants_focus || tab_work) || crate::framework::overlay_open(app, ctx) {
         return;
