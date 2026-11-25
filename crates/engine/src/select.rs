@@ -19,9 +19,9 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
             .prims
             .iter()
             .flat_map(|p| match p.kind {
-                cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask => {
-                    list.points(p).as_chunks::<3>().0.iter().map(|t| vec![t[0], t[1], t[2], t[0]]).collect()
-                }
+                // A fill is drawn without an outline: it is hit on the closed boundary of what it
+                // covers, not on each triangle (a SOLID's diagonal is no edge of it).
+                cadcraft_render::Kind::Tris | cadcraft_render::Kind::Mask => list.fill_outlines(p),
                 cadcraft_render::Kind::Infinite { ray } => match list.points(p) {
                     [base, dir] => {
                         let far = 1e9;
