@@ -549,7 +549,7 @@ fn gather_in(
             continue;
         }
         let inf = crate::select::is_infinite(e);
-        if !inf && !crate::select::bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        if !inf && !crate::select::snap_bounds(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
         // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
