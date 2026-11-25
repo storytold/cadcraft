@@ -72,3 +72,41 @@ fn the_page_still_decides_the_bits_cadcraft_models() {
     d.layouts.last_mut().unwrap().page = PageSetup::default();
     assert_eq!(flags_after_save(&d, "sheet.dxf"), Some(512 | 128 | 32 | 16));
 }
+
+/// Each LAYOUT object's name and plot layout flags (the AcDbLayout group 1 and the
+/// AcDbPlotSettings group 70) in DXF text.
+fn layout_plot_flags(text: &str) -> Vec<(String, i64)> {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let mut out = Vec::new();
+    let (mut inside, mut subclass, mut name, mut flags) = (false, "", None, None);
+    for pair in lines.chunks(2) {
+        let [code, value] = pair else { break };
+        match *code {
+            "0" => {
+                if let (true, Some(n), Some(f)) = (inside, name.take(), flags.take()) {
+                    out.push((n, f));
+                }
+                (inside, subclass, name, flags) = (*value == "LAYOUT", "", None, None);
+            }
+            "100" if inside => subclass = value,
+            "70" if inside && subclass == "AcDbPlotSettings" => flags = value.parse().ok(),
+            "1" if inside && subclass == "AcDbLayout" => name = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn only_the_model_layout_carries_the_model_type_flag() {
+    // 1024 is "ModelType" (DXF Reference, PLOTSETTINGS group 70): the plot settings of model space.
+    // The Model layout carries it; a paper layout does not, even when it was read with it.
+    for read in [688, 688 | 1024] {
+        let bytes = write(&drawing(read), "sheet.dxf").unwrap();
+        let layouts = layout_plot_flags(&String::from_utf8_lossy(&bytes));
+        let flags = |name: &str| layouts.iter().find(|(n, _)| n == name).map(|&(_, f)| f);
+        let (model, sheet) = (flags("Model").unwrap(), flags("SHEET").unwrap());
+        assert_ne!(model & 1024, 0, "Model, SHEET read with {read}: {layouts:?}");
+        assert_eq!(sheet & 1024, 0, "SHEET read with {read}: {layouts:?}");
+    }
+}

@@ -15,6 +15,7 @@
 	2 Points	2 punkty
 	2 Viewports	2 rzutnie
 	2D Solid	Bryła 2D
+	3 Point	3 punkty
 	3 Points	3 punkty
 	3 Viewports	3 rzutnie
 	3D Face	Ściana 3D
@@ -23,20 +24,42 @@
 	4 Viewports	4 rzutnie
 	< Less than	< Mniejsze niż
 	<> Not Equal	<> Różne
+	<style overrides>	<nadpisania stylu>
 	= Equals	= Równe
 	> Greater than	> Większe niż
+	A dimension style with this name already exists.	Styl wymiarowania o tej nazwie już istnieje.
 	About	O programie
 	About CADCraft	O programie CADCraft
+	Above	Nad
+	Above text	Nad tekstem
 	Absolute	Bezwzględne
 	Add Leader	Dodaj odnośnik
+	Add a drawing file as a block library	Dodaj plik rysunku jako bibliotekę bloków
+	Add a folder of drawings or a drawing file to use its blocks.	Dodaj folder rysunków lub plik rysunku, aby używać jego bloków.
+	Additional Tools	Dodatkowe narzędzia
 	Align	Wyrównaj
 	Align Text	Wyrównaj tekst
 	Aligned	Wyrównany
 	All	Wszystkie
 	All Used Layers	Wszystkie używane warstwy
 	All files	Wszystkie pliki
+	All properties of {style}	Wszystkie właściwości stylu {style}
+	All styles	Wszystkie style
+	Alt enabled	Jednostki alternatywne włączone
+	Alt format	Format alternatywny
+	Alt precision	Dokładność alternatywna
+	Alt prefix	Przedrostek alternatywny
+	Alt prefix and suffix	Przedrostek i przyrostek alternatywny
+	Alt round	Zaokrąglenie alternatywne
+	Alt scale factor	Współczynnik skali alternatywnej
+	Alt suffix	Przyrostek alternatywny
+	Alt zero suppression	Pomijanie zer alternatywnych
+	Alternate Units	Jednostki alternatywne
 	Angle	Kąt
+	Angle format	Format kąta
+	Angle precision	Dokładność kąta
 	Angular	Kątowy
+	Angular zero suppression	Pomijanie zer kątowych
 	Annotation Visibility	Widoczność opisów
 	Annotation scale	Skala opisów
 	Apparent Intersection	Pozorne przecięcie
@@ -45,8 +68,19 @@
 	Apply true color	Zastosuj kolor RGB
 	Arc	Łuk
 	Arc Length	Długość łuku
+	Arc length symbol	Symbol długości łuku
+	Architectural	Architektoniczne
+	Architectural stacked	Architektoniczne piętrowe
+	Architectural tick	Kreska architektoniczna
 	Area	Pole
 	Array	Szyk
+	Arrow 1	Grot 1
+	Arrow 2	Grot 2
+	Arrowheads	Groty
+	Arrows	Groty
+	At Ext Line 1	Przy linii pomocniczej 1
+	At Ext Line 2	Przy linii pomocniczej 2
+	At least	Co najmniej
 	Attach	Dołącz
 	Attribute	Atrybut
 	Attribute Definition	Definicja atrybutu
@@ -56,22 +90,32 @@
 	Axis, End	Oś, punkt końcowy
 	Base	Punkt bazowy
 	Baseline	Od bazy
+	Baseline spacing	Odstęp wymiarów od bazy
 	Batch Publish	Publikowanie zbiorcze
+	Before text	Przed tekstem
+	Below	Pod
+	Best fit	Najlepsze dopasowanie
 	Binary assets added	Dodane pliki binarne
 	Binary assets removed	Usunięte pliki binarne
 	Blend	Płynne połączenie
 	Block	Blok
 	Block Attribute Manager...	Menedżer atrybutów bloków...
 	Block Editor	Edytor bloków
+	Block Libraries	Biblioteki bloków
+	Block Library	Biblioteka bloków
 	Block Reference	Odnośnik bloku
 	Block...	Blok...
 	Blocks	Bloki
+	Blocks Palette	Paleta bloków
 	Blue	Niebieski
 	Bold	Pogrubienie
 	Boolean	Operacje logiczne
+	Bottom center	Dół środek
 	Boundary	Obwiednia
 	Boundary...	Obwiednia...
 	Box	Prostopadłościan
+	Box blank	Kwadrat pusty
+	Box filled	Kwadrat wypełniony
 	Break	Przerwij
 	Break At Point	Przerwij w punkcie
 	Bring to Front	Przenieś na wierzch
@@ -87,6 +131,7 @@
 	Center X	Środek X
 	Center Y	Środek Y
 	Center Z	Środek Z
+	Center mark size	Rozmiar znacznika środka
 	Center, Diameter	Środek, średnica
 	Center, Radius	Środek, promień
 	Center, Start, Angle	Środek, początek, kąt
@@ -98,9 +143,14 @@
 	Circle	Okrąg
 	Circumference	Obwód
 	Clear	Usuń
+	Click a block, then pick its insertion point.	Kliknij blok, a następnie wskaż jego punkt wstawienia.
 	Close	Zamknij
 	Close All	Zamknij wszystkie
+	Close panel	Zamknij panel
+	Close {panel}	Zamknij {panel}
 	Closed	Zamknięta
+	Closed blank	Zamknięty pusty
+	Closed filled	Zamknięty wypełniony
 	Coincident	Zbieżność
 	Collapse Tool Sets	Zwiń zestawy narzędzi
 	Collinear	Współliniowość
@@ -109,12 +159,17 @@
 	Color 9	Kolor 9
 	Color Index	Indeks koloru
 	Color...	Kolor...
+	Columns	Kolumny
+	Comma	Przecinek
 	Command History	Historia poleceń
 	Command Line	Wiersz poleceń
 	Command Line History Lines	Liczba wierszy historii poleceń
 	Command Reference	Lista poleceń
 	Commits	Zatwierdzenia
 	Company	Firma
+	Compare	Porównaj
+	Compare Dimension Styles	Porównaj style wymiarowania
+	Compare...	Porównaj...
 	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Projektowanie i kreślenie wspomagane komputerowo — otwarty program CAD napisany w języku Rust, opracowany niezależnie.
 	Concentric	Współśrodkowość
 	Cone	Stożek
@@ -131,8 +186,11 @@
 	Copy with Base Point	Kopiuj z punktem bazowym
 	Count	Zlicz obiekty
 	Create Block	Utwórz blok
+	Create New Dimension Style	Utwórz nowy styl wymiarowania
 	Creates a user parameter	Tworzy parametr użytkownika
 	Ctrl+Enter to finish	Ctrl+Enter, aby zakończyć
+	Current Drawing	Bieżący rysunek
+	Current dimension style: {style}	Bieżący styl wymiarowania: {style}
 	Current layer	Bieżąca warstwa
 	Current selection	Bieżące zaznaczenie
 	Current: {color}	Bieżący: {color}
@@ -140,11 +198,17 @@
 	Cyan	Cyjan
 	Cylinder	Walec
 	Dark	Ciemny
+	Datum triangle	Trójkąt bazowy
+	Datum triangle filled	Trójkąt bazowy wypełniony
+	Decimal	Dziesiętne
+	Decimal degrees	Stopnie dziesiętne
+	Decimal separator	Separator dziesiętny
 	Default	Domyślna
 	Define Attributes	Zdefiniuj atrybuty
 	Define Attributes...	Zdefiniuj atrybuty...
 	Defined width	Zdefiniowana szerokość
 	Degree	Stopień
+	Degrees Minutes Seconds	Stopnie, minuty, sekundy
 	Delete	Usuń
 	Delete Column	Usuń kolumnę
 	Delete Constraints	Usuń więzy
@@ -157,12 +221,28 @@
 	Delete Text Style	Usuń styl tekstu
 	Delta X	Przyrost X
 	Delta Y	Przyrost Y
+	Describe Properties	Opisz właściwości
 	Description	Opis
+	Details	Szczegóły
+	Diagonal stacking	Ułamek ukośny
 	Diameter	Średnica
+	Dim line color	Kolor linii wymiarowej
+	Dim line ext	Przedłużenie linii wymiarowej
+	Dim line forced	Wymuś linię wymiarową
+	Dim line linetype	Rodzaj linii wymiarowej
+	Dim line lineweight	Grubość linii wymiarowej
+	Dim prefix	Przedrostek wymiaru
+	Dim roundoff	Zaokrąglenie wymiaru
+	Dim scale linear	Skala wymiarów liniowych
 	Dim style	Styl wymiaru
+	Dim suffix	Przyrostek wymiaru
+	Dim units	Jednostki wymiaru
 	Dimension	Wymiar
 	Dimension Space	Odstępy między wymiarami
+	Dimension Style	Styl wymiarowania
+	Dimension Style Manager	Menedżer stylów wymiarowania
 	Dimension Style Override	Nadpisz ustawienia stylu wymiarowania
+	Dimension Style Overrides	Nadpisania stylu wymiarowania
 	Dimension Style...	Styl wymiarowania...
 	Dimension Text Edit	Edytuj tekst wymiaru
 	Dimension style	Styl wymiarowania
@@ -175,6 +255,9 @@
 	Divide	Podziel na równe części
 	Do not plot (click: plot)	Niedrukowana (kliknij, aby włączyć drukowanie)
 	Donut	Pierścień
+	Dot	Kropka
+	Dot blank	Kropka pusta
+	Dot small	Mała kropka
 	Double-click to edit the description	Kliknij dwukrotnie, aby edytować opis
 	Down	Dół
 	Drafting	Rysowanie
@@ -200,6 +283,7 @@
 	End Y	Koniec Y
 	End angle	Kąt końcowy
 	Endpoint	Punkt końcowy
+	Engineering	Inżynierskie
 	Enter Top, Zero or Bottom.	Wpisz Top, Zero lub Bottom.
 	Enter a fit data option	Wybierz opcję punktów dopasowania
 	Enter a pattern name	Podaj nazwę wzoru
@@ -246,14 +330,24 @@
 	Entire drawing	Cały rysunek
 	Equal	Równość
 	Erase	Usuń
+	Exactly	Dokładnie
 	Exclude from new selection set	Wyklucz z nowego zbioru zaznaczenia
 	Explode	Rozbij
 	Export	Eksportuj
 	Export to PDF...	Eksportuj do PDF...
 	Expression	Wyrażenie
+	Ext line 1 linetype	Rodzaj linii pomocniczej 1
+	Ext line 2 linetype	Rodzaj linii pomocniczej 2
+	Ext line color	Kolor linii pomocniczych
+	Ext line ext	Przedłużenie linii pomocniczych
+	Ext line fixed	Stała długość linii pomocniczych
+	Ext line length	Długość linii pomocniczych
+	Ext line lineweight	Grubość linii pomocniczych
+	Ext line offset	Odsunięcie linii pomocniczych
 	Extend	Wydłuż
 	Extension	Przedłużenie
 	Extents	Zakres rysunku
+	Extra Large Icons	Bardzo duże ikony
 	Extrude	Wyciągnij
 	File	Plik
 	File Tab	Karta pliku
@@ -267,7 +361,11 @@
 	Fit Points	Punkty dopasowania
 	Fix	Unieruchom
 	Flatten Objects	Spłaszcz obiekty
+	Folder or file	Folder lub plik
 	Format	Format
+	Fraction format	Format ułamka
+	Fractional	Ułamkowe
+	Fractional stacked	Ułamkowe piętrowe
 	Freehand	Odręczna
 	Freeze	Zamrożona
 	Freeze Layer	Zamroź warstwę
@@ -276,6 +374,7 @@
 	Freeze/Thaw in all viewports	Zamroź/odmroź we wszystkich rzutniach
 	Freeze/Thaw in the current viewport	Zamroź/odmroź w bieżącej rzutni
 	General	Ogólne
+	Generate Boundary	Utwórz obwiednię
 	Geometric Center	Środek geometryczny
 	Geometric Constraint	Więz geometryczny
 	Geometric Constraints	Więzy geometryczne
@@ -284,6 +383,7 @@
 	Get View	Odczytaj widok
 	Global width	Szerokość globalna
 	Grab bag	Różne
+	Gradians	Grady
 	Gradient	Gradient
 	Gradient...	Gradient...
 	Green	Zielony
@@ -307,12 +407,18 @@
 	Hide All Dynamic Dimensions	Ukryj wszystkie wymiary dynamiczne
 	Hide Layer List	Ukryj listę warstw
 	Hide Palettes	Ukryj palety
+	Hide dim line 1	Ukryj linię wymiarową 1
+	Hide dim line 2	Ukryj linię wymiarową 2
+	Hide ext line 1	Ukryj linię pomocniczą 1
+	Hide ext line 2	Ukryj linię pomocniczą 2
 	Home	Start
 	Horizontal	Poziomo
+	Horizontal stacking	Ułamek poziomy
 	HorizontalDistance	Odległość pozioma
 	How to apply:	Sposób zastosowania:
 	ID Point	Współrzędne punktu
 	Import	Importuj
+	Import Library Block	Importuj blok z biblioteki
 	In	Powiększ
 	In-window Menu Bar	Pasek menu w oknie
 	Include in new selection set	Uwzględnij w nowym zbiorze zaznaczenia
@@ -324,6 +430,7 @@
 	Insert Block	Wstaw blok
 	Insert Column	Wstaw kolumnę
 	Insert Row	Wstaw wiersz
+	Insert and Explode	Wstaw i rozbij
 	Insert this block	Wstaw ten blok
 	Insertion	Wstawienie
 	Insertion X	Wstawienie X
@@ -331,6 +438,7 @@
 	Insertion Z	Wstawienie Z
 	Inspect Constraints	Sprawdź więzy
 	Inspect Drawing	Sprawdź rysunek
+	Integral	Całka
 	Interface Language	Język interfejsu
 	Interface Theme	Motyw interfejsu
 	Intersect	Część wspólna
@@ -338,10 +446,15 @@
 	Isolate	Izoluj
 	Isolate Layer	Izoluj warstwę
 	Isometric Drafting	Rysowanie izometryczne
+	JIS	JIS
+	Jog angle	Kąt załamania
 	Join	Połącz
 	Join the ArtCraft Discord…	Dołącz do Discorda ArtCraft…
 	Join us on Discord	Dołącz do nas na Discordzie
+	Justification	Wyrównanie
+	Keep dim line with text	Zachowaj linię wymiarową przy tekście
 	Language	Język
+	Large Icons	Duże ikony
 	Last	Ostatnie
 	Last commit	Ostatnie zatwierdzenie
 	Layer	Warstwa
@@ -360,20 +473,30 @@
 	Layout	Arkusz
 	Layout list	Lista arkuszy
 	Leader	Linia odniesienia
+	Leader arrow	Grot odnośnika
+	Leading	Początkowe
 	Left	Lewo
 	Length	Długość
 	Length X	Długość X
 	Length Y	Długość Y
 	Lengthen	Zmień długość
+	Libraries	Biblioteki
 	Light	Światło
+	Limits	Wartości graniczne
 	Line	Linia
 	Line delta	Bilans wierszy
+	Line space distance	Odstęp między wierszami
+	Line space factor	Współczynnik odstępu wierszy
+	Line space style	Styl odstępu wierszy
 	Linear	Liniowy
+	Lines	Linie
+	Lines & Arrows	Linie i groty
 	Lines +/−	Wiersze +/−
 	Lines added	Dodane wiersze
 	Lines deleted	Usunięte wiersze
 	Linetype	Rodzaj linii
 	Linetype Scale	Skala rodzaju linii
+	Lower tolerance	Tolerancja dolna
 	Ltscale	Skala rodzaju linii
 	Linetype...	Rodzaj linii...
 	Lineweight	Grubość linii
@@ -405,15 +528,27 @@
 	Measure	Zmierz
 	Measure Distance	Zmierz odległość
 	Measure Geometry	Zmierz geometrię
+	Measurement	Wartość pomiaru
+	Medium Icons	Średnie ikony
+	Menu Bar	Pasek menu
 	Merge Cells	Scal komórki
 	Merged PRs	Scalone zgłoszenia zmian
+	Middle	Środek
+	Middle center	Środek środek
+	Middle left	Środek lewo
+	Middle right	Środek prawo
 	Midpoint	Punkt środkowy
 	Mirror	Odbij lustrzanie
+	Misc	Różne
 	Model Space (in viewport)	Przestrzeń modelu (w rzutni)
 	Modeling	Modelowanie
 	Models	Modele
 	Modify	Modyfikuj
+	Modify Dimension Style: {style}	Modyfikuj styl wymiarowania: {style}
+	Modify...	Modyfikuj...
 	Move	Przesuń
+	Move text, add leader	Przesuń tekst, dodaj odnośnik
+	Move text, no leader	Przesuń tekst bez odnośnika
 	Multileader	Wieloodnośnik
 	Multileader Style...	Styl wieloodnośnika...
 	Multileader style	Styl wieloodnośnika
@@ -430,6 +565,7 @@
 	Nearest	Najbliższy
 	New	Nowy
 	New (metric)	Nowy (metryczny)
+	New Dimension Style: {style}	Nowy styl wymiarowania: {style}
 	New Drawing	Nowy rysunek
 	New Drawing (⌘N)	Nowy rysunek (⌘N)
 	New Drawing...	Nowy rysunek...
@@ -438,7 +574,10 @@
 	New VP Freeze	Zamroź w nowej rzutni
 	New Viewports...	Nowe rzutnie...
 	New state name	Nazwa nowego stanu
+	New style name	Nazwa nowego stylu
+	New...	Nowy...
 	No	Nie
+	No block matches the filter.	Żaden blok nie pasuje do filtru.
 	No blocks defined in this drawing.	W tym rysunku nie zdefiniowano bloków.
 	No contributor data was built into this copy.	Ta wersja nie zawiera danych o współtwórcach.
 	No model credits were built into this copy.	Ta wersja nie zawiera informacji o wykorzystanych modelach.
@@ -448,6 +587,7 @@
 	None	Brak
 	Not available	Niedostępne
 	Not available yet	Jeszcze niedostępne
+	Not stacked	Bez ułamka piętrowego
 	OK	OK
 	Object	Obiekt
 	Object Snap	Przyciąganie do obiektów
@@ -456,24 +596,38 @@
 	Object Snap Tracking	Śledzenie przyciągania do obiektów
 	Object Snap Tracking (F11)	Śledzenie przyciągania do obiektów (F11)
 	Object type:	Typ obiektu:
+	Obliquing	Pochylenie
 	Off	Wyłącz
 	Offset	Odsuń
 	On	Włącz
 	On/Off	Włącz/wyłącz
 	One of the Crafting Apps by the ArtCraft team and community.	Jedna z aplikacji Crafting Apps tworzonych przez zespół ArtCraft i społeczność.
+	Only the first {n} are shown.	Pokazano tylko pierwsze ({n}).
 	Open (⌘O)	Otwórz (⌘O)
+	Open 30	Otwarty 30
+	Open Library...	Otwórz bibliotekę...
 	Open Sample Drawing	Otwórz przykładowy rysunek
+	Open arrow	Otwarty
 	Open...	Otwórz...
 	Operator:	Operator:
 	Orbit	Orbita
 	Ordinate	Współrzędna
+	Origin indicator	Wskaźnik początku
+	Origin indicator 2	Wskaźnik początku 2
 	Ortho (F8)	Tryb ortogonalny (F8)
 	Ortho Mode	Tryb ortogonalny
 	Ortho Mode (F8)	Tryb ortogonalny (F8)
 	Out	Pomniejsz
+	Outside	Na zewnątrz
+	Over Ext Line 1	Nad linią pomocniczą 1
+	Over Ext Line 2	Nad linią pomocniczą 2
 	Override	Nadpisz ustawienia wymiaru
+	Override Current Style: {style}	Nadpisz bieżący styl: {style}
+	Override...	Nadpisz...
+	Overrides the dimension style. Right-click to use the style's value.	Nadpisuje styl wymiarowania. Kliknij prawym przyciskiem, aby użyć wartości ze stylu.
 	PAPER	PAPIER
 	Percent	Procent
+	Period	Kropka
 	Polar (distance < angle)	Biegunowe (odległość < kąt)
 	PRs	Zgłoszenia zmian
 	Page Setup Manager	Menedżer ustawień strony
@@ -513,8 +667,12 @@
 	Position X	Pozycja X
 	Position Y	Pozycja Y
 	Position Z	Pozycja Z
+	Prefix and suffix	Przedrostek i przyrostek
+	Preview of: {style}	Podgląd: {style}
+	Preview of: {style} (overrides)	Podgląd: {style} (nadpisania)
 	Previous	Poprzedni
 	Previous Layer	Poprzednia warstwa
+	Primary Units	Jednostki podstawowe
 	Primitives	Bryły podstawowe 3D
 	Print	Drukuj
 	Print...	Drukuj...
@@ -534,10 +692,13 @@
 	Quick Select...	Szybkie zaznaczanie...
 	QuickCalc	Szybki kalkulator
 	Quit CADCraft	Zakończ CADCraft
+	Radians	Radiany
 	Radius	Promień
 	Raster Image	Obraz rastrowy
 	Ray	Półprosta
+	Read the library again	Wczytaj bibliotekę ponownie
 	Read-only	Tylko do odczytu
+	Reading the library...	Wczytywanie biblioteki...
 	Real name	Imię i nazwisko
 	Realtime	W czasie rzeczywistym
 	Reassociate Dimensions	Ponownie powiąż wymiary
@@ -555,6 +716,8 @@
 	Region/Mass Properties	Właściwości obszaru i masy
 	Relative	Względne
 	Remove Leader	Usuń odnośnik
+	Remove Style Overrides	Usuń nadpisania stylu
+	Remove from the list	Usuń z listy
 	Remove the viewport override	Usuń nadpisanie rzutni
 	Rename Dimension Style	Zmień nazwę stylu wymiarowania
 	Rename Layer	Zmień nazwę warstwy
@@ -562,6 +725,7 @@
 	Rename Layout	Zmień nazwę arkusza
 	Rename Text Style	Zmień nazwę stylu tekstu
 	Rename...	Zmień nazwę...
+	Repeat Placement	Powtarzaj wstawianie
 	Requires a point (x,y, @dx,dy or @d<a).	Wymagany punkt (x,y, @dx,dy lub @d<a).
 	Reset Palettes	Zresetuj palety
 	Restore	Przywróć
@@ -571,6 +735,7 @@
 	Revision Cloud	Chmurka rewizji
 	Revolve	Obróć bryłę
 	Right	Prawo
+	Right angle	Kąt prosty
 	Rotate	Obróć
 	Rotation	Obrót
 	S	S
@@ -580,7 +745,10 @@
 	Save As...	Zapisz jako...
 	Save Layer State	Zapisz stan warstw
 	Save State	Zapisz stan
+	Save as New Style...	Zapisz jako nowy styl...
+	Save to current style	Zapisz w bieżącym stylu
 	Scale	Skaluj
+	Scientific	Naukowe
 	Search for layer	Szukaj warstwy
 	Search for parameter	Szukaj parametru
 	Second and next points:	Drugi i kolejne punkty:
@@ -661,6 +829,7 @@
 	Set Table Cell	Ustaw zawartość komórki
 	Set Variable	Ustaw zmienną
 	Set View	Ustaw widok
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Ustawione przez styl tekstu „{style}”, który ma stałą wysokość. Ustaw w nim wysokość 0, aby użyć wysokości tekstu wymiaru.
 	Share	Udostępnij
 	Show	Pokaż
 	Show All	Pokaż wszystkie
@@ -672,6 +841,8 @@
 	Single Line Text	Tekst jednowierszowy
 	Single Point	Pojedynczy punkt
 	Single...	Pojedynczy...
+	Small	Mały
+	Small Icons	Małe ikony
 	Smooth	Gładkość
 	Snap	Przyciąganie
 	Snap Mode	Tryb skoku
@@ -680,7 +851,9 @@
 	Snap X spacing	Odstęp skoku X
 	Snap and Grid	Skok i siatka
 	Solid	Bryła
+	Some of these dimensions take their text height from a fixed-height text style.	Niektóre z tych wymiarów biorą wysokość tekstu ze stylu tekstu o stałej wysokości.
 	Sort	Sortowanie
+	Space	Spacja
 	Specify a point	Wskaż punkt
 	Specify a scale for the hatch pattern	Podaj skalę wzoru kreskowania
 	Specify a second extension line origin	Wskaż początek drugiej linii pomocniczej
@@ -817,6 +990,7 @@
 	Start X	Początek X
 	Start Y	Początek Y
 	Start angle	Kąt początkowy
+	Start with	Na podstawie
 	Start, Center, Angle	Początek, środek, kąt
 	Start, Center, End	Początek, środek, koniec
 	Start, Center, Length	Początek, środek, długość
@@ -826,13 +1000,36 @@
 	Status	Stan
 	Status Bar	Pasek stanu
 	Stretch	Rozciągnij
+	Style	Styl
 	Style: Standard	Styl: Standard
+	Styles	Style
+	Styles in use	Używane style
 	Subtract	Odejmij
+	Suppress arrows	Pomiń groty
 	Sweep	Przeciągnij po ścieżce
 	Switch Drawing	Przełącz rysunek
 	Switch Layout	Przełącz arkusz
 	Switch between model space in a viewport and paper space	Przełącz obszar modelu i papieru
+	Symbols and Arrows	Symbole i groty
 	Symmetric	Symetria
+	Text alignment X	Wyrównanie tekstu X
+	Text alignment Y	Wyrównanie tekstu Y
+	Text and arrows	Tekst i groty
+	Text inside	Tekst wewnątrz
+	Text inside align	Wyrównanie tekstu wewnątrz
+	Text movement	Przesuwanie tekstu
+	Text offset	Odsunięcie tekstu
+	Text outside align	Wyrównanie tekstu na zewnątrz
+	Text pos hor	Położenie tekstu w poziomie
+	Text pos vert	Położenie tekstu w pionie
+	Text position X	Położenie tekstu X
+	Text position Y	Położenie tekstu Y
+	Text rotation	Obrót tekstu
+	Text vertical position	Położenie tekstu w pionie
+	This block is already in the drawing, so its definition is used.	Ten blok jest już w rysunku, więc zostanie użyta jego definicja.
+	This drawing has no blocks.	Ten rysunek nie ma bloków.
+	This library has no drawings or blocks.	Ta biblioteka nie zawiera rysunków ani bloków.
+	Tick size	Rozmiar kreski
 	Toggle PICKADD (off: each pick replaces the selection)	Przełącz PICKADD (wyłączone: wskazanie zastępuje zaznaczenie)
 	Toggle PICKADD (on: picks add to the selection)	Przełącz PICKADD (włączone: wskazania dodają do zaznaczenia)
 	TOP	GÓRA
@@ -854,11 +1051,19 @@
 	Thickness	Grubość
 	Time	Czas
 	To get started, create or open a drawing.	Aby rozpocząć, utwórz lub otwórz rysunek.
+	Tolerance height	Wysokość tolerancji
+	Tolerance pos vert	Położenie tolerancji w pionie
+	Tolerance precision	Dokładność tolerancji
+	Tolerance zero suppression	Pomijanie zer tolerancji
+	Tolerances	Tolerancje
 	Tool Bar	Pasek narzędzi
 	Tool Sets	Zestawy narzędzi
 	Tools	Narzędzia
+	Top	Góra
+	Top center	Góra środek
 	Torus	Torus
 	Trace	Ślad
+	Trailing	Końcowe
 	Transparency	Przezroczystość
 	Trim	Przytnij
 	True Color	Kolor rzeczywisty
@@ -868,7 +1073,9 @@
 	Type	Typ
 	Type a command	Wpisz polecenie
 	Type text; Enter starts a new paragraph	Wpisz tekst; Enter rozpoczyna nowy akapit
+	UCS	LUW
 	UCS Icon	Ikona LUW
+	UCS Icon at Origin	Ikona LUW w początku układu
 	Undo	Cofnij
 	Undo (⌘Z)	Cofnij (⌘Z)
 	Union	Suma
@@ -876,10 +1083,13 @@
 	Units...	Jednostki...
 	Unlock Layer	Odblokuj warstwę
 	Unmerge Cells	Rozdziel komórki
+	Unnamed	Bez nazwy
 	Unsaved Layer State	Niezapisany stan warstw
 	Up	Góra
 	Update	Aktualizuj
+	Upper tolerance	Tolerancja górna
 	Use System Setting	Użyj ustawienia systemowego
+	Use the style's value	Użyj wartości ze stylu
 	User	Użytkownik
 	User Parameters	Parametry użytkownika
 	Username	Nazwa użytkownika
@@ -887,6 +1097,7 @@
 	VP Freeze	Zamrożenie w rzutni
 	Value	Wartość
 	Value:	Wartość:
+	Variable	Zmienna
 	Version	Wersja
 	Version {version}	Wersja {version}
 	Vertical	Pionowo
@@ -903,12 +1114,17 @@
 	White	Biały
 	Width factor	Współczynnik szerokości
 	Window	Okno
+	Windows desktop	Pulpit Windows
 	Wipeout	Maskowanie
+	With	Z
+	With no command running, a quick click repeats the last command or runs what was typed.	Gdy żadne polecenie nie działa, szybkie kliknięcie powtarza ostatnie polecenie lub uruchamia to, co wpisano.
 	Workspace Switching	Zmiana przestrzeni roboczej
 	Write Block	Zapisz blok
 	Xline	Prosta konstrukcyjna
 	Yellow	Żółty
 	Yes	Tak
+	Z	Z
+	Zero suppression	Pomijanie zer
 	Zoom	Powiększenie
 	Zoom All	Pokaż całość
 	Zoom Extents	Dopasuj do zawartości
@@ -919,8 +1135,10 @@
 	Zoom Window	Powiększ obszar
 	error	błąd
 	{contributors} · {commits}	{contributors} · {commits}
+	{count} differences	Różnice: {count}
 	{kind} (constraint {id})	{kind} (więz {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Więz {kind} {name} = {expression}  (kliknij dwukrotnie, aby edytować)
+	{property}: that value can't be used here.	{property}: tej wartości nie można tu użyć.
 	ƒx  New User Parameter	ƒx  Nowy parametr użytkownika
 	ΔLOC	Δwiersze
 	−Bin	−bin

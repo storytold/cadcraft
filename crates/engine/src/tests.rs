@@ -747,6 +747,15 @@ fn script_runs_commands() {
 }
 
 #[test]
+fn scripts_allow_one_leading_utf8_bom() {
+    for text in ["\u{feff}LINE 0,0 10,10\n\n", "\u{feff}; first comment\r\nLINE 0,0 10,10\r\n\r\n"] {
+        let mut s = Session::new();
+        s.script(text).unwrap();
+        assert_eq!(kinds(&s), vec!["Line"]);
+    }
+}
+
+#[test]
 fn script_splits_line_at_keyword_prompt() {
     let mut s = Session::new();
     s.script("POLYGON 6 200,20 I 15").unwrap();
@@ -1550,6 +1559,50 @@ fn setvar_rejects_non_finite_text_for_real_variables() {
             assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
         }
     }
+}
+
+#[test]
+fn a_proxy_is_drawn_but_no_selection_takes_it_in() {
+    // A proxy's graphics are drawn and measured, but saving writes its record unchanged: an edit
+    // could not hold. So a window round a line and a proxy, ALL, SELECTALL and a pick on the
+    // proxy's graphics leave the proxy out, and MOVE moves the line alone.
+    use cadcraft_doc::{Common, Entity, Handle, Line, Space, Unknown, entity_bounds};
+    use cadcraft_geom::Vec3;
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let line = s.doc().unwrap().model.last().unwrap().handle;
+    let drawn = Entity::new(Handle(0), EntityKind::Line(Line { a: Vec3::new(0.0, 5.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) }));
+    let unknown = Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics: vec![drawn] };
+    let proxy = s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Unknown(unknown)).unwrap();
+    let bounds = |s: &Session| entity_bounds(s.doc().unwrap(), s.doc().unwrap().entity(proxy).unwrap(), 0);
+    let before = bounds(&s);
+    assert!(!before.is_empty(), "the proxy measures as its graphics");
+
+    s.idle_click(Vec2::new(5.0, 5.0), false).unwrap();
+    assert_eq!(s.selection(), Vec::<Handle>::new(), "a pick on the proxy's graphics");
+    s.idle_click(Vec2::new(-1.0, -1.0), false).unwrap();
+    s.idle_click(Vec2::new(11.0, 6.0), false).unwrap();
+    assert_eq!(s.selection(), vec![line], "a window round both");
+    s.execute("selectall", &json!({})).unwrap();
+    assert_eq!(s.selection(), vec![line], "SELECTALL");
+
+    s.execute("move", &json!({"delta": [0, 20]})).unwrap();
+    let d = s.doc().unwrap();
+    assert!(matches!(&d.entity(line).unwrap().kind, EntityKind::Line(l) if l.a.y == 20.0), "the line moved");
+    assert_eq!(bounds(&s), before, "the proxy stayed where its record puts it");
+
+    // Handles named outright leave the proxy out too.
+    s.execute("select", &json!({"handles": [proxy.hex(), line.hex()]})).unwrap();
+    assert_eq!(s.selection(), vec![line], "SELECT by handles");
+
+    // Last passes over the proxy drawn last: it takes the line.
+    s.set_selection(Vec::new());
+    s.start("erase").unwrap();
+    s.input(Input::Text("L".into())).unwrap();
+    s.input(Input::Enter).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(line).is_none(), "Last took the line");
+    assert!(d.entity(proxy).is_some(), "the proxy is kept");
 }
 
 #[test]

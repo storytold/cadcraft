@@ -9,8 +9,11 @@ use serde_json::json;
 fn session() -> (Session, String) {
     let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
     let mut d = Drawing::new_imperial();
-    let kind =
-        EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags: vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")] });
+    let kind = EntityKind::Unknown(Unknown {
+        dxf_type: "OLE2FRAME".into(),
+        tags: vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")],
+        graphics: Vec::new(),
+    });
     let h = d.add(&Space::Model, Common::default(), kind).unwrap();
     let mut s = Session::empty();
     s.open_drawing(d, "ole.dxf", None);
@@ -75,7 +78,8 @@ fn data_session(chunks: &[usize], hex_override: Option<&str>) -> (Session, Strin
         tags.push(tag(310, &hex[at..]));
     }
     let mut d = Drawing::new_imperial();
-    let h = d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags })).unwrap();
+    let h =
+        d.add(&Space::Model, Common::default(), EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() })).unwrap();
     let mut s = Session::empty();
     s.open_drawing(d, "ole.dxf", None);
     (s, h.hex())
@@ -160,8 +164,11 @@ fn a_locked_ole_frame_does_not_block_an_in_place_rotation() {
     let mut d = Drawing::new_imperial();
     d.ensure_layer("L");
     let common = Common { layer: "L".into(), ..Common::default() };
-    let kind =
-        EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags: vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")] });
+    let kind = EntityKind::Unknown(Unknown {
+        dxf_type: "OLE2FRAME".into(),
+        tags: vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")],
+        graphics: Vec::new(),
+    });
     let ole = d.add(&Space::Model, common, kind).unwrap();
     if let Some(l) = d.layer_mut("L") {
         l.locked = true;

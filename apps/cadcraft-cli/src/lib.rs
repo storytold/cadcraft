@@ -58,6 +58,7 @@ fn install_io() {
     cadcraft_engine::cmd::file::set_object_records(cadcraft_io::object_records);
     // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
     cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
+    cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
 }
 
 /// `path` as text, for the engine and io calls that take a file name as a string.
@@ -95,7 +96,7 @@ where
         Ok(cli) => cli,
         Err(e) => {
             let to: &mut dyn Write = if e.use_stderr() { err } else { out };
-            return match write!(to, "{}", e.render()) {
+            return match write!(to, "{}", e.render()).and_then(|()| to.flush()) {
                 Err(w) if w.kind() != std::io::ErrorKind::BrokenPipe => {
                     let _ = writeln!(err, "error: can't write the output: {w}");
                     1
@@ -163,6 +164,25 @@ mod tests {
         assert_eq!(run(["--help"], &mut FailingWriter(std::io::ErrorKind::StorageFull), &mut err), 1);
         assert!(String::from_utf8_lossy(&err).starts_with("error: "));
         assert_eq!(run(["--help"], &mut FailingWriter(std::io::ErrorKind::BrokenPipe), &mut Vec::new()), 0);
+    }
+
+    struct FailingFlush(std::io::ErrorKind);
+
+    impl Write for FailingFlush {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(self.0.into())
+        }
+    }
+
+    #[test]
+    fn a_failed_flush_of_help_exits_1_unless_the_pipe_is_closed() {
+        let mut err = Vec::new();
+        assert_eq!(run(["--help"], &mut FailingFlush(std::io::ErrorKind::StorageFull), &mut err), 1);
+        assert!(String::from_utf8_lossy(&err).starts_with("error: "));
+        assert_eq!(run(["--help"], &mut FailingFlush(std::io::ErrorKind::BrokenPipe), &mut Vec::new()), 0);
     }
 
     #[test]

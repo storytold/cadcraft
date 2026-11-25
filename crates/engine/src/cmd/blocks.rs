@@ -15,7 +15,7 @@ use super::machines::{SelOutcome, SelectPhase, number};
 use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
 
 use super::has_doc;
-use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Origin, Prompt, Result, Session, Step};
 
 mod attdef;
 mod attedit;
@@ -43,14 +43,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
-            .interactive(|_| Ok(Box::new(InsertM::default()))),
+            .interactive(|s| Ok(Box::new(InsertM { person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
             .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("minsert", "Multiple Insert", run_minsert)
             .params("{name, file?: DXF/DWG path (as INSERT), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y], attribs?: {TAG: value}, rows?: 1..32767 (default 1), columns?: 1..32767 (default 1), rowSpacing?, columnSpacing? (along the reference's own axes, not scaled with it)}")
-            .interactive(|_| Ok(Box::new(InsertM { minsert: true, ..InsertM::default() }))),
+            .interactive(|s| Ok(Box::new(InsertM { minsert: true, person: s.command_origin() == Origin::Person, ..InsertM::default() }))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -60,6 +60,9 @@ pub fn specs() -> Vec<CommandSpec> {
         attedit::dash_attedit_spec(),
         wblock::wblock_spec(),
         wblock::dash_wblock_spec(),
+        CommandSpec::new("wblockpick", "Write Block Pick", run_wblockpick)
+            .params("{mode: \"objects\"|\"base\"}")
+            .interactive(|_| Ok(Box::new(WblockPickM::default()))),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -70,14 +73,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("blocks.reference.set", "Set Dynamic Property", run_reference_set)
-            .params("{handle (a dynamic block reference), name (a custom property as Properties names it: a visibility state, a lookup, a distance or \"Position1 X\"), value (lengths in drawing units)} → {properties}")
+            .params("{handle (a dynamic block reference), name (a custom property as Properties names it: a visibility state, a lookup, a distance, \"Position1 X\", an angle or a flip state), value (lengths in drawing units, angles in degrees; a flip state by name or 0/1)} → {properties}")
             .enabled(has_doc),
         CommandSpec::new("blocks.reference.grips", "Dynamic Block Grips", dyngrip::run_grips)
-            .params("{handle} → [{node, part: base|end|at, shape: linear|point|list, at: [x,y], dir: [x,y], property, choices?}] (empty: not a dynamic block reference)")
+            .params("{handle} → [{node, part: base|end|at|basex-endy|basey-endx, shape: linear|point|list|rotation|flip, at: [x,y], dir: [x,y], property, choices?}] (empty: not a dynamic block reference)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("blocks.reference.grip", "Drag Dynamic Grip", dyngrip::run_grip)
-            .params("{handle, node (the parameter's graph id), part: base|end|at, to: [x,y] (drawing coordinates)} → {properties}: a distance's arrow changes the distance (snapped to its values), a position's square moves it")
+            .params("{handle, node (the parameter's graph id), part: base|end|at|basex-endy|basey-endx, to: [x,y] (drawing coordinates)} → {properties}: a distance's arrow changes the distance (snapped to its values), a position's square moves it, a rotation's circle turns its angle, a polar or XY parameter's squares move its base, end or corners")
             .enabled(has_doc),
         CommandSpec::new("purge", "Purge", purge::run)
             .alias(&["pu", "-purge"])
@@ -713,6 +716,88 @@ impl BlockM {
     }
 }
 
+// ── WBLOCKPICK ────────────────────────────────────────────────────────────────
+
+/// The result kept for the Write Block dialog after a WBLOCKPICK session ends.
+pub struct WblockPicks {
+    /// Selected handles (mode "objects") — empty for a "base" pick.
+    pub handles: Vec<Handle>,
+    /// Base point picked (mode "base") — `None` for an "objects" pick.
+    pub base: Option<Vec2>,
+}
+
+fn run_wblockpick(_s: &mut Session, _p: &Value) -> Result<Value> {
+    ok()
+}
+
+/// Which pick session WBLOCKPICK is running.
+#[derive(Default)]
+enum WblockPickMode {
+    /// Waiting for the mode keyword ("objects" or "base").
+    #[default]
+    Waiting,
+    Objects(SelectPhase),
+    Base,
+}
+
+#[derive(Default)]
+struct WblockPickM {
+    mode: WblockPickMode,
+}
+
+impl Interactive for WblockPickM {
+    fn name(&self) -> &'static str {
+        "WBLOCKPICK"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match &self.mode {
+            WblockPickMode::Waiting => Prompt::new("Enter pick mode", Accept::TEXT).kw(&["Objects", "Base"]),
+            WblockPickMode::Objects(sel) => sel.prompt(),
+            WblockPickMode::Base => Prompt::new("Specify insertion base point", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match &mut self.mode {
+            WblockPickMode::Waiting => {
+                match &i {
+                    Input::Keyword(k) | Input::Text(k) => {
+                        let k = k.to_ascii_lowercase();
+                        if k.starts_with('o') {
+                            self.mode = WblockPickMode::Objects(SelectPhase::default());
+                        } else {
+                            self.mode = WblockPickMode::Base;
+                        }
+                    }
+                    Input::Cancel | Input::Enter => return Ok(Step::Cancel),
+                    _ => {}
+                }
+                Ok(Step::Continue)
+            }
+            WblockPickMode::Objects(sel) => {
+                if matches!(i, Input::Cancel) {
+                    return Ok(Step::Cancel);
+                }
+                match sel.feed(s, &i)? {
+                    SelOutcome::More => Ok(Step::Continue),
+                    SelOutcome::Empty => Ok(Step::Cancel),
+                    SelOutcome::Done(hs) => {
+                        s.wblock_picks = Some(WblockPicks { handles: hs, base: None });
+                        Ok(Step::Done)
+                    }
+                }
+            }
+            WblockPickMode::Base => match i {
+                Input::Cancel => Ok(Step::Cancel),
+                Input::Point(p) => {
+                    s.wblock_picks = Some(WblockPicks { handles: Vec::new(), base: Some(p) });
+                    Ok(Step::Done)
+                }
+                _ => Ok(Step::Continue),
+            },
+        }
+    }
+}
+
 mod insert_file;
 pub(crate) mod library;
 pub(crate) mod xref;
@@ -773,6 +858,16 @@ struct InsertM {
     rotation: Option<f64>,
     /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
     attdefs: Vec<(String, String, String, bool)>,
+    /// How many of `attdefs` have their value: counted here, not by `values`, whose key is the
+    /// tag, so two definitions with one tag are still each asked once.
+    asked: usize,
+    /// ATTDIA 1 and a person started the command: the values are asked for in the Edit
+    /// Attributes dialog. A script, LISP routine or JSON call that opened INSERT has nobody to
+    /// answer a dialog, so it asks at the command line, even after the program is done.
+    dialog: bool,
+    /// A person started this command ([`Session::command_origin`]), fixed for its whole life:
+    /// only then may ATTDIA 1 open the dialog.
+    person: bool,
     values: serde_json::Map<String, Value>,
     /// Verify attributes asked again so far.
     verified: usize,
@@ -804,7 +899,7 @@ impl InsertM {
             s.echo("Enter attribute values");
         }
         // Then the Verify attributes are asked again, with the values typed.
-        if self.stage == InsStage::Attribs && self.values.len() >= self.attdefs.len() && self.verified < self.verifying().len() {
+        if self.stage == InsStage::Attribs && self.asked >= self.attdefs.len() && self.verified < self.verifying().len() {
             if self.verified == 0 {
                 s.echo("Verify attribute values");
             }
@@ -812,7 +907,7 @@ impl InsertM {
             return Ok(Step::Continue);
         }
         if self.stage == InsStage::Attribs
-            && self.values.len() >= self.attdefs.len()
+            && self.asked >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
             let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values, self.grid())?;
@@ -863,6 +958,8 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
+        // A program cannot click the dialog: it asks at the command line, as ATTDIA 0 does.
+        self.dialog = s.settings.attdia && self.person;
         self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {
@@ -877,6 +974,7 @@ impl InsertM {
                 })
                 .collect()
         };
+        self.asked = 0;
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
@@ -966,7 +1064,7 @@ impl Interactive for InsertM {
             InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
             InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
             InsStage::Attribs => {
-                let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (_, prompt, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
                 let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
                 // No default shown when there is none ("Value:", AutoCAD 2024), not "<>".
                 if default.is_empty() { p } else { p.default(default) }
@@ -1173,12 +1271,16 @@ impl Interactive for InsertM {
                 }
             }
             InsStage::Attribs => {
-                let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (tag, _, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
+                    // A canvas click is no answer to a text prompt: the dialog stays up and the
+                    // attribute is asked for again, as Verify does. Enter keeps the default.
+                    Input::Point(_) => return Ok(Step::Continue),
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                self.asked += 1;
                 return self.advance(s);
             }
             // Enter keeps the value typed.
@@ -1215,6 +1317,18 @@ impl Interactive for InsertM {
         let mut ins = insert_entity(b, at, self.scale3(scale), rot, self.base);
         self.grid().apply(&mut ins);
         vec![EntityKind::Insert(ins)]
+    }
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        // Only before the first answer: values typed at the command line go on there.
+        if !self.dialog || self.stage != InsStage::Attribs || self.asked > 0 || self.attdefs.is_empty() {
+            return None;
+        }
+        let rows = self
+            .attdefs
+            .iter()
+            .map(|(tag, prompt, default, verify)| AttribAsk { tag: tag.clone(), prompt: prompt.clone(), default: default.clone(), verify: *verify })
+            .collect();
+        Some(AttribEntry::idle(self.name.clone().unwrap_or_default(), rows))
     }
 }
 
