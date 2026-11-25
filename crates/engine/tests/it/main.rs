@@ -51,6 +51,7 @@ mod dimstyle_cli;
 mod dimtedit_prompts;
 mod drafting_spacing;
 mod draw_prompts;
+mod drawing_lock;
 mod draworder;
 mod dyn_input;
 mod dynamic_block_data;

@@ -68,4 +68,62 @@ impl Session {
             }
         }
     }
+
+    /// Explicitly take over an existing `.dwl`/`.dwl2` lock for an open read-only drawing and
+    /// switch it to writable mode (for example after another session crashed).
+    pub fn take_over_lock(&mut self, index: usize) -> Result<()> {
+        let Some(st) = self.docs.get(index) else {
+            return Err(EngineError::Other("no such drawing".into()));
+        };
+        if !st.read_only {
+            return Ok(());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let target_path = st.path.clone().filter(|p| cadcraft_doc::Format::from_path(p) == Some(cadcraft_doc::Format::Dwg));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(p) = target_path {
+            let target = std::path::Path::new(&p);
+            // If another tab in this same session currently holds the lock for this file, release
+            // its guard and demote it to read-only first so closing it later cannot delete our new lock.
+            for (j, other) in self.docs.iter_mut().enumerate() {
+                if j != index
+                    && other.lock.is_some()
+                    && other.path.as_deref().is_some_and(|op| crate::drawing_lock::same_path(std::path::Path::new(op), target))
+                {
+                    other.lock = None;
+                    other.read_only = true;
+                    other.lock_info = Some("lock transferred to another open tab".into());
+                    other.lock_holder = None;
+                }
+            }
+            let result = crate::drawing_lock::force_acquire_lock(target);
+            let st = &mut self.docs[index];
+            match result {
+                crate::drawing_lock::LockResult::Acquired(guard) => {
+                    st.lock = Some(std::sync::Arc::new(guard));
+                    st.read_only = false;
+                    st.lock_info = None;
+                    st.lock_holder = None;
+                    self.bump_doc_epoch();
+                    return Ok(());
+                }
+                crate::drawing_lock::LockResult::AlreadyLocked(info) => {
+                    let desc = info.description();
+                    st.lock_info = Some(desc.clone());
+                    st.lock_holder = Some(info);
+                    return Err(EngineError::Other(format!("file is still locked ({desc})")));
+                }
+                crate::drawing_lock::LockResult::Failed(err) => {
+                    return Err(EngineError::Other(err));
+                }
+            }
+        }
+        let st = &mut self.docs[index];
+        st.read_only = false;
+        st.lock_info = None;
+        st.lock_holder = None;
+        self.bump_doc_epoch();
+        Ok(())
+    }
 }

@@ -413,10 +413,40 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
     let notes = drawing.read_notes.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let lock_path = path.clone();
     let i = s.open_drawing(drawing, &file_name(name), path);
     if let Some(st) = s.docs.get_mut(i) {
         // QSAVE keeps a binary DXF binary.
         st.binary_dxf = binary_dxf;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(ref p) = lock_path
+            && is_lockable_drawing(p)
+            && crate::file_access::check_write(crate::drawing_lock::dwl_path(std::path::Path::new(p))).is_ok()
+            && crate::file_access::check_write(crate::drawing_lock::dwl2_path(std::path::Path::new(p))).is_ok()
+        {
+            let path_buf = std::path::Path::new(p);
+            match crate::drawing_lock::try_acquire_lock(path_buf) {
+                crate::drawing_lock::LockResult::Acquired(guard) => {
+                    st.lock = Some(std::sync::Arc::new(guard));
+                    st.read_only = false;
+                    st.lock_info = None;
+                    st.lock_holder = None;
+                }
+                crate::drawing_lock::LockResult::AlreadyLocked(info) => {
+                    st.read_only = true;
+                    let desc = info.description();
+                    st.lock_info = Some(desc);
+                    st.lock_holder = Some(info);
+                }
+                crate::drawing_lock::LockResult::Failed(err) => {
+                    st.read_only = true;
+                    st.lock_info = Some(err);
+                    st.lock_holder = None;
+                }
+            }
+        }
     }
     for note in notes {
         s.echo(note);
@@ -429,16 +459,19 @@ pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option
     Ok(add_read(s, drawing, binary_dxf, &name, path))
 }
 
-/// OPEN's reply: the drawing's index and what reading it left out.
+/// OPEN's reply: the drawing's index, warnings, read-only status, and lock holder details.
 fn opened(s: &Session, i: usize, entities: bool) -> Value {
-    let d = s.docs.get(i).map(|st| &st.doc);
-    let warnings = d.map(|d| d.read_notes.clone()).unwrap_or_default();
+    let d = s.docs.get(i);
+    let warnings = d.map(|st| st.doc.read_notes.clone()).unwrap_or_default();
+    let read_only = d.map(|st| st.read_only).unwrap_or(false);
+    let lock_info = d.and_then(|st| st.lock_info.clone());
+    let lock_holder = d.and_then(|st| st.lock_holder.clone());
     // Opened on the view it was saved at: a viewer keeps it instead of fitting the extents.
-    let saved_view = d.is_some_and(|d| crate::view::saved_view(d).is_some());
+    let saved_view = d.is_some_and(|st| crate::view::saved_view(&st.doc).is_some());
     if entities {
-        json!({ "index": i, "entities": d.map(|d| d.entity_count()), "warnings": warnings, "saved_view": saved_view })
+        json!({ "index": i, "entities": d.map(|st| st.doc.entity_count()), "warnings": warnings, "saved_view": saved_view, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
     } else {
-        json!({ "index": i, "warnings": warnings, "saved_view": saved_view })
+        json!({ "index": i, "warnings": warnings, "saved_view": saved_view, "read_only": read_only, "lock_info": lock_info, "lock_holder": lock_holder })
     }
 }
 
@@ -509,6 +542,25 @@ pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
 fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usize> {
     if s.doc()?.refedit.is_some() {
         return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if is_lockable_drawing(path) {
+        let path_buf = std::path::Path::new(path);
+        let holds_own_lock = s.state().ok().is_some_and(|st| {
+            st.lock.is_some()
+                && !st.read_only
+                && st.path.as_deref().is_some_and(|cur| crate::drawing_lock::same_path(std::path::Path::new(cur), path_buf))
+        });
+        if !holds_own_lock {
+            if let Some(info) = crate::drawing_lock::read_lock_info(path_buf) {
+                if !crate::drawing_lock::is_stale_lock(&info) {
+                    let desc = info.description();
+                    return Err(bad(cmd, format!("Cannot save over '{path}': file is write-protected ({desc})")));
+                }
+            } else if crate::drawing_lock::has_lock_files(path_buf) {
+                return Err(bad(cmd, format!("Cannot save over '{path}': file is write-protected (lock file present)")));
+            }
+        }
     }
     let bytes = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
@@ -790,11 +842,50 @@ fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&st
         return Ok(bytes.len());
     }
     let st = s.state_mut()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let is_same_file = st.path.as_deref().is_some_and(|cur| crate::drawing_lock::same_path(std::path::Path::new(cur), std::path::Path::new(path)));
     st.saved = st.drawing().clone();
     st.path = Some(path.to_string());
     st.title = file_name(path);
     // A BEgin group still open when the drawing is saved ends there.
     st.end_undo_group();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if !is_same_file || st.lock.is_none() {
+        // Drop any previous lock and reset read-only state when saving to a different file
+        // (including non-DWG formats like .dxf that do not use .dwl/.dwl2 lock files).
+        st.lock = None;
+        if !is_same_file {
+            st.read_only = false;
+            st.lock_info = None;
+            st.lock_holder = None;
+        }
+        if is_lockable_drawing(path)
+            && crate::file_access::check_write(crate::drawing_lock::dwl_path(std::path::Path::new(path))).is_ok()
+            && crate::file_access::check_write(crate::drawing_lock::dwl2_path(std::path::Path::new(path))).is_ok()
+        {
+            let path_buf = std::path::Path::new(path);
+            match crate::drawing_lock::try_acquire_lock(path_buf) {
+                crate::drawing_lock::LockResult::Acquired(guard) => {
+                    st.lock = Some(std::sync::Arc::new(guard));
+                    st.read_only = false;
+                    st.lock_info = None;
+                    st.lock_holder = None;
+                }
+                crate::drawing_lock::LockResult::AlreadyLocked(info) => {
+                    st.read_only = true;
+                    st.lock_info = Some(info.description());
+                    st.lock_holder = Some(info);
+                }
+                crate::drawing_lock::LockResult::Failed(err) => {
+                    st.read_only = true;
+                    st.lock_info = Some(err);
+                    st.lock_holder = None;
+                }
+            }
+        }
+    }
+
     Ok(bytes.len())
 }
 
@@ -808,6 +899,12 @@ fn saved(path: &str, bytes: usize) -> Value {
 }
 
 fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Ok(st) = s.state()
+        && st.read_only
+    {
+        let reason = st.lock_info.as_deref().unwrap_or("file is write-protected or in use");
+        return Err(bad("qsave", format!("Drawing is read-only ({reason}). Use SAVEAS to save with a different name.")));
+    }
     let path = match str_param(p, "path") {
         Some(p) => p.to_string(),
         None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
@@ -1062,6 +1159,12 @@ pub fn drops_unknown(path: impl AsRef<std::path::Path>) -> bool {
 /// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
 fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
     Format::from_path(path).is_some_and(Format::is_drawing)
+}
+
+/// Whether `path` is an AutoCAD drawing (.dwg) that uses `.dwl`/`.dwl2` lock files.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_lockable_drawing(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path) == Some(Format::Dwg)
 }
 
 /// Whether `path` is a DXF file.
