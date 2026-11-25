@@ -229,6 +229,25 @@ mod block_pick_tests {
         cadcraft_render::place_text_entity(app.session.doc().unwrap(), &a.text, &a.text.value).1.center()
     }
 
+    /// A point in the box the renderer draws single-line attribute `a` in where the ordinary pick
+    /// takes nothing. The ordinary pick hits a block reference by what it draws, text included, so
+    /// a click on a glyph stroke is taken by the reference itself and the candidate scan has little
+    /// left to decide. The tests that measure what the scan costs click between the strokes, where
+    /// it decides alone. Corners come first: strokes sit nearer the middle of a box.
+    fn between_strokes(app: &CadApp, a: &Attrib) -> Vec2 {
+        let b = cadcraft_render::place_text_entity(app.session.doc().unwrap(), &a.text, &a.text.value).1;
+        let spots = [0.9, 0.1, 0.5, 0.7, 0.3];
+        for fy in spots {
+            for fx in spots {
+                let p = Vec2::new(b.min.x + b.width() * fx, b.min.y + b.height() * fy);
+                if cadcraft_engine::cmd::curves::pick_at(&app.session, p).is_none() {
+                    return p;
+                }
+            }
+        }
+        panic!("the ordinary pick takes something at every probe of the box {b:?}")
+    }
+
     /// A distant double-click over many references: the first builds the candidate list (each
     /// object and attribute read once, nothing laid out, no definition read); the next reads
     /// nothing at all, however many references there are.
@@ -339,7 +358,7 @@ mod block_pick_tests {
             }
             at = a;
         }
-        let p = centre(&app, &at);
+        let p = between_strokes(&app, &at);
         let (hit, stats) = click(&mut app, p);
         assert_eq!(hit, Some(bottom), "the one reference whose attribute is drawn wins");
         assert_eq!(stats.definition_entities, (DEFS + 1) as u64, "one pass over the definition for all {HIDDEN} references");
@@ -404,7 +423,7 @@ mod block_pick_tests {
             app
         };
         let mut app = build();
-        let at = centre(&app, &attrib("T", Vec3::new(0.0, 1.0, 0.0), "1"));
+        let at = between_strokes(&app, &attrib("T", Vec3::new(0.0, 1.0, 0.0), "1"));
         let (hit, cold) = click(&mut app, at);
         assert_eq!(hit, None, "constant attributes cannot be edited");
         assert_eq!(cold.attributes_visited, (REFS * CONSTANTS) as u64, "each constant attribute is read and paid for once");
@@ -440,7 +459,7 @@ mod block_pick_tests {
             attribs.push(visible.clone());
             reference = d.add(&Space::Model, Common::default(), reference_with_attribs("Inv", attribs, None)).unwrap();
         }
-        let at = centre(&app, &visible);
+        let at = between_strokes(&app, &visible);
         let (hit, full) = click(&mut app, at);
         assert_eq!(hit, Some(reference), "the full budget reaches the visible text");
         assert_eq!(full.attributes_visited, 2 * (INVISIBLE as u64 + 1), "read to build the list, then to test it");
@@ -494,7 +513,7 @@ mod block_pick_tests {
                 d.add(&Space::Model, Common::default(), reference_with_attribs("Inv2", vec![a.clone()], Some(inverted_square(10.0, 10.0)))).unwrap();
             d.add(&Space::Model, Common::default(), reference_with_attribs("Inv2", vec![a.clone()], Some(inverted_square(0.0, 0.0)))).unwrap();
         }
-        let at = centre(&app, &a);
+        let at = between_strokes(&app, &a);
         let (hit, stats) = click(&mut app, at);
         assert_eq!(hit, Some(lower), "the inside of the top reference's inverted boundary is hidden");
         assert_eq!(stats.clip_regions, 2, "both text hits tested their boundary");
@@ -534,8 +553,12 @@ mod block_pick_tests {
                 a.multiline = Some(cadcraft_doc::MultilineAttrib { mtext, read_as: read_as.into() });
                 d.add(&Space::Model, Common::default(), reference_with_attribs("Cols", vec![a], None)).unwrap();
             }
-            // Attach top-left: the drawn box hangs below the insertion point.
-            let (hit, stats) = click(&mut app, Vec2::new(0.3, -0.5));
+            // Attach top-left: the drawn box hangs below the insertion point. The click is between
+            // the legs of the "A", where the ordinary pick takes nothing (its crossbar, at the
+            // middle of the box, would be taken as part of the reference).
+            let at = Vec2::new(0.3, -0.9);
+            assert_eq!(cadcraft_engine::cmd::curves::pick_at(&app.session, at), None, "read as {read_as}: the ordinary pick takes nothing there");
+            let (hit, stats) = click(&mut app, at);
             assert_eq!(hit, None, "read as {read_as}: the {HEIGHTS}-entry array spends the budget");
             assert_eq!(stats.text_layouts, 0, "read as {read_as}: nothing is laid out before the array is paid for");
             assert!(stats.exhausted && stats.work <= MAX_ATTRIB_PICK_WORK, "read as {read_as}: {stats:?}");
@@ -558,7 +581,7 @@ mod block_pick_tests {
             d.blocks.insert("Big".into(), std::sync::Arc::new(blk));
             reference = d.add(&Space::Model, Common::default(), reference_with_attribs("Big", vec![a.clone()], None)).unwrap();
         }
-        let at = centre(&app, &a);
+        let at = between_strokes(&app, &a);
         let (hit, full) = click(&mut app, at);
         assert_eq!(hit, Some(reference));
         assert!(full.work > (TAG_BYTES / 64) as u64, "the compare is paid for by its bytes: {full:?}");
@@ -726,7 +749,7 @@ mod block_pick_tests {
             }
             reference = d.add(&Space::Model, Common::default(), reference_with_attribs("Top", vec![a.clone()], None)).unwrap();
         }
-        let at = centre(&app, &a);
+        let at = between_strokes(&app, &a);
         let mut built = 0;
         let mut clicks = 0;
         let found = loop {

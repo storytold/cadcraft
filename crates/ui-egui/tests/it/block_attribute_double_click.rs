@@ -109,8 +109,9 @@ fn double_clicking_a_references_geometry_opens_the_enhanced_attribute_editor() {
 fn double_clicking_an_attributes_text_opens_the_editor_too() {
     let (app, reference) = app_with_reference();
     let mut h = harness(app);
-    let at = attribute_centre(h.state(), reference, "NO");
-    // The text lies outside the block's drawn geometry: a pick there finds no object.
+    // Between the strokes of the text, which lies outside the block's drawn geometry: a pick there
+    // finds no object.
+    let at = between_strokes(h.state(), reference, "NO", |picked| picked.is_none());
     assert_eq!(cadcraft_engine::cmd::curves::pick_at(&h.state().session, at), None);
     double_click(&mut h, at);
     assert_editor_on(h.state(), reference);
@@ -230,6 +231,25 @@ fn drawn_box(app: &CadApp, r: Handle, tag: &str) -> cadcraft_geom::Bounds2 {
     }
 }
 
+/// A point in the box drawn for attribute `tag` of reference `r` where what the ordinary pick takes
+/// (`None` for no object) is what `wanted` accepts. A pick hits a block reference by what it draws,
+/// text included, so the middle of an attribute's box is usually on a glyph stroke and the
+/// reference itself is taken there. The tests about the double-click's own text hit click between
+/// the strokes instead. Corners come first: strokes sit nearer the middle of a box.
+fn between_strokes(app: &CadApp, r: Handle, tag: &str, wanted: impl Fn(Option<&EntityKind>) -> bool) -> Vec2 {
+    let b = drawn_box(app, r, tag);
+    let spots = [0.9, 0.1, 0.5, 0.7, 0.3];
+    for fy in spots {
+        for fx in spots {
+            let p = Vec2::new(b.min.x + b.width() * fx, b.min.y + b.height() * fy);
+            if wanted(picked_kind(app, p).as_ref()) {
+                return p;
+            }
+        }
+    }
+    panic!("no probe of the box {b:?} has the ordinary pick this test needs")
+}
+
 #[test]
 fn a_text_drawn_over_an_attribute_text_wins_the_double_click() {
     let (mut app, reference) = app_with_reference();
@@ -255,9 +275,11 @@ fn a_reference_drawn_over_a_text_keeps_the_attribute_editor() {
     let reference = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
     app.session.execute("view.set", &json!({ "center": [104, 1], "height": 8 })).unwrap();
     app.canvas.zoom_pending = false;
-    let at = attribute_centre(&app, reference, "NO");
-    assert!(matches!(picked_kind(&app, at), Some(EntityKind::Text(_))), "the TEXT is still the object a pick takes");
+    // A taller text leaves room between its strokes, inside the box of the TEXT under it.
+    with_attrib(&mut app, reference, "NO", |a| a.text.height = 1.0);
     let mut h = harness(app);
+    let at = between_strokes(h.state(), reference, "NO", |picked| matches!(picked, Some(EntityKind::Text(_))));
+    assert!(matches!(picked_kind(h.state(), at), Some(EntityKind::Text(_))), "the TEXT is still the object a pick takes");
     double_click(&mut h, at);
     assert_editor_on(h.state(), reference);
 }
@@ -353,6 +375,8 @@ fn an_attribute_frozen_in_the_viewport_is_not_clickable() {
     with_attrib(&mut app, reference, "NO", |a| {
         a.props.layer = Some("HID".into());
         a.text.insert = Vec3::new(105.0, 1.0, 0.0);
+        // A taller text leaves room between its strokes, clear of the pick aperture.
+        a.text.height = 1.0;
     });
     // A layout viewport looking at the reference, and MSPACE into it.
     let paper = Space::Paper("Layout1".into());
@@ -381,8 +405,10 @@ fn an_attribute_frozen_in_the_viewport_is_not_clickable() {
         .unwrap();
     app.canvas.zoom_pending = false;
     assert_eq!(app.session.viewport_frozen(), ["HID".to_string()], "the active viewport freezes the attribute's layer");
-    let at = attribute_centre(&app, reference, "NO");
     let mut h = harness(app);
+    // Between the strokes of the text. The ordinary pick reads a reference's text without the
+    // viewport's frozen layers, so a click on a stroke of this attribute would take the reference.
+    let at = between_strokes(h.state(), reference, "NO", |picked| picked.is_none());
     double_click(&mut h, at);
     assert!(h.state().ui.dialog.is_none(), "the viewport does not draw the attribute's text: no editor");
     assert!(h.state().session.running.is_none(), "and no command starts");
