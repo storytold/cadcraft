@@ -462,7 +462,8 @@ mod tests {
         let ctx = egui::Context::default();
         crate::framework::install_headless(&ctx);
         let mut app = app_with(&["A"]);
-        assert!(!close_frame(&mut app, &ctx), "a saved drawing closes without asking");
+        // Only the app's decision: a close that goes ahead ends in the platform's quit, which macOS answers by cancelling it.
+        assert!(!app.request_quit(), "a saved drawing closes without asking");
         dirty(&mut app, 0);
         assert!(close_frame(&mut app, &ctx), "unsaved changes must cancel the close");
         assert_eq!(app.close_prompt(), Some("A"));
@@ -477,7 +478,7 @@ mod tests {
         dirty(&mut app, 0);
         let (req, _rx) = crate::control::ControlRequest::new("app.quit", json!({}));
         let _ = crate::control::handle(&mut app, &ctx, &req);
-        assert!(!close_frame(&mut app, &ctx));
+        assert!(!app.request_quit());
         assert!(app.closing.is_none());
     }
 
