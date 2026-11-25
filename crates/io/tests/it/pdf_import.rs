@@ -169,6 +169,16 @@ fn rotated_text_keeps_its_angle() {
 }
 
 #[test]
+fn text_that_climbs_a_step_each_glyph_leaves_its_first_baseline() {
+    // Each glyph is 0.08 em above the one before: close enough to join it, but after a few the
+    // glyphs are well off the baseline the text is placed on.
+    let d = import("BT /F1 10 Tf 100 100 Td (A) Tj 0.8 Ts (B) Tj 1.6 Ts (C) Tj 2.4 Ts (D) Tj 3.2 Ts (E) Tj 4 Ts (F) Tj ET");
+    assert_eq!(texts(&d).concat(), "ABCDEF");
+    let rises: Vec<f64> = kinds(&d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.insert.y) } else { None }).collect();
+    assert!(rises.len() > 1 && rises.windows(2).all(|w| w[1] > w[0]), "{:?}: {rises:?}", texts(&d));
+}
+
+#[test]
 fn words_far_apart_on_a_line_are_separate_texts() {
     let d = import("BT /F1 10 Tf 50 100 Td (Left) Tj 400 0 Td (Right) Tj ET");
     let texts: Vec<_> = kinds(&d).into_iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect();
@@ -224,6 +234,17 @@ fn text_starting_on_a_clip_edge_is_kept() {
     // Text wholly outside the clip is still left out, and a glyph is cut at the clip.
     let d = import("q 100 200 200 14 re W n BT /F1 10 Tf 400 202 Td (Gone) Tj ET BT /F1 10 Tf 88 202 Td (XYZ) Tj ET Q");
     assert_eq!(texts(&d), ["Z"]);
+}
+
+#[test]
+fn text_inside_a_clip_with_no_area_is_left_out() {
+    // A 1000 point 0 is 556 points wide, so its middle lies on x = 300, where the two clips touch.
+    let content = |clips: &str| format!("q {clips} BT /F1 1000 Tf 22 100 Td (0) Tj ET Q");
+    let points = PdfImportOptions { unit: 1.0, ..Default::default() };
+    let (d, _) = read(&page(&content("0 0 300 800 re W n")), &points).unwrap();
+    assert_eq!(texts(&d), ["0"], "a glyph whose middle lies on the clip's edge is kept");
+    let (d, _) = read(&page(&content("0 0 300 800 re W n 300 0 300 800 re W n")), &points).unwrap();
+    assert!(texts(&d).is_empty(), "{:?}", texts(&d));
 }
 
 #[test]
@@ -372,6 +393,24 @@ fn text_drawn_as_fill_and_stroke_is_one_text() {
 }
 
 #[test]
+fn text_drawn_as_fill_and_stroke_is_one_text_when_it_splits_into_runs() {
+    // The whole TJ is filled before it is stroked: fill Left, fill Right, stroke Left, stroke Right.
+    let d = import("BT /F1 12 Tf 50 100 Td 2 Tr [(Left) -30000 (Right)] TJ ET");
+    assert_eq!(texts(&d), ["Left", "Right"]);
+    // Text that is only stroked is kept.
+    let d = import("BT /F1 12 Tf 50 100 Td 1 Tr [(Left) -30000 (Right)] TJ ET");
+    assert_eq!(texts(&d), ["Left", "Right"]);
+}
+
+#[test]
+fn the_same_text_filled_again_in_another_colour_is_kept() {
+    // A black label, then the same label in red over it, with nothing drawn between.
+    let d = import("BT /F1 12 Tf 20 20 Td (Label) Tj ET 1 0 0 rg BT /F1 12 Tf 20 20 Td (Label) Tj ET");
+    assert_eq!(texts(&d), ["Label", "Label"]);
+    assert_eq!(kinds(&d).last().map(|e| e.common.color), Some(Color::True(Rgb(255, 0, 0))));
+}
+
+#[test]
 fn a_plot_of_a_drawing_imports_back_as_its_geometry() {
     let mut d = Drawing::new_metric();
     d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(100.0, 0.0, 0.0) })).unwrap();
@@ -517,6 +556,14 @@ fn a_path_that_doubles_back_along_an_edge_is_not_a_rectangular_clip() {
     assert!(d.read_notes.iter().any(|n| n.contains("clips by a shape other than a rectangle")), "{:?}", d.read_notes);
     let EntityKind::Line(line) = &kinds(&d)[0].kind else { panic!("expected a line") };
     assert!(line.b.x > 100.0 * MM_PER_PT, "the line was cut at the box: {line:?}");
+}
+
+#[test]
+fn a_clip_of_separate_segments_is_empty_not_a_rectangle() {
+    // Two open segments reach the four corners of a box, but neither encloses any area.
+    let d = import("q 0 0 m 100 0 l 100 100 m 0 100 l W n 0 50 m 150 50 l S Q");
+    assert!(kinds(&d).is_empty(), "{:?}", kinds(&d));
+    assert!(!d.read_notes.iter().any(|n| n.contains("clips by a shape other than a rectangle")), "{:?}", d.read_notes);
 }
 
 #[test]

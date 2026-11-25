@@ -10,6 +10,7 @@ use crate::theme::Tokens;
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
+    crate::attentry::show(app, ctx);
     crate::line_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
@@ -32,6 +33,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "commands" => commands(app, ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
+        "wblock" => crate::wblock::dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
         o if o == "options" || o.starts_with("options:") => crate::options::dialog(app, ctx, o, &mut open),
         o if o.starts_with("textedit:") => crate::textdlg::dialog(app, ctx, o, &mut open),
@@ -353,7 +355,8 @@ fn about(ctx: &egui::Context, open: &mut bool) {
                 1 => crate::credits::contributors_ui(ui),
                 2 => crate::credits::models_ui(ui),
                 _ => {
-                    ui.heading(crate::tl!("CADCraft"));
+                    // The channel name, so a Nightly bug report names the channel it came from.
+                    ui.heading(crate::os_window::drawn_name());
                     ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
                     ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
                     ui.add_space(6.0);

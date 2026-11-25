@@ -50,7 +50,10 @@ pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices:
 
     match rule {
         FillRule::EvenOdd => {
-            let probes: Vec<Vec2> = polygons.iter().map(|p| interior_probe(p)).collect();
+            // Contours that don't meet are placed by a point of their own boundary: a point nudged
+            // inside an edge can land in a contour drawn close to it.
+            let apart = sampled <= MAX_TOPOLOGY_POINTS && edges_meet(&polygons) == Some(false);
+            let probes: Vec<Vec2> = polygons.iter().map(|p| if apart { boundary_point(p) } else { interior_probe(p) }).collect();
             let mut depth = vec![0usize; loops.len()];
             containment(&polygons, &probes, &mut work, |i, _| depth[i] += 1)?;
             for (loop_, depth) in loops.iter_mut().zip(depth) {
@@ -71,7 +74,7 @@ pub(super) fn normalize(mut loops: Vec<HatchLoop>, rule: FillRule, max_vertices:
                 .collect();
             // No two contours meet, so a contour lies inside another exactly when a point of its
             // own boundary does.
-            let probes: Vec<Vec2> = polygons.iter().map(|p| longest_edge(p).map_or(Vec2::ZERO, |(a, b)| (a + b) * 0.5)).collect();
+            let probes: Vec<Vec2> = polygons.iter().map(|p| boundary_point(p)).collect();
             // The winding number just inside each contour.
             let mut winding = sign.clone();
             containment(&polygons, &probes, &mut work, |i, j| winding[i] += sign[j])?;
@@ -301,6 +304,11 @@ fn interior_probe(polygon: &[Vec2]) -> Vec2 {
     Vec2::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
 }
 
+/// The middle of the longest edge.
+fn boundary_point(polygon: &[Vec2]) -> Vec2 {
+    longest_edge(polygon).map_or(Vec2::ZERO, |(a, b)| (a + b) * 0.5)
+}
+
 fn longest_edge(polygon: &[Vec2]) -> Option<(Vec2, Vec2)> {
     polygon
         .iter()
@@ -311,7 +319,9 @@ fn longest_edge(polygon: &[Vec2]) -> Option<(Vec2, Vec2)> {
 }
 
 fn signed_area(polygon: &[Vec2]) -> f64 {
-    polygon.iter().zip(polygon.iter().cycle().skip(1)).take(polygon.len()).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f64>() * 0.5
+    // Relative to the first vertex, so the products far from the origin don't round the area away.
+    let Some(&o) = polygon.first() else { return 0.0 };
+    polygon.iter().zip(polygon.iter().cycle().skip(1)).take(polygon.len()).map(|(a, b)| (*a - o).cross(*b - o)).sum::<f64>() * 0.5
 }
 
 fn contains(polygon: &[Vec2], point: Vec2) -> bool {
@@ -368,7 +378,7 @@ fn tessellate_nonzero(polygons: &[Vec<Vec2>], sampled_vertices: usize, max_verti
                         .ok_or("PDF fill tessellation returned an invalid index")
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(HatchLoop { vertices, outer: true, sources: Vec::new() })
+            Ok(HatchLoop { vertices, outer: true, boundary_flags: None, sources: Vec::new() })
         })
         .collect()
 }
@@ -416,7 +426,12 @@ mod tests {
     use super::*;
 
     fn polygon(points: &[(f64, f64)]) -> HatchLoop {
-        HatchLoop { vertices: points.iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(), outer: false, sources: Vec::new() }
+        HatchLoop {
+            vertices: points.iter().map(|&(x, y)| PolyVertex::new(Vec2::new(x, y))).collect(),
+            outer: false,
+            boundary_flags: None,
+            sources: Vec::new(),
+        }
     }
 
     fn square(x0: f64, y0: f64, x1: f64, y1: f64, clockwise: bool) -> HatchLoop {
@@ -441,6 +456,7 @@ mod tests {
                 .map(|&(x, y)| PolyVertex { bulge: quarter * turn, ..PolyVertex::new(Vec2::new(x, y)) })
                 .collect(),
             outer: false,
+            boundary_flags: None,
             sources: Vec::new(),
         }
     }
@@ -460,7 +476,7 @@ mod tests {
     #[test]
     fn a_disc_of_two_half_circles_is_kept() {
         let half = |x: f64| PolyVertex { bulge: 1.0, ..PolyVertex::new(Vec2::new(x, 0.0)) };
-        let disc = HatchLoop { vertices: vec![half(-1.0), half(1.0)], outer: false, sources: Vec::new() };
+        let disc = HatchLoop { vertices: vec![half(-1.0), half(1.0)], outer: false, boundary_flags: None, sources: Vec::new() };
         for rule in [FillRule::EvenOdd, FillRule::NonZero] {
             let result = normalize(vec![disc.clone()], rule, 10_000, TOL).expect("valid contour");
             assert_eq!(result.len(), 1);
@@ -555,6 +571,24 @@ mod tests {
         assert!(!filled(&result, Vec2::new(shift + 5.0, shift + 5.0)));
         assert!(filled(&result, Vec2::new(shift + 1.0, shift + 1.0)));
         assert!(filled(&result, Vec2::new(shift + 11.0, shift + 5.1)));
+    }
+
+    #[test]
+    fn a_unit_square_far_from_the_origin_keeps_its_area() {
+        // At 2^29 the products of the coordinates are too large to keep a unit of area.
+        for shift in [0.0, 2f64.powi(29)] {
+            let result = normalize(vec![square(shift, shift, shift + 1.0, shift + 1.0, false)], FillRule::NonZero, 100, TOL).expect("valid contour");
+            assert_eq!(result.len(), 1, "at {shift}");
+        }
+    }
+
+    #[test]
+    fn even_odd_hole_close_to_its_outer_edge_is_classified_by_depth() {
+        // The hole runs 1e-6 below the outer square's top edge, closer than a point nudged inside
+        // that edge.
+        let input = vec![square(0.0, 0.0, 10.0, 8.0, false), square(4.0, 7.0, 6.0, 7.999_999, false)];
+        let result = normalize(input, FillRule::EvenOdd, 1000, TOL).expect("valid contours");
+        assert!(result[0].outer && !result[1].outer, "{result:?}");
     }
 
     #[test]

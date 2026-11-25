@@ -20,7 +20,7 @@
 //! Adapted from CADCraft PR #2787, commit ec17f63f189d1dccf91357701f9bba243ca88dd5
 //! (MIT OR Apache-2.0). PDF interpretation stays in craft-pdf; this module maps it to CAD entities.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
@@ -237,9 +237,13 @@ struct Collector {
     /// Characters of text the page may still add.
     text_left: usize,
     run: Option<Run>,
-    /// The text last added: where it starts, its string and its size, so the same text drawn again
-    /// at the same place (a fill and then its stroke, render mode 2) is not added twice.
-    last_text: Option<(Vec2, String, f64)>,
+    /// The glyphs filled since the last shape, image or stroked glyph, in paint order: where each
+    /// starts and its characters. Render mode 2 fills a whole text show and then draws it again for
+    /// its stroke; a stroke glyph that repeats the next one here is that replay and is skipped.
+    /// Each was charged to the page's text budget, which bounds the queue.
+    filled: VecDeque<(Vec2, String)>,
+    /// Whether a glyph was stroked since the last fill: the next fill starts a new queue.
+    stroking: bool,
     left_out: BTreeMap<LeftOut, usize>,
     failure: Option<String>,
     /// The clips in force, outermost first: a rectangle in page points, or `None` for another shape.
@@ -297,7 +301,8 @@ impl Collector {
             glyphs: 0,
             text_left: MAX_TEXT_CHARS,
             run: None,
-            last_text: None,
+            filled: VecDeque::new(),
+            stroking: false,
             left_out: BTreeMap::new(),
             failure: None,
             clips: Vec::new(),
@@ -517,7 +522,7 @@ impl Collector {
                 }
             })
             .enumerate()
-            .map(|(i, (vertices, _))| HatchLoop { vertices, outer: i == 0, sources: Vec::new() })
+            .map(|(i, (vertices, _))| HatchLoop { vertices, outer: i == 0, boundary_flags: None, sources: Vec::new() })
             .collect();
         if kept_whole {
             self.approximated("curved filled shapes crossing a clip kept whole");
@@ -554,9 +559,14 @@ impl Collector {
         self.add(LAYER_FILLS, color, Lineweight::ByLayer, EntityKind::Hatch(hatch), verts);
     }
 
-    fn glyph_text(&mut self, glyph: &Glyph<'_>, to_page: Affine, glyph_to_text: Affine, paint: &Paint<'_>) {
+    fn glyph_text(&mut self, glyph: &Glyph<'_>, to_page: Affine, glyph_to_text: Affine, paint: &Paint<'_>, stroke: bool) {
         if !self.opts.text || self.failure.is_some() {
             return;
+        }
+        if stroke {
+            self.stroking = true;
+        } else if std::mem::take(&mut self.stroking) {
+            self.filled.clear();
         }
         self.glyphs += 1;
         if self.glyphs > MAX_GLYPHS {
@@ -594,29 +604,42 @@ impl Collector {
         let end = g.advance_width().map(|w| pt(m * Point::new(f64::from(w), 0.0))).filter(|e| e.x.is_finite() && e.y.is_finite());
         // A glyph is kept when its middle (half its advance along, half the cap height up) lies in
         // the clip. Its origin is no test: a plotter often clips each text to a box drawn through
-        // that origin (or ends the page clip there), and rounding then puts it a hair outside.
+        // that origin (or ends the page clip there), and rounding then puts it a hair outside. A clip
+        // with no area (two clips that only touch) shows nothing.
         let half = end.map_or(dir * (0.25 * em), |e| (e - origin) * 0.5);
         let middle = origin + half + ey * (0.5 * CAP_HEIGHT);
         if let Some((lo, hi)) = self.clip()
-            && !((lo.x..=hi.x).contains(&middle.x) && (lo.y..=hi.y).contains(&middle.y))
+            && !(lo.x < hi.x && lo.y < hi.y && (lo.x..=hi.x).contains(&middle.x) && (lo.y..=hi.y).contains(&middle.y))
         {
             return;
+        }
+        if stroke {
+            if self.filled.front().is_some_and(|(at, s)| (*at - origin).len() <= 1e-9 * em.max(1.0) && *s == ch) {
+                self.filled.pop_front();
+                return;
+            }
+            self.filled.clear();
         }
         // The characters this glyph adds, and a space before them, against the page's text budget.
         let Some(left) = self.text_left.checked_sub(ch.chars().count().saturating_add(1)) else {
             return self.fail(&format!("more than {MAX_TEXT_CHARS} characters of text on the page"));
         };
         self.text_left = left;
+        if !stroke {
+            self.filled.push_back((origin, ch.clone()));
+        }
 
         if let Some(run) = &mut self.run {
-            // A fill and its stroke (render mode 2) arrive as two calls for one glyph at one origin;
-            // this is tested first, since the gap measured from where the glyph ended is negative.
+            // The same glyph drawn again at the same origin adds nothing; this is tested first,
+            // since the gap measured from where the glyph ended is negative.
             if run.color == color && (origin - run.last).len() <= 1e-9 * em.max(1.0) && run.text.ends_with(&ch) {
                 return;
             }
             let rel = origin - run.last;
             let along = rel.x * run.dir.x + rel.y * run.dir.y;
-            let across = (rel.x * run.dir.y - rel.y * run.dir.x).abs();
+            // Measured from the first glyph, so a run cannot drift off its baseline a step at a time.
+            let from_start = origin - run.start;
+            let across = (from_start.x * run.dir.y - from_start.y * run.dir.x).abs();
             let same = run.color == color && (run.em - em).abs() <= 0.02 * em && run.dir.x * dir.x + run.dir.y * dir.y > 0.9999 && across <= 0.1 * em;
             // Where the previous glyph ended, else the previous origin plus an average glyph.
             let gap = match run.end {
@@ -630,7 +653,7 @@ impl Collector {
                 if gap > 0.15 * em && !run.text.ends_with(' ') && !ch.starts_with(' ') {
                     run.text.push(' ');
                 }
-                // A fill and its stroke arrive as two calls for one glyph.
+                // The same glyph drawn again where the last one started adds nothing.
                 if !(along.abs() < 1e-9 * em.max(1.0) && run.text.ends_with(&ch)) {
                     run.text.push_str(&ch);
                     run.glyphs += 1;
@@ -650,14 +673,6 @@ impl Collector {
         if value.trim().is_empty() {
             return;
         }
-        if let Some((at, text, em)) = &self.last_text
-            && *text == value
-            && (*at - run.start).len() <= 1e-9 * run.em.max(1.0)
-            && (*em - run.em).abs() <= 1e-9 * run.em.max(1.0)
-        {
-            return;
-        }
-        self.last_text = Some((run.start, value.clone(), run.em));
         let fit_end = run.end.filter(|e| run.glyphs >= 2 && (*e - run.start).len() > 1e-9);
         let text = Text {
             insert: v3(run.start),
@@ -695,16 +710,38 @@ fn translucent(paint: &Paint<'_>) -> bool {
     matches!(paint, Paint::Color(c) if { let [_, _, _, a] = c.to_rgba().to_rgba8(); a > 0 && a < 255 })
 }
 
-/// The rectangle a clip path is, when it is an axis-aligned one (four or five straight points).
+/// The rectangle a clip path is, when it is one axis-aligned subpath of four or five straight
+/// points; a rectangle with no area when its subpaths enclose none, since that clip shows nothing.
 fn rect_of(path: &BezPath) -> Option<Rect> {
-    let mut pts: Vec<Point> = Vec::new();
+    let mut subpaths: Vec<Vec<Point>> = Vec::new();
+    let mut closed = false;
     for el in path.elements() {
         match *el {
-            PathEl::MoveTo(p) | PathEl::LineTo(p) => pts.push(p),
-            PathEl::ClosePath => {}
+            PathEl::MoveTo(p) => {
+                subpaths.push(vec![p]);
+                closed = false;
+            }
+            PathEl::LineTo(p) => {
+                // A line after a close starts a new subpath where the closed one started.
+                if closed {
+                    let start = subpaths.last().and_then(|s| s.first()).copied().unwrap_or(p);
+                    subpaths.push(vec![start]);
+                    closed = false;
+                }
+                match subpaths.last_mut() {
+                    Some(s) => s.push(p),
+                    None => subpaths.push(vec![p]),
+                }
+            }
+            PathEl::ClosePath => closed = true,
             _ => return None,
         }
     }
+    if !subpaths.is_empty() && subpaths.iter().all(|s| collinear(s)) {
+        return Some(Rect::ZERO);
+    }
+    let [pts] = subpaths.as_slice() else { return None };
+    let mut pts = pts.clone();
     if !(4..=5).contains(&pts.len()) {
         return None;
     }
@@ -731,6 +768,14 @@ fn rect_of(path: &BezPath) -> Option<Rect> {
     let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].iter().all(|&(x, y)| pts.iter().filter(|p| at(p, x, y)).count() == 1);
     (pts.iter().all(|p| on(p.x, x0, x1) && on(p.y, y0, y1)) && (flat || corners) && x0.is_finite() && y0.is_finite())
         .then(|| Rect::new(x0, y0, x1, y1))
+}
+
+/// Whether the points lie on one straight line, or at one point, to a millionth of a point.
+fn collinear(pts: &[Point]) -> bool {
+    let Some(&a) = pts.first() else { return true };
+    let far = pts.iter().map(|p| *p - a).max_by(|u, v| u.hypot2().total_cmp(&v.hypot2())).unwrap_or_default();
+    let len = far.hypot();
+    len < 1e-6 || pts.iter().all(|p| (far.cross(*p - a) / len).abs() < 1e-6)
 }
 
 /// How a shape lies against a clip rectangle.
@@ -934,7 +979,7 @@ impl<'a> Device<'a> for Collector {
         }
         self.flush_text();
         // Text drawn again after a shape is a new label on top, not the stroke of the text before.
-        self.last_text = None;
+        self.filled.clear();
         match mode {
             PathDrawMode::Fill(rule) => self.fill(path, transform, paint, rule),
             PathDrawMode::Stroke(p) => {
@@ -962,13 +1007,15 @@ impl<'a> Device<'a> for Collector {
         }
     }
     fn draw_glyph(&mut self, glyph: &Glyph<'a>, transform: Affine, glyph_transform: Affine, paint: &Paint<'a>, mode: &GlyphDrawMode) {
-        if matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_)) {
-            self.glyph_text(glyph, transform, glyph_transform, paint);
+        match mode {
+            GlyphDrawMode::Fill => self.glyph_text(glyph, transform, glyph_transform, paint, false),
+            GlyphDrawMode::Stroke(_) => self.glyph_text(glyph, transform, glyph_transform, paint, true),
+            _ => {}
         }
     }
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {
         self.flush_text();
-        self.last_text = None;
+        self.filled.clear();
         self.left_out(LeftOut::Image);
     }
     fn pop_clip_path(&mut self) {

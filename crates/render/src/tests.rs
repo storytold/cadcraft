@@ -82,7 +82,7 @@ fn hatch_pattern_and_solid() {
     let h = Hatch {
         pattern: "ANSI31".into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.clone(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 1.0,
         angle: 0.0,
         associative: false,
@@ -514,7 +514,7 @@ fn pattern_hatch(pattern: &str, scale: f64, (x0, y0, x1, y1): (f64, f64, f64, f6
     Hatch {
         pattern: pattern.into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: sq.to_vec(), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale,
         angle: 0.0,
         associative: false,
@@ -1299,7 +1299,8 @@ fn raster_hatch_pattern_matches_one_by_one() {
 #[test]
 fn ole_frame_draws_its_outline() {
     let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
-    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let frame =
+        |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
@@ -1331,6 +1332,51 @@ fn without_linetypes_every_line_is_drawn_whole() {
     assert_eq!(dashed.tris, continuous.tris);
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
+
+/// A proxy draws its proxy graphics like block contents: layer 0 and ByBlock in the picture are
+/// the proxy's own, and the proxy's layer hides all of it.
+#[test]
+fn proxy_graphics_draw_like_block_contents() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Notes".into(), color: Color::Index(3), ..Default::default() });
+    let byblock = Common { color: Color::ByBlock, ..Default::default() };
+    let graphics = vec![
+        block_entity(7, byblock, EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })),
+        block_entity(
+            7,
+            Common { color: Color::Index(1), ..Default::default() },
+            EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 0.0, 0.0), radius: 5.0 }),
+        ),
+    ];
+    let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Default::default() }, proxy).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims.iter().map(|p| p.color).collect::<Vec<_>>(), [Rgb(0, 255, 0), Rgb(255, 0, 0)]);
+    let b = d.extents(&Space::Model);
+    assert!((b.min.x, b.max.x, b.max.y) == (0.0, 20.0, 5.0), "{b:?}");
+    d.layer_mut("Notes").unwrap().frozen = true;
+    assert!(build(&d, &Space::Model, &Options::default()).prims.is_empty());
+}
+
+/// On a locked layer, a proxy's graphics fade like a block's contents: layer 0 in the picture takes
+/// the proxy's fade, a ByBlock part on an unlocked layer only the proxy's own transparency.
+#[test]
+fn proxy_graphics_on_a_locked_layer_fade_like_block_contents() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    for (own, want) in [(ByLayer, 0), (Percent(20), 20)] {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 0.0, 0.0) });
+        let graphics = vec![
+            block_entity(7, Common::default(), line(0.0)),
+            block_entity(7, Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() }, line(2.0)),
+        ];
+        let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+        d.add(&Space::Model, Common { layer: "Locked".into(), transparency: own, ..Default::default() }, proxy).unwrap();
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![50.max(want), want], "{own:?}");
+    }
 }
 
 /// A broken table whose parts, with their repeated labels, together hold more cells than a table may
@@ -1371,7 +1417,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
             }
         }
         v.rotate_left(rot);
-        HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+        HatchLoop { vertices: v, outer: true, boundary_flags: None, sources: Vec::new() }
     };
     let mut h = pattern_hatch("SOLID", 1.0, (0.0, 0.0, 1.0, 1.0));
     h.loops = vec![ring(0, false), ring(2, false), ring(1, true), ring(3, true)];
@@ -1380,6 +1426,7 @@ fn rotated_and_reversed_copies_of_a_curved_loop_fill_once() {
     h.loops.push(HatchLoop {
         vertices: ring(0, false).vertices.into_iter().map(|q| PolyVertex { bulge: 0.0, ..q }).collect(),
         outer: true,
+        boundary_flags: None,
         sources: Vec::new(),
     });
     assert_eq!(loops_of(&h).len(), 2);

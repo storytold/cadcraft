@@ -2,8 +2,10 @@
 //! another program keeps (`cadcraft_engine::cmd::file::not_saved`), a DXF can't hold every solid
 //! or proxy of every version (`cadcraft_engine::cmd::file::loss_on_save`), and QSAVE replaces the file
 //! that still has it, so File ▸ Save, its shortcut or typing QSAVE says what would go first:
-//! Save Anyway / Save As... / Cancel. Agreeing lasts for that same loss on that same file, so
-//! later saves in the session don't ask again; the file no longer holds what was agreed to.
+//! Save Anyway / Save As... / Cancel. Save As from a DWG warning suggests DXF, which keeps the
+//! objects; File ▸ Save As suggests the user's default format. Agreeing lasts for that same loss
+//! on that same file, so later saves in the session don't ask again; the file no longer holds
+//! what was agreed to.
 //!
 //! Programmatic saves (`engine.execute`, the control channel, MCP, scripts) never ask: they keep
 //! reporting the loss in the result's `notSaved` and on the command line.
@@ -94,7 +96,12 @@ impl CadApp {
             (Choice::Cancel, _) | (_, None) => self.session.echo(crate::tf!("Save cancelled: {path} was not changed.", path = loss.path)),
             (Choice::SaveAs, Some(i)) => {
                 self.activate_doc(i);
-                let _ = self.run("ui.saveas", Value::Null);
+                // A DWG warning says DXF keeps the objects, so this dialog suggests DXF. A DXF
+                // warning is about an older version, and File ▸ Save As passes no format, so both
+                // keep suggesting the user's default.
+                let dxf = std::path::Path::new(&loss.path).extension().is_some_and(|e| e.eq_ignore_ascii_case("dxf"));
+                let params = if dxf { Value::Null } else { json!({ "format": "dxf" }) };
+                let _ = self.run("ui.saveas", params);
             }
             (Choice::SaveAnyway, Some(i)) => {
                 self.activate_doc(i);
