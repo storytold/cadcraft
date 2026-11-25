@@ -275,3 +275,38 @@ fn an_extend_fence_highlights_the_stretches_it_adds() {
     s.input(Input::Enter).unwrap();
     assert!((drawn(&s) - before - shown).abs() < 1e-6);
 }
+
+#[test]
+fn a_fence_across_more_objects_than_the_preview_cap_shows_no_part() {
+    use cadcraft_engine::cmd::TRIM_PREVIEW_MAX_PICKS as CAP;
+    // Rungs crossed by one fence, between two rails that cut them. Each rung is one pick.
+    let mut s = Session::new();
+    line(&mut s, [0.0, 0.0], [0.0, 100.0]);
+    line(&mut s, [10.0, 0.0], [10.0, 100.0]);
+    let rung = |s: &mut Session, i: usize| {
+        let y = 1.0 + i as f64;
+        line(s, [-5.0, y], [15.0, y]);
+    };
+    for i in 0..CAP {
+        rung(&mut s, i);
+    }
+    s.zoom_extents().unwrap();
+    let fence = |s: &mut Session| {
+        s.start("trim").unwrap();
+        s.input(Input::Keyword("Fence".into())).unwrap();
+        s.input(Input::Point(Vec2::new(5.0, 0.5))).unwrap();
+    };
+    // The fence runs up between the rails, crossing every rung: CAP picks, the most the preview takes.
+    fence(&mut s);
+    let shown = highlight_all(&s, [5.5, 99.0]).expect("up to the cap, the fence is previewed");
+    assert!((length(&shown) - CAP as f64 * 10.0).abs() < 1e-6, "{}", length(&shown));
+    s.cancel();
+    // One more rung: past the cap there is no part highlight, and the fence still trims them all.
+    rung(&mut s, CAP);
+    fence(&mut s);
+    assert!(s.highlight_all(Vec2::new(5.5, 99.0)).is_none(), "past the cap nothing is previewed");
+    let before = drawn(&s);
+    s.input(Input::Point(Vec2::new(5.5, 99.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!((before - drawn(&s) - (CAP + 1) as f64 * 10.0).abs() < 1e-6, "every rung lost its middle");
+}

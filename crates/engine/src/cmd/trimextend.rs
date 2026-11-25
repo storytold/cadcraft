@@ -19,6 +19,11 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 /// Most fence points the JSON form takes.
 const MAX_FENCE: usize = 10_000;
+/// Most picks a Fence or Crossing preview works out ([`TrimM`]'s `highlight_all`). Each pick
+/// gathers the cutting edges over the whole drawing again, on every cursor move, so a fence across
+/// a crowded drawing shows no part highlight at all rather than slow the drawing area down; the
+/// fence itself still trims everything it crosses.
+pub const PREVIEW_MAX_PICKS: usize = 64;
 
 /// TRIMEXTENDMODE: 1 (default) Quick, 0 Standard.
 fn quick_mode(s: &Session) -> bool {
@@ -710,6 +715,9 @@ impl Interactive for TrimM {
             _ => return None,
         };
         let (work, tol) = found.ok()?;
+        if work.iter().map(|(_, picks)| picks.len()).sum::<usize>() > PREVIEW_MAX_PICKS {
+            return None;
+        }
         let px = (s.pixel_size() / 2.0).max(1e-9);
         Some(picks_preview(s, &work, self.extend, self.edges(quick, implied), quick, tol, px))
     }

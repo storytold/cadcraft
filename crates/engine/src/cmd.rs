@@ -50,6 +50,7 @@ mod spline_opts;
 mod table;
 mod tolerance;
 mod trimextend;
+pub use trimextend::PREVIEW_MAX_PICKS as TRIM_PREVIEW_MAX_PICKS;
 mod txt2mtxt;
 pub use txt2mtxt::Txt2MtxtOptions;
 mod ucs;
