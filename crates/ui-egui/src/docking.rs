@@ -560,11 +560,6 @@ impl Glyph for PanelGlyph {
     }
 }
 
-/// The drawing's id as the window's document canvas.
-fn drawing_id() -> egui::Id {
-    egui::Id::unique("cadcraft-drawing")
-}
-
 /// Validate and repair the stored workspace, sync it with the app, and draw the dock: restore or fall back from the
 /// persisted layout (a failed restore falls back to the default layout with a status message), draw every panel body
 /// and the drawing, forward the keys typed in floating panels' own windows, and apply the pass's layout actions.
@@ -695,7 +690,7 @@ impl DockPanels<Panel> for Panels<'_> {
         if !panels.contains(&Panel::Canvas) {
             return None;
         }
-        crate::framework::host_canvas(ui.ctx(), drawing_id());
+        crate::framework::host_canvas(ui.ctx());
         ui.painter().rect_filled(rect, 0.0, crate::theme::Tokens::get().canvas);
         crate::canvas::show(self.app, ui);
         Some(rect.height())

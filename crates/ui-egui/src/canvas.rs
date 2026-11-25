@@ -856,7 +856,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // draws the others.
     let tiles = tile_rects(app, full);
     let rect = tiles.iter().find(|(_, tile)| tile.active).map_or(full, |(r, _)| *r);
-    let resp = ui.interact(full, ui.scope_id().with("canvas"), Sense::click_and_drag());
+    let resp = ui.interact(full, crate::framework::drawing_id(), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     app.canvas.rect = Some(rect);
     app.session.viewport_px = (f64::from(rect.width()).max(1.0), f64::from(rect.height()).max(1.0));

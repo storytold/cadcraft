@@ -66,7 +66,8 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
 
 /// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
 /// the command line deaf to typing). While no widget has focus, a pressed Tab becomes a `"\t"`
-/// text event, which keeps its place among the other keystrokes; [`keyboard`] handles it.
+/// text event, which keeps its place among the other keystrokes; [`keyboard`] handles it. From a
+/// focused widget, the drawing included, Tab moves on in the window's Tab order.
 pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
     if ctx.egui_wants_keyboard_input() {
         return;
@@ -369,7 +370,7 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
 
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    if crate::framework::widget_has_keyboard(ctx) {
         app.cmd.preedit.clear();
         app.cmd.ime_on = false;
         return;

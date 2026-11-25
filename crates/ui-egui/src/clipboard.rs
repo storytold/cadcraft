@@ -262,7 +262,7 @@ pub fn pump(app: &mut CadApp, ctx: &egui::Context) {
     }
     if let Some(p) = app.paste.request.take() {
         // A focused text field would take the `Paste` itself.
-        if ctx.egui_wants_keyboard_input() {
+        if crate::framework::widget_has_keyboard(ctx) {
             run_now(app, p);
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);

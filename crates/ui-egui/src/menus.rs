@@ -1014,7 +1014,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
         run_transparent(app, "ui.toggle.quickcalc");
     }
-    if ctx.egui_wants_keyboard_input() {
+    if crate::framework::widget_has_keyboard(ctx) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.

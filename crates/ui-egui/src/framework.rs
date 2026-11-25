@@ -137,12 +137,24 @@ impl CadApp {
     }
 }
 
-/// Declares the drawing `id`, drawn in this pass, as the window's document canvas. With nothing focused it is the
-/// window's key target: Enter, the arrows, Delete, the edit chords and the clipboard events stay in egui's input for
-/// the command line and CADCraft's shortcuts. The drawing takes no egui focus of its own.
-pub(crate) fn host_canvas(ctx: &egui::Context, id: egui::Id) {
+/// The drawing's widget, the window's document canvas.
+pub(crate) fn drawing_id() -> egui::Id {
+    egui::Id::unique("cadcraft-drawing")
+}
+
+/// Declares the drawing, drawn in this pass, as the window's document canvas. With nothing focused it is the window's
+/// key target: Enter, the arrows, Delete, the edit chords and the clipboard events stay in egui's input for the command
+/// line and CADCraft's shortcuts. Tab and Shift+Tab stop at the drawing and move on from it; a click in it takes no
+/// focus.
+pub(crate) fn host_canvas(ctx: &egui::Context) {
     const KEYS: KeyUse = KeyUse::CANVAS.with_edits(EditSet::ALL);
-    craft_ui::runtime::focus::host_canvas(ctx, id, KEYS);
+    craft_ui::runtime::focus::host_canvas(ctx, drawing_id(), KEYS);
+}
+
+/// Whether a widget other than the drawing has the keyboard. The command line and CADCraft's shortcuts have it
+/// otherwise: with nothing focused, and while the drawing is the focused Tab stop.
+pub(crate) fn widget_has_keyboard(ctx: &egui::Context) -> bool {
+    ctx.egui_wants_keyboard_input() && !ctx.memory(|memory| memory.has_focus(drawing_id()))
 }
 
 /// Whether Escape was pressed in this pass: from egui while one of CADCraft's own widgets or popups has the keyboard,
