@@ -6,6 +6,11 @@ use crate::{EngineError, Result, Session};
 
 mod table;
 
+/// ACADVER: the program's release, as a text AutoCAD documents it and `atof` reads back as a
+/// number. A drawing's `$ACADVER` header is its file version, which is what a save writes, so the
+/// two are separate values: `get` gives this text, `list` too, and the header stays as read.
+pub const ACADVER_TEXT: &str = "24.3s (CADCraft)";
+
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
     "ATTREQ",
@@ -175,6 +180,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
         "CMDACTIVE" => json!(i32::from(s.running.is_some())),
         "TILEMODE" => json!(i32::from(s.state().is_ok_and(|d| d.space.layout().is_none()))),
+        // The release number as AutoCAD reports it, so `(atof (getvar "ACADVER"))` is 24.3; the
+        // drawing's own `$ACADVER` (its file version) is left alone for the save version.
+        "ACADVER" => json!(ACADVER_TEXT),
         "PLATFORM" => json!(std::env::consts::OS),
         "BLOCKEDITOR" => json!(i32::from(s.state().is_ok_and(|d| d.block_edit.is_some()))),
         // The template NEW/QNEW start from (a profile setting, like FONTALT; "" = none).
@@ -263,6 +271,7 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
 
 /// Variables `get` reports from session or drawing state that `set` can't change.
 const READ_ONLY: &[&str] = &[
+    "ACADVER",
     "CMDNAMES",
     "DWGNAME",
     "DWGPREFIX",
@@ -506,7 +515,7 @@ pub fn list(s: &Session) -> Value {
     let mut m = serde_json::Map::new();
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
-            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
+            if matches!(k.as_str(), "ACADVER" | "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
                 m.insert(k.clone(), get(s, k).unwrap_or(Value::Null));
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
