@@ -319,7 +319,9 @@ fn longest_edge(polygon: &[Vec2]) -> Option<(Vec2, Vec2)> {
 }
 
 fn signed_area(polygon: &[Vec2]) -> f64 {
-    polygon.iter().zip(polygon.iter().cycle().skip(1)).take(polygon.len()).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f64>() * 0.5
+    // Relative to the first vertex, so the products far from the origin don't round the area away.
+    let Some(&o) = polygon.first() else { return 0.0 };
+    polygon.iter().zip(polygon.iter().cycle().skip(1)).take(polygon.len()).map(|(a, b)| (*a - o).cross(*b - o)).sum::<f64>() * 0.5
 }
 
 fn contains(polygon: &[Vec2], point: Vec2) -> bool {
@@ -563,6 +565,15 @@ mod tests {
         assert!(!filled(&result, Vec2::new(shift + 5.0, shift + 5.0)));
         assert!(filled(&result, Vec2::new(shift + 1.0, shift + 1.0)));
         assert!(filled(&result, Vec2::new(shift + 11.0, shift + 5.1)));
+    }
+
+    #[test]
+    fn a_unit_square_far_from_the_origin_keeps_its_area() {
+        // At 2^29 the products of the coordinates are too large to keep a unit of area.
+        for shift in [0.0, 2f64.powi(29)] {
+            let result = normalize(vec![square(shift, shift, shift + 1.0, shift + 1.0, false)], FillRule::NonZero, 100, TOL).expect("valid contour");
+            assert_eq!(result.len(), 1, "at {shift}");
+        }
     }
 
     #[test]
