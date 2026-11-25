@@ -250,9 +250,10 @@ pub fn pattern_for(d: &Drawing, name: &str) -> Option<HatchPattern> {
     Some(if d.header.i64("MEASUREMENT", 0) == 1 { scaled_pattern(p, 25.4) } else { p })
 }
 
-/// The pattern name of a user-defined hatch, as the DXF Reference writes it (group 2). Its lines
-/// are not a pattern definition but the hatch's angle, spacing and double flag (groups 52, 41 and
-/// 77 of a DXF file), so [`user_defined_lines`] makes them.
+/// The pattern name of a user-defined hatch, as the DXF Reference writes it (group 2). Its families
+/// are not a named pattern's: a hatch stores them at unit scale, turned by its angle and spaced by
+/// its scale (groups 52, 41 and 77 of a DXF file), so [`user_defined_lines`] makes them for a file
+/// that lists none (AutoCAD's own are written with 78 = 0).
 pub const USER_PATTERN: &str = "_USER";
 
 /// Whether `name` is a user-defined hatch's pattern name ([`USER_PATTERN`], in any case).

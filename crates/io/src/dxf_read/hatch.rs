@@ -88,8 +88,8 @@ pub(super) fn hatch(tags: &[Tag], t: &T, curves: &mut CurvePoints) -> Option<Ent
         Vec::new()
     } else {
         let lines = pattern_definition(tags, scale, angle, origin);
-        // A user-defined hatch's lines are not in the file: they are its angle, spacing and double
-        // flag, which AutoCAD writes instead of a pattern definition (group 78 is 0).
+        // A file that lists no definition lines for a user-defined hatch (AutoCAD writes its own
+        // with 78 = 0) means its angle, spacing and double flag; build the families from those.
         if lines.is_empty() && cadcraft_doc::library::is_user_pattern(&pattern) {
             cadcraft_doc::library::user_defined_lines(t.i(77).unwrap_or(0) != 0)
         } else {

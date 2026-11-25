@@ -667,8 +667,8 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             }
         }
         w.i(75, i64::from(h.style));
-        // Pattern type: 0 for a user-defined hatch, whose lines are its angle, spacing and double
-        // flag (groups 52, 41 and 77); 1 for a predefined (library) pattern.
+        // Pattern type: 0 for a user-defined hatch (its lines come from its angle, spacing and
+        // double flag, groups 52, 41 and 77); 1 for a predefined (library) pattern.
         let user = cadcraft_doc::library::is_user_pattern(&h.pattern);
         w.i(76, if user { 0 } else { 1 });
         // Angle, scale and double flag are a pattern fill's: AutoCAD 2024 writes none of them on a
@@ -685,22 +685,23 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
             };
             // Double hatch area (group 77): a user-defined hatch's second family, at right angles.
             w.i(77, i64::from(user && lines.len() > 1));
-            // A user-defined hatch's definition lines are implied, so the file lists none.
-            w.i(78, if user { 0 } else { lines.len() as i64 });
-            if !user {
-                for pl in lines {
-                    let ang = pl.angle.to_radians() + h.angle;
-                    w.f(53, ang.to_degrees());
-                    let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
-                    w.f(43, o.x);
-                    w.f(44, o.y);
-                    let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
-                    w.f(45, dl.x);
-                    w.f(46, dl.y);
-                    w.i(79, pl.dashes.len() as i64);
-                    for dsh in pl.dashes {
-                        w.f(49, dsh * h.scale);
-                    }
+            // The number of pattern definition lines, then each line's angle, base point, offset
+            // and dashes, scaled and rotated as the hatch draws them. The DXF Reference has no
+            // user-defined exception: its families are listed here as any pattern's are, and a
+            // reader given 78 = 0 has no lines to draw.
+            w.i(78, lines.len() as i64);
+            for pl in lines {
+                let ang = pl.angle.to_radians() + h.angle;
+                w.f(53, ang.to_degrees());
+                let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
+                w.f(43, o.x);
+                w.f(44, o.y);
+                let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
+                w.f(45, dl.x);
+                w.f(46, dl.y);
+                w.i(79, pl.dashes.len() as i64);
+                for dsh in pl.dashes {
+                    w.f(49, dsh * h.scale);
                 }
             }
         }

@@ -1,5 +1,6 @@
-//! HATCH pattern definition lines (groups 78, 53, 43–46, 79, 49) of a pattern the library
-//! doesn't define survive a DXF read and save (issue #290).
+//! HATCH pattern definition lines (groups 78, 53, 43–46, 79, 49) survive a DXF read and save: a
+//! pattern the library doesn't define (issue #290), and a user-defined hatch's own families, which
+//! a DWG keeps too.
 
 use cadcraft_doc::library::PatternLine;
 use cadcraft_doc::*;
@@ -35,15 +36,22 @@ fn custom_lines() -> Vec<PatternLine> {
     ]
 }
 
-fn save(h: Hatch) -> String {
+fn drawing(h: Hatch) -> Drawing {
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).expect("add");
-    write_dxf(&d)
+    d
+}
+
+fn save(h: Hatch) -> String {
+    write_dxf(&drawing(h))
+}
+
+fn first_hatch_of(d: &Drawing) -> Hatch {
+    d.model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).expect("hatch")
 }
 
 fn first_hatch(text: &str) -> Hatch {
-    let d = read_dxf(text.as_bytes()).expect("read");
-    d.model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).expect("hatch")
+    first_hatch_of(&read_dxf(text.as_bytes()).expect("read"))
 }
 
 /// (group code, value) pairs of a DXF text.
@@ -104,14 +112,22 @@ fn custom_pattern_lines_roundtrip_scaled_and_rotated() {
 }
 
 #[test]
-fn user_defined_hatches_save_their_type_and_double_flag_and_read_back() {
+fn user_defined_hatches_save_their_type_double_flag_and_lines_and_read_back() {
     let lines = cadcraft_doc::library::user_defined_lines(true);
     let text = save(hatch(cadcraft_doc::library::USER_PATTERN, 2.0, 30f64.to_radians(), Vec2::new(1.0, 2.0), lines.clone()));
     let p = pairs(&text);
     assert_eq!(hatch_group(&p, 2).as_deref(), Some("_USER"));
     assert_eq!(hatch_group(&p, 76).as_deref(), Some("0"), "pattern type 0: user-defined");
     assert_eq!(hatch_group(&p, 77).as_deref(), Some("1"), "double hatch area");
-    assert_eq!(hatch_group(&p, 78).as_deref(), Some("0"), "a user-defined hatch lists no lines");
+    assert_eq!(hatch_group(&p, 78).as_deref(), Some("2"), "the two families are listed");
+    // Each family is written as a pattern line is: its angle, base point, offset and dashes.
+    let at = pattern_data(&p);
+    let num = |k: usize| p[at + k].1.parse::<f64>().expect("number");
+    let off = Vec2::new(0.0, 1.0).rotate(30f64.to_radians()) * 2.0;
+    assert!((num(1) - 30.0).abs() < 1e-9, "53 angle: the family turned by the hatch's angle");
+    assert!((num(2) - 1.0).abs() < 1e-9 && (num(3) - 2.0).abs() < 1e-9, "43/44 base point at the hatch origin");
+    assert!((num(4) - off.x).abs() < 1e-9 && (num(5) - off.y).abs() < 1e-9, "45/46 offset: the spacing, turned");
+    assert_eq!(p[at + 6], (79, "0".into()), "79 dashes");
     // Read back to the same angle, spacing and families, and saved again unchanged.
     let h = first_hatch(&text);
     assert_eq!(h.pattern, "_USER");
@@ -124,12 +140,41 @@ fn user_defined_hatches_save_their_type_and_double_flag_and_read_back() {
     let p = pairs(&single);
     assert_eq!(hatch_group(&p, 76).as_deref(), Some("0"));
     assert_eq!(hatch_group(&p, 77).as_deref(), Some("0"));
+    assert_eq!(hatch_group(&p, 78).as_deref(), Some("1"), "the one family is listed");
     assert_eq!(first_hatch(&single).pattern_lines.len(), 1);
     let ansi = save(hatch("ANSI31", 1.0, 0.0, Vec2::ZERO, custom_lines()));
     let p = pairs(&ansi);
     assert_eq!(hatch_group(&p, 76).as_deref(), Some("1"));
     assert_eq!(hatch_group(&p, 77).as_deref(), Some("0"));
     assert_eq!(hatch_group(&p, 78).as_deref(), Some("2"));
+}
+
+/// A user-defined hatch's families are a pattern definition like any other's, so an imported one
+/// based away from its origin and doubled keeps both families' angle, base point, offset and count
+/// through a DXF save and a DWG save. Written as 78 = 0 they were lost: a reader with no fallback
+/// drew nothing, and this program's fallback moved the base point to the hatch's origin.
+#[test]
+fn a_user_defined_hatch_keeps_its_line_definitions_through_dxf_and_dwg() {
+    // Two families based at (1,1): a double hatch whose lines do not start at its origin.
+    let mut lines = cadcraft_doc::library::user_defined_lines(true);
+    for l in &mut lines {
+        l.origin = (1.0, 1.0);
+    }
+    let d = drawing(hatch(cadcraft_doc::library::USER_PATTERN, 2.0, 30f64.to_radians(), Vec2::ZERO, lines.clone()));
+    let text = write_dxf(&d);
+    assert_eq!(hatch_group(&pairs(&text), 78).as_deref(), Some("2"), "the file lists both families");
+    let back = first_hatch(&text);
+    assert_eq!(back.pattern_lines.len(), 2, "{:?}", back.pattern_lines);
+    assert!(near(&back.pattern_lines, &lines), "{:?}", back.pattern_lines);
+    // A DWG keeps them too: the DWG bridge converts the same written HATCH.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        cadcraft_io::dwg_worker::allow_in_process();
+        let dwg = cadcraft_io::write(&d, "user-pattern.dwg").expect("write dwg");
+        let h = first_hatch_of(&cadcraft_io::read(&dwg, "user-pattern.dwg").expect("read dwg"));
+        assert_eq!(h.pattern_lines.len(), 2, "{:?}", h.pattern_lines);
+        assert!(near(&h.pattern_lines, &lines), "{:?}", h.pattern_lines);
+    }
 }
 
 #[test]
