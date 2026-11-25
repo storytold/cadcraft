@@ -782,11 +782,11 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 }
                 // Selection cycling: the press picks a row of the open list, or opens the list over
                 // overlapping objects (#1149). Its release must not count again.
-                if cycle_click(app, &xf, Some(pos), Some(xf.to_world(pos)), m.shift) {
+                if cycle_click(app, ui.ctx(), &xf, Some(pos), Some(xf.to_world(pos)), m.shift) {
                     app.canvas.press = Some(press::Press::new(pos, false));
                     continue;
                 }
-                if press_takes(app, &xf, pos) {
+                if press_takes(app, &xf, ui.ctx(), pos) {
                     let opened = press_at(app, &xf, ui.ctx(), pos, m);
                     app.canvas.press = Some(press::Press::new(pos, opened));
                 } else if !app.session.realtime_zoom_active() && !app.session.realtime_pan_active() {
@@ -806,7 +806,10 @@ fn handle_presses(app: &mut CadApp, ui: &egui::Ui, context: &PressContext) -> bo
                 click_used = true;
                 if p.is_on_grip() {
                     if grip_clicks && let Some((at, m)) = p.grip_click(pos) {
-                        if let Some(g) = crate::dyngrips::at(app, &xf, Some(at)) {
+                        if let Some(t) = blockedit::target(app, ui.ctx(), &xf, Some(at)) {
+                            // The Block Editor's parameters and actions, and their grips, before objects.
+                            blockedit::click(app, t, m.shift);
+                        } else if let Some(g) = crate::dyngrips::at(app, &xf, Some(at)) {
                             crate::dyngrips::click(app, g);
                         } else if let Some(g) = grip_at(app, &xf, Some(at)) {
                             click_grip(app, g, m.shift);
@@ -956,7 +959,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.press = None;
     }
     let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl;
-    let cycled = pressed_primary && !click_used && !middle_down && cycle_click(app, &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
+    let cycled =
+        pressed_primary && !click_used && !middle_down && cycle_click(app, ui.ctx(), &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
     // Clicks the presses above left alone: on grips, and during ZOOM Realtime.
     if inside
         && pressed_primary
@@ -984,6 +988,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
+        } else if let Some(t) = blockedit::target(app, ui.ctx(), &xf, hover_pos) {
+            // The Block Editor's parameters and actions, and their grips, before objects.
+            blockedit::click(app, t, mods.shift);
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
@@ -1089,16 +1096,16 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
 }
 
 /// Whether the press at `pos` is acted on when the button goes down ([`press_at`]): at any prompt
-/// and on the drawing with no command running. Grips (with no command running), ZOOM Realtime and
-/// PAN keep their clicks.
-fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
+/// and on the drawing with no command running. Grips and the Block Editor's parameters and actions
+/// (with no command running), ZOOM Realtime and PAN keep their clicks.
+fn press_takes(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2) -> bool {
     if app.session.realtime_zoom_active() || app.session.realtime_pan_active() {
         return false;
     }
     if app.session.prompting() {
         return true;
     }
-    crate::dyngrips::at(app, xf, Some(pos)).is_none() && grip_at(app, xf, Some(pos)).is_none()
+    crate::dyngrips::at(app, xf, Some(pos)).is_none() && grip_at(app, xf, Some(pos)).is_none() && blockedit::target(app, ctx, xf, Some(pos)).is_none()
 }
 
 /// Act on a press at `pos`: at a prompt the point goes in (snapped as the cursor would be there);
