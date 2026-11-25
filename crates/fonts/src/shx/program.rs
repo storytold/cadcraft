@@ -25,5 +25,7 @@ pub(super) fn outline(font: &ShxFont, number: u16, vertical: bool) -> Result<Shx
     Ok(ShxGlyph {
         strokes: glyph.strokes.into_iter().map(|stroke| stroke.into_iter().map(|p| Vec2::new(p.x, p.y)).collect()).collect(),
         advance: Vec2::new(glyph.advance.x, glyph.advance.y),
+        extent: glyph.extent.map(|(lo, hi)| (Vec2::new(lo.x, lo.y), Vec2::new(hi.x, hi.y))),
+        extent_points: glyph.extent_points.into_iter().map(|p| Vec2::new(p.x, p.y)).collect(),
     })
 }

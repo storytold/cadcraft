@@ -979,7 +979,9 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 
 #[test]
 fn mtext_exact_spacing_ignores_taller_lines() {
-    // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
+    // #711: a doubled middle line pushes the baselines apart with At least, not with Exactly. As
+    // AutoCAD steps lines (measured): (previous height + text height) / 3 + next height, so
+    // 1 → 2 → 1 high lines step 2/3 + 2 and then 1 + 1.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {
         insert: Vec3::ZERO,
         height: 1.0,
@@ -996,7 +998,7 @@ fn mtext_exact_spacing_ignores_taller_lines() {
     let height = |contents: &str, ls: f64, exact: bool| layout_mtext_entity(&d, &mtext(contents, ls, exact)).bounds.height();
     // The plain layout and the paragraph layout (`\p`) both honour the style.
     for mixed in ["A\\P{\\H2x;BB}\\PCC", "\\pxi1;A\\P{\\H2x;BB}\\PCC"] {
-        assert!((height(mixed, 1.0, false) - (1.0 + 2.0 * 5.0 / 3.0 + 5.0 / 3.0)).abs() < 1e-9, "{mixed}: at least");
+        assert!((height(mixed, 1.0, false) - (1.0 + (2.0 / 3.0 + 2.0) + (1.0 + 1.0))).abs() < 1e-9, "{mixed}: at least");
         assert!((height(mixed, 1.0, true) - (1.0 + 2.0 * 5.0 / 3.0)).abs() < 1e-9, "{mixed}: exactly");
         assert!((height(mixed, 2.0, true) - (1.0 + 2.0 * 5.0 / 3.0 * 2.0)).abs() < 1e-9, "{mixed}: exactly, factor 2");
     }

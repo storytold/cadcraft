@@ -16,7 +16,8 @@ cadcraft-geom = { path = "crates/geom" }
 # DXF tags: the shared reader and writer (moved from crates/dxf; craft-libs#791).
 craft-dxf = { git = "https://github.com/storytold/craft-libs", rev = "219c1d0b14177af6f291395d6587f61a5e09043a" }
 craft-dwg = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-shx = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
+# Glyph::extent from storytold/craft-libs#2036; back to storytold/craft-libs once it is merged.
+craft-shx = { git = "https://github.com/whaslbeck/craft-libs", rev = "95b12714fe41335ad88b73f824486f1f50fc9ba8" }
 craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 craft-mime = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
 cadcraft-color = { path = "crates/color" }

@@ -523,6 +523,31 @@ pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f
     line_width(s, height, width_factor)
 }
 
+/// The box of what shaped text draws (strokes and outlines), `None` when it draws nothing.
+pub(crate) fn ink_extent(sh: &Shaped) -> Option<Bounds2> {
+    let mut out: Option<Bounds2> = None;
+    for p in sh.outlines().iter().flatten() {
+        if p.is_finite() {
+            out = Some(out.map_or(Bounds2::new(*p, *p), |mut b| {
+                b.add(*p);
+                b
+            }));
+        }
+    }
+    out
+}
+
+/// The box of one line of text from the pen's start on the baseline, slanted by `oblique`, as
+/// AutoCAD measures text for MTEXT wrapping and justification: what the line draws, with an SHX
+/// font's arcs counted by their chord-and-sagitta box ([`shx::ShxGlyph::extent`]). `None` when
+/// nothing is drawn.
+pub fn text_extent(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Bounds2> {
+    match font {
+        TextFont::Shx(t) => shx::extent(t, s, height, width_factor, oblique),
+        _ => ink_extent(&shape_line(font, s, height, width_factor, oblique)),
+    }
+}
+
 /// Horizontal / vertical alignment for single-line text (matches DXF 72/73 semantics).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Align {

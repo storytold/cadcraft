@@ -7,7 +7,9 @@
 
 use cadcraft_geom::{Bounds2, Vec2};
 
-use super::{Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, num, parse, seg_plain, seg_shape, seg_width, split_thai};
+use super::{
+    Atom, Fmt, MTextLayout, MTextParams, MTextPiece, Seg, num, parse, room_needed, seg_plain, seg_shape, seg_width, split_thai, word_extent,
+};
 
 /// Columns an MTEXT's text flows through, each as wide as the MTEXT's width.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -342,6 +344,14 @@ struct PLine {
     para: usize,
     /// The last line of its paragraph.
     para_end: bool,
+    /// Where the line starts (its indent or tab stop).
+    start: f64,
+    /// What the line draws ([`super::seg_extent`] of its words, in line coordinates).
+    ext: Option<Bounds2>,
+    /// Justified by its drawing's width but drawn from its start (see the plain path's `Line`).
+    keep_start: bool,
+    /// The next piece follows a left tab stop: its drawing starts at the stop.
+    after_tab: bool,
 }
 
 /// A word split at its tab characters.
@@ -386,7 +396,12 @@ struct LineBuilder<'a> {
     lines: Vec<PLine>,
     line: PLine,
     paragraph: usize,
-    pending_space: Option<usize>,
+    /// Spaces since the last word, each with its format (see the plain path).
+    pending: Vec<usize>,
+    /// At the start of a paragraph, where leading spaces are kept.
+    para_start: bool,
+    /// Format of the last segment placed on the current line.
+    prev_word_fmt: Option<usize>,
     last_format: usize,
 }
 
@@ -400,9 +415,11 @@ impl<'a> LineBuilder<'a> {
             width,
             height,
             lines: Vec::new(),
-            line: PLine { width: (first.left + first.first).max(0.0), ..Default::default() },
+            line: PLine { width: (first.left + first.first).max(0.0), start: (first.left + first.first).max(0.0), ..Default::default() },
             paragraph: 0,
-            pending_space: None,
+            pending: Vec::new(),
+            para_start: true,
+            prev_word_fmt: None,
             last_format: 0,
         }
     }
@@ -422,17 +439,18 @@ impl<'a> LineBuilder<'a> {
     fn push_atom(&mut self, atom: &Atom) {
         match atom {
             Atom::Space(format) => {
-                if !self.line.items.is_empty() || self.pending_space.is_some() {
-                    self.pending_space = Some(*format);
+                if !self.line.items.is_empty() || self.para_start {
+                    self.pending.push(*format);
                 }
                 self.last_format = *format;
             }
             Atom::Para(format) => {
-                self.pending_space = None;
+                self.pending.clear();
                 let next_start = self.first_start(self.paragraph + 1);
                 self.last_format = *format;
                 self.finish(true, next_start);
                 self.paragraph += 1;
+                self.para_start = true;
             }
             Atom::Word(segments) => self.push_word(segments),
         }
@@ -449,7 +467,7 @@ impl<'a> LineBuilder<'a> {
         }
         self.line.para = self.paragraph;
         self.line.para_end = paragraph_end;
-        let next = PLine { width: next_start, ..Default::default() };
+        let next = PLine { width: next_start, start: next_start, ..Default::default() };
         self.lines.push(std::mem::replace(&mut self.line, next));
     }
 
@@ -464,7 +482,7 @@ impl<'a> LineBuilder<'a> {
     }
 
     fn push_tab(&mut self, parts: &[Part], index: usize) {
-        self.pending_space = None;
+        self.pending.clear();
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
@@ -484,6 +502,7 @@ impl<'a> LineBuilder<'a> {
         } else {
             self.line.width = x;
             self.line.text.push(' ');
+            self.line.after_tab = kind == TabKind::Left;
         }
     }
 
@@ -515,25 +534,51 @@ impl<'a> LineBuilder<'a> {
     /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
     fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width = self.word_width(segments);
-        let space_width = if index == 0 {
-            self.pending_space.map_or(0.0, |format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
-        } else {
-            0.0
-        };
+        let word_ext = word_extent(segments, |f| self.format(f));
+        let space_width = if index == 0 { super::spaces_width(&self.pending, |f| self.format(f)) } else { 0.0 };
         let (available, left) = {
             let props = self.paragraphs.props(self.paragraph);
             (self.available_width(props), props.left.max(0.0))
         };
-        if self.width > 0.0 && !self.line.items.is_empty() && self.line.width + space_width + word_width > available + 1e-9 {
+        // Leading spaces count as the line's first word (see the plain path).
+        if self.width > 0.0
+            && (!self.line.items.is_empty() || (index == 0 && !self.pending.is_empty()))
+            && super::overflows(self.line.width + space_width + room_needed(word_ext, word_width), available)
+        {
             self.finish(false, left);
-        } else if index == 0 && (!self.line.items.is_empty() || self.pending_space.is_some()) {
-            self.line.width += space_width;
-            if self.pending_space.is_some() {
-                self.line.text.push(' ');
-                self.line.gaps += 1;
-            }
+            self.pending.clear();
         }
-        self.pending_space = None;
+        // As in the plain path: a line starting with spaces (or a tab) or holding spaces formatted
+        // unlike both neighbouring words is justified from its start.
+        let at_start = (self.line.width - self.line.start).abs() < 1e-9;
+        let lone = !self.line.items.is_empty()
+            && index == 0
+            && self
+                .prev_word_fmt
+                .zip(segments.first())
+                .is_some_and(|(before, (_, after))| super::lone_spaces(&self.pending, before, *after, |f| self.format(f)));
+        if self.line.items.is_empty() && ((index == 0 && !self.pending.is_empty()) || !at_start) {
+            // Leading spaces or a tab: justified from the line's start to the end of its drawing.
+            let p = Vec2::new(self.line.start, 0.0);
+            self.line.ext = super::union(self.line.ext, Some(Bounds2::new(p, p)));
+        } else if lone {
+            self.line.keep_start = true;
+        }
+        // After a left tab AutoCAD puts the drawing, not the pen, at the stop.
+        if std::mem::take(&mut self.line.after_tab)
+            && let Some(b) = word_ext
+        {
+            self.line.width -= b.min.x;
+        }
+        if index == 0 && !self.pending.is_empty() {
+            self.line.width += super::spaces_width(&self.pending, |f| self.format(f));
+            self.line.text.push_str(&" ".repeat(self.pending.len()));
+            self.line.gaps += 1;
+        }
+        self.pending.clear();
+        self.para_start = false;
+        let start = self.line.width;
+        self.line.ext = super::union(self.line.ext, word_ext.map(|b| super::shifted(b, start)));
         for (segment, format) in segments {
             let segment_width = seg_width(segment, self.format(*format));
             self.line.max_h = self.line.max_h.max(self.format(*format).height);
@@ -541,6 +586,7 @@ impl<'a> LineBuilder<'a> {
             self.line.items.push(Item { seg: segment.clone(), fmt: *format, x: self.line.width, gap: self.line.gaps });
             self.line.width += segment_width;
             self.last_format = *format;
+            self.prev_word_fmt = Some(*format);
         }
     }
 
@@ -563,6 +609,26 @@ fn next_tab(x: f64, pp: &ParaProps, h: f64) -> (f64, TabKind) {
     }
     let step = DEFAULT_TAB * h;
     ((((x + eps) / step).floor() + 1.0) * step, TabKind::Left)
+}
+
+/// How far a line moves right in its column and how much each gap between its words widens:
+/// justified by what the line draws (see the plain path), its drawing from the line's start.
+#[expect(clippy::cast_precision_loss, reason = "Gap counts are at most MAX_ATOMS, so the usize converted here is exact in f64.")]
+fn line_shift(line: &PLine, right_edge: f64, align: ParaAlign, wraps: bool) -> (f64, f64) {
+    let (lo, hi) = match line.ext {
+        Some(b) if line.keep_start => (line.start, line.start + b.width()),
+        Some(b) => (b.min.x, b.max.x),
+        None => (line.start, line.width),
+    };
+    let lead = line.start - lo;
+    let free = right_edge - (hi + lead);
+    let spread = wraps && line.gaps > 0 && free > 0.0 && (align == ParaAlign::Distributed || (align == ParaAlign::Justify && !line.para_end));
+    match align {
+        ParaAlign::Center => (lead + free / 2.0, 0.0),
+        ParaAlign::Right => (lead + free, 0.0),
+        _ if spread => (lead, free / line.gaps as f64),
+        _ => (lead, 0.0),
+    }
 }
 
 /// Lay out MTEXT with paragraph formatting and columns. `base` is the entity's own format,
@@ -601,12 +667,13 @@ pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextL
     let (mut column, mut current_y, mut first_in_col, mut force) = (0usize, 0.0f64, true, false);
     let mut col_bottom = vec![0.0f64];
     let mut prev_para: Option<usize> = None;
+    let mut prev_h = height;
     for line in &lines {
         let line_height = if line.max_h > 0.0 { line.max_h } else { height };
         let new_para = prev_para != Some(line.para);
         let before = if new_para && prev_para.is_some() { paragraphs.props(line.para).before * height } else { 0.0 };
-        let step_h = if params.line_spacing_exact { height } else { line_height };
-        let pitch = |first: bool| if first { line_height } else { step_h * 5.0 / 3.0 * line_spacing + before };
+        let step = if params.line_spacing_exact { height * 5.0 / 3.0 } else { super::line_step(height, prev_h, line_height, line.ext) };
+        let pitch = |first: bool| if first { super::first_drop(line_height, line.ext) } else { step * line_spacing + before };
         let column_height = col_height(column);
         if !first_in_col && column + 1 < max_cols && (force || (column_height > 0.0 && current_y + pitch(false) > column_height + 1e-9)) {
             column += 1;
@@ -619,13 +686,14 @@ pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextL
         first_in_col = false;
         placed.push((column, -current_y));
         if let Some(bottom) = col_bottom.get_mut(column) {
-            *bottom = current_y;
+            *bottom = current_y + super::last_descent(line.ext);
         }
         if line.para_end {
             current_y += paragraphs.props(line.para).after * height;
             force = paragraphs.column_break(line.para);
         }
         prev_para = Some(line.para);
+        prev_h = line_height;
     }
     let n_cols = match cols {
         Some(spec) if !spec.dynamic => max_cols,
@@ -660,20 +728,11 @@ pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextL
         let pp = paragraphs.props(line.para);
         let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(column) } else { column };
         let col_x = box_x0 + slot as f64 * (col_w + gutter);
-        let right_edge = col_w - pp.right;
-        let free = right_edge - line.width;
         let align = match pp.align {
             ParaAlign::Default => [ParaAlign::Left, ParaAlign::Center, ParaAlign::Right].get(usize::from(acol)).copied().unwrap_or_default(),
             alignment => alignment,
         };
-        let spread =
-            width > 0.0 && line.gaps > 0 && free > 0.0 && (align == ParaAlign::Distributed || (align == ParaAlign::Justify && !line.para_end));
-        let (shift, per_gap) = match align {
-            ParaAlign::Center => (free / 2.0, 0.0),
-            ParaAlign::Right => (free, 0.0),
-            _ if spread => (0.0, free / line.gaps as f64),
-            _ => (0.0, 0.0),
-        };
+        let (shift, per_gap) = line_shift(line, col_w - pp.right, align, width > 0.0);
         for item in &line.items {
             let fm = fmt(item.fmt);
             if !allowance.left() {
