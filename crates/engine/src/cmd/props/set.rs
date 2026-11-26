@@ -332,17 +332,16 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let text_style = str_param(p, "style")
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
-    if let Some(tag) = str_param(p, "tag") {
-        if tag.trim().is_empty() || tag.trim().contains(' ') {
-            return Err(bad("properties.set", "an attribute tag must not be empty or contain spaces"));
-        }
+    if let Some(tag) = str_param(p, "tag")
+        && (tag.trim().is_empty() || tag.trim().contains(' '))
+    {
+        return Err(bad("properties.set", "an attribute tag must not be empty or contain spaces"));
     }
-    if let Some(j) = str_param(p, "justify") {
-        if crate::cmd::draw::justify(j).is_none()
-            && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Text(_) | EntityKind::AttDef(_))))
-        {
-            return Err(bad("properties.set", "unknown text justification"));
-        }
+    if let Some(j) = str_param(p, "justify")
+        && crate::cmd::draw::justify(j).is_none()
+        && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Text(_) | EntityKind::AttDef(_))))
+    {
+        return Err(bad("properties.set", "unknown text justification"));
     }
     let dim_vars = DimVars::new(d, p)?;
     // A pattern must be one each hatch can take, as HATCHEDIT refuses others.

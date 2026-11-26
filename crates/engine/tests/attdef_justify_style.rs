@@ -181,12 +181,11 @@ fn typed_justify_refuses_unknown_codes_and_asks_again() {
     let mut s = session();
     typed_to_start_point(&mut s);
     s.cmdline("J").unwrap();
-    for bad in ["XX"] {
-        s.cmdline(bad).unwrap();
-        assert!(s.log.iter().any(|l| l.contains("Invalid option") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
-        s.log.clear();
-        assert!(s.prompt_text().contains("Enter an option"), "{bad}: {}", s.prompt_text());
-    }
+    let bad = "XX";
+    s.cmdline(bad).unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Invalid option") || l.contains("Align and Fit")), "{bad}: {:?}", s.log);
+    s.log.clear();
+    assert!(s.prompt_text().contains("Enter an option"), "{bad}: {}", s.prompt_text());
     s.cmdline("TR").unwrap();
     s.cmdline("0,0").unwrap();
     s.cmdline("").unwrap();
