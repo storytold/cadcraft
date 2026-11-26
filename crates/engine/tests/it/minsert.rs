@@ -118,6 +118,37 @@ fn the_prompts_follow_autocad_2024() {
 }
 
 #[test]
+fn counts_take_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Enter number of rows (---)": +3 and 03 are three rows; 5.0, 5., 1e1, 8/2,
+    // 3', 4.5, 0 and a point from LISP are refused and asked again (measured; at the columns 5.0
+    // and +3 too).
+    let mut s = Session::new();
+    let l = handle(&s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap());
+    s.execute("-block", &json!({"name": "B", "base": [0, 0], "handles": [l]})).unwrap();
+    for input in ["minsert", "B", "0,0", "1", "", "0"] {
+        s.cmdline(input).unwrap();
+    }
+    for row_or_column in ["+3", "03"] {
+        let asked = s.prompt_text();
+        for bad in ["5.0", "5.", "1e1", "8/2", "3'", "4.5", "0", "(list 1 2)"] {
+            let logged = s.log.len();
+            s.cmdline(bad).unwrap();
+            let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+            assert_eq!(said, ["Requires an integer between 1 and 32767."], "{bad}");
+            assert_eq!(s.prompt_text(), asked, "{bad}");
+        }
+        s.cmdline(row_or_column).unwrap();
+    }
+    for input in ["10", "20"] {
+        s.cmdline(input).unwrap();
+    }
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let [i] = inserts(&s).try_into().unwrap();
+    // (columns, rows, column spacing, row spacing)
+    assert_eq!(grid(&i), (3, 3, 20.0, 10.0));
+}
+
+#[test]
 fn counts_run_from_1_to_32767() {
     // AutoCAD 2024: "Requires an integer between 1 and 32767."
     let mut s = Session::new();

@@ -22,13 +22,15 @@ impl Rng {
         x ^= x << 25;
         x ^= x >> 27;
         self.0 = x;
-        x.wrapping_mul(0x2545F4914F6CDD1D)
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
     /// Uniform in `[-scale, scale]`.
+    #[expect(clippy::cast_precision_loss, reason = "The generator keeps exactly 53 random bits, and 2^53 is exactly representable as f64.")]
     fn f64(&mut self, scale: f64) -> f64 {
         ((self.next() >> 11) as f64 / (1u64 << 53) as f64) * 2.0 * scale - scale
     }
     /// Uniform in `[lo, hi]`.
+    #[expect(clippy::cast_precision_loss, reason = "The generator keeps exactly 53 random bits, and 2^53 is exactly representable as f64.")]
     fn range(&mut self, lo: f64, hi: f64) -> f64 {
         lo + (hi - lo) * (self.next() >> 11) as f64 / (1u64 << 53) as f64
     }
@@ -96,7 +98,7 @@ fn on_line(p: Vec2, a: Vec2, d: Vec2, rel: f64) -> bool {
 /// The infinite-line intersection lies on both lines, and swapping the lines gives the same point.
 #[test]
 fn line_line_infinite_lies_on_both_and_is_symmetric() {
-    let mut r = Rng::new(0xC0FFEE);
+    let mut r = Rng::new(0xC0_FFEE);
     let mut checked = 0;
     for _ in 0..4000 {
         let (a1, a2, b1, b2) = (r.vec(1000.0), r.vec(1000.0), r.vec(1000.0), r.vec(1000.0));
@@ -115,8 +117,9 @@ fn line_line_infinite_lies_on_both_and_is_symmetric() {
 
 /// The finite-line result agrees with the parameters of the infinite one.
 #[test]
+#[expect(clippy::many_single_char_names, reason = "The property uses the same a/b/p/t/u notation as the geometric equations under test.")]
 fn line_line_matches_infinite_parameters() {
-    let mut r = Rng::new(0xBAD5EED);
+    let mut r = Rng::new(0xBAD_5EED);
     for _ in 0..4000 {
         let a = Line::new(r.vec(100.0), r.vec(100.0));
         let b = Line::new(r.vec(100.0), r.vec(100.0));
@@ -220,7 +223,7 @@ fn circle_circle_hits_lie_on_both_and_match_the_closed_form() {
 /// Degenerate and hostile circles: concentric, contained, negative/NaN radii, extreme centres.
 #[test]
 fn circle_circle_degenerate_and_hostile_never_panic() {
-    let mut r = Rng::new(0xD15EA5E);
+    let mut r = Rng::new(0xD15_EA5E);
     for _ in 0..3000 {
         let c1 = Circle { center: Vec2::new(r.hostile(), r.hostile()), radius: r.hostile() };
         let c2 = Circle { center: Vec2::new(r.hostile(), r.hostile()), radius: r.hostile() };
@@ -240,7 +243,7 @@ fn circle_circle_degenerate_and_hostile_never_panic() {
 /// Extending segments only adds hits: the finite result is a subset of the extended one.
 #[test]
 fn segment_extension_only_adds_hits() {
-    let mut r = Rng::new(0x5E6C0DE);
+    let mut r = Rng::new(0x5E6_C0DE);
     for _ in 0..3000 {
         let s1 = Segment::Line(Line::new(r.vec(100.0), r.vec(100.0)));
         let s2 = Segment::Line(Line::new(r.vec(100.0), r.vec(100.0)));
@@ -259,6 +262,7 @@ fn segment_extension_only_adds_hits() {
 
 /// The closest point on a line is a fixed point of `closest`, and the offset is perpendicular.
 #[test]
+#[expect(clippy::many_single_char_names, reason = "The property uses conventional line/point/parameter notation from the closest-point equations.")]
 fn line_closest_is_a_fixed_point_and_perpendicular() {
     let mut r = Rng::new(0xC105E);
     for _ in 0..4000 {
@@ -309,7 +313,7 @@ fn arc_endpoints_and_sampling_are_consistent() {
         assert!(pt_eq(a.at(0.0), a.start_point(), 1e-9), "at(0) != start_point");
         assert!(pt_eq(a.at(1.0), a.end_point(), 1e-9), "at(1) != end_point");
         for k in 0..=10 {
-            let t = k as f64 / 10.0;
+            let t = f64::from(k) / 10.0;
             let p = a.at(t);
             assert!(p.x.is_finite() && p.y.is_finite(), "arc sample not finite at t={t}: {p:?}");
             assert!(on_circle(p, a.center, a.radius, 1e-9), "arc sample at t={t} off the circle: {p:?}");

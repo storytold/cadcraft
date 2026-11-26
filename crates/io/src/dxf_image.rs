@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle, Image};
-use cadcraft_dxf::{Section, Tag};
 use cadcraft_geom::{Vec2, Vec3};
+use craft_dxf::{SectionRef, Tag};
 
 /// Most clip boundary vertices kept per image (hostile files).
 const MAX_CLIP: usize = 100_000;
@@ -79,29 +79,17 @@ fn has_images(store: &EntityStore) -> bool {
 }
 
 /// Fill in each image's definition (path, name, pixel size) from the IMAGEDEF it points to.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+/// `refs`: each IMAGE entity's handle in the drawing → its IMAGEDEF handle (upper case), noted
+/// as the entity was read, so an image whose repeated handle was reassigned keeps its own.
+pub(crate) fn resolve(secs: &[SectionRef<'_>], d: &mut Drawing, refs: &HashMap<Handle, String>) {
     if !has_images(&d.model) && !d.layouts.iter().any(|l| has_images(&l.entities)) && !d.blocks.values().any(|b| has_images(&b.entities)) {
         return;
-    }
-    // IMAGE handle → IMAGEDEF handle.
-    let mut refs: HashMap<Handle, String> = HashMap::new();
-    for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(&s.tags, |kind, tags| {
-            if kind != "IMAGE" {
-                return;
-            }
-            let h = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str()));
-            let def = tags.iter().find(|t| t.code == 340).map(|t| key(&t.str()));
-            if let (Some(h), Some(def)) = (h, def) {
-                refs.insert(h, def);
-            }
-        });
     }
     // IMAGEDEF objects, and the names dictionaries give them.
     let mut defs: HashMap<String, Def> = HashMap::new();
     let mut names: HashMap<String, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        each_record(&s.tags, |kind, tags| match kind {
+        each_record(s.tags, |kind, tags| match kind {
             "IMAGEDEF" => {
                 let Some(h) = tags.iter().find(|t| t.code == 5).map(|t| key(&t.str())) else { return };
                 let start = tags.iter().position(|t| t.code == 100 && t.str() == "AcDbRasterImageDef").unwrap_or(0);

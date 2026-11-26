@@ -21,6 +21,7 @@ fn a_long_routine_runs_across_frames() {
     app.open_bytes("loop.lsp", b"(setq i 0) (while (< i 2000000) (setq i (1+ i))) (princ \"done\")");
     assert!(app.session.lisp_busy(), "a slice per frame");
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut frames = 0;
     while app.session.lisp_running() && frames < 1000 {
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -43,13 +44,16 @@ fn a_canvas_click_answers_a_routine_waiting_for_a_point() {
     use egui::{Event, Modifiers, PointerButton, vec2};
     let mut app = CadApp::new(Session::new(), Services::default());
     app.canvas.zoom_pending = false;
-    let mut h = egui_kittest::Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = egui_kittest::Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     h.state_mut().session.cmdline("(setq p (getpoint \"\nPick: \"))").unwrap();
     h.run_steps(2);
