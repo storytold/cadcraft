@@ -343,18 +343,29 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
+            // Why: Strict DXF parsers (e.g. AutoCAD 2027) reject conditional MTEXT background tags
+            // (63/421/45) when group 90 disables the mask or color bit; emit only tags active for
+            // the current bitmask, and keep them before column tags (75/101) where the reader stops.
             if let Some(bg) = &t.background {
-                w.i(90, i64::from(bg.mask));
-                if let Some(c) = bg.color {
-                    match c {
-                        Color::True(rgb) => {
-                            w.i(63, i64::from(cadcraft_color::nearest_aci(rgb)));
-                            w.i(421, i64::from(rgb.to_u32()));
+                let mask = bg.mask & 0x03;
+                if mask != 0 {
+                    w.i(90, i64::from(mask));
+                    let uses_window_bg = (mask & 2) != 0;
+                    if !uses_window_bg
+                        && (mask & 1) != 0
+                        && let Some(c) = bg.color
+                    {
+                        match c {
+                            Color::True(rgb) => {
+                                w.i(63, i64::from(cadcraft_color::nearest_aci(rgb)));
+                                w.i(421, i64::from(rgb.to_u32()));
+                            }
+                            c => w.i(63, i64::from(c.to_aci())),
                         }
-                        c => w.i(63, i64::from(c.to_aci())),
                     }
+                    let scale = if bg.scale.is_finite() { bg.scale.clamp(1.0, 5.0) } else { 1.5 };
+                    w.f(45, scale);
                 }
-                w.f(45, bg.scale);
             }
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
         }
