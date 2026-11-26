@@ -251,10 +251,23 @@ impl LayerSet {
     }
 }
 
+/// The position of the first layout of each name, so finding the layout of each of many objects
+/// is a map lookup rather than a scan of the layouts: a file of N layouts and N objects in the
+/// last of them read in N² name comparisons (#1924). The reader keeps the layouts' names and order
+/// while it fills them.
+pub(super) fn layout_positions(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
+    let mut at = std::collections::BTreeMap::new();
+    for (i, l) in d.layouts.iter().enumerate() {
+        at.entry(l.name.clone()).or_insert(i);
+    }
+    at
+}
+
 /// Place the BLOCKS entities: model and paper space blocks go to their space, the rest become
 /// block definitions.
 pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
     let mut layers = LayerSet::new(d);
+    let layout_at = layout_positions(d);
     for (name, base, description, ents, xref) in blocks {
         let up = name.to_ascii_uppercase();
         if up == "*MODEL_SPACE" {
@@ -265,8 +278,8 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
             continue;
         }
         if up.starts_with("*PAPER_SPACE") {
-            let lname = paper_block_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string());
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+            let lname = paper_block_for.get(&up).map_or(first_layout, String::as_str);
+            if let Some(l) = layout_at.get(lname).and_then(|&i| d.layouts.get_mut(i)) {
                 for (_, _, e) in ents {
                     l.entities.push(e);
                 }
@@ -324,11 +337,12 @@ pub(super) fn place_entities(
     first_layout: &str,
 ) {
     let mut layers = LayerSet::new(d);
+    let layout_at = layout_positions(d);
     for (owner, paper, e) in entities {
         layers.ensure(d, &e.common.layer);
         match paper_layout(owner, paper, rx, paper_block_for, first_layout) {
             Some(lname) => {
-                if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+                if let Some(l) = layout_at.get(&lname).and_then(|&i| d.layouts.get_mut(i)) {
                     l.entities.push(e);
                 }
             }
@@ -417,6 +431,7 @@ pub(super) fn apply_sortents(
         Some(if up.starts_with("*PAPER_SPACE") { paper_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string()) + "\0paper" } else { up })
     };
     let last: HashMap<String, usize> = tables.iter().enumerate().filter_map(|(i, (owner, _))| Some((target(owner)?, i))).collect();
+    let layout_at = layout_positions(d);
     for (i, (owner, map)) in tables.iter().enumerate() {
         if target(owner).and_then(|t| last.get(&t)) != Some(&i) {
             continue;
@@ -432,7 +447,7 @@ pub(super) fn apply_sortents(
             d.model.sort_by_key(key);
         } else if up.starts_with("*PAPER_SPACE") {
             let lname = paper_for.get(&up).map(String::as_str).unwrap_or(first_layout);
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+            if let Some(l) = layout_at.get(lname).and_then(|&i| d.layouts.get_mut(i)) {
                 l.entities.sort_by_key(key);
             }
         } else if let Some(b) = d.blocks.get_mut(name.as_str()) {

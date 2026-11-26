@@ -129,7 +129,7 @@ fn save(s: &mut Session, name: &str, annotative: Option<bool>, replace: bool) ->
     if let Some(a) = annotative {
         st.annotative = a;
     }
-    let name = match d.dim_styles.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+    let name = match d.dim_styles.by_name_mut(&name) {
         Some(existing) if replace => {
             let kept = existing.name.clone();
             *existing = DimStyle { name: kept.clone(), ..st };

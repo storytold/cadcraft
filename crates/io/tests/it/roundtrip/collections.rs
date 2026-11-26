@@ -195,7 +195,7 @@ pub(super) fn assert_layer_states(a: &Drawing, b: &Drawing, context: &str) {
 
 pub(super) fn layouts() -> Case {
     let mut drawing = cases::drawing();
-    drawing.layouts = vec![Layout::new("Sheet_A", 1), Layout::new("Sheet_B", 2)];
+    drawing.layouts = vec![Layout::new("Sheet_A", 1), Layout::new("Sheet_B", 2)].into();
     for (index, layout) in drawing.layouts.iter_mut().enumerate() {
         layout.page.paper_mm = Some(true);
         // PageSetup stores portrait dimensions; landscape is a separate orientation flag.
