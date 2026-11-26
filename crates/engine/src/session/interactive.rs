@@ -233,6 +233,13 @@ impl Session {
             if input == Input::Enter
                 && let Some(last) = self.last_command.clone()
             {
+                // Why: `pastetable` has no standalone `interactive` factory because its TSV
+                // payload comes from the clipboard; repeat it with the last pasted payload.
+                if last == "pastetable"
+                    && let Some((tsv, th)) = self.last_paste_table.clone()
+                {
+                    return self.start_paste_table(&tsv, th);
+                }
                 return self.start(&last);
             }
             return Ok(());

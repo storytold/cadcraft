@@ -208,6 +208,7 @@ impl Session {
         let cols = data.first().map_or(0, Vec::len);
         let st = style_of(self);
         let table = build_table(&st, Vec2::ZERO, &data, text_height);
+        self.last_paste_table = Some((tsv.to_string(), text_height));
         let enabled = crate::find_command("pastetable").map_or((|_| Ok(())) as fn(&Session) -> std::result::Result<(), String>, |c| c.enabled);
         self.launch_interactive("pastetable", enabled, Box::new(PasteTableM { table, rows, cols }))
     }
@@ -300,5 +301,52 @@ mod tests {
         s.start_paste_table("A\tB\n1\t2\n", None).unwrap();
         assert_eq!(s.commands_started, before_started + 1);
         assert_eq!(s.last_command.as_deref(), Some("pastetable"));
+    }
+
+    #[test]
+    fn enter_repeats_pastetable_with_last_payload() {
+        let mut s = Session::new();
+        s.start_paste_table("A\tB\n1\t2\n", Some(3.0)).unwrap();
+        s.input(Input::Point(Vec2::ZERO)).unwrap();
+        assert!(s.running.is_none());
+
+        s.input(Input::Enter).unwrap();
+        assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("pastetable"));
+        s.input(Input::Point(Vec2::new(50.0, 0.0))).unwrap();
+        assert!(s.running.is_none());
+
+        let tables: Vec<_> = s
+            .doc()
+            .unwrap()
+            .model
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Table(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].cells, tables[1].cells);
+        assert_eq!(tables[0].text_height, 3.0);
+        assert_eq!(tables[1].text_height, 3.0);
+        assert_eq!(tables[0].insert.xy(), Vec2::ZERO);
+        assert_eq!(tables[1].insert.xy(), Vec2::new(50.0, 0.0));
+    }
+
+    #[test]
+    fn execute_pastetable_without_tsv_still_errors_and_other_command_overrides_repeat() {
+        let mut s = Session::new();
+        let err = s.execute("pastetable", &Value::Null).unwrap_err().to_string();
+        assert!(err.contains("`tsv` string is required"), "{err}");
+
+        s.start_paste_table("A\tB\n1\t2\n", None).unwrap();
+        s.input(Input::Point(Vec2::ZERO)).unwrap();
+
+        for t in ["line", "0,0", "10,0", ""] {
+            s.cmdline(t).unwrap();
+        }
+        assert!(s.running.is_none());
+        s.input(Input::Enter).unwrap();
+        assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("line"));
     }
 }

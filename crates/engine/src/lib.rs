@@ -127,6 +127,9 @@ pub struct Session {
     pub suspended: Option<Running>,
     pub log: Vec<String>,
     pub last_command: Option<String>,
+    /// Last TSV payload and optional text height passed to [`Session::start_paste_table`], so
+    /// pressing Enter to repeat `pastetable` restarts interactive placement.
+    pub(crate) last_paste_table: Option<(String, Option<f64>)>,
     /// LASTPOINT.
     pub last_point: Vec2,
     /// AREA and PERIMETER: the last area AREA or MEASUREGEOM measured (in their Add and Subtract
@@ -226,6 +229,7 @@ impl Session {
             suspended: None,
             log: Vec::new(),
             last_command: None,
+            last_paste_table: None,
             last_point: Vec2::ZERO,
             area: 0.0,
             perimeter: 0.0,
