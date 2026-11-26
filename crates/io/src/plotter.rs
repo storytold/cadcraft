@@ -148,8 +148,14 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         } else {
             (Vec2::ZERO, Vec2::ZERO)
         };
-        let view = if s.is_finite() && s > 0.0 { Bounds2::new(from - to / s, from + (sheet.size - to) / s) } else { sheet.bounds() };
-        return Ok(crate::svg::export_list(&list, Some(view)).into_bytes());
+        let (view, clip) = if s.is_finite() && s > 0.0 {
+            let view = Bounds2::new(from - to / s, from + (sheet.size - to) / s);
+            let clip = placed.then(|| Bounds2::new(from + (sheet.printable.min - to) / s, from + (sheet.printable.max - to) / s));
+            (view, clip)
+        } else {
+            (sheet.bounds(), None)
+        };
+        return Ok(crate::svg::export_list_clipped(&list, Some(view), clip).into_bytes());
     }
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.
@@ -485,6 +491,8 @@ mod tests {
         // A4 landscape (297 x 210): at scale 0.5 the viewBox is 594 x 420; at scale 2.0 it is 148.5 x 105.
         assert!(half.contains("viewBox=\"0 0 594") && half.contains(" 420"), "scale 0.5 viewBox: {half}");
         assert!(dbl.contains("viewBox=\"0 0 148.5") && dbl.contains(" 105"), "scale 2.0 viewBox: {dbl}");
+        // Placed layout SVG clips to the printable area while keeping the full-sheet viewBox.
+        assert!(half.contains(r#"<clipPath id="printable">"#) && half.contains(r#"clip-path="url(#printable)""#), "printable clip: {half}");
     }
 
     /// A layout with saved `plot_area = "extents"`, `scale_to_fit = false`, and an explicit scale

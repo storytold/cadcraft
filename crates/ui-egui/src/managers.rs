@@ -1032,7 +1032,7 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
                     o.insert("offset".into(), json!(st.offset_mm));
                 }
             }
-        } else if page.plot_area != "layout" && (output != "svg" || preview_dpi.is_some()) {
+        } else if page.plot_area != "layout" {
             o.insert("center".into(), json!(page.center));
         }
     }
@@ -1412,6 +1412,13 @@ mod plot_dialog_tests {
             assert_eq!(params["scale"], json!(0.5));
             assert_eq!(params["center"], json!(true));
         }
+        // Layout SVG export also receives the dialog's `center` setting (e.g. `false` overriding saved `true`).
+        let mut svg_st = st;
+        let svg = cadcraft_engine::cmd::plotters::devices().into_iter().find(|dev| dev.output.as_str() == "svg").expect("built-in SVG device");
+        apply_page_change(&mut svg_st.page, "device", &json!(svg.name));
+        svg_st.page.center = false;
+        assert_eq!(plot_params(&svg_st, None)["center"], json!(false));
+        assert_eq!(plot_params(&svg_st, Some(150.0))["center"], json!(false));
     }
 
     #[test]
