@@ -736,6 +736,7 @@ dependencies = [
  "cadcraft-ui-egui",
  "chrono",
  "clap",
+ "craft-quit",
  "craft-update",
  "eframe",
  "egui",
@@ -1639,6 +1640,7 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=8fa4db64a9bb943520259ea95331a303ba788f21#8fa4db64a9bb943520259ea95331a303ba788f21"
 dependencies = [
  "dispatch2",
+ "egui",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "wasm-bindgen",
