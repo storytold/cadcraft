@@ -20,21 +20,19 @@ fn editing(app: &CadApp) -> Option<(String, bool)> {
     st.block_editor().map(|n| (n.to_string(), st.block_unsaved()))
 }
 
-/// Tint the drawing area while the Block Editor is open (under the drawing).
-pub(super) fn wash(app: &CadApp, p: &egui::Painter, rect: Rect) {
-    if editing(app).is_some() {
-        p.rect_filled(rect, 0.0, Tokens::get().accent.gamma_multiply(0.12));
-    }
+/// Whether the Block Editor is open in the active drawing.
+pub(super) fn active(app: &CadApp) -> bool {
+    editing(app).is_some()
 }
 
 /// The base point marker and the Block Editor bar (over the drawing).
 pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf: &Xf, rect: Rect) {
     let Some((name, unsaved)) = editing(app) else { return };
     let t = Tokens::get();
-    // The base point: the origin of the editor's coordinates.
+    // The base point: the origin of the editor's coordinates, high-contrast on the light canvas.
     let o = xf.to_screen(Vec2::ZERO);
     if rect.expand(16.0).contains(o) {
-        let st = Stroke::new(1.5, t.accent);
+        let st = Stroke::new(1.5, Tokens::LIGHT.icon_accent);
         p.circle_stroke(o, 6.0, st);
         p.line_segment([o - vec2(12.0, 0.0), o + vec2(12.0, 0.0)], st);
         p.line_segment([o - vec2(0.0, 12.0), o + vec2(0.0, 12.0)], st);

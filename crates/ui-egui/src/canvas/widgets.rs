@@ -26,7 +26,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         let p = ui.painter_at(*r);
         let xf = tile_xf(*r, tile);
         p.rect_filled(*r, 0.0, t.canvas);
-        draw_grid(app, &p, &xf);
+        draw_grid(app, &p, &xf, &t);
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }

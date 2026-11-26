@@ -644,7 +644,9 @@ impl CadApp {
         }
         self.sync_bars();
         if let Err(e) = self.session.start(name) {
-            self.session.echo(e.to_string());
+            let msg = e.to_string();
+            self.session.echo(msg.clone());
+            self.set_status(msg);
         }
     }
 
