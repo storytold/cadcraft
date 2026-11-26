@@ -197,12 +197,13 @@ pub(crate) enum ViewMode {
   of a headless session, so you see each edit land and the drawing stays open afterwards:
     cadcraft-cli run --connect 127.0.0.1:7979 --script "circle 0,0 25"
   FILE opens in the app and --metric starts a new metric drawing there; without either, the
-  steps act on the drawing the app has open. --save or --export is
-  the app's Save As (an image path exports and the drawing keeps its name). Paths are made
-  absolute before they are sent. A --script's command-line output goes to stderr, as headless.
-  After a --script, or a --cmd that can change the current drawing (new, open, close,
-  closeall, document.switch), {last} is forgotten: a handle is never applied to another
-  drawing. --sample, --window and --view are headless only."#)]
+  steps act on the drawing the app has open. --save or --export is the app's Save As (an image
+  path exports and the drawing keeps its name). Paths are made absolute, and drawing and script
+  files are read, before anything is sent. A --script's output goes to stderr, as headless.
+  {last} is checked against the drawing the app has open (ui.inspect): if a step, a click in
+  the window or another client opened or switched to another drawing since the handle came
+  back, the run fails rather than apply it there. --sample, --window and --view are headless
+  only."#)]
 pub(crate) struct RunArgs {
     #[arg(value_name = "FILE", help = open_help())]
     pub(crate) files: Vec<PathBuf>,

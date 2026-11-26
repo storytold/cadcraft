@@ -29,6 +29,12 @@ pub(crate) enum RunError {
         .0.display()
     )]
     DrivelessPath(std::path::PathBuf),
+    /// A drawing `run --connect` would ask the app to open, which this process can't read.
+    #[error("{}: {source}", .path.display())]
+    ReadDrawing { path: std::path::PathBuf, source: std::io::Error },
+    /// `{last}` came from a drawing that is no longer the app's open one.
+    #[error("--cmd {id}: `{{last}}` came from another drawing than the one open now: {why}")]
+    LastStale { id: String, why: &'static str },
     /// The running app refused a step, or the connection failed during it.
     #[error("{step}: {message}")]
     Remote { step: String, message: String },
@@ -257,10 +263,6 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
     Ok(())
 }
 
-/// Commands that can make another drawing current in the running app. The control channel does not
-/// say which drawing is current, so after one of these `{last}` is forgotten rather than checked.
-const SWITCHES_DRAWING: &[&str] = &["new", "open", "close", "closeall", "document.switch"];
-
 /// `path` as the app should see it: absolute, since the app does not share this process's folder.
 fn app_path(path: &std::path::Path) -> Result<String> {
     let cwd = std::env::current_dir()?;
@@ -290,6 +292,31 @@ fn in_wsl_share(dir: &std::path::Path) -> bool {
     t.starts_with("\\\\wsl.localhost\\") || t.starts_with("\\\\wsl$\\")
 }
 
+/// One control request for `step`; a refusal or lost connection names the step.
+fn remote(app: &mut cadcraft_mcp::Remote, step: &str, method: &str, params: Value) -> Result<Value> {
+    app.call(method, params).map_err(|message| RunError::Remote { step: step.to_string(), message }.into())
+}
+
+/// The drawing the app has open, as `ui.inspect` reports it (index, title, path): what a returned
+/// handle belongs to. The protocol has no drawing selector, so a switch made in the window or by
+/// another client between two steps shows only here. `None` when the app doesn't say.
+fn open_drawing(app: &mut cadcraft_mcp::Remote) -> Option<Value> {
+    let r = app.call("ui.inspect", json!({})).ok()?;
+    let docs = r.get("session")?.get("documents")?.as_array()?;
+    let d = docs.iter().find(|d| d.get("active").and_then(Value::as_bool) == Some(true))?;
+    Some(json!([d.get("index"), d.get("title"), d.get("path")]))
+}
+
+/// Whether `{last}` appears anywhere in `p`.
+fn mentions_last(p: &Value) -> bool {
+    match p {
+        Value::String(t) => t.as_str() == LAST_HANDLE,
+        Value::Array(a) => a.iter().any(mentions_last),
+        Value::Object(m) => m.values().any(mentions_last),
+        _ => false,
+    }
+}
+
 /// `run --connect`: the same drawings and steps, sent to the running app's control channel. Every
 /// input is read and every path resolved before the first request, so a bad argument changes
 /// nothing in the open drawing.
@@ -298,6 +325,9 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
     for d in &a.drawings {
         opens.push(match d {
             Drawing::File(f) => {
+                // Read it now, as script files are: a missing drawing must fail before `--metric`
+                // or an earlier file has changed what the app has open.
+                std::fs::File::open(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
                 let path = app_path(f)?;
                 (format!("open {}", f.display()), "app.open", json!({"path": path}))
             }
@@ -317,31 +347,36 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
     let outputs: Vec<String> = [&a.save, &a.export].into_iter().flatten().map(|p| app_path(p)).collect::<Result<_>>()?;
 
     let mut app = cadcraft_mcp::Remote::connect(addr).map_err(|source| RunError::NotReachable { addr: addr.to_string(), source })?;
-    let mut call = |step: &str, method: &str, params: Value| -> Result<Value> {
-        app.call(method, params).map_err(|message| RunError::Remote { step: step.to_string(), message }.into())
-    };
     for (step, method, params) in opens {
-        call(&step, method, params)?;
+        remote(&mut app, &step, method, params)?;
     }
-    let mut last_handle: Option<Handle> = None;
+    // The last returned handle, with the drawing that was open when it came back. Only asked for
+    // when some step uses `{last}`.
+    let chains = steps.iter().any(|s| matches!(s, Ready::Cmd(c) if mentions_last(&c.params)));
+    let mut last_handle: Option<(Handle, Option<Value>)> = None;
     for step in steps {
         match step {
             Ready::Script(body) => {
-                let r = call("--script", "cmdline.script", json!({"text": body}))?;
+                let r = remote(&mut app, "--script", "cmdline.script", json!({"text": body}))?;
                 for l in r.get("output").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
                     io.errln(format_args!("{l}"));
                 }
-                // A script can open, switch or close drawings, and the app does not say whether it did.
-                last_handle = None;
             }
             Ready::Cmd(CmdStep { id, params }) => {
-                let params = fill_last(params, last_handle).map_err(|source| RunError::CmdLast { id: id.clone(), source })?;
-                let r = call(&format!("--cmd {id}"), "engine.execute", json!({"command": id, "params": params}))?;
-                if SWITCHES_DRAWING.contains(&id.to_ascii_lowercase().as_str()) {
-                    last_handle = None;
-                }
-                if let Some(h) = returned_handle_remote(&r) {
-                    last_handle = Some(h);
+                let h = match &last_handle {
+                    Some((h, then)) if mentions_last(params) => match (then, open_drawing(&mut app)) {
+                        (Some(then), Some(now)) if now == *then => Some(*h),
+                        (Some(_), Some(_)) => return Err(RunError::LastStale { id: id.clone(), why: "the app has another drawing open" }.into()),
+                        _ => return Err(RunError::LastStale { id: id.clone(), why: "the app doesn't say which drawing is open" }.into()),
+                    },
+                    Some((h, _)) => Some(*h),
+                    None => None,
+                };
+                let params = fill_last(params, h).map_err(|source| RunError::CmdLast { id: id.clone(), source })?;
+                let r = remote(&mut app, &format!("--cmd {id}"), "engine.execute", json!({"command": id, "params": params}))?;
+                if let Some(h) = returned_handle_remote(&r).filter(|_| chains) {
+                    // A handle whose drawing can't be told is never filled in (see above).
+                    last_handle = Some((h, open_drawing(&mut app)));
                 }
                 if !r.is_null() {
                     io.outln(format_args!("{r}"));
@@ -350,7 +385,7 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
         }
     }
     for path in outputs {
-        call(&format!("save {path}"), "app.save", json!({"path": path}))?;
+        remote(&mut app, &format!("save {path}"), "app.save", json!({"path": path}))?;
         io.errln(format_args!("saved {path} (in the app at {addr})"));
     }
     Ok(())

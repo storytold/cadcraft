@@ -39,13 +39,16 @@ as `mcp --connect` sends it: a file is `app.open`, `--metric` is `new {"metric":
 `--script` or `--script-file` is `cmdline.script`, a `--cmd` is `engine.execute`, and `--save` or
 `--export` is `app.save` (the app's Save As; an image exports and the drawing keeps its name).
 Without a file or `--metric` the steps act on the drawing the app has open. Paths are made
-absolute first, script files are read and every value checked before the first request, and the
+absolute first, drawing and script files are read and every value checked before the first request, and the
 first refused step stops the run (exit 1, naming the step). A script's command-line output goes
 to stderr, as headless.
 
-The control channel doesn't say which drawing is current, so `{last}` is forgotten after a
-`--script` or a `--cmd` that can change it (`new`, `open`, `close`, `closeall`,
-`document.switch`): the run fails rather than apply a handle to another drawing. `--sample`,
+`{last}` is checked against the drawing the app has open: when a handle comes back, `run` notes
+the open drawing (`ui.inspect`: its index, title and path), and before filling in `{last}` it
+checks that drawing is still the open one. If a step, a click in the window or another client
+opened or switched to another drawing in between, the run fails rather than apply the handle
+there. The protocol has no drawing selector, so a switch in the moment between that check and the
+command itself is not caught. `--sample`,
 `--window` and `--view` are headless only. As for `mcp --connect`, `CADCRAFT_CONTROL_PORT` is
 not read: a variable must not turn a headless run into edits of the open drawing.
 
