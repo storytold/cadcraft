@@ -61,13 +61,10 @@ fn visits(len: f64, pattern: &[f64], min_pattern: f64) -> Option<f64> {
 
 /// The drawn stretches of a run `len` long, as (start, end) along it (a dot: start == end), in
 /// order; `None` when it is drawn continuous (see [`visits`]), also when it repeats past
-/// [`MAX_ELEMENTS`] or `budget` refuses it. `pattern` is scaled; `min_pattern` is the caller's.
+/// [`MAX_ELEMENTS`] or `budget` refuses it. A pattern of gaps only draws nothing at any length,
+/// without a charge. `pattern` is scaled; `min_pattern` is the caller's.
 fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64, budget: &mut impl Budget) -> Option<Vec<(f64, f64)>> {
     let elements = visits(len, pattern, min_pattern)?;
-    if elements > MAX_ELEMENTS {
-        budget.refused();
-        return None;
-    }
     let period: f64 = pattern.iter().map(|d| d.abs()).sum();
     let mut drawn = Vec::new();
     let mut at = 0.0;
@@ -77,11 +74,22 @@ fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64, budget: &mut
         }
         at += d.abs();
     }
+    // Gaps only: nothing to draw or walk, at any length.
     if drawn.is_empty() {
         return Some(Vec::new());
     }
-    // At most MAX_ELEMENTS here, so the cast is exact enough to charge.
-    if !budget.take(elements.ceil() as usize) {
+    if elements > MAX_ELEMENTS {
+        budget.refused();
+        return None;
+    }
+    // A closed run walks its periods rounded to a whole number (up to half a period more than
+    // `elements` counts), from the one before its anchor to the one after its last.
+    let walked = match how {
+        Layout::Closed { .. } => elements.max(((len / period).round().max(1.0) + 2.0) * pattern.len() as f64),
+        Layout::Open => elements,
+    };
+    // At most MAX_ELEMENTS and half a period here, so the cast is exact enough to charge.
+    if !budget.take(walked.ceil() as usize) {
         budget.refused();
         return None;
     }
@@ -513,10 +521,28 @@ mod tests {
         assert_eq!(ranges(50_001.0 * 0.75, &lt, 1.0, 1e-9, Layout::Open, &mut b), None);
         assert_eq!((b.left, b.refused), (usize::MAX, 1));
 
+        // Gaps only draw nothing at any length, past the run's own limit too.
         let gaps = Linetype::simple("GAPS", "", &[-0.5, -0.25]);
         let mut b = Left { left: 0, refused: 0 };
-        assert_eq!(ranges(750.0, &gaps, 1.0, 0.0, Layout::Open, &mut b), Some(Vec::new()));
+        for len in [750.0, 750_000.0] {
+            assert_eq!(ranges(len, &gaps, 1.0, 0.0, Layout::Open, &mut b), Some(Vec::new()), "{len}");
+            assert!(apply(&[Vec2::ZERO, Vec2::new(len, 0.0)], &gaps, 1.0, 0.0, &mut b).is_empty(), "{len}");
+        }
         assert_eq!(b.refused, 0);
+    }
+
+    /// A closed run is stretched to a whole number of periods, rounded: 192 is 1.5 periods of 128
+    /// here, laid out as 2, and walked from the period before its anchor to the one after the
+    /// last (4 periods of 127 dashes). The build is charged at least that.
+    #[test]
+    fn a_closed_run_is_charged_for_the_periods_it_walks() {
+        let mut pattern = vec![1.0; 127];
+        pattern.push(-1.0);
+        let lt = Linetype::simple("LONG", "", &pattern);
+        let mut b = Left { left: usize::MAX, refused: 0 };
+        assert!(ranges(192.0, &lt, 1.0, 0.0, Layout::Closed { anchor: 0.0 }, &mut b).is_some());
+        let (charged, walked) = (usize::MAX - b.left, 4 * 127);
+        assert!(charged >= walked, "charged {charged} for {walked} elements walked");
     }
 
     /// A plot or export keeps the dashes of a run more than 50,000 periods long; a display build,
