@@ -1019,38 +1019,54 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire: Vec<String> = Vec::new();
+    // Why: keep clipboard commands and PasteTable in one ordered queue so same-frame events
+    // (such as Copy followed by Paste) dispatch in arrival order instead of PasteTable running
+    // ahead of earlier commands.
+    enum QueuedShortcut {
+        Command { id: String, from_clipboard: bool },
+        PasteTable(String),
+    }
+
+    let mut queue: Vec<QueuedShortcut> = Vec::new();
+    let mut seen_cmds: Vec<String> = Vec::new();
     let mut pasted_table = false;
     for action in crate::clipboard::shortcut_actions(app, ctx, float_edits) {
         match action {
             crate::clipboard::ShortcutAction::Command(id) => {
                 let id = id.to_string();
-                if !fire.contains(&id) {
-                    fire.push(id);
+                if !seen_cmds.contains(&id) {
+                    seen_cmds.push(id.clone());
+                    queue.push(QueuedShortcut::Command { id, from_clipboard: true });
                 }
             }
             crate::clipboard::ShortcutAction::PasteTable(tsv) => {
                 pasted_table = true;
+                queue.push(QueuedShortcut::PasteTable(tsv));
+            }
+        }
+    }
+    ctx.input_mut(|i| {
+        for (s, id) in &pairs {
+            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !seen_cmds.contains(id) {
+                seen_cmds.push(id.clone());
+                queue.push(QueuedShortcut::Command { id: id.clone(), from_clipboard: false });
+            }
+        }
+    });
+    for item in queue {
+        let (id, from_clipboard) = match item {
+            QueuedShortcut::PasteTable(tsv) => {
                 app.cmd.buffer.clear();
                 if let Err(e) = app.session.start_paste_table(&tsv, None) {
                     app.session.echo(e.to_string());
                 }
+                continue;
             }
-        }
-    }
-    // The first `read` commands come from this frame's clipboard events, whose `Paste` has been read.
-    let read = fire.len();
-    ctx.input_mut(|i| {
-        for (s, id) in &pairs {
-            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
-                fire.push(id.clone());
-            }
-        }
-    });
-    for (n, id) in fire.into_iter().enumerate() {
+            QueuedShortcut::Command { id, from_clipboard } => (id, from_clipboard),
+        };
         let id = id.as_str();
         // A paste command bound to another key has read nothing yet: it is held like a menu paste.
-        if let Some(id) = crate::clipboard::paste_id(id).filter(|_| n < read) {
+        if let Some(id) = crate::clipboard::paste_id(id).filter(|_| from_clipboard) {
             crate::clipboard::run_read(app, id);
             continue;
         }
@@ -1297,5 +1313,61 @@ mod units_dialog_tests {
         assert!(app.ui.dialog.is_none(), "JSON calls never open dialogs");
         let h = &app.session.doc().unwrap().header;
         assert_eq!((h.i64("LUNITS", 0), h.i64("LUPREC", 0), h.i64("INSUNITS", 0)), (4, 3, 4));
+    }
+}
+
+#[cfg(test)]
+mod clipboard_order_tests {
+    use cadcraft_engine::Session;
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    fn app_with_selected_line() -> CadApp {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let r = app.session.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(r["handles"][0].as_str().unwrap()).unwrap();
+        app.session.set_selection(vec![h]);
+        app
+    }
+
+    fn dispatch_events(app: &mut CadApp, events: Vec<egui::Event>) {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput { events, ..Default::default() });
+        super::shortcuts(app, &ctx);
+        let mut out = ctx.end_pass();
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn copy_before_paste_table_in_same_frame_keeps_pastetable_active() {
+        let mut app = app_with_selected_line();
+        dispatch_events(&mut app, vec![egui::Event::Copy, egui::Event::Paste("A\tB\n1\t2".into())]);
+        assert!(!app.session.clipboard.is_empty());
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("pastetable"));
+    }
+
+    #[test]
+    fn paste_table_before_copy_runs_copy_after_pastetable() {
+        let mut app = app_with_selected_line();
+        dispatch_events(&mut app, vec![egui::Event::Paste("A\tB\n1\t2".into()), egui::Event::Copy]);
+        assert!(!app.session.clipboard.is_empty());
+        assert!(app.session.running.is_none());
+    }
+
+    #[test]
+    fn paste_table_suppresses_duplicate_paste_shortcut_and_deduplicates_copy() {
+        let mut app = app_with_selected_line();
+        dispatch_events(
+            &mut app,
+            vec![
+                egui::Event::Copy,
+                egui::Event::Copy,
+                egui::Event::Paste("A\tB\n1\t2".into()),
+                egui::Event::Key { key: egui::Key::V, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND },
+            ],
+        );
+        assert!(!app.session.clipboard.is_empty());
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("pastetable"));
     }
 }
