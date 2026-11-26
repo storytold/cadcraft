@@ -16,9 +16,30 @@ use std::fs::{File, OpenOptions, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// Monotonic counter making temporary names unique within this process without a RNG dependency.
 static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Locks held from destination metadata inspection through rename, so concurrent writes cannot
+/// combine permissions from one version of a path with the group of another.
+fn path_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let key = match (absolute.parent(), absolute.file_name()) {
+        (Some(parent), Some(name)) => std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()).join(name),
+        _ => absolute,
+    };
+    let mut locks = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        lock
+    } else {
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+}
 
 /// How many fresh temporary names to try before giving up (each collision is another local race).
 const MAX_TRIES: u32 = 32;
@@ -33,13 +54,15 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     // A symlinked destination is resolved so the link stays a link and its target is replaced.
     let resolved = resolve_symlink(path)?;
     let path = resolved.as_deref().unwrap_or(path);
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let permissions = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(meta.permissions()),
         Ok(_) => None,
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
-    write_atomic_with(path, permissions, |file| file.write_all(bytes))
+    write_atomic_with_locked(path, permissions, |file| file.write_all(bytes))
 }
 
 /// The topmost folder missing above `path`: what [`write_atomic_making_folders`] will create.
@@ -67,10 +90,30 @@ pub fn write_atomic_making_folders(path: &Path, bytes: &[u8]) -> io::Result<()> 
 /// with `permissions` given to it from its creation (`None`: the usual creation mode). A symlink
 /// at `path` is replaced by the new file, never written through.
 pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+/// [`write_atomic_with`] with permissions derived under the same destination lock as the write.
+pub fn write_atomic_with_permissions(
+    path: &Path,
+    permissions: impl FnOnce() -> io::Result<Option<Permissions>>,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let lock = path_lock(path);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let permissions = permissions()?;
+    write_atomic_with_locked(path, permissions, fill)
+}
+
+fn write_atomic_with_locked(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let (mut file, tmp) = create_temp(&dir, permissions.as_ref())?;
     let write = (|| {
         if let Some(permissions) = permissions {
+            #[cfg(unix)]
+            let permissions = keep_group(&file, path, permissions);
             file.set_permissions(permissions)?;
         }
         fill(&mut file)?;
@@ -88,6 +131,20 @@ pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: im
     }
     sync_dir(&dir);
     Ok(())
+}
+
+/// `permissions` for the new file when `path` already exists: the group bits mean "this group" only
+/// if the file is still in the old file's group, so the group is restored first. When it can't be
+/// (the user is not a member of it), the group bits are dropped rather than handed to another group.
+#[cfg(unix)]
+fn keep_group(file: &File, path: &Path, permissions: Permissions) -> Permissions {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, fchown};
+    let Ok(old) = std::fs::symlink_metadata(path) else { return permissions };
+    // A file already in the old group needs no change (and a restrictive syscall policy may refuse a no-op fchown).
+    if !old.is_file() || file.metadata().is_ok_and(|m| m.gid() == old.gid()) || fchown(file, None, Some(old.gid())).is_ok() {
+        return permissions;
+    }
+    Permissions::from_mode(permissions.mode() & !0o070)
 }
 
 /// Flush `dir` so a rename just made in it survives a crash or power loss (POSIX records a
@@ -228,6 +285,33 @@ mod tests {
         write_atomic(&dir.join("a.bin"), b"x").unwrap();
         assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"x");
         sync_dir(&dir.join("missing"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The replacement keeps the old file's group (when the user is in another group, as `id -G`
+    /// says) together with its mode, so the group bits never name a different group.
+    #[cfg(unix)]
+    #[test]
+    fn keeps_the_group_and_mode_of_the_file_it_replaces() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown};
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-grp-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("out.bin");
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::set_permissions(&dest, Permissions::from_mode(0o640)).unwrap();
+        let own = std::fs::metadata(&dest).unwrap().gid();
+        let other = std::process::Command::new("id")
+            .arg("-G")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().filter_map(|g| g.parse::<u32>().ok()).find(|g| *g != own));
+        if let Some(gid) = other {
+            chown(&dest, None, Some(gid)).unwrap();
+        }
+        let want = std::fs::metadata(&dest).unwrap();
+        write_atomic(&dest, b"new").unwrap();
+        let got = std::fs::metadata(&dest).unwrap();
+        assert_eq!((got.gid(), got.mode() & 0o777), (want.gid(), 0o640));
         std::fs::remove_dir_all(&dir).ok();
     }
 

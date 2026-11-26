@@ -4,24 +4,32 @@
 //! the drawing as a crossed-out frame.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use cadcraft_doc::{Drawing, EntityKind, Image, Raster};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::file::base64_decode;
-use super::{CommandSpec, bad, f64_or, point_param, str_param};
+use super::{CommandSpec, bad, point_value, str_param};
 use crate::{Result, Session};
 
 /// Most image files loaded per drawing.
 const MAX_IMAGE_FILES: usize = 1000;
 /// Largest image file read (bytes).
-#[cfg(not(target_arch = "wasm32"))]
 const MAX_IMAGE_BYTES: u64 = 256 << 20;
+/// Longest base64 text taken for `data`: what a file of [`MAX_IMAGE_BYTES`] encodes to.
+const MAX_IMAGE_BASE64: u64 = MAX_IMAGE_BYTES.div_ceil(3) * 4;
+/// Longest `data` text with the line breaks and spaces base64 may carry (MIME breaks every 76
+/// characters, under 3% more): the characters past [`MAX_IMAGE_BASE64`] are counted only up to
+/// here, which also bounds what decoding sets aside.
+const MAX_IMAGE_TEXT: u64 = MAX_IMAGE_BASE64 + MAX_IMAGE_BASE64 / 16;
 /// Most decoded pixel bytes kept per drawing; images past it stay unloaded.
 const MAX_LOADED_BYTES: u64 = 2 << 30;
+/// Most bytes one decoded image takes: the image reader decodes at most 128 million pixels, four
+/// bytes each (`cadcraft_io::raster::MAX_IMAGE_PIXELS`).
+const MAX_DECODED_BYTES: u64 = 512_000_000;
 /// Most image files decoded at the same time when a drawing opens.
 const MAX_LOADERS: usize = 4;
 /// Longest image path taken from a caller.
@@ -70,11 +78,23 @@ fn paths(d: &Drawing) -> Vec<String> {
     paths
 }
 
+/// Whether `path` is a full path here, or on Windows where a drawing may have been written (a
+/// drive, `C:\maps\a.png`, or a share, `\\server\maps`), which other systems read as relative.
+#[cfg(not(target_arch = "wasm32"))]
+fn full_path(path: &str) -> bool {
+    let b = path.trim().as_bytes();
+    std::path::Path::new(path.trim()).is_absolute() || b.starts_with(b"\\\\") || matches!(b, [d, b':', b'\\' | b'/', ..] if d.is_ascii_alphabetic())
+}
+
 /// The contents of the image file saved as `path` in a drawing at `host`.
 fn read_file(path: &str, host: Option<&str>) -> std::result::Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let file = super::blocks::xref::find_file(path, host).ok_or("file not found")?;
+        let file = super::blocks::xref::find_file(path, host).ok_or_else(|| {
+            // An unsaved drawing has no folder for a relative path to be relative to.
+            if host.is_none() && !full_path(path) { "file not found (save the drawing first, or give a full path)" } else { "file not found" }
+        })?;
+        crate::file_access::check_read(&file)?;
         let len = std::fs::metadata(&file).map_err(|e| e.to_string())?.len();
         if len > MAX_IMAGE_BYTES {
             return Err(format!("the file is larger than {} MB", MAX_IMAGE_BYTES >> 20));
@@ -166,13 +186,11 @@ fn over_limit(path: &str) -> String {
 /// what opening a drawing with large images waits for). The results are in the order of `paths`.
 fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<Raster, String>> {
     // Decoded bytes so far, shared by the loaders: past the limit no further file is started.
-    let decoded_bytes = AtomicU64::new(0);
+    let budget = Budget::default();
     let load = |path: &str| -> std::result::Result<Raster, String> {
-        if decoded_bytes.load(Ordering::Relaxed) > MAX_LOADED_BYTES {
-            return Err(format!("not loaded (more than {} MB of images)", MAX_LOADED_BYTES >> 20));
-        }
+        let mut decoding = budget.start().ok_or_else(|| format!("not loaded (more than {} MB of images)", MAX_LOADED_BYTES >> 20))?;
         let r = read_file(path, host).and_then(|bytes| decode(&bytes))?;
-        decoded_bytes.fetch_add(bytes_of(&r), Ordering::Relaxed);
+        decoding.bytes = bytes_of(&r);
         Ok(r)
     };
     let mut results: Vec<Option<std::result::Result<Raster, String>>> = paths.iter().map(|_| None).collect();
@@ -180,14 +198,18 @@ fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<R
     if loaders > 1 {
         // Each loader takes the next file nobody has started.
         let next = AtomicUsize::new(0);
+        // The automation roots are per thread, so they go along with each loader.
+        let roots = crate::file_access::current();
         let work = || {
-            let mut done = Vec::new();
-            loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(path) = paths.get(index) else { break };
-                done.push((index, load(path)));
-            }
-            done
+            crate::file_access::confine(roots.as_ref(), || {
+                let mut done = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(index) else { break };
+                    done.push((index, load(path)));
+                }
+                done
+            })
         };
         let finished: Vec<_> = std::thread::scope(|scope| {
             let started: Vec<_> = (0..loaders).filter_map(|_| std::thread::Builder::new().spawn_scoped(scope, work).ok()).collect();
@@ -201,6 +223,83 @@ fn decode_files(paths: &[&str], host: Option<&str>) -> Vec<std::result::Result<R
     }
     // One loader, or files a loader that could not start or finish left behind.
     results.into_iter().zip(paths).map(|(result, path)| result.unwrap_or_else(|| load(path))).collect()
+}
+
+/// The decoded bytes the loaders of one drawing share.
+#[derive(Default)]
+struct Budget {
+    spent: Mutex<Spent>,
+    /// Signaled when a file finishes decoding.
+    finished: Condvar,
+}
+
+/// Decoded bytes so far, and how many files are being decoded.
+#[derive(Default)]
+struct Spent {
+    decoded: u64,
+    decoding: u64,
+}
+
+/// Whether a loader may start decoding a file.
+#[derive(Debug, PartialEq)]
+enum Admit {
+    Start,
+    /// Not until another file finishes.
+    Wait,
+    /// The images decoded so far are past the limit.
+    Full,
+}
+
+impl Spent {
+    /// A file starts while the images decoded so far, and the largest image each file being
+    /// decoded can become, fit under `limit`. A file always starts when no other one is being
+    /// decoded, so that the images run past `limit` by one image at most.
+    fn admit(&mut self, limit: u64, largest: u64) -> Admit {
+        if self.decoded > limit {
+            return Admit::Full;
+        }
+        let reserved = self.decoding.saturating_add(1).saturating_mul(largest);
+        if self.decoding > 0 && self.decoded.saturating_add(reserved) > limit {
+            return Admit::Wait;
+        }
+        self.decoding = self.decoding.saturating_add(1);
+        Admit::Start
+    }
+
+    /// A file finished decoding into `bytes` (0 when it failed).
+    fn finish(&mut self, bytes: u64) {
+        self.decoding = self.decoding.saturating_sub(1);
+        self.decoded = self.decoded.saturating_add(bytes);
+    }
+}
+
+impl Budget {
+    /// Wait until a file may start decoding; `None` once the images decoded so far are past the
+    /// limit.
+    fn start(&self) -> Option<Decoding<'_>> {
+        let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            match spent.admit(MAX_LOADED_BYTES, MAX_DECODED_BYTES) {
+                Admit::Start => return Some(Decoding { budget: self, bytes: 0 }),
+                Admit::Full => return None,
+                Admit::Wait => spent = self.finished.wait(spent).unwrap_or_else(PoisonError::into_inner),
+            }
+        }
+    }
+}
+
+/// A file being decoded. Dropping it counts `bytes` as decoded and lets a waiting loader check
+/// again, also when the decoding failed.
+struct Decoding<'a> {
+    budget: &'a Budget,
+    bytes: u64,
+}
+
+impl Drop for Decoding<'_> {
+    fn drop(&mut self) {
+        self.budget.spent.lock().unwrap_or_else(PoisonError::into_inner).finish(self.bytes);
+        self.budget.finished.notify_all();
+    }
 }
 
 /// How many files are decoded at once: one per processor, at most [`MAX_LOADERS`] (each large
@@ -247,6 +346,9 @@ pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(ID, "`path` is too long"));
     }
     let place = placement(p)?;
+    if p.get("name").is_some_and(|n| !(n.is_null() || n.is_string())) {
+        return Err(bad(ID, "`name` must be text"));
+    }
     let raster = pixels(s, p, &path)?;
     let (w, h) = (f64::from(raster.width()), f64::from(raster.height()));
     // One pixel in drawing units, along the image's bottom edge (`u`) and its left edge (`v`).
@@ -284,18 +386,32 @@ struct Placement {
 
 /// `at`, `rotation` and the width (`width`, else `scale`: an image is one unit wide at scale 1).
 fn placement(p: &Value) -> Result<Placement> {
-    let at = point_param(p, "at").unwrap_or(Vec2::ZERO);
+    let at = match p.get("at") {
+        None | Some(Value::Null) => Vec2::ZERO,
+        Some(v) => point_value(v).ok_or_else(|| bad(ID, "`at` must be a point"))?,
+    };
     if !(at.x.is_finite() && at.y.is_finite()) {
         return Err(bad(ID, "`at` must be a point"));
     }
+    // `scale` is checked even when `width` takes precedence over it.
+    let scale = number(p, "scale")?;
     let width = match p.get("width") {
         Some(v) => v.as_f64().filter(|w| w.is_finite()).ok_or_else(|| bad(ID, "`width` must be a number"))?,
-        None => f64_or(p, "scale", 1.0),
+        None => scale.unwrap_or(1.0),
     };
     if !(width.is_finite() && width > 0.0) {
         return Err(bad(ID, "`scale` and `width` must be greater than zero"));
     }
-    Ok(Placement { at, rotation: f64_or(p, "rotation", 0.0).to_radians(), width })
+    let rotation = number(p, "rotation")?.unwrap_or(0.0);
+    Ok(Placement { at, rotation: rotation.to_radians(), width })
+}
+
+/// The number `key` of `p`: `None` when it is omitted or null, an error when it is not a number.
+fn number(p: &Value, key: &str) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| bad(ID, format!("`{key}` must be a number"))),
+    }
 }
 
 /// The pixels of the image at `path`: decoded from `data` when the caller hands the file over,
@@ -304,7 +420,19 @@ fn pixels(s: &Session, p: &Value, path: &str) -> Result<Arc<Raster>> {
     let bytes = match p.get("data") {
         Some(data) => {
             let text = data.as_str().ok_or_else(|| bad(ID, "`data` must be base64 text"))?;
-            base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?
+            // Refused before decoding, which would hold all of it in memory. Line breaks and
+            // spaces, which decoding skips, don't count.
+            let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+            let digits = || u64::try_from(text.bytes().filter(|b| !matches!(b, b'\n' | b'\r' | b' ')).count()).unwrap_or(u64::MAX);
+            if len > MAX_IMAGE_TEXT || (len > MAX_IMAGE_BASE64 && digits() > MAX_IMAGE_BASE64) {
+                return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
+            }
+            let bytes = base64_decode(text).ok_or_else(|| bad(ID, "`data` is not valid base64"))?;
+            // The longest text allowed can still hold a byte or two more than the limit.
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_IMAGE_BYTES {
+                return Err(bad(ID, format!("`data` is larger than {} MB", MAX_IMAGE_BYTES >> 20)));
+            }
+            bytes
         }
         None => {
             if let Some(loaded) = s.doc()?.rasters.get(path) {
@@ -350,4 +478,41 @@ fn describe(d: &Drawing, path: &str, host: Option<&str>) -> Value {
         (None, Some(_)) => "Not loaded",
     };
     json!({ "path": path, "foundAt": found_at, "status": status, "pixels": loaded.map(|r| json!([r.width(), r.height()])) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file starts only while the largest image each file being decoded can become still fits,
+    /// one file always starts when none is being decoded, and none starts past the limit.
+    #[test]
+    fn loaders_start_files_within_the_limit() {
+        let mut s = Spent::default();
+        // Room for two of the largest images.
+        assert_eq!(s.admit(10, 4), Admit::Start);
+        assert_eq!(s.admit(10, 4), Admit::Start);
+        assert_eq!(s.admit(10, 4), Admit::Wait);
+        s.finish(3);
+        assert_eq!(s.admit(10, 4), Admit::Wait, "3 decoded and two files that can become 4 each are past 10");
+        s.finish(5);
+        // Over the limit only by the one file being decoded.
+        assert_eq!(s.admit(10, 4), Admit::Start);
+        s.finish(4);
+        assert_eq!(s.admit(10, 4), Admit::Full);
+        // A failed file counts nothing.
+        let mut s = Spent::default();
+        assert_eq!(s.admit(10, 4), Admit::Start);
+        s.finish(0);
+        assert_eq!((s.decoded, s.decoding), (0, 0));
+    }
+
+    /// Files that fail still let the other loaders go on: every file gets a result.
+    #[test]
+    fn decode_files_finishes_when_every_file_fails() {
+        let paths = ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"];
+        let results = decode_files(&paths, None);
+        assert_eq!(results.len(), paths.len());
+        assert!(results.iter().all(std::result::Result::is_err), "none of these files exists");
+    }
 }
