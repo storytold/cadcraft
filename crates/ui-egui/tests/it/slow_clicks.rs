@@ -34,13 +34,17 @@ fn harness_stepping(step: f32) -> (Harness<'static, CadApp>, Handle) {
     let line = session.doc().unwrap().space(&Space::Model).unwrap().iter().next().unwrap().handle;
     let mut app = CadApp::new(session, Services::default());
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(step).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(step)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(3);
     (h, line)
 }

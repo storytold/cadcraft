@@ -14,6 +14,7 @@ mod format;
 mod gdt;
 mod header;
 pub mod library;
+mod names;
 mod plotstyle;
 mod plotter;
 mod raster;
@@ -36,6 +37,7 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
+pub use names::{Named, NamedList, NamedMap};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
@@ -101,19 +103,25 @@ pub struct Drawing {
     pub header: Header,
     /// File data CADCraft does not model, written back on save.
     pub foreign: std::sync::Arc<foreign::Foreign>,
-    pub layers: Vec<Layer>,
-    pub linetypes: Vec<Linetype>,
-    pub text_styles: Vec<TextStyle>,
-    pub dim_styles: Vec<DimStyle>,
+    /// Layers in table order; [`Drawing::layer`] looks them up by name.
+    pub layers: NamedList<Layer>,
+    /// Linetypes in table order; [`Drawing::linetype`] looks them up by name.
+    pub linetypes: NamedList<Linetype>,
+    /// Text styles in table order; [`Drawing::text_style`] looks them up by name.
+    pub text_styles: NamedList<TextStyle>,
+    /// Dimension styles in table order; [`Drawing::dim_style`] looks them up by name.
+    pub dim_styles: NamedList<DimStyle>,
     pub mleader_styles: Vec<MLeaderStyle>,
     pub table_styles: Vec<TableStyle>,
     /// Multiline styles (MLSTYLE); STANDARD is always there.
     pub mline_styles: Vec<MLineStyle>,
-    pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
+    /// Block definitions by name; [`Drawing::block`] looks them up.
+    pub blocks: NamedMap<std::sync::Arc<Block>>,
     pub model: EntityStore,
     /// Model layout's page setup, or the default extents-to-fit setup for a new drawing.
     pub model_page: Option<PageSetup>,
-    pub layouts: Vec<Layout>,
+    /// Layouts in list order (`tab_order` orders the tabs); [`Drawing::layout`] looks them up by name.
+    pub layouts: NamedList<Layout>,
     /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
     /// written active again. `None`, or a layout that no longer exists: the first by tab order.
     pub active_layout: Option<String>,
@@ -195,21 +203,22 @@ impl Drawing {
         Drawing {
             header: Header::default(),
             foreign: std::sync::Arc::default(),
-            layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }],
+            layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }].into(),
             linetypes: vec![
                 Linetype { name: "ByBlock".into(), description: String::new(), pattern: Vec::new() },
                 Linetype { name: "ByLayer".into(), description: String::new(), pattern: Vec::new() },
                 Linetype::continuous(),
-            ],
-            text_styles: vec![TextStyle::default()],
-            dim_styles: vec![DimStyle::default()],
+            ]
+            .into(),
+            text_styles: vec![TextStyle::default()].into(),
+            dim_styles: vec![DimStyle::default()].into(),
             mleader_styles: vec![MLeaderStyle::default()],
             table_styles: vec![TableStyle::default()],
             mline_styles: vec![MLineStyle::default()],
-            blocks: BTreeMap::new(),
+            blocks: NamedMap::default(),
             model: EntityStore::new(),
             model_page: None,
-            layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
+            layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)].into(),
             active_layout: None,
             views: Vec::new(),
             vports: Vec::new(),
@@ -313,20 +322,25 @@ impl Drawing {
         }
     }
 
+    /// The first layer named `name`, without case.
     pub fn layer(&self, name: &str) -> Option<&Layer> {
-        self.layers.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.layers.by_name(name)
     }
+    /// The first layer named `name`, without case, to change.
     pub fn layer_mut(&mut self, name: &str) -> Option<&mut Layer> {
-        self.layers.iter_mut().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.layers.by_name_mut(name)
     }
+    /// The first linetype named `name`, without case.
     pub fn linetype(&self, name: &str) -> Option<&Linetype> {
-        self.linetypes.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.linetypes.by_name(name)
     }
+    /// The first text style named `name`, without case.
     pub fn text_style(&self, name: &str) -> Option<&TextStyle> {
-        self.text_styles.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.text_styles.by_name(name)
     }
+    /// The first dimension style named `name`, without case.
     pub fn dim_style(&self, name: &str) -> Option<&DimStyle> {
-        self.dim_styles.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.dim_styles.by_name(name)
     }
 
     /// The DIM* variables in the header that differ from the current dimension style, as
@@ -394,11 +408,13 @@ impl Drawing {
             }
         }
     }
+    /// The block named exactly `name`, else the first by name order named `name` without case.
     pub fn block(&self, name: &str) -> Option<&std::sync::Arc<Block>> {
-        self.blocks.get(name).or_else(|| self.blocks.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))
+        self.blocks.by_name(name)
     }
+    /// The first layout named `name`, without case.
     pub fn layout(&self, name: &str) -> Option<&Layout> {
-        self.layouts.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.layouts.by_name(name)
     }
 
     /// Add a layer if missing; returns whether it was created.

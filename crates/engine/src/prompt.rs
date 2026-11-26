@@ -37,6 +37,7 @@ const NO_OR: &[&str] = &[
     "Choose mode for selected object conversion",
     "Create annotative block",
     "Enter a configuration option",
+    "Enter a copy mode option",
     "Enter a plotting preference",
     "Enter an annotation option",
     "Enter an option",
@@ -340,6 +341,19 @@ pub trait Interactive: Send {
     fn live_value(&self, _s: &Session, _cursor: Vec2) -> Option<String> {
         None
     }
+    /// What the rollover highlight shows of the object `h` under the cursor, when it is not the
+    /// whole object (TRIM: the piece a click there removes; EXTEND: what it adds). `None`: the
+    /// whole object, as for any other command.
+    fn highlight(&self, _s: &Session, _h: cadcraft_doc::Handle, _cursor: Vec2) -> Option<Vec<EntityKind>> {
+        None
+    }
+    /// What the running command will change wherever the cursor is, highlighted in place of the
+    /// object under it (TRIM's Fence and Crossing: every piece the fence or the window will
+    /// remove), each with the handle of the object it is part of. `None`: nothing of the kind,
+    /// and the object under the cursor is highlighted as [`Interactive::highlight`] says.
+    fn highlight_all(&self, _s: &Session, _cursor: Vec2) -> Option<Vec<(cadcraft_doc::Handle, EntityKind)>> {
+        None
+    }
     /// The preview as existing objects under one transform, when it is that (MOVE, COPY,
     /// ROTATE, SCALE). The UI then draws them from geometry uploaded once instead of rebuilding
     /// the transformed copies every frame; `None` falls back to [`Interactive::preview`].
@@ -366,6 +380,23 @@ pub trait Interactive: Send {
     /// in the Edit Attributes dialog (INSERT with ATTDIA 1). Typed answers still work.
     fn attribute_entry(&self) -> Option<AttribEntry> {
         None
+    }
+    /// The live parameters of the running array (ARRAYRECT / ARRAYPOLAR), for the array window.
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        None
+    }
+    /// Replace the running array's live parameters, as the array window's fields change them.
+    fn set_array_live(&mut self, _s: &mut Session, _v: &crate::ArrayLive) -> Result<()> {
+        Err(crate::EngineError::Other("this command has no live array parameters".into()))
+    }
+    /// Put the command back at its Main option loop (the state eXit/Enter finishes from).
+    /// False when the command cannot commit yet (e.g. the polar centre is still unspecified).
+    fn array_set_main(&mut self) -> bool {
+        false
+    }
+    /// Ask the next canvas point to be the polar centre. False when the command has no centre.
+    fn array_pick_center(&mut self) -> bool {
+        false
     }
 }
 

@@ -31,7 +31,12 @@ fn dxf(src: &str) -> String {
 
 /// The fixture with a reference to `block` at (100, 100).
 fn reference(block: &str) -> (Drawing, Handle) {
-    let mut d = read_dxf(dxf(&include_str!("../data/dynblock_scale_polar.txt").replace("\r\n", "\n")).as_bytes()).unwrap();
+    reference_in(&include_str!("../data/dynblock_scale_polar.txt").replace("\r\n", "\n"), block)
+}
+
+/// Fixture text `src` with a reference to `block` at (100, 100).
+fn reference_in(src: &str, block: &str) -> (Drawing, Handle) {
+    let mut d = read_dxf(dxf(src).as_bytes()).unwrap();
     let ins = cadcraft_doc::Insert {
         block: block.into(),
         insert: Vec3::new(100.0, 100.0, 0.0),
@@ -191,6 +196,47 @@ fn a_polar_angle_turns_everything_about_the_base() {
     set_property(&mut d, r, "Angle1", "0").unwrap();
     set_property(&mut d, r, "Distance1", "4").unwrap();
     assert_eq!(shapes(&d, r), vec![[1.0, 0.0, 4.0, 0.0], [4.0, 0.0, 0.25, 0.0], [2.0, 2.0, 0.5, 0.0]]);
+}
+
+/// The arc and the wipeout a polar stretch acts on move whole after its turn, as before: the
+/// lists it stores for them (the arc's start and the wipeout's second point, both in its frame)
+/// aren't used, as for a stretch whose frame can't be tested (a wipeout's or an arc's list isn't
+/// measured).
+#[test]
+fn a_polar_stretch_moves_an_arc_and_a_wipeout_whole() {
+    // Arc B3 round (3, 0) from (4, 0), in the frame, to (2, 0); wipeout B4 from x = 3 to x = 4.
+    let extra = "0 ARC\n5 B3\n330 1A\n100 AcDbEntity\n8 0\n100 AcDbCircle\n10 3\n20 0\n30 0\n40 1\n100 AcDbArc\n50 0\n51 180\n\
+                 0 WIPEOUT\n5 B4\n330 1A\n100 AcDbEntity\n8 0\n100 AcDbWipeout\n10 0\n20 0\n30 0\n11 1\n21 0\n31 0\n12 0\n22 1\n32 0\n\
+                 13 1\n23 1\n71 2\n91 4\n14 2.5\n24 0.7\n14 3.5\n24 0.7\n14 3.5\n24 0.3\n14 2.5\n24 0.3\n";
+    let src = include_str!("../data/dynblock_scale_polar.txt")
+        .replace("\r\n", "\n")
+        .replace("1005 B2\n0 ENDBLK\n", &format!("1005 B2\n{extra}0 ENDBLK\n"))
+        .replace("71 3\n330 B0\n330 B1\n330 93\n", "71 5\n330 B0\n330 B1\n330 B3\n330 B4\n330 93\n")
+        .replace("74 1\n332 B0\n75 1\n76 1\n", "74 3\n332 B0\n75 1\n76 1\n332 B3\n75 1\n76 0\n332 B4\n75 1\n76 1\n");
+    let (mut d, r) = reference_in(&src, "Tag");
+    let m = dynamic_block(&d, "Tag").unwrap();
+    let ActionKind::PolarStretch { vertices, .. } = &m.actions[0].kind else { panic!("a polar stretch") };
+    assert_eq!(vertices, &vec![(Handle(0xB0), vec![1]), (Handle(0xB3), vec![0]), (Handle(0xB4), vec![1])]);
+    let parts = |d: &Drawing| {
+        let Some(EntityKind::Insert(i)) = d.entity(r).map(|e| &e.kind) else { panic!("a reference") };
+        let b = d.block(&i.block).unwrap();
+        let arc = b.entities.iter().find_map(|e| match &e.kind {
+            EntityKind::Arc(a) => Some((a.center, a.radius, a.start, a.end)),
+            _ => None,
+        });
+        let wipe = b.entities.iter().find_map(|e| match &e.kind {
+            EntityKind::Wipeout(w) => Some(w.boundary.clone()),
+            _ => None,
+        });
+        (arc.unwrap(), wipe.unwrap())
+    };
+    let ((c, radius, start, end), outline) = parts(&d);
+    set_property(&mut d, r, "Distance1", "6").unwrap();
+    let ((c2, radius2, start2, end2), outline2) = parts(&d);
+    let v = cadcraft_doc::geom::Vec2::new(2.0, 0.0);
+    assert!(c2.xy().near(c.xy() + v, 1e-9) && c2.z == c.z && radius2 == radius && start2 == start && end2 == end, "{c2:?} {radius2} {start2} {end2}");
+    assert_eq!(outline2.len(), outline.len());
+    assert!(outline2.iter().zip(&outline).all(|(p, q)| p.near(*q + v, 1e-9)), "{outline2:?}");
 }
 
 #[test]

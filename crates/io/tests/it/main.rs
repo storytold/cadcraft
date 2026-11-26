@@ -51,6 +51,9 @@ mod layout_plot_window;
 mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
 mod low_handseed;
+#[cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+mod ltype_dwg_dash_count;
+mod ltype_element_cap;
 mod minsert_marker;
 mod mleader_content;
 mod mleader_roundtrip;
@@ -69,6 +72,7 @@ mod ole_frame;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
+mod pdf_import;
 mod pdf_layers;
 #[path = "../support/pdf_read.rs"]
 mod pdf_read;

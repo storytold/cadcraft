@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_color::Color;
 use cadcraft_doc::{
     AssocSnap, Attrib, Block, Common, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, EntityStore, Gradient, Group, HAlign,
-    HVal, Handle, Hatch, Insert, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
+    HVal, Handle, Hatch, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
     TableStyle, Text, Transparency, Ucs, VAlign, VportConfig, VportTile,
 };
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
@@ -156,17 +156,23 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 
 /// [`tags`], with the foreign objects the file keeps, by their handles in the drawing.
 fn tags_kept(d: &Drawing, version: Version) -> (Vec<Tag>, std::collections::HashSet<cadcraft_doc::Handle>) {
-    let (mut tags, kept) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
+    let (mut tags, kept, _) = sections::tags_kept_for(d, version, version, version < Version::R2004, false);
     // Kept proxies in this version's layout (#3229). Not for the DWG bridge, whose writer reads
     // them in the layout of the DWG they came from.
     proxy::proxy_layout(&mut tags, version);
     (tags, kept)
 }
 
+/// The most dash elements a linetype keeps in a DWG. The DWG writer (acadrust) stores the count in
+/// one byte, so a longer pattern would come back with its count modulo 256 (none at all for 256),
+/// and a DWG save keeps the first 255 instead ([`dwg_notes`] says so).
+pub const DWG_MAX_LINETYPE_ELEMENTS: usize = 255;
+
 /// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
+/// version's (MULTILEADER from 2007), and its linetypes have at most
+/// [`DWG_MAX_LINETYPE_ELEMENTS`] elements.
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> (String, craft_dwg::Unwritten) {
-    let (mut tags, kept) = sections::tags_kept_for(d, Version::R2000, dwg, false, true);
+    let (mut tags, kept, _) = sections::tags_kept_for(d, Version::R2000, dwg, false, true);
     let mut unwritten = craft_dwg::Unwritten::new();
     if dwg == Version::R2007 {
         let omitted = legacy_visualstyles_kept(d, &kept);
@@ -186,13 +192,31 @@ pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> (String, craft_dwg::Unwri
 pub fn dwg_compat_lost(d: &Drawing, version: Version) -> craft_dwg::Unwritten {
     let mut lost = craft_dwg::Unwritten::new();
     if version == Version::R2007 && d.foreign.objects.iter().any(legacy_visual_style) {
-        let (_, kept) = sections::tags_kept_for(d, Version::R2000, version, false, true);
+        let (_, kept, _) = sections::tags_kept_for(d, Version::R2000, version, false, true);
         let omitted = legacy_visualstyles_kept(d, &kept);
         if omitted != 0 {
             lost.insert("VISUALSTYLE".into(), omitted);
         }
     }
     lost
+}
+
+/// What a DWG keeps of `d` only in part, as notes for the user: one counting the linetypes with
+/// more dash elements than a DWG counts, which it saves with their first
+/// [`DWG_MAX_LINETYPE_ELEMENTS`]. Empty when the DWG keeps every linetype whole.
+pub fn dwg_notes(d: &Drawing) -> Vec<String> {
+    let max = DWG_MAX_LINETYPE_ELEMENTS;
+    if d.linetypes.iter().all(|l| l.pattern.len() <= max) {
+        return Vec::new();
+    }
+    // The writer decides which linetypes the file holds (an xref's own only when a layer uses
+    // them), so it does the counting; the LTYPE table is the same in every DWG version.
+    let (_, _, cut) = sections::tags_kept_for(d, Version::R2000, Version::R2004, false, true);
+    match cut {
+        0 => Vec::new(),
+        1 => vec![format!("DWG: 1 linetype has more than {max} dash elements; only its first {max} were saved.")],
+        n => vec![format!("DWG: {n} linetypes have more than {max} dash elements; only the first {max} of each were saved.")],
+    }
 }
 
 fn legacy_visualstyles_kept(d: &Drawing, kept: &HashSet<cadcraft_doc::Handle>) -> usize {

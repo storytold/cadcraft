@@ -84,7 +84,7 @@ pub(super) fn model_ucs(d: &Drawing) -> Ucs {
 /// style are its overrides and are written instead, so they are kept with the drawing (#3100).
 fn dim_header_vars(w: &mut W, d: &Drawing) {
     let name = d.header.str("DIMSTYLE", "Standard");
-    let Some(style) = d.dim_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&name)) else { return };
+    let Some(style) = d.dim_style(&name) else { return };
     let mut v = serde_json::to_value(style).unwrap_or_default();
     if let Some(fields) = v.as_object_mut() {
         fields.extend(d.dim_overrides());

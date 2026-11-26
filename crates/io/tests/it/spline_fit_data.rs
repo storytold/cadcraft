@@ -25,8 +25,12 @@ fn fit_options_roundtrip_through_dxf() {
         assert!(r.fit_opts.start_tangent.is_some_and(|t| t.near(Vec2::Y, 1e-9)));
         assert!(r.fit_opts.end_tangent.is_some_and(|t| t.near(Vec2::new(1.0, -1.0).normalized(), 1e-9)));
         assert_eq!(r.control.len(), sp.control.len());
+        // Over the whole curve: chord-length knots run to the fit points' length, not to 1.
+        let (lo, hi) = sp.domain();
+        let (rlo, rhi) = r.domain();
+        assert!((rlo - lo).abs() < 1e-9 && (rhi - hi).abs() < 1e-9, "{:?} vs {:?}", r.domain(), (lo, hi));
         for i in 0..=20 {
-            let t = i as f64 / 20.0;
+            let t = lo + (hi - lo) * f64::from(i) / 20.0;
             assert!(r.eval(t).near(sp.eval(t), 1e-9));
         }
         // Closed (periodic) splines keep their parametrisation too.

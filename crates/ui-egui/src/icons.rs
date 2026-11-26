@@ -3,7 +3,6 @@
 //! Icons are line drawings on a 24×24 design grid: light strokes for existing geometry, blue for
 //! the geometry a command creates and orange dots for picked points.
 
-use craft_ui::buttons::{ButtonVisuals, IconButton, IconButtonStyle};
 use egui::{Color32, Painter, Pos2, Rect, Stroke, pos2};
 
 use crate::theme::Tokens;
@@ -1146,23 +1145,31 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, tooltip: &str, selected:
     button_bare(ui, icon, size, tooltip, selected).on_hover_text(crate::i18n::t(tooltip))
 }
 
-/// [`button`] without its hover text, for callers that show a richer tooltip of their own.
+/// [`button`] without its hover text, for callers that show a richer tooltip of their own. CADCraft paints the
+/// button in its own colours: transparent, the hover tint, the active-tab fill while selected, and an accent ring
+/// inside it while it has keyboard focus.
 pub fn button_bare(ui: &mut egui::Ui, icon: Icon, size: f32, tooltip: &str, selected: bool) -> egui::Response {
+    const RADIUS: egui::CornerRadius = egui::CornerRadius::same(3);
     let t = Tokens::get();
-    let visuals = |fill| ButtonVisuals { fill, stroke: Stroke::NONE, icon: t.icon };
-    let style = IconButtonStyle {
-        normal: visuals(Color32::TRANSPARENT),
-        hovered: visuals(t.control_hover.gamma_multiply(0.6)),
-        pressed: None,
-        selected: visuals(t.tab_active),
-        corner_radius: egui::CornerRadius::same(3),
-        focus_stroke: Stroke::new(1.0, t.accent),
+    let label = crate::i18n::t(tooltip);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label));
+    let fill = if selected {
+        t.tab_active
+    } else if resp.hovered() {
+        t.control_hover.gamma_multiply(0.6)
+    } else {
+        Color32::TRANSPARENT
     };
-    let resp = IconButton::new(crate::i18n::t(tooltip), egui::vec2(size, size), &style).selected(selected).show(ui, |ui, rect, _| {
-        // A single tint would erase the blue geometry and orange picked points. Keep the
-        // original painter and its explicit dimming on the same parent-enabled UI.
-        paint(ui.painter(), rect.shrink(size * 0.08), icon, !ui.is_enabled());
-    });
+    if fill != Color32::TRANSPARENT {
+        ui.painter().rect_filled(rect, RADIUS, fill);
+    }
+    // A single tint would erase the blue geometry and orange picked points: the original painter keeps its own
+    // colours and its explicit dimming.
+    paint(ui.painter(), rect.shrink(size * 0.08), icon, !ui.is_enabled());
+    if resp.has_focus() && size > 4.0 {
+        ui.painter().rect_stroke(rect.shrink(2.0), RADIUS, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
     crate::control::record_widget(ui, &resp, tooltip, "button", Some(selected));
     resp
 }

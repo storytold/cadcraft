@@ -143,7 +143,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 });
         });
     let outside = ctx.input(|i| i.pointer.primary_pressed() && i.pointer.interact_pos().is_some_and(|p| !area.response.rect.contains(p)));
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         done = Done::Cancel;
     } else if armed && outside {
         done = Done::Ok;
