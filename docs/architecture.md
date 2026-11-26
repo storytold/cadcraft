@@ -20,7 +20,7 @@ About 57,000 lines of Rust in 12 library crates, 3 apps and `xtask` (counted 202
 | L2 | `render` | 3,300 | Display lists (polylines, triangles, points tagged with entity handles): linetypes, hatches, gradients, text, block expansion, dimension geometry, paper-space clipping; CPU rasteriser (`tiny-skia`) for PNG, plot preview and tests |
 | L2 | `constraints` | 2,504 | Own parametric solver: damped Gauss–Newton / Levenberg–Marquardt (`lm.rs`), 12 geometric and the dimensional constraints, expressions and parameters, AutoConstrain inference |
 | L3 | `io` | 5,124 | DXF ⇄ document mapping (`dxf_read.rs`, `dxf_write.rs`, CADCraft xdata in `dxf_ext.rs`), PDF plotting, SVG and PNG export |
-| L3 | `dwg` | 149 | DWG through a DXF bridge: the `acadrust` crate (MPL-2.0, unmodified) converts DWG ⇄ DXF bytes; nothing else sees its types. Native only |
+| L3 | `craft-dwg` | shared | DWG through the shared byte bridge: `acadrust` (MPL-2.0, unmodified) converts DWG ⇄ DXF bytes; the app keeps process isolation and maps DXF into its document model. Native only |
 | L4 | `engine` | 25,090 | `Session`, the command registry (`cmd/*`), command-line parser and prompt machines, object snaps and polar/ortho (`snap.rs`), selection (`select.rs`), grips (`grips.rs`), associativity (`assoc.rs`), system variables, units, undo, R-tree spatial index (`spatial.rs`) |
 | L5 | `ui-egui` | 9,849 | The swappable egui front end: GPU canvas (`gpu.rs`, wgpu), menus and shortcuts (`menus.rs`), command line, palettes, Layer Properties Manager and other dialogs, ViewCube, icons drawn in code, themes, the interface string catalog (`i18n/`, English, Ukrainian and German), JSON control channel (`control.rs`) |
 | L5 | `mcp` | 559 | MCP server (JSON-RPC 2.0 over stdio) on a headless session or bridged to a running app |
@@ -72,7 +72,7 @@ their own version, subject to supported-version mapping and the DWG minimum. SAV
 overrides this choice and is remembered for later saves.
 Without an explicit save version, `io::save_version` uses the drawing's `$ACADVER`, keeping
 supported versions, mapping older files to 2000 and newer files to 2018 (missing or invalid
-codes also default to 2018). DWG is converted to DXF in memory by `acadrust` and read through
+codes also default to 2018). DWG is converted to DXF in memory by shared `craft-dwg` and read through
 the same path; saving DWG converts an internal R2000 DXF to the chosen DWG version, not
 necessarily R2000. DWG defaults to at least 2004 to retain true colours, transparency, table
 styles and gradients; an explicit save version can still request 2000. CADCraft-only data

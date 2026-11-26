@@ -34,7 +34,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let d = match (space, margins) {
         (Space::Paper(n), Some(m)) => {
             let mut c = d.clone();
-            if let Some(l) = c.layouts.iter_mut().find(|l| l.name.eq_ignore_ascii_case(n)) {
+            if let Some(l) = c.layouts.by_name_mut(n) {
                 l.page.margins_mm = m;
             }
             with_margins = c;
@@ -116,7 +116,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         // PDF clips a placed plot to the printable area: blank the rest of the sheet.
         raster::blank_outside_printable(&mut pm, &sheet.printable, k);
     }
-    pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
+    raster::encode_png(&pm).ok_or_else(|| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
