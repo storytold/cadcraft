@@ -233,6 +233,26 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
     }
 }
 
+/// `Services::start_pick` for Linux and the BSDs: the blocking dialog runs on a thread of its
+/// own, so the window keeps answering the desktop while the dialog is open; `ui` is woken when
+/// it answers. If the thread cannot start, `done` is dropped unanswered and the app says the
+/// dialog could not be shown.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn start_pick(ui: egui::Context) -> cadcraft_ui_egui::StartPick {
+    Box::new(move |pick, done| {
+        let ui = ui.clone();
+        let spawned = std::thread::Builder::new().name("file-dialog".into()).spawn(move || {
+            let dialog = file_dialog(&pick);
+            let picked = if matches!(pick, Pick::Save(_)) { dialog.save_file() } else { dialog.pick_file() };
+            done(picked.map(|p| p.to_string_lossy().to_string()));
+            ui.request_repaint();
+        });
+        if let Err(e) = spawned {
+            log::warn!("file dialog: {e}");
+        }
+    })
+}
+
 /// The blocking dialog for `pick` (Windows, Linux, FreeBSD).
 fn file_dialog(pick: &Pick) -> rfd::FileDialog {
     let dialog = filters(pick).iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
@@ -616,6 +636,13 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "macos")]
             if let Some(window) = cc.winit_window().cloned() {
                 app.services.start_pick = Some(sheet::start_pick(window, cc.egui_ctx.clone()));
+            }
+            // On Linux and the BSDs the dialog is the desktop portal's, another process: waiting
+            // for it in the event handler leaves the window unanswered for as long as it is open,
+            // and the desktop then offers to force-quit the app.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                app.services.start_pick = Some(start_pick(cc.egui_ctx.clone()));
             }
             let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
