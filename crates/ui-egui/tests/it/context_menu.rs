@@ -214,6 +214,7 @@ fn quick_right_click_cancels_a_palette_placement_only() {
     app.session.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();
     let handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
     app.session.execute("block", &json!({ "name": "BOLT", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+    app.options.time_sensitive_right_click = true;
     let at = egui::pos2(800.0, 500.0);
     let click = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE };
     let right_click = |app: &mut CadApp| {

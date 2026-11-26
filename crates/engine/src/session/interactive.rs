@@ -60,7 +60,9 @@ impl Session {
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
             return Err(EngineError::Disabled(id.into(), why));
         }
-        self.last_command = Some(id.to_string());
+        if !matches!(id, "bclose" | "bsave" | "bsaveas") {
+            self.last_command = Some(id.to_string());
+        }
         self.echo(format!("Command: {}", id.to_ascii_uppercase()));
         let guarded = guard::Guarded::wrap(machine);
         let st = self.state()?;
@@ -171,7 +173,9 @@ impl Session {
             // The outer command stays the one Enter repeats.
             self.echo(format!(">>{}", spec.id.to_ascii_uppercase()));
         } else {
-            self.last_command = Some(spec.id.to_string());
+            if !matches!(spec.id, "bclose" | "bsave" | "bsaveas") {
+                self.last_command = Some(spec.id.to_string());
+            }
             self.echo(format!("Command: {}", spec.id.to_ascii_uppercase()));
         }
         match spec.interactive {

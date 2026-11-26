@@ -103,4 +103,105 @@ mod hatch_pick_tests {
         // The double-click (at the hatch's centre grip) only opens the dialog: no grip edit.
         assert!(app.session.running.is_none(), "{:?}", app.session.running.as_ref().map(|r| r.machine.name()));
     }
+
+    fn run_frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) {
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        app.logic(ctx);
+        let input = egui::RawInput { screen_rect: screen, events, time: Some(time), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn right_clicking_an_unselected_block_reference_selects_it_and_offers_bedit() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        assert!(!app.options.time_sensitive_right_click, "standard CAD shortcut menu is the default");
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "PART", "base": [0, 0], "handles": [l] })).unwrap();
+        app.session.set_selection(Vec::new());
+        let _ = app.session.zoom_extents();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
+        let rbtn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![rbtn(true), rbtn(false)], 0.2);
+
+        assert_eq!(app.session.selection().len(), 1, "right-click on unselected block selects it");
+        let has_bedit =
+            crate::context_menu::entries(&app).into_iter().flatten().any(|e| matches!(e, crate::menus::Entry::Item { id, .. } if id == "bedit"));
+        assert!(has_bedit, "context menu offers Block Editor");
+        crate::context_menu::choose(&mut app, "bedit");
+        assert_eq!(app.session.state().unwrap().block_editor(), Some("PART"), "choosing Block Editor enters BEDIT");
+    }
+
+    #[test]
+    fn right_click_inside_block_editor_opens_menu_and_never_kicks_user_out() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "PART", "base": [0, 0], "handles": [l] })).unwrap();
+        app.run("bedit", json!({ "name": "PART" })).unwrap();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = egui::pos2(800.0, 500.0);
+        let rbtn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![rbtn(true), rbtn(false)], 0.15);
+        run_frame(&mut app, &ctx, Vec::new(), 0.2);
+
+        assert_eq!(app.session.state().unwrap().block_editor(), Some("PART"), "right-click stays inside Block Editor");
+        assert!(app.session.running.is_none(), "quick right-click does not start a command");
+        let be_items: Vec<(String, bool)> = crate::context_menu::entries(&app)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| match e {
+                crate::menus::Entry::Item { id, enabled, .. } => Some((id, enabled)),
+                _ => None,
+            })
+            .collect();
+        assert!(be_items.iter().any(|(id, en)| id == "bsave" && !en), "bsave is disabled when clean: {be_items:?}");
+        assert!(be_items.iter().any(|(id, en)| id == "bclose" && *en), "bclose is enabled: {be_items:?}");
+        app.run("line", json!({ "points": [[0, 2], [5, 2]] })).unwrap();
+        let bsave_on = crate::context_menu::entries(&app)
+            .into_iter()
+            .flatten()
+            .any(|e| matches!(e, crate::menus::Entry::Item { id, enabled, .. } if id == "bsave" && enabled));
+        assert!(bsave_on, "bsave enables once block has unsaved changes");
+        app.start("bclose");
+        app.session.input(cadcraft_engine::Input::Keyword("No".into())).unwrap();
+        assert_eq!(app.session.state().unwrap().block_editor(), None);
+        assert_ne!(app.session.last_command.as_deref(), Some("bclose"), "interactive bclose does not pollute last_command");
+        let has_repeat_bclose =
+            crate::context_menu::entries(&app).into_iter().flatten().any(|e| matches!(e, crate::menus::Entry::Item { id, .. } if id == "bclose"));
+        assert!(!has_repeat_bclose, "Model Space menu never offers Repeat BCLOSE");
+    }
+
+    #[test]
+    fn time_sensitive_right_click_opt_in_does_not_kick_user_out_of_block_editor() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("options", json!({"timeSensitiveRightClick": true})).unwrap();
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "PART", "base": [0, 0], "handles": [l] })).unwrap();
+        app.run("bedit", json!({ "name": "PART" })).unwrap();
+        app.run("bclose", json!({ "save": false })).unwrap();
+        assert_ne!(app.session.last_command.as_deref(), Some("bclose"), "bclose must not linger as repeatable last_command");
+        app.run("bedit", json!({ "name": "PART" })).unwrap();
+        assert_eq!(app.session.last_command, None, "entering BEDIT clears last_command");
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = egui::pos2(800.0, 500.0);
+        let rbtn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![rbtn(true)], 0.2);
+        run_frame(&mut app, &ctx, vec![rbtn(false)], 0.25);
+        run_frame(&mut app, &ctx, Vec::new(), 0.3);
+
+        assert_eq!(app.session.state().unwrap().block_editor(), Some("PART"), "quick right-click never kicks user out of BEDIT");
+    }
 }

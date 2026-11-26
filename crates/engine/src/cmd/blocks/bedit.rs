@@ -147,6 +147,9 @@ fn open_closed(s: &mut Session, name: &str, create: bool) -> Result<Value> {
     let new = create && !name.eq_ignore_ascii_case(crate::blockedit::CURRENT_DRAWING) && s.doc()?.block(name).is_none();
     s.state_mut()?.open_block_editor(name, create)?;
     let name = s.state()?.block_editor().unwrap_or(name).to_string();
+    // Entering the Block Editor clears `last_command` so Enter or a time-sensitive quick
+    // right-click inside the editor never accidentally re-runs BEDIT or BCLOSE.
+    s.last_command = None;
     // The block's objects with room around them (and the editor's bar above them).
     s.zoom_extents()?;
     let c = s.state()?.view().center;
@@ -237,6 +240,9 @@ fn close(s: &mut Session, save: bool) -> Result<Value> {
     let name = st.block_editor().unwrap_or_default().to_string();
     let saved = save && st.block_unsaved();
     s.state_mut()?.close_block_editor(save)?;
+    if s.last_command.as_deref().is_some_and(|c| matches!(c, "bclose" | "bedit")) {
+        s.last_command = None;
+    }
     if saved {
         s.echo(format!("Block \"{name}\" saved."));
     }

@@ -40,7 +40,7 @@ const GROUP: &[&str] = &["group", "ungroup"];
 /// With a selection: selection tools.
 const SELECT: &[&str] = &["addselected", "selectsimilar", "ai_deselect"];
 const VIEW: &[&str] = &["u", "redo", "pan", "zoom"];
-const TOOLS: &[&str] = &["qselect", "find"];
+const TOOLS: &[&str] = &["qselect", "quickcalc", "find"];
 /// Last in the menu: Properties with a selection, Options always.
 const SETTINGS: &[&str] = &["options"];
 
@@ -95,9 +95,11 @@ fn push(groups: &mut Vec<Vec<Entry>>, group: Vec<Entry>) {
 pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut groups = Vec::new();
     let mut first = Vec::new();
-    if let Some(last) = app.session.last_command.as_deref().and_then(find_command) {
+    if let Some(last) = app.session.last_command.as_deref().and_then(find_command)
+        && crate::clipboard::offered(&app.session, last)
+    {
         let label = crate::tf!("Repeat {command}", command = last.id.to_ascii_uppercase());
-        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: crate::clipboard::offered(&app.session, last) });
+        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: true });
     }
     let recent: Vec<Entry> = app
         .session
@@ -114,8 +116,19 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     first.extend(sub("Recent Commands", recent));
     push(&mut groups, first);
     // In the Block Editor: save the block or go back to the drawing.
-    if app.session.state().is_ok_and(|st| st.block_edit.is_some()) {
-        push(&mut groups, items(app, &["bsave", "bsaveas", "bclose"]));
+    if let Ok(st) = app.session.state()
+        && st.block_edit.is_some()
+    {
+        let unsaved = st.block_unsaved();
+        let mut be = items(app, &["bsave", "bsaveas", "bclose"]);
+        for e in &mut be {
+            if let Entry::Item { id, enabled, .. } = e
+                && id == "bsave"
+            {
+                *enabled = *enabled && unsaved;
+            }
+        }
+        push(&mut groups, be);
     }
     let mut clip: Vec<Entry> = sub("Clipboard", items(app, CLIPBOARD)).into_iter().collect();
     clip.extend(sub("Isolate", items(app, ISOLATE)));
@@ -156,6 +169,7 @@ fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
             if ents.iter().any(|e| matches!(&e.kind, EntityKind::Insert(i) if !i.attribs.is_empty())) {
                 v.push(("attedit", Some("Edit Attributes...")));
             }
+            v.push(("explode", None));
             v
         }
         EntityKind::Hatch(_) => vec![("hatchedit", None), ("hatchgenerateboundary", None)],

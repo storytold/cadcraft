@@ -16,7 +16,7 @@
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
-//! | `timeSensitiveRightClick` | a quick right-click is Enter (between commands it runs what was typed, or repeats the last command) and holding the button opens the shortcut menu (default); `false`: `rightClickCommand` decides while a command runs, `rightClickDefault` and `rightClickEdit` between commands |
+//! | `timeSensitiveRightClick` | `false` (default): `rightClickCommand` decides while a command runs, `rightClickDefault` and `rightClickEdit` between commands (standard shortcut menus); `true`: a quick right-click is Enter and holding the button opens the shortcut menu |
 //! | `rightClickDuration` | how long the right button is held to open the menu while a command runs, 100–2000 ms (250) |
 //! | `rightClickDefault`, `rightClickEdit` | with the time-sensitive right-click off, a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
 //! | `rightClickCommand` | a right-click while a command runs, with the time-sensitive right-click off: `"menu"` (default), `"enter"`, or `"menuWithOptions"` (the menu when the prompt has options, else Enter) |
@@ -167,7 +167,7 @@ impl Default for UiOptions {
             paper_background: None,
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
-            time_sensitive_right_click: true,
+            time_sensitive_right_click: false,
             right_click_hold_ms: (crate::context_menu::HOLD_SECS * 1000.0) as u32,
             right_click_default: IdleClick::Menu,
             right_click_edit: IdleClick::Menu,
