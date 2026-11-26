@@ -103,6 +103,10 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The value asked for is an angle about the base (a rotation grip): Dynamic Input shows one
+    /// angle box, with the command's live value ([`Interactive::live_value`]).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub angle: bool,
     /// The prompt takes a block's name as well as its keywords: a Greek word that is an existing
     /// block's name is that block, not a keyword read from its Latin keys.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -152,6 +156,11 @@ impl Prompt {
     /// The grip being stretched (the `grip` field).
     pub fn grip(mut self, g: (Handle, usize)) -> Self {
         self.grip = Some(g);
+        self
+    }
+    /// An angle about the base is asked for (the `angle` field).
+    pub fn angle(mut self) -> Self {
+        self.angle = true;
         self
     }
     /// The visual chooser the UI can show (the `picker` field).
@@ -326,6 +335,24 @@ pub trait Interactive: Send {
     fn preview_objects(&self, _s: &Session, _cursor: Vec2) -> Vec<cadcraft_doc::Entity> {
         Vec::new()
     }
+    /// The value the cursor would give, as the prompt asks for it (an angle as the drawing
+    /// shows angles): what Dynamic Input shows in its box before anything is typed.
+    fn live_value(&self, _s: &Session, _cursor: Vec2) -> Option<String> {
+        None
+    }
+    /// What the rollover highlight shows of the object `h` under the cursor, when it is not the
+    /// whole object (TRIM: the piece a click there removes; EXTEND: what it adds). `None`: the
+    /// whole object, as for any other command.
+    fn highlight(&self, _s: &Session, _h: cadcraft_doc::Handle, _cursor: Vec2) -> Option<Vec<EntityKind>> {
+        None
+    }
+    /// What the running command will change wherever the cursor is, highlighted in place of the
+    /// object under it (TRIM's Fence and Crossing: every piece the fence or the window will
+    /// remove), each with the handle of the object it is part of. `None`: nothing of the kind,
+    /// and the object under the cursor is highlighted as [`Interactive::highlight`] says.
+    fn highlight_all(&self, _s: &Session, _cursor: Vec2) -> Option<Vec<(cadcraft_doc::Handle, EntityKind)>> {
+        None
+    }
     /// The preview as existing objects under one transform, when it is that (MOVE, COPY,
     /// ROTATE, SCALE). The UI then draws them from geometry uploaded once instead of rebuilding
     /// the transformed copies every frame; `None` falls back to [`Interactive::preview`].
@@ -347,6 +374,28 @@ pub trait Interactive: Send {
     /// only its preview set); `None` shows the drawing.
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
+    }
+    /// The attribute values the command waits for, all at once, when the UI should ask for them
+    /// in the Edit Attributes dialog (INSERT with ATTDIA 1). Typed answers still work.
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        None
+    }
+    /// The live parameters of the running array (ARRAYRECT / ARRAYPOLAR), for the array window.
+    fn array_live(&self) -> Option<crate::ArrayLive> {
+        None
+    }
+    /// Replace the running array's live parameters, as the array window's fields change them.
+    fn set_array_live(&mut self, _s: &mut Session, _v: &crate::ArrayLive) -> Result<()> {
+        Err(crate::EngineError::Other("this command has no live array parameters".into()))
+    }
+    /// Put the command back at its Main option loop (the state eXit/Enter finishes from).
+    /// False when the command cannot commit yet (e.g. the polar centre is still unspecified).
+    fn array_set_main(&mut self) -> bool {
+        false
+    }
+    /// Ask the next canvas point to be the polar centre. False when the command has no centre.
+    fn array_pick_center(&mut self) -> bool {
+        false
     }
 }
 
@@ -387,6 +436,48 @@ pub enum EditorKind {
     Line,
     /// A dimension's text: `<>` stands for the measured value, shown as `measured`.
     Dimension { measured: String },
+}
+
+/// See [`Interactive::attribute_entry`]: the block being inserted and the attributes asked for,
+/// in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttribEntry {
+    pub block: String,
+    pub rows: Vec<AttribAsk>,
+    /// The drawing the command runs in ([`crate::DocState::uid`]) and its number in
+    /// [`Session::commands_started`], stamped by [`Session::attribute_entry`]: a dialog draft
+    /// belongs to one command, so a command started afterwards never takes it.
+    pub drawing: u64,
+    pub command: u64,
+}
+
+/// One attribute an INSERT asks for: its tag, prompt and default value; the value of a Verify
+/// one is asked again once every value is in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AttribAsk {
+    pub tag: String,
+    pub prompt: String,
+    pub default: String,
+    pub verify: bool,
+}
+
+impl AttribEntry {
+    /// An entry as the command builds it, before [`Session::attribute_entry`] stamps the drawing
+    /// and command number it belongs to.
+    pub(crate) fn idle(block: String, rows: Vec<AttribAsk>) -> Self {
+        AttribEntry { block, rows, drawing: 0, command: 0 }
+    }
+
+    /// The answers that give the attributes `values` (one per row, in order; a missing one is
+    /// the default) when typed in turn: every value, then each Verify attribute's again, as
+    /// INSERT asks them once the dialog has shown the values.
+    pub fn answers(&self, values: &[String]) -> Vec<String> {
+        let value = |i: usize| values.get(i).cloned().unwrap_or_else(|| self.rows.get(i).map(|r| r.default.clone()).unwrap_or_default());
+        let mut out: Vec<String> = (0..self.rows.len()).map(value).collect();
+        let verify: Vec<String> = self.rows.iter().enumerate().filter(|(_, r)| r.verify).map(|(i, _)| value(i)).collect();
+        out.extend(verify);
+        out
+    }
 }
 
 /// See [`Interactive::drag`].

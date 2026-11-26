@@ -118,7 +118,7 @@ numbers):
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski) and Georgian (ქართული), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski), Georgian (ქართული) and Tamil (தமிழ், with an installed Tamil font), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -344,7 +344,9 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `cadcraft-<ver>-windows-x64.msi` | `cadcraft-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `cadcraft-<ver>-windows-arm64.msi` | `cadcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `cadcraft-<ver>-windows-x86.msi` | `cadcraft-<ver>-windows-x86-portable.zip` |
+
+For 32-bit Windows, [CADCraft v0.18.0](https://github.com/storytold/cadcraft/releases/tag/v0.18.0)
+was the last release with both an x86 MSI and portable ZIP.
 
 Installers and executables are code-signed.
 
@@ -381,15 +383,19 @@ and web backend defaults are unchanged.
 | Flatpak | `cadcraft-<ver>-linux-x86_64.flatpak` | `cadcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `cadcraft-<ver>-linux-x86_64.deb` | `cadcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `cadcraft-<ver>-linux-x86_64.rpm` | `cadcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux | `cadcraft-<ver>-linux-x86_64.pkg.tar.zst` | `cadcraft-<ver>-linux-aarch64.pkg.tar.zst` | |
 | Tarball | `cadcraft-<ver>-linux-x86_64.tar.gz` | `cadcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
+RISC-V (riscv64) packages are `cadcraft-<ver>-linux-riscv64.deb`,
+`cadcraft-<ver>-linux-riscv64.rpm`, and `cadcraft-<ver>-linux-riscv64.tar.gz`. They are
+cross-compiled and need glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
 ### FreeBSD
 
 | Build | File |
 |---|---|
 | x86_64 | `cadcraft-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `cadcraft-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 

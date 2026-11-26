@@ -3,21 +3,39 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-/// A marker must be a file. Prove the data folder is writable before selecting it.
-pub(crate) fn directory_in(exe_dir: &Path) -> std::io::Result<Option<PathBuf>> {
-    if !exe_dir.join("portable.txt").is_file() {
-        return Ok(None);
-    }
-    let data = exe_dir.join("CADCraftData");
-    std::fs::create_dir_all(&data)?;
-    let probe = data.join(format!(".portable-write-test-{}", std::process::id()));
-    // A byte, not just an empty file: a full drive can still make the file and refuse its data.
+/// The marker file a portable copy ships beside `cadcraft.exe`.
+pub(crate) const PORTABLE_MARKER: &str = "portable.txt";
+
+/// The settings folder a portable copy keeps beside the executable.
+pub(crate) const PORTABLE_DATA_DIR: &str = "CADCraftData";
+
+/// The marker path, when `dir` holds a marker file (not a directory of that name).
+pub(crate) fn portable_marker(dir: &Path) -> Option<PathBuf> {
+    let marker = dir.join(PORTABLE_MARKER);
+    marker.is_file().then_some(marker)
+}
+
+/// Prove `dir` is writable with the one exclusive probe this app uses: a fresh file holding a byte
+/// (a full drive can still create an empty file and refuse its data) and its flush, removed again.
+/// The nightly profile check and the portable check share it, so both test the same thing.
+pub(crate) fn probe(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let probe = dir.join(format!(".portable-write-test-{}", std::process::id()));
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe)?;
     let written = file.write_all(&[0]).and_then(|()| file.sync_all());
     drop(file);
     let removed = std::fs::remove_file(&probe);
     written?;
-    removed?;
+    removed
+}
+
+/// A marker must be a file. Prove the data folder is writable before selecting it.
+pub(crate) fn directory_in(exe_dir: &Path) -> std::io::Result<Option<PathBuf>> {
+    if portable_marker(exe_dir).is_none() {
+        return Ok(None);
+    }
+    let data = exe_dir.join(PORTABLE_DATA_DIR);
+    probe(&data)?;
     Ok(Some(data))
 }
 

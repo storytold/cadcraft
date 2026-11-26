@@ -901,6 +901,80 @@ fn attributes_draw_with_their_own_transparency() {
     assert!(build(&d, &Space::Model, &Options::default()).prims.iter().all(|p| p.transparency == 0));
 }
 
+/// A block "K" with a line along y = 0 and the definition `def` (its text at y = 1), referenced
+/// at `at` with `attribs`, under ATTMODE `attmode`: the points drawn above the line.
+fn drawn_above_line(def: cadcraft_doc::Attrib, attribs: Vec<cadcraft_doc::Attrib>, attmode: i64, at: Vec3) -> Vec<cadcraft_geom::Vec2> {
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("ATTMODE", attmode);
+    let mut blk = cadcraft_doc::Block::new("K");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    blk.entities.push(block_entity(2, Common::default(), EntityKind::AttDef(def)));
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.insert = at;
+    ins.attribs = attribs;
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    l.prims.iter().flat_map(|p| l.points(p).iter().copied()).filter(|p| p.y > at.y + 0.5).collect()
+}
+
+fn constant(invisible: bool) -> cadcraft_doc::Attrib {
+    cadcraft_doc::Attrib { constant: true, invisible, ..attrib("C") }
+}
+
+#[test]
+fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
+    // #3413: a constant value isn't copied into the reference's attributes; the block draws it.
+    let at = Vec3::new(100.0, 200.0, 0.0);
+    let pts = drawn_above_line(constant(false), vec![], 1, at);
+    assert!(!pts.is_empty(), "the constant value is drawn");
+    // Where the definition puts it, moved with the reference.
+    assert!(pts.iter().all(|p| p.x > at.x && p.x < at.x + 10.0 && p.y < at.y + 3.0), "{pts:?}");
+    // A variable definition draws nothing from the block (its attribute is drawn instead).
+    assert!(drawn_above_line(attrib("C"), vec![], 1, at).is_empty());
+    // A reference that carries an attribute for the constant (placed, as attributes are, in
+    // drawing coordinates where the definition's text lands) draws it once, not twice.
+    let mut own = attrib("c");
+    own.text.insert = own.text.insert + at;
+    assert_eq!(drawn_above_line(constant(false), vec![own], 1, at).len(), pts.len());
+}
+
+#[test]
+fn many_constant_definitions_are_matched_to_the_attributes_without_comparing_every_pair() {
+    // #1923: a reference with N attributes of a block with N constant definitions, the tags N long
+    // ones alike up to their last characters, no attribute's a definition's. Asking for each
+    // definition whether the reference carries its tag by comparing it with every attribute cost
+    // N x N comparisons of whole tags for each copy drawn (many seconds here); gathering the
+    // reference's tags once costs milliseconds. The values are empty and the attributes invisible,
+    // so drawing them costs nothing.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("K");
+    for (h, i) in (1..).zip(0..N) {
+        let mut a = cadcraft_doc::Attrib { constant: true, ..attrib(&tag('D', i)) };
+        a.text.value.clear();
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| cadcraft_doc::Attrib { invisible: true, ..attrib(&tag('A', i)) }).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    build(&d, &Space::Model, &Options::default());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
+fn constant_attribute_definitions_follow_attmode() {
+    let at = Vec3::ZERO;
+    // ATTMODE 0 hides every attribute; 1 the invisible ones; 2 shows them all.
+    assert!(drawn_above_line(constant(false), vec![], 0, at).is_empty());
+    assert!(drawn_above_line(constant(true), vec![], 1, at).is_empty());
+    assert!(!drawn_above_line(constant(true), vec![], 2, at).is_empty());
+}
+
 #[test]
 fn attributes_follow_the_reference_layer_and_have_no_definition() {
     use cadcraft_doc::Transparency::Percent;
@@ -1299,7 +1373,8 @@ fn raster_hatch_pattern_matches_one_by_one() {
 #[test]
 fn ole_frame_draws_its_outline() {
     let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
-    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let frame =
+        |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_imperial();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
     d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
@@ -1331,6 +1406,51 @@ fn without_linetypes_every_line_is_drawn_whole() {
     assert_eq!(dashed.tris, continuous.tris);
     let drawn = build(&drawing("DASHED"), &Space::Model, &Options::default());
     assert!(drawn.prims.len() > 2 * continuous.prims.len(), "drawn with its linetype: {} primitives", drawn.prims.len());
+}
+
+/// A proxy draws its proxy graphics like block contents: layer 0 and ByBlock in the picture are
+/// the proxy's own, and the proxy's layer hides all of it.
+#[test]
+fn proxy_graphics_draw_like_block_contents() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Notes".into(), color: Color::Index(3), ..Default::default() });
+    let byblock = Common { color: Color::ByBlock, ..Default::default() };
+    let graphics = vec![
+        block_entity(7, byblock, EntityKind::Line(cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })),
+        block_entity(
+            7,
+            Common { color: Color::Index(1), ..Default::default() },
+            EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(15.0, 0.0, 0.0), radius: 5.0 }),
+        ),
+    ];
+    let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Default::default() }, proxy).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims.iter().map(|p| p.color).collect::<Vec<_>>(), [Rgb(0, 255, 0), Rgb(255, 0, 0)]);
+    let b = d.extents(&Space::Model);
+    assert!((b.min.x, b.max.x, b.max.y) == (0.0, 20.0, 5.0), "{b:?}");
+    d.layer_mut("Notes").unwrap().frozen = true;
+    assert!(build(&d, &Space::Model, &Options::default()).prims.is_empty());
+}
+
+/// On a locked layer, a proxy's graphics fade like a block's contents: layer 0 in the picture takes
+/// the proxy's fade, a ByBlock part on an unlocked layer only the proxy's own transparency.
+#[test]
+fn proxy_graphics_on_a_locked_layer_fade_like_block_contents() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    for (own, want) in [(ByLayer, 0), (Percent(20), 20)] {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let line = |x: f64| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 1.0, 0.0, 0.0) });
+        let graphics = vec![
+            block_entity(7, Common::default(), line(0.0)),
+            block_entity(7, Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() }, line(2.0)),
+        ];
+        let proxy = EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "ACAD_PROXY_ENTITY".into(), tags: Vec::new(), graphics });
+        d.add(&Space::Model, Common { layer: "Locked".into(), transparency: own, ..Default::default() }, proxy).unwrap();
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![50.max(want), want], "{own:?}");
+    }
 }
 
 /// A broken table whose parts, with their repeated labels, together hold more cells than a table may

@@ -857,7 +857,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
         let w = (ui.available_width() - 150.0).max(80.0);
         ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text(crate::tl!("Filter")).desired_width(w));
         let view_label = ui.label(crate::tl!("View"));
-        craft_ui::ComboBox::from_id_salt("blocks-view")
+        egui::ComboBox::from_id_salt("blocks-view")
             .selected_text(st.view.label())
             .show_ui(ui, |ui| {
                 for v in View::ALL {

@@ -166,6 +166,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::bedit::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::wblock::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
     }
@@ -368,6 +371,7 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
             "ka" => "This build has no Georgian font, so the interface stays in English. Build with craft-fonts (its Geor face) to use Georgian.",
+            "ta" => "No Tamil font is installed, so the interface stays in English. Install one (Noto Sans Tamil or Lohit Tamil, for example) to use Tamil.",
             _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
@@ -524,7 +528,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.start_tab = false;
             Ok(Value::Null)
         }
-        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+        "export" | "exp" | "import" | "imp" | "pdfimport" | "pdfi" | "publish" | "preview" | "pre"
+            if params.is_null() && app.session.state().is_ok() =>
+        {
             return Some(crate::exchange::route(app, id));
         }
         "ui.hidepalettes" => {
@@ -624,6 +630,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         // Hatch Edit dialog. -HATCH, -HATCHEDIT and JSON calls keep the command line and the JSON form.
         "hatch" | "h" | "bh" | "gradient" | "gd" if params.is_null() && crate::hatchdlg::dialog_on(app) => {
             crate::hatchdlg::open_create(app, matches!(id, "gradient" | "gd"));
+            Ok(Value::Null)
+        }
+        // Typed or from a menu (no parameters): ARRAYRECT and ARRAYPOLAR start the real command and
+        // open the Array window on it. ARRAY and -ARRAY stay on the command line, and JSON calls
+        // keep the JSON form.
+        "arrayrect" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Rectangular);
+            Ok(Value::Null)
+        }
+        "arraypolar" if params.is_null() => {
+            crate::arraydlg::open(app, cadcraft_engine::ArrayLiveKind::Polar);
             Ok(Value::Null)
         }
         // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
@@ -741,7 +758,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     };
     for c in cadcraft_engine::command_specs() {
         if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
+            add(c.menu, c.label, c.id, c.shortcut, crate::clipboard::offered(&app.session, c));
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
@@ -869,7 +886,7 @@ pub fn activate(app: &mut CadApp, id: &str) {
         run_transparent(app, id);
         return;
     }
-    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+    if id == "xref" && app.ui.docking.layout().contains(&crate::docking::Panel::ExternalRefs) {
         if let Err(e) = crate::xrefs::close_palette(app) {
             app.set_status(e);
         }
@@ -894,14 +911,36 @@ pub fn activate_native(app: &mut CadApp, ctx: &egui::Context, id: &str) {
             app.synthetic.extend(events);
             ctx.request_repaint();
         }
-        TextCommand::Events(events) => craft_ui::docking::send_keys(ctx, window, events),
+        TextCommand::Events(events) => {
+            // The menu took the key from the floating panel's own window: it reaches that window as the key pressed.
+            let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+            let platform = craft_keymap::egui::platform(ctx);
+            for equivalent in events.iter().filter_map(|event| key_equivalent(event, platform)) {
+                host.key_equivalent(window, equivalent);
+            }
+        }
     }
 }
 
-/// The window whose text field has the keyboard: a floating panel's own OS window, or the main
-/// window.
+/// The key equivalent the native menu took for `event`: a copy, a cut, or a key press as a tap of its chord.
+fn key_equivalent(event: &egui::Event, platform: craft_keymap::Platform) -> Option<craft_ui::runtime::windows::KeyEquivalent> {
+    use craft_ui::runtime::windows::KeyEquivalent;
+    match event {
+        egui::Event::Copy => Some(KeyEquivalent::Copy),
+        egui::Event::Cut => Some(KeyEquivalent::Cut),
+        egui::Event::Key { key, pressed: true, modifiers, .. } => {
+            let key = craft_keymap::Key::from_egui(*key)?;
+            Some(KeyEquivalent::Tap(craft_keymap::Chord::new(craft_keymap::Mods::from_egui(modifiers, platform), key)))
+        }
+        _ => None,
+    }
+}
+
+/// The window whose text field has the keyboard: the window that has the keys (a floating panel's own OS window, or
+/// the main window) while a text field there has the focus.
 pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
-    craft_ui::docking::typing_window(ctx).or_else(|| ctx.text_edit_focused().then_some(egui::ViewportId::ROOT))
+    let host = craft_ui::runtime::windows::WindowHost::of(ctx);
+    host.typing().then(|| host.key_window())
 }
 
 /// Whether a focused text field takes the menu command `id` ([`activate_native`]): a native
@@ -998,6 +1037,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.ui.dialog.as_deref() != Some(crate::keys::DIALOG) {
         crate::keys::stop_recording(ctx);
     }
+    let float_edits = std::mem::take(&mut app.fired_edits);
     if crate::keys::recording(ctx) {
         return;
     }
@@ -1006,25 +1046,51 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     if app.closing.is_some() {
         return;
     }
+    crate::clipboard::pump(app, ctx);
     // A palette toggle is global even while its expression field owns keyboard focus.
     let quickcalc = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num8);
     if pairs.iter().any(|(s, id)| *s == quickcalc && id == "ui.toggle.quickcalc") && ctx.input_mut(|i| i.consume_shortcut(&quickcalc)) {
         run_transparent(app, "ui.toggle.quickcalc");
     }
-    if ctx.egui_wants_keyboard_input() {
+    if crate::framework::widget_has_keyboard(ctx) {
         return;
     }
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
-    let mut fire: Vec<String> = crate::clipboard::shortcut_commands(app, ctx).into_iter().map(str::to_string).collect();
+    let mut fire: Vec<String> = Vec::new();
+    let mut pasted_table = false;
+    for action in crate::clipboard::shortcut_actions(app, ctx, float_edits) {
+        match action {
+            crate::clipboard::ShortcutAction::Command(id) => {
+                let id = id.to_string();
+                if !fire.contains(&id) {
+                    fire.push(id);
+                }
+            }
+            crate::clipboard::ShortcutAction::PasteTable(tsv) => {
+                pasted_table = true;
+                app.cmd.buffer.clear();
+                if let Err(e) = app.session.start_paste_table(&tsv, None) {
+                    app.session.echo(e.to_string());
+                }
+            }
+        }
+    }
+    // The first `read` commands come from this frame's clipboard events, whose `Paste` has been read.
+    let read = fire.len();
     ctx.input_mut(|i| {
         for (s, id) in &pairs {
-            if i.consume_shortcut(s) && !fire.contains(id) {
+            if i.consume_shortcut(s) && !(pasted_table && matches!(id.as_str(), "pasteclip" | "pasteblock")) && !fire.contains(id) {
                 fire.push(id.clone());
             }
         }
     });
-    for id in fire {
+    for (n, id) in fire.into_iter().enumerate() {
         let id = id.as_str();
+        // A paste command bound to another key has read nothing yet: it is held like a menu paste.
+        if let Some(id) = crate::clipboard::paste_id(id).filter(|_| n < read) {
+            crate::clipboard::run_read(app, id);
+            continue;
+        }
         // ISOPLANE (F5, Ctrl+E) switches the plane without cancelling the active command.
         if id == "isoplane" {
             if let Some(m) = app.session.execute(id, &json!({})).ok().and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_string)) {

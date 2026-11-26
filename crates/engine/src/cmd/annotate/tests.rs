@@ -319,6 +319,46 @@ fn dimtedit_and_dimspace() {
 }
 
 #[test]
+fn dimspace_auto_uses_the_base_dimension_text_height_and_scale() {
+    let mut s = Session::new();
+    let text_height = 3.0;
+    let scale = 1.5;
+    s.execute("dimstyle", &json!({ "name": "Base", "DIMTXT": 2, "DIMDLI": 7, "DIMSCALE": scale })).unwrap();
+    let base = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 4] })).unwrap());
+    s.execute("dimoverride", &json!({ "handles": [base.hex()], "DIMTXT": text_height })).unwrap();
+    s.execute("dimstyle.current", &json!({ "name": "Standard" })).unwrap();
+    let first = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [20, 0], "at": [10, 20] })).unwrap());
+    let second = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [30, 0], "at": [15, 36] })).unwrap());
+
+    s.execute("dimspace", &json!({ "base": base.hex(), "handles": [first.hex(), second.hex()] })).unwrap();
+
+    let positions = [base, first, second].map(|handle| dim(&s, handle).defpt.y);
+    let expected_spacing = 2.0 * text_height * scale;
+    assert!((positions[0] - 4.0).abs() < 1e-9, "positions: {positions:?}");
+    assert!(positions.windows(2).all(|pair| (pair[1] - pair[0] - expected_spacing).abs() < 1e-9), "positions: {positions:?}");
+}
+
+#[test]
+fn dimspace_auto_uses_the_base_dimension_fixed_text_style_height() {
+    let mut s = Session::new();
+    let fixed_height = 2.5;
+    s.execute("style", &json!({ "name": "Fixed", "height": fixed_height })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "Base", "DIMTXSTY": "Fixed", "DIMTXT": 3, "DIMDLI": 7, "DIMSCALE": 2 })).unwrap();
+    let base = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 4] })).unwrap());
+    s.execute("dimstyle.current", &json!({ "name": "Standard" })).unwrap();
+    let target = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [20, 0], "at": [10, 20] })).unwrap());
+
+    s.start("dimspace").unwrap();
+    s.input(Input::Pick(vec![base])).unwrap();
+    s.input(Input::Pick(vec![target])).unwrap();
+    s.input(Input::Enter).unwrap();
+    s.input(Input::Text("Auto".into())).unwrap();
+
+    let spacing = dim(&s, target).defpt.y - dim(&s, base).defpt.y;
+    assert!((spacing - 2.0 * fixed_height).abs() < 1e-9, "spacing: {spacing}");
+}
+
+#[test]
 fn text_style_rename_follows_block_definition_text() {
     let mut s = Session::new();
     s.execute("style", &json!({ "name": "SRC", "height": 1, "backwards": true })).unwrap();
