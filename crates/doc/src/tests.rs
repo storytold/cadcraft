@@ -969,3 +969,22 @@ fn many_attributes_and_definitions_are_matched_without_comparing_every_pair() {
     assert!(!d.extents(&Space::Model).is_empty());
     assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
 }
+
+/// Looking a layer or a block up by name does not scan the table: a file of N layers, or of N
+/// blocks and N references to blocks it does not have, opened in N² name comparisons (#1924).
+#[test]
+fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    const N: usize = 60_000;
+    let mut d = Drawing::new_imperial();
+    d.layers = (0..N).map(|i| Layer::new(&format!("L{i}"))).collect();
+    for i in 0..N {
+        let name = format!("B{i}");
+        d.blocks.insert(name.clone(), std::sync::Arc::new(Block::new(&name)));
+    }
+    let started = std::time::Instant::now();
+    for i in 0..N {
+        assert!(d.layer(&format!("l{i}")).is_some() && d.layer(&format!("M{i}")).is_none());
+        assert!(d.block(&format!("b{i}")).is_some() && d.block(&format!("Z{i}")).is_none());
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}

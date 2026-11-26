@@ -1018,8 +1018,8 @@ impl LayerState {
     pub const ALL: u32 = 2047;
 
     /// A state of every property of `layers`, with `current` the layer restoring makes current.
-    pub fn new(name: impl Into<String>, layers: Vec<Layer>, current: impl Into<String>) -> Self {
-        LayerState { name: name.into(), layers, current: current.into(), ..LayerState::default() }
+    pub fn new(name: impl Into<String>, layers: impl Into<Vec<Layer>>, current: impl Into<String>) -> Self {
+        LayerState { name: name.into(), layers: layers.into(), current: current.into(), ..LayerState::default() }
     }
 }
 
