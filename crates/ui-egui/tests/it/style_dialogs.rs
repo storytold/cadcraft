@@ -9,6 +9,7 @@ use serde_json::json;
 fn menu_items_open_their_dialogs() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     for (cmd, dialog) in [
         ("pagesetup", "pagesetup"),
         ("linetype", "linetype"),
@@ -67,6 +68,7 @@ fn json_calls_never_open_the_dialogs() {
 fn dimstyle_dialog_renders_and_preserves_state() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.cmdline("D");
     assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"));
 
@@ -111,6 +113,7 @@ fn dimstyle_refuses_invalid_values_with_diagnostic() {
 fn dimstyle_dialog_action_updates_style_properties() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     menus::activate(&mut app, "dimstyle");
     assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"));
 

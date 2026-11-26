@@ -22,13 +22,15 @@ The signer-owned files (`.github/workflows/nightly-sign.yml`,
 `.github/nightly-signing-policy.json`, `packaging/windows/sign.ps1`, the macOS nightly signing
 scripts `nightly-sign.sh`/`nightly-verify.sh`/`nightly-lib.sh`/`import-cert.sh` and their
 entitlements, `.github/nightly-linux-signing-key.asc`, and every transitive reusable pin) travel
-on a reviewed `main` → `release` sync and are compared against the previous trusted release, not a
-manifest from `main`. Nightlies share the existing Windows signing identity with stable, so a
+on the dedicated `nightly-signer` branch, which only fast-forwards to reviewed `main` commits, and
+are compared against the previous trusted release, not a manifest from `main`. Its trust closure is
+all of `.github/` and `packaging/`, including `packaging/env.sh`, which `import-cert.sh` sources with
+the Apple keys. Nightlies share the existing Windows signing identity with stable, so a
 suspected key compromise affects both channels: stop nightlies too, and have the identity's owner
 revoke/rotate it.
 
-Before the first run, the shared `craft-common-actions` caller must admit CADCraft (its jobs are
-still gated on PhotoCraft), and the app-side flavor must be in the built channel: a nightly binary
+The shared `craft-common-actions` signer admits CADCraft through its reviewed `nightly-apps.json`
+row at the pinned commit, and the app-side flavor must be in the built channel: a nightly binary
 is refused without `--launch-profile nightly-v1 --profile-root <dir>`, so every Launcher wrapper
 must pass them (see the preparation doc).
 

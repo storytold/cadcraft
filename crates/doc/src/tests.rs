@@ -890,3 +890,101 @@ fn constant_values_count_in_extents_as_attmode_shows_them() {
     assert!(top(1, true) < 40.0);
     assert!(top(2, true) > 40.0, "ATTMODE 2 shows an invisible one");
 }
+
+#[test]
+fn an_attribute_lies_on_the_layer_of_the_first_definition_of_its_tag() {
+    // Two definitions of one tag, in different case, on a frozen layer and on layer 0: an
+    // attribute without a layer of its own (in a third case) lies on the first one's.
+    let top = |defs: [(&str, &str); 2]| {
+        let mut d = Drawing::new_imperial();
+        let mut frozen = Layer::new("AFRZ");
+        frozen.frozen = true;
+        d.layers.push(frozen);
+        let mut blk = Block::new("B");
+        blk.entities.push(on_layer("0", line((0.0, 0.0), (1.0, 1.0)), 1));
+        for (h, (layer, tag)) in (2..).zip(defs) {
+            blk.entities.push(on_layer(layer, EntityKind::AttDef(plain_attrib(tag)), h));
+        }
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+        let mut a = plain_attrib("Tag");
+        a.text.insert = Vec3::new(0.0, 500.0, 0.0);
+        ins.attribs.push(a);
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        extents_pair(&d).1.y
+    };
+    assert!(top([("AFRZ", "TAG"), ("0", "tag")]) < 100.0, "on the first definition's frozen layer");
+    assert!(top([("0", "tag"), ("AFRZ", "TAG")]) > 400.0, "on the first definition's layer 0");
+}
+
+#[test]
+fn constant_definitions_of_one_tag_all_count_unless_the_reference_carries_the_tag() {
+    // Two constant definitions of one tag, in different case: a reference draws both values,
+    // unless it carries an attribute of that tag (in a third case), which stands for both.
+    let max = |attribs: Vec<Attrib>| {
+        let mut d = Drawing::new_imperial();
+        let mut blk = Block::new("B");
+        blk.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+        for (h, tag, at) in [(2, "C", Vec3::new(0.0, 5000.0, 0.0)), (3, "c", Vec3::new(7000.0, 0.0, 0.0))] {
+            let mut a = plain_attrib(tag);
+            a.text.insert = at;
+            a.constant = true;
+            blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(a)));
+        }
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+        ins.attribs = attribs;
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        extents_pair(&d).1
+    };
+    for shown in [max(vec![]), max(vec![plain_attrib("D")])] {
+        assert!(shown.x > 6000.0 && shown.y > 4000.0, "both values count: {shown:?}");
+    }
+    let carried = max(vec![plain_attrib("D"), plain_attrib("Cc"), plain_attrib("C")]);
+    assert!(carried.x < 100.0 && carried.y < 100.0, "neither value counts: {carried:?}");
+}
+
+#[test]
+fn many_attributes_and_definitions_are_matched_without_comparing_every_pair() {
+    // #1923: one reference with N attributes (none with a layer of its own) of a block with N
+    // constant definitions, the tags N long ones alike up to their last characters, no attribute's
+    // a definition's. Comparing each attribute with each definition, for its layer and for which
+    // constant values the reference carries, cost N x N comparisons of whole tags (many seconds
+    // here); one lookup per attribute or definition costs milliseconds.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = Block::new("B");
+    blk.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+    for (h, i) in (2..).zip(0..N) {
+        let mut a = plain_attrib(&tag('D', i));
+        a.constant = true;
+        blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| plain_attrib(&tag('A', i))).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    assert!(!d.extents(&Space::Model).is_empty());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+/// Looking a layer or a block up by name does not scan the table: a file of N layers, or of N
+/// blocks and N references to blocks it does not have, opened in N² name comparisons (#1924).
+#[test]
+fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    const N: usize = 60_000;
+    let mut d = Drawing::new_imperial();
+    d.layers = (0..N).map(|i| Layer::new(&format!("L{i}"))).collect();
+    for i in 0..N {
+        let name = format!("B{i}");
+        d.blocks.insert(name.clone(), std::sync::Arc::new(Block::new(&name)));
+    }
+    let started = std::time::Instant::now();
+    for i in 0..N {
+        assert!(d.layer(&format!("l{i}")).is_some() && d.layer(&format!("M{i}")).is_none());
+        assert!(d.block(&format!("b{i}")).is_some() && d.block(&format!("Z{i}")).is_none());
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}

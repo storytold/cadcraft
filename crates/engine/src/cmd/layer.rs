@@ -297,7 +297,7 @@ fn run_layerp(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
     let snap = d.header.str("CADCRAFT_LAYERP", "");
     let layers: Vec<Layer> = serde_json::from_str(&snap).map_err(|_| bad("layerp", "No previous layer state."))?;
-    d.layers = layers;
+    d.layers = layers.into();
     Ok(json!({"message": "Restored previous layer states."}))
 }
 
@@ -375,7 +375,7 @@ fn run_layuniso(s: &mut Session, _p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
     let snap = d.header.str("CADCRAFT_LAYISO", "");
     let layers: Vec<Layer> = serde_json::from_str(&snap).map_err(|_| bad("layuniso", "No isolated layers."))?;
-    d.layers = layers;
+    d.layers = layers.into();
     ok()
 }
 

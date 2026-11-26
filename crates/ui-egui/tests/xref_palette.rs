@@ -39,9 +39,9 @@ fn xref_opens_the_palette_and_its_buttons_manage_the_xref() {
     assert_eq!(status(&app), Some(XrefStatus::Loaded));
     // Typed (by its alias) it opens the palette instead of listing.
     assert!(app.cmdline("XR").is_none());
-    assert!(app.ui.docking.layout.contains(&Panel::ExternalRefs));
+    assert!(app.ui.docking.layout().contains(&Panel::ExternalRefs));
     app.ui.in_window_menu = false;
-    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -76,7 +76,7 @@ fn xref_opens_the_palette_and_its_buttons_manage_the_xref() {
 #[test]
 fn the_window_menu_item_closes_an_open_palette() {
     let mut app = CadApp::new(Session::default(), Services::default());
-    let open = |app: &CadApp| app.ui.docking.layout.contains(&Panel::ExternalRefs);
+    let open = |app: &CadApp| app.ui.docking.layout().contains(&Panel::ExternalRefs);
     menus::activate(&mut app, "xref");
     assert!(open(&app), "the menu item opens the palette");
     menus::activate(&mut app, "xref");
@@ -93,5 +93,5 @@ fn json_xref_lists_and_never_opens_the_palette() {
     let mut app = CadApp::new(Session::default(), Services::default());
     let r = app.run("xref", json!({})).unwrap();
     assert_eq!(r["xrefs"], json!([]));
-    assert!(!app.ui.docking.layout.contains(&Panel::ExternalRefs));
+    assert!(!app.ui.docking.layout().contains(&Panel::ExternalRefs));
 }

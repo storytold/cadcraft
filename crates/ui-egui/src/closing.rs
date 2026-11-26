@@ -256,7 +256,7 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
                 choice = Some(Choice::Discard);
             }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if crate::framework::escape_pressed(ui.ctx()) {
             choice = Some(Choice::Cancel);
         }
     });
@@ -448,7 +448,10 @@ mod tests {
         use egui::{ViewportCommand, ViewportEvent, ViewportId, ViewportInfo};
         let mut input = egui::RawInput::default();
         input.viewports.insert(ViewportId::ROOT, ViewportInfo { events: vec![ViewportEvent::Close], ..Default::default() });
-        let mut out = ctx.run_ui(input, |ui| app.logic(ui.ctx()));
+        let mut out = ctx.run_ui(input, |ui| {
+            app.logic(ui.ctx());
+            app.close_path(ui.ctx());
+        });
         out.textures_delta.clear();
         out.viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::CancelClose))
     }
@@ -457,8 +460,10 @@ mod tests {
     #[test]
     fn window_close_with_unsaved_changes_is_held() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = app_with(&["A"]);
-        assert!(!close_frame(&mut app, &ctx), "a saved drawing closes without asking");
+        // Only the app's decision: a close that goes ahead ends in the platform's quit, which macOS answers by cancelling it.
+        assert!(!app.request_quit(), "a saved drawing closes without asking");
         dirty(&mut app, 0);
         assert!(close_frame(&mut app, &ctx), "unsaved changes must cancel the close");
         assert_eq!(app.close_prompt(), Some("A"));
@@ -468,11 +473,12 @@ mod tests {
     #[test]
     fn programmatic_quit_skips_the_prompt() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = app_with(&["A"]);
         dirty(&mut app, 0);
         let (req, _rx) = crate::control::ControlRequest::new("app.quit", json!({}));
         let _ = crate::control::handle(&mut app, &ctx, &req);
-        assert!(!close_frame(&mut app, &ctx));
+        assert!(!app.request_quit());
         assert!(app.closing.is_none());
     }
 

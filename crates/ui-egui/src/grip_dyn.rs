@@ -269,6 +269,7 @@ mod tests {
         let r = app.session.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap();
         let h = Handle::parse_hex(r["handles"][0].as_str().unwrap()).unwrap();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         run_frame(&mut app, &ctx, Vec::new());
         let at = app.canvas.rect.map_or(pos2(700.0, 450.0), |r| r.center() + vec2(40.0, -30.0));
         run_frame(&mut app, &ctx, vec![Event::PointerMoved(at)]);
@@ -278,8 +279,7 @@ mod tests {
 
         // `20` Tab: the length locks and the next field is active; the grip sits on the circle.
         run_frame(&mut app, &ctx, vec![Event::Text("20".into())]);
-        // (Tab reaches the command line as text: `cmdline::capture_tab`.)
-        run_frame(&mut app, &ctx, vec![Event::Text("\t".into())]);
+        run_frame(&mut app, &ctx, key(egui::Key::Tab));
         assert_eq!(app.canvas.grip_dyn.locked, [(0, "20".to_owned())]);
         assert_eq!(app.canvas.grip_dyn.active, 1);
         assert!(app.cmd.buffer.is_empty());
@@ -312,6 +312,7 @@ mod tests {
             // The UCS icon paints "X" and "Y" too: off (UCSICON, which the drawing keeps).
             app.run("ucsicon", serde_json::json!({"on": false})).unwrap();
             let ctx = egui::Context::default();
+            crate::framework::install_headless(&ctx);
             crate::canvas::tests::painted_text(&mut app, &ctx, pos2(700.0, 450.0));
             let at = app.canvas.xf.unwrap().to_screen(Vec2::ZERO) + vec2(130.0, -70.0);
             let labels = |text: &str| text.lines().filter(|l| matches!(*l, "X" | "Y" | "<")).map(str::to_owned).collect::<Vec<_>>();
@@ -349,6 +350,7 @@ mod tests {
         let r = app.session.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap();
         let h = Handle::parse_hex(r["handles"][0].as_str().unwrap()).unwrap();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         crate::canvas::tests::painted_text(&mut app, &ctx, pos2(700.0, 450.0));
         let at = app.canvas.xf.unwrap().to_screen(Vec2::ZERO) + vec2(130.0, -70.0);
         app.session.start_grip_edit(&[(h, 2)]).unwrap();

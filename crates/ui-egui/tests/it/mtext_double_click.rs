@@ -13,13 +13,17 @@ fn harness() -> (Harness<'static, CadApp>, Handle) {
     let mut app = CadApp::new(Session::new(), Services::default());
     let r = app.run("mtext", json!({ "at": [0, 5], "text": "hello", "height": 1 })).unwrap();
     let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
-    let mut harness = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(5);
     harness.state_mut().session.execute("view.set", &json!({ "center": [2, 4], "height": 20 })).unwrap();
     harness.state_mut().canvas.zoom_pending = false;
