@@ -91,27 +91,40 @@ fn build_table(st: &TableStyle, at: Vec2, data: &[Vec<String>], text_height: Opt
     let margin = if st.text_height.is_finite() && st.text_height > 0.0 { st.margin * (th / st.text_height) } else { th * 0.5 };
 
     let mut col_chars = vec![1usize; cols];
-    let mut row_heights = Vec::with_capacity(data.len());
     let mut cells = Vec::with_capacity(data.len());
 
     for row in data {
-        let mut max_lines = 1usize;
         let mut table_row = Vec::with_capacity(cols);
         for (c, raw) in row.iter().enumerate() {
-            let line_count = raw.split('\n').count().clamp(1, 50);
-            max_lines = max_lines.max(line_count);
             let max_chars = raw.split('\n').map(|line| line.chars().count()).max().unwrap_or(0).clamp(1, 60);
             if let Some(slot) = col_chars.get_mut(c) {
                 *slot = (*slot).max(max_chars);
             }
             table_row.push(TableCell { text: cadcraft_doc::mtext_literal(raw), ..TableCell::default() });
         }
-        row_heights.push(th * (max_lines as f64 * 5.0 / 3.0) + 2.0 * margin);
         cells.push(table_row);
     }
 
     let min_col_w = (th * 4.0 + 2.0 * margin).max(th * 5.0);
-    let col_widths: Vec<f64> = col_chars.into_iter().map(|chars| (0.75 * th * chars as f64 + 2.0 * margin + 0.5 * th).max(min_col_w)).collect();
+    let col_widths: Vec<f64> = col_chars.into_iter().map(|chars| (0.95 * th * chars as f64 + 2.0 * margin + 0.5 * th).max(min_col_w)).collect();
+
+    let mut row_heights = Vec::with_capacity(cells.len());
+    for row in &cells {
+        let mut max_lines = 1usize;
+        for (c, cell) in row.iter().enumerate() {
+            if cell.text.is_empty() {
+                continue;
+            }
+            // Why: size each row from the actual wrapped line count (both hard \P breaks and soft
+            // word-wraps within the capped column width) so tall wrapped cells fit inside their row.
+            let inner_w = col_widths.get(c).copied().unwrap_or(0.0) - 2.0 * margin;
+            let wrap_w = if inner_w.is_finite() && inner_w > 0.0 { inner_w } else { 0.0 };
+            let mp = cadcraft_fonts::MTextParams { width: wrap_w, ..cadcraft_fonts::MTextParams::new(Vec2::ZERO, th) };
+            let line_count = cadcraft_fonts::layout_mtext_with(&cell.text, &mp).lines.len().clamp(1, 50);
+            max_lines = max_lines.max(line_count);
+        }
+        row_heights.push(th * (max_lines as f64 * 5.0 / 3.0) + 2.0 * margin);
+    }
 
     Table { insert: v3(at), col_widths, row_heights, cells, style: st.name.clone(), text_height: th, title: false, header: false, ..Table::default() }
 }
@@ -300,5 +313,26 @@ mod tests {
         s.start_paste_table("A\tB\n1\t2\n", None).unwrap();
         assert_eq!(s.commands_started, before_started + 1);
         assert_eq!(s.last_command.as_deref(), Some("pastetable"));
+    }
+
+    #[test]
+    fn long_wrapped_cells_cap_col_width_and_grow_row_height() {
+        let mut s = Session::new();
+        let long_cell = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+        assert!(long_cell.chars().count() > 60);
+        let tsv = format!("Short\t{long_cell}\n\"First line\n{long_cell}\"\t\nA\tB",);
+        let res = s.execute("pastetable", &json!({ "tsv": tsv, "at": [0, 0], "text_height": 2.0 })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(res["handle"].as_str().unwrap()).unwrap();
+        let e = s.doc().unwrap().entity(h).unwrap();
+        let EntityKind::Table(t) = &e.kind else { panic!("expected table") };
+
+        // Column 1 width is capped at 60 characters rather than growing unboundedly.
+        let st = style_of(&s);
+        let expected_cap_w = 0.95 * 2.0 * 60.0 + 2.0 * (st.margin * (2.0 / st.text_height)) + 0.5 * 2.0;
+        assert!((t.col_widths[1] - expected_cap_w).abs() < 1e-9);
+        // Row 0 wraps into multiple lines and is taller than single-line Row 2.
+        assert!(t.row_heights[0] > t.row_heights[2]);
+        // Row 1 combines a hard newline and a long wrapped line, making it taller than Row 0.
+        assert!(t.row_heights[1] > t.row_heights[0]);
     }
 }

@@ -38,6 +38,8 @@ pub struct TableText {
     /// MTEXT attachment (1 top left … 9 bottom right).
     pub attach: u8,
     pub height: f64,
+    /// Available horizontal text wrap width inside the cell (0 disables wrapping).
+    pub wrap_width: f64,
     pub color: Color,
     pub style: String,
     pub text: String,
@@ -363,12 +365,17 @@ fn layout(d: &Drawing, t: &Table) -> TableGeom {
             1 => (y0 + y1) / 2.0,
             _ => y1 - cs.margin_v,
         };
+        // Why: wrap cell text inside the cell's horizontal bounds (excluding margins) so long lines
+        // do not spill into adjacent columns; clamp non-finite or narrow spans to 0 (no wrap).
+        let inner_w = x1 - x0 - 2.0 * cs.margin_h;
+        let wrap_width = if inner_w.is_finite() && inner_w > 0.0 { inner_w } else { 0.0 };
         g.texts.push(TableText {
             row: a.row,
             col: a.col,
             at: p(x, y),
             attach,
             height: cell.text_height.filter(|h| h.is_finite() && *h > 0.0).map_or(cs.text_height, |h| h * k),
+            wrap_width,
             color: cs.text_color,
             style: cs.text_style.clone(),
             text: cell.text.clone(),
@@ -412,6 +419,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
         // alignment point (its numbering is MTEXT's attachment).
         let mp = cadcraft_fonts::MTextParams {
             attach: tx.attach,
+            width: tx.wrap_width,
             font,
             width_factor: ts.width_factor,
             oblique: ts.oblique,
@@ -457,5 +465,78 @@ mod budget_tests {
         rows.push(101);
         let part = part_table(&t, &rows, Vec2::ZERO);
         assert_eq!(part.cells[0][0].merged, Some((99, 1)));
+    }
+
+    #[test]
+    fn cell_text_wraps_within_column_and_merged_bounds() {
+        let mut d = Drawing::default();
+        let long_text = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+        let t = Table {
+            col_widths: vec![30.0, 20.0],
+            row_heights: vec![40.0, 40.0],
+            text_height: 2.5,
+            cells: vec![
+                vec![TableCell { text: long_text.into(), ..Default::default() }, TableCell { text: "B".into(), ..Default::default() }],
+                vec![TableCell { text: long_text.into(), merged: Some((1, 2)), ..Default::default() }, TableCell::default()],
+            ],
+            ..Default::default()
+        };
+        let g = table_geometry(&d, &t);
+        assert!(g.texts[0].wrap_width > 0.0 && g.texts[0].wrap_width < 30.0);
+        // Merged cell spans both columns (50.0 total), so its wrap width exceeds a single column.
+        assert!(g.texts[2].wrap_width > g.texts[0].wrap_width);
+
+        // Render via `crate::build` and verify all stroke vertices of cell (0,0) stay inside column 0 [0, 30].
+        d.model.push(cadcraft_doc::Entity::new(
+            cadcraft_doc::Handle(1),
+            cadcraft_doc::EntityKind::Table(Table {
+                col_widths: vec![30.0, 20.0],
+                row_heights: vec![40.0],
+                text_height: 2.5,
+                cells: vec![vec![TableCell { text: long_text.into(), ..Default::default() }, TableCell::default()]],
+                ..Default::default()
+            }),
+        ));
+        let list = crate::build(&d, &cadcraft_doc::Space::Model, &crate::Options::default());
+        assert!(!list.verts.is_empty());
+        for p in &list.verts {
+            assert!(p.x >= -1e-6 && p.x <= 50.0 + 1e-6, "vertex outside table: {p:?}");
+        }
+        // Verify layout_mtext_with at tx.wrap_width wraps into multiple lines and stays inside column 0 [0, 30].
+        let mp = cadcraft_fonts::MTextParams {
+            attach: g.texts[0].attach,
+            width: g.texts[0].wrap_width,
+            ..cadcraft_fonts::MTextParams::new(g.texts[0].at, g.texts[0].height)
+        };
+        let laid = cadcraft_fonts::layout_mtext_with(&g.texts[0].text, &mp);
+        assert!(laid.lines.len() > 1);
+        for s in &laid.strokes {
+            for p in s {
+                assert!(p.x >= -1e-6 && p.x <= 30.0 + 1e-6, "glyph spilled past column 0: {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_or_non_finite_columns_and_escapes_do_not_panic() {
+        let mut d = Drawing::default();
+        let t = Table {
+            col_widths: vec![0.1, f64::NAN, 40.0],
+            row_heights: vec![10.0],
+            cells: vec![vec![
+                TableCell { text: "Narrow".into(), ..Default::default() },
+                TableCell { text: "NaN".into(), ..Default::default() },
+                TableCell { text: "Line1\\PLine2\\\\{brace}".into(), ..Default::default() },
+            ]],
+            ..Default::default()
+        };
+        let g = table_geometry(&d, &t);
+        assert_eq!(g.texts[0].wrap_width, 0.0);
+        assert_eq!(g.texts[1].wrap_width, 0.0);
+        assert!(g.texts[2].wrap_width > 0.0);
+
+        d.model.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), cadcraft_doc::EntityKind::Table(t)));
+        let list = crate::build(&d, &cadcraft_doc::Space::Model, &crate::Options::default());
+        assert!(!list.verts.is_empty());
     }
 }
