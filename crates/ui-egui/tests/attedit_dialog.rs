@@ -384,6 +384,48 @@ fn a_pending_properties_value_goes_stale_when_the_value_gains_a_line_break() {
     assert_eq!(value(harness.state(), h, "NOTE"), "other\nline", "nothing was applied");
 }
 
+#[test]
+fn a_pending_properties_value_is_reported_when_its_trailing_row_is_removed() {
+    for only_row in [false, true] {
+        let (mut app, h) = app_with_reference();
+        if only_row {
+            app.run("battman", json!({ "name": "Tag", "action": "remove", "tag": "NO" })).unwrap();
+        }
+        let mut harness = palette(app);
+        harness.run();
+        type_pending(&mut harness, "n", "EG");
+        assert!(shows(&harness, &["EG"], "n"), "the field contains the pending text");
+        let focus = harness.ctx.memory(|m| m.focused()).expect("the attribute field has focus");
+
+        harness.state_mut().run("battman", json!({ "name": "Tag", "action": "remove", "tag": "NOTE" })).unwrap();
+        assert_eq!(cadcraft_engine::attributes(harness.state().session.doc().unwrap(), h).len(), usize::from(!only_row));
+        harness.run();
+        assert!(told_the_value_was_not_applied(&harness), "the removal is reported: {:?}", harness.state().session.log.last());
+        assert!(!harness.ctx.memory(|m| m.has_focus(focus)), "the removed field has no focus");
+
+        harness.state_mut().run("undo", json!({})).unwrap();
+        harness.state_mut().session.set_selection(vec![h]);
+        harness.run();
+        assert!(shows(&harness, &["n"], "EG"), "Undo restores only the saved value: {:?}", fields(&harness));
+    }
+}
+
+#[test]
+fn a_pending_properties_value_survives_removal_of_a_later_row() {
+    let (mut app, h) = app_with_reference();
+    app.run("battman", json!({ "name": "Tag", "action": "sync" })).unwrap();
+    let mut harness = palette(app);
+    harness.run();
+    type_pending(&mut harness, "7", "EG");
+    harness.state_mut().run("battman", json!({ "name": "Tag", "action": "remove", "tag": "NOTE" })).unwrap();
+    harness.run();
+    assert!(shows(&harness, &["EG"], "n"), "the unchanged row keeps its pending text: {:?}", fields(&harness));
+    assert!(!told_the_value_was_not_applied(&harness));
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(value(harness.state(), h, "NO"), "EG", "the edit reaches the unchanged attribute");
+}
+
 /// Undo can put an older attribute, with its older value, where the typed-into one was: the
 /// pending text must not go to it.
 #[test]
