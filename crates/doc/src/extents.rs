@@ -1,6 +1,6 @@
 //! Approximate entity bounds (used for extents, zoom and selection pre-filtering).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, bulge_to_arc};
 
@@ -284,7 +284,7 @@ fn layer_counts(d: &Drawing, layer: &str, off_counts: bool) -> bool {
 
 /// The layer an insert's attribute draws on, as the renderer takes it: its own, else its
 /// definition's, from the block's definitions by tag `defs` (layer "0" being the insert's).
-fn attrib_layer<'a>(defs: Option<&HashMap<TagKey<'a>, &'a Entity>>, a: &'a crate::Attrib) -> &'a str {
+fn attrib_layer<'a>(defs: Option<&BTreeMap<TagKey<'a>, &'a Entity>>, a: &'a crate::Attrib) -> &'a str {
     a.props.layer.as_deref().unwrap_or_else(|| defs.and_then(|defs| defs.get(&TagKey(&a.tag))).map_or("0", |be| be.common.layer.as_str()))
 }
 
@@ -297,7 +297,7 @@ fn attrib_layer<'a>(defs: Option<&HashMap<TagKey<'a>, &'a Entity>>, a: &'a crate
 struct Contents<'a> {
     geometry: Bounds2,
     constants: Vec<(&'a str, Bounds2)>,
-    defs: HashMap<TagKey<'a>, &'a Entity>,
+    defs: BTreeMap<TagKey<'a>, &'a Entity>,
 }
 
 impl Contents<'_> {

@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use super::common::{Common, Lineweight};
 use super::text::{MText, Text};
@@ -145,11 +146,21 @@ impl AttribProps {
 }
 
 /// An attribute tag as attributes are matched to their definitions and to each other: ASCII
-/// letters in either case are the same tag, other characters must be equal. As a hash key it finds
-/// the match in one lookup, where comparing each attribute with each definition costs their product
-/// on a block with many of both (#1923).
+/// letters in either case are the same tag, other characters must be equal. As an ordered map key
+/// it finds the match in a logarithmic number of comparisons, where comparing each attribute with
+/// each definition costs their product on a block with many of both (#1923). It orders, rather
+/// than hashes, so the cost doesn't depend on hash keys a crafted file could predict (the web
+/// build's `RandomState`), as in the layer and block name index.
 #[derive(Clone, Copy, Debug)]
 pub struct TagKey<'a>(pub &'a str);
+
+impl TagKey<'_> {
+    /// The tag's bytes with ASCII letters in lower case: equal for the tags `eq_ignore_ascii_case`
+    /// finds equal.
+    fn folded(&self) -> impl Iterator<Item = u8> + '_ {
+        self.0.bytes().map(|b| b.to_ascii_lowercase())
+    }
+}
 
 impl PartialEq for TagKey<'_> {
     fn eq(&self, other: &Self) -> bool {
@@ -159,14 +170,15 @@ impl PartialEq for TagKey<'_> {
 
 impl Eq for TagKey<'_> {}
 
-impl std::hash::Hash for TagKey<'_> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Tags equal without ASCII case hash alike: their bytes with ASCII letters in lower case,
-        // then a byte no UTF-8 text holds, as `str` ends its own.
-        for b in self.0.bytes() {
-            state.write_u8(b.to_ascii_lowercase());
-        }
-        state.write_u8(0xff);
+impl Ord for TagKey<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.folded().cmp(other.folded())
+    }
+}
+
+impl PartialOrd for TagKey<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -236,8 +248,8 @@ impl Insert {
     /// The reference's attributes by tag: of several with one tag (in any ASCII case), the first.
     /// Built once, it tells whether the reference carries a definition's tag, and its value, in
     /// one lookup instead of a pass over the attributes per definition (#1923).
-    pub fn attribs_by_tag(&self) -> HashMap<TagKey<'_>, &Attrib> {
-        let mut by_tag = HashMap::with_capacity(self.attribs.len());
+    pub fn attribs_by_tag(&self) -> BTreeMap<TagKey<'_>, &Attrib> {
+        let mut by_tag = BTreeMap::new();
         for a in &self.attribs {
             by_tag.entry(TagKey(a.tag.as_str())).or_insert(a);
         }
@@ -250,8 +262,8 @@ impl crate::Block {
     /// first in the block's order, the one an attribute of that tag takes its properties from.
     /// Built once for all of a reference's attributes, it matches each in one lookup instead of a
     /// pass over the block per attribute (#1923).
-    pub fn attdefs_by_tag(&self) -> HashMap<TagKey<'_>, &crate::Entity> {
-        let mut by_tag = HashMap::new();
+    pub fn attdefs_by_tag(&self) -> BTreeMap<TagKey<'_>, &crate::Entity> {
+        let mut by_tag = BTreeMap::new();
         for e in self.entities.iter() {
             if let EntityKind::AttDef(a) = &e.kind {
                 by_tag.entry(TagKey(a.tag.as_str())).or_insert(e.as_ref());

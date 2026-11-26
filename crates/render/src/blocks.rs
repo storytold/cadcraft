@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use cadcraft_doc::TagKey;
 
@@ -137,7 +137,7 @@ fn constant_attribute<'i>(
     a: &cadcraft_doc::Attrib,
     ins: &'i cadcraft_doc::Insert,
     attmode: i64,
-    carried: &mut Option<HashMap<TagKey<'i>, &'i cadcraft_doc::Attrib>>,
+    carried: &mut Option<BTreeMap<TagKey<'i>, &'i cadcraft_doc::Attrib>>,
 ) -> Option<Entity> {
     if !a.constant
         || attmode == 0
