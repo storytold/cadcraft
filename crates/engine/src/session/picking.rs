@@ -66,6 +66,18 @@ impl Session {
         self.set_selection(sel);
     }
 
+    /// Pick the object at world point `p` within `aperture` and select it, expanding to any
+    /// selectable group when group selection (`PICKSTYLE`) is enabled. Returns whether an object
+    /// was picked.
+    pub fn select_at(&mut self, p: Vec2, aperture: f64) -> bool {
+        let space = self.space();
+        let picked = self.doc().ok().and_then(|d| select::pick_in(d, &space, self.viewport_frozen(), p, aperture));
+        let Some(h) = picked else { return false };
+        let hs = cmd::groups::expand(self, vec![h]);
+        self.set_selection(hs);
+        true
+    }
+
     /// Whether a click at `p` selects objects by picking: no command running, or a command at
     /// "Select objects" with no selection window or typed mode under way.
     pub fn click_picks(&self) -> bool {

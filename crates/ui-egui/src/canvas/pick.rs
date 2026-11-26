@@ -204,4 +204,24 @@ mod hatch_pick_tests {
 
         assert_eq!(app.session.state().unwrap().block_editor(), Some("PART"), "quick right-click never kicks user out of BEDIT");
     }
+
+    #[test]
+    fn right_clicking_a_group_member_selects_the_whole_group() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let a = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        let b = app.run("line", json!({ "points": [[0, 5], [10, 5]] })).unwrap()["handles"][0].clone();
+        app.run("group", json!({ "name": "PAIR", "handles": [a, b] })).unwrap();
+        app.session.set_selection(Vec::new());
+        let _ = app.session.zoom_extents();
+
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new(), 0.0);
+        let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
+        let rbtn =
+            |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::default() };
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+        run_frame(&mut app, &ctx, vec![rbtn(true), rbtn(false)], 0.2);
+
+        assert_eq!(app.session.selection().len(), 2, "right-click expands to all members of the selectable group");
+    }
 }
