@@ -114,6 +114,11 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // The same for linetypes (first definition wins) and text styles (last definition wins).
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
+    // And for dimension styles (a later record replaces the first of its name, which keeps its
+    // place); ordered by name rather than hashed, so its cost does not depend on hash keys. Built
+    // in reverse, so the first style of a name is the one kept.
+    let mut dim_style_index: std::collections::BTreeMap<String, usize> =
+        d.dim_styles.iter().enumerate().rev().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
         let t = T(tg);
         match kind.as_str() {
@@ -280,9 +285,12 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
                 let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
-                match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
+                match dim_style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.dim_styles.get_mut(i)) {
                     Some(x) => *x = st,
-                    None => d.dim_styles.push(st),
+                    None => {
+                        dim_style_index.insert(name.to_ascii_lowercase(), d.dim_styles.len());
+                        d.dim_styles.push(st);
+                    }
                 }
             }
             "VPORT" => vport_record(d, &t, false),

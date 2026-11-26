@@ -1,10 +1,12 @@
-//! The layer and block tables, whose names are looked up without case through an index instead of a
-//! scan once a table is large and looked up often.
+//! The drawing's tables of named entries (layers, blocks, linetypes, text styles, dimension styles
+//! and layouts), whose names are looked up without case through an index instead of a scan once a
+//! table is large and looked up often.
 //!
-//! [`Drawing::layer`](crate::Drawing::layer) and [`Drawing::block`](crate::Drawing::block) run for
-//! every entity while a drawing is read, measured and drawn. Scanning the table on each made a file
-//! of N layers, or of N blocks and N references to blocks it does not have, cost N² name
-//! comparisons: tens of seconds to open at a few tens of thousands (#1924, F-04).
+//! [`Drawing::layer`](crate::Drawing::layer), [`Drawing::block`](crate::Drawing::block) and the
+//! other lookups by name run for every entity while a drawing is read, measured and drawn, and
+//! every layout is looked up on each change. Scanning the table on each made a file of N layers,
+//! or of N blocks, linetypes or styles and N objects naming ones it does not have, cost N² name
+//! comparisons: tens of seconds to open or draw at a few tens of thousands (#1924, F-04).
 //!
 //! Each table keeps an index from a name with its ASCII letters lower-cased to the table's first
 //! entry of that name, so a lookup returns what a scan in table order returns. The index is ordered
@@ -105,14 +107,21 @@ pub trait Named {
     fn name(&self) -> &str;
 }
 
-impl Named for crate::Layer {
-    fn name(&self) -> &str {
-        &self.name
-    }
+/// Entries named by their `name` field.
+macro_rules! named_by_field {
+    ($($t:ty),*) => {$(
+        impl Named for $t {
+            fn name(&self) -> &str {
+                &self.name
+            }
+        }
+    )*};
 }
+named_by_field!(crate::Layer, crate::Linetype, crate::TextStyle, crate::DimStyle, crate::Layout);
 
-/// A list of named entries in their own order (the drawing's layers). It reads and changes as a
-/// `Vec`; [`NamedList::by_name`] finds the first entry of a name without case.
+/// A list of named entries in their own order (the drawing's layers, linetypes, text styles,
+/// dimension styles and layouts). It reads and changes as a `Vec`; [`NamedList::by_name`] finds the
+/// first entry of a name without case.
 pub struct NamedList<T> {
     list: Vec<T>,
     index: Lazy<usize>,
@@ -130,6 +139,12 @@ impl<T: Named> NamedList<T> {
     /// The first entry named `name`, without case.
     pub fn by_name(&self, name: &str) -> Option<&T> {
         self.position_by_name(name).and_then(|i| self.list.get(i))
+    }
+
+    /// The first entry named `name`, without case, to change (which drops the index).
+    pub fn by_name_mut(&mut self, name: &str) -> Option<&mut T> {
+        let i = self.position_by_name(name)?;
+        self.get_mut(i)
     }
 }
 
@@ -318,8 +333,8 @@ impl<'a, V> IntoIterator for &'a mut NamedMap<V> {
 mod tests {
     use std::sync::Arc;
 
-    use super::MIN_INDEXED;
-    use crate::{Block, Drawing, Layer};
+    use super::{MIN_INDEXED, Named, NamedList};
+    use crate::{Block, DimStyle, Drawing, Layer, Layout, Linetype, TextStyle};
 
     /// Names to look up: each given name as it is, upper-cased, lower-cased and with a character
     /// added (a miss).
@@ -329,6 +344,63 @@ mod tests {
 
     fn layers_indexed(d: &Drawing) -> bool {
         d.layers.index.index.get().is_some()
+    }
+
+    fn indexed<T>(list: &NamedList<T>) -> bool {
+        list.index.index.get().is_some()
+    }
+
+    /// Every lookup through `find` finds what a scan of `list` in table order finds (the first of a
+    /// name without case), by pointer, for the list's names and `extra`.
+    fn check_list<'a, T: Named>(list: &'a NamedList<T>, find: impl Fn(&str) -> Option<&'a T>, extra: &[&str]) {
+        let names: Vec<String> = list.iter().map(|t| t.name().to_string()).collect();
+        for p in probes(names.iter().map(String::as_str).chain(extra.iter().copied())) {
+            let want = list.iter().find(|t| t.name().eq_ignore_ascii_case(&p)).map(std::ptr::from_ref);
+            assert_eq!(find(&p).map(std::ptr::from_ref), want, "{p}");
+        }
+    }
+
+    /// The linetype, text style, dimension style and layout lookups each find what a scan in table
+    /// order finds (the first of a name without case): while they scan, once the table is indexed,
+    /// and after `by_name_mut` (RENAME, STYLE, DIMSTYLE, a .lin file reloaded, a layout's UCS)
+    /// changed the first of a name and dropped the index.
+    #[test]
+    fn linetype_style_and_layout_lookups_find_the_first_of_a_name() {
+        let names: Vec<String> = (0..150).map(|i| format!("N{i}")).chain(["n7", "Dash", "DASH"].map(String::from)).collect();
+        let mut d = Drawing::new_imperial();
+        d.linetypes = names.iter().map(|n| Linetype::simple(n, "", &[0.5, -0.25])).collect();
+        d.text_styles = names.iter().map(|n| TextStyle { name: n.clone(), ..TextStyle::default() }).collect();
+        d.dim_styles = names.iter().map(|n| DimStyle { name: n.clone(), ..DimStyle::default() }).collect();
+        d.layouts = names.iter().zip(1..).map(|(n, tab)| Layout::new(n, tab)).collect();
+        let check = |d: &Drawing, extra: &[&str]| {
+            check_list(&d.linetypes, |n| d.linetype(n), extra);
+            check_list(&d.text_styles, |n| d.text_style(n), extra);
+            check_list(&d.dim_styles, |n| d.dim_style(n), extra);
+            check_list(&d.layouts, |n| d.layout(n), extra);
+        };
+        let all_indexed = |d: &Drawing| indexed(&d.linetypes) && indexed(&d.text_styles) && indexed(&d.dim_styles) && indexed(&d.layouts);
+        // The first round scans until the index is built; the second reads only the index.
+        check(&d, &["dash", "missing"]);
+        assert!(all_indexed(&d));
+        check(&d, &["dash", "missing"]);
+
+        // The first of a name changes, and the later one of that name is found after it.
+        d.linetypes.by_name_mut("n7").unwrap().name = "Seven".into();
+        d.text_styles.by_name_mut("n7").unwrap().name = "Seven".into();
+        d.dim_styles.by_name_mut("n7").unwrap().name = "Seven".into();
+        d.layouts.by_name_mut("n7").unwrap().name = "Seven".into();
+        assert!(!indexed(&d.linetypes) && !indexed(&d.text_styles) && !indexed(&d.dim_styles) && !indexed(&d.layouts));
+        assert_eq!(d.linetype("N7").map(|l| l.name.as_str()), Some("n7"));
+        assert_eq!(d.text_style("N7").map(|s| s.name.as_str()), Some("n7"));
+        assert_eq!(d.dim_style("N7").map(|s| s.name.as_str()), Some("n7"));
+        assert_eq!(d.layout("N7").map(|l| (l.name.as_str(), l.tab_order)), Some(("n7", 151)));
+        assert_eq!(d.linetypes.get(7).map(|l| l.name.as_str()), Some("Seven"));
+        check(&d, &["SEVEN", "n7"]);
+        assert!(all_indexed(&d));
+        // A miss changes nothing and keeps the index.
+        assert!(d.dim_styles.by_name_mut("none").is_none());
+        assert!(indexed(&d.dim_styles));
+        check(&d, &["dash"]);
     }
 
     fn blocks_indexed(d: &Drawing) -> bool {

@@ -397,6 +397,60 @@ fn many_distinct_symbol_names_read_quickly() {
     assert_eq!(d.text_style("ST0").map(|s| s.height), Some(2.0));
 }
 
+/// Many distinct dimension style names read in linear time, with the duplicate rule kept: a later
+/// record of a name in other case replaces the first, which keeps its place and takes the later
+/// record's name, also the Standard style a drawing starts with (#1924). The names share their
+/// first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_dimension_style_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |i: usize| format!("D{}{i:06}", "x".repeat(199));
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nDIMSTYLE\n2\n{}\n70\n0\n40\n1\n", name(i)));
+    }
+    t.push_str(&format!("0\nDIMSTYLE\n2\n{}\n70\n0\n40\n2\n", name(0).to_ascii_uppercase()));
+    t.push_str("0\nDIMSTYLE\n2\nSTANDARD\n70\n0\n40\n3\n0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let styles: Vec<(&str, f64)> = d.dim_styles.iter().map(|s| (s.name.as_str(), s.scale)).collect();
+    assert_eq!(styles.len(), N + 1);
+    assert_eq!(styles.first(), Some(&("STANDARD", 3.0)));
+    assert_eq!(styles.get(1), Some(&(name(0).to_ascii_uppercase().as_str(), 2.0)));
+    assert_eq!(styles.get(2), Some(&(name(1).as_str(), 1.0)));
+}
+
+/// Many layouts with every paper-space object in one of the last of them read in linear time.
+/// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
+/// name differs only in case, nor to a later one of the same name (#1924).
+#[test]
+fn many_layouts_read_quickly() {
+    const N: usize = 40_000;
+    let name = |i: usize| format!("L{}{i:06}", "x".repeat(47));
+    let last = name(0).to_ascii_uppercase();
+    // Layout N is the active one (its block record is *Paper_Space): paper-space objects without
+    // an owner go to it. It and layout N + 1 have the first layout's name in other case.
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nBLOCK_RECORD\n0\nBLOCK_RECORD\n5\n1F\n2\n*Paper_Space\n0\nENDTAB\n0\nENDSEC\n");
+    t.push_str("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..N {
+        t.push_str(&format!("0\nLINE\n8\n0\n67\n1\n10\n{i}\n20\n0\n11\n{i}\n21\n1\n"));
+    }
+    t.push_str("0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N + 2 {
+        let (n, owner) = if i < N { (name(i), "0") } else { (last.clone(), if i == N { "1F" } else { "0" }) };
+        t.push_str(&format!("0\nLAYOUT\n5\n{:X}\n100\nAcDbPlotSettings\n100\nAcDbLayout\n1\n{n}\n71\n{}\n330\n{owner}\n", 0x1000 + i, i + 1));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "layouts.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let objects: Vec<(&str, usize)> = d.layouts.iter().map(|l| (l.name.as_str(), l.entities.len())).collect();
+    assert_eq!(objects.len(), N + 2);
+    assert_eq!(objects.first(), Some(&(name(0).as_str(), 0)));
+    assert_eq!(objects.get(N..), Some(&[(last.as_str(), N), (last.as_str(), 0)][..]));
+}
+
 /// Elements with many duplicate attributes are read in bounded time.
 #[test]
 fn svg_duplicate_attributes_are_not_rescanned() {
