@@ -79,8 +79,9 @@ pub struct PdfOptions {
     /// Flate-compress the content stream.
     pub compress: bool,
     pub title: String,
-    /// Model space only: plot this rectangle (drawing units), fitted to the printable area,
-    /// instead of the extents. Ignored for layouts.
+    /// Plot area override (`layout`, `extents`, `display`, `limits`, `window`).
+    pub plot_area: Option<String>,
+    /// Plot rectangle (drawing units), fitted or placed on the printable area.
     pub window: Option<Bounds2>,
     /// Drawing layers become PDF layers (optional content groups). Default on.
     pub layers: bool,
@@ -119,6 +120,7 @@ impl Default for PdfOptions {
             lineweights: None,
             compress: false,
             title: String::new(),
+            plot_area: None,
             window: None,
             layers: true,
             include_off_layers: false,
@@ -159,6 +161,7 @@ impl PdfOptions {
             lineweights: v.get("lineweights").and_then(Value::as_bool),
             compress: v.get("compress").and_then(Value::as_bool).unwrap_or(true),
             title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+            plot_area: v.get("plotArea").and_then(Value::as_str).map(str::to_ascii_lowercase),
             window: window(v.get("window")),
             margins: margins(v.get("margins")),
             hyperlinks: v.get("hyperlinks").and_then(Value::as_bool).unwrap_or(true),
@@ -522,23 +525,56 @@ struct SheetPage {
 pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
     let mut o = o.clone();
     let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
-    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot of the sheet.
-    if o.fit == Some(false) && o.scale.is_none() {
-        o.window = None;
-        return o;
-    }
     let saved = paper::saved_plot(page);
-    // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
-    o.window = saved.window;
-    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
-    if o.fit.is_none() && o.scale.is_none() && saved.fit {
-        o.fit = Some(true);
-    }
-    if o.scale.is_none() {
-        o.scale = saved.scale;
-    }
-    if o.center.is_none() && saved.window.is_some() {
-        o.center = Some(saved.center);
+    match o.plot_area.as_deref() {
+        Some("layout") => {
+            // Caller explicitly chose the whole sheet: ignore any saved window.
+            o.window = None;
+        }
+        Some("extents") => {
+            // Caller explicitly chose extents: ignore any saved window, default to fitting extents.
+            o.window = None;
+            if o.fit.is_none() && o.scale.is_none() {
+                o.fit = Some(true);
+            }
+            if o.center.is_none() {
+                o.center = Some(saved.center);
+            }
+        }
+        Some("window" | "display") => {
+            if o.window.is_none() {
+                o.window = saved.window;
+            }
+            if o.fit.is_none() && o.scale.is_none() && saved.fit {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
+        _ => {
+            // An explicit `fit: false` without a `scale` or explicit `window` asks for the plain 1:1 plot of the sheet.
+            if o.fit == Some(false) && o.scale.is_none() && o.window.is_none() {
+                o.window = None;
+                return o;
+            }
+            if o.window.is_none() {
+                o.window = saved.window;
+            }
+            // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+            if o.fit.is_none() && o.scale.is_none() && saved.fit {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
     }
     o
 }
@@ -579,10 +615,11 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
-    // A layout plotted over a window is placed like model space: the window on the printable area.
-    let placed = fit || window.is_some() || matches!(space, Space::Model);
+    // A layout plotted over a window or extents is placed like model space: on the printable area.
+    let extents_area = o.plot_area.as_deref() == Some("extents");
+    let placed = fit || window.is_some() || extents_area || matches!(space, Space::Model);
     let map = if placed {
-        let by = if window.is_some() { &Space::Model } else { space };
+        let by = if window.is_some() || extents_area { &Space::Model } else { space };
         let (from, to) = placement(by, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {

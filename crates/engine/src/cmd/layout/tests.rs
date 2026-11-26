@@ -220,10 +220,15 @@ fn pagesetup_paper_table() {
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());
     assert!(s.execute("pagesetup", &json!({"paper": "A4"})).is_err(), "model tab needs a layout");
-    for area in ["extents", "display", "window", "limits"] {
-        let e = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": area})).unwrap_err();
-        assert!(e.to_string().contains("not available yet"), "{area}: {e}");
+    for area in ["extents", "display", "window", "layout"] {
+        let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": area})).unwrap();
+        assert_eq!(r["page"]["plotArea"], area);
     }
+    let e = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "limits"})).unwrap_err();
+    assert!(e.to_string().contains("limits"), "{e}");
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "window", "plotWindow": [4388.0, -1253.0, 5229.0, -659.0]})).unwrap();
+    assert_eq!(r["page"]["plotArea"], "window");
+    assert_eq!(r["page"]["plotWindow"], json!([4388.0, -1253.0, 5229.0, -659.0]));
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "Layout"})).unwrap();
     assert_eq!(r["page"]["plotArea"], "layout");
     let report = s.execute("pagesetup", &Value::Null).unwrap();
@@ -322,7 +327,10 @@ fn plot_goes_through_the_hook() {
     assert!(s.execute("plot", &json!({"layout": "Model", "output": "svg", "center": false, "offset": [0, 0]})).is_err());
     assert!(opts(s.execute("plot", &json!({"layout": "Model", "plotArea": "limits"})).unwrap()).contains(r#""window":[[0.0,0.0],"#));
     assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
-    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
+    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "limits"})).is_err(), "limits is model-only");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window", "window": [[4388, -1253], [5229, -659]]})).unwrap());
+    assert!(text.contains(r#""window":[[4388.0,-1253.0],[5229.0,-659.0]]"#), "{text}");
+    assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "extents"})).is_ok());
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
     // Image output holds one sheet: several `layouts` would report pages:N but write one render.
     for out in ["x.png", "x.svg"] {

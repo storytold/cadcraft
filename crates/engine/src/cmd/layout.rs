@@ -654,6 +654,7 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         "margins",
         "lineweights",
         "plotArea",
+        "plotWindow",
         "scale",
         "scaleToFit",
         "center",
@@ -759,11 +760,28 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
         if !["layout", "extents", "display", "window", "limits"].contains(&v.as_str()) {
             return Err(bad(cmd, "`plotArea` must be layout, extents, display, window or limits"));
         }
-        // Layout plotting always prints the whole sheet; the other areas are only stored for DXF round trips.
-        if v != "layout" && v != page.plot_area {
-            return Err(bad(cmd, format!("plot area `{v}` is not available yet; layouts plot the whole sheet (`layout`)")));
+        if v == "limits" && v != page.plot_area {
+            return Err(bad(cmd, "plot area `limits` is not available for layouts; use layout, extents, display or window"));
         }
         page.plot_area = v;
+    }
+    if let Some(raw) = p.get("plotWindow") {
+        let corners = raw.as_array().ok_or_else(|| bad(cmd, "`plotWindow` must be [x1, y1, x2, y2] or [[x1, y1], [x2, y2]]"))?;
+        let parsed = match corners.len() {
+            4 => {
+                let vals: Vec<f64> = corners.iter().filter_map(Value::as_f64).filter(|v| v.is_finite()).collect();
+                (vals.len() == 4).then(|| [vals[0], vals[1], vals[2], vals[3]])
+            }
+            2 => point_value(&corners[0]).zip(point_value(&corners[1])).map(|(a, b)| [a.x, a.y, b.x, b.y]),
+            _ => None,
+        };
+        let Some([x1, y1, x2, y2]) = parsed else {
+            return Err(bad(cmd, "`plotWindow` must be [x1, y1, x2, y2] or [[x1, y1], [x2, y2]]"));
+        };
+        if (x2 - x1).abs() <= 1e-9 || (y2 - y1).abs() <= 1e-9 {
+            return Err(bad(cmd, "`plotWindow` must have non-zero width and height"));
+        }
+        page.plot_window = [x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)];
     }
     if let Some(v) = str_param(p, "plotStyleTable") {
         page.plot_style_table = v.chars().take(260).collect();
@@ -921,17 +939,16 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     }
 }
 
-/// The model-space rectangle a plot of `plotArea` covers: `extents` (default) plots everything,
-/// `display` the current model view, `limits` the drawing limits, `window` the `window` corners.
-/// Layouts plot their sheet (`layout`).
+/// The rectangle a plot of `plotArea` covers: `extents` plots everything, `display` the current
+/// view, `limits` the drawing limits (model space), `window` the `window` corners (or a layout's
+/// saved `plot_window`), and `layout` the layout sheet.
 fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Option<Bounds2>> {
     let area = str_param(p, "plotArea").map(str::to_ascii_lowercase);
     let w = match (space, area.as_deref()) {
-        (_, None) | (Space::Model, Some("extents")) | (Space::Paper(_), Some("layout")) => return Ok(None),
-        (Space::Paper(_), Some(_)) => return Err(bad(cmd, "a layout plots its whole sheet: `plotArea` must be layout")),
-        (Space::Model, Some("display")) => {
+        (_, None) | (Space::Model, Some("extents")) | (Space::Paper(_), Some("layout" | "extents")) => return Ok(None),
+        (_, Some("display")) => {
             let st = s.state()?;
-            let v = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
+            let v = st.views.iter().find(|(sp, _)| sp == space).map(|(_, v)| *v).unwrap_or_default();
             let (px, py) = s.viewport_px;
             let aspect = if px.is_finite() && py.is_finite() && px > 0.0 && py > 0.0 { px / py } else { 1.0 };
             let half = Vec2::new(v.height * aspect / 2.0, v.height / 2.0);
@@ -943,16 +960,24 @@ fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Optio
             let hi = d.header.point("LIMMAX").map(|p| p.xy()).unwrap_or(Vec2::new(12.0, 9.0));
             Bounds2::new(lo, hi)
         }
-        (Space::Model, Some("window")) => {
+        (Space::Paper(_), Some("limits")) => return Err(bad(cmd, "`plotArea` limits is only available in Model space")),
+        (_, Some("window")) => {
             let corners = p.get("window").and_then(Value::as_array);
             let a = corners.and_then(|c| c.first()).and_then(point_value);
             let b = corners.and_then(|c| c.get(1)).and_then(point_value);
-            let (Some(a), Some(b)) = (a, b) else {
+            if let (Some(a), Some(b)) = (a, b) {
+                Bounds2::new(a, b)
+            } else if let Space::Paper(name) = space
+                && let Some(l) = s.doc()?.layout(name)
+                && let Some(saved) = cadcraft_render::paper::saved_plot(&l.page).window
+            {
+                saved
+            } else {
                 return Err(bad(cmd, "`plotArea` window needs `window`: [[x1, y1], [x2, y2]]"));
-            };
-            Bounds2::new(a, b)
+            }
         }
-        (Space::Model, Some(_)) => return Err(bad(cmd, "`plotArea` must be extents, display, limits or window (layouts: layout)")),
+        (Space::Paper(_), Some(_)) => return Err(bad(cmd, "`plotArea` must be layout, extents, display or window for a layout")),
+        (Space::Model, Some(_)) => return Err(bad(cmd, "`plotArea` must be extents, display, limits or window")),
     };
     let ok = w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9;
     if ok { Ok(Some(w)) } else { Err(bad(cmd, "the plot area is empty")) }
