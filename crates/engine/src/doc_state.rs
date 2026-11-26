@@ -49,9 +49,10 @@ pub struct DocState {
     /// when they change.
     pub(crate) fonts_noted: String,
     /// The files the user linked with DATALINK since the drawing was opened, as the file system
-    /// resolves them: DATALINKUPDATE reads these also outside the drawing's folder
-    /// ([`crate::doc_path`]). Kept with the open drawing only, never saved.
-    pub(crate) chosen_links: std::collections::HashSet<std::path::PathBuf>,
+    /// resolves them, each with when it was last chosen (a larger number is later):
+    /// DATALINKUPDATE reads these also outside the drawing's folder ([`crate::doc_path`]). Kept
+    /// with the open drawing only, never saved.
+    pub(crate) chosen_links: std::collections::HashMap<std::path::PathBuf, u64>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

@@ -248,7 +248,7 @@ fn link_file(id: &str, path: &str, st: &DocState, folder: Option<&std::path::Pat
     crate::file_access::check_read(&file).map_err(|e| bad(id, e))?;
     let real = std::fs::canonicalize(&file).map_err(|e| bad(id, format!("{path}: {e}")))?;
     // Whole components: `plans-old` is not in `plans`.
-    if folder.is_some_and(|f| real.starts_with(f)) || st.chosen_links.contains(&real) {
+    if folder.is_some_and(|f| real.starts_with(f)) || st.chosen_links.contains_key(&real) {
         // Read where it was checked, not through the links again.
         return Ok(real);
     }
@@ -256,15 +256,18 @@ fn link_file(id: &str, path: &str, st: &DocState, folder: Option<&std::path::Pat
 }
 
 /// Remember `real` (resolved), the file of a link the user just gave, as theirs to read for the
-/// drawing `st`. At [`MAX_CHOSEN_LINKS`] files another one makes room: the newest choice counts.
+/// drawing `st`, as its latest choice. At [`MAX_CHOSEN_LINKS`] files a new one makes room by
+/// dropping the file chosen longest ago.
 fn remember_link(st: &mut DocState, real: std::path::PathBuf) {
-    if st.chosen_links.len() >= MAX_CHOSEN_LINKS
-        && !st.chosen_links.contains(&real)
-        && let Some(old) = st.chosen_links.iter().next().cloned()
+    let links = &mut st.chosen_links;
+    let latest = links.values().max().map_or(0, |n| n.saturating_add(1));
+    if links.len() >= MAX_CHOSEN_LINKS
+        && !links.contains_key(&real)
+        && let Some(oldest) = links.iter().min_by_key(|(_, n)| **n).map(|(p, _)| p.clone())
     {
-        st.chosen_links.remove(&old);
+        links.remove(&oldest);
     }
-    st.chosen_links.insert(real);
+    links.insert(real, latest);
 }
 
 /// Read a linked file through the host (natively the file system; not on the web).
@@ -419,18 +422,36 @@ mod tests {
         }
     }
 
-    /// However many files the user links, the drawing remembers a bounded number of them, and
-    /// always the one linked last.
+    /// Whether the drawing `st` remembers `file` as linked by the user.
+    fn remembered(st: &DocState, file: &std::path::Path) -> bool {
+        st.chosen_links.contains_key(file)
+    }
+
+    /// However many files the user links, the drawing remembers at most [`MAX_CHOSEN_LINKS`] of
+    /// them: the ones linked last, a file linked again counting as just linked.
     #[test]
-    fn remembered_links_are_bounded_and_keep_the_newest() {
+    fn remembered_links_are_the_most_recent_ones() {
         let mut st = DocState::new(cadcraft_doc::Drawing::new_metric(), "t", None);
-        for i in 0..MAX_CHOSEN_LINKS + 10 {
-            let file = std::path::PathBuf::from(format!("/data/{i}.csv"));
-            remember_link(&mut st, file.clone());
-            assert!(st.chosen_links.contains(&file));
-            assert!(st.chosen_links.len() <= MAX_CHOSEN_LINKS);
+        let file = |i: usize| std::path::PathBuf::from(format!("/data/{i}.csv"));
+        for i in 0..MAX_CHOSEN_LINKS {
+            remember_link(&mut st, file(i));
+        }
+        // Linked again at the bound, the second file drops nothing and becomes the newest, so two
+        // new files make room by dropping the first and the third.
+        remember_link(&mut st, file(1));
+        assert_eq!(st.chosen_links.len(), MAX_CHOSEN_LINKS);
+        assert!(remembered(&st, &file(0)));
+        remember_link(&mut st, file(MAX_CHOSEN_LINKS));
+        remember_link(&mut st, file(MAX_CHOSEN_LINKS + 1));
+        assert!([1, MAX_CHOSEN_LINKS, MAX_CHOSEN_LINKS + 1].iter().all(|&i| remembered(&st, &file(i))));
+        assert!(!remembered(&st, &file(0)) && !remembered(&st, &file(2)));
+        // After many more, the ones linked last are the ones remembered.
+        let end = 2 * MAX_CHOSEN_LINKS + 10;
+        for i in MAX_CHOSEN_LINKS + 2..end {
+            remember_link(&mut st, file(i));
         }
         assert_eq!(st.chosen_links.len(), MAX_CHOSEN_LINKS, "the bound is reached, not a smaller one");
+        assert!((end - MAX_CHOSEN_LINKS..end).all(|i| remembered(&st, &file(i))));
     }
 
     #[test]
