@@ -28,6 +28,7 @@ fn insert(d: &mut Drawing, block: &str, at: (f64, f64)) -> Entity {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     Entity { handle: d.new_handle(), common: Common::default(), kind }
 }
@@ -322,5 +323,26 @@ fn clipboard_travels_as_text() {
     t.execute("pasteorig", &json!({})).unwrap();
     assert_eq!(t.doc().unwrap().model.len(), 2);
     assert!(t.doc().unwrap().block("DOOR").is_some() && t.doc().unwrap().layer("HINGE").is_some());
+    // A paste asked for from a menu or by name reads the system clipboard first, so text from
+    // another window replaces a copy made here earlier; text that is not a DXF drawing does not.
+    let mut u = Session::empty();
+    u.open_drawing(drawing_b(), "B", None);
+    assert!(u.execute("pasteclip", &json!({})).is_err(), "nothing to paste yet");
+    assert!(clipboard::load_system_text(&mut u, &text));
+    u.execute("pasteclip", &json!({})).unwrap();
+    assert_eq!(u.doc().unwrap().model.len(), 2, "the system clipboard's objects were pasted");
+
+    let mut v = Session::empty();
+    v.open_drawing(drawing_b(), "B", None);
+    let local = line(v.doc_mut().unwrap(), "0", (1.0, 1.0), (2.0, 2.0));
+    let local_handle = local.handle.hex();
+    v.doc_mut().unwrap().model.push(local);
+    v.execute("copyclip", &json!({ "handles": [local_handle] })).unwrap();
+    assert_eq!(v.clipboard.len(), 1);
+    assert!(!clipboard::load_system_text(&mut v, "just some words"), "not a drawing");
+    assert_eq!(v.clipboard.len(), 1, "the copy made here stays");
+    assert!(clipboard::load_system_text(&mut v, &text));
+    assert_eq!(v.clipboard.len(), 2, "newer text from another window replaces it");
+    assert!(v.clipboard_source.as_ref().is_some_and(|c| c.uid.is_none()));
     let _ = a;
 }

@@ -4,8 +4,8 @@
 //! Foreign REGIONs stay unknown objects as before; hostile xdata doesn't panic.
 
 use cadcraft_doc::{Common, Drawing, EntityKind, HatchLoop, Region, Space};
-use cadcraft_dxf::{records, sections};
 use cadcraft_geom::{PolyVertex, Vec2};
+use craft_dxf::{records, sections};
 
 fn regions(d: &Drawing) -> Vec<Region> {
     d.model
@@ -19,7 +19,7 @@ fn regions(d: &Drawing) -> Vec<Region> {
 
 fn square(x: f64, y: f64, s: f64, outer: bool) -> HatchLoop {
     let v = |a: f64, b: f64| PolyVertex::new(Vec2::new(a, b));
-    HatchLoop { vertices: vec![v(x, y), v(x + s, y), v(x + s, y + s), v(x, y + s)], outer, sources: Vec::new() }
+    HatchLoop { vertices: vec![v(x, y), v(x + s, y), v(x + s, y + s), v(x, y + s)], outer, boundary_flags: None, sources: Vec::new() }
 }
 
 #[test]
@@ -29,6 +29,7 @@ fn region_with_islands_survives_save_and_reopen() {
     let hole = HatchLoop {
         vertices: vec![PolyVertex::with_bulge(Vec2::new(3.0, 5.0), 1.0), PolyVertex::with_bulge(Vec2::new(7.0, 5.0), 1.0)],
         outer: false,
+        boundary_flags: None,
         sources: Vec::new(),
     };
     let r = Region { loops: vec![square(0.0, 0.0, 10.0, true), hole, square(4.5, 4.5, 1.0, true), square(20.0, 0.0, 2.0, true)] };
@@ -56,7 +57,7 @@ fn region_with_islands_survives_save_and_reopen() {
     assert!(matches!(back.entity(plain).unwrap().kind, EntityKind::LwPolyline(_)));
 
     // Other readers see four closed polylines on the region's layer.
-    let tags = cadcraft_dxf::parse(saved.as_bytes()).unwrap();
+    let tags = craft_dxf::parse(saved.as_bytes()).unwrap();
     let ents = records(&sections(&tags).into_iter().find(|s| s.name == "ENTITIES").unwrap().tags);
     let polys: Vec<_> = ents.iter().filter(|(k, _)| k == "LWPOLYLINE").collect();
     assert_eq!(polys.len(), 5);
