@@ -34,7 +34,14 @@ fn painted(app: &mut CadApp, ctx: &egui::Context) -> String {
         }
     }
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
-    let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+    let mut output = ctx.run_ui(input, |ui| {
+        if app.ui.dialog.as_deref() == Some("attdef") {
+            let mut open = true;
+            attdefdlg::dialog(app, ui.ctx(), &mut open);
+        } else {
+            cadcraft_ui_egui::palettes::right_palettes(app, ui);
+        }
+    });
     output.textures_delta.clear();
     let mut text = String::new();
     for s in &output.shapes {

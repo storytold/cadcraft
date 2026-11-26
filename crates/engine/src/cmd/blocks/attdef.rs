@@ -147,6 +147,14 @@ fn below_point(t: &Text) -> Vec2 {
 
 /// ATTDEF's JSON form.
 pub(super) fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
+    for key in ["justify", "style"] {
+        if let Some(value) = p.get(key)
+            && !value.is_null()
+            && !value.is_string()
+        {
+            return Err(bad("attdef", format!("`{key}` must be a string, got {value}")));
+        }
+    }
     let tag = str_param(p, "tag").ok_or_else(|| bad("attdef", "`tag` is required"))?;
     if !valid_tag(tag) {
         return Err(bad("attdef", TAG_ERROR));
