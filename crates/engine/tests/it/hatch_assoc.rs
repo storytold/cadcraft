@@ -145,6 +145,26 @@ fn moving_or_copying_the_hatch_alone_ends_the_link() {
 }
 
 #[test]
+fn imported_boundary_flags_survive_refill_and_copy() {
+    let mut session = Session::new();
+    let boundary = handle(&session.execute("rectang", &json!({ "p1": [0, 0], "p2": [4, 2] })).unwrap());
+    let hatch_handle = handle(&session.execute("hatch", &json!({ "handles": [boundary.clone()] })).unwrap());
+    session.doc_mut().unwrap().model.modify(Handle::parse_hex(&hatch_handle).unwrap(), |entity| {
+        if let EntityKind::Hatch(hatch) = &mut entity.kind {
+            hatch.loops[0].boundary_flags = Some(7);
+        }
+    });
+    let expected = hatch(&session, &hatch_handle).loops[0].boundary_flags;
+    session.execute("move", &json!({ "handles": [boundary], "delta": [10, 0] })).unwrap();
+    assert_eq!(hatch(&session, &hatch_handle).loops[0].boundary_flags, expected);
+    let count = session.doc().unwrap().model.len();
+    session.execute("copy", &json!({ "handles": [hatch_handle], "delta": [30, 0] })).unwrap();
+    let copy = session.doc().unwrap().model.iter().skip(count).find(|entity| matches!(entity.kind, EntityKind::Hatch(_))).unwrap();
+    let EntityKind::Hatch(copied) = &copy.kind else { panic!("not a hatch") };
+    assert_eq!(copied.loops[0].boundary_flags, expected);
+}
+
+#[test]
 fn non_associative_hatch_keeps_no_sources() {
     let mut s = Session::new();
     let r = handle(&s.execute("rectang", &json!({ "p1": [0, 0], "p2": [4, 2] })).unwrap());
@@ -166,7 +186,10 @@ fn hostile_sources_never_panic() {
     let k = EntityKind::Hatch(Hatch {
         pattern: "ANSI31".into(),
         solid: false,
-        loops: vec![HatchLoop { vertices: sq, outer: true, sources: sources.clone() }, HatchLoop { vertices: nan, outer: false, sources }],
+        loops: vec![
+            HatchLoop { vertices: sq, outer: true, boundary_flags: None, sources: sources.clone() },
+            HatchLoop { vertices: nan, outer: false, boundary_flags: None, sources },
+        ],
         scale: 1.0,
         angle: 0.0,
         associative: true,

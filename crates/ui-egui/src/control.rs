@@ -177,7 +177,7 @@ fn focus_json(ctx: &egui::Context) -> Value {
         "id": focused.map(|id| format!("{:016x}", id.value())),
         "label": widget.map(|widget| &widget.label),
         "role": widget.map(|widget| widget.role),
-        "keyboardInput": ctx.egui_wants_keyboard_input(),
+        "keyboardInput": crate::framework::widget_has_keyboard(ctx),
     })
 }
 
@@ -308,6 +308,14 @@ fn key_from(name: &str) -> Option<egui::Key> {
 }
 
 pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    let out = handle_request(app, ctx, req);
+    // A command the request ran may have asked for a bar (MENUBAR, TOOLBAR): apply it before
+    // the next request, so a later query or `ui.set` sees the bars as they are now.
+    app.sync_bars();
+    out
+}
+
+fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     let f = |k: &str| p.get(k).and_then(Value::as_f64);
@@ -350,6 +358,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let before = app.session.log.len();
             let error = match s("key").unwrap_or("enter").to_ascii_lowercase().as_str() {
                 "escape" | "esc" => {
+                    app.paste.cancel();
                     app.session.cancel();
                     None
                 }

@@ -410,7 +410,9 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     // Current layer combo.
     let Ok(d) = app.session.doc() else { return };
     let cur = d.header.str("CLAYER", "0");
-    let layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    // By name, as the Layer Properties Manager lists them, not in the order they were made (#2858).
+    let mut layers: Vec<(String, bool, bool, bool, Color)> = d.layers.iter().map(|l| (l.name.clone(), l.on, l.frozen, l.locked, l.color)).collect();
+    layers.sort_by_key(|l| crate::layers::natural_lower(&l.0));
     let cur_info = layers.iter().find(|l| l.0.eq_ignore_ascii_case(&cur)).cloned();
     let mut set_current = None;
     let mut toggle: Option<(String, &str, bool)> = None;
@@ -632,19 +634,28 @@ fn read_only(ui: &mut egui::Ui, text: &str) {
     value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
 }
 
+/// The All and My halves of the Properties header's segmented control, which ends at `right`:
+/// 35 px each, wider where a label needs it (a Tamil "All" does), so labels never overlap.
+fn segment_halves(right: f32, top: f32, all_width: f32, my_width: f32) -> (Rect, Rect) {
+    let fit = |text: f32| (text + 12.0).max(35.0);
+    let my = Rect::from_min_size(pos2(right - fit(my_width), top), vec2(fit(my_width), 18.0));
+    let all = Rect::from_min_size(pos2(my.left() - fit(all_width), top), vec2(fit(all_width), 18.0));
+    (all, my)
+}
+
 /// The Properties header: All/My, the selection-type filter and the PICKADD / Select Objects /
 /// Quick Select buttons.
 fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let hr = section_header(ui, "Properties");
     // All | My segmented control ("My" property sets don't exist yet).
-    let seg = Rect::from_min_size(pos2(hr.right() - 120.0, hr.top() + 4.0), vec2(70.0, 18.0));
-    ui.painter().rect_filled(seg, 3.0, t.chrome_dark);
-    let half = Rect::from_min_size(seg.min, vec2(35.0, 18.0));
-    let my = half.translate(vec2(35.0, 0.0));
+    let (all_label, my_label) = (crate::tl!("All"), crate::tl!("My"));
+    let width = |text: &str| ui.painter().layout_no_wrap(text.to_owned(), crate::theme::small(), t.text).size().x;
+    let (half, my) = segment_halves(hr.right() - 50.0, hr.top() + 4.0, width(all_label), width(my_label));
+    ui.painter().rect_filled(half.union(my), 3.0, t.chrome_dark);
     ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
-    ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, crate::tl!("All"), crate::theme::small(), t.text);
-    ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, crate::tl!("My"), crate::theme::small(), t.text_faint);
+    ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, all_label, crate::theme::small(), t.text);
+    ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, my_label, crate::theme::small(), t.text_faint);
     ui.interact(my, ui.scope_id().with("prop_my"), Sense::hover()).on_hover_text(crate::tl!("My properties: not available yet"));
     let sel = app.session.selection();
     let pickadd = app.session.settings.pickadd;
@@ -1478,6 +1489,18 @@ mod tests {
     use egui::{Color32, Shape};
     use egui_kittest::kittest::Queryable;
 
+    /// English keeps the 35 px halves where they were (right − 120 to right − 50); a longer label
+    /// widens its own half, leftwards, so All and My never overlap.
+    #[test]
+    fn all_my_halves_fit_their_labels() {
+        let (all, my) = segment_halves(200.0, 10.0, 14.0, 13.0);
+        assert_eq!(all, Rect::from_min_size(pos2(130.0, 10.0), vec2(35.0, 18.0)));
+        assert_eq!(my, Rect::from_min_size(pos2(165.0, 10.0), vec2(35.0, 18.0)));
+        let (all, my) = segment_halves(200.0, 10.0, 58.0, 30.0);
+        assert!(all.width() >= 58.0 + 12.0 && my.width() >= 30.0 + 12.0, "{all:?} {my:?}");
+        assert!(all.right() <= my.left() && my.right() == 200.0, "{all:?} {my:?}");
+    }
+
     #[test]
     fn shown_part_takes_off_only_the_number_tag() {
         assert_eq!(shown_part(&exact("5.00".into(), 5.0)), "5.00");
@@ -1760,5 +1783,42 @@ mod tests {
         h.state_mut().run("select", json!({ "handles": [handles[0].clone()] })).unwrap();
         h.run_steps(3);
         assert!(h.query_all_by_value("4.0000").count() > 0, "one circle alone shows its radius");
+    }
+
+    /// The painted texts with their top edge, in paint order.
+    fn painted_texts_at(shape: &Shape, out: &mut Vec<(String, f32)>) {
+        match shape {
+            Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos.y)),
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| painted_texts_at(shape, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_layer_list_is_sorted_by_name_not_by_creation_order() {
+        // #2858: layers made out of order (Z, a, M) show A to Z, ignoring case, as in the Layer
+        // Properties Manager.
+        let mut app = CadApp::new(Session::default(), Services::default());
+        for name in ["Z_Finish", "a_Base", "M_Layout"] {
+            app.run("layer.new", json!({ "name": name })).unwrap();
+        }
+        app.ui.show_layer_list = true;
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1200.0))), ..Default::default() };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| layers_section(&mut app, ui));
+            texts.clear();
+            output.shapes.iter().for_each(|shape| painted_texts_at(&shape.shape, &mut texts));
+            output.textures_delta.clear();
+        }
+        let names = ["0", "a_Base", "M_Layout", "Z_Finish"];
+        let mut rows: Vec<(String, f32)> = texts.into_iter().filter(|(t, _)| names.contains(&t.as_str())).collect();
+        rows.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // The current layer's name is painted first, in the combo above the list; the list follows.
+        assert_eq!(rows.remove(0).0, "0", "the combo above the list shows the current layer");
+        let order: Vec<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(order, names, "the list runs from top to bottom by name");
     }
 }

@@ -64,6 +64,7 @@ fn a_panic_saves_the_work_and_reports_and_repeated_ones_close_safely() {
     app.enable_autosave(&auto);
     app.run("circle", serde_json::json!({"center": [0, 0], "radius": 1})).unwrap();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
 
     // One panic: the drawing has a whole recovery copy by the time the frame goes on.
     panic_in_a_nested_ui(&mut app, &ctx, "a bug in a panel");

@@ -185,7 +185,7 @@ pub(super) fn layer_states() -> Case {
         layer.on = false;
         layer.locked = true;
     }
-    drawing.layer_states.push(LayerState { name: "Saved".into(), layers });
+    drawing.layer_states.push(LayerState::new("Saved", layers, "0"));
     Case { name: "drawing/layer-state".into(), drawing }
 }
 
@@ -195,9 +195,9 @@ pub(super) fn assert_layer_states(a: &Drawing, b: &Drawing, context: &str) {
 
 pub(super) fn layouts() -> Case {
     let mut drawing = cases::drawing();
-    drawing.layouts = vec![Layout::new("Sheet_A", 1), Layout::new("Sheet_B", 2)];
+    drawing.layouts = vec![Layout::new("Sheet_A", 1), Layout::new("Sheet_B", 2)].into();
     for (index, layout) in drawing.layouts.iter_mut().enumerate() {
-        layout.page.paper_mm = true;
+        layout.page.paper_mm = Some(true);
         // PageSetup stores portrait dimensions; landscape is a separate orientation flag.
         layout.page.width_mm = 297.0;
         layout.page.height_mm = 420.0;
@@ -257,7 +257,13 @@ pub(super) fn assert_layouts(a: &Drawing, b: &Drawing, context: &str) {
         let back = b.layouts.iter().find(|l| l.name == layout.name).expect("layout must survive");
         assert_eq!(back.tab_order, layout.tab_order, "{context}.{}.tab_order", layout.name);
         // The groups 44, 45 and 73 the file stored are provenance, not a setting.
-        let setting = |p: &cadcraft_doc::PageSetup| cadcraft_doc::PageSetup { file_paper: None, ..p.clone() };
+        let setting = |p: &cadcraft_doc::PageSetup| cadcraft_doc::PageSetup {
+            file_plot_settings: None,
+            file_paper: None,
+            file_plot_flags: None,
+            file_standard_scale: None,
+            ..p.clone()
+        };
         assert_eq!(setting(&back.page), setting(&layout.page), "{context}.{}.page", layout.name);
         assert_eq!(back.view, layout.view, "{context}.{}.view", layout.name);
         compare::entities(a, b, &layout.entities, &back.entities, &format!("{context}.layout[{}]", layout.name));

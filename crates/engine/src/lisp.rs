@@ -139,6 +139,9 @@ pub struct LispState {
     /// Interpreter steps all synchronous callbacks have run, nested ones included. A callback's
     /// allowance counts what ran since it started, so the callbacks it calls spend its steps.
     pub(crate) callback_used: u64,
+    /// Work synchronous callbacks did inside the running step, already counted in `callback_used`:
+    /// the step is charged it without charging the enclosing callback a second time.
+    pub(crate) callback_work: u64,
     /// The `callback_used` value the callback running now (and so every one it calls) must not
     /// pass: the lowest of its own and its callers' allowances.
     pub(crate) callback_ceiling: Option<u64>,
@@ -360,11 +363,17 @@ impl Session {
             let mut env = self.lisp_env_take();
             value::set_string_budget(run.string_bytes, self.lisp.limits.string_bytes);
             value::set_cell_limit(self.lisp.limits.cells.max(run.cells_at_start));
+            // What the routine feeds the command line is the program's input: the command it
+            // starts, even when another one is running and the token reaches
+            // [`Session::typed`] first, never opens a dialog. Restored after the slice, a panic
+            // in it included, so a person's later command keeps its own origin.
+            let program_input = std::mem::replace(&mut self.program_input, true);
             let outcome = {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| machine.run(&mut ctx, SLICE)))
             };
+            self.program_input = program_input;
             run.string_bytes = value::string_bytes_used();
             let outcome = match outcome {
                 Ok(o) => o,
@@ -383,6 +392,14 @@ impl Session {
             let uid = run.uid;
             self.lisp_flush(&mut env, false);
             self.lisp_env_put(uid, env);
+            // The work the slice did, which one step can take far past the slice. After a panic
+            // `used` is still the previous slice's; the run ends with the error anyway.
+            run.steps = run.steps.saturating_add(run.machine.used);
+            if run.blocking && run.steps > BLOCKING_CAP && matches!(outcome, Outcome::Wait(_)) {
+                self.lisp.run = Some(run);
+                self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
+                return;
+            }
             match outcome {
                 Outcome::Done(v) => {
                     self.lisp.run = Some(run);
@@ -395,13 +412,7 @@ impl Session {
                     return;
                 }
                 Outcome::Wait(Need::Yield) => {
-                    run.steps = run.steps.saturating_add(SLICE);
                     if run.blocking {
-                        if run.steps > BLOCKING_CAP {
-                            self.lisp.run = Some(run);
-                            self.lisp_error(LispError::quit(format!("routine stopped after {BLOCKING_CAP} steps")));
-                            return;
-                        }
                         self.lisp.run = Some(run);
                         continue;
                     }
@@ -558,7 +569,7 @@ impl Session {
     /// A routine waits for the user's answer to a `get…` function: its prompt.
     pub(crate) fn lisp_prompt(&self) -> Option<Prompt> {
         match self.lisp.run.as_ref()?.waiting.as_ref()? {
-            Need::Get(req) => Some(req.prompt()),
+            Need::Get(req) => Some(req.prompt(&self.input_ucs())),
             _ => None,
         }
     }
@@ -569,10 +580,15 @@ impl Session {
         let Need::Get(req) = self.lisp.run.as_ref()?.waiting.as_ref()? else { return None };
         let line =
             |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) });
-        let Some(b) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        // The base is a UCS point (as the routine gave it); the preview is drawn in world space.
+        let ucs = self.input_ucs();
+        let Some(bu) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        let b = ucs.to_wcs(bu);
         Some(match req.kind {
             input::GetKind::Corner => {
-                let (c1, c2) = (cadcraft_geom::Vec2::new(cursor.x, b.y), cadcraft_geom::Vec2::new(b.x, cursor.y));
+                // The rectangle runs along the UCS axes, as the corner it returns is measured.
+                let cu = ucs.to_ucs(cursor);
+                let (c1, c2) = (ucs.to_wcs(cadcraft_geom::Vec2::new(cu.x, bu.y)), ucs.to_wcs(cadcraft_geom::Vec2::new(bu.x, cu.y)));
                 vec![line(b, c1), line(c1, cursor), line(cursor, c2), line(c2, b)]
             }
             input::GetKind::Point | input::GetKind::Dist | input::GetKind::Angle { .. } => vec![line(b, cursor)],
@@ -751,6 +767,8 @@ fn file_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ucs_tests;
 
 #[cfg(test)]
 mod block_tests;

@@ -146,8 +146,10 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "chrome",
         "cmdline",
         "credits",
+        "docking",
         "dialogs",
         "hatchdlg",
+        "arraydlg",
         "aliasdlg",
         "keys",
         "mtext_editor",
@@ -272,6 +274,7 @@ fn assert_additional_locale_aliases() {
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("he", &["he", "he-IL", "he_IL.UTF-8", "HE-il", " he-IL ", "iw", "iw-IL"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
+        ("ta", &["ta", "ta-IN", "ta_IN.UTF-8", "TA-in", " ta-LK ", "ta-SG", "ta_MY.UTF-8"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -284,7 +287,8 @@ fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
     let look_alikes = ["ua", "ukulele", "nl-NL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
-    for tag in look_alikes.into_iter().chain(others) {
+    let tamil = ["tam", "tamil", "தமிழ்"];
+    for tag in look_alikes.into_iter().chain(others).chain(tamil) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
 }
@@ -395,6 +399,7 @@ fn the_wcs_pill_draws_its_arrow_instead_of_a_glyph_a_font_may_lack() {
     // #1541: "WCS ⌄" showed a box where the UI font had no "⌄"; the chevron is now drawn as
     // lines, so no catalog and no language paints the glyph.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     for language in &LANGUAGES {
         assert!(!language.source.contains('\u{2304}'), "{}.tsv still has the \u{2304} glyph", language.code);
@@ -448,6 +453,7 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> String {
 #[test]
 fn the_command_line_says_or_before_keywords_as_the_prompt_does() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     for lang in ["en", "de"] {
         let mut app = CadApp::new(Session::new(), Services::default());
         app.run("ui.language", json!({ "lang": lang })).unwrap();
@@ -476,6 +482,7 @@ fn live_switch_translates_the_shell_without_mutating_drawing_or_automation() {
     app.ui.in_window_menu = true;
     app.session.state_mut().unwrap().title = "Open".into();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     assert!(render(&mut app, &ctx).contains("Properties"));
     let commands = crate::control::all_commands(&app);
@@ -538,6 +545,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             app.ui.interface_language = Preference::parse(language.code).unwrap();
             app.ui.dialog = Some(dialog.into());
             let ctx = egui::Context::default();
+            crate::framework::install_headless(&ctx);
             app.logic(&ctx);
             let text = render(&mut app, &ctx);
             assert!(text.contains(tr(app.language(), heading)), "{}: {dialog}: {text}", language.code);
@@ -553,11 +561,12 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "he", "vi", "ka"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "he", "vi", "ka", "ta"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         if extra_font {
             crate::theme::install_fonts(&ctx, language.code);
         }
@@ -628,6 +637,7 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     // The picker shows 한국어 in an English interface only when the CJK fonts loaded in every
     // language cover Hangul; the Korean interface itself always does, with a fallback font.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let english = crate::theme::cjk_covers_hangul();
     assert_eq!(with_language("en", || Preference::Korean.name()), if english { "한국어" } else { "Korean" });
     assert_eq!(with_language("ko", || Preference::Korean.name()), "한국어");
@@ -672,6 +682,7 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
     // `default_fonts` and `monochrome_emoji_fonts` in production, so web and native builds
     // always start with bounded Latin and monochrome icon faces instead of an empty family.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     crate::theme::install_fonts(&ctx, "en");
     let mut output = ctx.run_ui(Default::default(), |_| {});
     output.textures_delta.clear();
@@ -704,6 +715,36 @@ fn bosnian_counts_take_one_few_other() {
     assert_eq!(forms, [2, 0, 1, 1, 2, 2, 2, 2, 0, 1, 2, 2]);
     assert_eq!(Preference::parse("bs"), Some(Preference::Bosnian));
     assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
+}
+
+/// Tamil counts take the English forms (one, other). Tamil shows only with a font that has its
+/// letters, an installed Tamil font or the craft-fonts Tamil face, and only the Tamil interface
+/// loads one, so the picker writes தமிழ் there and Tamil in every other. Without a font the
+/// interface stays English and choosing Tamil says why.
+#[test]
+fn tamil_takes_two_forms_and_needs_a_tamil_font() {
+    assert_eq!(Preference::parse("ta"), Some(Preference::Tamil));
+    assert_eq!(Preference::Tamil.native_name(), "தமிழ்");
+    let ta = LANGUAGES.iter().find(|l| l.code == "ta").unwrap();
+    assert_eq!(ta.plural_forms, 2);
+    with_language("ta", || {
+        assert_eq!(count(1, "{n} commit", "{n} commits"), "1 கமிட்");
+        assert_eq!(count(5, "{n} commit", "{n} commits"), "5 கமிட்கள்");
+        assert_eq!(t("Layers"), "அடுக்குகள்");
+    });
+    assert_eq!(with_language("en", || Preference::Tamil.name()), "Tamil");
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.run("ui.language", json!({"lang": "ta"})).unwrap();
+    let shown = crate::theme::can_show("ta");
+    assert_eq!(r["interfaceLanguage"], "ta");
+    assert_eq!(r["shown"], if shown { "ta" } else { "en" });
+    assert_eq!(app.ui.interface_language, Preference::Tamil);
+    if shown {
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "தமிழ்");
+    } else {
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Tamil font")));
+        assert_eq!(with_language("ta", || Preference::Tamil.name()), "Tamil");
+    }
 }
 
 /// Vietnamese has one form for every count, and shows only with an interface font that has its
@@ -750,4 +791,25 @@ fn hebrew_counts_locale_and_lookup() {
         assert_eq!(count(5, "{n} contributor", "{n} contributors"), "5 תורמים");
     });
     assert_eq!(tr("he", "Properties"), "מאפיינים");
+}
+
+/// Arabic gives Stretch, Trim and Point words of their own: Stretch read «تمديد» like Extend,
+/// Trim's prompts said «قص» like Cut, and Point read «تأشير», the catalog's word for dimensioning.
+#[test]
+fn arabic_tells_stretch_trim_and_point_from_their_neighbours() {
+    // The words themselves: a pair that merely differs also differs when a row is missing and both
+    // fall back to English, and Point and Dimension already differed before.
+    for (key, word) in [("Stretch", "تمطيط"), ("Trim", "تشذيب"), ("Point", "نقطة")] {
+        assert_eq!(tr("ar", key), word, "{key}");
+    }
+    for (a, b) in [("Stretch", "Extend"), ("Trim", "Cut"), ("Point", "Dimension")] {
+        assert_ne!(tr("ar", a), tr("ar", b), "{a} and {b} share a word");
+    }
+    for (prompt, verb) in [
+        ("Select object to trim or shift-select to extend", "تشذيب"),
+        ("Select object to extend or shift-select to trim", "تشذيب"),
+        ("Select objects to stretch by crossing-window or crossing-polygon...", "تمطيط"),
+    ] {
+        assert!(tr("ar", prompt).contains(verb), "{prompt}");
+    }
 }

@@ -1,7 +1,9 @@
-//! CADCraft file formats: DXF/DWG read, SVG and SVGZ import, SVG/PNG/PDF export (plotting).
+//! CADCraft file formats: DXF/DWG read, SVG/SVGZ import, PDF page conversion and SVG/PNG/PDF plotting.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// A DWG hatch's elliptic boundary edge angles, in degrees in the DXF the DWG is read through (#3332).
+mod dwg_hatch;
 /// What a DXF file holds that CADCraft doesn't model, kept and written back (#528).
 mod dxf_raw;
 
@@ -9,12 +11,14 @@ mod dxf_raw;
 mod dxf_clip;
 mod dxf_ext;
 mod dxf_image;
+mod dxf_layer_states;
 mod dxf_mleader;
 mod dxf_read;
 mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pdf_read;
 pub mod plotter;
 /// Raster image files (PNG, JPEG, BMP, TIFF) decoded to pixels.
 pub mod raster;
@@ -34,7 +38,7 @@ pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::entity_groups;
+pub use dxf_write::{DWG_MAX_LINETYPE_ELEMENTS, dwg_compat_lost, dwg_notes, entity_groups, proxies_lost};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.
@@ -77,7 +81,7 @@ fn dwg_error(message: String) -> IoError {
 
 /// How a program runs the DWG reader and writer in a child process (`craft_dwg::worker`).
 pub mod dwg_worker {
-    pub use craft_dwg::{WORKER_ARG, serve_if_asked, use_own_worker};
+    pub use craft_dwg::{WORKER_ARG, allow_in_process, serve_if_asked, use_own_worker};
     #[cfg(all(not(target_arch = "wasm32"), not(all(target_os = "freebsd", target_arch = "aarch64"))))]
     pub use craft_dwg::{crash_worker_for_test, use_worker};
 }
@@ -97,6 +101,8 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if craft_dwg::is_dwg(bytes) {
         let (dxf, notes) = craft_dwg::decode(bytes, craft_dwg::Limits::DEFAULT).map_err(dwg_error)?;
+        // The decoder writes an elliptic hatch edge's angles in radians; DXF keeps degrees.
+        let dxf = dwg_hatch::elliptic_edge_degrees(dxf);
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes.into_iter().map(|note| cadcraft_dwg_message(&note)).collect();
         return Ok((d, Some(dxf)));
@@ -159,8 +165,13 @@ pub fn write_noted(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> R
 /// file they came from (`Foreign::version`, not `$ACADVER`, which SAVEAS changes), and the bridge
 /// reads them as that version.
 fn write_dwg(d: &Drawing, version: Version) -> Result<(Vec<u8>, craft_dwg::Unwritten)> {
-    let bridge = dxf_write::dwg_bridge(d, version);
-    craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)
+    let (bridge, omitted) = dxf_write::dwg_bridge(d, version);
+    let (bytes, mut unwritten) = craft_dwg::encode_kept_noted(bridge.as_bytes(), version.code(), d.foreign.version.as_deref()).map_err(dwg_error)?;
+    for (kind, omitted) in omitted {
+        let count = unwritten.entry(kind).or_default();
+        *count = count.saturating_add(omitted);
+    }
+    Ok((bytes, unwritten))
 }
 
 /// Like [`write`], but image formats (PNG, SVG, PDF) show `window` (a model-space rectangle in
