@@ -85,6 +85,7 @@ mod insert_enter;
 mod insert_prompts;
 mod isometric;
 mod join_close;
+mod join_on_source;
 mod json_param_validation;
 mod kept_dimension_snaps;
 mod layer_cmdline;
