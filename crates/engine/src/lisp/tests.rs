@@ -1886,6 +1886,19 @@ fn erasing_another_object_keeps_an_attrib_name() {
 }
 
 #[test]
+fn entdel_of_another_object_keeps_an_attrib_name() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i))");
+    s.execute("line", &json!({ "points": [[0, -10], [10, -10]] })).unwrap();
+    ok(&mut s, "(setq line (entlast))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget line)))"), "\"LINE\"");
+    ok(&mut s, "(entdel line)");
+    assert_eq!(ok(&mut s, "(entget line)"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"A1\"");
+}
+
+#[test]
 fn a_name_given_in_the_block_editor_never_resolves_in_the_host() {
     let mut s = with_attributes(&[("T1", 0, "D1")]);
     inserted(&mut s, json!({ "T1": "A1" }));
