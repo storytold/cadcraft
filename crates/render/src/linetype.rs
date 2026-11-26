@@ -130,8 +130,8 @@ fn gap_first(len: f64, pattern: &[f64], period: f64) -> Vec<(f64, f64)> {
                     continue;
                 }
                 let b = b.min(p0 + len);
-                if b > a || (e == 0.0 && (p0..=p0 + len).contains(&a)) {
-                    out.push((a - p0, b - p0));
+                if b > a.max(p0) || (e == 0.0 && (p0..=p0 + len).contains(&a)) {
+                    out.push((a.max(p0) - p0, b - p0));
                 }
             }
         }
