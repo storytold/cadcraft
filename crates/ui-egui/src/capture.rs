@@ -1,15 +1,15 @@
 //! Bounded, one-shot window screenshots for `ui.screenshot`.
 //!
 //! The request record owns the output path, reply, deadline, document/focus identity and the
-//! geometry it was admitted against. The shared `craft_ui::capture::CaptureSlot` owns the strong
-//! `egui::Context`; its screenshot callback holds only a weak reference and never writes a file.
+//! geometry it was admitted against. The runtime's `ScreenshotSlot`, made when the capture is issued
+//! (`WindowHost::screenshot`), owns the strong `egui::Context`; its screenshot callback holds only a
+//! weak reference and never writes a file.
 //! Files are encoded and written only from the logic drain, after the deadline and every identity
 //! check have passed.
 
 use std::sync::mpsc::Sender;
 
-use craft_ui::capture::CaptureSlot;
-use egui::ViewportCommand;
+use craft_ui::runtime::windows::{ScreenshotSlot, WindowHost};
 use serde_json::{Value, json};
 use web_time::{Duration, Instant};
 
@@ -174,8 +174,8 @@ struct Shot {
     geometry: SurfaceGeometry,
     expected: [usize; 2],
     reserved: usize,
-    slot: Option<CaptureSlot>,
-    callback: Option<egui::ScreenshotCallback>,
+    /// The runtime's screenshot slot, from the moment the capture is issued.
+    slot: Option<ScreenshotSlot>,
 }
 
 /// All admitted screenshots. `requests` includes queued, issued and completed-but-undrained
@@ -234,9 +234,10 @@ fn active_document(app: &CadApp) -> Option<u64> {
     app.session.docs.get(app.session.active).map(|doc| doc.uid)
 }
 
-/// The widget egui currently reports as keyboard-focused, if any.
+/// The widget egui currently reports as keyboard-focused, if any. The drawing's focus shows nothing, so it counts as
+/// none: a command that opens a drawing moves the focus to it in a later frame.
 fn current_focus(ctx: &egui::Context) -> Option<egui::Id> {
-    ctx.memory(|memory| memory.focused())
+    ctx.memory(|memory| memory.focused()).filter(|id| *id != crate::framework::drawing_id())
 }
 
 /// Snapshot the active drawing UID, the monotonic document epoch and the focused widget together.
@@ -344,7 +345,6 @@ pub(crate) fn admit(app: &mut CadApp, ctx: &egui::Context, path: Option<String>,
             format!("screenshot budget exceeded: {total} bytes reserved by outstanding requests, over the {MAX_TOTAL_BYTES}-byte limit"),
         );
     }
-    let (slot, callback) = CaptureSlot::new(ctx, ctx.viewport_id(), MAX_IMAGE_BYTES);
     let now = Instant::now();
     app.shots.requests.push(Shot {
         token,
@@ -360,8 +360,7 @@ pub(crate) fn admit(app: &mut CadApp, ctx: &egui::Context, path: Option<String>,
         geometry: geometry.surface,
         expected,
         reserved,
-        slot: Some(slot),
-        callback: Some(callback),
+        slot: None,
     });
     ctx.request_repaint();
 }
@@ -390,10 +389,10 @@ fn identity_change(app: &CadApp, ctx: &egui::Context, shot: &Shot) -> Option<&'s
 
 /// Issue settled requests from the first non-discarded UI pass.
 ///
-/// egui discards a pass only when `will_discard()` says so, and the final pass of a multi-pass
-/// frame reports false; a hidden `run_logic` tick never reaches `issue` at all.
+/// A pass is skipped only when `craft_ui::runtime::frame::will_rerun` says it will run again, and
+/// the final pass of a multi-pass frame reports false; a hidden `run_logic` tick never reaches `issue` at all.
 pub(crate) fn issue(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.will_discard() {
+    if craft_ui::runtime::frame::will_rerun(ctx) {
         return;
     }
     // The draw may have moved the focus or switched drawings: observe that before judging.
@@ -447,11 +446,7 @@ pub(crate) fn issue(app: &mut CadApp, ctx: &egui::Context) {
             continue;
         }
         let shot = &mut app.shots.requests[i];
-        let Some(callback) = shot.callback.take() else {
-            failures.push((i, "screenshot failed: the capture callback was already consumed".into()));
-            continue;
-        };
-        ctx.send_viewport_cmd_to(ctx.viewport_id(), ViewportCommand::Screenshot(callback));
+        shot.slot = Some(WindowHost::of(ctx).screenshot(ctx.viewport_id(), MAX_IMAGE_BYTES));
         shot.issued = true;
         shot.identity = current.identity;
         shot.geometry = current.surface;
@@ -509,7 +504,7 @@ pub(crate) fn drain(app: &mut CadApp, ctx: &egui::Context) {
             reject(shot.reply, shot.token, "screenshot failed: the window geometry changed while the capture was queued");
             continue;
         }
-        let Some(result) = app.shots.requests[i].slot.as_ref().and_then(CaptureSlot::take) else {
+        let Some(result) = app.shots.requests[i].slot.as_ref().and_then(ScreenshotSlot::take) else {
             i += 1;
             continue;
         };
@@ -560,7 +555,7 @@ pub(crate) fn cancel_all(app: &mut CadApp) {
 pub(crate) fn request_hidden_paint(app: &CadApp, ctx: &egui::Context) {
     if app.shots.has_unissued() {
         #[cfg(not(target_arch = "wasm32"))]
-        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
         ctx.request_repaint();
     }
 }

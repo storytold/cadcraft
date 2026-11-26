@@ -890,3 +890,158 @@ fn constant_values_count_in_extents_as_attmode_shows_them() {
     assert!(top(1, true) < 40.0);
     assert!(top(2, true) > 40.0, "ATTMODE 2 shows an invisible one");
 }
+
+#[test]
+fn an_attribute_lies_on_the_layer_of_the_first_definition_of_its_tag() {
+    // Two definitions of one tag, in different case, on a frozen layer and on layer 0: an
+    // attribute without a layer of its own (in a third case) lies on the first one's.
+    let top = |defs: [(&str, &str); 2]| {
+        let mut d = Drawing::new_imperial();
+        let mut frozen = Layer::new("AFRZ");
+        frozen.frozen = true;
+        d.layers.push(frozen);
+        let mut blk = Block::new("B");
+        blk.entities.push(on_layer("0", line((0.0, 0.0), (1.0, 1.0)), 1));
+        for (h, (layer, tag)) in (2..).zip(defs) {
+            blk.entities.push(on_layer(layer, EntityKind::AttDef(plain_attrib(tag)), h));
+        }
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+        let mut a = plain_attrib("Tag");
+        a.text.insert = Vec3::new(0.0, 500.0, 0.0);
+        ins.attribs.push(a);
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        extents_pair(&d).1.y
+    };
+    assert!(top([("AFRZ", "TAG"), ("0", "tag")]) < 100.0, "on the first definition's frozen layer");
+    assert!(top([("0", "tag"), ("AFRZ", "TAG")]) > 400.0, "on the first definition's layer 0");
+}
+
+#[test]
+fn constant_definitions_of_one_tag_all_count_unless_the_reference_carries_the_tag() {
+    // Two constant definitions of one tag, in different case: a reference draws both values,
+    // unless it carries an attribute of that tag (in a third case), which stands for both.
+    let max = |attribs: Vec<Attrib>| {
+        let mut d = Drawing::new_imperial();
+        let mut blk = Block::new("B");
+        blk.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+        for (h, tag, at) in [(2, "C", Vec3::new(0.0, 5000.0, 0.0)), (3, "c", Vec3::new(7000.0, 0.0, 0.0))] {
+            let mut a = plain_attrib(tag);
+            a.text.insert = at;
+            a.constant = true;
+            blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(a)));
+        }
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+        ins.attribs = attribs;
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        extents_pair(&d).1
+    };
+    for shown in [max(vec![]), max(vec![plain_attrib("D")])] {
+        assert!(shown.x > 6000.0 && shown.y > 4000.0, "both values count: {shown:?}");
+    }
+    let carried = max(vec![plain_attrib("D"), plain_attrib("Cc"), plain_attrib("C")]);
+    assert!(carried.x < 100.0 && carried.y < 100.0, "neither value counts: {carried:?}");
+}
+
+#[test]
+fn many_attributes_and_definitions_are_matched_without_comparing_every_pair() {
+    // #1923: one reference with N attributes (none with a layer of its own) of a block with N
+    // constant definitions, the tags N long ones alike up to their last characters, no attribute's
+    // a definition's. Comparing each attribute with each definition, for its layer and for which
+    // constant values the reference carries, cost N x N comparisons of whole tags (many seconds
+    // here); one lookup per attribute or definition costs milliseconds.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = Block::new("B");
+    blk.entities.push(Entity::new(Handle(1), line((0.0, 0.0), (1.0, 1.0))));
+    for (h, i) in (2..).zip(0..N) {
+        let mut a = plain_attrib(&tag('D', i));
+        a.constant = true;
+        blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = plain_insert("B") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| plain_attrib(&tag('A', i))).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    assert!(!d.extents(&Space::Model).is_empty());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+/// Looking a layer or a block up by name does not scan the table: a file of N layers, or of N
+/// blocks and N references to blocks it does not have, opened in N² name comparisons (#1924).
+#[test]
+fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    const N: usize = 60_000;
+    let mut d = Drawing::new_imperial();
+    d.layers = (0..N).map(|i| Layer::new(&format!("L{i}"))).collect();
+    for i in 0..N {
+        let name = format!("B{i}");
+        d.blocks.insert(name.clone(), std::sync::Arc::new(Block::new(&name)));
+    }
+    let started = std::time::Instant::now();
+    for i in 0..N {
+        assert!(d.layer(&format!("l{i}")).is_some() && d.layer(&format!("M{i}")).is_none());
+        assert!(d.block(&format!("b{i}")).is_some() && d.block(&format!("Z{i}")).is_none());
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}
+
+/// Table entries for the cost tests below.
+const NAMED: usize = 40_000;
+
+/// A name of 54 bytes whose first 48 every such name of `kind` shares, so comparing two costs
+/// about 50 bytes and not a length check, as in a crafted file.
+fn long_name(kind: &str, tail: &str) -> String {
+    format!("{kind}{}{tail}", "x".repeat(48 - kind.len()))
+}
+
+/// The [`NAMED`] names `long_name(kind, "000000")`, `..."000001"`, ...
+fn long_names(kind: &str) -> impl Iterator<Item = String> + '_ {
+    (0..NAMED).map(move |i| long_name(kind, &format!("{i:06}")))
+}
+
+/// Each of a table's [`NAMED`] names is looked up in other case (found) and as a missing name of
+/// the same length, well within a bound that scanning the table for each lookup misses: a file of
+/// N entries and N objects naming one it lacks, or names in other case, drew in N² name
+/// comparisons (#1924).
+fn lookups_by_name_are_quick(kind: &str, found: impl Fn(&str) -> bool) {
+    let started = std::time::Instant::now();
+    for i in 0..NAMED {
+        assert!(found(&long_name(kind, &format!("{i:06}")).to_ascii_uppercase()), "{kind} {i}");
+        assert!(!found(&long_name(kind, &format!("z{i:05}"))), "{kind} {i}");
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}
+
+#[test]
+fn linetype_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.linetypes = long_names("LT").map(|n| Linetype::simple(&n, "", &[0.5, -0.25])).collect();
+    lookups_by_name_are_quick("LT", |n| d.linetype(n).is_some());
+}
+
+#[test]
+fn text_style_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles = long_names("S").map(|name| TextStyle { name, ..TextStyle::default() }).collect();
+    lookups_by_name_are_quick("S", |n| d.text_style(n).is_some());
+}
+
+#[test]
+fn dim_style_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.dim_styles = long_names("D").map(|name| DimStyle { name, ..DimStyle::default() }).collect();
+    lookups_by_name_are_quick("D", |n| d.dim_style(n).is_some());
+}
+
+/// Each change to a drawing looks up every layout of the drawing before it by name (the check for
+/// non-finite results), so a drawing of N layouts cost N² name comparisons per command.
+#[test]
+fn layout_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.layouts = long_names("L").zip(1..).map(|(n, tab)| Layout::new(&n, tab)).collect();
+    lookups_by_name_are_quick("L", |n| d.layout(n).is_some());
+}

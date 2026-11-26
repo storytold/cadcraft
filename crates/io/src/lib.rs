@@ -38,7 +38,7 @@ pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::{dwg_compat_lost, entity_groups, proxies_lost};
+pub use dxf_write::{DWG_MAX_LINETYPE_ELEMENTS, dwg_compat_lost, dwg_notes, entity_groups, proxies_lost};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.

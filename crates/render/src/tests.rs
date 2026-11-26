@@ -282,6 +282,23 @@ fn system_font() -> Option<&'static str> {
     ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find(|n| cadcraft_fonts::ttf::find(n).is_some())
 }
 
+/// #666: on screen, filled glyphs outside the area being looked at are left out (the canvas
+/// builds again when the view leaves it); plots and builds without a view keep every glyph.
+#[test]
+fn glyphs_outside_the_view_are_left_out_of_screen_builds_only() {
+    let Some(font) = system_font() else { return };
+    let d = text_doc(font, "OH");
+    let tris = |o: &Options| build(&d, &Space::Model, o).prims.iter().filter(|p| p.kind == Kind::Tris).count();
+    let all = tris(&Options::default());
+    assert!(all > 0);
+    let near = Options { view: Some(Bounds2::new(Vec2::new(-1.0, -1.0), Vec2::new(3.0, 2.0))), ..Options::default() };
+    assert_eq!(tris(&near), all, "a view over the text keeps it");
+    let far = Options { view: Some(Bounds2::new(Vec2::new(100.0, 100.0), Vec2::new(110.0, 110.0))), ..Options::default() };
+    assert_eq!(tris(&far), 0, "a view far from the text leaves its glyphs out");
+    let plot = build_plot(&d, &Space::Model, &far);
+    assert_eq!(plot.prims.iter().filter(|p| p.kind == Kind::Tris).count(), all, "plots keep every glyph");
+}
+
 // ---------- a fixture TrueType font: no font file, no installed font ----------
 
 /// A closed ellipse round (500, 350), wound by `clockwise`: one contour of a glyph outline.
@@ -938,6 +955,32 @@ fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
     let mut own = attrib("c");
     own.text.insert = own.text.insert + at;
     assert_eq!(drawn_above_line(constant(false), vec![own], 1, at).len(), pts.len());
+}
+
+#[test]
+fn many_constant_definitions_are_matched_to_the_attributes_without_comparing_every_pair() {
+    // #1923: a reference with N attributes of a block with N constant definitions, the tags N long
+    // ones alike up to their last characters, no attribute's a definition's. Asking for each
+    // definition whether the reference carries its tag by comparing it with every attribute cost
+    // N x N comparisons of whole tags for each copy drawn (many seconds here); gathering the
+    // reference's tags once costs milliseconds. The values are empty and the attributes invisible,
+    // so drawing them costs nothing.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("K");
+    for (h, i) in (1..).zip(0..N) {
+        let mut a = cadcraft_doc::Attrib { constant: true, ..attrib(&tag('D', i)) };
+        a.text.value.clear();
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| cadcraft_doc::Attrib { invisible: true, ..attrib(&tag('A', i)) }).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    build(&d, &Space::Model, &Options::default());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
 }
 
 #[test]

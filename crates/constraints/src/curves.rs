@@ -238,8 +238,9 @@ mod tests {
             assert!(f.t.near(g.t, 1e-3), "{f:?} {g:?}");
             assert!((f.k - g.k).abs() < 1e-2, "{f:?} {g:?}");
         }
-        // An unclamped (periodic) spline has no ends.
-        let closed = GSpline::from_fit_points_closed(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(2.0, 3.0)]);
-        assert!(spline_end(&closed, false).is_none());
+        // An unclamped spline has no ends: one whose control points wrap round.
+        let fit = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(2.0, 3.0)];
+        let closed = GSpline::fit_with(&fit, true, cadcraft_geom::FitOptions { knots: cadcraft_geom::KnotParam::Uniform, ..Default::default() });
+        assert!(closed.wraps() && spline_end(&closed, false).is_none());
     }
 }

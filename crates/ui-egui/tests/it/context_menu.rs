@@ -82,6 +82,8 @@ fn clipboard_events_run_the_clipboard_commands() {
     app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
     let h = app.session.doc().unwrap().model.handles();
     app.session.set_selection(h);
+    // Only the shortcut table runs here, no app UI: the drawing that keeps the clipboard events in egui while it is
+    // shown is not drawn, so the runtime is not installed.
     let ctx = egui::Context::default();
     let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         ctx.begin_pass(egui::RawInput { events, ..Default::default() });
@@ -186,6 +188,7 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, mut events: Vec<egui::Event>, 
 fn shift_right_click_opens_the_snap_menu() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
     app.cmdline("LINE 0,0");
@@ -209,6 +212,7 @@ fn shift_right_click_opens_the_snap_menu() {
 fn quick_right_click_cancels_a_palette_placement_only() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), egui::Modifiers::NONE);
     app.session.execute("line", &json!({ "points": [[0, 0], [4, 0]] })).unwrap();

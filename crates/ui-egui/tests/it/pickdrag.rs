@@ -11,7 +11,7 @@ fn harness() -> Harness<'static, CadApp> {
     app.canvas.zoom_pending = false;
     app.session.execute("line", &json!({"points":[[0,0],[10,0]]})).unwrap();
     app.session.execute("view.set", &json!({"center":[5,0],"height":30})).unwrap();
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);
