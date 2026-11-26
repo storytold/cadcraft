@@ -48,6 +48,10 @@ pub struct DocState {
     /// The fonts missing on Windows that a save last named: the next save names them again only
     /// when they change.
     pub(crate) fonts_noted: String,
+    /// The files the user linked with DATALINK since the drawing was opened, as the file system
+    /// resolves them: DATALINKUPDATE reads these also outside the drawing's folder
+    /// ([`crate::doc_path`]). Kept with the open drawing only, never saved.
+    pub(crate) chosen_links: std::collections::HashSet<std::path::PathBuf>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -77,6 +81,7 @@ impl DocState {
             ucs_tilted_noted: false,
             erased: Default::default(),
             fonts_noted: String::new(),
+            chosen_links: Default::default(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet

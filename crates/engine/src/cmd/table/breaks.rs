@@ -8,11 +8,13 @@ use super::cells::cell_of;
 use super::{MAX_COLS, MAX_ROWS, anchors, edit, set_anchors, usize_param};
 use crate::cmd::machines::SelectRun;
 use crate::cmd::{CommandSpec, bad, bool_or, str_param};
-use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, DocState, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Largest linked file read (bytes).
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_LINK_BYTES: usize = 8 << 20;
+/// Most files remembered per drawing as linked by the user ([`DocState::chosen_links`]).
+const MAX_CHOSEN_LINKS: usize = 1000;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -26,7 +28,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Data Link..."])
             .params("{handle, path (.csv, .txt/.tsv tab-separated), startRow? (default: below the title), remove?: bool} → {rows, cols}"),
         CommandSpec::new("datalinkupdate", "Update Data Links", run_update)
-            .params("{handles?} (default: every linked table) → {updated}")
+            .params(
+                "{handles?} (default: every linked table) → {updated, errors}; a link saved in the drawing is read only from the drawing's \
+                 folder or below it, unless DATALINK linked that file since the drawing was opened",
+            )
             .interactive(|_| Ok(Box::new(SelectRun::new("datalinkupdate", "DATALINKUPDATE")))),
     ]
 }
@@ -224,13 +229,42 @@ fn separator(path: &str, text: &str) -> char {
     if first.contains(';') && !first.contains(',') { ';' } else { ',' }
 }
 
-/// The file to read for a data link: a path the user just `chosen` as given, a path stored in the
-/// drawing at `host` only through [`crate::doc_path::resolve`].
-fn link_file(id: &str, path: &str, host: Option<&str>, chosen: bool) -> Result<std::path::PathBuf> {
+/// The file to read for a data link of the drawing `st`: a path the user just `chosen` as given;
+/// a path stored in the drawing through [`crate::doc_path::resolve`], and then only as the file
+/// system finds it (`..` and links followed) in the drawing's `folder`
+/// ([`crate::doc_path::drawing_folder`]) or below it, or when the user linked that same file since
+/// the drawing was opened ([`DocState::chosen_links`]).
+fn link_file(id: &str, path: &str, st: &DocState, folder: Option<&std::path::Path>, chosen: bool) -> Result<std::path::PathBuf> {
     if chosen {
         return Ok(std::path::PathBuf::from(path));
     }
-    crate::doc_path::resolve(path, host.map(std::path::Path::new)).map_err(|r| bad(id, format!("{path}: not opened, {r}")))
+    let host = st.path.as_deref().map(std::path::Path::new);
+    let file = crate::doc_path::resolve(path, host).map_err(|r| bad(id, format!("{path}: not opened, {r}")))?;
+    if cfg!(target_arch = "wasm32") {
+        // Nothing is read there; [`read_link`] says so.
+        return Ok(file);
+    }
+    // The automation roots first: outside them nothing about the file is asked.
+    crate::file_access::check_read(&file).map_err(|e| bad(id, e))?;
+    let real = std::fs::canonicalize(&file).map_err(|e| bad(id, format!("{path}: {e}")))?;
+    // Whole components: `plans-old` is not in `plans`.
+    if folder.is_some_and(|f| real.starts_with(f)) || st.chosen_links.contains(&real) {
+        // Read where it was checked, not through the links again.
+        return Ok(real);
+    }
+    Err(bad(id, format!("{path}: not read, the file is outside the drawing's folder; link it with DATALINK to read it")))
+}
+
+/// Remember `real` (resolved), the file of a link the user just gave, as theirs to read for the
+/// drawing `st`. At [`MAX_CHOSEN_LINKS`] files another one makes room: the newest choice counts.
+fn remember_link(st: &mut DocState, real: std::path::PathBuf) {
+    if st.chosen_links.len() >= MAX_CHOSEN_LINKS
+        && !st.chosen_links.contains(&real)
+        && let Some(old) = st.chosen_links.iter().next().cloned()
+    {
+        st.chosen_links.remove(&old);
+    }
+    st.chosen_links.insert(real);
 }
 
 /// Read a linked file through the host (natively the file system; not on the web).
@@ -288,16 +322,20 @@ fn fill(t: &mut Table, start: usize, data: &[Vec<String>]) {
     }
 }
 
-/// Re-read the linked file of table `h`; `chosen` says its path was just given by the user.
-fn update(s: &mut Session, h: Handle, chosen: bool) -> Result<(usize, usize)> {
+/// Re-read the linked file of table `h`; `chosen` says its path was just given by the user, else
+/// it is read from the drawing's `folder` ([`crate::doc_path::drawing_folder`]) or a file the user
+/// linked.
+fn update(s: &mut Session, h: Handle, folder: Option<&std::path::Path>, chosen: bool) -> Result<(usize, usize)> {
     let id = "datalinkupdate";
     let link = match s.doc()?.entity(h).map(|e| &e.kind) {
         Some(EntityKind::Table(t)) => t.data_link.clone().ok_or_else(|| bad(id, "the table has no data link"))?,
         _ => return Err(bad(id, "object is not a table")),
     };
-    let host = s.state()?.path.clone();
-    let file = link_file(id, &link.path, host.as_deref(), chosen)?;
+    let file = link_file(id, &link.path, s.state()?, folder, chosen)?;
     let text = read_link(id, &file)?;
+    if chosen && let Ok(real) = std::fs::canonicalize(&file) {
+        remember_link(s.state_mut()?, real);
+    }
     let data = parse_csv(&text, separator(&link.path, &text));
     let mut size = (0, 0);
     edit(s, &json!({ "handle": h.hex() }), id, |t| {
@@ -325,7 +363,7 @@ fn run_datalink(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     let h = r.get("handle").and_then(Value::as_str).and_then(Handle::parse_hex).ok_or_else(|| bad(id, "no table"))?;
-    let (rows, cols) = update(s, h, true)?;
+    let (rows, cols) = update(s, h, None, true)?;
     Ok(json!({ "handle": h.hex(), "rows": rows, "cols": cols }))
 }
 
@@ -351,8 +389,10 @@ fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut updated = 0;
     let mut errors = Vec::new();
+    // Resolved once for every table, and only when there is one.
+    let folder = if hs.is_empty() { None } else { crate::doc_path::drawing_folder(s.state()?.path.as_deref().map(std::path::Path::new)) };
     for h in hs {
-        match update(s, h, false) {
+        match update(s, h, folder.as_deref(), false) {
             Ok(_) => updated += 1,
             Err(e) => errors.push(e.to_string()),
         }
@@ -377,6 +417,20 @@ mod tests {
         if dev.exists() {
             assert!(read_link("datalink", dev).is_err());
         }
+    }
+
+    /// However many files the user links, the drawing remembers a bounded number of them, and
+    /// always the one linked last.
+    #[test]
+    fn remembered_links_are_bounded_and_keep_the_newest() {
+        let mut st = DocState::new(cadcraft_doc::Drawing::new_metric(), "t", None);
+        for i in 0..MAX_CHOSEN_LINKS + 10 {
+            let file = std::path::PathBuf::from(format!("/data/{i}.csv"));
+            remember_link(&mut st, file.clone());
+            assert!(st.chosen_links.contains(&file));
+            assert!(st.chosen_links.len() <= MAX_CHOSEN_LINKS);
+        }
+        assert_eq!(st.chosen_links.len(), MAX_CHOSEN_LINKS, "the bound is reached, not a smaller one");
     }
 
     #[test]
