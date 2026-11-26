@@ -895,7 +895,27 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             let k = parse_scale(v).ok_or_else(|| bad(cmd, "`scale` must be positive: paper units per drawing unit, or a ratio such as \"1:50\""))?;
             o.insert("scale".into(), json!(k));
         }
-        if let Some(w) = plot_window(s, p, cmd, &space)? {
+        if let Some(names) = sheets.as_deref()
+            && p.get("plotArea").is_none()
+            && p.get("window").is_none()
+        {
+            let plain_sheet = p.get("fit").and_then(Value::as_bool) == Some(false) && p.get("scale").is_none();
+            if !plain_sheet {
+                let mut map = serde_json::Map::new();
+                for name in names {
+                    if !name.eq_ignore_ascii_case("model") && s.doc()?.layout(name).is_some_and(|l| l.page.plot_area.eq_ignore_ascii_case("display"))
+                    {
+                        let w = display_view_window(s, &Space::Paper(name.clone()))?;
+                        if w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9 {
+                            map.insert(name.clone(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
+                        }
+                    }
+                }
+                if !map.is_empty() {
+                    o.insert("displayWindows".into(), Value::Object(map));
+                }
+            }
+        } else if let Some(w) = plot_window(s, p, cmd, &space)? {
             o.insert("window".into(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
         }
         // Without one, the plotter uses each sheet's page setup.
@@ -949,6 +969,16 @@ fn saved_window_corners(page: &PageSetup) -> Option<Bounds2> {
         .filter(|w| w.width() > 1e-9 && w.height() > 1e-9)
 }
 
+/// The current view rectangle of `space` in world coordinates.
+fn display_view_window(s: &Session, space: &Space) -> Result<Bounds2> {
+    let st = s.state()?;
+    let v = st.views.iter().find(|(sp, _)| sp == space).map(|(_, v)| *v).unwrap_or_default();
+    let (px, py) = s.viewport_px;
+    let aspect = if px.is_finite() && py.is_finite() && px > 0.0 && py > 0.0 { px / py } else { 1.0 };
+    let half = Vec2::new(v.height * aspect / 2.0, v.height / 2.0);
+    Ok(Bounds2::new(v.center - half, v.center + half))
+}
+
 /// The rectangle a plot of `plotArea` covers: `extents` plots everything, `display` the current
 /// view, `limits` the drawing limits (model space), `window` the `window` corners (or a layout's
 /// saved `plot_window`), and `layout` the layout sheet.
@@ -964,14 +994,7 @@ fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Optio
     };
     let w = match (space, effective) {
         (_, None) | (Space::Model, Some("extents")) | (Space::Paper(_), Some("layout" | "extents")) => return Ok(None),
-        (_, Some("display")) => {
-            let st = s.state()?;
-            let v = st.views.iter().find(|(sp, _)| sp == space).map(|(_, v)| *v).unwrap_or_default();
-            let (px, py) = s.viewport_px;
-            let aspect = if px.is_finite() && py.is_finite() && px > 0.0 && py > 0.0 { px / py } else { 1.0 };
-            let half = Vec2::new(v.height * aspect / 2.0, v.height / 2.0);
-            Bounds2::new(v.center - half, v.center + half)
-        }
+        (_, Some("display")) => display_view_window(s, space)?,
         (Space::Model, Some("limits")) => {
             let d = s.doc()?;
             let lo = d.header.point("LIMMIN").map(|p| p.xy()).unwrap_or(Vec2::ZERO);

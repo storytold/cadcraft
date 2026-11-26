@@ -83,6 +83,8 @@ pub struct PdfOptions {
     pub plot_area: Option<String>,
     /// Plot rectangle (drawing units), fitted or placed on the printable area.
     pub window: Option<Bounds2>,
+    /// Per-layout view-derived display windows for multi-sheet plots, keyed by layout name.
+    pub display_windows: Vec<(String, Bounds2)>,
     /// Drawing layers become PDF layers (optional content groups). Default on.
     pub layers: bool,
     /// With `layers`: objects on layers that are off are plotted on PDF layers that start
@@ -122,6 +124,7 @@ impl Default for PdfOptions {
             title: String::new(),
             plot_area: None,
             window: None,
+            display_windows: Vec::new(),
             layers: true,
             include_off_layers: false,
             links: Vec::new(),
@@ -163,11 +166,21 @@ impl PdfOptions {
             title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
             plot_area: v.get("plotArea").and_then(Value::as_str).map(str::to_ascii_lowercase),
             window: window(v.get("window")),
+            display_windows: display_windows(v.get("displayWindows")),
             margins: margins(v.get("margins")),
             hyperlinks: v.get("hyperlinks").and_then(Value::as_bool).unwrap_or(true),
             plot_transparency: v.get("plotTransparency").and_then(Value::as_bool),
         }
     }
+
+    fn display_window(&self, layout: &str) -> Option<Bounds2> {
+        self.display_windows.iter().find(|(n, _)| n.eq_ignore_ascii_case(layout)).map(|(_, w)| *w)
+    }
+}
+
+fn display_windows(v: Option<&Value>) -> Vec<(String, Bounds2)> {
+    let Some(map) = v.and_then(Value::as_object) else { return Vec::new() };
+    map.iter().filter_map(|(name, val)| window(Some(val)).map(|w| (name.clone(), w))).collect()
 }
 
 fn offset(v: Option<&Value>) -> Option<[f64; 2]> {
@@ -526,6 +539,7 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
     let mut o = o.clone();
     let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
     let saved = paper::saved_plot(page);
+    let display_win = space.layout().and_then(|n| o.display_window(n));
     match o.plot_area.as_deref() {
         Some("layout") => {
             // Caller explicitly chose the whole sheet: ignore any saved window.
@@ -543,7 +557,7 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
         }
         Some("window" | "display") => {
             if o.window.is_none() {
-                o.window = saved.window;
+                o.window = display_win.or(saved.window);
             }
             let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
             if o.fit.is_none() && o.scale.is_none() && saved_fit {
@@ -569,7 +583,7 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
                 }
             }
             if o.window.is_none() {
-                o.window = saved.window;
+                o.window = if page.plot_area.eq_ignore_ascii_case("display") { display_win } else { saved.window };
             }
             // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
             let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
@@ -1177,12 +1191,19 @@ mod saved_setup_tests {
         };
         d.layouts.push(l2);
 
-        let shared = PdfOptions::from_json(&json!({"window": [[0.0, 0.0], [816.0, 584.0]]}));
+        let shared = PdfOptions::from_json(&json!({"displayWindows": {"L1": [[0.0, 0.0], [816.0, 584.0]]}}));
         let l1 = with_saved_setup(&d, &Space::Paper("L1".into()), &shared);
         let l2 = with_saved_setup(&d, &Space::Paper("L2".into()), &shared);
+        assert_eq!(l1.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(816.0, 584.0))));
         assert_eq!(l1.fit, Some(true), "L1 saved display + scale_to_fit fits its resolved window");
+        assert_eq!(l2.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(200.0, 100.0))), "L2 keeps its own saved plot_window");
         assert_eq!(l2.fit, None, "L2 fixed scale is not overridden by L1's display fit");
         assert_eq!(l2.scale, Some(0.5));
+
+        // An explicit caller-supplied `window` remains a shared override across sheets.
+        let explicit_shared = PdfOptions::from_json(&json!({"window": [[15.0, 25.0], [85.0, 75.0]]}));
+        let l2_override = with_saved_setup(&d, &Space::Paper("L2".into()), &explicit_shared);
+        assert_eq!(l2_override.window, Some(Bounds2::new(Vec2::new(15.0, 25.0), Vec2::new(85.0, 75.0))));
 
         // Explicit `fit: false` and explicit `scale` still win on L1.
         let explicit_no_fit =

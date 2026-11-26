@@ -508,4 +508,16 @@ fn plot_layout_saved_area_and_explicit_window_precedence() {
     assert!(text.contains(r#""window":[[15,25],[85,75]]"#), "explicit window beats saved display default: {text}");
     let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display", "window": [[15, 25], [85, 75]]})).unwrap());
     assert!(!text.contains(r#""window":[[15,25],[85,75]]"#), "explicit plotArea display still resolves current view: {text}");
+
+    // Multi-sheet plot when active tab has saved `plotArea: "display"`: view window is scoped
+    // under `displayWindows` for that layout rather than leaking into shared `window`.
+    s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout2", "plotArea": "window", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
+    let multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"]})).unwrap());
+    assert!(!multi.contains(r#""window":"#), "multi-sheet plot must not leak active tab display into shared window: {multi}");
+    assert!(multi.contains(r#""displayWindows":{"Layout1":[["#), "display window scoped to Layout1: {multi}");
+    assert!(!multi.contains(r#""Layout2":[["#), "Layout2 does not get a display window: {multi}");
+    // An explicit caller-supplied `window` remains a shared override across sheets.
+    let explicit_multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(explicit_multi.contains(r#""window":[[15,25],[85,75]]"#), "explicit window stays shared: {explicit_multi}");
 }
