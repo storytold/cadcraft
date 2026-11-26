@@ -32,6 +32,8 @@ pub struct Remote {
     token: Option<String>,
     /// Longest reply line accepted (`MAX_REPLY_LINE`; smaller in tests).
     max_reply: usize,
+    /// How many connections have been opened: see [`Remote::connections`].
+    connections: u64,
 }
 
 /// The port component of a `HOST:PORT` address, for locating the token file.
@@ -64,7 +66,7 @@ fn read_reply_line(reader: &mut impl BufRead, reply: &mut String, max: usize) ->
 impl Remote {
     /// Connect to a running control server; its session token is read lazily when the first request is sent.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None, max_reply: MAX_REPLY_LINE };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, launch: false, token: None, max_reply: MAX_REPLY_LINE, connections: 0 };
         r.reconnect()?;
         Ok(r)
     }
@@ -72,7 +74,15 @@ impl Remote {
     /// the server before the app is open. With `launch`, a call that finds nothing at `addr`
     /// opens the app with that control port first (macOS) and waits for it.
     pub fn lazy(addr: &str, launch: bool) -> Self {
-        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, max_reply: MAX_REPLY_LINE }
+        Self { addr: addr.to_string(), conn: None, next_id: 1, launch, token: None, max_reply: MAX_REPLY_LINE, connections: 0 }
+    }
+
+    /// How many connections this client has opened so far. A request after a dropped connection
+    /// (a restarted app, for one) opens a new one, and a read-only request, or one the app refused
+    /// unrun over its token, is resent that way without an error. A caller whose requests must all
+    /// reach one app session compares this after each call.
+    pub fn connections(&self) -> u64 {
+        self.connections
     }
 
     /// The per-session token for this port, read (and cached) from the owner-only token file. A
@@ -130,6 +140,7 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
+                    self.connections += 1;
                     return Ok(());
                 }
                 Err(e) => last = e,

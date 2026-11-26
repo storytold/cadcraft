@@ -387,7 +387,7 @@ impl Session {
             .enumerate()
             .map(|(i, d)| {
                 serde_json::json!({
-                    "index": i, "title": d.title, "path": d.path, "dirty": d.is_dirty(),
+                    "index": i, "uid": d.uid, "title": d.title, "path": d.path, "dirty": d.is_dirty(),
                     "entities": d.doc.entity_count(), "active": i == self.active, "revision": d.revision,
                     "blockEditor": d.block_editor(),
                 })

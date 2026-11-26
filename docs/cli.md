@@ -21,6 +21,69 @@ scripts and the JSON command forms in [customization.md](customization.md).
 | Paths | Read as given, including names that aren't valid Unicode. The engine opens files by text name, so such a name is reported as an error (exit 1) where a drawing is opened; an output takes any name whose extension is ASCII. |
 | Completions and man pages | The Linux packages install them. To generate them yourself: `cargo run -p cadcraft-cli --example man-and-completions -- <out-dir>`. |
 
+## Running steps in the open app
+
+`run --connect HOST:PORT` sends `run`'s drawings and steps to a desktop app started with
+`--control PORT` instead of running them headless, so each call edits the drawing on screen and
+the next call finds it as the last one left it:
+
+```sh
+cadcraft-cli run --connect 127.0.0.1:7979 --script "circle 0,0 25"
+cadcraft-cli run --connect 127.0.0.1:7979 --cmd 'line {"points":[[0,0],[100,50]]}' \
+  --cmd 'properties.set {"handles":["{last}"],"color":1}'
+cadcraft-cli run --connect 127.0.0.1:7979 --export view.png
+```
+
+Each step is one [control protocol](control-protocol.md) request, sent with the session token
+as `mcp --connect` sends it: a file is `app.open`, `--metric` is `new {"metric":true}`, a
+`--script` or `--script-file` is `cmdline.script`, a `--cmd` is `engine.execute`, and `--save` or
+`--export` is `app.save` (the app's Save As; an image exports and the drawing keeps its name).
+Without a file or `--metric` the steps act on the drawing the app has open. Before the first
+request, paths are made absolute, script files are read, drawing files are checked to be readable
+regular files, and every value is checked. The first refused or unanswered request stops the run
+(exit 1, naming the step). A script's command-line output goes to stderr, as headless. So does
+what the app's replies say a file left out: the notes from reading a drawing, and after a save
+the objects the format doesn't keep, a folder that had to be made, and fonts AutoCAD on Windows
+doesn't have.
+
+A run keeps to one connection. The control client opens a new connection by itself to resend a
+read after a lost reply, and a restarted app would answer it: with another drawing open, and
+with drawing ids that start at 1 again. So the run stops (exit 1) at the first request answered
+on another connection than the one that answered its first request, and sends nothing more. The
+steps before it may have run in the app that went away, so look at the drawing before running
+the rest.
+
+`{last}` is checked against the drawing the app has open. `ui.inspect` reports each open
+drawing's `uid`, an id unique for the app's lifetime, so a file closed and opened again gets a new
+one. Before each command, `run` reads the open drawing's id once; `{last}` is checked against
+that read, and if the command returns a handle, the id is read again afterwards. If another drawing
+is open (opened or switched to by a step, a click in the window or another client), or the id
+changed while the command ran, the run fails rather than apply the handle there. So does a
+release whose `ui.inspect` has no `uid`. The ids are read only when some step uses `{last}`. The
+protocol has no drawing selector, so two switches are not caught: one in the moment between that
+read and the command itself, and one away and back to the same drawing while a command runs.
+
+In the open app `{last}` is the last value in a handle field of a command's result that reads
+as a handle. Headless also checks that the object exists in the drawing; here the drawing is
+the app's, so a result that lists names in such a field (the block names of `drawing.inspect`,
+for one) can replace the handle. Chain from the command that made the object.
+
+Only the drawings, `--save` and `--export` paths are made absolute. A path inside a `--cmd` or
+a script is the app's to resolve, in its own folder, so give those absolute. The app uses its
+own settings and fonts: `--config-dir`, `--fontalt` and `--fontfallback` apply to headless runs
+only.
+
+`--sample`, `--window` and `--view` are headless only. As for `mcp --connect`,
+`CADCRAFT_CONTROL_PORT` is not read: a variable must not turn a headless run into edits of the
+open drawing.
+
+From WSL, call the Windows `cadcraft-cli.exe` (WSL runs Windows programs), not a Linux build: the
+app listens on Windows' loopback, which WSL's default networking doesn't reach, and writes its token
+under `%LOCALAPPDATA%`. Relative paths and Linux paths work from a folder inside WSL, since the
+`.exe` then runs in `\\wsl.localhost\<distro>\…`. From a folder on a drive (`/mnt/c/…`), a Linux path
+such as `/home/me/plan.dxf` has no drive and would land on `C:`, so it is refused: give a relative
+path or convert it with `wslpath -w`.
+
 ## Environment variables
 
 Variables are fallbacks for flags; `--help` shows each next to its flag. An empty value counts as
