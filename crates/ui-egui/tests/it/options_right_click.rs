@@ -103,6 +103,7 @@ fn an_idle_right_click_can_repeat_the_last_command() {
     a.cmdline("circle 0,0 5");
     assert!(!a.session.prompting());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut a, &ctx, Vec::new(), 0.0);
     right_click(&mut a, &ctx, 0.1, 0.05);
     assert!(a.session.prompting(), "CIRCLE runs again: {}", a.session.prompt_text());
@@ -126,6 +127,7 @@ fn the_time_sensitive_right_click_decides_between_commands_too() {
     a.cmdline("circle 0,0 5");
     assert!(!a.session.prompting());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let text = right_click(&mut a, &ctx, 0.1, 0.4);
     assert!(!a.session.prompting(), "a longer click repeats nothing: {}", a.session.prompt_text());
@@ -135,6 +137,7 @@ fn the_time_sensitive_right_click_decides_between_commands_too() {
 #[test]
 fn command_mode_and_click_duration_decide_enter_or_the_menu() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
 
     // A longer duration: a 0.5 s click is still Enter.
     let mut a = app();
@@ -146,6 +149,7 @@ fn command_mode_and_click_duration_decide_enter_or_the_menu() {
 
     // Time-sensitive off, Command mode Enter: every right-click is Enter.
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut a = app();
     a.run("options", json!({"timeSensitiveRightClick": false, "rightClickCommand": "enter"})).unwrap();
     frame(&mut a, &ctx, Vec::new(), 0.0);
@@ -167,7 +171,7 @@ fn command_mode_and_click_duration_decide_enter_or_the_menu() {
 const SHOTS: &str = "CADCRAFT_OPTIONS_SHOTS";
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    let builder = Harness::builder().with_size(egui::vec2(1400.0, 900.0));
+    let builder = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(egui::vec2(1400.0, 900.0));
     let builder = if std::env::var_os(SHOTS).is_some() { builder.wgpu() } else { builder };
     let mut h = builder.build_ui_state(
         |ui, app: &mut CadApp| {

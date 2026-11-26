@@ -388,6 +388,13 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
     }
 }
 
+/// A right-click menu of the drawing. Only real clicks open and close it: with the drawing focused, egui makes Enter and
+/// Space clicks of it, and those go to the command line.
+pub(crate) fn popup(drawing: &egui::Response) -> egui::Popup<'static> {
+    let open = if drawing.secondary_clicked() { Some(true) } else { drawing.clicked_by(egui::PointerButton::Primary).then_some(false) };
+    egui::Popup::context_menu(drawing).open_memory(open.map(egui::SetOpenCommand::Bool))
+}
+
 /// Attach the menu to the canvas response: it opens on a right-click, as the object snap menu
 /// when that click held Shift or Ctrl (`CanvasState::snap_menu`).
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
@@ -411,7 +418,7 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
         }
         return;
     }
-    resp.context_menu(|ui| {
+    popup(resp).show(|ui| {
         let groups = if snap { snap_entries(app) } else { entries(app) };
         groups_ui(ui, &groups, &mut clicked);
     });

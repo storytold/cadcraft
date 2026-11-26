@@ -215,6 +215,7 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time
 fn time_sensitive_right_click() {
     let mut app = app();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), 0.0);
     let at = egui::pos2(800.0, 500.0);

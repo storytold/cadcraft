@@ -183,7 +183,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.radio_value(&mut app.wblock.source, Source::Block, crate::tl!("Block"));
                     ui.add_space(8.0);
                     ui.add_enabled_ui(app.wblock.source == Source::Block, |ui| {
-                        craft_ui::ComboBox::from_id_salt("wblock_block_name")
+                        egui::ComboBox::from_id_salt("wblock_block_name")
                             .selected_text(if app.wblock.block_name.is_empty() { crate::tl!("(select)") } else { app.wblock.block_name.as_str() })
                             .width(220.0)
                             .show_ui(ui, |ui| {
@@ -277,7 +277,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             });
         });
 
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         cancel = true;
     }
 
