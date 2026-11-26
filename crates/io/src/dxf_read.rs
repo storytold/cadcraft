@@ -74,6 +74,8 @@ struct Rx {
     block: Option<String>,
     /// The points HATCH boundary curves may still be sampled into.
     curves: hatch::CurvePoints,
+    /// LTYPE records read with only their first `MAX_LINETYPE_ELEMENTS` dash elements.
+    linetypes_cut: usize,
     /// IMAGE entity handle, as read (a repeated one reassigned) → its IMAGEDEF handle (upper case).
     image_defs: HashMap<Handle, String>,
 }
@@ -292,6 +294,14 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     }
     crate::dxf_raw::read(&secs, &mut d);
     crate::dxf_clip::read(&mut d);
+    if rx.linetypes_cut > 0 {
+        let (n, max) = (rx.linetypes_cut, craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS);
+        d.read_notes.push(if n == 1 {
+            format!("DXF: 1 linetype has more than {max} dash elements; only its first {max} were read.")
+        } else {
+            format!("DXF: {n} linetypes have more than {max} dash elements; only the first {max} of each were read.")
+        });
+    }
     if rx.curves.cut > 0 {
         // Echoed on open, returned by OPEN and listed by the CLI, so a coarse boundary is never silent.
         let n = rx.curves.cut;
