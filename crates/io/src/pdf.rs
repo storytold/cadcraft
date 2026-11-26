@@ -537,13 +537,19 @@ struct SheetPage {
 /// saved setup.
 pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
     let mut o = o.clone();
-    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
+    let display_win = o.display_window(space.tab_name());
+    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else {
+        if o.window.is_none() && o.plot_area.as_deref() == Some("display") {
+            o.window = display_win;
+        }
+        return o;
+    };
     let saved = paper::saved_plot(page);
-    let display_win = space.layout().and_then(|n| o.display_window(n));
     match o.plot_area.as_deref() {
         Some("layout") => {
-            // Caller explicitly chose the whole sheet: ignore any saved window.
+            // Caller explicitly chose the whole sheet: ignore any saved window and never fit.
             o.window = None;
+            o.fit = Some(false);
         }
         Some("extents") => {
             // Caller explicitly chose extents: ignore any saved window, default to fitting extents.
@@ -555,12 +561,32 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
                 o.center = Some(saved.center);
             }
         }
-        Some("window" | "display") => {
+        Some("display") => {
             if o.window.is_none() {
-                o.window = display_win.or(saved.window);
+                o.window = display_win;
             }
-            let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
-            if o.fit.is_none() && o.scale.is_none() && saved_fit {
+            if o.fit.is_none() && o.scale.is_none() && page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some() {
+                o.fit = Some(true);
+            }
+            if o.scale.is_none() {
+                o.scale = saved.scale;
+            }
+            if o.center.is_none() && o.window.is_some() {
+                o.center = Some(saved.center);
+            }
+        }
+        Some("window") => {
+            if o.window.is_none() {
+                o.window = saved.window.or_else(|| {
+                    let [x1, y1, x2, y2] = page.plot_window;
+                    [x1, y1, x2, y2]
+                        .iter()
+                        .all(|v| v.is_finite())
+                        .then(|| Bounds2::new(Vec2::new(x1, y1), Vec2::new(x2, y2)))
+                        .filter(|w| w.width() > 1e-9 && w.height() > 1e-9)
+                });
+            }
+            if o.fit.is_none() && o.scale.is_none() && saved.fit {
                 o.fit = Some(true);
             }
             if o.scale.is_none() {
@@ -1212,5 +1238,20 @@ mod saved_setup_tests {
         let explicit_scale =
             with_saved_setup(&d, &Space::Paper("L1".into()), &PdfOptions::from_json(&json!({"window": [[0, 0], [100, 60]], "scale": 0.25})));
         assert_eq!((explicit_scale.fit, explicit_scale.scale), (None, Some(0.25)));
+
+        // `"display"` and `"window"` stay strictly separated: `"display"` never falls back to
+        // `saved.window`, and `"window"` never reads `displayWindows`.
+        let disp_no_win = with_saved_setup(&d, &Space::Paper("L2".into()), &PdfOptions::from_json(&json!({"plotArea": "display"})));
+        assert_eq!(disp_no_win.window, None, "display without displayWindows never falls back to saved plot_window");
+        let win_with_disp = with_saved_setup(
+            &d,
+            &Space::Paper("L2".into()),
+            &PdfOptions::from_json(&json!({"plotArea": "window", "displayWindows": {"L2": [[1, 2], [3, 4]]}})),
+        );
+        assert_eq!(win_with_disp.window, Some(Bounds2::new(Vec2::ZERO, Vec2::new(200.0, 100.0))), "window ignores displayWindows");
+
+        // Explicit `plotArea: "layout"` forces `fit: false` and clears `window` (AutoCAD parity).
+        let layout_area = with_saved_setup(&d, &Space::Paper("L2".into()), &PdfOptions::from_json(&json!({"plotArea": "layout", "fit": true})));
+        assert_eq!((layout_area.window, layout_area.fit), (None, Some(false)));
     }
 }

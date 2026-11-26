@@ -757,10 +757,13 @@ fn page_rows(
     });
     ui.end_row();
     ui.label("");
-    let mut fit = page.scale_to_fit;
-    if ui.checkbox(&mut fit, "Fit to paper").changed() {
-        change = Some(("scaleToFit", json!(fit)));
-    }
+    let fit_allowed = page.plot_area != "layout";
+    let mut fit = fit_allowed && page.scale_to_fit;
+    ui.add_enabled_ui(fit_allowed, |ui| {
+        if ui.checkbox(&mut fit, "Fit to paper").changed() {
+            change = Some(("scaleToFit", json!(fit)));
+        }
+    });
     ui.end_row();
     if let Some((center, offset_mm, supported)) = placement {
         ui.label("Plot offset");
@@ -789,7 +792,7 @@ fn page_rows(
     }
     if rows.scale {
         let label = ui.label("Scale");
-        ui.add_enabled_ui(!page.scale_to_fit, |ui| {
+        ui.add_enabled_ui(!(fit_allowed && page.scale_to_fit), |ui| {
             if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale), Some(label.id)).and_then(|t| parse_ratio(&t)) {
                 change = Some(("scale", json!(v)));
             }
@@ -858,7 +861,12 @@ fn apply_page_change(page: &mut cadcraft_doc::PageSetup, key: &str, v: &Value) {
             }
         }
         "plotStyleTable" => page.plot_style_table = v.as_str().unwrap_or_default().chars().take(260).collect(),
-        "plotArea" => page.plot_area = v.as_str().unwrap_or("extents").into(),
+        "plotArea" => {
+            page.plot_area = v.as_str().unwrap_or("extents").into();
+            if page.plot_area == "layout" {
+                page.scale_to_fit = false;
+            }
+        }
         "scale" => page.scale = v.as_f64().filter(|s| s.is_finite() && *s > 0.0).unwrap_or(page.scale),
         _ => {
             let b = v.as_bool().unwrap_or_default();
@@ -980,10 +988,11 @@ fn plot_window_for(d: &cadcraft_doc::Drawing, target: &str, page: &cadcraft_doc:
 /// asks for a PNG at that resolution instead of the device's output, on the same sheet.
 fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
     let page = &st.page;
+    let fit = !(st.target != "Model" && page.plot_area == "layout") && page.scale_to_fit;
     let mut p = json!({
         "layout": st.target,
         "landscape": page.landscape,
-        "fit": page.scale_to_fit,
+        "fit": fit,
         "lineweights": page.lineweights,
         "plotTransparency": page.plot_transparency,
     });
@@ -1018,7 +1027,7 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
             o.insert("plotStyleTable".into(), json!(page.plot_style_table));
         }
         o.insert("plotArea".into(), json!(page.plot_area));
-        if !page.scale_to_fit {
+        if !fit {
             o.insert("scale".into(), json!(page.scale));
         }
         if page.plot_area == "window" {
@@ -1128,7 +1137,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     "landscape": page.landscape,
                     "plotArea": page.plot_area,
                     "scale": page.scale,
-                    "scaleToFit": page.scale_to_fit,
+                    "scaleToFit": page.plot_area != "layout" && page.scale_to_fit,
                     "center": page.center,
                     "lineweights": page.lineweights,
                     "plotTransparency": page.plot_transparency,
@@ -1419,6 +1428,16 @@ mod plot_dialog_tests {
         svg_st.page.center = false;
         assert_eq!(plot_params(&svg_st, None)["center"], json!(false));
         assert_eq!(plot_params(&svg_st, Some(150.0))["center"], json!(false));
+
+        // Selecting Plot area = Layout disables Fit to paper (AutoCAD parity) even if scale_to_fit was on.
+        svg_st.page.scale_to_fit = true;
+        apply_page_change(&mut svg_st.page, "plotArea", &json!("layout"));
+        assert!(!svg_st.page.scale_to_fit);
+        svg_st.page.scale_to_fit = true; // even if stale true, plot_params enforces fit: false for layout area
+        let layout_params = plot_params(&svg_st, None);
+        assert_eq!(layout_params["plotArea"], json!("layout"));
+        assert_eq!(layout_params["fit"], json!(false));
+        assert_eq!(layout_params["scale"], json!(0.5));
     }
 
     #[test]

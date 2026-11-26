@@ -519,5 +519,34 @@ fn plot_layout_saved_area_and_explicit_window_precedence() {
     assert!(!multi.contains(r#""Layout2":[["#), "Layout2 does not get a display window: {multi}");
     // An explicit caller-supplied `window` remains a shared override across sheets.
     let explicit_multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "window": [[15, 25], [85, 75]]})).unwrap());
-    assert!(explicit_multi.contains(r#""window":[[15,25],[85,75]]"#), "explicit window stays shared: {explicit_multi}");
+    assert!(explicit_multi.contains(r#""window":[[15.0,25.0],[85.0,75.0]]"#), "explicit window stays shared: {explicit_multi}");
+
+    // Explicit `plotArea: "display"` on multi-sheet plots resolves per-sheet display windows (using paper
+    // sheet bounds for unvisited Layout2 rather than View::default()) and strips spoofed `displayWindows`.
+    let disp_multi = opts(
+        s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "plotArea": "display", "displayWindows": {"Layout2": [[1, 2], [3, 4]]}}))
+            .unwrap(),
+    );
+    assert!(!disp_multi.contains(r#""window":"#), "explicit multi-sheet display must not write shared window: {disp_multi}");
+    assert!(
+        disp_multi.contains(r#""Layout1":[["#) && disp_multi.contains(r#""Layout2":[[0.0,0.0],"#),
+        "unvisited Layout2 uses paper bounds: {disp_multi}"
+    );
+    assert!(!disp_multi.contains("[[1,2],[3,4]]"), "caller-supplied displayWindows is stripped: {disp_multi}");
+
+    // Explicit `plotArea: "window"` (no `window`) on multi-sheet plots validates each sheet without leaking s.space()'s window.
+    s.execute("layout.set", &json!({"name": "Model"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotWindow": [1.0, 2.0, 50.0, 40.0]})).unwrap();
+    let win_multi = opts(s.execute("plot", &json!({"layouts": ["Layout1", "Layout2"], "plotArea": "window"})).unwrap());
+    assert!(!win_multi.contains(r#""window":"#), "multi-sheet saved window does not copy active tab into shared window: {win_multi}");
+    assert!(
+        s.execute("plot", &json!({"layouts": ["Model", "Layout1"], "plotArea": "window"})).is_err(),
+        "multi-sheet plotArea window without corners rejects Model"
+    );
+
+    // Explicit `plotArea: "limits"` rejects multi-sheet plots containing any paper-space layout even when Model is active.
+    assert!(
+        s.execute("plot", &json!({"layouts": ["Model", "Layout1"], "plotArea": "limits"})).is_err(),
+        "limits is invalid when any target sheet is a layout"
+    );
 }
