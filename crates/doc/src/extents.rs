@@ -1,10 +1,10 @@
 //! Approximate entity bounds (used for extents, zoom and selection pre-filtering).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, bulge_to_arc};
 
-use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim};
+use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim, TagKey};
 
 /// Nested block references deeper than this are ignored (cyclic or hostile files).
 pub const MAX_BLOCK_DEPTH: usize = 16;
@@ -283,33 +283,33 @@ fn layer_counts(d: &Drawing, layer: &str, off_counts: bool) -> bool {
 }
 
 /// The layer an insert's attribute draws on, as the renderer takes it: its own, else its
-/// definition's (layer "0" being the insert's).
-fn attrib_layer<'a>(d: &'a Drawing, ins: &crate::Insert, a: &'a crate::Attrib) -> &'a str {
-    a.props.layer.as_deref().unwrap_or_else(|| {
-        d.block(&ins.block)
-            .and_then(|blk| blk.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))))
-            .map_or("0", |be| be.common.layer.as_str())
-    })
+/// definition's, from the block's definitions by tag `defs` (layer "0" being the insert's).
+fn attrib_layer<'a>(defs: Option<&BTreeMap<TagKey<'a>, &'a Entity>>, a: &'a crate::Attrib) -> &'a str {
+    a.props.layer.as_deref().unwrap_or_else(|| defs.and_then(|defs| defs.get(&TagKey(&a.tag))).map_or("0", |be| be.common.layer.as_str()))
 }
 
 /// The bounds of a block's contents, in block coordinates: its geometry, which every reference to
 /// the block shows, and the value of each constant attribute definition ATTMODE shows, by tag, which
 /// only a block reference draws (a dimension's block does not), and only when the reference
 /// carries no attribute of that tag. They are kept apart so that the one cache serves every
-/// reference, whichever asks first.
+/// reference, whichever asks first. Also the block's attribute definitions by tag, for the layer
+/// of an attribute that has none of its own.
 struct Contents<'a> {
     geometry: Bounds2,
     constants: Vec<(&'a str, Bounds2)>,
+    defs: BTreeMap<TagKey<'a>, &'a Entity>,
 }
 
 impl Contents<'_> {
     /// What reference `ins` shows of the block: its geometry and the constant values `ins` has
     /// no attribute for (that attribute is drawn instead, and counted with the attributes).
     fn in_reference(&self, ins: &crate::Insert) -> Bounds2 {
-        self.constants
-            .iter()
-            .filter(|(tag, _)| !ins.attribs.iter().any(|r| r.tag.eq_ignore_ascii_case(tag)))
-            .fold(self.geometry, |b, (_, c)| b.union(c))
+        if self.constants.is_empty() {
+            return self.geometry;
+        }
+        // The reference's tags are gathered once, not scanned again for each constant (#1923).
+        let carried = ins.attribs_by_tag();
+        self.constants.iter().filter(|(tag, _)| !carried.contains_key(&TagKey(tag))).fold(self.geometry, |b, (_, c)| b.union(c))
     }
 }
 
@@ -323,7 +323,7 @@ fn contents<'a, 'm>(
 ) -> Option<&'m Contents<'a>> {
     let key = (blk.name.as_str(), depth);
     if !blocks.contains_key(&key) {
-        let mut c = Contents { geometry: Bounds2::EMPTY, constants: Vec::new() };
+        let mut c = Contents { geometry: Bounds2::EMPTY, constants: Vec::new(), defs: blk.attdefs_by_tag() };
         // ATTMODE, as the renderer applies it to a constant value: 0 shows none, 1 the visible
         // ones, 2 all of them.
         let attmode = d.header.i64("ATTMODE", 1);
@@ -487,9 +487,12 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             // one draws nothing, so it contributes nothing: ZOOM Extents must not fly off to its
             // insertion point. Attributes below still count.
             let mut b = Bounds2::EMPTY;
+            let mut defs = None;
             if let Some(blk) = d.block(&ins.block) {
                 let m = ins.transform(blk.base.xy());
-                let inner = contents(d, blk, depth, blocks, off_counts).map_or(Bounds2::EMPTY, |c| c.in_reference(ins));
+                let c = contents(d, blk, depth, blocks, off_counts);
+                defs = c.map(|c| &c.defs);
+                let inner = c.map_or(Bounds2::EMPTY, |c| c.in_reference(ins));
                 b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
                 // XCLIP: the reference app takes the boundary's box, also where it reaches past the
                 // block or misses it (an inverted clip can show anything, so it keeps the block's).
@@ -511,7 +514,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 }
             }
             for a in &ins.attribs {
-                if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
+                if !a.invisible && layer_counts(d, attrib_layer(defs, a), off_counts) {
                     b = b.union(&match a.multiline_text() {
                         Some(m) => mtext_box(&m),
                         None => text_box(&a.text, a.text.value.chars().count()),

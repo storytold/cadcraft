@@ -5,6 +5,7 @@ use super::{
     VportConfig, VportTile, record_slices,
 };
 use cadcraft_fonts::windows::windows_font;
+use craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -166,7 +167,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 linetype_names.insert(name.to_ascii_lowercase());
-                let pattern = ltype_pattern(tg, &ltype_styles);
+                let (pattern, cut) = ltype_pattern(tg, &ltype_styles);
+                rx.linetypes_cut = rx.linetypes_cut.saturating_add(usize::from(cut));
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -402,10 +404,18 @@ fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
 /// LTYPE): each `49` length starts an element; `74` type flags (1 absolute rotation, 2 text,
 /// 4 shape), `75` shape number, `340` STYLE, `46` scale, `50` rotation (radians), `44`/`45`
 /// offset and `9` text follow it.
-fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElement> {
+///
+/// At most [`MAX_LINETYPE_ELEMENTS`] elements are read, the cap a `.lin` file has: the rest of
+/// the pattern, with the text and shapes of its elements, is dropped and `true` comes back so
+/// the reader can say so. The renderer copies and walks the whole pattern for every object
+/// drawn with it, so an uncapped pattern made each redraw and export cost grow with its length.
+fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> (Vec<DashElement>, bool) {
     let mut out: Vec<DashElement> = Vec::new();
     for t in tags.iter().take_while(|t| t.code < 1000) {
         if t.code == 49 {
+            if out.len() >= MAX_LINETYPE_ELEMENTS {
+                return (out, true);
+            }
             out.push(DashElement::dash(t.f64()));
             continue;
         }
@@ -432,5 +442,5 @@ fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElem
             _ => {}
         }
     }
-    out
+    (out, false)
 }

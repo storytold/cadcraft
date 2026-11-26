@@ -13,6 +13,7 @@ mod attedit_prompts;
 mod attrib_modes;
 mod attrib_props;
 mod attribute_selection;
+mod attribute_tag_matching;
 mod attribute_tools;
 mod attribute_value_baseline;
 mod block_description;

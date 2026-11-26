@@ -161,7 +161,7 @@ impl SpatialIndex {
         let infinite = chunks.iter().flat_map(|(off, c)| c.infinite.iter().map(move |i| off + i)).collect();
         SpatialIndex {
             store: store.clone(),
-            blocks: d.blocks.clone(),
+            blocks: (*d.blocks).clone(),
             dim_styles: d.dim_styles.clone(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno: anno_key(d),
