@@ -45,12 +45,13 @@ to stderr, as headless.
 
 `{last}` is checked against the drawing the app has open. `ui.inspect` reports each open
 drawing's `uid`, an id unique for the app's lifetime, so a file closed and opened again gets a new
-one. `run` reads the open drawing's id before and after the command that returns a handle, and
-again before filling in `{last}`. If another drawing is open by then (opened or switched to by a
-step, a click in the window or another client), or the drawing changed while the command ran, the
-run fails rather than apply the handle there. So does a release whose `ui.inspect` has no `uid`.
-The protocol has no drawing selector, so a switch in the moment between that last check and the
-command itself is not caught. `--sample`,
+one. Before each command, `run` reads the open drawing's id once; `{last}` is checked against
+that read, and if the command returns a handle, the id is read again afterwards. If another drawing
+is open (opened or switched to by a step, a click in the window or another client), or the id
+changed while the command ran, the run fails rather than apply the handle there. So does a release
+whose `ui.inspect` has no `uid`. The protocol has no drawing selector, so two switches are not
+caught: one in the moment between that read and the command itself, and one away and back to the
+same drawing while a command runs. `--sample`,
 `--window` and `--view` are headless only. As for `mcp --connect`, `CADCRAFT_CONTROL_PORT` is
 not read: a variable must not turn a headless run into edits of the open drawing.
 

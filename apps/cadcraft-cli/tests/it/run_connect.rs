@@ -213,6 +213,41 @@ fn last_is_refused_once_another_drawing_could_be_open() {
 }
 
 #[test]
+fn last_is_never_sent_after_a_read_that_saw_another_drawing() {
+    // The drawing switches right after the read that checks `{last}`. A run that reads it again
+    // before the command sees the new id; it must not then send the old handle.
+    let uid = Arc::new(AtomicU64::new(1));
+    let inspects = Arc::new(AtomicU64::new(0));
+    let last_seen = Arc::new(AtomicU64::new(0));
+    let seen_at_erase = Arc::new(AtomicU64::new(0));
+    let (u, n, seen, at_erase) = (Arc::clone(&uid), Arc::clone(&inspects), Arc::clone(&last_seen), Arc::clone(&seen_at_erase));
+    let (addr, rx) = fake_app(move |req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
+        (Some("ui.inspect"), _) => {
+            let id = u.load(Ordering::SeqCst);
+            seen.store(id, Ordering::SeqCst);
+            // Reads: before `line`, after it, then the one that checks `{last}` for `erase`.
+            if n.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                u.store(2, Ordering::SeqCst);
+            }
+            inspect(id)
+        }
+        (_, Some("line")) => json!({"result": {"handles": ["1A"]}}),
+        (_, Some("erase")) => {
+            at_erase.store(seen.load(Ordering::SeqCst), Ordering::SeqCst);
+            json!({"result": null})
+        }
+        _ => json!({"result": null}),
+    });
+    let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", ERASE_LAST]);
+    let reqs = requests(&rx);
+    if reqs.iter().any(|r| r["params"]["command"] == "erase") {
+        assert_eq!(seen_at_erase.load(Ordering::SeqCst), 1, "{{last}} was sent after a read saw drawing 2");
+    } else {
+        assert_eq!(out.status.code(), Some(1));
+    }
+}
+
+#[test]
 fn last_survives_a_step_that_keeps_the_same_drawing_open() {
     let (addr, rx) = fake_app(|req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
         (Some("ui.inspect"), _) => inspect(1),

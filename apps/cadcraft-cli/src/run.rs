@@ -370,8 +370,12 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                 }
             }
             Ready::Cmd(CmdStep { id, params }) => {
+                // One read of the open drawing before the command: `{last}` is checked against it
+                // and it is the "before" of the handle the command may return, so no switch can fall
+                // between a check and the command except after this read (see docs/cli.md).
+                let now = if chains { open_drawing(&mut app) } else { None };
                 let h = match &last_handle {
-                    Some((h, then)) if mentions_last(params) => match (then, open_drawing(&mut app)) {
+                    Some((h, then)) if mentions_last(params) => match (then, now) {
                         (Some(then), Some(now)) if now == *then => Some(*h),
                         (Some(_), Some(_)) => {
                             return Err(RunError::LastStale {
@@ -386,9 +390,9 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                     None => None,
                 };
                 let params = fill_last(params, h).map_err(|source| RunError::CmdLast { id: id.clone(), source })?;
-                // The drawing is read before and after: a switch while the command ran leaves its
-                // handle's drawing unknown, never recorded as the drawing switched to.
-                let before = if chains { open_drawing(&mut app) } else { None };
+                // Read again after: a switch while the command ran leaves its handle's drawing
+                // unknown, never recorded as the drawing switched to.
+                let before = now;
                 let r = remote(&mut app, &format!("--cmd {id}"), "engine.execute", json!({"command": id, "params": params}))?;
                 if let Some(h) = returned_handle_remote(&r).filter(|_| chains) {
                     let after = open_drawing(&mut app);
