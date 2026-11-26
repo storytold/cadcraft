@@ -34,7 +34,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let d = match (space, margins) {
         (Space::Paper(n), Some(m)) => {
             let mut c = d.clone();
-            if let Some(l) = c.layouts.iter_mut().find(|l| l.name.eq_ignore_ascii_case(n)) {
+            if let Some(l) = c.layouts.by_name_mut(n) {
                 l.page.margins_mm = m;
             }
             with_margins = c;

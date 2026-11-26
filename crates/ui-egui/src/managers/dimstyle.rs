@@ -787,7 +787,7 @@ fn sample(d: &Drawing, style: &DimStyle, w: u32, h: u32, bg: egui::Color32) -> O
         let doc = s.doc_mut().ok()?;
         doc.text_styles.clone_from(&d.text_styles);
         doc.linetypes.clone_from(&d.linetypes);
-        doc.dim_styles = vec![DimStyle { name: "Preview".into(), ..style.clone() }];
+        doc.dim_styles = vec![DimStyle { name: "Preview".into(), ..style.clone() }].into();
         doc.header.set_str("DIMSTYLE", "Preview");
         doc.sync_dim_vars();
     }

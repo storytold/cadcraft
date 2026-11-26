@@ -14,7 +14,7 @@ use cadcraft_io::{SaveOptions, read, write_with};
 
 fn three_sheets() -> Drawing {
     let mut d = Drawing::new_metric();
-    d.layouts = vec![Layout::new("S1", 1), Layout::new("S2", 2), Layout::new("S3", 3)];
+    d.layouts = vec![Layout::new("S1", 1), Layout::new("S2", 2), Layout::new("S3", 3)].into();
     let line = |a: f64| EntityKind::Line(Line { a: Vec3::new(a, 0.0, 0.0), b: Vec3::new(a + 10.0, 10.0, 0.0) });
     d.add(&Space::Paper("S1".into()), Common::default(), line(0.0)).unwrap();
     d.add(&Space::Paper("S2".into()), Common::default(), line(20.0)).unwrap();
