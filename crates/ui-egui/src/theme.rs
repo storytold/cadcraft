@@ -367,10 +367,8 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
         // עברית: an installed Hebrew face after the Latin ones (egui's bundled faces carry no
-        // Hebrew glyphs), for the Hebrew interface.
-        if language == "he"
-            && let Some(bytes) = hebrew_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
-        {
+        // Hebrew glyphs), loaded in every interface so the language picker can show עברית.
+        if let Some(bytes) = hebrew_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES)) {
             added.push(("system-hebrew".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
         // தமிழ்: likewise an installed Tamil face, for the Tamil interface.
@@ -649,7 +647,7 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn first_readable_capped(candidates: &[&str], max_bytes: u64) -> Option<std::path::PathBuf> {
-    candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file() && read_capped(p, max_bytes).is_some())
+    installed(candidates).find(|p| read_capped(p, max_bytes).is_some())
 }
 
 /// An installed font with Hebrew glyphs, for the עברית interface; fonts are never bundled
@@ -679,6 +677,8 @@ pub fn hebrew_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
                         "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
                         "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
+                        "/usr/share/fonts/google-noto-vf/NotoSansHebrew[wdth,wght].ttf",
+                        "/usr/share/fonts/truetype/noto/NotoSansHebrew[wdth,wght].ttf",
                         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "/usr/share/fonts/TTF/DejaVuSans.ttf",
                         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
@@ -1106,6 +1106,22 @@ mod tests {
         let candidates = [missing.to_str().unwrap(), empty.to_str().unwrap(), big.to_str().unwrap(), ok.to_str().unwrap()];
         assert_eq!(super::first_readable_capped(&candidates, 16), Some(ok));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn installed_or_embedded_hebrew_font_renders_picker_label_in_english_interface() {
+        if !super::can_show("he") {
+            return;
+        }
+        let ctx = egui::Context::default();
+        super::install_fonts(&ctx, "en");
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        output.textures_delta.clear();
+        ctx.fonts_mut(|view| {
+            for c in "עברית".chars() {
+                assert!(view.has_glyph(&egui::FontId::proportional(12.0), c), "missing Hebrew glyph {c} in English interface");
+            }
+        });
     }
 
     /// What the gate asks of the table: an embedded face of the script stands in for an installed
