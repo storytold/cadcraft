@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{ArrayParams, AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerState, Parametric, PlotStyleTable};
-use cadcraft_dxf::{Tag, Version};
 use cadcraft_render::Arrowhead;
+use craft_dxf::{Tag, Version};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -35,6 +35,42 @@ pub(crate) const PLOT_STYLE_NAMES_KEY: &str = "ACAD_PLOTSTYLENAME";
 pub(crate) const HANDSEED_KEY: &str = "CADCRAFT_HANDSEED";
 /// Named-object-dictionary key of the XRECORD holding the current multileader style.
 pub(crate) const MLEADER_STYLE_KEY: &str = "CADCRAFT_MLEADERSTYLE";
+/// Named-object-dictionary key of the XRECORD holding model space's current UCS name ($UCSNAME,
+/// which the DWG bridge drops).
+pub(crate) const UCS_NAME_KEY: &str = "CADCRAFT_UCSNAME";
+
+/// Whether the UCS at `origin` with axes `x`, `y` is exactly the named UCS `u` (to rounding):
+/// only then is the current UCS still that named one, read or written. The origin may differ by
+/// printing round-off only: we write the shortest exact form and other programs 15–16
+/// significant digits (half a unit in the 15th is 5e-16 of the value), so 1e-14 of the value,
+/// plus 1e-9 near the World origin, covers it while even 1e12 away a 0.5 move is a different UCS.
+/// The axes match to 1e-9 of their length, so short axes turned to another direction don't.
+pub(crate) fn is_named_frame(u: &cadcraft_doc::Ucs, origin: cadcraft_geom::Vec3, x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {
+    let axis = |a: cadcraft_geom::Vec3, b: cadcraft_geom::Vec3| (a - b).len() <= 1e-9 * a.len().max(b.len());
+    (origin - u.origin).len() <= 1e-9 + 1e-14 * origin.len() && axis(x, u.x_axis) && axis(y, u.y_axis)
+}
+
+/// The UCS table record named `name` whose frame the UCS at `origin`, `x`, `y` still is: the only
+/// case in which a current UCS (model space's or a layout's, read or written) keeps that name.
+pub(crate) fn named_ucs<'a>(
+    ucss: &'a [cadcraft_doc::Ucs],
+    name: &str,
+    origin: cadcraft_geom::Vec3,
+    x: cadcraft_geom::Vec3,
+    y: cadcraft_geom::Vec3,
+) -> Option<&'a cadcraft_doc::Ucs> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    ucss.iter().find(|u| u.name.eq_ignore_ascii_case(name) && is_named_frame(u, origin, x, y))
+}
+
+/// Whether `x` and `y` can be a UCS's axes: finite, not zero and not along each other (relative
+/// to their lengths, so short but square axes are fine). Read and written by the same rule.
+pub(crate) fn usable_axes(x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {
+    x.is_finite() && y.is_finite() && x.len() > 1e-12 && y.len() > 1e-12 && x.cross(y).len() > 1e-9 * x.len() * y.len()
+}
 /// Most plot style tables and plot style names read from a file.
 pub(crate) const MAX_PLOT_STYLE_TABLES: usize = 1000;
 pub(crate) const MAX_PLOT_STYLE_NAMES: usize = 100_000;
@@ -844,15 +880,33 @@ pub(crate) fn apply_anno(d: &mut cadcraft_doc::Drawing, p: AnnoPayload) {
             std::sync::Arc::make_mut(b).annotative = true;
         }
     }
+    // Which layout holds each paper space object, found once: `modify_entity` searches every
+    // layout for a handle model space lacks, which a long list of missing handles made quadratic.
+    let mut in_layout: std::collections::HashMap<Handle, usize> = Default::default();
+    if !p.objects.is_empty() {
+        // First layout wins, as `modify_entity` did.
+        for (i, l) in d.layouts.iter().enumerate() {
+            for h in l.entities.handles() {
+                in_layout.entry(h).or_insert(i);
+            }
+        }
+    }
     for o in p.objects {
         let Some(h) = Handle::parse_hex(&o.handle) else { continue };
+        let store = if d.model.contains(h) {
+            &mut d.model
+        } else if let Some(l) = in_layout.get(&h).and_then(|&i| d.layouts.get_mut(i)) {
+            &mut l.entities
+        } else {
+            continue;
+        };
         let mut scales: Vec<cadcraft_doc::AnnoScale> = Vec::new();
         for s in o.scales.into_iter().filter(|s| s.is_valid() && !s.name.trim().is_empty()) {
             if scales.len() < cadcraft_doc::MAX_SCALES && !scales.iter().any(|x| x.name.eq_ignore_ascii_case(&s.name)) {
                 scales.push(s);
             }
         }
-        let _ = d.modify_entity(h, |e| {
+        store.modify(h, |e| {
             if cadcraft_doc::can_be_annotative(&e.kind) {
                 e.common.anno_scales = scales;
             }
@@ -881,6 +935,23 @@ pub(crate) fn parse_constraints(text: &str) -> Option<(Vec<Constraint>, Parametr
     Some((p.constraints, p.parametric))
 }
 
+/// A view centre as a file stores it (VIEWPORT and VPORT group 12, VIEW group 10), as the
+/// drawing point at the middle of the view. The stored centre is in display coordinates: their
+/// origin is the view's `target` (VIEWPORT and VPORT group 17, VIEW group 12) and their axes are
+/// turned by the view's `twist` (radians). Turning back keeps a twisted view on its part of the
+/// drawing however far that is from the origin; a non-finite result keeps the stored centre.
+pub(crate) fn dcs_center_to_model(c: cadcraft_geom::Vec2, twist: f64, target: cadcraft_geom::Vec2) -> cadcraft_geom::Vec2 {
+    let m = c.rotate(-twist) + if target.is_finite() { target } else { cadcraft_geom::Vec2::ZERO };
+    if m.is_finite() { m } else { c }
+}
+
+/// The display-coordinate view centre a file stores for the drawing point `m` at the middle of
+/// a view with `twist`, its target at the origin (the inverse of [`dcs_center_to_model`]).
+pub(crate) fn model_center_to_dcs(m: cadcraft_geom::Vec2, twist: f64) -> cadcraft_geom::Vec2 {
+    let c = m.rotate(twist);
+    if c.is_finite() { c } else { m }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,5 +970,19 @@ mod tests {
         assert!(arrow_block_name("").is_none());
         assert!(arrow_block_name("nonsense").is_none());
         assert!(is_standard_arrow("_dot"));
+    }
+
+    /// A named UCS with very short axes is matched by its own axes only, not by the same short
+    /// axes turned another way; unit axes still match to rounding.
+    #[test]
+    fn named_frame_axes_match_relative_to_their_length() {
+        use cadcraft_geom::Vec3;
+        let ucs = |x: Vec3, y: Vec3| cadcraft_doc::Ucs { name: "A".into(), origin: Vec3::ZERO, x_axis: x, y_axis: y };
+        let tiny = ucs(Vec3::new(1e-10, 0.0, 0.0), Vec3::new(0.0, 1e-10, 0.0));
+        assert!(is_named_frame(&tiny, Vec3::ZERO, tiny.x_axis, tiny.y_axis));
+        assert!(!is_named_frame(&tiny, Vec3::ZERO, Vec3::new(0.0, 1e-10, 0.0), Vec3::new(-1e-10, 0.0, 0.0)));
+        let unit = ucs(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        assert!(is_named_frame(&unit, Vec3::ZERO, Vec3::new(1.0, 1e-12, 0.0), Vec3::new(-1e-12, 1.0, 0.0)));
+        assert!(!is_named_frame(&unit, Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0), Vec3::new(-1.0, 0.0, 0.0)));
     }
 }

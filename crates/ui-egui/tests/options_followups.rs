@@ -35,6 +35,8 @@ fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: 
         events,
         ..Default::default()
     };
+    // As the shells do: the frame's root values (the interface scale among them) before the pass.
+    app.before_input(ctx);
     app.logic(ctx);
     let mut output = ctx.run_ui(input, |ui| app.ui(ui));
     output.textures_delta.clear();
@@ -83,6 +85,7 @@ fn autosave_save_version_and_right_click_in_options() {
 
     // The tabs show the settings.
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     a.ui.dialog = Some("options:files".into());
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let text = frame(&mut a, &ctx, Vec::new(), 0.1);
@@ -96,6 +99,7 @@ fn autosave_save_version_and_right_click_in_options() {
     // Turned off, a quick right-click during a command opens the menu instead of acting as Enter.
     a.ui.dialog = None;
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let at = egui::pos2(800.0, 500.0);
     let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE };
@@ -116,6 +120,7 @@ fn interface_scale_in_options() {
     let r = a.run("options", json!({"interfaceScale": 1.5})).unwrap();
     assert_eq!(r["interfaceScale"], json!(1.5));
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut a, &ctx, Vec::new(), 0.0);
     // egui applies a newly requested zoom factor at the start of the next pass.
     frame(&mut a, &ctx, Vec::new(), 0.1);

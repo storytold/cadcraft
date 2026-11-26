@@ -125,6 +125,11 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// Points (polyline vertices and triangle corners) the whole build has charged so far, shared
+    /// by every part of it: the parts built in parallel, XCLIP parts and viewport contents.
+    points: &'a std::sync::atomic::AtomicUsize,
+    /// The most points the build may hold: [`MAX_DISPLAY_POINTS`] (less in tests).
+    max_points: usize,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -133,7 +138,17 @@ struct Builder<'a> {
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
-impl Builder<'_> {
+/// Upper bound on the points (polyline vertices plus triangle corners) one display list holds.
+/// [`MAX_BLOCK_EXPANSION`] counts objects, not their size: two million copies of one finely
+/// tessellated circle, or of a block of hatches and filled text, would otherwise build billions
+/// of points and end the process when memory runs out. Past the limit the remaining objects are
+/// not drawn and [`DisplayList::truncated`] is set. At 16 bytes a point this is 1 GiB, sixteen
+/// times the [`cadcraft_geom::MAX_TESSELLATED_POINTS`] one polyline may sample; a large real
+/// drawing (a million objects with tens of thousands of texts, drawn at screen detail or in full
+/// for a plot) is expected to hold a few tens of millions.
+pub const MAX_DISPLAY_POINTS: usize = 64_000_000;
+
+impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -152,7 +167,7 @@ impl Builder<'_> {
         }
     }
     fn polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         self.note_pen(color);
@@ -162,14 +177,15 @@ impl Builder<'_> {
     /// A one-pixel line in `color` as the plot style prints it, without the style's lineweight
     /// or pen: the centre line drawn on screen over a thin wide polyline.
     fn hairline(&mut self, ctx: &Ctx, color: Ink, pts: &[Vec2]) {
-        if pts.len() < 2 {
+        if pts.len() < 2 || !self.charge(pts.len()) {
             return;
         }
         let (color, _) = self.styled(color, 0.0);
         self.push_polyline(ctx, color, 0.0, pts);
     }
+    /// Push a polyline already charged to the point budget by the caller.
     fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
-        let start = self.list.verts.len() as u32;
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.verts.len()), u32::try_from(pts.len())) else { return };
         for p in pts {
             let q = ctx.xf.apply(*p);
             self.list.bounds.add(q);
@@ -183,7 +199,49 @@ impl Builder<'_> {
             transparency: self.transparency,
             kind: Kind::Polyline,
             start,
-            len: pts.len() as u32,
+            len,
+        });
+    }
+    /// The pixels of image `i` over its rectangle, cut to its clip boundary.
+    fn image(&mut self, ctx: &Ctx, color: Ink, i: &cadcraft_doc::Image, raster: &std::sync::Arc<cadcraft_doc::Raster>) {
+        // Where the entity puts its picture: the top-left corner, and one of its pixels to the
+        // right and down.
+        let top_left = ctx.xf.apply(i.insert.xy() + i.v.xy() * i.size.y);
+        let right = ctx.xf.apply_vec(i.u.xy());
+        let down = ctx.xf.apply_vec(i.v.xy() * -1.0);
+        let clip = image_clip(i, |q| top_left + right * q.x + down * q.y);
+        // The file found can have another pixel count than the entity records: its pixels are
+        // stretched over the same rectangle.
+        let img = DImage {
+            raster: raster.clone(),
+            origin: top_left,
+            right: right * (i.size.x / f64::from(raster.width())),
+            down: down * (i.size.y / f64::from(raster.height())),
+            clips: clip.into_iter().collect(),
+            fade: i.fade.min(100),
+        };
+        let corners = img.corners();
+        if !corners.iter().all(|q| q.x.is_finite() && q.y.is_finite()) {
+            return;
+        }
+        let (Ok(index), Ok(start)) = (u32::try_from(self.list.images.len()), u32::try_from(self.list.verts.len())) else { return };
+        if !self.charge(corners.len()) {
+            return;
+        }
+        for q in corners {
+            self.list.bounds.add(q);
+            self.list.verts.push(q);
+        }
+        self.list.images.push(img);
+        self.list.prims.push(DPrim {
+            handle: ctx.top,
+            color: color.rgb,
+            aci7: color.aci7,
+            lw: 0.0,
+            transparency: self.transparency,
+            kind: Kind::Image { index },
+            start,
+            len: 4,
         });
     }
     fn tris(&mut self, ctx: &Ctx, color: Ink, tris: &[Vec2]) {
@@ -193,9 +251,12 @@ impl Builder<'_> {
         if tris.len() < 3 {
             return;
         }
+        let (Ok(start), Ok(len)) = (u32::try_from(self.list.tris.len()), u32::try_from(tris.len())) else { return };
+        if !self.charge(tris.len()) {
+            return;
+        }
         self.note_pen(color);
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.tris.len() as u32;
         for p in tris {
             let q = xf.apply(*p);
             self.list.bounds.add(q);
@@ -209,7 +270,7 @@ impl Builder<'_> {
             transparency: self.transparency,
             kind: Kind::Tris,
             start,
-            len: tris.len() as u32,
+            len,
         });
     }
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
@@ -256,10 +317,13 @@ impl Builder<'_> {
         }
     }
     fn point(&mut self, ctx: &Ctx, color: Ink, p: Vec2) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(1) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
         let q = ctx.xf.apply(p);
         self.list.bounds.add(q);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(q);
         self.list.prims.push(DPrim {
             handle: ctx.top,
@@ -273,8 +337,11 @@ impl Builder<'_> {
         });
     }
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
+        let Ok(start) = u32::try_from(self.list.verts.len()) else { return };
+        if !self.charge(2) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
-        let start = self.list.verts.len() as u32;
         self.list.verts.push(ctx.xf.apply(base));
         self.list.verts.push(ctx.xf.apply_vec(dir).normalized());
         self.list.prims.push(DPrim {
@@ -288,17 +355,69 @@ impl Builder<'_> {
             len: 2,
         });
     }
-    /// Take one unit of the block-expansion budget; false once it is spent.
+    /// An empty builder drawing like this one (for contents cut afterwards, an XCLIP), with the
+    /// block-expansion count carried over.
+    fn part(&self) -> Builder<'a> {
+        let mut list = DisplayList::default();
+        list.expanded = self.list.expanded;
+        Builder {
+            list,
+            opts: self.opts,
+            plotting: self.plotting,
+            styles: self.styles,
+            named: self.named,
+            shared_budget: self.shared_budget,
+            transparency: self.transparency,
+            points: self.points,
+            max_points: self.max_points,
+        }
+    }
+    /// Take one unit of the block-expansion budget; false once it is spent, or once the build
+    /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        let ok = match self.shared_budget {
-            Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
-            None => self.list.expanded <= MAX_BLOCK_EXPANSION,
-        };
+        let ok = !self.points_spent()
+            && match self.shared_budget {
+                Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
+                None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+            };
         if !ok {
             self.list.truncated = true;
         }
         ok
+    }
+    /// Whether the build holds all the points it may: nothing more is drawn.
+    fn points_spent(&self) -> bool {
+        self.points.load(std::sync::atomic::Ordering::Relaxed) >= self.max_points
+    }
+    /// Charge `n` points to the build's [`MAX_DISPLAY_POINTS`] budget before they are pushed;
+    /// false (and the list marked truncated) when they don't fit, and nothing is pushed. Once the
+    /// budget is spent nothing more is added to the count, so it stays within the limit plus one
+    /// primitive per thread building in parallel.
+    fn charge(&mut self, n: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let ok = !self.points_spent() && self.points.fetch_add(n, Relaxed).saturating_add(n) <= self.max_points;
+        if !ok {
+            self.list.truncated = true;
+        }
+        ok
+    }
+}
+
+/// The clip boundary of image `i` as a closed outline, or `None` when the whole image shows.
+/// `place` gives the position of a point of the entity's pixel grid (x right, y down from the
+/// top-left corner of the image).
+fn image_clip(i: &cadcraft_doc::Image, place: impl Fn(Vec2) -> Vec2) -> Option<Vec<Vec2>> {
+    if !i.clipping {
+        return None;
+    }
+    // Boundaries count from pixel centres: the top-left corner of the image is (-0.5, -0.5).
+    let at = |q: Vec2| place(Vec2::new(q.x + 0.5, q.y + 0.5));
+    match i.clip.as_slice() {
+        // Two opposite corners of a rectangle.
+        [a, b] => Some(vec![at(*a), at(Vec2::new(b.x, a.y)), at(*b), at(Vec2::new(a.x, b.y))]),
+        polygon if polygon.len() >= 3 => Some(polygon.iter().map(|q| at(*q)).collect()),
+        _ => None,
     }
 }
 
@@ -315,12 +434,13 @@ mod text_entity;
 mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
-pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
+pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
-pub use viewports::{viewport_clip, viewport_content};
+pub use text_entity::{fitted_text_entity, layout_mtext_entity, place_text_entity, style_font, text_align};
+use viewports::{Clip, append_clipped_keep};
+pub use viewports::{clip_list, viewport_clip, viewport_content};
 
 #[cfg(test)]
 mod tests;

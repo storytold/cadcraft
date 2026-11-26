@@ -165,14 +165,57 @@ fn viewport_scale_lock_and_layers() {
     }
 }
 
+/// #2836: picking a paper sets the layout's paper units from it. In a new drawing (imperial,
+/// MEASUREMENT 0) ISO A0 was 46.81 x 33.11 units, the inch equivalent; now it is 1189 x 841.
+/// An inch paper gives the layout back the drawing's units.
+#[test]
+fn pagesetup_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    assert_eq!(cadcraft_render::paper::paper_unit_mm(s.doc().unwrap()), 25.4, "a new drawing is imperial");
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A0", "landscape": true})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D in the drawing's inches");
+    // A custom size replaces the named paper in the same call and keeps the layout's units.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "width": 254, "height": 508})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, None, "the layout still follows MEASUREMENT");
+    assert_eq!(size(&s), (20.0, 10.0, 25.4), "the custom size in the layout's inches");
+}
+
+/// #2836 through a device: the built-in devices list every standard size, so a paper picked in
+/// Page Setup with CADCraft PDF as the device comes from the device's list. It sets the layout's
+/// paper units as a paper picked with no device does.
+#[test]
+fn pagesetup_device_paper_sets_the_layout_paper_units() {
+    let mut s = Session::new();
+    let size = |s: &Session| {
+        let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+        ((sheet.size.x * 100.0).round() / 100.0, (sheet.size.y * 100.0).round() / 100.0, sheet.unit_mm)
+    };
+    s.execute("pagesetup", &json!({"layout": "Layout1", "device": "CADCraft PDF", "landscape": true})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A0 (841.00 x 1189.00 MM)"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.device, "CADCraft PDF");
+    assert_eq!(size(&s), (1189.0, 841.0, 1.0), "ISO A0 from the device's list in millimetres");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ANSI D"})).unwrap();
+    assert_eq!(size(&s), (34.0, 22.0, 25.4), "ANSI D from the device's list in the drawing's inches");
+    // An explicit choice in the same call wins over the paper's own units (#3249).
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "paperUnits": "mm"})).unwrap();
+    assert_eq!(size(&s), (914.4, 609.6, 1.0));
+}
+
 #[test]
 fn pagesetup_paper_table() {
     let mut s = Session::new();
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3", "landscape": true, "margins": [5, 5, 5, 5]})).unwrap();
     assert_eq!(r["page"]["widthMm"], 297.0);
     let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
-    // Imperial drawing: paper units are inches.
-    assert!((sheet.size.x - 420.0 / 25.4).abs() < 1e-9 && (sheet.size.y - 297.0 / 25.4).abs() < 1e-9);
+    // An imperial drawing, but a metric paper: the layout's paper units are millimetres (#2836).
+    assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9);
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "Z12"})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "margins": [1, 2]})).is_err());
     assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "width": 1e308, "height": 5})).is_err());
@@ -188,6 +231,57 @@ fn pagesetup_paper_table() {
     s.execute("pagesetup", &json!({"layout": "Layout2", "width": 500, "height": 300})).unwrap();
     let p = &s.doc().unwrap().layout("Layout2").unwrap().page;
     assert_eq!((p.width_mm, p.height_mm), (300.0, 500.0));
+}
+
+#[test]
+fn pagesetup_paper_units_make_an_inch_sheet_metric() {
+    // An ARCH D sheet in a drawing that measures in millimetres (#3249): the page setup's paper
+    // units decide the paper-space unit, so the sheet can be 914.4 x 609.6 mm.
+    let mut s = Session::new();
+    s.execute("units", &json!({"insunits": 4})).unwrap();
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], true);
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 914.4).abs() < 1e-9 && (sheet.size.y - 609.6).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "Inches"})).unwrap();
+    let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((sheet.size.x - 36.0).abs() < 1e-9 && (sheet.size.y - 24.0).abs() < 1e-9, "{:?}", sheet.size);
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "millimeters"})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(true));
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "feet"})).is_err());
+    assert!(s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": 4})).is_err());
+}
+
+#[test]
+fn pagesetup_paper_units_inches_overrides_metric_measurement() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "MEASUREMENT", "value": 1})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true})).unwrap();
+    // Without an explicit paperUnits choice, MEASUREMENT = 1 keeps the sheet in millimetres.
+    let metric = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((metric.size.x - 914.4).abs() < 1e-9 && (metric.size.y - 609.6).abs() < 1e-9, "{:?}", metric.size);
+    let r = s.execute("pagesetup", &json!({"layout": "Layout1", "paperUnits": "inches"})).unwrap();
+    assert_eq!(r["page"]["paperMm"], false);
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, Some(false));
+    let inch = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert!((inch.size.x - 36.0).abs() < 1e-9 && (inch.size.y - 24.0).abs() < 1e-9, "{:?}", inch.size);
+}
+
+/// The Plot dialog's Apply to Layout sends the layout's paper every time. Resubmitting the paper
+/// the layout already has keeps an explicit paper-units choice; a different paper still sets
+/// the units from that paper (#2836, #3249).
+#[test]
+fn pagesetup_same_paper_keeps_explicit_paper_units() {
+    let mut s = Session::new();
+    let units = |s: &Session| s.doc().unwrap().layout("Layout1").unwrap().page.paper_mm;
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "paperUnits": "mm"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ARCH D", "landscape": true, "lineweights": true})).unwrap();
+    assert_eq!(units(&s), Some(true), "millimetres on an inch paper survive resubmitting it");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A4", "paperUnits": "inches"})).unwrap();
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "ISO A4 (210.00 x 297.00 MM)"})).unwrap();
+    assert_eq!(units(&s), Some(false), "inches on a metric paper survive resubmitting it by its full name");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "paper": "A3"})).unwrap();
+    assert_eq!(units(&s), Some(true), "a different paper still sets the units");
 }
 
 fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {
@@ -230,6 +324,24 @@ fn plot_goes_through_the_hook() {
     assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
     assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
+    // Image output holds one sheet: several `layouts` would report pages:N but write one render.
+    for out in ["x.png", "x.svg"] {
+        let e = s.execute("plot", &json!({"path": out, "layouts": ["Layout1", "Layout2"]})).unwrap_err();
+        assert!(e.to_string().contains("layouts"), "{e}");
+    }
+    assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1", "Layout2"]})).is_err());
+    // `layout` and `layouts` naming different sheets are refused (the reply would name one sheet and the render another); agreeing ones pass.
+    for p in
+        [json!({"output": "png", "layout": "Model", "layouts": ["Layout1"]}), json!({"output": "pdf", "layout": "Layout1", "layouts": ["Model"]})]
+    {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("different"), "{e}");
+    }
+    assert_eq!(s.execute("plot", &json!({"output": "png", "layout": "layout1", "layouts": ["Layout1"]})).unwrap()["layout"], "Layout1");
+    let one = s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).unwrap();
+    assert_eq!(one["layout"], "Layout1");
+    let text = String::from_utf8(super::super::file::base64_decode(one["data"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(text.contains("Paper(\"Layout1\")"), "one sheet renders that layout, not the session space: {text}");
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::env::temp_dir().join(format!("cadcraft-plot-test-{}.pdf", std::process::id()));
@@ -283,7 +395,7 @@ fn mspace_edits_model_through_viewport() {
     s.cmdline("circle 10,10 3").unwrap();
     assert_eq!(s.doc().unwrap().model.len(), before + 1);
     // Zooming changes the viewport's model view, not the sheet.
-    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0 });
+    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0, twist: v.twist });
     let vp2 = viewports(&s, "L").into_iter().find(|(x, _)| *x == h).unwrap().1;
     assert!((vp2.view_height - vp.view_height / 2.0).abs() < 1e-9);
     assert_eq!(s.state().unwrap().paper_view(), pv);
@@ -306,4 +418,51 @@ fn plot_help_names_the_device_and_the_built_in_devices() {
         assert!(super::super::plotters::find_device(name).is_some(), "{name} is not a device");
         assert!(help.contains(name), "plot help lacks {name}");
     }
+}
+
+/// The path's extension picks the plot format as EXPORT does, in any case; one that names no
+/// format (or none) is refused instead of writing a PDF under that name, and a device that writes
+/// another format is refused.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn plot_path_extension_picks_the_format_like_export() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let mut s = session_with_model();
+    let dir = std::env::temp_dir().join(format!("cadcraft-plot-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+    let upper = s.execute("plot", &json!({"path": path("X.PNG")})).unwrap();
+    assert_eq!(upper["format"], "png", "an upper-case extension still picks png");
+    let e = s.execute("plot", &json!({"path": path("x.txt")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    let e = s.execute("plot", &json!({"path": path("noext")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("noext").exists());
+    let e = s.execute("plot", &json!({"path": path("y.png"), "device": "CADCraft PDF"})).unwrap_err().to_string();
+    assert!(e.contains("writes pdf") && e.contains("png"), "{e}");
+    // A device that resolves to none, or a null/unknown `output`, names no format: the refusal stands.
+    for p in [
+        json!({"path": path("x.txt"), "device": "None"}),
+        json!({"path": path("x.txt"), "output": null}),
+        json!({"path": path("x.txt"), "output": "bogus"}),
+    ] {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+        assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    }
+    // An explicit output still decides for an odd name.
+    assert_eq!(s.execute("plot", &json!({"path": path("z.txt"), "output": "pdf"})).unwrap()["format"], "pdf");
+    // But one that contradicts the extension is refused, as a device that does is (#2585 review).
+    let e = s.execute("plot", &json!({"path": path("w.png"), "output": "svg"})).unwrap_err().to_string();
+    assert!(e.contains("svg") && e.contains("png"), "{e}");
+    assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
+    std::fs::remove_dir_all(&dir).ok();
 }

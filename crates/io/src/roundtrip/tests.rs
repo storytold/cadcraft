@@ -39,7 +39,11 @@ fn drawing() -> Drawing {
     d.add(
         &Space::Model,
         Common::default(),
-        EntityKind::Unknown(Unknown { dxf_type: "ACME_WIDGET".into(), tags: vec![tag(100, "AcDbEntity"), tag(10, "1.0"), tag(20, "2.0")] }),
+        EntityKind::Unknown(Unknown {
+            dxf_type: "ACME_WIDGET".into(),
+            tags: vec![tag(100, "AcDbEntity"), tag(10, "1.0"), tag(20, "2.0")],
+            graphics: Vec::new(),
+        }),
     )
     .unwrap();
     d.add(&Space::Paper("Layout1".into()), Common::default(), line((1.0, 1.0), (2.0, 2.0))).unwrap();
@@ -394,6 +398,7 @@ fn read_census_reports_entities_the_reader_left_out() {
 #[test]
 fn dxf_round_trip_of_plain_geometry_is_lossless() {
     use corpus::{Format, round_trip};
+    crate::dwg_worker::allow_in_process();
     let mut d = drawing();
     // What the comparator should see in a round trip: the drawing as read from its own DXF.
     d = crate::read(crate::write(&d, "a.dxf").unwrap().as_slice(), "a.dxf").unwrap();
@@ -417,6 +422,7 @@ fn dxf_round_trip_of_plain_geometry_is_lossless() {
 #[test]
 fn hostile_files_are_reported_not_crashed() {
     use corpus::{CorpusOptions, check_bytes};
+    crate::dwg_worker::allow_in_process();
     let opts = CorpusOptions::default();
     for (bytes, name) in [
         (&b""[..], "empty.dxf"),
@@ -438,6 +444,7 @@ fn hostile_files_are_reported_not_crashed() {
 #[test]
 fn report_renders_as_markdown_and_json() {
     use corpus::{CorpusOptions, CorpusReport, check_bytes};
+    crate::dwg_worker::allow_in_process();
     let d = drawing();
     let dxf = crate::write(&d, "a.dxf").unwrap();
     let opts = CorpusOptions::default();
@@ -498,6 +505,7 @@ fn corpus_round_trip_report() {
         eprintln!("CADCRAFT_CORPUS_DIR is not set: corpus round trip skipped");
         return;
     };
+    crate::dwg_worker::allow_in_process();
     let out = std::env::var_os("CADCRAFT_CORPUS_REPORT").map_or_else(|| dir.join("report"), std::path::PathBuf::from);
     let files = corpus::corpus_files(&dir, std::slice::from_ref(&out));
     let report = corpus::run(&dir, &files, &corpus::CorpusOptions::default(), &mut |i, n, rel| eprintln!("[{}/{n}] {rel}", i + 1));
@@ -516,7 +524,8 @@ fn corpus_round_trip_report() {
 #[test]
 fn types_the_dwg_writer_cannot_write_are_reported_lost() {
     use corpus::{CorpusReport, FileReport, Format, round_trip};
-    let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags });
+    crate::dwg_worker::allow_in_process();
+    let unknown = |t: &str, tags: Vec<RawTag>| EntityKind::Unknown(Unknown { dxf_type: t.into(), tags, graphics: Vec::new() });
     let mut d = Drawing::new_metric();
     let widget = vec![tag(100, "AcDbEntity"), tag(100, "AcmeWidget"), tag(10, "1.0"), tag(20, "2.0"), tag(30, "0.0")];
     d.add(&Space::Model, Common::default(), unknown("ACME_WIDGET", widget.clone())).unwrap();

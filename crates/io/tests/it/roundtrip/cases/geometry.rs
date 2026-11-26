@@ -226,7 +226,7 @@ pub(crate) fn hatches() -> Vec<Case> {
                 EntityKind::Hatch(Hatch {
                     pattern: "SOLID".into(),
                     solid: true,
-                    loops: vec![HatchLoop { vertices: vertices.clone(), outer: true, sources: Vec::new() }],
+                    loops: vec![HatchLoop { vertices: vertices.clone(), outer: true, boundary_flags: Some(3), sources: Vec::new() }],
                     scale: 1.0,
                     angle: 0.0,
                     associative: false,

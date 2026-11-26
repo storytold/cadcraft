@@ -2,9 +2,10 @@ use super::common::T;
 use super::objects::MAX_OBJECTS;
 use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
-    VportConfig, VportTile, records,
+    VportConfig, VportTile, record_slices,
 };
 use cadcraft_fonts::windows::windows_font;
+use craft_dxf::lin_pat::MAX_LINETYPE_ELEMENTS;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -33,9 +34,9 @@ pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
                 [x, y, z] if x.code == 10 => HVal::Point(Vec3::new(x.f64(), y.f64(), z.f64())),
                 [x, y] if x.code == 10 => HVal::Point(Vec3::new(x.f64(), y.f64(), 0.0)),
                 [v] => match &v.value {
-                    cadcraft_dxf::Value::Real(r) => HVal::Real(*r),
-                    cadcraft_dxf::Value::Int(n) => HVal::Int(*n),
-                    cadcraft_dxf::Value::Bool(b) => HVal::Int(i64::from(*b)),
+                    craft_dxf::Value::Real(r) => HVal::Real(*r),
+                    craft_dxf::Value::Int(n) => HVal::Int(*n),
+                    craft_dxf::Value::Bool(b) => HVal::Int(i64::from(*b)),
                     other => HVal::Str(other.as_str()),
                 },
                 _ => continue,
@@ -92,7 +93,7 @@ fn style_font(tags: &[Tag], file: String) -> String {
 
 /// Load symbol tables and resolve handle references, indexing layer names for case-insensitive updates.
 pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
-    let recs = records(tags);
+    let recs = record_slices(tags);
     // STYLE handle → name, or the shape file of an unnamed shape style (linetype elements).
     let ltype_styles: HashMap<String, String> = recs
         .iter()
@@ -114,7 +115,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     let mut linetype_names: std::collections::HashSet<String> = d.linetypes.iter().map(|l| l.name.to_ascii_lowercase()).collect();
     let mut style_index: HashMap<String, usize> = d.text_styles.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
-        let t = T(&tg);
+        let t = T(tg);
         match kind.as_str() {
             "LAYER" => {
                 let name = t.s(2).unwrap_or_default();
@@ -141,11 +142,11 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if let Some(n) = t.s(390).and_then(|h| rx.pstyles.get(&h.trim().to_ascii_uppercase())) {
                     l.plot_style = n.clone();
                 }
-                let alpha = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
+                let alpha = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
                 if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
                     l.transparency = pct;
                 }
-                if let Some(desc) = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
+                if let Some(desc) = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
                     l.description = desc.str();
                 }
                 match layer_index.get(&name.to_ascii_lowercase()) {
@@ -166,7 +167,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     continue;
                 }
                 linetype_names.insert(name.to_ascii_lowercase());
-                let pattern = ltype_pattern(&tg, &ltype_styles);
+                let (pattern, cut) = ltype_pattern(tg, &ltype_styles);
+                rx.linetypes_cut = rx.linetypes_cut.saturating_add(usize::from(cut));
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -178,7 +180,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 let gen_flags = t.i(71).unwrap_or(0);
                 let st = TextStyle {
                     name: name.clone(),
-                    font: style_font(&tg, t.s(3).unwrap_or_default()),
+                    font: style_font(tg, t.s(3).unwrap_or_default()),
                     big_font: t.s(4).unwrap_or_default(),
                     height: t.fd(40, 0.0),
                     width_factor: t.fd(41, 1.0),
@@ -186,7 +188,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     backwards: gen_flags & 2 != 0,
                     upside_down: gen_flags & 4 != 0,
                     vertical: t.i(70).unwrap_or(0) & 4 != 0,
-                    annotative: annotative(&tg),
+                    annotative: annotative(tg),
                 };
                 match style_index.get(&name.to_ascii_lowercase()).and_then(|&i| d.text_styles.get_mut(i)) {
                     Some(x) => *x = st,
@@ -199,7 +201,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             // The first *ACTIVE viewport holds the current snap/grid settings.
             "VPORT" if !active_vport && t.s(2).is_some_and(|n| n.trim().eq_ignore_ascii_case("*ACTIVE")) => {
                 active_vport = true;
-                vport_record(d, &t);
+                vport_record(d, &t, true);
                 for (name, code) in [("SNAPUNIT", 14), ("GRIDUNIT", 15)] {
                     if let (Some(x), Some(y)) = (t.f(code), t.f(code + 10)) {
                         let p = Vec2::new(x, y);
@@ -214,6 +216,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 {
                     d.header.set("SNAPBASE", HVal::Point(Vec3::new(x, y, 0.0)));
                 }
+                ucsicon(d, &t);
                 if let Some(a) = t.f(50).filter(|a| a.is_finite()) {
                     d.header.set_f64("SNAPANG", a);
                 }
@@ -224,18 +227,18 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
+                let twist = t.f(50).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
                 // The view centre 10/20 is in display coordinates, whose origin is the target 12/22/32.
-                let center = t.view_center(10, 12);
+                let center = t.view_center(10, 12, twist);
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
-                let x = crate::dxf_ext::xdata(&tg, crate::dxf_ext::APP);
+                let x = crate::dxf_ext::xdata(tg, crate::dxf_ext::APP);
                 let field = |key: &str| {
                     x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str)
                 };
                 // 70 bit 1: a paper space view; its layout is CADCraft xdata.
                 let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
-                let twist = t.f(50).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
                 let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout };
                 match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = v,
@@ -274,28 +277,43 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                         fields.insert(field.to_string(), v);
                     }
                 }
-                fields.extend(crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes));
-                let mut st = DimStyle { name: name.clone(), annotative: annotative(&tg), ..DimStyle::default() };
+                fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
+                let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
                 match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = st,
                     None => d.dim_styles.push(st),
                 }
             }
-            "VPORT" => vport_record(d, &t),
+            "VPORT" => vport_record(d, &t, false),
             _ => {}
         }
     }
-    // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents).
-    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
+    // One *Active viewport is no tiling: its single tile is not a configuration to switch to. Its
+    // view was kept in the HEADER pair as it was read (see `vport_record`), and the record stays
+    // only for its view twist (see `cadcraft_engine::DocState`).
+    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.first().is_some_and(|t| t.twist != 0.0));
 }
 
-fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
+fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
     for (kind, tags) in recs {
         let table = T(tags);
+        // Proxy graphics count every LAYER and LTYPE record, so one without a handle or a name
+        // keeps its place in the index lists (an empty name) and the records after it don't
+        // shift (#3094).
+        if table.s(5).is_none() || table.s(2).is_none() {
+            let name = table.s(2).unwrap_or_default();
+            match kind.as_str() {
+                "LAYER" => rx.proxy_tables.layers.push(name),
+                "LTYPE" if !name.eq_ignore_ascii_case("ByBlock") && !name.eq_ignore_ascii_case("ByLayer") => rx.proxy_tables.linetypes.push(name),
+                _ => {}
+            }
+            continue;
+        }
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
         match kind.as_str() {
             "STYLE" => {
+                rx.proxy_tables.styles.push((name.clone(), table.s(3).unwrap_or_default()));
                 rx.styles.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "BLOCK_RECORD" => {
@@ -307,13 +325,27 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
                 rx.brs.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "LTYPE" => {
+                if !name.eq_ignore_ascii_case("ByBlock") && !name.eq_ignore_ascii_case("ByLayer") {
+                    rx.proxy_tables.linetypes.push(name.clone());
+                }
                 rx.ltypes.insert(handle.trim().to_ascii_uppercase(), name);
             }
             "LAYER" => {
+                rx.proxy_tables.layers.push(name.clone());
                 rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
+            }
+            "UCS" => {
+                rx.ucss.insert(handle.trim().to_ascii_uppercase(), name);
             }
             _ => {}
         }
+    }
+}
+
+/// The `*ACTIVE` VPORT's UCSICON setting (group 74: bit 1 the icon shown, bit 2 at the UCS origin).
+fn ucsicon(d: &mut Drawing, t: &T) {
+    if let Some(v) = t.i(74) {
+        d.header.set_i64("UCSICON", v.clamp(0, 3));
     }
 }
 
@@ -321,25 +353,43 @@ fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
 const MAX_VPORT_TILES: usize = 64;
 
 /// A VPORT record: one tile of the configuration it names (`*ACTIVE` the one shown). Corners
-/// are fractions of the drawing area; unusable tiles are skipped.
-fn vport_record(d: &mut Drawing, t: &T) {
+/// are fractions of the drawing area; unusable tiles are skipped. `first_active`: this is the
+/// file's first `*ACTIVE` record, the one whose view is the drawing's saved view.
+fn vport_record(d: &mut Drawing, t: &T, first_active: bool) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
+    // View twist (group 51, degrees).
+    let twist = t.f(51).map_or(0.0, |a| cadcraft_geom::norm_angle(a.to_radians()));
     // The view centre 12/22 is in display coordinates, whose origin is the view target 17/27/37.
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17));
+    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17, twist));
+    // A modern file keeps the view it was saved at in the first `*ACTIVE` record (12/22 centre,
+    // 40 height) as well as in the HEADER pair, and as with the snap and grid spacing the record
+    // is the newer of the two and wins (#1602). A record that leaves the centre out has no view
+    // to give -- `p` reads a missing coordinate as zero -- so the header pair stays.
+    // From the caller, which knows the record's place: whether a tile was kept for an earlier
+    // `*ACTIVE` record says nothing when that record's tile was unusable.
+    let first_active = first_active && name.eq_ignore_ascii_case(VportConfig::ACTIVE);
+    let centred = t.f(12).is_some() && t.f(22).is_some();
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
-    let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
-        && max.x > min.x + 1e-6
-        && max.y > min.y + 1e-6
-        && center.is_finite()
-        && height.is_finite()
-        && height > 0.0;
-    if name.is_empty() || !ok {
+    // One record carries two separate things: where the tile sits on the screen (10/11) and the
+    // view it shows (12/22, 40). They are judged apart, because a record can hold a usable view
+    // with a tile rectangle that is not usable -- a first `*ACTIVE` like that used to return
+    // before the view was read, so a file whose header has no view opened on the extent fit
+    // instead of where it was saved (noted in review).
+    let view_ok = center.is_finite() && height.is_finite() && height > 0.0;
+    let tile_ok = [min.x, min.y, max.x, max.y].into_iter().all(unit) && max.x > min.x + 1e-6 && max.y > min.y + 1e-6;
+    if name.is_empty() {
+        return;
+    }
+    if first_active && centred && view_ok {
+        d.header.set_saved_view(center, height);
+    }
+    if !view_ok || !tile_ok {
         return;
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
     let clamp = |p: Vec2| Vec2::new(p.x.clamp(0.0, 1.0), p.y.clamp(0.0, 1.0));
-    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect };
+    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, twist };
     let name = if name.eq_ignore_ascii_case(VportConfig::ACTIVE) { VportConfig::ACTIVE.to_string() } else { name };
     let room = d.vports.len() < MAX_OBJECTS;
     match d.vports.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&name)) {
@@ -354,10 +404,18 @@ fn vport_record(d: &mut Drawing, t: &T) {
 /// LTYPE): each `49` length starts an element; `74` type flags (1 absolute rotation, 2 text,
 /// 4 shape), `75` shape number, `340` STYLE, `46` scale, `50` rotation (radians), `44`/`45`
 /// offset and `9` text follow it.
-fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElement> {
+///
+/// At most [`MAX_LINETYPE_ELEMENTS`] elements are read, the cap a `.lin` file has: the rest of
+/// the pattern, with the text and shapes of its elements, is dropped and `true` comes back so
+/// the reader can say so. The renderer copies and walks the whole pattern for every object
+/// drawn with it, so an uncapped pattern made each redraw and export cost grow with its length.
+fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> (Vec<DashElement>, bool) {
     let mut out: Vec<DashElement> = Vec::new();
     for t in tags.iter().take_while(|t| t.code < 1000) {
         if t.code == 49 {
+            if out.len() >= MAX_LINETYPE_ELEMENTS {
+                return (out, true);
+            }
             out.push(DashElement::dash(t.f64()));
             continue;
         }
@@ -384,5 +442,5 @@ fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElem
             _ => {}
         }
     }
-    out
+    (out, false)
 }
