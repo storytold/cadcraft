@@ -299,20 +299,12 @@ impl GripEdit {
                 s.echo(self.label());
                 Ok(Step::Continue)
             }
-            Input::Point(p) => {
+            Input::Point(p) | Input::Deferred(crate::snap::Deferred { at: p, .. }) => {
                 if self.mode == GripMode::Scale {
                     self.edit_scale(s, self.base.dist(p))
                 } else {
                     let m = self.matrix(p);
                     self.edit(s, p, m)
-                }
-            }
-            Input::Deferred(d) => {
-                if self.mode == GripMode::Scale {
-                    self.edit_scale(s, self.base.dist(d.at))
-                } else {
-                    let m = self.matrix(d.at);
-                    self.edit(s, d.at, m)
                 }
             }
             Input::Text(t) => match self.mode {
