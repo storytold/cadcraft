@@ -110,6 +110,53 @@ fn attributes_without_properties_stay_without() {
 }
 
 #[test]
+fn many_attributes_are_written_without_comparing_every_pair_with_the_definitions() {
+    // #1923: a reference with N attributes, and a multileader's block content with N, of a block
+    // with N definitions, the tags N long ones alike up to their last characters, no attribute's
+    // a definition's. Looking for each attribute's definition by comparing it with every one (for
+    // the ATTRIB's properties, the multileader's attribute values) cost N x N comparisons of whole
+    // tags (many seconds here); the definitions gathered by tag once cost milliseconds.
+    const N: usize = 8000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(150));
+    let mut d = Drawing::new_metric();
+    let mut blk = Block::new("TAGS");
+    for (h, i) in (0x100..).zip(0..N) {
+        blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(attrib(&tag('D', i), 0.0, AttribProps::default()))));
+    }
+    d.blocks.insert(blk.name.clone(), Arc::new(blk));
+    let ins = Insert {
+        block: "TAGS".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: (0..N).map(|i| attrib(&tag('A', i), 0.0, AttribProps::default())).collect(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins.clone())).expect("add");
+    let m = MLeader {
+        leaders: vec![vec![Vec3::ZERO]],
+        landing: Vec3::new(10.0, 0.0, 0.0),
+        dogleg: 1.0,
+        text: None,
+        style: "Standard".into(),
+        arrow_size: 1.0,
+        spline: false,
+        block: Some(ins),
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).expect("add");
+    // A version with native multileaders: R2000 writes one as a leader and a block reference.
+    let opts = cadcraft_io::SaveOptions { version: Some(cadcraft_io::Version::R2007), binary: false };
+    let t = std::time::Instant::now();
+    let dxf = String::from_utf8(cadcraft_io::write_with(&d, "x.dxf", &opts).expect("write")).expect("text");
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    assert!(dxf.contains("MULTILEADER") && dxf.contains("ATTRIB"));
+}
+
+#[test]
 fn hostile_attrib_groups_do_not_panic() {
     let dxf = "0\nSECTION\n2\nENTITIES\n0\nINSERT\n5\n20\n8\n0\n66\n1\n2\nNOPE\n10\n0\n20\n0\n30\n0\n\
 0\nATTRIB\n5\n21\n8\n\n6\n\n62\n99999\n420\n-5\n370\n-99999\n10\n0\n20\n0\n30\n0\n40\n1\n1\nv\n2\nT\n70\n0\n\

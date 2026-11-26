@@ -54,6 +54,21 @@ fn store() -> MutexGuard<'static, Aliases> {
     USER.get_or_init(|| Mutex::new(Aliases::default())).lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The command a user alias stands for, `name` typed in any case; `None` when it is no user alias.
+/// The interface resolves a lone typed alias with this before its own command routes, so a user
+/// alias of HATCH opens the Hatch dialog as HATCH does.
+pub fn user_alias_command(name: &str) -> Option<String> {
+    // Keys are stored with their ASCII letters in lower case. Past ASCII, the key and the name
+    // are compared in lower case, so `ΚΡ` finds `κρ` and `éx` finds a key stored as `Éx`.
+    let name = name.trim();
+    if let Some(command) = user_alias(&name.to_ascii_lowercase()) {
+        return Some(command);
+    }
+    let lower = name.to_lowercase();
+    let aliases = store();
+    aliases.map.iter().find(|(key, _)| key.to_lowercase() == lower).map(|(_, command)| command.clone())
+}
+
 /// The command a user alias stands for (`name` in lower case).
 pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()

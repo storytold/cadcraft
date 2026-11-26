@@ -3,7 +3,7 @@
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::{EntityKind, Handle};
-use cadcraft_ui_egui::{CadApp, Services, attedit, context_menu, menus};
+use cadcraft_ui_egui::{CadApp, Services, attedit, context_menu, framework::install_headless, menus};
 use serde_json::json;
 
 /// A block "Tag" with attributes NO (prompt "Number") and NOTE, and one reference to it.
@@ -56,7 +56,7 @@ fn painted(app: &mut CadApp, ctx: &egui::Context) -> String {
 
 /// The application in an egui harness at a size that shows the Properties palette.
 fn palette(app: CadApp) -> egui_kittest::Harness<'static, CadApp> {
-    egui_kittest::Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+    egui_kittest::Harness::builder().with_context_setup(install_headless).with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -116,6 +116,7 @@ fn edit_attributes_on_a_selected_reference_opens_the_dialog() {
     assert!(app.session.running.is_none(), "the dialog, not the command-line prompts");
 
     let ctx = egui::Context::default();
+    install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     let text = painted(&mut app, &ctx);
@@ -142,6 +143,7 @@ fn open_makes_the_chosen_attribute_current() {
     assert_eq!(app.ui.dialog.as_deref(), Some("attedit"));
     assert_eq!((app.attedit.current, app.attedit.focus), (Some(1), true));
     let ctx = egui::Context::default();
+    install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     assert!(!app.attedit.focus, "the focus was given in the first frame");
@@ -218,6 +220,7 @@ fn the_active_viewport_decides_which_selected_reference_attedit_opens() {
 fn the_properties_palette_lists_the_attributes() {
     let (mut app, _) = app_with_reference();
     let ctx = egui::Context::default();
+    install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     let text = painted(&mut app, &ctx);
@@ -256,6 +259,7 @@ fn the_dialog_closes_in_another_drawing() {
     assert!(!attedit::apply(&mut app));
     assert_eq!(value(&app, h, "NOTE"), "n", "the other drawing's reference is untouched");
     let ctx = egui::Context::default();
+    install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     assert!(app.ui.dialog.is_none(), "closed");

@@ -71,7 +71,7 @@ fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
         label: label.unwrap_or(spec.label).to_string(),
         id: id.to_string(),
         shortcut: spec.shortcut.map(str::to_string),
-        enabled: (spec.enabled)(&app.session).is_ok(),
+        enabled: crate::clipboard::offered(&app.session, spec),
     })
 }
 
@@ -97,14 +97,19 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut first = Vec::new();
     if let Some(last) = app.session.last_command.as_deref().and_then(find_command) {
         let label = crate::tf!("Repeat {command}", command = last.id.to_ascii_uppercase());
-        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: (last.enabled)(&app.session).is_ok() });
+        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: crate::clipboard::offered(&app.session, last) });
     }
     let recent: Vec<Entry> = app
         .session
         .recent_commands(RECENT)
         .iter()
         .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
+        .map(|c| Entry::Item {
+            label: c.id.to_ascii_uppercase(),
+            id: c.id.to_string(),
+            shortcut: None,
+            enabled: crate::clipboard::offered(&app.session, c),
+        })
         .collect();
     first.extend(sub("Recent Commands", recent));
     push(&mut groups, first);
@@ -383,6 +388,13 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
     }
 }
 
+/// A right-click menu of the drawing. Only real clicks open and close it: with the drawing focused, egui makes Enter and
+/// Space clicks of it, and those go to the command line.
+pub(crate) fn popup(drawing: &egui::Response) -> egui::Popup<'static> {
+    let open = if drawing.secondary_clicked() { Some(true) } else { drawing.clicked_by(egui::PointerButton::Primary).then_some(false) };
+    egui::Popup::context_menu(drawing).open_memory(open.map(egui::SetOpenCommand::Bool))
+}
+
 /// Attach the menu to the canvas response: it opens on a right-click, as the object snap menu
 /// when that click held Shift or Ctrl (`CanvasState::snap_menu`).
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
@@ -406,7 +418,7 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
         }
         return;
     }
-    resp.context_menu(|ui| {
+    popup(resp).show(|ui| {
         let groups = if snap { snap_entries(app) } else { entries(app) };
         groups_ui(ui, &groups, &mut clicked);
     });
