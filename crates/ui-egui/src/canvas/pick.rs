@@ -276,4 +276,35 @@ mod hatch_pick_tests {
         assert!(saw_light_bg, "Block Editor canvas should be filled with the light block_editor_canvas token");
         assert!(saw_dark_stroke, "ACI-7 entity geometry should render dark against the light Block Editor background");
     }
+
+    #[test]
+    fn block_editor_tiled_viewports_all_use_light_background_palette() {
+        let dark = crate::theme::Tokens::DARK;
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let l = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone();
+        app.run("block", json!({ "name": "SYM", "base": [0, 0], "handles": [l] })).unwrap();
+        app.run("bedit", json!({ "name": "SYM" })).unwrap();
+        app.run("vports.2", json!({})).unwrap();
+
+        let ctx = egui::Context::default();
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        app.logic(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: screen, ..Default::default() }, |ui| app.ui(ui));
+        out.textures_delta.clear();
+
+        let mut light_fills = 0usize;
+        fn count_fills(shape: &egui::Shape, light: egui::Color32, l: &mut usize) {
+            match shape {
+                egui::Shape::Rect(r) if r.rect.width() > 200.0 && r.rect.height() > 200.0 && r.fill == light => {
+                    *l += 1;
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| count_fills(s, light, l)),
+                _ => {}
+            }
+        }
+        for s in &out.shapes {
+            count_fills(&s.shape, dark.block_editor_canvas, &mut light_fills);
+        }
+        assert!(light_fills >= 2, "both active and inactive tiles should use light block_editor_canvas (got {light_fills})");
+    }
 }

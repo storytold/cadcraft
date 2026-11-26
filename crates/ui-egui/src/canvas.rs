@@ -563,7 +563,7 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
-    draw_tiles(app, ui, tiles);
+    draw_tiles(app, ui, tiles, &t);
     // UCS icon, ViewCube and viewport label.
     if app.session.ucsicon_bits() & 1 != 0 {
         let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
