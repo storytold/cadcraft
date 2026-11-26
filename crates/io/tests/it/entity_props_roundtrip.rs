@@ -26,6 +26,7 @@ fn square(size: f64) -> Vec<PolyVertex> {
 
 #[test]
 fn line_extrusion_roundtrips_with_world_endpoints() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // A LINE's endpoints are world coordinates whatever its extrusion, which only directs its
     // thickness; a mirrored normal (0, 0, -1) must come back from DXF and DWG (#2241).
     let mut d = Drawing::new_metric();
@@ -117,7 +118,7 @@ fn hatch(pattern: &str, gradient: Option<Gradient>) -> Hatch {
     Hatch {
         pattern: pattern.into(),
         solid: pattern == "SOLID",
-        loops: vec![HatchLoop { vertices: square(10.0), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: square(10.0), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 2.0,
         angle: 0.25,
         associative: false,
@@ -187,6 +188,7 @@ fn xref_block_flag_and_path_roundtrip() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let h = add(&mut d, 0.0, EntityKind::Insert(ins));
 
@@ -257,8 +259,16 @@ fn faces(d: &Drawing) -> Vec<Face3d> {
         .collect()
 }
 
+/// The faces of the one polyface mesh in `d`, as 3D faces.
+fn polyface_faces(d: &Drawing) -> Vec<Face3d> {
+    match d.model.iter().map(|e| &e.kind).collect::<Vec<_>>().as_slice() {
+        [EntityKind::PolyfaceMesh(m)] => m.faces3d(),
+        ks => panic!("expected one polyface mesh, got {ks:?}"),
+    }
+}
+
 #[test]
-fn polyface_and_polygon_mesh_polylines_become_faces_not_bogus_vertices() {
+fn polyface_and_polygon_mesh_polylines_read_as_meshes_and_faces_not_bogus_vertices() {
     let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
     // Polyface: four vertices, a quad, a triangle whose third edge is hidden, and faces with an
     // out-of-range index or only two vertices (skipped).
@@ -274,14 +284,14 @@ fn polyface_and_polygon_mesh_polylines_become_faces_not_bogus_vertices() {
     recs.push(vec![(0, "SEQEND"), (8, "0")]);
     let refs: Vec<&[(i32, &str)]> = recs.iter().map(Vec::as_slice).collect();
     let d = read_dxf(dxf(&refs).as_bytes()).expect("read polyface");
-    let fs = faces(&d);
+    let fs = polyface_faces(&d);
     assert_eq!(fs.len(), 2, "{fs:?}");
     assert_eq!(fs[0].corners, [p(0.0, 0.0, 2.0), p(1.0, 0.0, 2.0), p(1.0, 1.0, 2.0), p(0.0, 1.0, 2.0)]);
     assert_eq!(fs[0].hidden_edges, 0);
     assert_eq!(fs[1].corners, [p(0.0, 0.0, 2.0), p(1.0, 1.0, 2.0), p(0.0, 1.0, 2.0), p(0.0, 1.0, 2.0)]);
     assert_eq!(fs[1].hidden_edges, 4 | 8, "the triangle's closing edge is hidden");
-    // The faces survive a save and reopen as 3DFACEs.
-    assert_eq!(faces(&roundtrip(&d)), fs);
+    // The mesh survives a save and reopen.
+    assert_eq!(polyface_faces(&roundtrip(&d)), fs);
 
     // 3×2 polygon mesh: two quads.
     let mut recs: Vec<Vec<(i32, &str)>> =

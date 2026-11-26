@@ -1,14 +1,57 @@
+use std::collections::HashSet;
+
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
-use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
+use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, record_slices};
+
+/// Allocate an entity handle that is unique within the DXF, including against handles assigned
+/// to earlier malformed or generated entities.
+fn fresh_entity_handle(d: &mut Drawing, seen: &mut HashSet<Handle>, reserved: &HashSet<Handle>) -> Handle {
+    // The seed saturates at `u64::MAX`: once a file uses that handle, `new_handle` keeps
+    // returning it and a plain retry loop would never terminate. Stop as soon as it stops
+    // advancing.
+    let mut previous = None;
+    loop {
+        let h = d.new_handle();
+        if !reserved.contains(&h) && seen.insert(h) {
+            return h;
+        }
+        if previous == Some(h) {
+            break;
+        }
+        previous = Some(h);
+    }
+    // Every value the seed can still reach is taken, so scan from the bottom: the occupied set
+    // is finite, which guarantees a free handle within its size plus one candidates.
+    let limit = seen.len().saturating_add(reserved.len()).saturating_add(1);
+    let mut candidate = 1u64;
+    for _ in 0..limit {
+        let h = Handle(candidate);
+        if !reserved.contains(&h) && seen.insert(h) {
+            return h;
+        }
+        candidate = candidate.saturating_add(1);
+    }
+    // Unreachable in practice (pigeonhole over the finite occupied set); never lose the entity.
+    d.new_handle()
+}
+
+/// How an ENTITIES list assigns handles: the handles already seen anywhere in the file, the
+/// ones the block records reserved, and whether a record's own handle beats the reservation.
+pub(super) struct HandlePolicy<'a> {
+    pub seen: &'a mut HashSet<Handle>,
+    pub reserved: &'a HashSet<Handle>,
+    pub source_wins: bool,
+}
 
 pub(super) fn parse_entities(
-    recs: &[(String, Vec<Tag>)],
+    recs: &[(String, &[Tag])],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
     table_cells_left: &mut usize,
+    hp: &mut HandlePolicy<'_>,
 ) -> Vec<(Option<String>, bool, Entity)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -17,13 +60,16 @@ pub(super) fn parse_entities(
         let owner = crate::dxf_ext::owner(tags);
         let paper = t.i(67) == Some(1);
         let handle = t.s(5).and_then(|h| Handle::parse_hex(&h));
-        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left);
+        if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
+            rx.paper_views_dropped.push((owner.clone(), paper, rx.block.clone()));
+        }
+        let mut kindent = entity_with_table_budget(kind, tags, table_cells_left, &mut rx.curves);
         if let Some((c, _)) = kindent.as_mut()
             && let Some(n) = entity_plot_style(tags, rx)
         {
             c.plot_style = n;
         }
-        // More entities from this record (the faces of a polyface or polygon mesh).
+        // More entities from this record (the faces of a polygon mesh).
         let mut extra: Vec<EntityKind> = Vec::new();
         i += 1;
         match kind.as_str() {
@@ -52,29 +98,27 @@ pub(super) fn parse_entities(
         }
         if let Some((c, mut k)) = kindent {
             let h = match handle {
+                // A file's handles keep their identity, however high they are (#913, #939).
                 Some(h) => {
                     d.bump_handseed(h);
-                    h
+                    // A file's own handle wins when it is the first copy on a source list that
+                    // keeps them (ENTITIES); block copies yield to the reserved top-level ones.
+                    let kept = if hp.source_wins { hp.seen.insert(h) } else { !hp.reserved.contains(&h) && hp.seen.insert(h) };
+                    if kept { h } else { fresh_entity_handle(d, hp.seen, hp.reserved) }
                 }
-                None => d.new_handle(),
+                None => fresh_entity_handle(d, hp.seen, hp.reserved),
             };
             entity_extras(kind, tags, h, &mut k, rx);
-            let more: Vec<_> =
-                extra.into_iter().map(|f| (owner.clone(), paper, Entity { handle: d.new_handle(), common: c.clone(), kind: f })).collect();
+            let more: Vec<_> = extra
+                .into_iter()
+                .map(|f| (owner.clone(), paper, Entity { handle: fresh_entity_handle(d, hp.seen, hp.reserved), common: c.clone(), kind: f }))
+                .collect();
             out.push((owner, paper, Entity { handle: h, common: c, kind: k }));
             out.extend(more);
         } else if kind == "HATCH" {
             // Without boundary data. The other records `entity` returns nothing for are read
             // elsewhere (the writer's paper viewport, the loops of a region).
             *skipped = skipped.saturating_add(1);
-        }
-    }
-    // Assign fresh handles to duplicates (hostile files).
-    let mut seen = std::collections::HashSet::new();
-    for (_, _, e) in &mut out {
-        if !seen.insert(e.handle) {
-            e.handle = d.new_handle();
-            seen.insert(e.handle);
         }
     }
     out
@@ -87,8 +131,10 @@ pub(super) fn read_blocks(
     rx: &mut Rx,
     table_cells_left: &mut usize,
     skipped: &mut std::collections::BTreeMap<String, usize>,
+    seen_handles: &mut HashSet<Handle>,
+    reserved_handles: &HashSet<Handle>,
 ) -> Vec<BlockDef> {
-    let recs = records(tags);
+    let recs = record_slices(tags);
     for (k, tg) in &recs {
         let t = T(tg);
         if k == "BLOCK" && t.i(70).unwrap_or(0) & 4 != 0 {
@@ -111,7 +157,16 @@ pub(super) fn read_blocks(
                 j += 1;
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
-            let ents = parse_entities(body, d, rx, &mut n, table_cells_left);
+            rx.block = Some(name.to_ascii_uppercase());
+            let ents = parse_entities(
+                body,
+                d,
+                rx,
+                &mut n,
+                table_cells_left,
+                &mut HandlePolicy { seen: seen_handles, reserved: reserved_handles, source_wins: false },
+            );
+            rx.block = None;
             blocks.push((name, base, description, ents, xref));
             i = j + 1;
         } else {
@@ -128,8 +183,8 @@ pub(super) fn read_blocks(
 
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
-    for (k, tg) in records(tags) {
-        objs.add(&k, &tg);
+    for (k, tg) in record_slices(tags) {
+        objs.add(&k, tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
@@ -138,9 +193,17 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot)));
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot, tg), limits(&t)));
         }
     }
+}
+
+/// A LAYOUT's limits (groups 10/20 and 11/21 after the AcDbLayout marker), when both corners
+/// are there and usable, so a save writes back the file's own (#2109). The 0,0 to 12,9 a
+/// layout without its own limits writes reads back as none.
+fn limits(t: &T) -> Option<(Vec2, Vec2)> {
+    let corner = |x: i32, y: i32| Some(Vec2::new(t.f(x)?, t.f(y)?)).filter(|p| p.is_finite() && p.x.abs() < 1e12 && p.y.abs() < 1e12);
+    corner(10, 20).zip(corner(11, 21)).filter(|l| *l != (Vec2::ZERO, Vec2::new(12.0, 9.0)))
 }
 
 /// Add the drawing's layouts, and return the layout each paper-space block belongs to, and the
@@ -148,11 +211,12 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
 pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (HashMap<String, String>, String) {
     let mut paper_block_for: HashMap<String, String> = HashMap::new();
     layout_objs.sort_by_key(|l| l.1);
-    for (name, order, br, page) in layout_objs.iter() {
+    for (name, order, br, page, limits) in layout_objs.iter() {
         if name.eq_ignore_ascii_case("Model") {
+            d.model_page = Some(page.clone());
             continue;
         }
-        d.layouts.push(Layout { page: page.clone(), ..Layout::new(name, *order) });
+        d.layouts.push(Layout { page: page.clone(), limits: *limits, ..Layout::new(name, *order) });
         if let Some(bname) = rx.brs.get(br) {
             paper_block_for.insert(bname.to_ascii_uppercase(), name.clone());
         }
@@ -170,14 +234,32 @@ pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: 
     (paper_block_for, first_layout)
 }
 
+/// The drawing's layer names (lower-cased), so adding the layer an entity names is a set lookup
+/// rather than a scan of the layer table per entity: many distinct names made that quadratic
+/// (CWE-407).
+struct LayerSet(std::collections::HashSet<String>);
+
+impl LayerSet {
+    fn new(d: &Drawing) -> Self {
+        Self(d.layers.iter().map(|l| l.name.to_ascii_lowercase()).collect())
+    }
+    /// [`Drawing::ensure_layer`] through the set.
+    fn ensure(&mut self, d: &mut Drawing, name: &str) {
+        if self.0.insert(name.to_ascii_lowercase()) {
+            d.layers.push(cadcraft_doc::Layer::new(name));
+        }
+    }
+}
+
 /// Place the BLOCKS entities: model and paper space blocks go to their space, the rest become
 /// block definitions.
 pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
+    let mut layers = LayerSet::new(d);
     for (name, base, description, ents, xref) in blocks {
         let up = name.to_ascii_uppercase();
         if up == "*MODEL_SPACE" {
             for (_, _, e) in ents {
-                d.ensure_layer(&e.common.layer);
+                layers.ensure(d, &e.common.layer);
                 d.model.push(e);
             }
             continue;
@@ -225,6 +307,14 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
     }
 }
 
+/// The layout an entity record belongs to: paper space when flagged (67=1) or owned by a
+/// `*PAPER_SPACE` block, else `None` for model space.
+fn paper_layout(owner: Option<String>, paper: bool, rx: &Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) -> Option<String> {
+    let owner_name = owner.and_then(|o| rx.brs.get(&o.trim().to_ascii_uppercase()).cloned()).map(|n| n.to_ascii_uppercase());
+    let to_paper = paper || owner_name.as_deref().is_some_and(|n| n.starts_with("*PAPER_SPACE"));
+    to_paper.then(|| owner_name.and_then(|n| paper_block_for.get(&n).cloned()).unwrap_or_else(|| first_layout.to_string()))
+}
+
 /// Place the ENTITIES section: model space, or paper space when flagged (67=1).
 pub(super) fn place_entities(
     d: &mut Drawing,
@@ -233,19 +323,33 @@ pub(super) fn place_entities(
     paper_block_for: &HashMap<String, String>,
     first_layout: &str,
 ) {
+    let mut layers = LayerSet::new(d);
     for (owner, paper, e) in entities {
-        d.ensure_layer(&e.common.layer);
-        let owner_name = owner.and_then(|o| rx.brs.get(&o.trim().to_ascii_uppercase()).cloned()).map(|n| n.to_ascii_uppercase());
-        let to_paper = paper || owner_name.as_deref().is_some_and(|n| n.starts_with("*PAPER_SPACE"));
-        if to_paper {
-            let lname = owner_name.and_then(|n| paper_block_for.get(&n).cloned()).unwrap_or_else(|| first_layout.to_string());
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
-                l.entities.push(e);
+        layers.ensure(d, &e.common.layer);
+        match paper_layout(owner, paper, rx, paper_block_for, first_layout) {
+            Some(lname) => {
+                if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+                    l.entities.push(e);
+                }
             }
-        } else {
-            d.model.push(e);
+            None => d.model.push(e),
         }
     }
+}
+
+/// Layouts whose generated sheet viewport (PAPERVIEW) the reader dropped: their viewports keep
+/// their ids, so the next save generates the sheet again instead of promoting one of them.
+pub(super) fn dropped_paper_views(rx: &Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) -> std::collections::HashSet<String> {
+    rx.paper_views_dropped
+        .iter()
+        .filter_map(|(owner, paper, block)| match block {
+            // In a paper-space block the sheet is that block's layout, where `place_blocks` puts
+            // the block's other entities, whatever its owner group says.
+            Some(b) if b.starts_with("*PAPER_SPACE") => Some(paper_block_for.get(b).cloned().unwrap_or_else(|| first_layout.to_string())),
+            Some(_) => None,
+            None => paper_layout(owner.clone(), *paper, rx, paper_block_for, first_layout),
+        })
+        .collect()
 }
 
 pub(super) fn count_skipped(skipped: &mut std::collections::BTreeMap<String, usize>, section: &str, n: usize) {
@@ -306,7 +410,17 @@ pub(super) fn apply_sortents(
     paper_for: &HashMap<String, String>,
     first_layout: &str,
 ) {
-    for (owner, map) in tables {
+    // Each sort rebuilds its whole space, so a space named by many tables is sorted once, by the
+    // last of them (which decided its order anyway); repeated tables made import quadratic.
+    let target = |owner: &String| {
+        let up = brs.get(owner)?.to_ascii_uppercase();
+        Some(if up.starts_with("*PAPER_SPACE") { paper_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string()) + "\0paper" } else { up })
+    };
+    let last: HashMap<String, usize> = tables.iter().enumerate().filter_map(|(i, (owner, _))| Some((target(owner)?, i))).collect();
+    for (i, (owner, map)) in tables.iter().enumerate() {
+        if target(owner).and_then(|t| last.get(&t)) != Some(&i) {
+            continue;
+        }
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
         // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).

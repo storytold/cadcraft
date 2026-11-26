@@ -32,7 +32,9 @@ fn private_dir() -> io::Result<PathBuf> {
     if let Some(h) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(h).join(".cache"));
     }
-    Ok(std::env::temp_dir())
+    // The shared temporary directory would put the credential at a path any local account can
+    // predict and plant a link at: refuse instead.
+    Err(io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR or HOME is required for a private control token"))
 }
 
 /// Require the Windows per-user local app-data directory for session token storage.
@@ -75,7 +77,31 @@ fn issue_at(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Read the token for `port`, trimming trailing whitespace. Used by clients (the MCP bridge).
 pub fn read(port: u16) -> io::Result<String> {
-    let raw = std::fs::read_to_string(token_path(port)?)?;
+    read_at(&token_path(port)?)
+}
+
+/// Read a token file the issuer wrote: not through a link, a plain file, and (Unix) readable by
+/// its owner only, so a file another account planted or left open is not taken as the credential.
+fn read_at(path: &std::path::Path) -> io::Result<String> {
+    use std::io::Read;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the control token is not a plain file"));
+    }
+    #[cfg(unix)]
+    if std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o077 != 0 {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "the control token file is readable by other users"));
+    }
+    let mut raw = String::new();
+    file.take(1024).read_to_string(&mut raw)?;
     let token = raw.trim().to_string();
     if token.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "empty control token"));
@@ -179,6 +205,24 @@ mod tests {
         assert!(windows_private_dir(None).is_err());
         assert!(windows_private_dir(Some("".into())).is_err());
         assert_eq!(windows_private_dir(Some("private-app-data".into())).unwrap(), PathBuf::from("private-app-data"));
+    }
+
+    /// A link, or a file other users can read, is not accepted as the token.
+    #[cfg(unix)]
+    #[test]
+    fn read_refuses_links_and_shared_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("cadcraft-token-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("secret");
+        issue_at(&secret, b"abc").unwrap();
+        assert_eq!(read_at(&secret).unwrap(), "abc");
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        assert!(read_at(&link).is_err());
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_at(&secret).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Token issuance creates its missing directory hierarchy before writing the credential.

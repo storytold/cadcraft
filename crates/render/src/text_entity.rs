@@ -5,10 +5,28 @@ pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
     d.text_style(name).cloned().unwrap_or_default()
 }
 
+/// The font a text style draws with: its font file (TrueType, or an SHX font found by name),
+/// its big font and its vertical flag.
+pub fn style_font(ts: &cadcraft_doc::TextStyle) -> cadcraft_fonts::TextFont {
+    cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font, ts.vertical)
+}
+
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
+    let (font, params) = text_params(d, t);
+    cadcraft_fonts::place(&font, value, &params)
+}
+
+/// The dimensions used to display a two-point TEXT, ATTRIB or ATTDEF, for file writers.
+pub fn fitted_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> cadcraft_doc::Text {
+    let (font, params) = text_params(d, t);
+    let fitted = cadcraft_fonts::fit_params(&font, value, &params);
+    cadcraft_doc::Text { height: fitted.height, rotation: fitted.rotation, width_factor: fitted.width_factor, ..t.clone() }
+}
+
+fn text_params(d: &Drawing, t: &cadcraft_doc::Text) -> (cadcraft_fonts::TextFont, cadcraft_fonts::TextParams) {
     let ts = text_style(d, &t.style);
-    let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+    let font = style_font(&ts);
     let (h, v) = align(t.halign, t.valign);
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
@@ -22,7 +40,7 @@ pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (c
         backwards: ts.backwards,
         upside_down: ts.upside_down,
     };
-    cadcraft_fonts::place(&font, value, &p)
+    (font, p)
 }
 
 /// Lay out an MTEXT with its style's font.
@@ -36,7 +54,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: cadcraft_fonts::TextFont::resolve(&ts.font),
+        font: style_font(&ts),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {

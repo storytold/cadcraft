@@ -33,7 +33,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
             if !lt.is_empty() && !lt.eq_ignore_ascii_case("bylayer") && !lt.eq_ignore_ascii_case("byblock") {
                 c.linetype = lt.to_string();
             }
-            let (rgb, w, lt, scale, _, _) = resolve_common(ctx, &c, b.plotting);
+            let (rgb, w, lt, scale, _, _, _) = resolve_common(ctx, &c, b.plotting);
             let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
                 Some(over) => over,
                 None => lt,
@@ -59,7 +59,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
 
 #[allow(clippy::too_many_arguments)]
 fn stroke(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, scale: f64, min: f64, pts: &[Vec2]) {
-    match lt {
+    match lt.filter(|_| b.opts.linetypes) {
         Some(lt) => {
             for dash in linetype::apply(pts, lt, scale, min) {
                 match dash.as_slice() {

@@ -20,6 +20,7 @@ fn insert(block: &str, x: f64, cols: u32, rows: u32) -> EntityKind {
         rows,
         col_spacing: 5.0,
         row_spacing: 5.0,
+        clip: None,
     })
 }
 

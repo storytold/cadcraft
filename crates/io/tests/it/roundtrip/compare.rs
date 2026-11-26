@@ -263,7 +263,7 @@ fn attrib(expected: &Attrib, actual: &Attrib, context: &str) {
 }
 
 fn insert(expected: &Insert, actual: &Insert, context: &str) {
-    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing } = expected;
+    let Insert { block, insert, scale, rotation, attribs, cols, rows, col_spacing, row_spacing, clip } = expected;
     equal(block, &actual.block, context, "insert.block");
     equal(insert, &actual.insert, context, "insert.insert");
     equal(scale, &actual.scale, context, "insert.scale");
@@ -272,6 +272,7 @@ fn insert(expected: &Insert, actual: &Insert, context: &str) {
     equal(rows, &actual.rows, context, "insert.rows");
     equal(col_spacing, &actual.col_spacing, context, "insert.col_spacing");
     equal(row_spacing, &actual.row_spacing, context, "insert.row_spacing");
+    equal(clip, &actual.clip, context, "insert.clip");
     equal(&attribs.len(), &actual.attribs.len(), context, "insert.attribs.len");
     for (index, (a, b)) in attribs.iter().zip(&actual.attribs).enumerate() {
         attrib(a, b, &format!("{context}.attrib[{index}]"));
@@ -371,4 +372,54 @@ fn angle_tolerance_does_not_hide_real_changes_or_nonfinite_values() {
     for actual in [0.700001, f64::NAN, f64::INFINITY] {
         assert!(std::panic::catch_unwind(|| angle(0.7, actual, "self-test", "angle")).is_err());
     }
+}
+
+/// Authored two-point text saves the dimensions of its measured span. Expectations come from
+/// shaping and geometry, independently of the save fitting helper; all field assertions remain.
+pub(super) fn authored_text_dimensions(d: &Drawing) -> Drawing {
+    fn fit(d: &Drawing, t: &mut Text) {
+        use cadcraft_doc::HAlign;
+        if !matches!(t.halign, HAlign::Aligned | HAlign::Fit) {
+            return;
+        }
+        let Some(second) = t.align_pt else { return };
+        let distance = t.insert.xy().dist(second.xy());
+        if !distance.is_finite() || distance <= 1e-12 {
+            return;
+        }
+        t.rotation = t.insert.xy().angle_to(second.xy());
+        let style = d.text_style(&t.style).cloned().unwrap_or_default();
+        let font = cadcraft_render::style_font(&style);
+        let width = cadcraft_fonts::shape_line_dir(&font, &t.value, t.height, t.width_factor, t.oblique, Some(false)).width;
+        if width.is_finite() && width > 1e-12 {
+            if t.halign == HAlign::Aligned {
+                t.height *= distance / width;
+            } else {
+                t.width_factor *= distance / width;
+            }
+        }
+    }
+    fn store(d: &Drawing, entities: &mut EntityStore) {
+        for h in entities.handles() {
+            // Read-time measurements already have their own preservation contract.
+            if d.foreign.text_fits.contains_key(&h) {
+                continue;
+            }
+            entities.modify(h, |e| match &mut e.kind {
+                EntityKind::Text(t) => fit(d, t),
+                EntityKind::AttDef(a) => fit(d, &mut a.text),
+                EntityKind::Insert(i) => i.attribs.iter_mut().for_each(|a| fit(d, &mut a.text)),
+                _ => {}
+            });
+        }
+    }
+    let mut expected = d.clone();
+    store(d, &mut expected.model);
+    for layout in &mut expected.layouts {
+        store(d, &mut layout.entities);
+    }
+    for block in expected.blocks.values_mut() {
+        store(d, &mut std::sync::Arc::make_mut(block).entities);
+    }
+    expected
 }

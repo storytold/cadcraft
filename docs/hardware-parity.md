@@ -1,12 +1,12 @@
 # Hardware parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (zoom and pan regenerate in the background) · **Target:** Autodesk AutoCAD 2027 (Mac and Windows)
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit against main 41d9b5e95: SpaceMouse 2D navigation, magnifier option, winit PR state, plotter devices; the 45% is not re-measured; previously: re-audit against main e707ab4d: SpaceMouse 2D navigation, magnifier option, winit PR state, plotter devices; the 45% is not re-measured) · **Target:** Autodesk AutoCAD 2027 (Mac and Windows)
 
 The hardware AutoCAD uses and how CADCraft compares, per platform. Work items:
 [gaps.md](gaps.md#hardware).
 
 **Headline (estimated): hardware ≈ 45%.** 2D GPU drawing, HiDPI and trackpads are covered on
-every platform. Missing: 3D mice, tablets/digitizers, GPU-accelerated 3D (there is no 3D), and
+every platform. Missing: 3D navigation with a 3D mouse (2D pan and zoom landed on Windows and Linux, #650), tablets/digitizers, GPU-accelerated 3D (there is no 3D), and
 any deliberate multi-monitor handling. Remaining: **≈ 15–25 Opus 5.5 hours**, plus a human with
 the devices to test 3D mice and tablets.
 
@@ -20,15 +20,15 @@ requirements and graphics-performance documentation. Nothing was benchmarked in 
 | CPU fallback | software mode | yes (`tiny-skia` rasteriser) | yes | yes | — |
 | GPU for 3D (shaded visual styles, ray-traced rendering) | yes | no (no 3D) | no | no | no |
 | Low-latency presentation | yes | vsync or low-latency via `CADCRAFT_VSYNC` | same | no vsync queue so the crosshair keeps up (#183) | browser-controlled |
-| HiDPI / Retina, display scaling | yes | yes (egui points per pixel) | yes; a Windows 11 DPI fix is queued upstream (PR #110) | yes | yes |
+| HiDPI / Retina, display scaling | yes | yes (egui points per pixel) | yes; the Windows 11 DPI fix is in open PR #668 (PR #110 was closed in its favour) | yes | yes |
 | Multi-monitor (palettes on other screens, per-monitor DPI) | yes | not handled deliberately; one window | same | same | — |
 | Trackpad pan, pinch zoom | yes (Mac) | yes, with trackpad vs wheel detection (#58) | wheel only (precision touchpad untested) | wheel; delay reported on Linux Mint (#25) | browser events |
 | Magic Mouse | yes | treated as a trackpad | — | — | — |
 | Wheel mouse, middle-button pan | yes | yes | yes | yes | yes |
-| 3D mouse (3Dconnexion SpaceMouse) | yes | **no** | **no** | **no** | no |
+| 3D mouse (3Dconnexion SpaceMouse) | yes | **no** | 2D pan and zoom through raw HID (#650, Tools ▸ 3D Mouse); not checked on a physical device in the PR | same (hidapi, udev) | no |
 | Pen tablet / digitizer (TABLET command, calibration) | yes (Windows) | **no** | **no** | **no** | no |
-| Screen magnifier following the cursor | yes | — | breaks (#39; PR #187 adds a system-cursor option) | — | — |
-| Plotters and printers (PC3 devices, system printers) | yes | **no**: PDF/PNG/SVG files only; Print asks where to save the PDF (#26) | same | same | PDF bytes shown instead of a download (#134) |
+| Screen magnifier following the cursor | yes | — | breaks (#39 is open; the option to keep the system cursor over the drawing area landed, #187) | — | — |
+| Plotters and printers (PC3 devices, system printers) | yes | **no** system printers: PDF, PNG and SVG plotter devices only (#564); the Plot dialog writes the file (#160); CUPS printing is open PR #755 | same | same | PDF bytes shown instead of a download (#134) |
 
 ## Performance on hardware (internal numbers only)
 
@@ -48,5 +48,7 @@ next step.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: SpaceMouse 2D pan/zoom (#650), magnifier option (#187), winit PRs #110–#119 closed in favour of open PR #668, system printers still open (PR #755); re-checked against main 41d9b5e95, percentage and hours not re-measured |
+| 2026-10-13 | minor | Re-audit against main e707ab4d: SpaceMouse 2D pan/zoom (#650), magnifier option (#187), winit PRs #110–#119 closed in favour of open PR #668, system printers still open (PR #755); percentage and hours not re-measured |
 | 2026-10-13 | minor | Zoom and pan regenerate in the background: 2–4.5 s stalls down to 26–64 ms on a hatched DWG |
 | 2026-10-10 | major | First hardware parity doc: GPU backends per platform, input devices, displays, plotters |

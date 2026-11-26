@@ -118,6 +118,7 @@ pub(crate) fn dimensions() -> Vec<Case> {
                     overrides: Default::default(),
                     assoc: Vec::new(),
                     marks: DimMarks::default(),
+                    insertion_point: Vec3::ZERO,
                 }),
             );
             let mut block = Block::new("*D42");

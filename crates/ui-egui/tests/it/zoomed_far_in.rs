@@ -25,6 +25,7 @@ fn zooming_far_in_on_a_hovered_line_paints_what_shows() {
     app.run("line", json!({"points": [[0, 0], [100, 100]]})).unwrap();
     app.run("line", json!({"points": [[0, 100], [100, 0]]})).unwrap();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut app, &ctx, Vec::new());
     let over = app.canvas.rect.unwrap().center();
     // The smaller zoom first, so a regression fails there instead of filling memory at the limit.

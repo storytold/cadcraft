@@ -5,7 +5,7 @@
 //! has no thickness while a polyline's keeps it.
 
 use cadcraft_engine::Session;
-use cadcraft_engine::doc::{Arc, Circle, Common, EntityKind, Handle, Line, LwPolyline, Point};
+use cadcraft_engine::doc::{Arc, Circle, Common, EntityKind, Handle, Line, LwPolyline, Point, PolyfaceMesh};
 use cadcraft_engine::geom::{PolyVertex, Vec2, Vec3};
 use serde_json::json;
 
@@ -181,4 +181,15 @@ fn offset_keeps_a_polylines_elevation_and_thickness() {
     assert!(close(k.elevation, 12.5) && close(t, 1.0), "{} {t}", k.elevation);
     let first = k.vertices.first().unwrap().p;
     assert!(close(first.x, 0.0) && close(first.y, 3.0), "{first:?}");
+}
+
+#[test]
+fn scale_scales_a_polyface_meshs_vertex_heights() {
+    let mut s = Session::new();
+    let vertices = vec![Vec3::new(0.0, 0.0, 2.0), Vec3::new(10.0, 0.0, 2.0), Vec3::new(0.0, 10.0, 6.0)];
+    let m = add(&mut s, EntityKind::PolyfaceMesh(PolyfaceMesh { vertices, faces: vec![[1, 2, 3, 0]] }), 0.0);
+    scale(&mut s, m, "0.0 0.0");
+    let EntityKind::PolyfaceMesh(k) = get(&s, m).0 else { panic!() };
+    let want = [Vec3::new(0.0, 0.0, 3.4), Vec3::new(17.0, 0.0, 3.4), Vec3::new(0.0, 17.0, 10.2)];
+    assert!(k.vertices.iter().zip(want).all(|(a, b)| near3(*a, b)), "{:?}", k.vertices);
 }
