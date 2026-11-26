@@ -161,6 +161,25 @@ pub struct Insert {
     pub col_spacing: f64,
     #[serde(default)]
     pub row_spacing: f64,
+    /// XCLIP boundary of this reference (other references to the block are not clipped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<crate::ClipBoundary>,
+}
+impl Default for Insert {
+    fn default() -> Self {
+        Insert {
+            block: String::new(),
+            insert: Vec3::ZERO,
+            scale: unit_scale(),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        }
+    }
 }
 
 fn unit_scale() -> Vec3 {
@@ -172,6 +191,12 @@ fn one_u() -> u32 {
 }
 
 impl Insert {
+    /// The attributes that have a grip of their own (grips 1, 2… after the insertion point), with
+    /// their index in `attribs`: those shown and not locked in position, as AutoCAD offers them.
+    pub fn grip_attribs(&self) -> impl Iterator<Item = (usize, &Attrib)> {
+        self.attribs.iter().enumerate().filter(|(_, a)| !a.invisible && !a.modes.lock_position)
+    }
+
     /// Block-to-world transform (2D part).
     pub fn transform(&self, base: Vec2) -> Mat3 {
         Mat3::translate(self.insert.xy())

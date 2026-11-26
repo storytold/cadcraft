@@ -265,7 +265,7 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     }
     let mut d = Drawing::new_imperial();
     d.header = src.header.clone();
-    d.layers = pick(&src.layers, &used.layers, |l| &l.name);
+    d.layers = pick(&src.layers, &used.layers, |l| &l.name).into();
     d.linetypes = pick(&src.linetypes, &used.linetypes, |l| &l.name);
     d.text_styles = pick(&src.text_styles, &used.text_styles, |t| &t.name);
     d.dim_styles = pick(&src.dim_styles, &used.dim_styles, |t| &t.name);

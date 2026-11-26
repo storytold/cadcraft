@@ -8,6 +8,7 @@ use cadcraft_io::dwg_worker;
 #[test]
 fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     let drawing = cadcraft_engine::sample::bracket();
+    dwg_worker::allow_in_process();
     let in_process = cadcraft_io::write(&drawing, "a.dwg").unwrap();
 
     dwg_worker::use_worker(env!("CARGO_BIN_EXE_cadcraft-cli").into(), vec![dwg_worker::WORKER_ARG.into()]);
@@ -15,6 +16,13 @@ fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     assert_eq!(written.get(..6), in_process.get(..6), "the same version of file");
     let read = cadcraft_io::read(&written, "a.dwg").unwrap();
     assert_eq!(read.model.len(), drawing.model.len());
+
+    // A drawing whose kept objects came from a 2018 file: the worker gets that version with the
+    // request and reads the bridge DXF as it, as this process does.
+    let mut kept = drawing.clone();
+    kept.foreign = std::sync::Arc::new(cadcraft_engine::doc::foreign::Foreign { version: Some("AC1032".into()), ..Default::default() });
+    let written = cadcraft_io::write(&kept, "a.dwg").unwrap();
+    assert_eq!(cadcraft_io::read(&written, "a.dwg").unwrap().model.len(), drawing.model.len());
 
     // A decode error comes back as that error, not as the worker stopping.
     let mut bad = in_process.clone();
@@ -27,7 +35,8 @@ fn a_real_worker_reads_and_writes_and_its_death_is_an_error_here() {
     assert!(e.contains("worker stopped"), "{e}");
     assert!(cadcraft_io::read(&written, "a.dwg").is_ok(), "the next file gets a new worker");
 
-    // No worker to start: the work happens here, as without one.
+    // A worker that cannot start is an error, even where in-process conversion is allowed.
     dwg_worker::use_worker("no-such-program-here".into(), Vec::new());
-    assert!(cadcraft_io::read(&written, "a.dwg").is_ok());
+    let e = cadcraft_io::read(&written, "a.dwg").unwrap_err().to_string();
+    assert!(e.contains("could not start"), "{e}");
 }

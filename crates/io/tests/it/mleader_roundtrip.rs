@@ -51,6 +51,7 @@ fn insert(block: &str, at: Vec3) -> Insert {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }
 }
 
@@ -254,6 +255,7 @@ fn hostile_multileaders_do_not_panic() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn multileader_through_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     d.text_styles.push(TextStyle { name: "Notes".into(), ..TextStyle::default() });
     d.mleader_styles.push(MLeaderStyle { name: "Callout".into(), arrow_size: 0.3, ..MLeaderStyle::default() });
