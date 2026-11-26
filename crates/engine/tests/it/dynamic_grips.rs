@@ -145,3 +145,56 @@ fn a_grip_drag_previews_the_reference_in_its_own_colours() {
     let blue = cadcraft_engine::doc::color::Color::True(cadcraft_engine::doc::color::Rgb(0x2f, 0x6b, 0xff));
     assert!(preview[n..].iter().all(|e| e.common.color == blue));
 }
+
+#[test]
+fn a_grip_with_a_value_list_marks_its_stops_while_dragged() {
+    let (mut s, h) = session();
+    // Width is a list (30, 32, 36) from (0, -4): its end can stop 30, 32 or 36 along it.
+    let stops = cadcraft_engine::doc::dynblock::grip_stops(s.doc().unwrap(), h, 2, GripPart::End);
+    let at: Vec<(f64, f64)> = stops.iter().map(|(p, _)| (p.x, p.y)).collect();
+    assert_eq!(at, [(130.0, -4.0), (132.0, -4.0), (136.0, -4.0)]);
+    assert!(stops.iter().all(|(_, way)| (way.x - 1.0).abs() < 1e-12 && way.y.abs() < 1e-12));
+    // A grip that isn't on a list or increments has none; nor a list grip.
+    assert!(cadcraft_engine::doc::dynblock::grip_stops(s.doc().unwrap(), h, 1, GripPart::At).is_empty());
+
+    // The preview marks each stop with a tick across the travel, a few pixels long.
+    s.start_dyn_grip(h, 2, GripPart::End).unwrap();
+    let half = 6.0 * s.pixel_size();
+    let ticks: Vec<(f64, f64)> = s
+        .preview(Vec2::new(133.0, 0.0))
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            cadcraft_engine::doc::EntityKind::Line(l) if (l.a.x - l.b.x).abs() < 1e-9 && ((l.b.y - l.a.y).abs() - 2.0 * half).abs() < 1e-9 => {
+                Some((l.a.x, (l.a.y + l.b.y) / 2.0))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ticks, [(130.0, -4.0), (132.0, -4.0), (136.0, -4.0)]);
+}
+
+/// An alignment grip dragged onto a line (the synthetic Align block of the io tests, a line at
+/// 30° from (120, 100)): the reference moves onto the line and turns along it, as AutoCAD does;
+/// away from objects it only moves.
+#[test]
+fn an_alignment_grip_aligns_with_the_line_at_the_cursor() {
+    let src = include_str!("../../../io/tests/data/dynblock_params.txt").replace("\r\n", "\n");
+    let d = cadcraft_io::read_dxf(dxf(&src).as_bytes()).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "params", None);
+    let r = s.execute("insert", &json!({ "name": "Align", "at": [100, 100] })).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    let g = s.execute("blocks.reference.grips", &json!({ "handle": h.hex() })).unwrap();
+    assert_eq!(g[0]["shape"], "alignment");
+    // A point on the line, a little below it.
+    let (c, sn) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let to = [120.0 + 10.0 * c + 0.01 * sn, 100.0 + 10.0 * sn - 0.01 * c];
+    s.execute("blocks.reference.grip", &json!({ "handle": h.hex(), "node": 1, "part": "base", "to": to })).unwrap();
+    let Some(cadcraft_engine::doc::EntityKind::Insert(i)) = s.doc().unwrap().entity(h).map(|e| &e.kind) else { panic!("a reference") };
+    assert!((i.rotation.to_degrees() - 30.0).abs() < 1e-6, "{}", i.rotation.to_degrees());
+    assert!((i.insert.x - (120.0 + 10.0 * c)).abs() < 1e-6 && (i.insert.y - (100.0 + 10.0 * sn)).abs() < 1e-6, "{:?}", i.insert);
+    // Far from anything: it only moves.
+    s.execute("blocks.reference.grip", &json!({ "handle": h.hex(), "node": 1, "part": "base", "to": [0, -50] })).unwrap();
+    let Some(cadcraft_engine::doc::EntityKind::Insert(i)) = s.doc().unwrap().entity(h).map(|e| &e.kind) else { panic!("a reference") };
+    assert!((i.rotation.to_degrees() - 30.0).abs() < 1e-6 && i.insert.x.abs() < 1e-9 && (i.insert.y + 50.0).abs() < 1e-9);
+}
