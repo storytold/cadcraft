@@ -1,5 +1,5 @@
 //! Fit-point splines: knot parametrisation (chord, square root, uniform), end tangents and fit
-//! tolerance (least-squares approximation with fewer control points), as AutoCAD's SPLINE Fit
+//! tolerance (least-squares approximation with fewer control points), as `AutoCAD`'s SPLINE Fit
 //! method offers them. Construction follows the textbook global interpolation and approximation
 //! schemes (Piegl & Tiller, *The NURBS Book*, ch. 9).
 
@@ -110,17 +110,16 @@ impl Spline {
     pub fn fit_with(fit: &[Vec2], closed: bool, opts: FitOptions) -> Spline {
         let opts = opts.sanitized();
         let kinked = if fit.len() <= MAX_KINK_POINTS { kinked_fit(fit, closed, opts) } else { None };
-        let mut s = match kinked {
-            Some(s) => s,
-            None => {
-                // Repeats at the ends of an open curve are no corners: fit without them.
-                let (pts, _) = kinks(fit, false);
-                let mut s = if closed { closed_fit(&pts, opts.knots, opts.tolerance) } else { open_fit(&pts, opts) };
-                if pts.len() != fit.len() && !closed {
-                    s.fit = fit.to_vec();
-                }
-                s
+        let mut s = if let Some(s) = kinked {
+            s
+        } else {
+            // Repeats at the ends of an open curve are no corners: fit without them.
+            let (pts, _) = kinks(fit, false);
+            let mut s = if closed { closed_fit(&pts, opts.knots, opts.tolerance) } else { open_fit(&pts, opts) };
+            if pts.len() != fit.len() && !closed {
+                s.fit = fit.to_vec();
             }
+            s
         };
         s.fit_opts = if closed { FitOptions { start_tangent: None, end_tangent: None, ..opts } } else { opts };
         s
@@ -210,25 +209,28 @@ pub(crate) fn params(pts: &[Vec2], kind: KnotParam, closed: bool) -> Vec<f64> {
     let mut u = vec![0.0; count];
     let mut total = 0.0;
     for i in 1..count {
-        total += pts.get(i - 1).zip(pts.get(i % n.max(1))).map(|(a, b)| kind.step(a.dist(*b))).unwrap_or(1.0);
+        total += pts.get(i - 1).zip(pts.get(i % n.max(1))).map_or(1.0, |(a, b)| kind.step(a.dist(*b)));
         if let Some(x) = u.get_mut(i) {
             *x = total;
         }
     }
-    for x in u.iter_mut() {
+    for x in &mut u {
         *x /= total.max(1e-300);
     }
     u
 }
 
 fn chord_length(pts: &[Vec2]) -> f64 {
-    pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum()
+    pts.windows(2).map(|w| w.first().zip(w.get(1)).map_or(0.0, |(a, b)| a.dist(*b))).sum()
 }
 
 fn open_fit(fit: &[Vec2], opts: FitOptions) -> Spline {
     let n = fit.len();
     let tangents = opts.start_tangent.is_some() || opts.end_tangent.is_some();
-    if n < 2 || (n == 2 && !tangents) {
+    // Two points without tangents are a line, except that AutoCAD 2024's chord-length fit makes
+    // it a cubic ([`chord_interpolate`]: control points at the thirds), with a fit tolerance too.
+    let chord_fit = opts.knots == KnotParam::Chord;
+    if n < 2 || (n == 2 && !tangents && !chord_fit) {
         let mut s = if n < 2 {
             Spline { degree: 1, knots: vec![0.0, 0.0, 1.0, 1.0], control: fit.to_vec(), ..Spline::default() }
         } else {
@@ -256,12 +258,93 @@ fn open_fit(fit: &[Vec2], opts: FitOptions) -> Spline {
     if n > MAX_INTERP_POINTS {
         return through_control();
     }
-    interpolate(fit, &u, d0, d1).unwrap_or_else(through_control)
+    // No approximation (none asked for, too few or too many points for one, or none within the
+    // tolerance): the curve passes through the points. With chord-length knots it is AutoCAD
+    // 2024's interpolation (measured without a tolerance, and for two points with one); the other
+    // parametrisations interpolate with normalised knots.
+    let chord = if opts.knots == KnotParam::Chord { chord_interpolate(fit, opts.start_tangent, opts.end_tangent) } else { None };
+    chord.or_else(|| interpolate(fit, &u, d0, d1)).unwrap_or_else(through_control)
+}
+
+/// AutoCAD 2024's cubic through fit points with chord-length parameters, as it builds a fit-point
+/// spline: the parameters are the running chord length, not normalised, and they are the interior
+/// knots themselves; two control points more than fit points meet the end conditions. An end with
+/// a tangent (a unit direction) has it as its first derivative, so its length is one per unit of
+/// chord; an end without one has no curvature (second derivative 0). `None` for fewer than two
+/// points or two in the same place.
+fn chord_interpolate(fit: &[Vec2], d0: Option<Vec2>, d1: Option<Vec2>) -> Option<Spline> {
+    let n = fit.len();
+    if n < 2 {
+        return None;
+    }
+    let mut t = Vec::with_capacity(n);
+    let mut total = 0.0;
+    t.push(total);
+    for w in fit.windows(2) {
+        let (a, b) = (w.first()?, w.get(1)?);
+        let d = a.dist(*b);
+        if !(d > 0.0 && d.is_finite()) {
+            return None;
+        }
+        total += d;
+        t.push(total);
+    }
+    let p = 3;
+    let m = n + 2;
+    let mut knots = vec![0.0; p + 1];
+    knots.extend(t.get(1..n - 1)?.iter().copied());
+    knots.extend([total; 4]);
+    let k = |i: usize| knots.get(i).copied().unwrap_or(0.0);
+    let mut a = vec![vec![0.0; m]; m];
+    let (mut xs, mut ys) = (vec![0.0; m], vec![0.0; m]);
+    let mut row = 0;
+    let mut put = |coeffs: &[(usize, f64)], rhs: Vec2, a: &mut Vec<Vec<f64>>| {
+        if let Some(r) = a.get_mut(row) {
+            for (j, v) in coeffs {
+                if let Some(c) = r.get_mut(*j) {
+                    *c += *v;
+                }
+            }
+        }
+        if let (Some(x), Some(y)) = (xs.get_mut(row), ys.get_mut(row)) {
+            (*x, *y) = (rhs.x, rhs.y);
+        }
+        row += 1;
+    };
+    // At the start the first derivative is 3 (P1 - P0) / k(4), and the second derivative is 0
+    // when (P1 - P0) / k(4) = (P2 - P1) / k(5); the end mirrors it. Each end's row sits next to
+    // that end's point rows, so the system stays banded for `solve`.
+    let (s1, s2) = (1.0 / (k(p + 1) - k(1)), 1.0 / (k(p + 2) - k(2)));
+    match d0 {
+        Some(d) => put(&[(0, -3.0 * s1), (1, 3.0 * s1)], d, &mut a),
+        None => put(&[(0, s1), (1, -(s1 + s2)), (2, s2)], Vec2::ZERO, &mut a),
+    }
+    for (ti, q) in t.iter().zip(fit) {
+        let span = find_span(m - 1, p, *ti, &knots);
+        let coeffs: Vec<(usize, f64)> = basis(span, *ti, p, &knots).into_iter().enumerate().map(|(j, v)| (span + j - p, v)).collect();
+        put(&coeffs, *q, &mut a);
+    }
+    let (e1, e2) = (1.0 / (k(m + p - 1) - k(m - 1)), 1.0 / (k(m + p - 2) - k(m - 2)));
+    match d1 {
+        Some(d) => put(&[(m - 2, -3.0 * e1), (m - 1, 3.0 * e1)], d, &mut a),
+        None => put(&[(m - 3, e2), (m - 2, -(e1 + e2)), (m - 1, e1)], Vec2::ZERO, &mut a),
+    }
+    let (cx, cy) = (solve(a.clone(), xs)?, solve(a, ys)?);
+    let control: Vec<Vec2> = cx.into_iter().zip(cy).map(|(x, y)| Vec2::new(x, y)).collect();
+    if control.iter().any(|c| !c.x.is_finite() || !c.y.is_finite()) {
+        return None;
+    }
+    Some(Spline { degree: p, knots, control, fit: fit.to_vec(), ..Spline::default() })
 }
 
 /// Global interpolation: one control point per fit point plus one per end-derivative
 /// constraint, knots by averaging the parameters (an end with a derivative counts its
 /// parameter twice).
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::many_single_char_names,
+    reason = "Interpolation uses NURBS matrix notation, and its degree is capped at three, so p is exact as f64."
+)]
 fn interpolate(fit: &[Vec2], u: &[f64], d0: Option<Vec2>, d1: Option<Vec2>) -> Option<Spline> {
     let (p, knots) = interp_knots(u, d0.is_some(), d1.is_some());
     let m = knots.len().checked_sub(p + 1)?;
@@ -305,6 +388,7 @@ fn interpolate(fit: &[Vec2], u: &[f64], d0: Option<Vec2>, d1: Option<Vec2>) -> O
 
 /// Degree and clamped knots for interpolating at parameters `u`, with optional end derivatives:
 /// knots average the parameters, an end with a derivative counting its parameter twice.
+#[expect(clippy::cast_precision_loss, reason = "The interpolation degree is capped at three, so p is exact as f64.")]
 fn interp_knots(u: &[f64], d0: bool, d1: bool) -> (usize, Vec<f64>) {
     let m = u.len() + usize::from(d0) + usize::from(d1);
     let p = 3.min(m.saturating_sub(1)).max(1);
@@ -323,6 +407,13 @@ fn interp_knots(u: &[f64], d0: bool, d1: bool) -> (usize, Vec<f64>) {
 
 /// Clamped knots for a least-squares fit with `m` control points of degree `p` so every span
 /// holds parameters (The NURBS Book eq. 9.69). Needs `p < m < u.len()`.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "Fit sizes are bounded by MAX_APPROX_POINTS, knot indices are nonnegative and clamped, and the equations use NURBS Book notation."
+)]
 fn lsq_knots(u: &[f64], m: usize, p: usize) -> Vec<f64> {
     let n = u.len();
     let d = n as f64 / m.saturating_sub(p).max(1) as f64;
@@ -339,12 +430,18 @@ fn lsq_knots(u: &[f64], m: usize, p: usize) -> Vec<f64> {
 
 /// Periodic knots for `n` points with closed parameters `t` (`n + 1` values): knots[j] =
 /// t_(j-p), extended by whole periods on both sides.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap,
+    clippy::many_single_char_names,
+    reason = "Indices are bounded by slice lengths, period offsets are f64 by design, and the periodic equations use standard notation."
+)]
 fn periodic_knots(t: &[f64], n: usize, p: usize) -> Vec<f64> {
     let tk = |i: isize| {
         let (q, r) = (i.div_euclid(n.max(1) as isize), i.rem_euclid(n.max(1) as isize) as usize);
         t.get(r).copied().unwrap_or(0.0) + q as f64
     };
-    (0..n + 2 * p + 1).map(|j| tk(j as isize - p as isize)).collect()
+    (0..=(n + 2 * p)).map(|j| tk(j as isize - p as isize)).collect()
 }
 
 /// Least-squares approximation within `tol`: the fewest control points (searched by bisection)
@@ -357,7 +454,7 @@ fn approximate(fit: &[Vec2], u: &[f64], d0: Option<Vec2>, d1: Option<Vec2>, tol:
     let (mut lo, mut hi) = (p + 1, n.checked_sub(1)?);
     let mut best = None;
     while lo <= hi {
-        let mid = (lo + hi) / 2;
+        let mid = usize::midpoint(lo, hi);
         match least_squares(fit, u, mid, p, d0, d1) {
             Some(s) if max_deviation(&s, fit, u) <= tol => {
                 best = Some(s);
@@ -373,6 +470,11 @@ fn max_deviation(s: &Spline, fit: &[Vec2], u: &[f64]) -> f64 {
     fit.iter().zip(u).map(|(q, t)| s.eval(*t).dist(*q)).fold(0.0, f64::max)
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::many_single_char_names,
+    reason = "Open least-squares fitting is cubic and keeps the NURBS Book matrix notation, so p is exact as f64."
+)]
 fn least_squares(fit: &[Vec2], u: &[f64], m: usize, p: usize, d0: Option<Vec2>, d1: Option<Vec2>) -> Option<Spline> {
     let n = fit.len();
     if m <= p || m >= n {
@@ -522,6 +624,11 @@ fn kinked_fit(fit: &[Vec2], closed: bool, opts: FitOptions) -> Option<Spline> {
 
 /// A clamped, non-rational fitted piece raised to degree 3: interpolation through two or three
 /// points gives a single Bézier segment of lower degree, which is raised exactly.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::many_single_char_names,
+    reason = "Degree elevation stops at three and keeps the Bézier coefficient notation, so all indices are exact as f64."
+)]
 fn cubic(mut s: Spline) -> Option<Spline> {
     if s.degree == 3 {
         return Some(s);
@@ -555,7 +662,7 @@ fn approximate_closed(pts: &[Vec2], t: &[f64], p: usize, tol: f64) -> Option<Spl
     let (mut lo, mut hi) = (p + 1, n.checked_sub(1)?);
     let mut best = None;
     while lo <= hi {
-        let mid = (lo + hi) / 2;
+        let mid = usize::midpoint(lo, hi);
         match periodic_least_squares(pts, t, mid, p) {
             Some(s) if pts.iter().zip(t).all(|(q, u)| s.eval(*u).dist(*q) <= tol) => {
                 best = Some(s);
@@ -570,6 +677,13 @@ fn approximate_closed(pts: &[Vec2], t: &[f64], p: usize, tol: f64) -> Option<Spl
 /// A periodic spline with `m` distinct control points (`p < m < pts.len()`) closest in the
 /// least-squares sense to `pts` at closed parameters `t`. The period's breakpoints spread over
 /// the parameters so every span holds some (the closed counterpart of `lsq_knots`).
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "Fit sizes are bounded by MAX_APPROX_POINTS, periodic indices are nonnegative and bounded, and the matrix equations use standard notation."
+)]
 fn periodic_least_squares(pts: &[Vec2], t: &[f64], m: usize, p: usize) -> Option<Spline> {
     let n = pts.len();
     if m <= p || m >= n || t.len() != n + 1 {
@@ -620,6 +734,7 @@ fn periodic_least_squares(pts: &[Vec2], t: &[f64], m: usize, p: usize) -> Option
     Some(Spline { degree: p, knots, control, fit: pts.to_vec(), closed: true, ..Spline::default() })
 }
 
+#[expect(clippy::many_single_char_names, reason = "Closed interpolation keeps the NURBS Book parameter, degree and matrix notation.")]
 fn closed_fit(fit: &[Vec2], kind: KnotParam, tol: f64) -> Spline {
     let mut pts = fit.to_vec();
     if pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
@@ -681,7 +796,9 @@ mod tests {
 
     fn passes_through(s: &Spline, fit: &[Vec2], tol: f64) -> bool {
         let u = params(fit, s.fit_opts.knots, s.closed);
-        fit.iter().zip(&u).all(|(f, t)| s.eval(*t).dist(*f) < tol)
+        // The parameters run over the spline's domain (chord-length knots are not normalised).
+        let (lo, hi) = s.domain();
+        fit.iter().zip(&u).all(|(f, t)| s.eval(lo + t * (hi - lo)).dist(*f) < tol)
     }
 
     #[test]
@@ -728,9 +845,11 @@ mod tests {
         let end = (s.eval(hi) - s.eval(hi - h)).normalized();
         assert!(start.near(Vec2::new(0.0, 1.0), 1e-4), "{start:?}");
         assert!(end.near(Vec2::new(1.0, -1.0).normalized(), 1e-4), "{end:?}");
-        // One tangent only, and two fit points with tangents (a cubic Bezier).
+        // One tangent only: the other end has no curvature, so still two control points more
+        // than fit points (as AutoCAD 2024 builds it, `chord_fits_match_autocad_2024`); and two
+        // fit points with tangents (a cubic Bezier).
         let one = Spline::fit_with(&fit, false, FitOptions { start_tangent: Some(Vec2::Y), ..FitOptions::default() });
-        assert!(one.is_valid() && one.control.len() == fit.len() + 1 && passes_through(&one, &fit, 1e-3));
+        assert!(one.is_valid() && one.control.len() == fit.len() + 2 && passes_through(&one, &fit, 1e-3));
         let two = [Vec2::ZERO, Vec2::new(4.0, 0.0)];
         let b = Spline::fit_with(
             &two,
@@ -738,9 +857,97 @@ mod tests {
             FitOptions { start_tangent: Some(Vec2::Y), end_tangent: Some(Vec2::new(0.0, -1.0)), ..FitOptions::default() },
         );
         assert!(b.is_valid() && b.degree == 3 && b.control.len() == 4);
-        assert!(b.eval(0.5).y > 0.5, "the tangents bow the curve up");
+        let (blo, bhi) = b.domain();
+        assert!(b.eval((blo + bhi) / 2.0).y > 0.5, "the tangents bow the curve up");
         // Closed curves ignore tangents.
         assert_eq!(Spline::fit_with(&fit, true, opts).fit_opts.start_tangent, None);
+    }
+
+    #[test]
+    fn chord_fits_match_autocad_2024() {
+        // The control points AutoCAD 2024 builds (accoreconsole, `entget`) for a SPLINE stored
+        // with these fit points only, with a start tangent (0, 1) only and with an end tangent
+        // (0.6, -0.8) only. The knots are the running chord length, not normalised, with the fit
+        // points' own as the interior ones; an end without a tangent has no second derivative.
+        let fit = [Vec2::ZERO, Vec2::new(4.0, 0.0), Vec2::new(8.0, 2.0), Vec2::new(12.0, 1.0), Vec2::new(15.0, 4.0)];
+        let none = [
+            (0.0, 0.0),
+            (1.382372321772683, -0.2385675034006123),
+            (4.310283884394332, -0.7438615842143153),
+            (7.681946892002376, 3.278160343960215),
+            (12.35784449278344, -0.2891721570669931),
+            (14.110931758619, 2.556721307187103),
+            (15.0, 4.0),
+        ];
+        let start = [
+            (0.0, 0.0),
+            (0.0, 1.3333333333333002),
+            (5.032653247327764, -1.5652705405003644),
+            (7.49793879823205, 3.4873966488309946),
+            (12.40378970003823, -0.34141662738096556),
+            (14.12639202373297, 2.539141380790994),
+            (15.0, 4.0),
+        ];
+        let end = [
+            (0.0, 0.0),
+            (1.381988814451124, -0.2629235571276922),
+            (4.309088095530778, -0.8198045875666935),
+            (7.687216672987758, 3.6128373151524897),
+            (12.33964126060851, -1.445235877194591),
+            (14.15147186257614, 5.131370849898474),
+            (15.0, 4.0),
+        ];
+        let chords: Vec<f64> = fit.windows(2).map(|w| w[0].dist(w[1])).collect();
+        let interior = [chords[0], chords[0] + chords[1], chords[0] + chords[1] + chords[2]];
+        let total: f64 = chords.iter().sum();
+        let cases = [
+            (FitOptions::default(), none),
+            (FitOptions { start_tangent: Some(Vec2::Y), ..FitOptions::default() }, start),
+            (FitOptions { end_tangent: Some(Vec2::new(0.6, -0.8)), ..FitOptions::default() }, end),
+        ];
+        for (opts, want) in cases {
+            let s = Spline::fit_with(&fit, false, opts);
+            assert_eq!(s.control.len(), want.len());
+            assert!(s.control.iter().zip(want).all(|(c, (x, y))| c.near(Vec2::new(x, y), 1e-9)), "{:?}", s.control);
+            assert_eq!(s.knots.len(), 11);
+            assert!(s.knots[..4].iter().all(|k| *k == 0.0) && s.knots[7..].iter().all(|k| (k - total).abs() < 1e-12));
+            assert!(s.knots[4..7].iter().zip(interior).all(|(k, w)| (k - w).abs() < 1e-12), "{:?}", s.knots);
+        }
+        // Two fit points, drawn with SPLINE: a cubic with its control points at the thirds and
+        // knots 0 and the length, four times each (AutoCAD 2024's `entget`).
+        let two = [Vec2::new(-0.7167548102689167, -5.126502360792934), Vec2::new(0.039252452435714846, 5.571959062465009)];
+        let s = Spline::fit_with(&two, false, FitOptions::default());
+        let want = [
+            (-0.7167548102689167, -5.126502360792933),
+            (-0.4647523893673729, -1.560348553040286),
+            (-0.212749968465829, 2.005805254712361),
+            (0.03925245243571484, 5.571959062465008),
+        ];
+        assert!(s.degree == 3 && s.control.len() == 4, "{s:?}");
+        assert!(s.control.iter().zip(want).all(|(c, (x, y))| c.near(Vec2::new(x, y), 1e-9)), "{:?}", s.control);
+        let length = 10.72513980357368;
+        assert!(
+            s.knots.len() == 8 && s.knots[..4].iter().all(|k| *k == 0.0) && s.knots[4..].iter().all(|k| (k - length).abs() < 1e-9),
+            "{:?}",
+            s.knots
+        );
+        // A fit tolerance makes no difference to two points: AutoCAD 2024 with Fit tolerance 1
+        // from (0,0) to (10,5) has the same cubic, control points at the thirds, knots 0 and √125.
+        let two = [Vec2::ZERO, Vec2::new(10.0, 5.0)];
+        let s = Spline::fit_with(&two, false, FitOptions { tolerance: 1.0, ..FitOptions::default() });
+        let want = [(0.0, 0.0), (10.0 / 3.0, 5.0 / 3.0), (20.0 / 3.0, 10.0 / 3.0), (10.0, 5.0)];
+        assert!(s.degree == 3 && s.control.len() == 4, "{s:?}");
+        assert!(s.control.iter().zip(want).all(|(c, (x, y))| c.near(Vec2::new(x, y), 1e-9)), "{:?}", s.control);
+        let length = 125f64.sqrt();
+        assert!(
+            s.knots.len() == 8 && s.knots[..4].iter().all(|k| *k == 0.0) && s.knots[4..].iter().all(|k| (k - length).abs() < 1e-9),
+            "{:?}",
+            s.knots
+        );
+        assert_eq!(s.fit_opts.tolerance, 1.0);
+        // The same curve as without a tolerance.
+        let exact = Spline::fit_with(&two, false, FitOptions::default());
+        assert_eq!((&s.control, &s.knots, s.degree), (&exact.control, &exact.knots, exact.degree));
     }
 
     #[test]
@@ -748,7 +955,7 @@ mod tests {
         // Thirty noisy points along a gentle arc.
         let fit: Vec<Vec2> = (0..30)
             .map(|i| {
-                let t = i as f64 / 29.0;
+                let t = f64::from(i) / 29.0;
                 Vec2::new(t * 10.0, (t * 3.0).sin() * 2.0 + if i % 2 == 0 { 0.01 } else { -0.01 })
             })
             .collect();
@@ -761,7 +968,7 @@ mod tests {
         assert!(max_deviation(&s, &fit, &u) <= tol + 1e-9);
         assert!(s.eval(0.0).near(fit[0], 1e-9) && s.eval(1.0).near(fit[29], 1e-9), "ends stay exact");
         assert_eq!(s.fit, fit, "the fit points are kept");
-        assert_eq!(s.fit_opts.tolerance, tol);
+        assert_eq!(s.fit_opts.tolerance.to_bits(), tol.to_bits());
         // With tangents too.
         let t = Spline::fit_with(
             &fit,
@@ -781,7 +988,7 @@ mod tests {
         // Forty slightly noisy points round a circle.
         let fit: Vec<Vec2> = (0..40)
             .map(|i| {
-                let a = i as f64 / 40.0 * std::f64::consts::TAU;
+                let a = f64::from(i) / 40.0 * std::f64::consts::TAU;
                 let r = 5.0 + if i % 2 == 0 { 0.01 } else { -0.01 };
                 Vec2::new(a.cos() * r, a.sin() * r)
             })
@@ -796,7 +1003,7 @@ mod tests {
         let (lo, hi) = s.domain();
         assert!(s.eval(lo).near(s.eval(hi), 1e-9), "still closed");
         assert_eq!(s.fit, fit);
-        assert_eq!(s.fit_opts.tolerance, tol);
+        assert_eq!(s.fit_opts.tolerance.to_bits(), tol.to_bits());
         // Too tight a tolerance interpolates.
         let tiny = Spline::fit_with(&fit, true, FitOptions { tolerance: 1e-9, ..FitOptions::default() });
         assert_eq!(tiny.control.len(), exact.control.len());
@@ -809,10 +1016,14 @@ mod tests {
 
     fn on_curve(s: &Spline, q: Vec2) -> bool {
         let (lo, hi) = s.domain();
-        (0..=4000).any(|i| s.eval(lo + (hi - lo) * i as f64 / 4000.0).dist(q) < 1e-2)
+        (0..=4000).any(|i| s.eval(lo + (hi - lo) * f64::from(i) / 4000.0).dist(q) < 1e-2)
     }
 
     #[test]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "The test names spline values and points with the same short notation as the fitting equations."
+    )]
     fn repeated_fit_points_make_kinks() {
         let fit = [Vec2::new(0.0, 0.0), Vec2::new(2.0, 2.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(6.0, 2.0), Vec2::new(8.0, 0.0)];
         let s = Spline::fit_with(&fit, false, FitOptions::default());
@@ -873,13 +1084,17 @@ mod tests {
                 let _ = Spline::fit_with(&pairs[..n], closed, FitOptions { tolerance: 0.1, ..FitOptions::default() });
             }
         }
-        let tight: Vec<Vec2> = (0..8).map(|i| Vec2::new(i as f64 * 1e-13, 0.0)).collect();
+        let tight: Vec<Vec2> = (0..8).map(|i| Vec2::new(f64::from(i) * 1e-13, 0.0)).collect();
         let _ = Spline::fit_with(&tight, true, FitOptions { tolerance: 1.0, ..FitOptions::default() });
     }
 
     /// Above the interpolation cap the fit points become control points instead of a dense
     /// system the size of their count squared (issue #702); just below it they still interpolate.
     #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "The generated test grids are bounded by MAX_INTERP_POINTS + 1, so their indices are exact as f64."
+    )]
     fn too_many_fit_points_are_not_interpolated() {
         let wave = |n: usize| -> Vec<Vec2> { (0..n).map(|i| Vec2::new((i * i) as f64 * 1e-3, (i % 5) as f64)).collect() };
         let fit = wave(MAX_INTERP_POINTS + 1);

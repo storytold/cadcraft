@@ -30,3 +30,19 @@ fn programmatic_spline_control_count_is_limited() {
     s.execute("spline", &json!({ "control": control(20_000) })).unwrap();
     assert_eq!(s.doc().unwrap().model.len(), 1);
 }
+
+#[test]
+fn cv_degree_prompt_retries_a_fractional_degree() {
+    for command in ["spline.cv d", "spline m cv d"] {
+        let mut s = Session::new();
+        s.cmdline(command).unwrap();
+        let degree_prompt = s.current_prompt().unwrap();
+        assert!(degree_prompt.accept.number);
+        s.cmdline("2.5").unwrap();
+        assert_eq!(s.current_prompt().unwrap().message, degree_prompt.message, "{command}");
+        s.cmdline("2 0,0 1,1 2,0 3,1").unwrap();
+        s.input(cadcraft_engine::Input::Enter).unwrap();
+        let d = s.doc().unwrap();
+        assert!(matches!(&d.model.iter().last().unwrap().kind, EntityKind::Spline(sp) if sp.degree == 2));
+    }
+}

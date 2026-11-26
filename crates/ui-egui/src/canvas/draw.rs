@@ -11,7 +11,7 @@ fn prim_color32(prim: &cadcraft_render::DPrim, bg: Rgb) -> Color32 {
     Color32::from_rgba_unmultiplied(c.0, c.1, c.2, prim.alpha())
 }
 
-fn clip_infinite(xf: &Xf, base: Vec2, dir: Vec2, ray: bool) -> Option<[Pos2; 2]> {
+pub(super) fn clip_infinite(xf: &Xf, base: Vec2, dir: Vec2, ray: bool) -> Option<[Pos2; 2]> {
     let wb = xf.world_bounds();
     let far = (wb.width() + wb.height()) * 2.0 + base.dist(wb.center());
     let a = if ray { base } else { base - dir * far };
@@ -226,7 +226,7 @@ pub(super) fn draw_drag_gpu(
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, super::list::font_generation()).hash(&mut h);
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
