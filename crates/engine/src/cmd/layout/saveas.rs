@@ -12,7 +12,7 @@ use cadcraft_doc::{Common, Drawing, Entity, EntityKind, EntityStore, Point};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
-use super::super::file::{drops_unknown, io, not_saved, not_saved_message};
+use super::super::file::{drops_unknown, dwg_notes, io, not_saved, not_saved_message, report_dwg_notes};
 use super::super::{bad, str_param};
 use super::layout_name;
 use super::prompts::current_layout;
@@ -135,6 +135,9 @@ pub(super) fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(o) = r.as_object_mut() {
             o.insert("notSaved".into(), json!(lost));
         }
+    }
+    if drops_unknown(&path) {
+        report_dwg_notes(s, &mut r, dwg_notes(&t));
     }
     Ok(r)
 }

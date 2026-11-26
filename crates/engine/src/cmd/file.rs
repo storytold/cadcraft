@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases, user_alias_command};
 pub(crate) use pgp::{greek_alias, specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
@@ -102,6 +102,36 @@ static DWG_COMPAT_LOST: OnceLock<DwgCompatLost> = OnceLock::new();
 
 pub fn set_dwg_compat_lost(f: DwgCompatLost) {
     let _ = DWG_COMPAT_LOST.set(f);
+}
+
+/// Notes on what a DWG keeps of a drawing only in part, such as a linetype with more dash
+/// elements than a DWG can count (installed by the app with the DWG writer, a lower layer; see
+/// `cadcraft_io::dwg_notes`).
+pub type DwgNotes = fn(&Drawing) -> Vec<String>;
+
+static DWG_NOTES: OnceLock<DwgNotes> = OnceLock::new();
+
+pub fn set_dwg_notes(f: DwgNotes) {
+    let _ = DWG_NOTES.set(f);
+}
+
+/// The [`DwgNotes`] of `d`, the drawing a DWG save writes: none without the hook.
+pub fn dwg_notes(d: &Drawing) -> Vec<String> {
+    DWG_NOTES.get().map(|f| f(d)).unwrap_or_default()
+}
+
+/// Say on the command line what the DWG just written keeps only in part (`notes`, from
+/// [`dwg_notes`]), and list it in the result's `warnings`.
+pub(crate) fn report_dwg_notes(s: &mut Session, r: &mut Value, notes: Vec<String>) {
+    if notes.is_empty() {
+        return;
+    }
+    for note in &notes {
+        s.echo(note.clone());
+    }
+    if let Some(o) = r.as_object_mut() {
+        o.insert("warnings".into(), json!(notes));
+    }
 }
 
 /// What a DXF of `version` leaves out of `d` for its proxies' string streams (#3229): empty from
@@ -382,11 +412,16 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
 
 /// Parse a drawing's bytes, and search its folder for fonts where the automation roots allow.
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
-    let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
-    let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
+    let drawing = match super::exchange::open_pdf(bytes) {
+        Some(result) => result.map_err(|e| bad("open", e))?,
+        None => {
+            let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
+            (hooks.read)(bytes, name).map_err(|e| bad("open", e))?
+        }
+    };
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
-    let path = path.filter(|p| is_drawing_file(p));
+    let path = path.filter(|p| is_drawing_file(p) && !bytes.starts_with(b"%PDF-"));
     // The SHX fonts its text styles name are looked for beside the drawing too.
     if let Some(dir) = path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
         // A bare file name is in the current folder.
@@ -868,6 +903,8 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
     if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
+        let notes = s.state().map(|st| dwg_notes(st.drawing())).unwrap_or_default();
+        report_dwg_notes(s, &mut r, notes);
     } else if is_dxf_file(format!("drawing.{fmt}")) {
         let lost = host_dxf_lost(s, version);
         report_lost(s, &mut r, "drawing.dxf", version, &lost);
@@ -1000,7 +1037,9 @@ pub(super) fn report_loss(s: &mut Session, r: &mut Value, path: &str) {
     let Ok(d) = s.doc() else { return };
     let version = own_version(d, path);
     let lost = lost_writing(d, path, version);
+    let notes = if drops_unknown(path) { dwg_notes(d) } else { Vec::new() };
     report_lost(s, r, path, version, &lost);
+    report_dwg_notes(s, r, notes);
 }
 
 /// Say on the command line what the file `path`, written at `version`, couldn't keep (`lost`),
@@ -1107,6 +1146,8 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     report_new_folder(s, &mut r, folder);
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
+        let notes = s.state().map(|st| dwg_notes(st.drawing())).unwrap_or_default();
+        report_dwg_notes(s, &mut r, notes);
     } else if r.get("path").and_then(Value::as_str).is_some_and(is_dxf_file) {
         let lost = host_dxf_lost(s, version);
         report_lost(s, &mut r, "drawing.dxf", version, &lost);

@@ -99,6 +99,7 @@ fn grips_on_canvas(app: &CadApp, h: Handle) -> bool {
 fn a_selected_object_the_viewport_does_not_draw_paints_no_grips() {
     let Sheet { mut app, shown, hidden, a, b } = sheet();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     // Settle the dock layout.
     painted_grips(&mut app, &ctx);
     enter(&mut app, &b);
@@ -133,6 +134,7 @@ fn a_selected_object_the_viewport_does_not_draw_paints_no_grips() {
 fn the_cursor_highlights_the_object_the_viewport_draws() {
     let Sheet { mut app, shown, hidden, a, b } = sheet();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     painted_grips(&mut app, &ctx);
     for (viewport, under_cursor) in [(&a, shown), (&b, hidden)] {
         enter(&mut app, viewport);
@@ -152,6 +154,7 @@ fn the_cursor_highlights_the_object_the_viewport_draws() {
 fn the_highlight_follows_the_frozen_layers_under_a_resting_pointer() {
     let Sheet { mut app, shown, hidden, a: _, b } = sheet();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     painted_grips(&mut app, &ctx);
     enter(&mut app, &b);
     painted_grips(&mut app, &ctx);

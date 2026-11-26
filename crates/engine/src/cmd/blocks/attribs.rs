@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Block, Entity, EntityKind, Handle, Insert};
+use cadcraft_doc::{Attrib, Block, Entity, EntityKind, Handle, Insert, TagKey};
 use serde_json::{Value, json};
 
 use crate::cmd::curves::KW;
@@ -102,17 +102,14 @@ impl Interactive for AttdispM {
 /// Properties set on single attributes (layer, colour, …) go back to the definitions', as in AutoCAD.
 pub(super) fn synced(blk: &Block, defs: &[&Attrib], ins: &Insert) -> Vec<Attrib> {
     let m = ins.transform(blk.base.xy());
+    // The reference's attributes by tag, gathered once for all the definitions (#1923).
+    let carried = ins.attribs_by_tag();
     defs.iter()
         .map(|ad| {
             let mut k = EntityKind::Text(ad.text.clone());
             k.transform(&m);
             let mut t = if let EntityKind::Text(t) = k { t } else { ad.text.clone() };
-            t.value = ins
-                .attribs
-                .iter()
-                .find(|a| a.tag.eq_ignore_ascii_case(&ad.tag))
-                .map(|a| a.text.value.clone())
-                .unwrap_or_else(|| ad.text.value.clone());
+            t.value = carried.get(&TagKey(&ad.tag)).map_or_else(|| ad.text.value.clone(), |a| a.text.value.clone());
             Attrib {
                 tag: ad.tag.clone(),
                 text: t,

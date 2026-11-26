@@ -154,6 +154,9 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
         if let Some(m) = cadcraft_engine::cmd::file::not_saved_message(&lost) {
             io.errln(format_args!("{m}"));
         }
+        for note in cadcraft_engine::cmd::file::dwg_notes(d) {
+            io.errln(format_args!("{note}"));
+        }
     }
     Ok(())
 }
@@ -169,6 +172,10 @@ pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> 
         if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
             if u.is_ole_frame() && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
                 ole = ole.saturating_add(1);
+                continue;
+            }
+            // One with proxy graphics draws them (#2697, #3438).
+            if !u.graphics.is_empty() {
                 continue;
             }
             let n = types.entry(u.dxf_type.as_str()).or_insert(0);

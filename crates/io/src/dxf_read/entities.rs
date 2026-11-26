@@ -84,7 +84,7 @@ fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
     let mut elevation = t.fd(38, 0.0);
-    if tilted(c.extrusion, run_points(&verts, elevation, flags & 1 != 0)) {
+    if tilted(c.extrusion, || run_points(&verts, elevation, flags & 1 != 0)) {
         // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
         // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
@@ -244,7 +244,7 @@ pub(super) fn entity_with_table_budget(
         "HATCH" => {
             let mut k = hatch(tags, &t, curves)?;
             if let EntityKind::Hatch(h) = &mut k
-                && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
+                && tilted(c.extrusion, || h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
             {
                 // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
                 // at its mean height, and the pattern direction and origin projected the same way.
@@ -382,8 +382,13 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
         let cell = body.get(i..end).unwrap_or(&[]);
         i = end;
         let c = T(cell);
-        let mut text: String = cell.iter().filter(|x| x.code == 2 || x.code == 3).map(Tag::str).collect();
-        text.push_str(&c.s(1).unwrap_or_default());
+        let text: String = if cell.iter().any(|x| x.code == 1) {
+            let mut text: String = cell.iter().filter(|x| x.code == 2 || x.code == 3).map(Tag::str).collect();
+            text.push_str(&c.s(1).unwrap_or_default());
+            text
+        } else {
+            cell.iter().filter(|x| x.code == 302 || x.code == 303).map(Tag::str).collect()
+        };
         let span = |code: i32| c.i(code).and_then(|v| u32::try_from(v).ok());
         // A merge starts at the cell whose span (rows 176, columns 175) is more than one cell.
         // Its own merged flag (173) varies by writer: CADCraft sets it, while AutoCAD-style
@@ -489,8 +494,9 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
 /// needs the file's handle maps.
 pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &mut Rx) {
     match (kind, k) {
-        // Its proxy graphics, with the table indices resolved while the file's order is known.
-        ("ACAD_PROXY_ENTITY", EntityKind::Unknown(u)) => {
+        // Its proxy graphics (a proxy's, or the picture another kept entity was saved with), with
+        // the table indices resolved while the file's order is known.
+        (_, EntityKind::Unknown(u)) => {
             u.graphics = cadcraft_doc::proxy_entities(&u.proxy_graphics_bytes(), &rx.proxy_tables, h);
         }
         ("DIMENSION", EntityKind::Dimension(dm)) => {
@@ -610,7 +616,7 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
         let closed = flags & 1 != 0;
         let mut vertices: Vec<PolyVertex> = pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect();
         let mut elevation = t.p(10).z;
-        if tilted(c.extrusion, run_points(&vertices, elevation, closed)) {
+        if tilted(c.extrusion, || run_points(&vertices, elevation, closed)) {
             (vertices, elevation) = plan_of_tilted(c.extrusion, elevation, &vertices, closed);
             thickness_along_z(&mut c);
             c.extrusion = Vec3::Z;

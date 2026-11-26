@@ -372,13 +372,15 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
             w.f(45, i.row_spacing);
         }
         if !i.attribs.is_empty() {
+            // The block's definitions by tag, gathered once for all the attributes (#1923).
+            let defs = d.block(&i.block).map(|b| b.attdefs_by_tag()).unwrap_or_default();
             for (index, a) in i.attribs.iter().enumerate() {
                 let ah = w.h();
                 w.s(0, "ATTRIB");
                 w.s(5, ah);
                 w.s(330, e.handle.hex());
                 w.s(100, "AcDbEntity");
-                let (c, base) = attrib_common(d, e, i, a);
+                let (c, base) = attrib_common(e, &defs, a);
                 layer_and_props(w, &c, Some(&base));
                 // Hidden with its definition (a dynamic block's visibility state hides it).
                 if !base.visible {
@@ -522,26 +524,44 @@ fn write_table_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
                 let merge = cell.and_then(|x| x.merged).filter(|&(a, b)| a >= 1 && b >= 1 && (a, b) != (1, 1));
                 w.i(171, 1);
                 w.i(172, 0);
-                w.i(173, i64::from(covered || merge.is_some()));
+                w.i(173, i64::from(covered || (!cx.modern_table_values && merge.is_some())));
                 w.i(174, 0);
                 let (rs, cs) = if covered { (0, 0) } else { merge.map(|(a, b)| (span(a), span(b))).unwrap_or((1, 1)) };
                 w.i(175, cs);
                 w.i(176, rs);
                 w.i(91, 0);
+                if cx.modern_table_values {
+                    w.i(92, 0);
+                }
                 w.i(178, 0);
                 w.f(145, 0.0);
                 if let Some(h) = cell.and_then(|x| x.text_height).filter(|h| h.is_finite() && *h > 0.0) {
                     w.f(140, h);
                 }
-                // Long text: 250-character code-2 chunks, the rest in code 1.
-                let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
+                if cx.modern_table_values {
+                    w.s(301, "CELL_VALUE");
+                    w.i(93, 4);
+                    w.i(90, 4);
+                }
+                let chars: Vec<char> = cell.filter(|_| !cx.modern_table_values || !covered).map(|x| x.text.chars().collect()).unwrap_or_default();
                 let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
                 let n = chunks.len();
-                for (i, ch) in chunks.into_iter().enumerate() {
+                for (i, ch) in chunks.iter().enumerate() {
                     w.s(if i + 1 == n { 1 } else { 2 }, ch);
                 }
                 if n == 0 {
                     w.s(1, "");
+                }
+                if cx.modern_table_values {
+                    w.i(94, 0);
+                    w.s(300, "");
+                    for (i, ch) in chunks.iter().enumerate() {
+                        w.s(if i + 1 == n { 302 } else { 303 }, ch);
+                    }
+                    if n == 0 {
+                        w.s(302, "");
+                    }
+                    w.s(304, "ACVALUE_END");
                 }
             }
         }

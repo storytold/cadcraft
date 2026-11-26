@@ -903,6 +903,73 @@ pub fn object_records(d: &Drawing) -> Vec<ObjectRecord> {
         .collect()
 }
 
+/// The `dependentOnObject` handle (first group 330 inside the `AcDbAssocDependency` subclass) of
+/// a kept associative dependency, when it is non-null.
+fn assoc_dependency_target(o: &ForeignObject) -> Option<String> {
+    let mut in_dep = false;
+    for r in &o.tags {
+        if r.code == 100 {
+            if in_dep {
+                break;
+            }
+            in_dep = r.value.trim().eq_ignore_ascii_case("AcDbAssocDependency");
+        } else if in_dep && r.code == 330 {
+            let v = norm(&r.value);
+            return (!v.is_empty() && v != "0").then_some(v);
+        }
+    }
+    None
+}
+
+/// The groups of an `AcDbAssocAction` subclass before its dependency count: `100 AcDbAssocAction`,
+/// `90` version, `90` status, `330` network, `360` body, `90` index and `90` highest dependency index.
+const ASSOC_ACTION_HEADER: [i32; 7] = [100, 90, 90, 330, 360, 90, 90];
+
+/// If `tags[at]` is the dependency count (group 90) of an `AcDbAssocAction` subclass, returns the count.
+/// The count is followed by one group per dependency: 360 for an owned dependency, 330 for one the
+/// action does not own. acadrust writes this layout (`write_assoc_action` in acadrust 0.6.6's
+/// `io/dxf/writer/section_writer/associative.rs`) and reads it back (`read_action` in
+/// `io/dxf/reader/section_reader/associative.rs`). A DWG reaches this code through that writer, so a
+/// kept action from a DWG has this form too.
+///
+/// The match is positional on purpose. When the class version is above 1, the list is followed by
+/// `90 0`, `90 n` and n group-360 owned parameters. A loose match on a group 90 before handles also
+/// takes that second list.
+fn assoc_action_dep_count(tags: &[RawTag], at: usize) -> Option<usize> {
+    if at < ASSOC_ACTION_HEADER.len() || tags.get(at)?.code != 90 {
+        return None;
+    }
+    let start = at - ASSOC_ACTION_HEADER.len();
+    if !tags[start].value.trim().eq_ignore_ascii_case("AcDbAssocAction") {
+        return None;
+    }
+    if !ASSOC_ACTION_HEADER.iter().enumerate().all(|(k, &c)| tags[start + k].code == c) {
+        return None;
+    }
+    let count = usize::try_from(tags[at].value.trim().parse::<i64>().ok()?).ok()?;
+    let deps = tags.get(at + 1..at + 1 + count)?;
+    deps.iter().all(|t| matches!(t.code, 330 | 360)).then_some(count)
+}
+
+/// The index of a kept object's `100 AcDbAssocAction` marker. An associative network derives from
+/// an action, so it has one too.
+fn assoc_action_marker(tags: &[RawTag]) -> Option<usize> {
+    tags.iter().position(|t| t.code == 100 && t.value.trim().eq_ignore_ascii_case("AcDbAssocAction"))
+}
+
+/// The dependency list of a kept action that [`assoc_action_dep_count`] recognizes: the index of
+/// its count group and the count.
+fn assoc_action_list(tags: &[RawTag]) -> Option<(usize, usize)> {
+    let at = assoc_action_marker(tags)? + ASSOC_ACTION_HEADER.len();
+    Some((at, assoc_action_dep_count(tags, at)?))
+}
+
+/// Whether a kept object is an action whose dependency list has a form we do not know. Its list
+/// cannot be rewritten, so the dependencies it owns are not pruned.
+fn is_unknown_assoc_action(tags: &[RawTag]) -> bool {
+    assoc_action_marker(tags).is_some() && assoc_action_list(tags).is_none()
+}
+
 /// Remaps the kept data's handles onto a written file.
 struct Map<'a> {
     f: &'a Foreign,
@@ -954,6 +1021,7 @@ impl Map<'_> {
     fn object(&self, o: &ForeignObject, out: &mut Vec<Tag>) {
         out.push(Tag::s(0, o.kind.clone()));
         let dict = is_dictionary(&o.kind);
+        let list = assoc_action_list(&o.tags);
         let mut i = 0;
         while let Some(r) = o.tags.get(i) {
             i += 1;
@@ -995,6 +1063,16 @@ impl Map<'_> {
                     out.push(tag(r));
                     out.push(Tag::s(code, h));
                 }
+                continue;
+            }
+            if let Some((_, count)) = list.filter(|&(at, _)| at == i - 1) {
+                // An entry keeps its own group code. A null entry stays null, because [`Map::get`]
+                // gives "0" only for a null handle. An entry whose object is gone is left out, and
+                // the count follows.
+                let live: Vec<Tag> = o.tags[i..i + count].iter().filter_map(|n| self.get(&n.value).map(|h| Tag::s(n.code, h))).collect();
+                out.push(Tag::i(90, i64::try_from(live.len()).unwrap_or(i64::MAX)));
+                out.extend(live);
+                i += count;
                 continue;
             }
             if r.code == 5 {
@@ -1166,7 +1244,7 @@ pub(crate) fn finish(
             (o.handle.hex(), head(&t).owner)
         })
         .collect();
-    let alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
+    let mut alive_memo = settle(&hard, |kept: &HashMap<String, bool>| {
         // Keep established live paths available to descendants during this pass as well.
         let mut alive_memo: HashMap<String, bool> = kept.iter().filter(|(_, live)| **live).map(|(h, &live)| (h.clone(), live)).collect();
         let kept = |h: &str| kept.get(h) == Some(&true);
@@ -1207,6 +1285,64 @@ pub(crate) fn finish(
         }
         alive_memo
     });
+    // Drop kept AcDbAssocDependency objects whose dependentOnObject is no longer written. Also drop
+    // the kept objects whose owner, as [`owner_of`] finds it, is a dropped dependency. Leaving an
+    // active dependency with its group 330 remapped to "0" breaks the associative reactor invariant.
+    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
+    // A dependency stays when an action of unknown form names it by group 330 or 360, or is its
+    // owner. That action's list and count stay as read, and only the dangling target becomes null.
+    // Each kept action is classified once, here.
+    let unknown_actions: Vec<&ForeignObject> = f.objects.iter().filter(|o| is_unknown_assoc_action(&o.tags)).collect();
+    let unknown_handles: HashSet<String> = unknown_actions.iter().map(|o| o.handle.hex()).collect();
+    let unknown_refs: HashSet<String> = unknown_actions
+        .iter()
+        .flat_map(|o| o.tags.iter().take_while(|t| t.code < 1000).filter(|t| matches!(t.code, 330 | 360)).map(|t| norm(&t.value)))
+        .collect();
+    let in_unknown_action =
+        |h: &str| unknown_refs.contains(h) || own.get(h).and_then(Option::as_deref).is_some_and(|owner| unknown_handles.contains(owner));
+    // Each pass that changes something drops at least one live object, so the loop ends.
+    loop {
+        let mut changed = false;
+        for o in &f.objects {
+            let h = o.handle.hex();
+            if alive_memo.get(&h) != Some(&true) || in_unknown_action(&h) {
+                continue;
+            }
+            let dead_target = assoc_dependency_target(o).is_some_and(|t| {
+                if objs.contains_key(&t) {
+                    alive_memo.get(&t) != Some(&true)
+                } else if let Some(role) = handle(&t).and_then(|th| f.targets.get(&th)) {
+                    !roles.contains_key(role)
+                } else {
+                    !entities.contains(&t)
+                }
+            });
+            if dead_target {
+                alive_memo.insert(h, false);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+        // The owner is found as for the first liveness pass ([`owner_of`]). A null-owner child goes
+        // with its hard owner, and a child with another live hard owner stays.
+        let mut cascade = true;
+        while cascade {
+            cascade = false;
+            for o in &f.objects {
+                let h = o.handle.hex();
+                if alive_memo.get(&h) != Some(&true) {
+                    continue;
+                }
+                let owner = owner_of(own.get(&h).cloned().flatten(), &h, &hard, |x| alive_memo.get(x) == Some(&true));
+                if owner.is_some_and(|owner| objs.contains_key(&owner) && alive_memo.get(&owner) != Some(&true)) {
+                    alive_memo.insert(h, false);
+                    cascade = true;
+                }
+            }
+        }
+    }
     // New handles for the written kept objects, above every written handle and the seed.
     let mut fresh = Fresh::new(tags);
     // The entities of unmodeled types join the records only below, so their handles are not in
@@ -1224,7 +1360,6 @@ pub(crate) fn finish(
         }
     }
     let merged_into: HashMap<String, &ForeignObject> = merged.iter().filter_map(|(kept, own)| Some((own.clone(), *objs.get(kept)?))).collect();
-    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
     let mut block = String::new();
@@ -1263,7 +1398,9 @@ pub(crate) fn finish(
         let x = extra_for(f, &xd, r, b, &block);
         let joined = joined_into(&merged_into, b);
         if x.is_none() && Some(r.start) != root && joined.is_none() {
-            out.extend(b.iter().cloned());
+            out.extend(b.iter().map(|tag| {
+                if r.kind == "LAYOUT" && tag.code == 333 { Tag::s(333, map.get(&tag.str()).unwrap_or_else(|| "0".into())) } else { tag.clone() }
+            }));
             continue;
         }
         record(&map, r, b, x.as_deref(), None, Some(r.start) == root, &mut out);
@@ -1379,6 +1516,8 @@ fn plan_unknown(
     };
     let br = |name: &str| roles.get(&("BLOCK_RECORD".to_string(), up(name))).cloned();
     let first_at = |s: &cadcraft_doc::EntityStore| s.iter().find_map(|e| at.get(&e.handle.hex()).copied());
+    // The LAYER table as written: proxy graphics name layers by their index in it (#3094).
+    let written_layers: Vec<String> = recs.iter().filter(|r| r.sec == "TABLES" && r.kind == "LAYER").filter_map(|r| val(body(r), 2)).collect();
     let layouts = d.paper_space_layouts();
     // (entities, owner, paper space, end of the space, section)
     let mut stores: Vec<(&cadcraft_doc::EntityStore, Option<String>, bool, Option<usize>, &str)> = Vec::new();
@@ -1406,7 +1545,8 @@ fn plan_unknown(
                     {
                         continue;
                     }
-                    let t = unknown_entity(u, e, &owner, paper);
+                    let remapped = u.with_proxy_layers(&d.proxy_layers, &written_layers).map(|tags| Unknown { tags, ..u.clone() });
+                    let t = unknown_entity(remapped.as_ref().unwrap_or(u), e, &owner, paper);
                     if !t.is_empty() {
                         pending.push((sec.to_string(), t));
                     }

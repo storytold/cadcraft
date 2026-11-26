@@ -11,6 +11,10 @@ workspace = true
 
 [dependencies]
 craft-ui = { workspace = true }
+craft-behavior = { workspace = true }
+craft-host = { workspace = true }
+craft-keymap = { workspace = true, features = ["egui"] }
+craft-theme = { workspace = true }
 cadcraft-geom = { workspace = true }
 cadcraft-color = { workspace = true }
 cadcraft-doc = { workspace = true }
@@ -35,8 +39,6 @@ web-time = { workspace = true }
 craft-update = { workspace = true }
 
 [dev-dependencies]
-# Tests build the dock area as the desktop app does (headless contexts keep floats in-window).
-craft-ui = { workspace = true, features = ["native-windows"] }
 # The workspace `egui` dependency enables `default_fonts` and `monochrome_emoji_fonts` in
 # production too; the tests exercise the same installed chain as the app.
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
