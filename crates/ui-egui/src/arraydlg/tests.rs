@@ -449,3 +449,75 @@ fn ok_commits_once_a_successful_edit_clears_the_error() {
     assert!(app.array_dlg.is_none());
     assert!(app.session.running.is_none());
 }
+// Repeating the last command (empty line + Enter, or Space) must open the Array window, as
+// typing the name does: the repeat goes through the UI dispatch, not the engine's repeat.
+#[test]
+fn repeat_after_arrayrect_opens_the_window_and_starts_the_command() {
+    let (mut app, r) = app_with_rect();
+    app.session.set_selection(vec![r]);
+    app.cmdline("arrayrect");
+    assert_eq!(app.ui.dialog.as_deref(), Some("array"));
+    app.session.cancel();
+    frames(&mut app);
+    assert_eq!(app.ui.dialog, None);
+    // Empty line + Enter repeats ARRAYRECT: the window opens and the command runs again.
+    app.cmdline("");
+    assert_eq!(app.ui.dialog.as_deref(), Some("array"));
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("arrayrect"));
+    assert_eq!(app.session.array_live().unwrap().kind, ArrayLiveKind::Rectangular);
+}
+
+#[test]
+fn repeat_of_line_still_starts_line() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.cmdline("line");
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+    app.session.cancel();
+    // Repeating LINE starts it again, with no window.
+    app.cmdline("");
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+    assert_eq!(app.ui.dialog, None);
+}
+
+#[test]
+fn empty_input_while_a_command_prompts_does_not_restart_it() {
+    let (mut app, r) = app_with_rect();
+    app.session.set_selection(vec![r]);
+    app.cmdline("arrayrect");
+    assert!(app.session.prompting());
+    // While ARRAYRECT prompts, empty input goes to the running command (the engine ends it),
+    // never the repeat path: a repeat would call start("arrayrect") and reopen a fresh array.
+    app.cmdline("");
+    assert!(app.session.running.is_none(), "the command ended, it was not restarted");
+    assert!(app.session.array_live().is_none());
+    frames(&mut app);
+    assert_eq!(app.ui.dialog, None, "no fresh window from a repeat");
+}
+
+#[test]
+fn submit_with_an_empty_buffer_opens_the_window() {
+    let (mut app, r) = app_with_rect();
+    app.session.set_selection(vec![r]);
+    app.cmdline("arrayrect");
+    assert_eq!(app.ui.dialog.as_deref(), Some("array"));
+    app.session.cancel();
+    frames(&mut app);
+    assert_eq!(app.ui.dialog, None);
+    // Space and the quick right-click reach submit with an empty buffer: it repeats through
+    // cmdline(""), so the Array window opens and the command runs again.
+    app.cmd.buffer.clear();
+    crate::cmdline::submit(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("array"));
+    assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("arrayrect"));
+}
+// A repeat that fails (LINE with no document) returns the error; a successful repeat returns None.
+#[test]
+fn failing_repeat_returns_the_error_and_success_returns_none() {
+    let mut app = CadApp::new(Session::empty(), Services::default());
+    app.session.last_command = Some("line".to_string());
+    assert!(app.cmdline("").is_some(), "LINE with no document fails");
+    // A command that starts returns None.
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.session.last_command = Some("rectang".to_string());
+    assert!(app.cmdline("").is_none(), "a successful repeat returns None");
+}

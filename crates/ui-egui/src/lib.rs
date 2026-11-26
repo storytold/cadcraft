@@ -650,9 +650,42 @@ impl CadApp {
             return;
         }
         self.sync_bars();
-        if let Err(e) = self.session.start(name) {
-            self.session.echo(e.to_string());
+        if let Err(e) = self.start_checked(name) {
+            self.session.echo(e);
         }
+    }
+
+    /// [`CadApp::start`] but reports a start that failed instead of only echoing it. Shared by
+    /// `start` and `repeat_last` so both go through the UI dispatch (a UI command opens its window).
+    fn start_checked(&mut self, name: &str) -> Result<(), String> {
+        if clipboard::defer(self, name, None) {
+            return Ok(());
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
+        if menus::run_ui_command(self, name, &Value::Null).is_some() {
+            return Ok(());
+        }
+        self.sync_bars();
+        self.session.start(name).map_err(|e| e.to_string())
+    }
+
+    /// Repeat the last command as the command line does: a UI command opens its window.
+    /// Does nothing while a command is prompting or when there is no last command.
+    /// Returns the error message when the repeated command fails (also echoed).
+    pub fn repeat_last(&mut self) -> Option<String> {
+        if self.session.prompting() {
+            return None;
+        }
+        if let Some(name) = self.session.last_command.clone()
+            && let Err(e) = self.start_checked(&name)
+        {
+            self.session.echo(e.clone());
+            return Some(e);
+        }
+        None
     }
 
     /// Submit a line of command-line text. A refused line is echoed to the history; the error is
@@ -666,6 +699,11 @@ impl CadApp {
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         self.sync_bars();
+        // Repeating the last command (empty line + Enter, or Space, which trims to empty) goes
+        // through the UI dispatch so a UI command like ARRAYRECT opens its window, as typing it does.
+        if !self.session.prompting() && text.trim().is_empty() && self.session.last_command.is_some() {
+            return self.repeat_last();
+        }
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.

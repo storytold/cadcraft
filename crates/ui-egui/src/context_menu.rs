@@ -295,7 +295,12 @@ fn prefix_ids(e: Entry, prefix: &str) -> Entry {
 pub fn choose(app: &mut CadApp, id: &str) {
     if id == ENTER {
         app.cmd.buffer.clear();
-        app.cmdline("");
+        // While a command prompts, Enter finishes it; otherwise it repeats the last command.
+        if app.session.prompting() {
+            app.cmdline("");
+        } else {
+            app.repeat_last();
+        }
     } else if id == CANCEL {
         crate::cmdline::escape(app);
     } else if let Some(text) = id.strip_prefix(TYPE) {
@@ -411,10 +416,10 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
     if !snap
         && !o.time_sensitive_right_click
         && mode == crate::options::IdleClick::Repeat
-        && let Some(last) = app.session.last_command.clone()
+        && let Some(_last) = app.session.last_command.clone()
     {
         if resp.secondary_clicked() {
-            app.start(&last);
+            app.repeat_last();
         }
         return;
     }
