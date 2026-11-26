@@ -26,6 +26,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CELTSCALE", 40),
     ("DIMSCALE", 40),
     ("DIMSTYLE", 2),
+    ("DIMASSOC", 280),
     ("LUNITS", 70),
     ("LUPREC", 70),
     ("AUNITS", 70),
@@ -124,6 +125,7 @@ fn dim_header_vars(w: &mut W, d: &Drawing) {
     }
 }
 
+/// Write modelled HEADER variables with their declared DXF group types, then dimension style variables.
 pub(super) fn header_vars(w: &mut W, d: &Drawing) {
     for (name, code) in HEADER_VARS {
         let Some(v) = d.header.get(name) else { continue };
@@ -153,7 +155,7 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                     w.f(c, f);
                 }
             }
-            (c @ (62 | 70 | 290 | 370), v) => {
+            (c @ (62 | 70 | 280 | 290 | 370), v) => {
                 if let Some(i) = v.as_i64() {
                     w.s(9, format!("${name}"));
                     w.i(c, i);

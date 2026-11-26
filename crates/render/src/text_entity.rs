@@ -13,6 +13,18 @@ pub fn style_font(ts: &cadcraft_doc::TextStyle) -> cadcraft_fonts::TextFont {
 
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
+    let (font, params) = text_params(d, t);
+    cadcraft_fonts::place(&font, value, &params)
+}
+
+/// The dimensions used to display a two-point TEXT, ATTRIB or ATTDEF, for file writers.
+pub fn fitted_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> cadcraft_doc::Text {
+    let (font, params) = text_params(d, t);
+    let fitted = cadcraft_fonts::fit_params(&font, value, &params);
+    cadcraft_doc::Text { height: fitted.height, rotation: fitted.rotation, width_factor: fitted.width_factor, ..t.clone() }
+}
+
+fn text_params(d: &Drawing, t: &cadcraft_doc::Text) -> (cadcraft_fonts::TextFont, cadcraft_fonts::TextParams) {
     let ts = text_style(d, &t.style);
     let font = style_font(&ts);
     let (h, v) = align(t.halign, t.valign);
@@ -28,7 +40,7 @@ pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (c
         backwards: ts.backwards,
         upside_down: ts.upside_down,
     };
-    cadcraft_fonts::place(&font, value, &p)
+    (font, p)
 }
 
 /// Lay out an MTEXT with its style's font.

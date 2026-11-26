@@ -455,6 +455,19 @@ fn printing_many_lines_is_linear() {
 }
 
 #[test]
+fn lisp_pline_keeps_current_elevation() {
+    let mut s = session();
+    ok(&mut s, r#"(setvar "ELEVATION" 800.0)"#);
+    ok(&mut s, r#"(command "_PLINE" '(0 0) '(1000 0) '(1000 100) "")"#);
+    assert_eq!(ok(&mut s, "(cdr (assoc 38 (entget (entlast))))"), "800.0");
+
+    ok(&mut s, r#"(setvar "ELEVATION" -2.5)"#);
+    s.execute("pline", &serde_json::json!({"vertices": [[0, 0], [10, 0]], "width": 2})).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 38 (entget (entlast))))"), "-2.5");
+    assert_eq!(ok(&mut s, "(cdr (assoc 43 (entget (entlast))))"), "2.0");
+}
+
+#[test]
 fn command_draws_and_one_routine_is_one_undo_step() {
     let mut s = session();
     let n = |s: &Session| s.doc().unwrap().model.handles().len();

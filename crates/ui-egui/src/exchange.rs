@@ -26,12 +26,130 @@ pub fn route(app: &mut CadApp, id: &str) -> Result<Value, String> {
         "import" | "imp" => app
             .pick_then(Pick::Open, |app, path| app.run("import", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "IMPORT", r#"import {"path": "parts.dxf"}"#)),
+        "pdfimport" | "pdfi" => app
+            .pick_then(Pick::Open, |app, path| {
+                let doc = app.session.state().ok().map(|s| s.uid);
+                PDF_PENDING.with(|pending| {
+                    *pending.borrow_mut() = Some(PdfImport {
+                        doc,
+                        path,
+                        page: 1,
+                        scale: 1.0,
+                        at: [0.0, 0.0],
+                        password: String::new(),
+                        text: true,
+                        fills: true,
+                        lineweights: true,
+                        focus_page: true,
+                        error: None,
+                    });
+                });
+                app.ui.dialog = Some("pdfimport".into());
+                Ok(Value::Null)
+            })
+            .unwrap_or_else(|| no_picker(app, "PDFIMPORT", r#"pdfimport {"path": "plan.pdf", "page": 1}"#)),
         "publish" => app
             .pick_then(Pick::Save(format!("{stem}.pdf")), |app, path| app.run("publish", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "PUBLISH", "publish {}")),
         _ => app
             .pick_then(Pick::Save(format!("{stem}.svg")), |app, path| app.run("export", json!({ "path": path })))
             .unwrap_or_else(|| no_picker(app, "EXPORT", r#"export {"format": "svg"}"#)),
+    }
+}
+
+/// A chosen PDF and the editable content requested from its page.
+struct PdfImport {
+    /// The drawing the window was opened for; the page goes there even if another is shown now.
+    doc: Option<u64>,
+    path: String,
+    page: u32,
+    scale: f64,
+    at: [f64; 2],
+    password: String,
+    text: bool,
+    fills: bool,
+    lineweights: bool,
+    focus_page: bool,
+    error: Option<String>,
+}
+
+thread_local! {
+    static PDF_PENDING: std::cell::RefCell<Option<PdfImport>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Show page and content options before adding the selected PDF page to the drawing.
+pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let Some(mut state) = PDF_PENDING.with(|pending| pending.borrow_mut().take()) else {
+        *open = false;
+        return;
+    };
+    let name = std::path::Path::new(&state.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (mut import, mut cancel) = (false, false);
+    egui::Window::new(crate::tl!("Import PDF")).id(egui::Id::unique("cc_pdf_import")).open(open).collapsible(false).resizable(false).show(
+        ctx,
+        |ui| {
+            ui.label(&name);
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Page number"));
+                let page = ui.add(egui::DragValue::new(&mut state.page).range(1..=100_000)).labelled_by(label.id);
+                if state.focus_page {
+                    page.request_focus();
+                    state.focus_page = false;
+                }
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Scale factor"));
+                ui.add(egui::DragValue::new(&mut state.scale).speed(0.1).range(1e-9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Insertion X"));
+                ui.add(egui::DragValue::new(&mut state.at[0]).speed(1.0).range(-1e9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+                let label = ui.label(crate::tl!("Insertion Y"));
+                ui.add(egui::DragValue::new(&mut state.at[1]).speed(1.0).range(-1e9..=1e9).clamp_existing_to_range(false)).labelled_by(label.id);
+            });
+            ui.horizontal(|ui| {
+                let label = ui.label(crate::tl!("Password"));
+                ui.add(egui::TextEdit::singleline(&mut state.password).password(true)).labelled_by(label.id);
+            });
+            ui.checkbox(&mut state.text, crate::tl!("Import text as TEXT"));
+            ui.checkbox(&mut state.fills, crate::tl!("Import filled shapes as solid hatches"));
+            ui.checkbox(&mut state.lineweights, crate::tl!("Use the PDF's line widths"));
+            if let Some(error) = &state.error {
+                let t = crate::theme::Tokens::get();
+                let shown = ui.label(egui::RichText::new(crate::tf!("Import failed: {error}", error = error)).color(t.warn));
+                // Focus stays on the Import button, so the failure is announced.
+                ui.ctx().accesskit_node_builder(shown.id, |node| node.set_live(egui::accesskit::Live::Assertive));
+            }
+            ui.horizontal(|ui| {
+                import = ui.button(crate::tl!("Import Page")).clicked();
+                cancel = ui.button(crate::tl!("Cancel")).clicked();
+            });
+        },
+    );
+    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        cancel = true;
+    }
+    if import {
+        let mut params = json!({ "path": state.path, "page": state.page, "scale": state.scale, "at": state.at, "text": state.text, "fills": state.fills, "lineweights": state.lineweights });
+        if !state.password.is_empty() {
+            params["password"] = json!(state.password);
+        }
+        let index = state.doc.and_then(|uid| app.session.docs.iter().position(|d| d.uid == uid));
+        let result = match index {
+            None => Err(crate::tl!("The drawing this window was opened for is closed; nothing was imported.").to_string()),
+            Some(i) if i != app.session.active => app.run("document.switch", json!({ "index": i })).and_then(|_| app.run("pdfimport", params)),
+            Some(_) => app.run("pdfimport", params),
+        };
+        match result {
+            Ok(_) => *open = false,
+            Err(error) => state.error = Some(error),
+        }
+    }
+    if cancel {
+        *open = false;
+    }
+    if *open {
+        PDF_PENDING.with(|pending| *pending.borrow_mut() = Some(state));
     }
 }
 
