@@ -61,9 +61,6 @@ struct App {
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
     #[cfg(target_os = "macos")]
     menus_in_window: bool,
-    /// The `movable` flag last set on the main window.
-    #[cfg(target_os = "macos")]
-    movable: Option<bool>,
     /// Drawings and quit requests from Finder, the Dock and `open -a` (see `apple_events`).
     #[cfg(target_os = "macos")]
     apple_events: fmv_macos_events::Inbox,
@@ -141,17 +138,18 @@ impl eframe::App for App {
         if std::mem::take(&mut self.cad.quit_requested) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        self.cad.close_path(ctx);
     }
-    /// Apply the desktop-theme fallback, forward raw input to `CadApp`, and capture Tab at the command line.
+    /// Apply the desktop-theme fallback, forward raw input to `CadApp`, and hand the frame's root values to the UI
+    /// runtime.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         follow_desktop(raw, self.desktop_theme.current());
         self.cad.raw_input_hook(ctx, raw);
-        cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
+        self.cad.before_input(ctx);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        cadcraft_ui_egui::framework::before_ui(ui.ctx(), &*frame);
         self.cad.guarded_ui(ui);
-        #[cfg(target_os = "macos")]
-        craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
@@ -302,17 +300,15 @@ const MIN_INNER_SIZE: [f32; 2] = [900.0, 560.0];
 /// The main window: its size, title bar, placement and rendering needs. `restoring`: a window state
 /// saved by the last session is restored instead of opening centred. `stencil`: the stencil bits of
 /// its render pass ([`stencil_bits`]).
-fn window_options(restoring: bool, stencil: u8) -> eframe::NativeOptions {
+fn window_options(restoring: bool, stencil: u8, frame: Option<&cadcraft_ui_egui::framework::Decision>) -> eframe::NativeOptions {
+    let viewport = egui::ViewportBuilder::default()
+        .with_title(os_window::name_for(os_window::identity()))
+        .with_inner_size([1600.0, 1000.0])
+        .with_min_inner_size(MIN_INNER_SIZE)
+        .with_drag_and_drop(true)
+        .with_app_id(os_window::app_id());
     eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(os_window::name_for(os_window::identity()))
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size(MIN_INNER_SIZE)
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(os_window::app_id()),
+        viewport: cadcraft_ui_egui::framework::apply_frame(viewport, frame),
         // The size, position and maximized state are kept between sessions (#2595); eframe keeps a
         // restored window on the monitors that are connected now.
         persist_window: true,
@@ -544,6 +540,9 @@ fn main() -> eframe::Result {
     if stencil == 0 {
         log::warn!("CADCRAFT_STENCIL is off: the window has no stencil buffer; clipped layout viewports draw unclipped");
     }
+    // XWayland when it's there (see below), unless CADCRAFT_WAYLAND=1 keeps the native Wayland backend.
+    let forced_x11 = cfg!(all(unix, not(target_os = "macos"))) && std::env::var_os("DISPLAY").is_some() && vars.wayland != Switch::On;
+    let frame = cadcraft_ui_egui::framework::frame_decision(forced_x11);
     let persistence_path = vars
         .portable_storage_file
         .clone()
@@ -553,7 +552,7 @@ fn main() -> eframe::Result {
         // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
         persistence_path: persistence_path.clone(),
-        ..window_options(restores_window(persistence_path.as_deref()), stencil)
+        ..window_options(restores_window(persistence_path.as_deref()), stencil, frame.as_ref())
     };
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
@@ -576,20 +575,10 @@ fn main() -> eframe::Result {
     // manager showed a "no" cursor. Run through XWayland when it's there; CADCRAFT_WAYLAND=1
     // keeps the native Wayland backend.
     #[cfg(all(unix, not(target_os = "macos")))]
-    if std::env::var_os("DISPLAY").is_some() && vars.wayland != Switch::On {
+    if forced_x11 {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
-        }));
-    }
-    // macOS: Quit CADCraft (Cmd+Q), the Dock's Quit and logout end the app through AppKit's
-    // terminate, which would skip the unsaved-changes prompt (#2157). winit turns each into a
-    // close request for the window instead, so it asks first, as the close button does.
-    #[cfg(target_os = "macos")]
-    {
-        options.event_loop_builder = Some(Box::new(|b| {
-            use winit::platform::macos::EventLoopBuilderExtMacOS;
-            b.with_close_requested_on_terminate(true);
         }));
     }
     // Registered before the event loop starts, so it catches the Finder event that launched us as
@@ -604,6 +593,7 @@ fn main() -> eframe::Result {
         os_window::name_for(os_window::identity()),
         options,
         Box::new(move |cc| {
+            cadcraft_ui_egui::framework::install(&cc.egui_ctx, forced_x11, frame.clone())?;
             let mut app = CadApp::new(Session::empty(), services());
             // The exit hook runs in `on_exit`: macOS ends the process inside AppKit's terminate after
             // it, so nothing after `run_native` can be relied on there.
@@ -666,7 +656,7 @@ fn main() -> eframe::Result {
                 }
                 app.session.set_lisp_support_dir(Some(support));
             }
-            app.integrated_titlebar = cfg!(target_os = "macos");
+            app.integrated_titlebar = cadcraft_ui_egui::framework::draws_title_row(frame.as_ref());
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }
@@ -717,8 +707,6 @@ fn main() -> eframe::Result {
                 #[cfg(target_os = "macos")]
                 menus_in_window: vars.no_native_menu == Switch::On,
                 #[cfg(target_os = "macos")]
-                movable: None,
-                #[cfg(target_os = "macos")]
                 apple_events,
             }))
         }),
@@ -756,7 +744,7 @@ mod tests {
     /// #1129: the first launch opens centred, not cascaded from the top-left corner.
     #[test]
     fn the_first_launch_opens_centred() {
-        let o = window_options(false, STENCIL_BITS);
+        let o = window_options(false, STENCIL_BITS, None);
         assert!(o.centered, "centred on launch");
         assert!(o.persist_window, "the window state is saved for the next launch");
     }
@@ -764,7 +752,7 @@ mod tests {
     /// #2595: a saved window state (size, position, maximized) is restored, not centred over.
     #[test]
     fn a_saved_window_reopens_where_it_was() {
-        let o = window_options(true, STENCIL_BITS);
+        let o = window_options(true, STENCIL_BITS, None);
         assert!(!o.centered, "centring would move a restored window");
         assert!(o.persist_window);
     }
@@ -789,8 +777,8 @@ mod tests {
     #[test]
     fn the_window_carries_the_chosen_stencil_bits() {
         for bits in [0, STENCIL_BITS] {
-            assert_eq!(window_options(false, bits).stencil_buffer, bits);
-            assert_eq!(window_options(true, bits).stencil_buffer, bits);
+            assert_eq!(window_options(false, bits, None).stencil_buffer, bits);
+            assert_eq!(window_options(true, bits, None).stencil_buffer, bits);
         }
         let format = |bits| eframe::egui_wgpu::depth_format_from_bits(0, bits);
         assert_eq!(format(0), None, "no stencil: the canvas builds no clip pipelines");

@@ -398,6 +398,7 @@ fn the_wcs_pill_draws_its_arrow_instead_of_a_glyph_a_font_may_lack() {
     // #1541: "WCS ⌄" showed a box where the UI font had no "⌄"; the chevron is now drawn as
     // lines, so no catalog and no language paints the glyph.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     for language in &LANGUAGES {
         assert!(!language.source.contains('\u{2304}'), "{}.tsv still has the \u{2304} glyph", language.code);
@@ -451,6 +452,7 @@ fn render(app: &mut CadApp, ctx: &egui::Context) -> String {
 #[test]
 fn the_command_line_says_or_before_keywords_as_the_prompt_does() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     for lang in ["en", "de"] {
         let mut app = CadApp::new(Session::new(), Services::default());
         app.run("ui.language", json!({ "lang": lang })).unwrap();
@@ -479,6 +481,7 @@ fn live_switch_translates_the_shell_without_mutating_drawing_or_automation() {
     app.ui.in_window_menu = true;
     app.session.state_mut().unwrap().title = "Open".into();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     assert!(render(&mut app, &ctx).contains("Properties"));
     let commands = crate::control::all_commands(&app);
@@ -541,6 +544,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             app.ui.interface_language = Preference::parse(language.code).unwrap();
             app.ui.dialog = Some(dialog.into());
             let ctx = egui::Context::default();
+            crate::framework::install_headless(&ctx);
             app.logic(&ctx);
             let text = render(&mut app, &ctx);
             assert!(text.contains(tr(app.language(), heading)), "{}: {dialog}: {text}", language.code);
@@ -561,6 +565,7 @@ fn interface_fonts_cover_every_letter_in_each_catalog() {
             continue;
         }
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         if extra_font {
             crate::theme::install_fonts(&ctx, language.code);
         }
@@ -631,6 +636,7 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     // The picker shows 한국어 in an English interface only when the CJK fonts loaded in every
     // language cover Hangul; the Korean interface itself always does, with a fallback font.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let english = crate::theme::cjk_covers_hangul();
     assert_eq!(with_language("en", || Preference::Korean.name()), if english { "한국어" } else { "Korean" });
     assert_eq!(with_language("ko", || Preference::Korean.name()), "한국어");
@@ -675,6 +681,7 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
     // `default_fonts` and `monochrome_emoji_fonts` in production, so web and native builds
     // always start with bounded Latin and monochrome icon faces instead of an empty family.
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     crate::theme::install_fonts(&ctx, "en");
     let mut output = ctx.run_ui(Default::default(), |_| {});
     output.textures_delta.clear();

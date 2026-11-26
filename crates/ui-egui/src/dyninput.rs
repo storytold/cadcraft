@@ -572,6 +572,7 @@ mod tests {
     fn down_arrow_lists_the_options_and_enter_or_a_click_picks_one() {
         let mut app = crate::CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         run_frame(&mut app, &ctx, Vec::new());
         let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
         let hover = vec![egui::Event::PointerMoved(center)];

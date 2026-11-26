@@ -20,6 +20,7 @@ mod gpu_viewport_stencil;
 mod hidden_command_line;
 mod insert_attrib_dialog;
 mod instant_modals;
+mod keyboard_zoom;
 mod lisp_files;
 mod measure_distance_snapping;
 mod menubar_hover;

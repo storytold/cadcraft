@@ -126,7 +126,7 @@ pub fn pdf_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             });
         },
     );
-    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         cancel = true;
     }
     if import {
@@ -242,7 +242,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             close = ui.button("Close").clicked();
         });
     });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         close = true;
     }
     if close || print {

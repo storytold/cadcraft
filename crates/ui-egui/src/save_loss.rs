@@ -192,7 +192,7 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
                 choice = Some(Choice::SaveAnyway);
             }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if crate::framework::escape_pressed(ui.ctx()) {
             choice = Some(Choice::Cancel);
         }
     });

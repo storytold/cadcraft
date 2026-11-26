@@ -5,14 +5,14 @@ use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services, menus};
 use egui::{accesskit::Role, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 fn harness() -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;
-    let mut h = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1280.0, 800.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -30,12 +30,13 @@ fn menu(h: &mut Harness<'_, CadApp>, id: &str) {
     menus::activate_native(h.state_mut(), &ctx, id);
     let mut raw = egui::RawInput::default();
     h.state_mut().raw_input_hook(&ctx, &mut raw);
+    h.state_mut().before_input(&ctx);
     h.input_mut().events.extend(raw.events);
     h.run_steps(3);
 }
 
 fn expression<'a>(h: &'a Harness<'_, CadApp>) -> egui_kittest::Node<'a> {
-    h.get_by_role_and_label(Role::Tab, "QuickCalc").parent().unwrap().get_all_by_role(Role::TextInput).next().unwrap()
+    h.get_by_role_and_label(Role::TabPanel, "QuickCalc").get_all_by_role(Role::TextInput).next().unwrap()
 }
 
 #[test]
