@@ -314,6 +314,8 @@ pub(crate) fn gradient_name(t: &str) -> Option<&'static str> {
 struct HatchSettings {
     pattern: String,
     scale: f64,
+    /// HPSPACE for user-defined patterns. The entity stores it as its scale.
+    user_spacing: f64,
     angle: f64,
     /// A user-defined pattern is doubled ("Double hatch area?", DXF group 77): a second family of
     /// lines at right angles to the first.
@@ -342,9 +344,11 @@ impl HatchSettings {
             angle: f64_or(p, "angle", 0.0).to_radians(),
             centered: bool_or(p, "centered", true),
         });
+        let scale = f64_or(p, "scale", hdr.1).max(1e-9);
         HatchSettings {
             pattern,
-            scale: f64_or(p, "scale", hdr.1).max(1e-9),
+            scale,
+            user_spacing: scale,
             angle: p.get("angle").and_then(Value::as_f64).map(f64::to_radians).unwrap_or(hdr.2),
             double: false,
             gradient: g,
@@ -370,12 +374,13 @@ impl HatchSettings {
             loops.iter_mut().for_each(|l| l.sources.clear());
         }
         let solid = self.gradient.is_some() || self.pattern == "SOLID";
+        let user_defined = cadcraft_doc::library::is_user_pattern(&self.pattern);
         EntityKind::Hatch(Hatch {
             pattern: if self.gradient.is_some() { "SOLID".into() } else { self.pattern.clone() },
             solid,
             origin: self.origin_mode.origin(&loops, self.origin),
             loops,
-            scale: self.scale,
+            scale: if user_defined { self.user_spacing } else { self.scale },
             angle: self.angle,
             associative: self.associative,
             style: self.style,
@@ -384,11 +389,7 @@ impl HatchSettings {
             background: None,
             // A user-defined hatch's families come from its angle, spacing and double flag, not
             // from a pattern definition; any other hatch takes the loaded pattern's, if any.
-            pattern_lines: if cadcraft_doc::library::is_user_pattern(&self.pattern) {
-                cadcraft_doc::library::user_defined_lines(self.double)
-            } else {
-                patfile::lines_for(&self.pattern)
-            },
+            pattern_lines: if user_defined { cadcraft_doc::library::user_defined_lines(self.double) } else { patfile::lines_for(&self.pattern) },
         })
     }
 }
@@ -671,7 +672,8 @@ impl HatchM {
                 // The user-defined form asks for its lines next, not a named pattern's scale and angle.
                 if self.legacy && user_pattern_keyword(t) {
                     self.settings.pattern = cadcraft_doc::library::USER_PATTERN.to_string();
-                    self.settings.double = false;
+                    self.settings.user_spacing = s.last_used.hatch_spacing;
+                    self.settings.double = s.last_used.hatch_double;
                     return Ok(true);
                 }
                 let up = match patfile::typed_file(s, t) {
@@ -690,16 +692,19 @@ impl HatchM {
                     return Ok(false);
                 }
             }
-            // The user-defined pattern's spacing is stored as the hatch's scale (HPSCALE). More
-            // lines than a drawing can hold are bounded where the hatch is drawn; a zero, a
-            // negative number, NaN or text is refused here.
+            // Scale and spacing must be positive and finite. The renderer bounds the line count.
             HatchAsk::Scale | HatchAsk::Spacing => {
                 let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) else {
                     s.echo("Value must be positive and nonzero.");
                     return Ok(false);
                 };
-                self.settings.scale = v;
-                s.doc_mut()?.header.set_f64("HPSCALE", v);
+                if a == HatchAsk::Spacing {
+                    self.settings.user_spacing = v;
+                    s.last_used.hatch_spacing = v;
+                } else {
+                    s.doc_mut()?.header.set_f64("HPSCALE", v);
+                    self.settings.scale = v;
+                }
             }
             HatchAsk::Angle | HatchAsk::UserAngle => {
                 // Turns the pattern from the X axis (not from ANGBASE), clockwise when ANGDIR is 1.
@@ -713,6 +718,7 @@ impl HatchM {
                     "n" | "no" => false,
                     _ => return Ok(false),
                 };
+                s.last_used.hatch_double = self.settings.double;
             }
             HatchAsk::Origin => {
                 let mode = match t {
@@ -800,9 +806,11 @@ impl Interactive for HatchM {
             Some(HatchAsk::Angle) => return self.angle_prompt(s, "Specify an angle for the hatch pattern"),
             Some(HatchAsk::UserAngle) => return self.angle_prompt(s, "Specify an angle for the hatch lines"),
             Some(HatchAsk::Spacing) => {
-                return Prompt::new("Specify a spacing between the lines", Accept::NUMBER).default(format!("{:.4}", self.settings.scale));
+                return Prompt::new("Specify a spacing between the lines", Accept::NUMBER).default(format!("{:.4}", self.settings.user_spacing));
             }
-            Some(HatchAsk::Double) => return Prompt::new("Double hatch area?", Accept::TEXT).kw(&["Yes", "No"]).default("N"),
+            Some(HatchAsk::Double) => {
+                return Prompt::new("Double hatch area?", Accept::TEXT).kw(&["Yes", "No"]).default(if self.settings.double { "Y" } else { "N" });
+            }
             Some(HatchAsk::Origin) => return Prompt::new("Specify the pattern origin", Accept::POINT).kw(&ORIGIN_KW).default("Use current"),
             None => {}
         }
@@ -839,11 +847,6 @@ impl Interactive for HatchM {
                 }
                 Input::Keyword(k) if a == HatchAsk::Pattern && k == "Solid" => self.answer(s, a, "SOLID")?,
                 Input::Text(t) | Input::Keyword(t) => self.answer(s, a, t)?,
-                // Enter on "Double hatch area?" is its default, No.
-                Input::Enter if a == HatchAsk::Double => {
-                    self.settings.double = false;
-                    true
-                }
                 // Enter keeps the current value; a point or a pick answers none of these prompts.
                 Input::Enter => true,
                 _ => false,
@@ -886,7 +889,10 @@ impl Interactive for HatchM {
                         self.asking = Some(HatchAsk::Pattern);
                         self.properties = !self.gradient;
                     }
-                    "sCale" => self.asking = Some(HatchAsk::Scale),
+                    "sCale" => {
+                        let ask = if cadcraft_doc::library::is_user_pattern(&self.settings.pattern) { HatchAsk::Spacing } else { HatchAsk::Scale };
+                        self.asking = Some(ask);
+                    }
                     "Angle" => self.asking = Some(HatchAsk::Angle),
                     "Origin" => self.asking = Some(HatchAsk::Origin),
                     "sEparate" => {
@@ -1143,6 +1149,35 @@ mod tests {
         assert_eq!(h.pattern, cadcraft_doc::library::USER_PATTERN);
         assert!((h.scale - 1.0).abs() < 1e-12 && h.angle.abs() < 1e-12, "{} {}", h.scale, h.angle);
         assert_eq!(h.pattern_lines.len(), 1, "not doubled");
+    }
+
+    #[test]
+    fn lisp_user_hatch_reads_spacing_and_double_across_drawings() {
+        let mut s = Session::new();
+        s.cmdline("(setvar \"HPSPACE\" 12.5)").unwrap();
+        s.cmdline("(setvar \"HPDOUBLE\" 1.0)").unwrap();
+        s.new_drawing(false);
+        lisp_rectangle(&mut s);
+
+        s.cmdline("(command \"_.hatch\" \"_u\" \"\" \"\")").unwrap();
+        assert!(s.prompt_text().ends_with("<Y>:"), "{}", s.prompt_text());
+        for answer in ["", "_l", ""] {
+            s.cmdline(answer).unwrap();
+        }
+        let h = only_hatch(&s).1;
+        assert_eq!((h.scale, h.pattern_lines.len()), (12.5, 2));
+    }
+
+    #[test]
+    fn lisp_user_hatch_answers_leave_named_scale_unchanged() {
+        let mut s = Session::new();
+        lisp_rectangle(&mut s);
+        s.cmdline("(setvar \"HPSCALE\" 2.0)").unwrap();
+        s.cmdline("(command \"_.hatch\" \"_u\" 45 10 \"_y\" \"_l\" \"\")").unwrap();
+
+        assert_eq!(crate::sysvars::get(&s, "HPSCALE"), Some(json!(2.0)));
+        assert_eq!(crate::sysvars::get(&s, "HPSPACE"), Some(json!(10.0)));
+        assert_eq!(crate::sysvars::get(&s, "HPDOUBLE"), Some(json!(1)));
     }
 
     /// Solid asks neither a scale nor an angle, as it never has.

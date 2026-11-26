@@ -11,6 +11,8 @@ const SESSION_VARS: &[&str] = &[
     "ATTREQ",
     "OSMODE",
     "OSNAPHATCH",
+    "HPSPACE",
+    "HPDOUBLE",
     "ANNOAUTOSCALE",
     "ORTHOMODE",
     "POLARMODE",
@@ -83,6 +85,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
     let v = match n.as_str() {
         "OSMODE" => json!(st.osmode),
         "OSNAPHATCH" => json!(i32::from(st.osnaphatch)),
+        "HPSPACE" => json!(s.last_used.hatch_spacing),
+        "HPDOUBLE" => json!(i32::from(s.last_used.hatch_double)),
         // AutoCAD's values: positive on, negative off (4 = every annotative object).
         "ANNOAUTOSCALE" => json!(if st.annoautoscale { 4 } else { -4 }),
         // Paper units per drawing unit of the current annotation scale (1:50 → 0.02).
@@ -324,6 +328,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         // The `color` command's input: ByLayer, ByBlock, a name, an index or a true colour.
         "CECOLOR" => crate::cmd::set_current_color_value(s, v).ok_or_else(bad)?,
         "OSNAPHATCH" => st.osnaphatch = as_bool(v).ok_or_else(bad)?,
+        "HPSPACE" => s.last_used.hatch_spacing = as_f64(v).filter(|f| *f > 0.0).ok_or_else(bad)?,
+        "HPDOUBLE" => s.last_used.hatch_double = table::int_value(v).filter(|i| (0..=1).contains(i)).ok_or_else(bad)? == 1,
         "ANNOAUTOSCALE" => st.annoautoscale = as_i(v).filter(|i| (-4..=4).contains(i)).ok_or_else(bad)? > 0,
         // A scale of the drawing's list; ANNOAUTOSCALE adds it to the annotative objects.
         "CANNOSCALE" => crate::cmd::annoscale::set_current(s, v.as_str().ok_or_else(bad)?)?,

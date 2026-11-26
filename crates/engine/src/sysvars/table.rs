@@ -138,7 +138,7 @@ pub(super) fn get(s: &Session, name: &str) -> Option<Value> {
     })
 }
 
-fn int_value(v: &Value) -> Option<i64> {
+pub(super) fn int_value(v: &Value) -> Option<i64> {
     match v {
         Value::Number(n) => n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64)),
         Value::Bool(b) => Some(i64::from(*b)),

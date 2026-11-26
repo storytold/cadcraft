@@ -3,12 +3,15 @@ use super::cmd;
 /// Options and values the interactive commands remember for the rest of the session, offered as
 /// the `<default>` the next time they ask (as AutoCAD does). Values AutoCAD keeps in a drawing
 /// system variable (HPNAME, OFFSETDIST, FILLETRAD, CHAMFERA, POLYSIDES…) live in the drawing
-/// header instead. JSON calls never read these: their explicit parameters and documented defaults
-/// stay authoritative.
+/// header instead. Drawing commands called with JSON use their own parameter defaults.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LastUsed {
     /// HATCH/GRADIENT starts at "Select objects" instead of "Pick internal point".
     pub hatch_select: bool,
+    /// HPSPACE: line spacing for user-defined hatches.
+    pub hatch_spacing: f64,
+    /// HPDOUBLE: whether user-defined hatches have a second family of lines.
+    pub hatch_double: bool,
     /// POLYGON: circumscribed about the circle (the `C` option) instead of inscribed.
     pub polygon_circumscribed: bool,
     /// ROTATE angle (radians).
@@ -35,6 +38,8 @@ impl Default for LastUsed {
     fn default() -> Self {
         LastUsed {
             hatch_select: false,
+            hatch_spacing: 1.0,
+            hatch_double: false,
             polygon_circumscribed: false,
             rotate_angle: 0.0,
             scale_factor: 1.0,
