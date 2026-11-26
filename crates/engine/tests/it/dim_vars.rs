@@ -101,6 +101,24 @@ fn new_variables_are_style_overrides_and_read_back() {
 }
 
 #[test]
+fn setvar_dimension_variables_are_saved_with_the_drawing() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
+    // DIMSCALE was kept and DIMTIH, DIMDEC and DIMTAD were not (#3100).
+    let mut s = Session::new();
+    for (name, v) in [("DIMSCALE", json!(2.5)), ("DIMTIH", json!(0)), ("DIMDEC", json!(2)), ("DIMTAD", json!(1))] {
+        set(&mut s, name, v);
+    }
+    let want = s.doc().unwrap().dim_overrides();
+    for file in ["out.dxf", "out.dwg"] {
+        let bytes = cadcraft_io::write(s.doc().unwrap(), file).unwrap();
+        let back = cadcraft_io::read(&bytes, file).unwrap();
+        assert_eq!(back.dim_overrides(), want, "{file}");
+        assert_eq!(back.header.get("DIMTAD").and_then(|h| h.as_i64()), Some(1), "{file}");
+    }
+}
+
+#[test]
 fn text_fill_variables_are_style_overrides() {
     let mut s = Session::new();
     set(&mut s, "DIMTFILL", json!(2));
@@ -297,6 +315,23 @@ fn tolerance_justification_angular_zeros_and_arc_symbol() {
     let (_, g1) = last_dim(&s);
     assert!(!g1.value.contains('⌒'));
     assert_eq!(dim_lines(&g1).len(), dim_lines(&g2).len() + 1, "the symbol drawn over the text");
+}
+
+/// DIMPOST frames the angle too, as AutoCAD 2026 does to its own angular dimensions (#1653).
+#[test]
+fn dimpost_applies_to_angular_dimensions() {
+    let mut s = Session::new();
+    set(&mut s, "DIMPOST", json!("<> m"));
+    set(&mut s, "DIMADEC", json!(1));
+    // Vertex and two points.
+    s.execute("dimangular", &json!({ "vertex": [0, 0], "p1": [10, 0], "p2": [0, 10], "at": [3, 3] })).unwrap();
+    assert_eq!(last_dim(&s).1.value, "90.0° m");
+    // Two lines picked: the same suffix.
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("line", &json!({ "points": [[0, 0], [5, 8.660254037844387]] })).unwrap();
+    let h: Vec<String> = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).map(|e| e.handle.hex()).collect();
+    s.execute("dimangular", &json!({ "lines": h, "at": [4, 1] })).unwrap();
+    assert_eq!(last_dim(&s).1.value, "60.0° m");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::{
     Accept, EntityKind, Input, Interactive, PolyVertex, Prompt, Result, Session, Step, Value, Vec2, added, bad, bool_or, curves, f64_or, lwpoly,
-    number, other, point_param, point_req, rect_with_corners, size_param,
+    number, other, point_param, point_req, rect_corners_fit, rect_with_corners, size_param,
 };
 use crate::last_used::RectangModes;
 
@@ -19,9 +19,30 @@ fn rect_kind(first: Vec2, (w, h): (f64, f64), rot: f64, fillet: f64, chamfer: (f
     k
 }
 
+/// The area a fillet's or chamfer's four corners take off the full rectangle (a fillet wins).
+fn corner_area(fillet: f64, chamfer: (f64, f64)) -> f64 {
+    if fillet > 0.0 {
+        (4.0 - std::f64::consts::PI) * fillet * fillet
+    } else if chamfer.0 > 0.0 && chamfer.1 > 0.0 {
+        2.0 * chamfer.0 * chamfer.1
+    } else {
+        0.0
+    }
+}
+
+/// The sides of the rectangle of `area` with one side `side`, its length (or with `breadth`,
+/// its width). AutoCAD sizes it so that the outline, corners cut, encloses the area: the corners'
+/// area is added back. When the corners then don't fit they stay square, and the area is the full
+/// rectangle's.
+fn area_sides(area: f64, side: f64, breadth: bool, fillet: f64, chamfer: (f64, f64)) -> (f64, f64) {
+    let sides = |a: f64| if breadth { (a / side, side) } else { (side, a / side) };
+    let (w, h) = sides(area + corner_area(fillet, chamfer));
+    if rect_corners_fit(Vec2::new(w, h), fillet, chamfer) { (w, h) } else { sides(area) }
+}
+
 /// The width and height of a rectangle from its `dimensions`, its `p2` corner, its `area` with
 /// `length` or `breadth`, or its second corner `p2`, rotated by `rot` about `a`.
-fn rect_size(p: &Value, a: Vec2, rot: f64, centered: bool) -> Result<(f64, f64)> {
+fn rect_size(p: &Value, a: Vec2, rot: f64, centered: bool, fillet: f64, chamfer: (f64, f64)) -> Result<(f64, f64)> {
     Ok(if let Some(d) = p.get("dimensions").and_then(Value::as_array) {
         let l = d.first().and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("rectang", "dimensions: [length, width]"))?;
         let wd = d.get(1).and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("rectang", "dimensions: [length, width]"))?;
@@ -38,8 +59,8 @@ fn rect_size(p: &Value, a: Vec2, rot: f64, centered: bool) -> Result<(f64, f64)>
             return Err(bad("rectang", "area must be positive"));
         }
         match (p.get("length").and_then(Value::as_f64), p.get("breadth").and_then(Value::as_f64)) {
-            (Some(l), _) if l.is_finite() && l > 0.0 => (l, area / l),
-            (_, Some(b)) if b.is_finite() && b > 0.0 => (area / b, b),
+            (Some(l), _) if l.is_finite() && l > 0.0 => area_sides(area, l, false, fillet, chamfer),
+            (_, Some(b)) if b.is_finite() && b > 0.0 => area_sides(area, b, true, fillet, chamfer),
             _ => return Err(bad("rectang", "area needs `length` or `breadth`")),
         }
     } else {
@@ -68,7 +89,7 @@ pub(crate) fn run_rectang2(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let fillet = size_param("rectang", p, "fillet", true)?.unwrap_or(0.0);
     let width = size_param("rectang", p, "width", true)?.unwrap_or(0.0);
-    let (w, h) = rect_size(p, a, rot, centered)?;
+    let (w, h) = rect_size(p, a, rot, centered, fillet, ch)?;
     if w.abs() < 1e-12 || h.abs() < 1e-12 || !w.is_finite() || !h.is_finite() {
         return Err(bad("rectang", "rectangle has no area"));
     }
@@ -116,10 +137,13 @@ pub(crate) struct RectM2 {
     asking: Option<RAsk>,
 }
 
-/// A rectangle's rotation as AutoCAD 2024 shows it: degrees from 0 to 360, two decimals.
-fn rotation_text(rotation: f64) -> String {
-    let t = format!("{:.2}", rotation.to_degrees().rem_euclid(360.0));
-    if t == "360.00" { "0.00".into() } else { t }
+/// A rectangle's rotation (radians counterclockwise from +X) as AutoCAD 2024 shows it: from
+/// ANGBASE in the ANGDIR sense, in the drawing's angle units, to two places. Rotation 30 typed
+/// with ANGBASE 90 and ANGDIR 1 shows as "120.00", and 30.5 in degrees/minutes/seconds as
+/// "30d30'".
+fn rotation_text(s: &Session, rotation: f64) -> String {
+    let au = s.angle_settings();
+    crate::units::format_angle(au.shown(rotation), au.aunits, 2)
 }
 
 /// AutoCAD 2024's line listing the RECTANG modes that are set, `None` when none is ("Current
@@ -144,9 +168,10 @@ fn modes_line(s: &Session, m: &RectangModes) -> Option<String> {
     if m.width > 0.0 {
         parts.push(format!("Width={}", d(m.width)));
     }
-    let rot = rotation_text(m.rotation);
-    if rot != "0.00" {
-        parts.push(format!("Rotation={rot}"));
+    // Listed when the rectangle is turned from +X at all, to two places, whatever ANGBASE says.
+    let turned = format!("{:.2}", m.rotation.to_degrees().rem_euclid(360.0));
+    if turned != "0.00" && turned != "360.00" {
+        parts.push(format!("Rotation={}", rotation_text(s, m.rotation)));
     }
     (!parts.is_empty()).then(|| format!("Current rectangle modes:  {}", parts.join("  ")))
 }
@@ -219,7 +244,7 @@ impl Interactive for RectM2 {
     }
     /// Asks for the pending option's value, or for the first and second points; in centre mode
     /// the first prompt asks for the centre instead of a corner.
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         let num = |m: &str, d: f64| Prompt::new(m, Accept::NUMBER).default(format!("{d:.4}"));
         if let Some(a) = self.asking {
             return match a {
@@ -237,7 +262,7 @@ impl Interactive for RectM2 {
                 RAsk::DimW => num("Specify width for rectangles", self.dims.map(|d| d.1).unwrap_or(10.0)),
                 RAsk::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER)
                     .kw(&["Pick points"])
-                    .default(rotation_text(self.rotation))
+                    .default(rotation_text(s, self.rotation))
                     .base_opt(self.first),
                 RAsk::RotPick1 => Prompt::new("Specify first point", Accept::POINT),
                 RAsk::RotPick2(b) => Prompt::new("Specify second point", Accept::POINT).base(b),
@@ -299,7 +324,7 @@ impl Interactive for RectM2 {
                         self.asking = Some(a);
                         return Err(other("Value must be positive."));
                     }
-                    let (w, h) = if a == RAsk::AreaLength { (v, self.area / v) } else { (self.area / v, v) };
+                    let (w, h) = area_sides(self.area, v, a == RAsk::AreaWidth, self.fillet, self.chamfer);
                     return self.make(s, w, h);
                 }
                 RAsk::DimL => {
@@ -314,7 +339,8 @@ impl Interactive for RectM2 {
                 RAsk::Rotation => match i {
                     Input::Keyword(_) => self.asking = Some(RAsk::RotPick1),
                     Input::Point(p) => self.rotation = self.first.map(|f| f.angle_to(p)).unwrap_or(0.0),
-                    Input::Text(t) => self.rotation = s.angle_settings().direction(&t).ok_or_else(|| other("Requires a valid angle."))?,
+                    // An amount turned in the ANGDIR sense from +X, ANGBASE aside, as AutoCAD takes it.
+                    Input::Text(t) => self.rotation = s.angle_settings().rotation(&t).ok_or_else(|| other("Requires a valid angle."))?,
                     _ => {}
                 },
                 RAsk::RotPick1 => {

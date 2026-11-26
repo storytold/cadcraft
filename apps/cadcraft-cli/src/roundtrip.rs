@@ -58,7 +58,7 @@ pub(crate) fn roundtrip(a: &RoundtripArgs, io: &mut Streams) -> Result {
     if a.keep_saved {
         opts.keep_saved = Some(out.join("saved"));
     }
-    let report = corpus::run(&root, &files, &opts, &mut |i, n, rel| eprintln!("[{}/{n}] {rel}", i + 1));
+    let report = corpus::run(&root, &files, &opts, &mut |i, n, rel| io.errln(format_args!("[{}/{n}] {rel}", i + 1)));
     for f in &report.files {
         let routes: Vec<String> = f
             .routes
