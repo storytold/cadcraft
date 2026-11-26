@@ -13,6 +13,22 @@ use crate::theme::Tokens;
 
 type Outcome = Result<ReadFile, String>;
 
+/// Compare file paths without requiring the file to still exist. Native aliases are resolved so
+/// a symlink and its target share a drawing; web paths can only be compared directly.
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        a.canonicalize().ok().zip(b.canonicalize().ok()).is_some_and(|(a, b)| a == b)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+}
+
 struct Job {
     path: PathBuf,
     started: Instant,
@@ -28,6 +44,10 @@ pub struct Opening {
 impl Opening {
     /// Start reading `path` on a worker thread.
     pub fn start(&mut self, path: &Path) {
+        // Repeated events can arrive before the first background read completes.
+        if self.jobs.iter().any(|j| same_path(&j.path, path)) {
+            return;
+        }
         let (tx, rx) = channel();
         let p = path.to_path_buf();
         let spawned = std::thread::Builder::new().name("cadcraft-open".into()).spawn(move || {

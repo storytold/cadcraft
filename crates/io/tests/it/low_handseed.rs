@@ -41,6 +41,7 @@ fn counts(d: &Drawing) -> (usize, usize) {
 
 #[test]
 fn faces_made_while_reading_do_not_take_the_files_handles() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = cadcraft_io::read_dxf(dxf().as_bytes()).unwrap();
     assert_eq!(counts(&d), (3, 3));
     let handles: Vec<Handle> = d.model.iter().chain(d.block("MESH").unwrap().entities.iter()).map(|e| e.handle).collect();

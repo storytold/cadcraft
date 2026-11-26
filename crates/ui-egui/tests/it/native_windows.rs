@@ -18,7 +18,7 @@ fn frame_with(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) {
     let mut raw =
         egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0))), events, ..Default::default() };
     app.raw_input_hook(ctx, &mut raw);
-    cadcraft_ui_egui::cmdline::capture_tab(ctx, &mut raw);
+    app.before_input(ctx);
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
         app.ui(ui);
@@ -43,6 +43,7 @@ fn running(app: &CadApp) -> Option<&str> {
 #[test]
 fn modal_dialogs_block_native_panel_windows() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     pump(&mut app, &ctx);
     assert!(!native_input_blocked(&app, &ctx));
@@ -75,6 +76,7 @@ fn modal_dialogs_block_native_panel_windows() {
 #[test]
 fn keys_forwarded_from_a_native_window_reach_the_command_line_and_shortcuts() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     pump(&mut app, &ctx);
 
@@ -105,6 +107,7 @@ fn keys_forwarded_from_a_native_window_reach_the_command_line_and_shortcuts() {
 #[test]
 fn a_main_window_modifier_change_outlasts_keys_forwarded_meanwhile() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut app = CadApp::new(Session::new(), Services::default());
     pump(&mut app, &ctx);
     frame_with(&mut app, &ctx, vec![Event::ModifiersChanged(Modifiers::SHIFT)]);
@@ -113,4 +116,30 @@ fn a_main_window_modifier_change_outlasts_keys_forwarded_meanwhile() {
     frame_with(&mut app, &ctx, vec![Event::ModifiersChanged(Modifiers::NONE)]);
     pump(&mut app, &ctx);
     assert_eq!(ctx.input(|i| i.modifiers), Modifiers::NONE, "the released Shift is not put back");
+}
+
+/// Cmd/Ctrl+C pressed in a floating panel with nothing focused there is the runtime's `edit.copy`: the window's input
+/// no longer carries the clipboard event, and the app reads the command from the frame's output. It copies once, and
+/// Shift (COPYBASE) is left to the forwarded key.
+#[test]
+fn copy_pressed_in_a_floating_panel_reaches_the_app() {
+    use craft_ui::runtime::commands::{CommandSet as _, EditCommands, FirePhase, FireSource, Fired};
+    let fired = |mods| Fired::new(EditCommands::Copy.id().into(), FireSource::Key, FirePhase::Press, 0.0).mods(mods);
+
+    let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("circle", json!({"center": [0, 0], "radius": 1})).unwrap();
+    let all: Vec<_> = app.session.doc().unwrap().model.iter().map(|e| e.handle).collect();
+    app.session.set_selection(all);
+    pump(&mut app, &ctx);
+    assert!(app.session.clipboard.is_empty());
+
+    app.queue_fired_edits(&ctx, &[fired(craft_keymap::Mods { shift: true, ..craft_keymap::Mods::CMD })]);
+    pump(&mut app, &ctx);
+    assert!(app.session.clipboard.is_empty(), "a chord with Shift is not edit.copy");
+
+    app.queue_fired_edits(&ctx, &[fired(craft_keymap::Mods::CMD)]);
+    pump(&mut app, &ctx);
+    assert_eq!(app.session.clipboard.len(), 1, "copied once");
 }

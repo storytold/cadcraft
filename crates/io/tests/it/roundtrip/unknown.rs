@@ -27,7 +27,7 @@ fn drawing() -> Drawing {
         RawTag { code: 30, value: "3.75".into() },
         RawTag { code: 330, value: target.hex() },
     ];
-    d.model.push(Entity::new(handle, EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags })));
+    d.model.push(Entity::new(handle, EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags, graphics: Vec::new() })));
     d.model.push(Entity::new(target, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(5.0, 6.0, 7.0) })));
     d
 }
@@ -69,6 +69,7 @@ fn dxf_owner(bytes: &[u8]) {
 }
 
 pub(super) fn check(path: &str, version: Version, binary: bool) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let original = drawing();
     let mut current = original.clone();
     for pass in 1..=2 {

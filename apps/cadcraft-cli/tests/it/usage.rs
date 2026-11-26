@@ -818,12 +818,14 @@ fn non_unicode_arguments() {
     assert!(err.starts_with("error: invalid UTF-8 was detected"), "{err}");
 }
 
-/// An output name that isn't valid Unicode is written as given: only its extension picks the format.
+/// An output name that isn't valid Unicode reaches the filesystem unchanged: only its extension
+/// picks the format. Filesystems that reject the name must report their write error.
 #[cfg(unix)]
 #[test]
 fn non_unicode_output_names() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
+    cadcraft_io::dwg_worker::allow_in_process();
     let s = Scratch::new("nonunicode-out");
     let latin1 = |ext: &str| {
         let mut n = b"caf\xe9.".to_vec();
@@ -835,6 +837,18 @@ fn non_unicode_output_names() {
         let code = cadcraft_cli::run(args, &mut out, &mut err);
         (code, String::from_utf8_lossy(&err).into_owned())
     };
+    // APFS rejects invalid UTF-8 names (EILSEQ), although Unix paths can represent them.
+    // Probe this scratch filesystem rather than assuming every macOS volume behaves alike.
+    let probe = latin1("probe");
+    let rejected_name: Option<String> = match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            std::fs::remove_file(&probe).expect("remove filename probe");
+            None
+        }
+        #[cfg(target_os = "macos")]
+        Err(e) if e.raw_os_error() == Some(92) => Some(e.to_string()), // Darwin EILSEQ
+        Err(e) => panic!("unexpected filename probe error: {e}"),
+    };
     let b = s.0.join("b.dxf");
     let cases: [(Vec<OsString>, std::path::PathBuf); 3] = [
         (vec!["sample".into(), "bracket".into(), latin1("dxf").into()], latin1("dxf")),
@@ -843,6 +857,12 @@ fn non_unicode_output_names() {
     ];
     for (args, path) in cases {
         let (code, err) = run(args.clone());
+        if let Some(ref filesystem_error) = rejected_name {
+            assert_eq!(code, 1, "{args:?}: {err}");
+            assert!(err.contains(filesystem_error), "{args:?}: {err}");
+            assert!(!path.exists(), "{path:?}");
+            continue;
+        }
         assert_eq!(code, 0, "{args:?}: {err}");
         assert!(path.exists(), "{path:?}");
         assert!(std::fs::metadata(&path).expect("stat output").len() > 0, "{path:?}");
@@ -947,4 +967,12 @@ fn json_output_is_pretty_unless_compact() {
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert_eq!(r.stdout.lines().count(), 2, "one line per --cmd result: {}", r.stdout);
     assert_eq!(invoke(&["run", "--sample", "--compact"]).code, 2, "run takes no --compact");
+}
+
+#[test]
+fn roundtrip_progress_uses_the_requested_stderr() {
+    run_cases(
+        "roundtrip-progress",
+        &[case("roundtrip progress", &["roundtrip", "{b}", "--same-format", "--no-census"], 0, Starts("b.dxf: opened;"), Line("[1/1] b.dxf"))],
+    );
 }

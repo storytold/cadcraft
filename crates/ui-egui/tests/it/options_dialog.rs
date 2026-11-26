@@ -150,6 +150,7 @@ fn hostile_saved_profiles_are_ignored() {
 fn model_background_reaches_the_drawing_area_tokens() {
     let mut a = app();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let frame = |a: &mut CadApp| {
         let mut out = ctx.run_ui(Default::default(), |ui| a.ui(ui));
         out.textures_delta.clear();
@@ -173,6 +174,7 @@ fn model_background_reaches_the_drawing_area_tokens() {
 fn every_tab_renders() {
     let mut a = app();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     for (tab, label) in [
         ("display", "Crosshair size"),
         ("files", "Save new drawings as"),
@@ -215,6 +217,7 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
 
     // The Selection tab is laid out as AutoCAD's.
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     a.cmdline("options");
     a.ui.dialog = Some("options:selection".into());
     let text = render(&mut a, &ctx);
@@ -251,4 +254,23 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
     ] {
         assert!(text.contains(label), "{label} missing from:\n{text}");
     }
+}
+
+#[test]
+fn reset_brings_back_hidden_menu_bar_toolbar_and_status_bar() {
+    // #1240: with the in-window menu bar, the toolbar and the status bar hidden, OPTIONS ▸ Reset
+    // to Defaults (typed, or from the right-click menu) is the way back.
+    let mut a = app();
+    let d = cadcraft_ui_egui::UiState::default();
+    a.ui.in_window_menu = !d.in_window_menu;
+    a.ui.show_toolbar = false;
+    a.ui.show_status_bar = false;
+    a.ui.show_command_line = false;
+    a.ui.show_palettes = false;
+    a.run("options", json!({"reset": true})).unwrap();
+    assert_eq!(a.ui.in_window_menu, d.in_window_menu);
+    assert_eq!(a.ui.show_toolbar, d.show_toolbar);
+    assert_eq!(a.ui.show_status_bar, d.show_status_bar);
+    assert_eq!(a.ui.show_command_line, d.show_command_line);
+    assert_eq!(a.ui.show_palettes, d.show_palettes);
 }

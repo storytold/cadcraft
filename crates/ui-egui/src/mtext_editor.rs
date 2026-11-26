@@ -159,7 +159,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             });
         });
     });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         done = Done::Cancel;
     } else if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
         done = Done::Ok;
@@ -251,7 +251,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         ui.add_space(4.0);
         // Font
         let shown = cur.font.clone().unwrap_or_else(|| st.fmt.base_font.clone());
-        craft_ui::ComboBox::from_id_salt("mtext_font")
+        egui::ComboBox::from_id_salt("mtext_font")
             .width(120.0)
             .selected_text(shown.clone())
             .show_ui(ui, |ui| {
@@ -592,7 +592,7 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
     out.response.response.clone().accessible_name(crate::tl!("Text"));
     // On opening, and while the text is empty, the editor takes the focus; a field of the toolbar
     // the user clicked keeps it.
-    let free = ui.memory(|m| m.focused().is_none());
+    let free = !crate::framework::widget_has_keyboard(ui.ctx());
     if !out.response.has_focus() && (!st.focused || (buf.is_empty() && st.fmt.is_empty() && free)) {
         out.response.request_focus();
     }
@@ -712,6 +712,7 @@ mod tests {
     #[test]
     fn diameter_button_is_painted_and_named_under_bundled_fonts() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Panic);
         let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(120.0, 60.0))), ..Default::default() };
         let mut out = ctx.run_ui(raw, |ui| {
@@ -758,6 +759,7 @@ mod tests {
     #[test]
     fn editor_opens_only_for_mtext_text_entry_and_finishes_with_formatted_contents() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = CadApp::new(Session::new(), Services::default());
         let frame = |app: &mut CadApp| {
             let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
@@ -793,6 +795,7 @@ mod tests {
     #[test]
     fn textedit_on_the_next_mtext_does_not_keep_the_first_ones_text() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = CadApp::new(Session::new(), Services::default());
         let frame = |app: &mut CadApp| {
             let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
@@ -818,6 +821,7 @@ mod tests {
     #[test]
     fn textedit_opens_an_existing_mtext_with_its_contents() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = CadApp::new(Session::new(), Services::default());
         let frame = |app: &mut CadApp| {
             let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
@@ -853,6 +857,7 @@ mod tests {
     #[test]
     fn a_relative_height_in_a_multileaders_text_is_kept() {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut app = CadApp::new(Session::new(), Services::default());
         let frame = |app: &mut CadApp| {
             let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
@@ -881,5 +886,42 @@ mod tests {
         let big = st.fmt.fmt_at(0).height.expect("the relative height is kept");
         assert!((big - 2.0 * height).abs() < 1e-9, "{big} for a {height} text");
         assert_eq!(st.fmt.fmt_at(5).height, None, "the rest keeps the text's height");
+    }
+
+    /// A Thai MTEXT, which the canvas draws from a Thai fallback font, opens in the editor in
+    /// letters, not boxes: the app's interface fonts take the face drawing text takes for a
+    /// character they lack. Both interface families do, so Thai typed at the command line or in a
+    /// layer name (proportional) and a FIND result (monospace) are letters too (#2949). Runs where
+    /// a Thai face is found (CI embeds craft-fonts' Noto Sans Thai).
+    #[test]
+    fn thai_text_opens_in_the_editor_without_boxes() {
+        let thai = "แบบขยายผนังห้องน้ำ ชั้นที่ ๒";
+        let letters: Vec<char> = thai.chars().filter(|c| !c.is_whitespace()).collect();
+        if letters.iter().any(|c| cadcraft_fonts::ttf::fallback_for(*c).is_none()) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.run("mtext", serde_json::json!({ "at": [0, 20], "text": thai, "height": 2.5, "width": 40 })).unwrap();
+        app.start("textedit");
+        app.session.input(cadcraft_engine::Input::Point(cadcraft_geom::Vec2::new(1.0, 19.0))).unwrap();
+        // Real app frames: the fonts are the ones the app installs.
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))), ..Default::default() };
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(input.clone(), |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(ctx.data_mut(|d| d.get_temp::<State>(state_id())).expect("editor open").fmt.text(), thai);
+        let mut missing = Vec::new();
+        ctx.fonts_mut(|f| {
+            for font in [FontId::proportional(MIN_PX), FontId::monospace(MIN_PX)] {
+                missing.extend(letters.iter().filter(|c| !f.has_glyph(&font, **c)).map(|c| format!("{:?} {c}", font.family)));
+            }
+        });
+        assert!(missing.is_empty(), "drawn as boxes: {missing:?}");
     }
 }

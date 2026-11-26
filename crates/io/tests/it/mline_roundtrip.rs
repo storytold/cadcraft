@@ -284,6 +284,7 @@ fn hostile_mline_does_not_panic() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mline_survives_dwg_save_and_reopen() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     d.mline_styles.push(wall());
     let mut m = MLine::new(&wall(), &[Vec2::new(0.0, 0.0), Vec2::new(8.0, 0.0), Vec2::new(8.0, 6.0)], false, MLineJust::Top, 1.5);

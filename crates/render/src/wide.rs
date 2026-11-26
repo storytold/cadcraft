@@ -1,9 +1,9 @@
 //! Wide polylines with a linetype: each dash is a filled piece of the band, gaps are empty.
 
 use cadcraft_doc::{Linetype, LwPolyline};
-use cadcraft_geom::{Polyline, Vec2};
+use cadcraft_geom::{MAX_TESSELLATED_POINTS, Polyline, Vec2};
 
-use crate::linetype;
+use crate::linetype::{self, Layout};
 
 /// A point on the centre line: position, unit direction, half width and distance along the run.
 #[derive(Clone, Copy, Debug)]
@@ -15,8 +15,9 @@ struct Sample {
 }
 
 /// Centre-line samples of each segment, widths interpolated as [`crate::fill::wide_polyline`]
-/// does; distances start at 0 for each segment.
-fn segments(p: &LwPolyline, tol: f64) -> Vec<Vec<Sample>> {
+/// does; distances start at 0 for each segment. At most about `budget` points are sampled (see
+/// [`crate::fill::sample_within`]); past it segments are chords.
+fn segments(p: &LwPolyline, tol: f64, budget: &mut usize) -> Vec<Vec<Sample>> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let n = p.vertices.len();
     let mut out = Vec::new();
@@ -24,7 +25,7 @@ fn segments(p: &LwPolyline, tol: f64) -> Vec<Vec<Sample>> {
         let v = p.vertices.get(i % n.max(1)).copied().unwrap_or_default();
         let (w0, w1) = if p.const_width > 0.0 { (p.const_width, p.const_width) } else { (v.start_width, v.end_width) };
         let mut pts = Vec::new();
-        seg.tessellate(tol, &mut pts);
+        crate::fill::sample_within(seg, tol, budget, &mut pts);
         let m = pts.len();
         if m < 2 {
             continue;
@@ -66,13 +67,26 @@ fn edges(x: &Sample) -> (Vec2, Vec2) {
     (x.p + nrm, x.p - nrm)
 }
 
+/// How far along a closed PLINEGEN polyline, drawn from its first vertex, its second vertex lies
+/// (an arc by its chords at `tol`): where the pattern stretched around it is anchored, as AutoCAD
+/// lays it. 0 when the first two vertices coincide (`Polyline::segments` leaves that segment out).
+pub(crate) fn second_vertex_at(p: &LwPolyline, tol: f64) -> f64 {
+    let first = Polyline { vertices: p.vertices.iter().take(2).copied().collect(), closed: false };
+    first.tessellate(tol).windows(2).map(|w| if let [a, b] = w { a.dist(*b) } else { 0.0 }).sum()
+}
+
 /// Triangles for the dashes of a wide polyline drawn with `lt` at `scale`, a line across the band
 /// for each dot, and the centre line of each dash. With PLINEGEN the pattern runs along the whole
-/// polyline; otherwise it restarts at every vertex. A pattern shorter than `min_pattern` fills
-/// the whole band.
+/// polyline (stretched around a closed one from its second vertex, as a thin one is); otherwise
+/// it restarts at every vertex. A pattern shorter than `min_pattern` fills the whole band.
 pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> (Vec<Vec2>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
-    let mut runs = segments(p, tol);
+    let mut budget = MAX_TESSELLATED_POINTS;
+    let mut runs = segments(p, tol, &mut budget);
+    let mut how = Layout::Open;
     if p.plinegen && runs.len() > 1 {
+        if p.closed {
+            how = Layout::Closed { anchor: second_vertex_at(p, tol) };
+        }
         let mut whole: Vec<Sample> = Vec::new();
         for run in runs {
             let base = whole.last().map(|x| x.s).unwrap_or(0.0);
@@ -85,7 +99,7 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
     let mut centres = Vec::new();
     for run in &runs {
         let len = run.last().map(|x| x.s).unwrap_or(0.0);
-        let dashes = linetype::ranges(len, lt, scale, min_pattern).unwrap_or_else(|| vec![(0.0, len)]);
+        let dashes = linetype::ranges(len, lt, scale, min_pattern, how).unwrap_or_else(|| vec![(0.0, len)]);
         for (a, b) in dashes {
             if b - a <= 1e-12 {
                 if let Some(x) = at(run, a) {
@@ -113,4 +127,20 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
         }
     }
     (tris, ticks, centres)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The centre-line samples of a dashed wide polyline stop at the budget as the filled band's
+    /// do (#1922): every segment keeps a run, past the budget its two ends.
+    #[test]
+    fn dashed_wide_arcs_stop_sampling_at_the_budget() {
+        let mut budget = 1000;
+        let runs = segments(&crate::fill::tests::arcs(), 1e-9, &mut budget);
+        let samples: usize = runs.iter().map(Vec::len).sum();
+        assert_eq!(runs.len(), 99);
+        assert!(samples <= 1000 + 4096 + 2 * 99, "{samples}");
+    }
 }
