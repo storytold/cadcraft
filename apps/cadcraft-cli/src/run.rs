@@ -334,7 +334,8 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                 // Read it now, as script files are: a missing drawing must fail before `--metric`
                 // or an earlier file has changed what the app has open.
                 let path = app_path(f)?;
-                std::fs::File::open(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
+                // Not a plain open: a FIFO with no writer would block it forever.
+                cadcraft_engine::capped_read::open_regular(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
                 (format!("open {}", f.display()), "app.open", json!({"path": path}))
             }
             Drawing::Metric => ("--metric".into(), "engine.execute", json!({"command": "new", "params": {"metric": true}})),

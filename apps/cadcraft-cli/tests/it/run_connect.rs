@@ -103,6 +103,41 @@ fn a_drawing_that_cannot_be_read_fails_before_connecting() {
     assert!(stderr.contains("plan.dxf") && !stderr.contains("cannot reach"), "{stderr}");
 }
 
+/// A FIFO with no writer as the drawing: refused at once, never waited on.
+#[cfg(unix)]
+#[test]
+fn a_drawing_that_is_not_a_regular_file_is_refused_without_waiting() {
+    let dir = std::env::temp_dir().join(format!("run-connect-fifo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let fifo = dir.join("plan.dxf");
+    let made = Command::new("mkfifo").arg(&fifo).status().expect("run mkfifo");
+    assert!(made.success(), "mkfifo failed");
+    let free = TcpListener::bind("127.0.0.1:0").expect("bind").local_addr().expect("addr").to_string();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cadcraft-cli"))
+        .args(["run", "--connect", &free])
+        .arg(&fifo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run cadcraft-cli");
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait for cadcraft-cli") {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let out = child.wait_with_output().expect("collect output");
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(status.and_then(|s| s.code()), Some(1), "the run must fail, not wait for a writer");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not a regular file") && !stderr.contains("cannot reach"), "{stderr}");
+}
+
 #[test]
 fn a_refused_step_stops_the_run_and_says_which() {
     let (addr, rx) = fake_app(|req| match req["params"]["command"].as_str() {

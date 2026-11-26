@@ -8,15 +8,16 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
 
-/// Read at most `max` bytes from the regular file at `path`.
+/// Open the regular file at `path` for reading, without blocking on a special file.
 ///
-/// Returns an error if the path is not a regular file, cannot be opened, or holds more than `max`
-/// bytes. At most `max + 1` bytes are ever buffered, so an endless device cannot exhaust memory.
-pub fn read_capped(path: &Path, max: usize) -> io::Result<Vec<u8>> {
+/// The open is non-blocking on Unix, so a FIFO with no writer does not wait for one, and anything
+/// that is not a regular file is refused. Callers that only need to know a drawing can be read use
+/// this; [`read_capped`] reads through it.
+pub fn open_regular(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -29,6 +30,15 @@ pub fn read_capped(path: &Path, max: usize) -> io::Result<Vec<u8>> {
     if !meta.is_file() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a regular file"));
     }
+    Ok(file)
+}
+
+/// Read at most `max` bytes from the regular file at `path`.
+///
+/// Returns an error if the path is not a regular file, cannot be opened, or holds more than `max`
+/// bytes. At most `max + 1` bytes are ever buffered, so an endless device cannot exhaust memory.
+pub fn read_capped(path: &Path, max: usize) -> io::Result<Vec<u8>> {
+    let file = open_regular(path)?;
     // Read one byte past the limit so we can tell "exactly max" from "too big" without trusting
     // the metadata length (which a device may misreport).
     let mut buf = Vec::new();
