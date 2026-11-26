@@ -145,8 +145,8 @@ impl DocState {
         let Space::Paper(_) = &self.space else { return None };
         self.doc
             .space(&self.space)?
-            .iter()
-            .filter(|e| match &e.kind {
+            .iter_rev()
+            .find(|e| match &e.kind {
                 cadcraft_doc::EntityKind::Viewport(v) if v.id != 1 && v.on && v.height > 1e-12 && v.view_height > 1e-12 => {
                     match cadcraft_render::viewport_clip(&self.doc, e.handle, v) {
                         Some(c) => c.contains(at),
@@ -155,7 +155,6 @@ impl DocState {
                 }
                 _ => false,
             })
-            .last()
             .map(|e| e.handle)
     }
     /// The layers frozen in the active MSPACE viewport (VPLAYER, "VP Freeze"): that viewport does

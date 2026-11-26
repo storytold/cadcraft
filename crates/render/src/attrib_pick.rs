@@ -14,9 +14,9 @@
 //!   kept between clicks.
 //! - [`attribute_reference_at`] tests the references whose reach holds the click, topmost first and
 //!   above the ordinary pick's object, with the renderer's own layout and visibility rules.
-//! - Every step is paid for from one [`AttribPick`] budget before it is taken. When the budget runs
-//!   out the ordinary pick stands (a reference with an attribute to edit, or nothing): the result
-//!   is bounded and never a reference whose text is not under the click.
+//! - One [`AttribPick`] budget covers the check for an editable ordinary pick and the text search.
+//!   A confirmed editable pick stands when the text search runs out of work. If the budget runs
+//!   out before that check finds an editable attribute, the editor stays closed.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,10 +27,10 @@ use cadcraft_geom::{Bounds2, Vec2};
 use crate::clip;
 use crate::text_entity::{layout_mtext_contents, layout_mtext_entity, place_text_entity};
 
-/// The most work units one double-click may spend on attribute text: building the candidate list
-/// for store chunks that changed, scanning it, and testing candidates. One unit is about one object
-/// or attribute read; a text layout costs [`LAYOUT_UNITS`] plus [`LAYOUT_UNITS_PER_BYTE`] per byte
-/// it reads or copies. The ordinary pick is not part of it.
+/// The most work units one double-click may spend checking the ordinary pick for an editable
+/// attribute, building the candidate list for store chunks that changed, and testing candidates.
+/// One unit is about one object or attribute read. A text layout costs [`LAYOUT_UNITS`] plus
+/// [`LAYOUT_UNITS_PER_BYTE`] per byte it reads or copies.
 pub const MAX_ATTRIB_PICK_WORK: u64 = 1 << 22;
 
 /// The work of one text layout before its bytes: the style and font lookups, parsing, shaping.
@@ -80,7 +80,7 @@ pub struct AttribPickStats {
     pub clip_vertices: u64,
     /// Bytes the text layouts read or copied (paid for before each layout).
     pub payload_bytes: u64,
-    /// The budget ran out: the caller keeps the ordinary pick.
+    /// The budget ran out. A confirmed editable ordinary pick can still open the editor.
     pub exhausted: bool,
 }
 
@@ -753,10 +753,9 @@ fn store_search_units(store: &EntityStore) -> u64 {
 /// otherwise nothing. So an object drawn over a reference's attribute text (TEXT, say) still takes
 /// the click.
 ///
-/// All of it is paid for from `pick`. When the budget runs out the answer is the picked object
-/// when it is a reference with an attribute to edit, else `None`: never a reference whose
-/// attribute text was not found under the click. `targets` is the space's candidate list, kept
-/// between clicks.
+/// The budget in `pick` covers both the ordinary pick's editability check and the text search.
+/// When it runs out, the answer is the ordinary pick if the check found an editable attribute,
+/// or `None` otherwise. `targets` is the space's candidate list, kept between clicks.
 pub fn attribute_reference_at(
     d: &Drawing,
     store: &EntityStore,

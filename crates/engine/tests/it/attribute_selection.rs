@@ -1,8 +1,7 @@
 //! Ordinary selection and block attribute text (#2626). A double-click finds a block's attribute
-//! text through a list of its own, so the selection index measures a block reference exactly as
-//! the document does: window, crossing, fence and pick results don't change with the attributes'
-//! drawn text (invisible attributes, attributes on hidden layers, formatted multiline text), and
-//! the index and the plain scan below its size threshold agree.
+//! text through a list of its own. The selection index measures a block reference as the document
+//! does. The index and plain scan give the same window, crossing, fence and pick results around
+//! the reference's geometry and near its attribute text.
 
 use cadcraft_engine::doc::{
     Attrib, AttribModes, AttribProps, Block, Common, Drawing, Entity, EntityKind, HAlign, HVal, Handle, Insert, Line, MText, MultilineAttrib, Space,
@@ -121,12 +120,12 @@ fn the_index_and_the_scan_select_references_alike_whatever_their_attributes() {
         let s = select::select_fence(&small, &Space::Model, &fence).contains(&r_small);
         let l = select::select_fence(&large, &Space::Model, &fence).contains(&r_large);
         assert_eq!(s, l, "{name}: fence through the attribute text");
-        for p in [Vec2::new(100.3, 1.4), Vec2::new(100.3, -300.0), Vec2::new(0.5, 0.0)] {
-            assert_eq!(
-                select::pick(&small, &Space::Model, p, 0.05).is_some_and(|h| h == r_small),
-                select::pick(&large, &Space::Model, p, 0.05).is_some_and(|h| h == r_large),
-                "{name}: pick at {p:?}"
-            );
+        assert!(!s, "{name}: the text-only fence misses the reference");
+        for (p, expected) in [(Vec2::new(100.3, 1.4), false), (Vec2::new(100.3, -300.0), false), (Vec2::new(0.5, 0.0), true)] {
+            let s = select::pick(&small, &Space::Model, p, 0.05) == Some(r_small);
+            let l = select::pick(&large, &Space::Model, p, 0.05) == Some(r_large);
+            assert_eq!(s, l, "{name}: scan and index picks at {p:?}");
+            assert_eq!(s, expected, "{name}: expected reference hit at {p:?}");
         }
     }
 }
