@@ -200,9 +200,10 @@ pub(crate) enum ViewMode {
   steps act on the drawing the app has open. --save or --export is the app's Save As (an image
   path exports and the drawing keeps its name). Paths are made absolute, and drawing and script
   files are read, before anything is sent. A --script's output goes to stderr, as headless.
-  {last} is checked against the drawing the app has open (ui.inspect): if a step, a click in
-  the window or another client opened or switched to another drawing since the handle came
-  back, the run fails rather than apply it there. --sample, --window and --view are headless
+  {last} is checked against the id of the drawing the app has open (ui.inspect's uid): if a
+  step, a click in the window or another client opened or switched to another drawing since the
+  handle came back, the run fails rather than apply it there, as it does when the app doesn't
+  report drawing ids. --sample, --window and --view are headless
   only."#)]
 pub(crate) struct RunArgs {
     #[arg(value_name = "FILE", help = open_help())]

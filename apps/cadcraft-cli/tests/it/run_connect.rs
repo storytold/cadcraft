@@ -4,7 +4,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -39,9 +39,10 @@ fn requests(rx: &mpsc::Receiver<Vec<Value>>) -> Vec<Value> {
     rx.recv_timeout(Duration::from_secs(60)).expect("the run connected and closed the connection")
 }
 
-/// A `ui.inspect` reply whose open drawing is `title`.
-fn inspect(title: &str) -> Value {
-    json!({"result": {"session": {"documents": [{"index": 0, "title": title, "path": null, "active": true}]}}})
+/// A `ui.inspect` reply whose open drawing has id `uid`. The index, title and path never change, as
+/// when one file is closed and opened again in the same slot: only the id tells the drawings apart.
+fn inspect(uid: u64) -> Value {
+    json!({"result": {"session": {"documents": [{"index": 0, "uid": uid, "title": "plan.dxf", "path": "/plans/plan.dxf", "active": true}]}}})
 }
 
 fn run(args: &[&str]) -> Output {
@@ -57,7 +58,7 @@ fn steps_become_control_requests_in_order() {
     std::fs::write(&drawing, "").expect("write the drawing to open");
     let (addr, rx) = fake_app(|req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
         (Some("cmdline.script"), _) => json!({"result": {"output": ["Command: CIRCLE"], "state": {}}}),
-        (Some("ui.inspect"), _) => inspect("Drawing1"),
+        (Some("ui.inspect"), _) => inspect(1),
         (Some("engine.execute"), Some("line")) => json!({"result": {"handles": ["1A"]}}),
         _ => json!({"result": null}),
     });
@@ -115,46 +116,71 @@ fn a_refused_step_stops_the_run_and_says_which() {
     assert_eq!(requests(&rx).len(), 1, "nothing after the refused step is sent");
 }
 
+/// When the fake app's open drawing changes, relative to `run`'s requests.
+#[derive(Clone, Copy, Debug)]
+enum Switch {
+    /// A script step opens another drawing, or closes the file and opens it again.
+    ByScript,
+    /// Outside the run (a click in the window, another client), after the handle's drawing was read.
+    AfterTheHandle,
+    /// Outside the run, while the command that returns the handle runs.
+    WhileTheCommandRuns,
+}
+
+/// A fake app whose drawing id goes from 1 to 2 at `switch`, where `line` returns handle 1A.
+fn switching_app(switch: Switch) -> (String, mpsc::Receiver<Vec<Value>>) {
+    let uid = Arc::new(AtomicU64::new(1));
+    let inspects = Arc::new(AtomicU64::new(0));
+    fake_app(move |req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
+        (Some("ui.inspect"), _) => {
+            let r = inspect(uid.load(Ordering::SeqCst));
+            // The second inspect is the one right after `line`: the handle's drawing is known.
+            if matches!(switch, Switch::AfterTheHandle) && inspects.fetch_add(1, Ordering::SeqCst) == 1 {
+                uid.store(2, Ordering::SeqCst);
+            }
+            r
+        }
+        (Some("cmdline.script"), _) => {
+            if matches!(switch, Switch::ByScript) {
+                uid.store(2, Ordering::SeqCst);
+            }
+            json!({"result": {"output": [], "state": {}}})
+        }
+        (_, Some("line")) => {
+            if matches!(switch, Switch::WhileTheCommandRuns) {
+                uid.store(2, Ordering::SeqCst);
+            }
+            json!({"result": {"handles": ["1A"]}})
+        }
+        _ => json!({"result": null}),
+    })
+}
+
 #[test]
-fn last_is_refused_once_another_drawing_is_open() {
-    // Another drawing comes up through a step (a script that opens one), or outside the run
-    // (a click in the window, another client): either way the handle is not applied.
-    for switch_on_script in [true, false] {
-        let switched = Arc::new(AtomicBool::new(false));
-        let s = Arc::clone(&switched);
-        let (addr, rx) = fake_app(move |req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
-            (Some("ui.inspect"), _) => {
-                let r = inspect(if s.load(Ordering::SeqCst) { "Drawing2" } else { "Drawing1" });
-                // Outside the run: the drawing changes right after the handle came back.
-                if !switch_on_script {
-                    s.store(true, Ordering::SeqCst);
-                }
-                r
-            }
-            (Some("cmdline.script"), _) => {
-                s.store(true, Ordering::SeqCst);
-                json!({"result": {"output": [], "state": {}}})
-            }
-            (_, Some("line")) => json!({"result": {"handles": ["1A"]}}),
-            _ => json!({"result": null}),
-        });
+fn last_is_refused_once_another_drawing_could_be_open() {
+    for (switch, says) in [
+        (Switch::ByScript, "another drawing"),
+        (Switch::AfterTheHandle, "another drawing"),
+        (Switch::WhileTheCommandRuns, "doesn't say which drawing"),
+    ] {
+        let (addr, rx) = switching_app(switch);
         let mut args = vec!["--connect", addr.as_str(), "--cmd", LINE];
-        if switch_on_script {
-            args.extend_from_slice(&["--script", "open other.dxf"]);
+        if matches!(switch, Switch::ByScript) {
+            args.extend_from_slice(&["--script", "close\nopen /plans/plan.dxf"]);
         }
         args.extend_from_slice(&["--cmd", ERASE_LAST]);
         let out = run(&args);
-        assert_eq!(out.status.code(), Some(1), "switch on script: {switch_on_script}");
+        assert_eq!(out.status.code(), Some(1), "{switch:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("another drawing"), "switch on script: {switch_on_script}: {stderr}");
-        assert!(requests(&rx).iter().all(|r| r["params"]["command"] != "erase"), "the handle was never sent");
+        assert!(stderr.contains(says), "{switch:?}: {stderr}");
+        assert!(requests(&rx).iter().all(|r| r["params"]["command"] != "erase"), "{switch:?}: the handle was never sent");
     }
 }
 
 #[test]
 fn last_survives_a_step_that_keeps_the_same_drawing_open() {
     let (addr, rx) = fake_app(|req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
-        (Some("ui.inspect"), _) => inspect("Drawing1"),
+        (Some("ui.inspect"), _) => inspect(1),
         (Some("cmdline.script"), _) => json!({"result": {"output": [], "state": {}}}),
         (_, Some("line")) => json!({"result": {"handles": ["1A"]}}),
         _ => json!({"result": null}),
@@ -166,14 +192,17 @@ fn last_survives_a_step_that_keeps_the_same_drawing_open() {
 }
 
 #[test]
-fn last_is_refused_when_the_app_does_not_say_which_drawing_is_open() {
-    let (addr, rx) = fake_app(|req| match req["params"]["command"].as_str() {
-        Some("line") => json!({"result": {"handles": ["1A"]}}),
-        _ => json!({"result": {}}),
+fn last_is_refused_when_the_app_does_not_report_drawing_ids() {
+    // A release before `uid`: the drawing list without ids.
+    let (addr, rx) = fake_app(|req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
+        (Some("ui.inspect"), _) => json!({"result": {"session": {"documents": [{"index": 0, "title": "plan.dxf", "active": true}]}}}),
+        (_, Some("line")) => json!({"result": {"handles": ["1A"]}}),
+        _ => json!({"result": null}),
     });
     let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", ERASE_LAST]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("doesn't say which drawing"), "{}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("doesn't say which drawing"), "{stderr}");
     assert!(requests(&rx).iter().all(|r| r["params"]["command"] != "erase"), "the handle was never sent");
 }
 

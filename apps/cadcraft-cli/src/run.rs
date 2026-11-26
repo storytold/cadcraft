@@ -33,7 +33,7 @@ pub(crate) enum RunError {
     #[error("{}: {source}", .path.display())]
     ReadDrawing { path: std::path::PathBuf, source: std::io::Error },
     /// `{last}` came from a drawing that is no longer the app's open one.
-    #[error("--cmd {id}: `{{last}}` came from another drawing than the one open now: {why}")]
+    #[error("--cmd {id}: `{{last}}` is not filled in: {why}")]
     LastStale { id: String, why: &'static str },
     /// The running app refused a step, or the connection failed during it.
     #[error("{step}: {message}")]
@@ -297,15 +297,21 @@ fn remote(app: &mut cadcraft_mcp::Remote, step: &str, method: &str, params: Valu
     app.call(method, params).map_err(|message| RunError::Remote { step: step.to_string(), message }.into())
 }
 
-/// The drawing the app has open, as `ui.inspect` reports it (index, title, path): what a returned
-/// handle belongs to. The protocol has no drawing selector, so a switch made in the window or by
-/// another client between two steps shows only here. `None` when the app doesn't say.
-fn open_drawing(app: &mut cadcraft_mcp::Remote) -> Option<Value> {
+/// The id of the drawing the app has open (`ui.inspect`'s `session.documents[].uid`): what a
+/// returned handle belongs to. The protocol has no drawing selector, so a switch made in the window
+/// or by another client between two steps shows only here. Ids are unique for the app's lifetime,
+/// so a drawing closed and opened again gets a new one. `None` when the app doesn't report it
+/// (releases before this field).
+fn open_drawing(app: &mut cadcraft_mcp::Remote) -> Option<u64> {
     let r = app.call("ui.inspect", json!({})).ok()?;
     let docs = r.get("session")?.get("documents")?.as_array()?;
     let d = docs.iter().find(|d| d.get("active").and_then(Value::as_bool) == Some(true))?;
-    Some(json!([d.get("index"), d.get("title"), d.get("path")]))
+    d.get("uid")?.as_u64()
 }
+
+/// Why `{last}` is refused when its drawing can't be told.
+const UNKNOWN_DRAWING: &str =
+    "the app doesn't say which drawing its handle came from (a release without drawing ids, or the drawing changed while the command ran)";
 
 /// Whether `{last}` appears anywhere in `p`.
 fn mentions_last(p: &Value) -> bool {
@@ -327,8 +333,8 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
             Drawing::File(f) => {
                 // Read it now, as script files are: a missing drawing must fail before `--metric`
                 // or an earlier file has changed what the app has open.
-                std::fs::File::open(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
                 let path = app_path(f)?;
+                std::fs::File::open(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
                 (format!("open {}", f.display()), "app.open", json!({"path": path}))
             }
             Drawing::Metric => ("--metric".into(), "engine.execute", json!({"command": "new", "params": {"metric": true}})),
@@ -353,7 +359,7 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
     // The last returned handle, with the drawing that was open when it came back. Only asked for
     // when some step uses `{last}`.
     let chains = steps.iter().any(|s| matches!(s, Ready::Cmd(c) if mentions_last(&c.params)));
-    let mut last_handle: Option<(Handle, Option<Value>)> = None;
+    let mut last_handle: Option<(Handle, Option<u64>)> = None;
     for step in steps {
         match step {
             Ready::Script(body) => {
@@ -366,17 +372,27 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                 let h = match &last_handle {
                     Some((h, then)) if mentions_last(params) => match (then, open_drawing(&mut app)) {
                         (Some(then), Some(now)) if now == *then => Some(*h),
-                        (Some(_), Some(_)) => return Err(RunError::LastStale { id: id.clone(), why: "the app has another drawing open" }.into()),
-                        _ => return Err(RunError::LastStale { id: id.clone(), why: "the app doesn't say which drawing is open" }.into()),
+                        (Some(_), Some(_)) => {
+                            return Err(RunError::LastStale {
+                                id: id.clone(),
+                                why: "the app has another drawing open than the one its handle came from",
+                            }
+                            .into());
+                        }
+                        _ => return Err(RunError::LastStale { id: id.clone(), why: UNKNOWN_DRAWING }.into()),
                     },
                     Some((h, _)) => Some(*h),
                     None => None,
                 };
                 let params = fill_last(params, h).map_err(|source| RunError::CmdLast { id: id.clone(), source })?;
+                // The drawing is read before and after: a switch while the command ran leaves its
+                // handle's drawing unknown, never recorded as the drawing switched to.
+                let before = if chains { open_drawing(&mut app) } else { None };
                 let r = remote(&mut app, &format!("--cmd {id}"), "engine.execute", json!({"command": id, "params": params}))?;
                 if let Some(h) = returned_handle_remote(&r).filter(|_| chains) {
+                    let after = open_drawing(&mut app);
                     // A handle whose drawing can't be told is never filled in (see above).
-                    last_handle = Some((h, open_drawing(&mut app)));
+                    last_handle = Some((h, before.filter(|b| after == Some(*b))));
                 }
                 if !r.is_null() {
                     io.outln(format_args!("{r}"));
