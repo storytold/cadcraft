@@ -29,7 +29,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }
-        viewport_label(&p, *r);
+        viewport_label(&p, *r, t);
     }
     let p = ui.painter();
     for (r, tile) in tiles {
@@ -49,8 +49,7 @@ pub(super) fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
 
 /// The UCS icon: its X and Y arms along the current UCS's axes, with a square at the corner for
 /// the World UCS.
-pub(super) fn draw_ucs_icon(p: &egui::Painter, at: &crate::viewcube::IconPlace) {
-    let t = Tokens::get();
+pub(super) fn draw_ucs_icon(p: &egui::Painter, at: &crate::viewcube::IconPlace, t: &Tokens) {
     let (o, x, y) = (at.origin, at.x, at.y);
     let arm = crate::viewcube::ARM;
     let st = Stroke::new(1.0, t.canvas_ink);
@@ -66,8 +65,7 @@ pub(super) fn draw_ucs_icon(p: &egui::Painter, at: &crate::viewcube::IconPlace) 
     p.text(o + y * (arm + 10.0), egui::Align2::CENTER_CENTER, crate::tl!("Y"), f, t.canvas_ink);
 }
 
-pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
-    let t = Tokens::get();
+pub(super) fn viewport_label(p: &egui::Painter, rect: Rect, t: &Tokens) {
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
     p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
 }

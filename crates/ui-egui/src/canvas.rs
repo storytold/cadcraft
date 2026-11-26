@@ -567,7 +567,7 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     // UCS icon, ViewCube and viewport label.
     if app.session.ucsicon_bits() & 1 != 0 {
         let place = crate::viewcube::IconPlace::of(app, rect, xf.twist, |p| xf.to_screen(p));
-        draw_ucs_icon(painter, &place);
+        draw_ucs_icon(painter, &place, &t);
         // Clickable only at the Command prompt: while a command runs, a pick or a snap at the UCS
         // origin (where the icon may sit) reaches the drawing.
         if app.session.running.is_none() && app.session.pending_window.is_none() {
@@ -577,7 +577,7 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    viewport_label(painter, rect, &t);
     // Typing and Escape reach the command line even when its overlay is hidden, unless the
     // inline constraint editor already handled this frame's keys (Enter would otherwise repeat
     // `last_command`, e.g. immediately undoing the edit after Cmd+Z).

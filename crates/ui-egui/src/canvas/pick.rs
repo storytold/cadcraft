@@ -292,19 +292,27 @@ mod hatch_pick_tests {
         let mut out = ctx.run_ui(egui::RawInput { screen_rect: screen, ..Default::default() }, |ui| app.ui(ui));
         out.textures_delta.clear();
 
+        let bedit_ink = dark.for_block_editor().canvas_ink;
         let mut light_fills = 0usize;
-        fn count_fills(shape: &egui::Shape, light: egui::Color32, l: &mut usize) {
+        let mut dark_labels = 0usize;
+        fn scan_tiles(shape: &egui::Shape, light: egui::Color32, ink: egui::Color32, fills: &mut usize, labels: &mut usize) {
             match shape {
                 egui::Shape::Rect(r) if r.rect.width() > 200.0 && r.rect.height() > 200.0 && r.fill == light => {
-                    *l += 1;
+                    *fills += 1;
                 }
-                egui::Shape::Vec(v) => v.iter().for_each(|s| count_fills(s, light, l)),
+                egui::Shape::Text(t) if t.galley.text().contains("2D Wireframe") => {
+                    let color = t.override_text_color.or_else(|| t.galley.job.sections.first().map(|sec| sec.format.color));
+                    assert_eq!(color, Some(ink), "viewport label should use Block Editor canvas_ink");
+                    *labels += 1;
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| scan_tiles(s, light, ink, fills, labels)),
                 _ => {}
             }
         }
         for s in &out.shapes {
-            count_fills(&s.shape, dark.block_editor_canvas, &mut light_fills);
+            scan_tiles(&s.shape, dark.block_editor_canvas, bedit_ink, &mut light_fills, &mut dark_labels);
         }
         assert!(light_fills >= 2, "both active and inactive tiles should use light block_editor_canvas (got {light_fills})");
+        assert!(dark_labels >= 2, "both active and inactive tile viewport labels should use dark canvas_ink (got {dark_labels})");
     }
 }
