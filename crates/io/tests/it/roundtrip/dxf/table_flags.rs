@@ -6,8 +6,8 @@
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, Layer, TextStyle};
-use cadcraft_dxf::{Tag, Value, records, sections};
 use cadcraft_io::{SaveOptions, Version, read, write_with};
+use craft_dxf::{Tag, Value, records, sections};
 
 fn layers() -> Vec<(Layer, i64)> {
     let mut cases = Vec::new();
@@ -59,7 +59,7 @@ fn fixture(table: &str, body: &str) -> Drawing {
 
 fn output(drawing: &Drawing, table: &str, version: Version, binary: bool) -> Vec<Tag> {
     let bytes = write_with(drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
-    let tags = cadcraft_dxf::parse(&bytes).unwrap();
+    let tags = craft_dxf::parse(&bytes).unwrap();
     let sections = sections(&tags);
     let tables = records(&sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
     let matching: Vec<_> = tables.into_iter().filter(|(kind, groups)| kind == table && groups.contains(&Tag::s(2, "Flags"))).collect();
