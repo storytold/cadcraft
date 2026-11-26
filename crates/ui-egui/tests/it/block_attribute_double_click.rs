@@ -421,7 +421,6 @@ fn an_attribute_frozen_in_the_viewport_is_not_clickable() {
     with_attrib(&mut app, reference, "NO", |a| {
         a.props.layer = Some("HID".into());
         a.text.insert = Vec3::new(105.0, 1.0, 0.0);
-        // A taller text leaves room between its strokes, clear of the pick aperture.
         a.text.height = 1.0;
     });
     // A layout viewport looking at the reference, and MSPACE into it.
@@ -451,13 +450,22 @@ fn an_attribute_frozen_in_the_viewport_is_not_clickable() {
         .unwrap();
     app.canvas.zoom_pending = false;
     assert_eq!(app.session.viewport_frozen(), ["HID".to_string()], "the active viewport freezes the attribute's layer");
+    let at = {
+        let d = app.session.doc().unwrap();
+        let EntityKind::Insert(ins) = &d.entity(reference).unwrap().kind else { panic!("not a block reference") };
+        let a = ins.attribs.iter().find(|a| a.tag == "NO").unwrap();
+        let (shaped, _) = cadcraft_render::place_text_entity(d, &a.text, &a.text.value);
+        let stroke = shaped.strokes.iter().find(|s| s.len() >= 2).unwrap();
+        (stroke[0] + stroke[1]) / 2.0
+    };
     let mut h = harness(app);
-    // Between the strokes of the text. The ordinary pick reads a reference's text without the
-    // viewport's frozen layers, so a click on a stroke of this attribute would take the reference.
-    let at = between_strokes(h.state(), reference, "NO", |picked| picked.is_none());
+    assert_eq!(cadcraft_engine::cmd::curves::pick_at(&h.state().session, at), Some(reference), "ordinary pick still hits the stroke");
     double_click(&mut h, at);
-    assert!(h.state().ui.dialog.is_none(), "the viewport does not draw the attribute's text: no editor");
-    assert!(h.state().session.running.is_none(), "and no command starts");
+    assert!(h.state().ui.dialog.is_none(), "a stroke on a viewport-frozen layer does not open the editor");
+    assert!(h.state().session.running.is_none(), "no command starts");
+    h.run_steps(30);
+    double_click(&mut h, Vec2::new(108.0, 0.0));
+    assert_editor_on(h.state(), reference);
 }
 
 #[test]

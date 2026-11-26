@@ -15,8 +15,12 @@ fn draws_a_block(e: &Entity) -> bool {
 
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
+    hit_polylines_in(d, e, tol, &[])
+}
+
+fn hit_polylines_in(d: &Drawing, e: &Entity, tol: f64, frozen: &[String]) -> Vec<Vec<Vec2>> {
     if matches!(e.kind, EntityKind::Insert(_)) {
-        let list = insert_geometry(d, e, tol);
+        let list = insert_geometry(d, e, tol, frozen);
         return list
             .prims
             .iter()
@@ -124,8 +128,9 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     }
 }
 
-fn insert_geometry(d: &Drawing, e: &Entity, tol: f64) -> cadcraft_render::DisplayList {
-    cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() })
+fn insert_geometry(d: &Drawing, e: &Entity, tol: f64, frozen: &[String]) -> cadcraft_render::DisplayList {
+    let opts = cadcraft_render::Options { tolerance: tol, linetypes: false, ..Default::default() };
+    cadcraft_render::build_entities_with_frozen_layers(d, std::iter::once(e), &opts, frozen)
 }
 
 /// The part of an image its clips leave showing, as triangles (three points each); empty when a
@@ -144,7 +149,7 @@ fn shown_image_tris(img: &cadcraft_render::DImage) -> Vec<Vec2> {
 }
 
 fn insert_fill_hits_box(d: &Drawing, e: &Entity, bx: &Bounds2, tol: f64) -> bool {
-    let list = insert_geometry(d, e, tol);
+    let list = insert_geometry(d, e, tol, &[]);
     list.prims.iter().any(|p| {
         if let cadcraft_render::Kind::Image { index } = p.kind {
             let Some(img) = list.images.get(index as usize) else { return false };
@@ -171,7 +176,11 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
-    let polys = hit_polylines(d, e, tol);
+    entity_distance_in(d, e, p, tol, &[])
+}
+
+fn entity_distance_in(d: &Drawing, e: &Entity, p: Vec2, tol: f64, frozen: &[String]) -> f64 {
+    let polys = hit_polylines_in(d, e, tol, frozen);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
         || matches!(e.kind, EntityKind::Tolerance(_));
@@ -456,6 +465,9 @@ pub(crate) fn pick_with(
 ) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
     let all_visible = viewport_scale.is_some() && d.anno_all_visible();
+    // The attribute editor tests visible block contents. Frozen contents can only narrow the
+    // hit geometry, so the bounds can still be shared by viewports at this annotation scale.
+    let geometry_frozen = if viewport_scale.is_some() { frozen } else { &[] };
     // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e, frozen) {
@@ -465,7 +477,7 @@ pub(crate) fn pick_with(
         if !is_infinite(&e) && !bounds_of(d, &e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        if entity_distance(d, &e, p, aperture / 4.0) <= aperture {
+        if entity_distance_in(d, &e, p, aperture / 4.0, geometry_frozen) <= aperture {
             return Some(e.handle);
         }
     }

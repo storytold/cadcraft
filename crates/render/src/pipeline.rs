@@ -228,6 +228,16 @@ pub(crate) fn with_point_view(d: &Drawing, space: &Space, opts: &Options) -> Opt
 
 /// Build the display list for a set of loose entities (previews, rubber bands).
 pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options) -> DisplayList {
+    build_entities_with_frozen_layers(d, ents, opts, &[])
+}
+
+/// Build loose entities in drawing coordinates, with the active viewport's frozen layers.
+pub fn build_entities_with_frozen_layers<'a, I: IntoIterator<Item = &'a Entity>>(
+    d: &Drawing,
+    ents: I,
+    opts: &Options,
+    frozen: &[String],
+) -> DisplayList {
     let ents: Vec<&Entity> = ents.into_iter().collect();
     // Only previews holding points need the model extents for relative point sizes.
     let with_view;
@@ -250,7 +260,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
         max_points: MAX_DISPLAY_POINTS,
     };
     for e in ents {
-        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, frozen, &[]), e);
     }
     b.list
 }
