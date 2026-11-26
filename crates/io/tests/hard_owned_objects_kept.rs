@@ -91,6 +91,7 @@ fn check(text: &str, label: &str) {
 
 #[test]
 fn an_object_held_by_a_kept_one_is_kept() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = read_dxf(source().as_bytes()).expect("read");
     for generation in 1..=2 {
         let text = write_dxf(&d);
@@ -108,6 +109,7 @@ fn an_object_held_by_a_kept_one_is_kept() {
 /// Mutual hard owners must not erase the live path through a retained dictionary entry.
 #[test]
 fn cyclic_hard_owners_with_a_live_holder_stay_kept() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let groups = [
         (0, "SECTION"),
         (2, "OBJECTS"),

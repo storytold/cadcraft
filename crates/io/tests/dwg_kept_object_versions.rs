@@ -200,6 +200,7 @@ fn acad(v: Version) -> acadrust::DxfVersion {
 /// The DXF of `version` saved as a `target` DWG holds the render settings and the field that
 /// acadrust's own DXF → DWG conversion keeps.
 fn kept_objects_survive(version: &str, target: Version) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dxf = synthetic(version);
     let mut source = acadrust::DxfReader::from_reader(Cursor::new(dxf.clone().into_bytes())).unwrap().read().unwrap();
     let as_read = kept(&source);
@@ -242,6 +243,7 @@ fn kept_objects_survive(version: &str, target: Version) {
 /// value.
 #[test]
 fn kept_groups_keep_their_version_across_saves() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dxf = synthetic("AC1032");
     for (first, second) in [(Version::R2004, Version::R2004), (Version::R2010, Version::R2018), (Version::R2018, Version::R2018)] {
         let mut source = acadrust::DxfReader::from_reader(Cursor::new(dxf.clone().into_bytes())).unwrap().read().unwrap();
@@ -293,6 +295,7 @@ fn a_2018_files_kept_objects_reach_a_2004_dwg() {
 /// A drawing from an R2000 DXF (no newer groups to read differently) saves as before.
 #[test]
 fn an_r2000_files_drawing_still_saves_as_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dxf = "  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1015\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nLINE\r\n  8\r\n0\r\n 10\r\n0\r\n 20\r\n0\r\n 30\r\n0\r\n 11\r\n10\r\n 21\r\n5\r\n 31\r\n0\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
     let d = read(dxf.as_bytes(), "line.dxf").unwrap();
     let dwg = write_with(&d, "line.dwg", &SaveOptions::default()).unwrap();

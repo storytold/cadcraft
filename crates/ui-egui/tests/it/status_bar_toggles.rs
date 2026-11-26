@@ -13,7 +13,7 @@ fn harness() -> Harness<'static, CadApp> {
     let mut session = Session::empty();
     session.open_drawing(Drawing::new_imperial(), "Status bar toggles", None);
     let app = CadApp::new(session, Services::default());
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);

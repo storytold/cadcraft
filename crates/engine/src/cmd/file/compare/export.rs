@@ -455,15 +455,9 @@ fn tinted_dim_style(d: &mut Drawing, name: &str, color: Color, tinted: &mut Tint
     if let Some(n) = tinted.names.get(&key) {
         return Some(n.clone());
     }
-    let st = d.dim_styles.iter().find(|s| s.name.eq_ignore_ascii_case(name))?.clone();
+    let st = d.dim_style(name)?.clone();
     let base = format!("COMPARE_{}_{}", tag(color), st.name);
-    let new = tinted.next.find(
-        "dimension style",
-        &base,
-        d.dim_styles.len(),
-        |i| suffixed(&base, i),
-        |n| d.dim_styles.iter().any(|s| s.name.eq_ignore_ascii_case(n)),
-    );
+    let new = tinted.next.find("dimension style", &base, d.dim_styles.len(), |i| suffixed(&base, i), |n| d.dim_style(n).is_some());
     d.dim_styles.push(DimStyle {
         name: new.clone(),
         dim_line_color: Color::ByBlock,

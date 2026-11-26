@@ -26,6 +26,7 @@ fn square(size: f64) -> Vec<PolyVertex> {
 
 #[test]
 fn line_extrusion_roundtrips_with_world_endpoints() {
+    cadcraft_io::dwg_worker::allow_in_process();
     // A LINE's endpoints are world coordinates whatever its extrusion, which only directs its
     // thickness; a mirrored normal (0, 0, -1) must come back from DXF and DWG (#2241).
     let mut d = Drawing::new_metric();
@@ -117,7 +118,7 @@ fn hatch(pattern: &str, gradient: Option<Gradient>) -> Hatch {
     Hatch {
         pattern: pattern.into(),
         solid: pattern == "SOLID",
-        loops: vec![HatchLoop { vertices: square(10.0), outer: true, sources: Vec::new() }],
+        loops: vec![HatchLoop { vertices: square(10.0), outer: true, boundary_flags: None, sources: Vec::new() }],
         scale: 2.0,
         angle: 0.25,
         associative: false,

@@ -94,7 +94,7 @@ mod tests {
         let mut ui = UiState::default();
         let before = serde_json::to_value(&ui).unwrap();
         let mut invalid = ui.clone();
-        invalid.docking.layout.root = None;
+        invalid.docking = cadcraft_ui_egui::docking::Workspace::default();
         assert!(save(&invalid).is_err());
         let mut record: Value = serde_json::from_str(&save(&ui).unwrap()).unwrap();
         record["docking"] = serde_json::to_value(&invalid.docking).unwrap();

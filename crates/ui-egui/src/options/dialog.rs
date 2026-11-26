@@ -141,7 +141,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_display", |ui| {
         let theme_caption = ui.label(crate::tl!("Interface theme"));
         let mut theme = app.ui.theme;
-        let theme_combo = craft_ui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
+        let theme_combo = egui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
             for t in ThemePref::ALL {
                 ui.selectable_value(&mut theme, t, theme_label(t));
             }
@@ -154,7 +154,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
 
         let animations_caption = ui.label(crate::tl!("Animation effects"));
         let mut animations = app.ui.animations;
-        let animations_combo = craft_ui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
+        let animations_combo = egui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
             for a in AnimationPref::ALL {
                 ui.selectable_value(&mut animations, a, animations_label(a));
             }
@@ -168,7 +168,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         let scale_caption = ui.label(crate::tl!("Interface scale"));
         let scale = app.options.interface_scale;
         let percent = |s: f32| format!("{} %", (s * 100.0).round());
-        let scale_combo = craft_ui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
+        let scale_combo = egui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
             for n in [75u16, 100, 125, 150, 175, 200, 250, 300] {
                 let s = f32::from(n) / 100.0;
                 if ui.selectable_label((scale - s).abs() < 1e-4, format!("{n} %")).clicked() && (scale - s).abs() >= 1e-4 {
@@ -254,7 +254,7 @@ fn save_version_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, V
     let version_caption = ui.label(crate::tl!("Default save version"));
     let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
     let mut version = current;
-    let version_combo = craft_ui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
+    let version_combo = egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
         for v in crate::SaveVersion::ALL {
             ui.selectable_value(&mut version, v, v.year());
         }
@@ -543,7 +543,7 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     grid(ui, "options_preferences", |ui| {
         let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
-        let language_combo = craft_ui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
+        let language_combo = egui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
             for p in crate::i18n::Preference::for_picker() {
                 ui.selectable_value(&mut lang, p, p.name());
             }
@@ -577,6 +577,15 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     }
     if right_click {
         right_click_window(&app.options, ui.ctx(), &mut right_click, changes);
+    }
+    // The web build is always the latest: there is nothing to check for there.
+    if !cfg!(target_arch = "wasm32") {
+        ui.add_space(6.0);
+        let mut check = app.options.check_updates_at_start;
+        if ui.checkbox(&mut check, crate::tl!("Check for updates when CADCraft starts")).changed() {
+            changes.insert("checkUpdatesAtStart".into(), json!(check));
+        }
+        hint(ui, crate::tl!("Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks."));
     }
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(RIGHT_CLICK), right_click));
 }
@@ -615,23 +624,35 @@ fn right_click_window(o: &super::UiOptions, ctx: &egui::Context, open: &mut bool
                     ui.label(crate::tl!("milliseconds"));
                 });
                 hint(ui, crate::tl!("While a command runs, a quick click is Enter and a longer click opens the shortcut menu."));
+                hint(ui, crate::tl!("With no command running, a quick click repeats the last command or runs what was typed."));
             });
             ui.add_space(6.0);
-            for (title, note, key, current) in [
-                (crate::tl!("Default Mode"), crate::tl!("No objects selected and no command running:"), "rightClickDefault", o.right_click_default),
-                (crate::tl!("Edit Mode"), crate::tl!("Objects selected and no command running:"), "rightClickEdit", o.right_click_edit),
-            ] {
-                heading(ui, title);
-                ui.group(|ui| {
-                    ui.set_width(ui.available_width());
-                    hint(ui, note);
-                    for (choice, label) in [(IdleClick::Repeat, crate::tl!("Repeat last command")), (IdleClick::Menu, crate::tl!("Shortcut Menu"))] {
-                        if ui.radio(current == choice, label).clicked() && current != choice {
-                            changes.insert(key.into(), json!(choice.as_str()));
+            // Like Command mode, Default and Edit modes decide only with the time-sensitive
+            // right-click off: with it on, a quick click is Enter and a longer one the menu.
+            ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
+                for (title, note, key, current) in [
+                    (
+                        crate::tl!("Default Mode"),
+                        crate::tl!("No objects selected and no command running:"),
+                        "rightClickDefault",
+                        o.right_click_default,
+                    ),
+                    (crate::tl!("Edit Mode"), crate::tl!("Objects selected and no command running:"), "rightClickEdit", o.right_click_edit),
+                ] {
+                    heading(ui, title);
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        hint(ui, note);
+                        for (choice, label) in
+                            [(IdleClick::Repeat, crate::tl!("Repeat last command")), (IdleClick::Menu, crate::tl!("Shortcut Menu"))]
+                        {
+                            if ui.radio(current == choice, label).clicked() && current != choice {
+                                changes.insert(key.into(), json!(choice.as_str()));
+                            }
                         }
-                    }
-                });
-            }
+                    });
+                }
+            });
             ui.add_enabled_ui(!o.time_sensitive_right_click, |ui| {
                 heading(ui, crate::tl!("Command Mode"));
                 ui.group(|ui| {

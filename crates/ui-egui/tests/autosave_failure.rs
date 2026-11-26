@@ -49,6 +49,7 @@ fn a_failed_autosave_is_shown_until_a_write_works() {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.enable_autosave(&dir);
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.autosave_tick(&ctx);
     assert!(app.autosave_notice.is_none(), "nothing failed yet");
 

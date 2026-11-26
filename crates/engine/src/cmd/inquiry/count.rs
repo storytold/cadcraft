@@ -62,8 +62,7 @@ impl Scope {
             Some(_) => {
                 let name = given.unwrap_or_default();
                 let d = s.doc()?;
-                let l =
-                    d.layouts.iter().find(|l| l.name.eq_ignore_ascii_case(&name)).ok_or_else(|| bad(cmd, format!("no layout named \"{name}\"")))?;
+                let l = d.layout(&name).ok_or_else(|| bad(cmd, format!("no layout named \"{name}\"")))?;
                 Ok(Scope::Space(Space::Paper(l.name.clone())))
             }
         }

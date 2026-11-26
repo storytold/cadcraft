@@ -16,13 +16,17 @@ fn harness() -> Harness<'static, CadApp> {
     app.session.execute("view.set", &json!({ "center": [15, 10], "height": 40 })).unwrap();
     app.canvas.zoom_pending = false;
     // 60 frames a second: the default step (0.25 s) spreads two clicks past the double-click delay.
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }
@@ -73,7 +77,7 @@ fn double_clicked_text_takes_ime_composition_and_commit() {
     let mut h = harness();
     double_click(&mut h, Vec2::new(4.0, 1.2));
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Enter new text");
-    // Without a CJK font (none installed, no craft-fonts) the command line draws 中文 as boxes,
+    // Without a CJK font (none installed, no craft-fonts) the text box draws 中文 as boxes,
     // which the harness takes for a bug. The IME path below is the same either way.
     let drawable = h.ctx.fonts_mut(|view| {
         [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
@@ -83,17 +87,17 @@ fn double_clicked_text_takes_ime_composition_and_commit() {
     if !drawable {
         h.ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
     }
-    // Composition is shown, not saved; the commit is inserted exactly once (#1761).
+    // The double-clicked TEXT is edited in place (#842): composition goes into its box, not the
+    // command line, and the commit is inserted exactly once (#1761).
     h.event(Event::Ime(ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None }));
     h.run_steps(1);
-    assert_eq!(h.state().cmd.preedit, "zhong");
+    assert!(h.state().cmd.preedit.is_empty());
     assert!(h.state().cmd.buffer.is_empty());
     h.event(Event::Ime(ImeEvent::Commit("中文".into())));
     h.run_steps(1);
-    assert!(h.state().cmd.preedit.is_empty());
-    assert_eq!(h.state().cmd.buffer, "中文");
+    assert!(h.state().cmd.buffer.is_empty());
     h.key_press(Key::Enter);
-    h.run_steps(1);
+    h.run_steps(2);
     assert_eq!(text_at(&h, 0), "中文");
 }
 
