@@ -154,6 +154,9 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
         if let Some(m) = cadcraft_engine::cmd::file::not_saved_message(&lost) {
             io.errln(format_args!("{m}"));
         }
+        for note in cadcraft_engine::cmd::file::dwg_notes(d) {
+            io.errln(format_args!("{note}"));
+        }
     }
     Ok(())
 }
