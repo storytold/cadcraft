@@ -1843,6 +1843,77 @@ fn a_subentity_name_expires_when_its_record_is_rebuilt() {
 }
 
 #[test]
+fn an_empty_attrib_and_a_seqend_have_distinct_names() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let h = inserted(&mut s, json!({ "T1": "A1" }));
+    ok(&mut s, "(setq a (entnext i) end (entnext a))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget end)))"), "\"SEQEND\"");
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+                let mut blank = i.attribs[0].clone();
+                blank.tag.clear();
+                i.attribs.push(blank);
+            }
+        })
+        .unwrap();
+    assert_eq!(ok(&mut s, "(entget end)"), "nil");
+    assert_eq!(ok(&mut s, "(setq b (entnext a)) (list (cdr (assoc 0 (entget b))) (eq b (entnext a)))"), "(\"ATTRIB\" T)");
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+                i.attribs.truncate(1);
+            }
+        })
+        .unwrap();
+    assert_eq!(ok(&mut s, "(list (entget b) (cdr (assoc 0 (entget (entnext a)))))"), "(nil \"SEQEND\")");
+}
+
+#[test]
+fn explode_and_burst_retire_the_removed_inserts_record_names() {
+    for command in ["explode", "burst"] {
+        let mut s = with_attributes(&[("T1", 0, "D1"), ("T2", 0, "D2")]);
+        let h = inserted(&mut s, json!({ "T1": "A1" }));
+        ok(&mut s, "(setq a (entnext i) end (entnext (entnext a)))");
+        let original = s.doc().unwrap().entity(h).unwrap().as_ref().clone();
+        inserted(&mut s, json!({ "T1": "B1" }));
+        ok(&mut s, "(setq b (entnext i))");
+        // A host can shorten the run before removal and later reuse the handle.
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+                    i.attribs.truncate(1);
+                }
+            })
+            .unwrap();
+        let result = s.execute(command, &json!({ "handles": [h.hex()] })).unwrap();
+        assert!(!result["handles"].as_array().unwrap().is_empty(), "{command} creates pieces");
+        assert!(s.doc().unwrap().entity(h).is_none(), "{command} removes the reference");
+        s.doc_mut().unwrap().model.push(original);
+        assert_eq!(ok(&mut s, "(list (entget a) (entget end) (cdr (assoc 1 (entget b))))"), "(nil nil \"B1\")", "{command}");
+    }
+}
+
+#[test]
+fn entmod_obeys_the_refedit_working_set_for_attrib_owners() {
+    let mut s = with_attributes(&[("T1", 0, "D1")]);
+    let editing = inserted(&mut s, json!({ "T1": "E1" }));
+    let outside = inserted(&mut s, json!({ "T1": "A1" }));
+    s.execute("refedit", &json!({ "handle": editing.hex() })).unwrap();
+    let read = "(cdr (assoc 1 (entget (entnext i))))";
+    let edit = r#"(progn (setq d (entget (entnext i))) (entmod (subst (cons 1 "A2") (assoc 1 d) d)))"#;
+    assert_eq!(ok(&mut s, read), "\"A1\"");
+    assert_eq!(ok(&mut s, edit), "nil");
+    assert_eq!(ok(&mut s, read), "\"A1\"");
+    s.execute("refset", &json!({ "add": [outside.hex()] })).unwrap();
+    assert_ne!(ok(&mut s, edit), "nil");
+    assert_eq!(ok(&mut s, read), "\"A2\"");
+}
+
+#[test]
 fn a_restored_reference_does_not_revive_an_old_name() {
     // entdel of the reference, then entdel again to bring it back: the name given before the
     // first entdel names nothing, also after the reference returns.

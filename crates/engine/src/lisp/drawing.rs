@@ -386,17 +386,17 @@ struct Record {
     /// The record's place after the INSERT's own: an ATTRIB's index, or `attribs.len()` for the
     /// SEQEND.
     slot: usize,
-    /// The attribute's tag when it was named (`""` for the SEQEND): a record at that place with
-    /// another tag is another object, so the name no longer holds.
-    tag: String,
+    /// The ATTRIB's tag, which can be empty. A SEQEND has no tag.
+    tag: Option<String>,
 }
 
 impl Record {
-    /// Whether the reference's attributes still have this record in its place, with its tag.
+    /// Whether the reference still has the same kind of record in this slot, with the same tag.
     fn holds(&self, attribs: &[cadcraft_doc::Attrib]) -> bool {
-        match attribs.get(self.slot) {
-            Some(a) => a.tag.eq_ignore_ascii_case(&self.tag),
-            None => self.slot == attribs.len() && self.tag.is_empty(),
+        match (attribs.get(self.slot), self.tag.as_deref()) {
+            (Some(a), Some(tag)) => a.tag.eq_ignore_ascii_case(tag),
+            (None, None) => self.slot == attribs.len(),
+            _ => false,
         }
     }
 }
@@ -408,9 +408,9 @@ impl Record {
 /// given in (`DocState::expire_names`); otherwise it names nothing (`nil`), never another record.
 #[derive(Default)]
 pub(crate) struct RecordNames {
-    /// The name of each record a walk reached, by its INSERT and place: walking again gives the
-    /// same names.
-    by_slot: HashMap<(Handle, usize), RecordName>,
+    /// Names by INSERT and then by slot. Removing an INSERT ends all its names, even after a
+    /// change to the length of its attribute run.
+    by_owner: HashMap<Handle, HashMap<usize, RecordName>>,
     /// What each name that still holds stands for, by its number.
     by_name: HashMap<u64, Record>,
     /// The drawing's name epoch the names were given in.
@@ -422,7 +422,7 @@ impl RecordNames {
     /// gone or rebuilt.
     fn expire(&mut self, epoch: u64) {
         if self.epoch != epoch {
-            self.by_slot.clear();
+            self.by_owner.clear();
             self.by_name.clear();
             self.epoch = epoch;
         }
@@ -431,22 +431,20 @@ impl RecordNames {
     /// Drop the name numbered `id`: it names nothing from now on.
     fn retire(&mut self, id: u64) {
         if let Some(r) = self.by_name.remove(&id)
-            && self.by_slot.get(&(r.owner, r.slot)).is_some_and(|n| n.id == id)
+            && let Some(slots) = self.by_owner.get_mut(&r.owner)
+            && slots.get(&r.slot).is_some_and(|n| n.id == id)
         {
-            self.by_slot.remove(&(r.owner, r.slot));
+            slots.remove(&r.slot);
+            if slots.is_empty() {
+                self.by_owner.remove(&r.owner);
+            }
         }
     }
 
-    /// The reference `e` was erased: the names of its records went with it, and OOPS or `entdel`
-    /// bringing it back brings none back. The names of other references keep holding. One lookup
-    /// per record of `e`.
+    /// End the names of the removed reference. Restoring it does not revive any of its names.
     pub(crate) fn erased(&mut self, e: &Entity) {
-        let cadcraft_doc::EntityKind::Insert(i) = &e.kind else { return };
-        if self.by_name.is_empty() {
-            return;
-        }
-        for slot in 0..=i.attribs.len() {
-            if let Some(n) = self.by_slot.remove(&(e.handle, slot)) {
+        if let Some(slots) = self.by_owner.remove(&e.handle) {
+            for n in slots.into_values() {
                 self.by_name.remove(&n.id);
             }
         }
@@ -475,22 +473,22 @@ impl RecordNames {
     /// walk is stable. None past the SEQEND, at the limit of names, or when the numbers run out.
     fn name(&mut self, epoch: u64, attribs: &[cadcraft_doc::Attrib], owner: Handle, slot: usize) -> Option<RecordName> {
         self.expire(epoch);
-        if let Some(n) = self.by_slot.get(&(owner, slot)).copied() {
+        if let Some(n) = self.by_owner.get(&owner).and_then(|slots| slots.get(&slot)).copied() {
             if self.by_name.get(&n.id).is_some_and(|r| r.holds(attribs)) {
                 return Some(n);
             }
             self.retire(n.id);
         }
         let tag = match attribs.get(slot) {
-            Some(a) => a.tag.clone(),
-            None if slot == attribs.len() => String::new(),
+            Some(a) => Some(a.tag.clone()),
+            None if slot == attribs.len() => None,
             None => return None,
         };
         if self.by_name.len() >= MAX_RECORD_NAMES {
             return None;
         }
         let name = RecordName::fresh(owner)?;
-        self.by_slot.insert((owner, slot), name);
+        self.by_owner.entry(owner).or_default().insert(slot, name);
         self.by_name.insert(name.id, Record { owner, slot, tag });
         Some(name)
     }
@@ -641,6 +639,9 @@ fn entmod_attrib(ctx: &mut Ctx<'_>, list: &Value, name: RecordName) -> Value {
         return Value::Nil;
     }
     let Ok(d) = ctx.s.doc() else { return Value::Nil };
+    if crate::cmd::blocks::refedit::locked(d, owner) {
+        return Value::Nil;
+    }
     let Some((expected, now)) = record_list(d, name, owner, slot) else { return Value::Nil };
     // The type, layout, owner, handle and any other group are not the attribute's to change: a
     // list that differs from `entget` anywhere but its group 1 value is refused (a SEQEND's
