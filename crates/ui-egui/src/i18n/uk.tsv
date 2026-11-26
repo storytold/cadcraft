@@ -1453,12 +1453,12 @@
 	Not a point: {text}	Не точка: {text}
 	ATTDEF could not start	Не вдалося запустити ATTDEF
 	Middle	Посередині
-	Fit	Вписати
-	Top center	Зверху по центру
+	Fit	Вписування
+	Top center	Угорі по центру
 	Middle left	Посередині ліворуч
 	Middle center	Посередині по центру
 	Middle right	Посередині праворуч
-	Bottom center	Знизу по центру
+	Bottom center	Унизу по центру
 justify	Center	По центру
 justify	Align	Вирівняно
 	Ctrl+Enter to apply	Ctrl+Enter to apply
