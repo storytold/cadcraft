@@ -310,6 +310,18 @@ fn stored_linear_measurements_include_dimlfac_but_angles_stay_in_radians() {
     assert!((stored_measurement(&control) - 100.0).abs() < 1e-9, "DIMLFAC=1 keeps the raw measurement");
 }
 
+#[test]
+fn negative_dimlfac_follows_the_dimension_space() {
+    let model = with_linear_factor(linear(0.0), -2.0);
+    assert!((stored_measurement(&model) - 100.0).abs() < 1e-9, "model space uses 1.0 when DIMLFAC is negative");
+
+    let entity = model.model.iter().next().expect("the linear dimension");
+    let mut paper = Drawing::new_metric();
+    paper.dim_styles = model.dim_styles.clone();
+    paper.add(&Space::Paper("Layout1".into()), entity.common.clone(), entity.kind.clone()).unwrap();
+    assert!((stored_measurement(&paper) - 200.0).abs() < 1e-9, "paper space uses the absolute DIMLFAC");
+}
+
 /// Group 42 in CADCraft's direct DXF output.
 fn stored_measurement_dxf(d: &Drawing) -> f64 {
     let t = tags(&write_dxf(d));
