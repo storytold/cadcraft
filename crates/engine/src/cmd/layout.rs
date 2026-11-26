@@ -897,15 +897,6 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         }
         if let Some(w) = plot_window(s, p, cmd, &space)? {
             o.insert("window".into(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
-            if p.get("plotArea").is_none()
-                && p.get("fit").is_none()
-                && p.get("scale").is_none()
-                && p.get("window").is_none()
-                && let Space::Paper(name) = &space
-                && s.doc()?.layout(name).is_some_and(|l| l.page.plot_area.eq_ignore_ascii_case("display") && l.page.scale_to_fit)
-            {
-                o.insert("fit".into(), json!(true));
-            }
         }
         // Without one, the plotter uses each sheet's page setup.
         match super::plotters::plot_transparency(s, p) {

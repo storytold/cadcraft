@@ -494,11 +494,14 @@ fn plot_layout_saved_area_and_explicit_window_precedence() {
     assert!(text.contains(r#""window":[[10.0,20.0],[110.0,80.0]]"#), "fallback to saved plot_window: {text}");
 
     // Saved `plotArea: "display"` resolves the layout's current view window when `plot` omits `plotArea`,
-    // preserves saved `scaleToFit: true` when neither `fit` nor `scale` is explicit,
+    // leaves `fit` unset in shared options so each sheet resolves its own saved scale-to-fit,
     // and lets an explicit `window` without `plotArea` take precedence over saved `"display"`.
     s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "display", "scaleToFit": true})).unwrap();
     let text = opts(s.execute("plot", &json!({"layout": "Layout1"})).unwrap());
-    assert!(text.contains(r#""window":[["#) && text.contains(r#""fit":true"#), "saved display area resolves view window and fit: {text}");
+    assert!(
+        text.contains(r#""window":[["#) && !text.contains(r#""fit":"#),
+        "saved display resolves window without leaking fit into shared opts: {text}"
+    );
     let text = opts(s.execute("plot", &json!({"layout": "Layout1", "fit": false, "scale": 0.5})).unwrap());
     assert!(text.contains(r#""fit":false"#) && text.contains(r#""scale":0.5"#), "explicit fit/scale preserved: {text}");
     let text = opts(s.execute("plot", &json!({"layout": "Layout1", "window": [[15, 25], [85, 75]]})).unwrap());

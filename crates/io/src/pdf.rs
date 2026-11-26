@@ -545,7 +545,8 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
             if o.window.is_none() {
                 o.window = saved.window;
             }
-            if o.fit.is_none() && o.scale.is_none() && saved.fit {
+            let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
+            if o.fit.is_none() && o.scale.is_none() && saved_fit {
                 o.fit = Some(true);
             }
             if o.scale.is_none() {
@@ -571,7 +572,8 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
                 o.window = saved.window;
             }
             // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
-            if o.fit.is_none() && o.scale.is_none() && saved.fit {
+            let saved_fit = saved.fit || (page.plot_area.eq_ignore_ascii_case("display") && page.scale_to_fit && o.window.is_some());
+            if o.fit.is_none() && o.scale.is_none() && saved_fit {
                 o.fit = Some(true);
             }
             if o.scale.is_none() {
@@ -1153,5 +1155,41 @@ mod saved_setup_tests {
         let m = map(&d, json!({"scale": 0.25}));
         assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
         assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
+
+    /// Saved `plot_area: "display"` with `scale_to_fit: true` resolves `fit: true` per sheet without
+    /// overriding another sheet's fixed scale in a multi-sheet plot.
+    #[test]
+    fn saved_display_scale_to_fit_is_resolved_per_sheet() {
+        let mut d = drawing(true, 1.0);
+        d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "display".into();
+        let mut l2 = cadcraft_doc::Layout::new("L2", 4);
+        l2.page = cadcraft_doc::PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            plot_area: "window".into(),
+            plot_window: [0.0, 0.0, 200.0, 100.0],
+            scale_to_fit: false,
+            scale: 0.5,
+            center: true,
+            ..cadcraft_doc::PageSetup::default()
+        };
+        d.layouts.push(l2);
+
+        let shared = PdfOptions::from_json(&json!({"window": [[0.0, 0.0], [816.0, 584.0]]}));
+        let l1 = with_saved_setup(&d, &Space::Paper("L1".into()), &shared);
+        let l2 = with_saved_setup(&d, &Space::Paper("L2".into()), &shared);
+        assert_eq!(l1.fit, Some(true), "L1 saved display + scale_to_fit fits its resolved window");
+        assert_eq!(l2.fit, None, "L2 fixed scale is not overridden by L1's display fit");
+        assert_eq!(l2.scale, Some(0.5));
+
+        // Explicit `fit: false` and explicit `scale` still win on L1.
+        let explicit_no_fit =
+            with_saved_setup(&d, &Space::Paper("L1".into()), &PdfOptions::from_json(&json!({"window": [[0, 0], [100, 60]], "fit": false})));
+        assert_eq!(explicit_no_fit.fit, Some(false));
+        let explicit_scale =
+            with_saved_setup(&d, &Space::Paper("L1".into()), &PdfOptions::from_json(&json!({"window": [[0, 0], [100, 60]], "scale": 0.25})));
+        assert_eq!((explicit_scale.fit, explicit_scale.scale), (None, Some(0.25)));
     }
 }
