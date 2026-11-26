@@ -561,6 +561,12 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
                 o.window = None;
                 return o;
             }
+            if page.plot_area.eq_ignore_ascii_case("extents") {
+                o.plot_area = Some("extents".into());
+                if o.center.is_none() {
+                    o.center = Some(saved.center);
+                }
+            }
             if o.window.is_none() {
                 o.window = saved.window;
             }

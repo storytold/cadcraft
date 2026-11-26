@@ -331,6 +331,15 @@ fn plot_goes_through_the_hook() {
     let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window", "window": [[4388, -1253], [5229, -659]]})).unwrap());
     assert!(text.contains(r#""window":[[4388.0,-1253.0],[5229.0,-659.0]]"#), "{text}");
     assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "extents"})).is_ok());
+    // Saved plot_window is used as fallback for explicit `plotArea: "window"` even when saved plot_area is "layout".
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window"})).unwrap());
+    assert!(text.contains(r#""window":[[10.0,20.0],[110.0,80.0]]"#), "fallback to saved plot_window: {text}");
+    // Saved `plotArea: "display"` resolves the layout's current view window when `plot` omits `plotArea`.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "display"})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1"})).unwrap());
+    assert!(text.contains(r#""window":[["#), "saved display area resolves current view window: {text}");
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout"})).unwrap();
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
     // Image output holds one sheet: several `layouts` would report pages:N but write one render.
     for out in ["x.png", "x.svg"] {

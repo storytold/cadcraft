@@ -939,12 +939,30 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     }
 }
 
+/// Valid, normalized saved plot window from `page.plot_window`, regardless of `page.plot_area`.
+fn saved_window_corners(page: &PageSetup) -> Option<Bounds2> {
+    let [x1, y1, x2, y2] = page.plot_window;
+    [x1, y1, x2, y2]
+        .iter()
+        .all(|v| v.is_finite())
+        .then(|| Bounds2::new(Vec2::new(x1, y1), Vec2::new(x2, y2)))
+        .filter(|w| w.width() > 1e-9 && w.height() > 1e-9)
+}
+
 /// The rectangle a plot of `plotArea` covers: `extents` plots everything, `display` the current
 /// view, `limits` the drawing limits (model space), `window` the `window` corners (or a layout's
 /// saved `plot_window`), and `layout` the layout sheet.
 fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Option<Bounds2>> {
     let area = str_param(p, "plotArea").map(str::to_ascii_lowercase);
-    let w = match (space, area.as_deref()) {
+    let plain_sheet = p.get("fit").and_then(Value::as_bool) == Some(false) && p.get("scale").is_none() && p.get("window").is_none();
+    let effective = match (&area, space) {
+        (Some(a), _) => Some(a.as_str()),
+        (None, Space::Paper(name)) if !plain_sheet => {
+            s.doc()?.layout(name).filter(|l| l.page.plot_area.eq_ignore_ascii_case("display")).map(|_| "display")
+        }
+        (None, _) => None,
+    };
+    let w = match (space, effective) {
         (_, None) | (Space::Model, Some("extents")) | (Space::Paper(_), Some("layout" | "extents")) => return Ok(None),
         (_, Some("display")) => {
             let st = s.state()?;
@@ -969,7 +987,7 @@ fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Optio
                 Bounds2::new(a, b)
             } else if let Space::Paper(name) = space
                 && let Some(l) = s.doc()?.layout(name)
-                && let Some(saved) = cadcraft_render::paper::saved_plot(&l.page).window
+                && let Some(saved) = saved_window_corners(&l.page)
             {
                 saved
             } else {

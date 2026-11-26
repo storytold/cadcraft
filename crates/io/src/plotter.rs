@@ -455,4 +455,34 @@ mod tests {
         assert!(svg_text.contains("viewBox=\"0 0 841.") && svg_text.contains(" 594."), "SVG viewBox should match saved window: {svg_text}");
         assert!(svg_text.contains("<polyline"), "SVG should contain title block geometry");
     }
+
+    /// A layout with saved `plot_area = "extents"`, `scale_to_fit = false`, and an explicit scale
+    /// places its offset extents on the printable area (not scaled around `(0, 0)`) in PDF and PNG.
+    #[test]
+    fn saved_extents_with_fixed_scale_places_offset_geometry_on_sheet() {
+        let mut d = Drawing::new_metric();
+        let mut l = cadcraft_doc::Layout::new("ExtSheet", 4);
+        l.page = cadcraft_doc::PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [5.0; 4],
+            plot_area: "extents".into(),
+            scale_to_fit: false,
+            scale: 0.25,
+            center: true,
+            ..cadcraft_doc::PageSetup::default()
+        };
+        d.layouts.push(l);
+        let sp = Space::Paper("ExtSheet".into());
+        d.add(&sp, Common::default(), EntityKind::Line(Line { a: Vec3::new(4388.0, -956.0, 0.0), b: Vec3::new(5188.0, -956.0, 0.0) })).unwrap();
+
+        let png = plot(&d, &sp, &json!({"output": "png", "resolution": 100})).unwrap();
+        assert!(inked(&png, 120.0, 180.0, 105.0), "saved extents at fixed scale centers geometry on sheet");
+        assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"));
+
+        // Explicit `plotArea: "layout"` remains independent and plots the blank (0,0) sheet.
+        let layout_png = plot(&d, &sp, &json!({"output": "png", "resolution": 100, "plotArea": "layout", "fit": false})).unwrap();
+        assert!(!inked(&layout_png, 120.0, 180.0, 105.0), "explicit layout area ignores saved extents");
+    }
 }
