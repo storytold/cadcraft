@@ -108,6 +108,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 if let (Some(part), Some((region, inverted))) = (part, &clip) {
                     b.list.expanded = part.list.expanded;
                     b.list.truncated |= part.list.truncated;
+                    b.list.undashed = b.list.undashed.saturating_add(part.list.undashed);
                     append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) });
                     xclip_frame(b, ctx, region, rgb);
                 }

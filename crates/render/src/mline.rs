@@ -61,7 +61,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
 fn stroke(b: &mut Builder, ctx: &Ctx, rgb: Ink, lw: f32, lt: Option<&cadcraft_doc::Linetype>, scale: f64, min: f64, pts: &[Vec2]) {
     match lt.filter(|_| b.opts.linetypes) {
         Some(lt) => {
-            for dash in linetype::apply(pts, lt, scale, min) {
+            for dash in linetype::apply(pts, lt, scale, min, b) {
                 match dash.as_slice() {
                     [p] => b.point(ctx, rgb, *p),
                     _ => b.polyline(ctx, rgb, lw, &dash),

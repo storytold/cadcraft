@@ -35,20 +35,40 @@ pub enum Layout {
 const MAX_PERIODS: f64 = 50_000.0;
 
 /// Most pattern elements a run is laid out over (a long pattern repeated many times); beyond
-/// that it is drawn continuous too.
-const MAX_ELEMENTS: f64 = 2_000_000.0;
+/// that it is drawn continuous too, and the build says so ([`Budget::refused`]).
+const MAX_ELEMENTS: f64 = crate::MAX_RUN_DASH_ELEMENTS as f64;
 
-/// The drawn stretches of a run `len` long, as (start, end) along it (a dot: start == end), in
-/// order; `None` when it is drawn continuous (shorter than one period, or repeating too often).
-/// `pattern` is scaled; `min_pattern` is the caller's (see [`MAX_PERIODS`]).
-fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64) -> Option<Vec<(f64, f64)>> {
+/// Where a build's dash work is charged ([`crate::Builder`], against
+/// [`crate::MAX_DASH_ELEMENTS`]): asked before a run's pattern elements are visited.
+pub(crate) trait Budget {
+    /// Take `visits` pattern elements for one run; false when the build may not spend them, and
+    /// the run is drawn continuous.
+    fn take(&mut self, visits: usize) -> bool;
+    /// A run is drawn continuous because of a limit: its own ([`MAX_ELEMENTS`]) or the build's.
+    fn refused(&mut self);
+}
+
+/// The pattern elements [`layout`] visits on a run `len` long, or `None` when the run is drawn
+/// continuous whatever the limits: shorter than one period, or past [`MAX_PERIODS`] in a display
+/// build. `pattern` is scaled.
+fn visits(len: f64, pattern: &[f64], min_pattern: f64) -> Option<f64> {
     let period: f64 = pattern.iter().map(|d| d.abs()).sum();
     if !(len.is_finite() && period > 1e-12) || len < period || (min_pattern > 0.0 && len / period > MAX_PERIODS) {
         return None;
     }
-    if (len / period + 2.0) * pattern.len() as f64 > MAX_ELEMENTS {
+    Some((len / period + 2.0) * pattern.len() as f64)
+}
+
+/// The drawn stretches of a run `len` long, as (start, end) along it (a dot: start == end), in
+/// order; `None` when it is drawn continuous (see [`visits`]), also when it repeats past
+/// [`MAX_ELEMENTS`] or `budget` refuses it. `pattern` is scaled; `min_pattern` is the caller's.
+fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64, budget: &mut impl Budget) -> Option<Vec<(f64, f64)>> {
+    let elements = visits(len, pattern, min_pattern)?;
+    if elements > MAX_ELEMENTS {
+        budget.refused();
         return None;
     }
+    let period: f64 = pattern.iter().map(|d| d.abs()).sum();
     let mut drawn = Vec::new();
     let mut at = 0.0;
     for &d in pattern {
@@ -59,6 +79,11 @@ fn layout(len: f64, pattern: &[f64], how: Layout, min_pattern: f64) -> Option<Ve
     }
     if drawn.is_empty() {
         return Some(Vec::new());
+    }
+    // At most MAX_ELEMENTS here, so the cast is exact enough to charge.
+    if !budget.take(elements.ceil() as usize) {
+        budget.refused();
+        return None;
     }
     let first = pattern.first().copied().unwrap_or(0.0);
     let out = match how {
@@ -208,34 +233,37 @@ fn cut(pts: &[Vec2], ranges: &[(f64, f64)]) -> Vec<Vec<Vec2>> {
 }
 
 /// Split `pts`, an open run, into dashes. Dots come back as single-point runs. A run shorter than
-/// one period, or with a scaled pattern shorter than `min_pattern` (sub-pixel), comes back whole.
-pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Vec<Vec2>> {
-    apply_as(pts, lt, scale, min_pattern, Layout::Open)
+/// one period, or with a scaled pattern shorter than `min_pattern` (sub-pixel), comes back whole,
+/// as does one past a limit (see [`layout`]).
+pub(crate) fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, budget: &mut impl Budget) -> Vec<Vec<Vec2>> {
+    apply_as(pts, lt, scale, min_pattern, Layout::Open, budget).unwrap_or_else(|| vec![pts.to_vec()])
 }
 
-/// [`apply`] with the run laid out as `how` says.
-pub fn apply_as(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, how: Layout) -> Vec<Vec<Vec2>> {
-    let laid = if pts.len() >= 2 { scaled(lt, scale, min_pattern).and_then(|p| layout(length(pts), &p, how, min_pattern)) } else { None };
-    match laid {
-        Some(r) => cut(pts, &r),
-        None => vec![pts.to_vec()],
+/// [`apply`] with the run laid out as `how` says; `None` when the run is drawn continuous.
+pub(crate) fn apply_as(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64, how: Layout, budget: &mut impl Budget) -> Option<Vec<Vec<Vec2>>> {
+    if pts.len() < 2 {
+        return None;
     }
+    let pattern = scaled(lt, scale, min_pattern)?;
+    layout(length(pts), &pattern, how, min_pattern, budget).map(|r| cut(pts, &r))
 }
 
 /// The dashes of the pattern along a run of length `len` laid out as `how` says, as (start, end)
 /// distances; a dot has start == end. Laid out like [`apply_as`]. `None` when the run is drawn
-/// continuous: shorter than one period, a scaled pattern shorter than `min_pattern`, or too many
-/// repeats (see [`MAX_PERIODS`]).
-pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, how: Layout) -> Option<Vec<(f64, f64)>> {
-    if len > 0.0 { scaled(lt, scale, min_pattern).and_then(|p| layout(len, &p, how, min_pattern)) } else { None }
+/// continuous: shorter than one period, a scaled pattern shorter than `min_pattern`, too many
+/// repeats (see [`MAX_PERIODS`]), or past a limit (see [`layout`]).
+pub(crate) fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, how: Layout, budget: &mut impl Budget) -> Option<Vec<(f64, f64)>> {
+    if len > 0.0 { scaled(lt, scale, min_pattern).and_then(|p| layout(len, &p, how, min_pattern, budget)) } else { None }
 }
 
 /// Where the pattern starts on a run `len` long laid out as `how`, and how much it is stretched:
-/// period `k` starts at `start + k · period · stretch`. `None` when the run is drawn continuous.
+/// period `k` starts at `start + k · period · stretch`. `None` when the run is drawn continuous
+/// whatever the build's budget ([`visits`], [`MAX_ELEMENTS`]); the caller places texts only on a
+/// run whose dashes were laid out.
 pub fn phase(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, how: Layout) -> Option<(f64, f64)> {
     let pattern = scaled(lt, scale, min_pattern)?;
     let period: f64 = pattern.iter().map(|d| d.abs()).sum();
-    layout(len, &pattern, how, min_pattern)?;
+    visits(len, &pattern, min_pattern).filter(|v| *v <= MAX_ELEMENTS)?;
     let first = pattern.first().copied().unwrap_or(0.0);
     Some(match how {
         Layout::Open => {
@@ -256,18 +284,28 @@ pub fn phase(len: f64, lt: &Linetype, scale: f64, min_pattern: f64, how: Layout)
 mod tests {
     use super::*;
 
+    /// No build: every run within its own limit is laid out.
+    struct Free;
+
+    impl Budget for Free {
+        fn take(&mut self, _: usize) -> bool {
+            true
+        }
+        fn refused(&mut self) {}
+    }
+
     /// This gap-only pattern draws nothing, and `ranges` returns before cycling through its repeats.
     #[test]
     fn an_all_gap_pattern_draws_nothing_without_spinning() {
         let lt = Linetype::simple("GAPS", "", &[-0.001, -0.002]);
-        assert_eq!(ranges(1.0, &lt, 1.0, 0.0, Layout::Open), Some(Vec::new()));
-        assert!(apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0).is_empty());
+        assert_eq!(ranges(1.0, &lt, 1.0, 0.0, Layout::Open, &mut Free), Some(Vec::new()));
+        assert!(apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0, &mut Free).is_empty());
     }
 
     #[test]
     fn dashes_split_line() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 0.0, &mut Free);
         // 3.0 / 0.75 = 4 periods, centred: a half dash at each end and four whole ones between.
         assert_eq!(d.len(), 5);
         assert!((d[0][1].x - 0.25).abs() < 1e-9);
@@ -278,7 +316,7 @@ mod tests {
     #[test]
     fn dots_are_single_points() {
         let lt = Linetype::simple("DOT", "", &[0.0, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0, &mut Free);
         assert!(d.iter().all(|r| r.len() == 1));
         assert!(d.len() >= 4);
     }
@@ -286,21 +324,21 @@ mod tests {
     #[test]
     fn tiny_pattern_is_continuous() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 10.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(3.0, 0.0)], &lt, 1.0, 10.0, &mut Free);
         assert_eq!(d.len(), 1);
     }
 
     #[test]
     fn dash_continues_across_vertices() {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
-        let d = apply(&[Vec2::ZERO, Vec2::new(0.3, 0.0), Vec2::new(0.3, 1.0)], &lt, 1.0, 0.0);
+        let d = apply(&[Vec2::ZERO, Vec2::new(0.3, 0.0), Vec2::new(0.3, 1.0)], &lt, 1.0, 0.0, &mut Free);
         assert_eq!(d[0].len(), 3); // the first dash turns the corner
     }
     /// The drawn stretches of a run, a continuous one as one stretch, with stretches that touch
     /// joined (a plot draws them as one stroke).
     fn drawn(len: f64, pattern: &[f64], how: Layout) -> Vec<(f64, f64)> {
         let mut out: Vec<(f64, f64)> = Vec::new();
-        for (a, b) in layout(len, pattern, how, 0.0).unwrap_or_else(|| vec![(0.0, len)]) {
+        for (a, b) in layout(len, pattern, how, 0.0, &mut Free).unwrap_or_else(|| vec![(0.0, len)]) {
             match out.last_mut() {
                 Some(last) if (last.1 - a).abs() < 1e-9 && b > a && last.1 > last.0 => last.1 = b,
                 _ => out.push((a, b)),
@@ -380,8 +418,12 @@ mod tests {
             let (start, f) = phase(len, &lt, 1.0, 0.0, Layout::Open).unwrap();
             assert_eq!(f, 1.0);
             // Every whole dash starts a gap (1) after a period (3) starts.
-            let whole: Vec<f64> =
-                ranges(len, &lt, 1.0, 0.0, Layout::Open).unwrap().into_iter().filter(|(a, b)| (b - a - 2.0).abs() < 1e-9).map(|(a, _)| a).collect();
+            let whole: Vec<f64> = ranges(len, &lt, 1.0, 0.0, Layout::Open, &mut Free)
+                .unwrap()
+                .into_iter()
+                .filter(|(a, b)| (b - a - 2.0).abs() < 1e-9)
+                .map(|(a, _)| a)
+                .collect();
             assert!(!whole.is_empty(), "{len}");
             for a in whole {
                 let k = (a - 1.0 - start) / 3.0;
@@ -414,8 +456,8 @@ mod tests {
     #[test]
     fn a_run_shorter_than_one_period_is_continuous() {
         let lt = Linetype::simple("DASHED", "", &[2.0, -1.0]);
-        assert_eq!(apply(&[Vec2::ZERO, Vec2::new(2.99, 0.0)], &lt, 1.0, 0.0).len(), 1);
-        assert_eq!(ranges(2.99, &lt, 1.0, 0.0, Layout::Open), None);
+        assert_eq!(apply(&[Vec2::ZERO, Vec2::new(2.99, 0.0)], &lt, 1.0, 0.0, &mut Free).len(), 1);
+        assert_eq!(ranges(2.99, &lt, 1.0, 0.0, Layout::Open, &mut Free), None);
     }
 
     /// A long pattern repeated many times is drawn continuous rather than laid out element by
@@ -425,9 +467,56 @@ mod tests {
         let pattern: Vec<f64> = (0..100).map(|i| if i % 2 == 0 { 0.001 } else { -0.001 }).collect();
         let lt = Linetype::simple("MANY", "", &pattern);
         for how in [Layout::Open, Layout::Closed { anchor: 0.0 }] {
-            assert_eq!(ranges(4000.0, &lt, 1.0, 0.0, how), None, "{how:?}");
-            assert!(ranges(40.0, &lt, 1.0, 0.0, how).is_some_and(|r| r.len() > 10_000), "{how:?}");
+            assert_eq!(ranges(4000.0, &lt, 1.0, 0.0, how, &mut Free), None, "{how:?}");
+            assert!(ranges(40.0, &lt, 1.0, 0.0, how, &mut Free).is_some_and(|r| r.len() > 10_000), "{how:?}");
+            // Linetype text follows: none on the continuous run.
+            assert_eq!(phase(4000.0, &lt, 1.0, 0.0, how), None, "{how:?}");
+            assert!(phase(40.0, &lt, 1.0, 0.0, how).is_some(), "{how:?}");
         }
+    }
+
+    /// A budget of `left` elements that counts the runs it is told were refused.
+    struct Left {
+        left: usize,
+        refused: usize,
+    }
+
+    impl Budget for Left {
+        fn take(&mut self, visits: usize) -> bool {
+            self.left.checked_sub(visits).map(|left| self.left = left).is_some()
+        }
+        fn refused(&mut self) {
+            self.refused += 1;
+        }
+    }
+
+    /// A run is charged to the build's budget before it is laid out, and drawn whole and refused
+    /// when it does not fit. A run past its own limit is refused without being charged; one
+    /// drawn continuous by rule, or a pattern of gaps only, is neither charged nor refused.
+    #[test]
+    fn runs_are_charged_to_the_budget_and_refused_past_it() {
+        let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
+        // 1,000 periods: 2,000 elements and more.
+        let pts = [Vec2::ZERO, Vec2::new(750.0, 0.0)];
+        let mut b = Left { left: 3000, refused: 0 };
+        assert!(apply(&pts, &lt, 1.0, 0.0, &mut b).len() > 1000);
+        assert!(b.left <= 1000 && b.refused == 0, "{}", b.left);
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, &mut b), vec![pts.to_vec()]);
+        assert_eq!(apply_as(&pts, &lt, 1.0, 0.0, Layout::Closed { anchor: 0.0 }, &mut b), None);
+        assert_eq!(b.refused, 2);
+
+        let mut b = Left { left: usize::MAX, refused: 0 };
+        assert_eq!(ranges(1_000_001.0 * 0.75, &lt, 1.0, 0.0, Layout::Open, &mut b), None);
+        assert_eq!((b.left, b.refused), (usize::MAX, 1));
+        // Shorter than a period, and past 50,000 periods with a level of detail.
+        assert_eq!(ranges(0.5, &lt, 1.0, 0.0, Layout::Open, &mut b), None);
+        assert_eq!(ranges(50_001.0 * 0.75, &lt, 1.0, 1e-9, Layout::Open, &mut b), None);
+        assert_eq!((b.left, b.refused), (usize::MAX, 1));
+
+        let gaps = Linetype::simple("GAPS", "", &[-0.5, -0.25]);
+        let mut b = Left { left: 0, refused: 0 };
+        assert_eq!(ranges(750.0, &gaps, 1.0, 0.0, Layout::Open, &mut b), Some(Vec::new()));
+        assert_eq!(b.refused, 0);
     }
 
     /// A plot or export keeps the dashes of a run more than 50,000 periods long; a display build,
@@ -438,14 +527,14 @@ mod tests {
         let len = 50_001.0 * 0.75;
         // Centred, the first and last dashes are halves: one more dash than periods.
         for (how, dashes) in [(Layout::Open, 50_002), (Layout::Closed { anchor: 0.0 }, 50_001)] {
-            assert_eq!(ranges(len, &lt, 1.0, 0.0, how).map(|r| r.len()), Some(dashes), "{how:?}");
-            assert_eq!(ranges(len, &lt, 1.0, 1e-9, how), None, "{how:?}");
+            assert_eq!(ranges(len, &lt, 1.0, 0.0, how, &mut Free).map(|r| r.len()), Some(dashes), "{how:?}");
+            assert_eq!(ranges(len, &lt, 1.0, 1e-9, how, &mut Free), None, "{how:?}");
             // Where linetype texts are placed from.
             assert!(phase(len, &lt, 1.0, 0.0, how).is_some(), "{how:?}");
             assert_eq!(phase(len, &lt, 1.0, 1e-9, how), None, "{how:?}");
         }
         let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
-        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 50_002);
-        assert_eq!(apply(&pts, &lt, 1.0, 1e-9).len(), 1);
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0, &mut Free).len(), 50_002);
+        assert_eq!(apply(&pts, &lt, 1.0, 1e-9, &mut Free).len(), 1);
     }
 }

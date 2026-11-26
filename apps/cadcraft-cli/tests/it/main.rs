@@ -1,4 +1,5 @@
 mod cli;
+mod dash_limit_note;
 mod drafting_spacing;
 mod help;
 // DWG output needs craft-dwg's bridge.
