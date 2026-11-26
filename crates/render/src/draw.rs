@@ -240,7 +240,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             // Relative sizes follow the view: undo the block / viewport scale.
             let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
             let size = point::size(ctx.d.header.f64("PDSIZE", 0.0), view);
-            let fig = point::figure(ctx.d.header.i64("PDMODE", 0), size, p.p.xy(), p.angle, tol);
+            // A dimension's definition points are not point objects: always dots.
+            let mode = if ctx.dim_block { 0 } else { ctx.d.header.i64("PDMODE", 0) };
+            let fig = point::figure(mode, size, p.p.xy(), p.angle, tol);
             if fig.dot {
                 b.point(ctx, rgb, p.p.xy());
             }
@@ -372,7 +374,7 @@ fn draw_dimension(
         // DXF group 12: a moved dimension keeps its `*D` block where it was and the offset in
         // the insertion point, so the block draws translated by it (#2634).
         let off = dm.insertion_point.xy();
-        let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::translate(off)) };
+        let sub = Ctx { block_pstyle: b.named, block_transparency: own, dim_block: true, ..sub_ctx(ctx, e, Mat3::translate(off)) };
         // DIMTFILL: the block's MTEXT carries no background mask here, so a background
         // around each of the block's texts is drawn before the block's first text or first
         // line of the text's marks, except for a text that a SOLID of the block covers.
