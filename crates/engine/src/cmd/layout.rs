@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
         CommandSpec::new("layout.list", "List Layouts", run_list).params("→ [{name, tabOrder, page, viewports}]").noundo(),
         CommandSpec::new("layout.saveas", "Save Layout as Template", saveas::run_saveas)
-            .params("{name?: layout (default: the current layout, else the first tab), path: .dwt (or .dwg, .dxf; no extension adds .dwt)} → {name, path, bytes, notSaved?}")
+            .params("{name?: layout (default: the current layout, else the first tab), path: .dwt (or .dwg, .dxf; no extension adds .dwt)} → {name, path, bytes, notSaved?, warnings?}")
             .noundo(),
         CommandSpec::new("mview", "Viewports", run_mview)
             .alias(&["mv"])

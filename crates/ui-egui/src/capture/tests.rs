@@ -50,10 +50,13 @@ fn ui_frame(app: &mut CadApp, ctx: &egui::Context) -> egui::FullOutput {
     ui_frame_sized(app, ctx, 800.0, 600.0)
 }
 
-/// Run one real `logic` + `ui` pass at the requested size and drop texture deltas, yielding the frame's output.
+/// Run one real frame at the requested size, as the desktop app does (the raw input hooks, then `logic` + `ui`), and
+/// drop texture deltas, yielding the frame's output. The framework's hook gives the runtime the Options interface
+/// scale, which it applies as egui's zoom.
 fn ui_frame_sized(app: &mut CadApp, ctx: &egui::Context, width: f32, height: f32) -> egui::FullOutput {
-    let raw = raw(width, height);
-    note_raw_geometry(app, ctx, &raw);
+    let mut raw = raw(width, height);
+    app.raw_input_hook(ctx, &mut raw);
+    app.before_input(ctx);
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
         app.ui(ui);
@@ -100,12 +103,22 @@ fn complete(callbacks: Vec<egui::ScreenshotCallback>, size: [usize; 2]) {
 #[test]
 fn admission_counts_completed_but_undrained_and_never_evicts() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
-    let _receivers: Vec<_> = (0..MAX_REQUESTS).map(|_| admit_one(&mut app, &ctx)).collect();
+    // One geometry for every admission: a geometry seeded again between them is an identity change that rejects the
+    // queued requests at the next drain.
+    set_geometry(&mut app, &ctx, egui::vec2(800.0, 600.0));
+    let _receivers: Vec<_> = (0..MAX_REQUESTS)
+        .map(|_| {
+            let (tx, rx) = channel();
+            admit(&mut app, &ctx, None, tx);
+            rx
+        })
+        .collect();
     assert_eq!(app.shots.len(), MAX_REQUESTS);
-    // Complete the first slot without draining it: it still owns its reservation and request.
-    let image = Arc::new(ColorImage::filled([800, 600], Color32::RED));
-    app.shots.requests[0].callback.take().expect("a callback").complete(image);
+    // Complete the issued slots without draining them: each still owns its reservation and request.
+    let (_, callbacks) = issue_after_settling(&mut app, &ctx);
+    complete(callbacks, [800, 600]);
     let (tx, rx) = channel();
     admit(&mut app, &ctx, None, tx);
     assert_eq!(app.shots.len(), MAX_REQUESTS, "the fifth request is rejected, not admitted");
@@ -119,13 +132,12 @@ fn admission_counts_completed_but_undrained_and_never_evicts() {
 #[test]
 fn deadline_is_checked_before_writing_a_completed_image() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, _) = admit_one(&mut app, &ctx);
-    app.shots.requests[0].issued = true;
-    app.shots.requests[0].surface_epoch = app.capture_epoch;
+    let (_, callbacks) = issue_after_settling(&mut app, &ctx);
     app.shots.requests[0].deadline = Instant::now() - Duration::from_millis(1);
-    let image = Arc::new(ColorImage::filled([800, 600], Color32::RED));
-    app.shots.requests[0].callback.take().expect("a callback").complete(image);
+    complete(callbacks, [800, 600]);
     drain(&mut app, &ctx);
     let reply = rx.recv().expect("a timeout reply");
     assert_eq!(reply["ok"], false);
@@ -137,6 +149,7 @@ fn deadline_is_checked_before_writing_a_completed_image() {
 #[test]
 fn document_change_cancels_before_issuing() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, _) = admit_one(&mut app, &ctx);
     app.session.new_drawing(false);
@@ -150,6 +163,7 @@ fn document_change_cancels_before_issuing() {
 #[test]
 fn focus_change_cancels_an_unissued_capture() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let focus_a = egui::Id::unique("focus-a");
     let focus_b = egui::Id::unique("focus-b");
     ctx.memory_mut(|memory| memory.request_focus(focus_a));
@@ -170,6 +184,7 @@ fn focus_change_cancels_an_unissued_capture() {
 fn issued_callbacks_reply_once_with_matching_tokens_and_distinct_pathless_files() {
     let _shots = crate::control::lock_pathless_shots();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     set_geometry(&mut app, &ctx, egui::vec2(800.0, 600.0));
     let (tx1, rx1) = channel();
@@ -199,6 +214,7 @@ fn issued_callbacks_reply_once_with_matching_tokens_and_distinct_pathless_files(
 #[test]
 fn document_switch_after_issue_rejects_the_completed_callback_without_writing() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, token) = admit_one(&mut app, &ctx);
     let (_, callbacks) = issue_after_settling(&mut app, &ctx);
@@ -217,6 +233,7 @@ fn document_switch_after_issue_rejects_the_completed_callback_without_writing() 
 #[test]
 fn completed_callback_after_timeout_writes_nothing() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, _) = admit_one(&mut app, &ctx);
     let (_, callbacks) = issue_after_settling(&mut app, &ctx);
@@ -233,6 +250,7 @@ fn completed_callback_after_timeout_writes_nothing() {
 #[test]
 fn callback_completed_before_cancel_all_is_inert() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, token) = admit_one(&mut app, &ctx);
     let (_, callbacks) = issue_after_settling(&mut app, &ctx);
@@ -249,6 +267,7 @@ fn callback_completed_before_cancel_all_is_inert() {
 #[test]
 fn per_image_and_aggregate_budgets_reject_before_issue() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     // 5000×5000×4 bytes = 100 MB, over the 64 MiB per-image bound.
     set_geometry(&mut app, &ctx, egui::vec2(5000.0, 5000.0));
@@ -282,6 +301,7 @@ fn admit_one_at(app: &mut CadApp, ctx: &egui::Context, size: egui::Vec2) -> (Rec
 #[test]
 fn every_observed_geometry_change_bumps_the_generation() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     note_raw_geometry(&mut app, &ctx, &raw(800.0, 600.0));
     let first = app.capture_epoch;
@@ -299,6 +319,7 @@ fn every_observed_geometry_change_bumps_the_generation() {
 #[test]
 fn an_invalid_pass_invalidates_the_retained_surface() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     note_raw_geometry(&mut app, &ctx, &raw(800.0, 600.0));
     assert!(app.capture_geometry.is_some(), "the raw snapshot was retained");
@@ -324,6 +345,7 @@ fn an_invalid_pass_invalidates_the_retained_surface() {
 #[test]
 fn raw_geometry_uses_screen_rect_when_inner_rect_is_absent() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let mut raw = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0))),
@@ -344,6 +366,7 @@ fn raw_geometry_uses_screen_rect_when_inner_rect_is_absent() {
 fn a_discarded_pass_does_not_issue_and_the_settled_pass_does_once() {
     let _shots = crate::control::lock_pathless_shots();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, _) = admit_one(&mut app, &ctx);
     for shot in &mut app.shots.requests {
@@ -376,6 +399,7 @@ fn a_discarded_pass_does_not_issue_and_the_settled_pass_does_once() {
 fn issuance_uses_the_settled_interface_scale_not_the_admission_estimate() {
     let _shots = crate::control::lock_pathless_shots();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     app.options.interface_scale = 2.0;
     let raw = raw(800.0, 600.0);
@@ -396,6 +420,7 @@ fn issuance_uses_the_settled_interface_scale_not_the_admission_estimate() {
 #[test]
 fn a_document_switch_that_returns_still_rejects_the_queued_capture() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     app.session.new_drawing(false);
     let (rx, _) = admit_one(&mut app, &ctx);
@@ -417,6 +442,7 @@ fn a_document_switch_that_returns_still_rejects_the_queued_capture() {
 #[test]
 fn a_drawing_created_and_closed_between_observations_still_bumps_the_identity_epoch() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     set_geometry(&mut app, &ctx, egui::vec2(800.0, 600.0));
     let before_epoch = app.capture_identity_epoch;
@@ -433,6 +459,7 @@ fn a_drawing_created_and_closed_between_observations_still_bumps_the_identity_ep
 #[test]
 fn a_settled_window_does_not_keep_changing_the_surface_epoch() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     ui_frame(&mut app, &ctx).drop_without_applying_deltas();
     let epoch = app.capture_epoch;
@@ -450,6 +477,7 @@ fn a_settled_window_does_not_keep_changing_the_surface_epoch() {
 fn a_resize_while_settling_is_absorbed_at_issue() {
     let _shots = crate::control::lock_pathless_shots();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut app = app();
     let (rx, _) = admit_one(&mut app, &ctx);
     for shot in &mut app.shots.requests {

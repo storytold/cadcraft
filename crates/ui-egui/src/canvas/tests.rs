@@ -184,6 +184,7 @@ fn wheel_zoom_reads_every_notch_of_the_frame() {
 #[test]
 fn a_wheel_notch_zooms_whole_in_its_own_frame() {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let o = ctx.options(|o| o.input_options);
     let input = egui::RawInput { events: vec![wheel(egui::MouseWheelUnit::Line, 1.0, egui::Modifiers::NONE)], ..Default::default() };
     let mut seen = (0.0, 0.0);
@@ -231,6 +232,7 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
     app.session.execute("units", &serde_json::json!({"lunits": 4, "luprec": 4})).unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     painted_text(&mut app, &ctx, pos2(700.0, 450.0));
     app.session.cmdline("line").unwrap();
     app.session.input(Input::Point(Vec2::ZERO)).unwrap();
@@ -275,6 +277,7 @@ fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
     let at = pos2(400.0, 300.0);
     let paint = |app: &CadApp| {
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.painter_at(rect);
             let picking = app.session.picking_objects() && app.session.pending_window.is_none();
@@ -459,6 +462,7 @@ fn the_cycling_badge_follows_the_frozen_layers_under_a_resting_pointer() {
     app.session.execute("setvar", &serde_json::json!({ "name": "SELECTIONCYCLING", "value": 1 })).unwrap();
     app.session.execute("mspace", &serde_json::json!({ "handle": b })).unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     /// Whether the badge shows after a frame with the pointer resting on the two lines.
     fn badge(app: &mut CadApp, ctx: &egui::Context) -> bool {
         let (at, on_lines) = (Some(Pos2::new(200.0, 150.0)), Some(Vec2::new(50.0, 0.0)));
@@ -483,6 +487,7 @@ fn trim_highlights_the_piece_a_click_removes_once_per_cursor_position() {
     }
     app.session.zoom_extents().unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     painted_text(&mut app, &ctx, pos2(700.0, 450.0));
     app.session.cmdline("trim").unwrap();
     let at = app.canvas.xf.unwrap().to_screen(Vec2::new(5.0, 0.0));
@@ -509,6 +514,7 @@ fn a_fence_point_taken_back_with_undo_updates_the_highlight_at_once() {
     }
     app.session.zoom_extents().unwrap();
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     painted_text(&mut app, &ctx, pos2(700.0, 450.0));
     for answer in ["trim", "f", "5,-4", "5,1.5"] {
         app.session.cmdline(answer).unwrap();

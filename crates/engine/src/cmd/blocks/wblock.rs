@@ -8,7 +8,9 @@ use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::super::curves::KW;
-use super::super::file::{Version, lost_message, lost_writing, new_folder, own_version, report_lost, report_new_folder};
+use super::super::file::{
+    Version, drops_unknown, dwg_notes, lost_message, lost_writing, new_folder, own_version, report_dwg_notes, report_lost, report_new_folder,
+};
 use super::super::machines::{SelOutcome, SelectPhase};
 use super::super::modify::erase_kept;
 use super::super::{CommandSpec, bad, point_param, str_param, targets};
@@ -46,7 +48,7 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
     let folder = new_folder(&path);
-    let (entities, bytes, lost, version) = match str_param(p, "name") {
+    let (entities, bytes, lost, version, notes) = match str_param(p, "name") {
         Some("*") => write(s, "wblock", &path, Source::Whole)?,
         Some(name) => write(s, "wblock", &path, Source::Block(name, base))?,
         None => write(s, "wblock", &path, Source::Objects(&targets(s, p)?, base.unwrap_or(Vec2::ZERO)))?,
@@ -54,6 +56,7 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
     report_new_folder(s, &mut r, folder);
     report_lost(s, &mut r, &path, version, &lost);
+    report_dwg_notes(s, &mut r, notes);
     Ok(r)
 }
 
@@ -64,7 +67,7 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("-wblock", "`path` is required"))?.to_string();
     let base = point_param(p, "base");
     let folder = new_folder(&path);
-    let (entities, bytes, lost, version) = match str_param(p, "name") {
+    let (entities, bytes, lost, version, notes) = match str_param(p, "name") {
         Some(name) => write(s, "-wblock", &path, Source::Block(name, base))?,
         None => {
             let hs = targets(s, p)?;
@@ -80,16 +83,17 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let mut r = json!({ "path": path, "entities": entities, "bytes": bytes });
     report_new_folder(s, &mut r, folder);
     report_lost(s, &mut r, &path, version, &lost);
+    report_dwg_notes(s, &mut r, notes);
     Ok(r)
 }
 
 /// Write `what` to `path` through the io hooks; the objects written, the file's size, what the
-/// file left out (a DWG's unwritten types, a DXF before 2007's proxies with string streams) and
-/// the version it was written at, for the caller to report as a save does. The
-/// written drawing keeps the source's settings and styles, as AutoCAD's -WBLOCK does: its units
-/// ($INSUNITS, $MEASUREMENT), so a block from a metric drawing is not declared in inches and
-/// scaled on insert, and its defaults (text size, current styles, annotation scales).
-fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usize, BTreeMap<String, usize>, Version)> {
+/// file left out (a DWG's unwritten types, a DXF before 2007's proxies with string streams), the
+/// version it was written at and what a DWG keeps only in part, for the caller to report as a
+/// save does. The written drawing keeps the source's settings and styles, as AutoCAD's -WBLOCK
+/// does: its units ($INSUNITS, $MEASUREMENT), so a block from a metric drawing is not declared in
+/// inches and scaled on insert, and its defaults (text size, current styles, annotation scales).
+fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usize, BTreeMap<String, usize>, Version, Vec<String>)> {
     let src = s.doc()?;
     // The base point becomes the written drawing's origin: by default 0,0 for objects and the
     // block's base point for a block.
@@ -115,13 +119,18 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     // The written drawing's own version: the writer is given no other.
     let version = own_version(&d, path);
     let lost = lost_writing(&d, path, version);
-    Ok((d.model.len(), bytes.len(), lost, version))
+    let notes = if drops_unknown(path) { dwg_notes(&d) } else { Vec::new() };
+    Ok((d.model.len(), bytes.len(), lost, version, notes))
 }
 
-/// Say on the command line what the file written at `path` and `version` left out.
-fn echo_not_saved(s: &mut Session, path: &str, version: Version, lost: &BTreeMap<String, usize>) {
+/// Say on the command line what the file written at `path` and `version` left out, and what a
+/// DWG keeps only in part (`notes`).
+fn echo_not_saved(s: &mut Session, path: &str, version: Version, lost: &BTreeMap<String, usize>, notes: Vec<String>) {
     if let Some(msg) = lost_message(path, version, lost) {
         s.echo(msg);
+    }
+    for note in notes {
+        s.echo(note);
     }
 }
 
@@ -341,7 +350,7 @@ impl DashWblockM {
 
     fn write(&self, s: &mut Session, what: Source) -> Result<Step> {
         match write(s, "-wblock", &self.path, what) {
-            Ok((.., lost, version)) => echo_not_saved(s, &self.path, version, &lost),
+            Ok((.., lost, version, notes)) => echo_not_saved(s, &self.path, version, &lost, notes),
             Err(e) => s.echo(e.to_string()),
         }
         Ok(Step::Done)
@@ -352,8 +361,8 @@ impl DashWblockM {
             return Ok(Step::Done);
         }
         match write(s, "-wblock", &self.path, Source::Objects(hs, self.base)) {
-            Ok((.., lost, version)) => {
-                echo_not_saved(s, &self.path, version, &lost);
+            Ok((.., lost, version, notes)) => {
+                echo_not_saved(s, &self.path, version, &lost, notes);
                 erase(s, hs)?;
             }
             Err(e) => s.echo(e.to_string()),

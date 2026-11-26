@@ -22,13 +22,17 @@ fn harness() -> Harness<'static, CadApp> {
     session.execute("line", &json!({"points": [[20, 20], [60, 20]]})).unwrap();
     let mut app = CadApp::new(session, Services::default());
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }

@@ -103,7 +103,7 @@ fn start_page_lists_recent_files_and_opens_one_on_click() {
     let (_dir, plan, section) = drawings("start");
     let mut app = CadApp::new(Session::empty(), Services::default());
     app.ui.recent_files = vec![section.clone(), plan.clone()];
-    let mut h = Harness::builder().with_size(vec2(1200.0, 760.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1200.0, 760.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);

@@ -18,13 +18,17 @@ fn page_setup_switches_an_arch_d_sheet_to_millimetres() {
     app.start("pagesetup");
     // The dialog's existing combo boxes (device, paper, plot area, plot style) have no
     // accessible name yet; that check is not what this test is about.
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_accessibility_check(false).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_accessibility_check(false)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h.get_by_label("Millimeters").click();
     h.run_steps(5);
@@ -42,13 +46,17 @@ fn page_setup_switches_a_metric_drawing_sheet_to_inches() {
     let mm = cadcraft_render::sheet(app.session.doc().unwrap(), "Layout1").unwrap();
     assert!((mm.size.x - 914.4).abs() < 1e-9 && (mm.size.y - 609.6).abs() < 1e-9, "{:?}", mm.size);
     app.start("pagesetup");
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_accessibility_check(false).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_accessibility_check(false)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h.get_by_label("Inches").click();
     h.run_steps(5);
@@ -67,13 +75,17 @@ fn clicking_the_inherited_paper_units_records_the_choice() {
     app.run("pagesetup", json!({ "layout": "Layout1", "paper": "ARCH D", "landscape": true })).unwrap();
     assert_eq!(app.session.doc().unwrap().layout("Layout1").unwrap().page.paper_mm, None);
     app.start("pagesetup");
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_accessibility_check(false).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_accessibility_check(false)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h.get_by_label("Inches").click();
     h.run_steps(5);
