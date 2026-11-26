@@ -1,5 +1,5 @@
 //! `cadcraft-cli run --connect` end to end against a stand-in control server: each step becomes
-//! one control request, in command-line order, on one connection.
+//! one control request, in command-line order, and a run keeps to one connection.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -244,6 +244,137 @@ fn last_is_never_sent_after_a_read_that_saw_another_drawing() {
         assert_eq!(seen_at_erase.load(Ordering::SeqCst), 1, "{{last}} was sent after a read saw drawing 2");
     } else {
         assert_eq!(out.status.code(), Some(1));
+    }
+}
+
+/// What a stand-in app does after answering a request.
+enum Then {
+    Stay,
+    /// Close the connection, as an app that quits does.
+    HangUp,
+}
+
+/// Stand-in apps on one port, one after another: each serves one connection, as an app that was
+/// restarted would. `answer` gets the app's number (from 0) and the request. Hands back every
+/// request with the number of the app it reached, once the last connection has closed.
+fn fake_apps(apps: usize, answer: impl Fn(usize, &Value) -> (Value, Then) + Send + 'static) -> (String, mpsc::Receiver<Vec<(usize, Value)>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr").to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for app in 0..apps {
+            let Ok((conn, _)) = listener.accept() else { break };
+            let mut reader = BufReader::new(conn.try_clone().expect("clone"));
+            let mut w = conn;
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
+                let req: Value = serde_json::from_str(&line).expect("json request");
+                line.clear();
+                let (reply, then) = answer(app, &req);
+                seen.push((app, req.clone()));
+                let reply = json!({"id": req["id"], "ok": reply.get("error").is_none(), "result": reply["result"], "error": reply["error"], "state": reply["state"]});
+                writeln!(w, "{reply}").expect("write reply");
+                if matches!(then, Then::HangUp) {
+                    break;
+                }
+            }
+        }
+        let _ = tx.send(seen);
+    });
+    (addr, rx)
+}
+
+/// Two apps in a row whose open drawing is `uid` 1 both times: a restarted app numbers its drawings
+/// from 1 again. `line` returns handle 1A. The first app quits once the handle's drawing has been
+/// read (the read after `line`).
+fn restarting_app() -> (String, mpsc::Receiver<Vec<(usize, Value)>>) {
+    let inspects = AtomicU64::new(0);
+    fake_apps(2, move |app, req| match (req["method"].as_str(), req["params"]["command"].as_str()) {
+        (Some("ui.inspect"), _) => {
+            let quit = app == 0 && inspects.fetch_add(1, Ordering::SeqCst) == 1;
+            (inspect(1), if quit { Then::HangUp } else { Then::Stay })
+        }
+        (_, Some("line")) => (json!({"result": {"handles": ["1A"]}}), Then::Stay),
+        _ => (json!({"result": null}), Then::Stay),
+    })
+}
+
+/// The requests that reached the app after the restart, other than reads.
+fn sent_after_the_restart(rx: &mpsc::Receiver<Vec<(usize, Value)>>) -> Vec<Value> {
+    let reqs = rx.recv_timeout(Duration::from_secs(60)).expect("the run connected and closed its connections");
+    reqs.into_iter().filter(|(app, r)| *app > 0 && r["method"] != "ui.inspect").map(|(_, r)| r).collect()
+}
+
+#[test]
+fn last_is_refused_after_the_app_restarts_with_the_same_drawing_id() {
+    // The id matches, but the app doesn't: the handle must not reach the new app.
+    let (addr, rx) = restarting_app();
+    let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", ERASE_LAST]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("opened again"), "{stderr}");
+    assert_eq!(sent_after_the_restart(&rx), Vec::<Value>::new(), "nothing but the read reached the new app");
+}
+
+#[test]
+fn no_step_reaches_an_app_that_restarted_during_the_run() {
+    // `circle` and the save don't use `{last}`, but the read before `circle` is resent on a new
+    // connection: without the one-connection rule they would change and save the new app's drawing.
+    let (addr, rx) = restarting_app();
+    let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", "circle", "--cmd", ERASE_LAST, "--save", "out.dxf"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--cmd circle") && stderr.contains("opened again"), "the error names the step: {stderr}");
+    assert_eq!(sent_after_the_restart(&rx), Vec::<Value>::new(), "nothing but the read reached the new app");
+}
+
+#[test]
+fn a_first_request_resent_on_a_new_connection_is_not_a_restart() {
+    // The app refuses the run's first request unrun over its token and closes the connection, and
+    // the client sends it again on a new one. Nothing was learned or changed before it, so the run
+    // goes on there.
+    let (addr, rx) = fake_apps(2, |app, req| match (app, req["params"]["command"].as_str()) {
+        (0, _) => (json!({"error": "unauthorized: missing or invalid control token", "state": "not-run"}), Then::HangUp),
+        (_, Some("line")) => (json!({"result": {"handles": ["1A"]}}), Then::Stay),
+        (_, _) if req["method"] == "ui.inspect" => (inspect(1), Then::Stay),
+        _ => (json!({"result": null}), Then::Stay),
+    });
+    let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", ERASE_LAST]);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let sent = sent_after_the_restart(&rx);
+    assert_eq!(sent.last().map(|r| r["params"]["params"].clone()), Some(json!({"handles": ["1A"]})), "{sent:?}");
+}
+
+#[test]
+fn a_drawing_read_the_app_does_not_answer_stops_the_run() {
+    // The read before a command failed: the run doesn't go on without knowing what is open.
+    let (addr, rx) = fake_app(|req| match req["method"].as_str() {
+        Some("ui.inspect") => json!({"error": "busy: too many requests are waiting"}),
+        _ => json!({"result": {"handles": ["1A"]}}),
+    });
+    let out = run(&["--connect", &addr, "--cmd", LINE, "--cmd", ERASE_LAST]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--cmd line") && stderr.contains("busy"), "{stderr}");
+    assert!(requests(&rx).iter().all(|r| r["method"] == "ui.inspect"), "no command was sent");
+}
+
+#[test]
+fn what_the_app_left_out_of_a_file_is_reported() {
+    let drawing = std::env::temp_dir().join(format!("run-connect-notes-{}.dxf", std::process::id()));
+    std::fs::write(&drawing, "").expect("write the drawing to open");
+    let (addr, _rx) = fake_app(|req| match req["method"].as_str() {
+        Some("app.open") => json!({"result": {"index": 0, "warnings": ["2 records were skipped"]}}),
+        Some("app.save") => json!({"result": {"path": "out.dwg", "bytes": 10, "notSaved": {"WIPEOUT": 3}, "createdFolder": "/plans/new"}}),
+        _ => json!({"result": null}),
+    });
+    let out = run(&["--connect", &addr, drawing.to_str().expect("utf-8 temp dir"), "--save", "out.dwg"]);
+    let _ = std::fs::remove_file(&drawing);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for said in ["2 records were skipped", "3 WIPEOUT", "/plans/new"] {
+        assert!(stderr.contains(said), "{said}: {stderr}");
     }
 }
 

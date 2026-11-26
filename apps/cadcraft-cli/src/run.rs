@@ -38,6 +38,12 @@ pub(crate) enum RunError {
     /// The running app refused a step, or the connection failed during it.
     #[error("{step}: {message}")]
     Remote { step: String, message: String },
+    /// A request was answered on another connection than the run's (see [`App`]).
+    #[error(
+        "{step}: the connection to CADCraft at {addr} was opened again during the run (the app may have restarted), so the run stopped here and sent nothing more. This step and the ones before it may have run in different app sessions: inspect the drawing before running the rest{}",
+        .failed.as_ref().map(|e| format!(" (the new connection answered: {e})")).unwrap_or_default()
+    )]
+    Reconnected { step: String, addr: String, failed: Option<String> },
 }
 
 /// A `{last}` placeholder with no handle to fill in.
@@ -265,8 +271,10 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
 
 /// `path` as the app should see it: absolute, since the app does not share this process's folder.
 fn app_path(path: &std::path::Path) -> Result<String> {
-    let cwd = std::env::current_dir()?;
-    if let Some(e) = driveless_root(path, &cwd, cfg!(windows)) {
+    // The folder only matters for the drive-less check: off Windows an absolute path needs none.
+    if cfg!(windows)
+        && let Some(e) = driveless_root(path, &std::env::current_dir()?, true)
+    {
         return Err(e.into());
     }
     let abs = std::path::absolute(path)?;
@@ -292,21 +300,79 @@ fn in_wsl_share(dir: &std::path::Path) -> bool {
     t.starts_with("\\\\wsl.localhost\\") || t.starts_with("\\\\wsl$\\")
 }
 
-/// One control request for `step`; a refusal or lost connection names the step.
-fn remote(app: &mut cadcraft_mcp::Remote, step: &str, method: &str, params: Value) -> Result<Value> {
-    app.call(method, params).map_err(|message| RunError::Remote { step: step.to_string(), message }.into())
+/// The running app for one `run --connect`, held to one connection.
+///
+/// [`cadcraft_mcp::Remote`] opens a new connection by itself to resend a read-only request
+/// (`ui.inspect`) after a transport error, or a request the app refused unrun over its token. In
+/// the middle of a run, that connection can be to another app process (a restart): its drawing ids
+/// start at 1 again, and its open drawing is not the one the earlier steps changed. So the run
+/// keeps the connection that answered its first request, before which it has learned and changed
+/// nothing, and stops at the first request answered on another. A request that fails stops the run
+/// too, so none is ever sent after a connection was lost.
+struct App<'a> {
+    remote: cadcraft_mcp::Remote,
+    addr: &'a str,
+    /// [`cadcraft_mcp::Remote::connections`] when the first request was answered.
+    connection: Option<u64>,
 }
 
-/// The id of the drawing the app has open (`ui.inspect`'s `session.documents[].uid`): what a
-/// returned handle belongs to. The protocol has no drawing selector, so a switch made in the window
-/// or by another client between two steps shows only here. Ids are unique for the app's lifetime,
-/// so a drawing closed and opened again gets a new one. `None` when the app doesn't report it
-/// (releases before this field).
-fn open_drawing(app: &mut cadcraft_mcp::Remote) -> Option<u64> {
-    let r = app.call("ui.inspect", json!({})).ok()?;
-    let docs = r.get("session")?.get("documents")?.as_array()?;
-    let d = docs.iter().find(|d| d.get("active").and_then(Value::as_bool) == Some(true))?;
-    d.get("uid")?.as_u64()
+impl App<'_> {
+    /// One control request for `step`; a refusal, a lost connection or a new one names the step.
+    fn call(&mut self, step: &str, method: &str, params: Value) -> Result<Value> {
+        let r = self.remote.call(method, params);
+        let now = self.remote.connections();
+        match self.connection {
+            Some(first) if first != now => {
+                return Err(RunError::Reconnected { step: step.to_string(), addr: self.addr.to_string(), failed: r.err() }.into());
+            }
+            None if r.is_ok() => self.connection = Some(now),
+            _ => {}
+        }
+        r.map_err(|message| RunError::Remote { step: step.to_string(), message }.into())
+    }
+
+    /// The id of the drawing the app has open (`ui.inspect`'s `session.documents[].uid`): what a
+    /// returned handle belongs to. The protocol has no drawing selector, so a switch made in the
+    /// window or by another client between two steps shows only here. Ids are unique for the app's
+    /// lifetime, so a drawing closed and opened again gets a new one. `None` when the app doesn't
+    /// report it (releases before this field). A read the app doesn't answer stops the run, as any
+    /// failed request does.
+    fn open_drawing(&mut self, step: &str) -> Result<Option<u64>> {
+        let r = self.call(&format!("{step} (reading which drawing is open)"), "ui.inspect", json!({}))?;
+        let active = |d: &&Value| d.get("active").and_then(Value::as_bool) == Some(true);
+        Ok(r.pointer("/session/documents").and_then(Value::as_array).and_then(|docs| docs.iter().find(active)).and_then(|d| d.get("uid")?.as_u64()))
+    }
+}
+
+/// What the app's reply to `app.open` says reading the file left out (`warnings`), on stderr, where
+/// headless `run` prints the same notes.
+fn report_opened(r: &Value, io: &mut Streams) {
+    for note in r.get("warnings").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        io.errln(format_args!("{note}"));
+    }
+}
+
+/// What the app's reply to `app.save` says about the file at `path`: a folder it had to make, the
+/// objects the format left out (`notSaved`) and the fonts AutoCAD on Windows doesn't have. The app
+/// shows these on its own command line; the run must not print only "saved".
+fn report_saved(path: &str, r: &Value, io: &mut Streams) {
+    if let Some(folder) = r.get("createdFolder").and_then(Value::as_str) {
+        io.errln(format_args!("created the folder {folder}, which did not exist"));
+    }
+    let lost: Vec<String> = r.get("notSaved").and_then(Value::as_object).into_iter().flatten().map(|(kind, n)| format!("{n} {kind}")).collect();
+    if !lost.is_empty() {
+        io.errln(format_args!("not saved in {path} (the app's command line says why): {}", lost.join(", ")));
+    }
+    let fonts: Vec<String> = r
+        .get("nonPortableFonts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| Some(format!("{} ({})", f.get("style")?.as_str()?, f.get("font")?.as_str()?)))
+        .collect();
+    if !fonts.is_empty() {
+        io.errln(format_args!("fonts in {path} that AutoCAD on Windows doesn't have: {}", fonts.join(", ")));
+    }
 }
 
 /// Why `{last}` is refused when its drawing can't be told.
@@ -323,16 +389,16 @@ fn mentions_last(p: &Value) -> bool {
     }
 }
 
-/// `run --connect`: the same drawings and steps, sent to the running app's control channel. Every
-/// input is read and every path resolved before the first request, so a bad argument changes
-/// nothing in the open drawing.
+/// `run --connect`: the same drawings and steps, sent to the running app's control channel on one
+/// connection ([`App`]). Script files are read, drawings checked to be readable and every path
+/// resolved before the first request, so a bad argument changes nothing in the open drawing.
 fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
     let mut opens: Vec<(String, &'static str, Value)> = Vec::new();
     for d in &a.drawings {
         opens.push(match d {
             Drawing::File(f) => {
-                // Read it now, as script files are: a missing drawing must fail before `--metric`
-                // or an earlier file has changed what the app has open.
+                // Checked now, when script files are read: a missing drawing must fail before
+                // `--metric` or an earlier file has changed what the app has open.
                 let path = app_path(f)?;
                 // Not a plain open: a FIFO with no writer would block it forever.
                 cadcraft_engine::capped_read::open_regular(f).map_err(|source| RunError::ReadDrawing { path: f.clone(), source })?;
@@ -343,28 +409,34 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
             Drawing::Sample => return Err(RunError::Remote { step: "--sample".into(), message: "headless only".into() }.into()),
         });
     }
-    let mut steps: Vec<Ready> = Vec::new();
+    // Each step with the name an error gives it.
+    let mut steps: Vec<(String, Ready)> = Vec::new();
     for step in &a.steps {
         steps.push(match step {
-            Step::Script(text) => Ready::Script(text.replace("\\n", "\n")),
-            Step::ScriptFile(p) => Ready::Script(std::fs::read_to_string(p).map_err(|source| RunError::ReadScript { path: p.clone(), source })?),
-            Step::Cmd(c) => Ready::Cmd(c),
+            Step::Script(text) => ("--script".into(), Ready::Script(text.replace("\\n", "\n"))),
+            Step::ScriptFile(p) => (
+                format!("--script-file {}", p.display()),
+                Ready::Script(std::fs::read_to_string(p).map_err(|source| RunError::ReadScript { path: p.clone(), source })?),
+            ),
+            Step::Cmd(c) => (format!("--cmd {}", c.id), Ready::Cmd(c)),
         });
     }
     let outputs: Vec<String> = [&a.save, &a.export].into_iter().flatten().map(|p| app_path(p)).collect::<Result<_>>()?;
 
-    let mut app = cadcraft_mcp::Remote::connect(addr).map_err(|source| RunError::NotReachable { addr: addr.to_string(), source })?;
+    let remote = cadcraft_mcp::Remote::connect(addr).map_err(|source| RunError::NotReachable { addr: addr.to_string(), source })?;
+    let mut app = App { remote, addr, connection: None };
     for (step, method, params) in opens {
-        remote(&mut app, &step, method, params)?;
+        let r = app.call(&step, method, params)?;
+        report_opened(&r, io);
     }
-    // The last returned handle, with the drawing that was open when it came back. Only asked for
-    // when some step uses `{last}`.
-    let chains = steps.iter().any(|s| matches!(s, Ready::Cmd(c) if mentions_last(&c.params)));
+    // The last returned handle, with the drawing that was open when it came back (`None`: it can't
+    // be told). Only asked for when some step uses `{last}`.
+    let chains = steps.iter().any(|(_, s)| matches!(s, Ready::Cmd(c) if mentions_last(&c.params)));
     let mut last_handle: Option<(Handle, Option<u64>)> = None;
-    for step in steps {
-        match step {
+    for (step, ready) in steps {
+        match ready {
             Ready::Script(body) => {
-                let r = remote(&mut app, "--script", "cmdline.script", json!({"text": body}))?;
+                let r = app.call(&step, "cmdline.script", json!({"text": body}))?;
                 for l in r.get("output").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
                     io.errln(format_args!("{l}"));
                 }
@@ -373,10 +445,10 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                 // One read of the open drawing before the command: `{last}` is checked against it
                 // and it is the "before" of the handle the command may return, so no switch can fall
                 // between a check and the command except after this read (see docs/cli.md).
-                let now = if chains { open_drawing(&mut app) } else { None };
-                let h = match &last_handle {
-                    Some((h, then)) if mentions_last(params) => match (then, now) {
-                        (Some(then), Some(now)) if now == *then => Some(*h),
+                let before = if chains { app.open_drawing(&step)? } else { None };
+                let h = match last_handle {
+                    Some((h, then)) if mentions_last(params) => match (then, before) {
+                        (Some(then), Some(now)) if now == then => Some(h),
                         (Some(_), Some(_)) => {
                             return Err(RunError::LastStale {
                                 id: id.clone(),
@@ -386,28 +458,28 @@ fn run_connected(a: &RunArgs, addr: &str, io: &mut Streams) -> Result {
                         }
                         _ => return Err(RunError::LastStale { id: id.clone(), why: UNKNOWN_DRAWING }.into()),
                     },
-                    Some((h, _)) => Some(*h),
-                    None => None,
+                    _ => None,
                 };
                 let params = fill_last(params, h).map_err(|source| RunError::CmdLast { id: id.clone(), source })?;
-                // Read again after: a switch while the command ran leaves its handle's drawing
-                // unknown, never recorded as the drawing switched to.
-                let before = now;
-                let r = remote(&mut app, &format!("--cmd {id}"), "engine.execute", json!({"command": id, "params": params}))?;
-                if let Some(h) = returned_handle_remote(&r).filter(|_| chains) {
-                    let after = open_drawing(&mut app);
-                    // A handle whose drawing can't be told is never filled in (see above).
-                    last_handle = Some((h, before.filter(|b| after == Some(*b))));
-                }
+                let r = app.call(&step, "engine.execute", json!({"command": id, "params": params}))?;
+                // Printed before the read below: the command ran, whatever that read does.
                 if !r.is_null() {
                     io.outln(format_args!("{r}"));
+                }
+                if chains && let Some(h) = returned_handle_remote(&r) {
+                    // Read again after: a switch while the command ran leaves its handle's drawing
+                    // unknown, never recorded as the drawing switched to. Such a handle is never
+                    // filled in (see above).
+                    let after = app.open_drawing(&step)?;
+                    last_handle = Some((h, before.filter(|b| after == Some(*b))));
                 }
             }
         }
     }
     for path in outputs {
-        remote(&mut app, &format!("save {path}"), "app.save", json!({"path": path}))?;
+        let r = app.call(&format!("save {path}"), "app.save", json!({"path": path}))?;
         io.errln(format_args!("saved {path} (in the app at {addr})"));
+        report_saved(&path, &r, io);
     }
     Ok(())
 }

@@ -198,13 +198,15 @@ pub(crate) enum ViewMode {
     cadcraft-cli run --connect 127.0.0.1:7979 --script "circle 0,0 25"
   FILE opens in the app and --metric starts a new metric drawing there; without either, the
   steps act on the drawing the app has open. --save or --export is the app's Save As (an image
-  path exports and the drawing keeps its name). Paths are made absolute, and drawing and script
-  files are read, before anything is sent. A --script's output goes to stderr, as headless.
+  path exports and the drawing keeps its name). Before anything is sent, paths are made
+  absolute, script files are read and drawing files are checked to be readable. A --script's
+  output goes to stderr, as headless, and so does what the app says a file left out.
+  A run keeps to one connection: if the app restarts part-way, the run stops there (exit 1)
+  instead of sending the remaining steps to the new session.
   {last} is checked against the id of the drawing the app has open (ui.inspect's uid): if a
   step, a click in the window or another client opened or switched to another drawing since the
   handle came back, the run fails rather than apply it there, as it does when the app doesn't
-  report drawing ids. --sample, --window and --view are headless
-  only."#)]
+  report drawing ids. --sample, --window and --view are headless only."#)]
 pub(crate) struct RunArgs {
     #[arg(value_name = "FILE", help = open_help())]
     pub(crate) files: Vec<PathBuf>,
