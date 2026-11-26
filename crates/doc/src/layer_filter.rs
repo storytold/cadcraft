@@ -154,12 +154,28 @@ impl Wildcard {
     }
 }
 
+fn closes_before_separator(chars: &[char], mut i: usize) -> bool {
+    while let Some(&c) = chars.get(i) {
+        match c {
+            ']' => return true,
+            '[' | ',' => return false,
+            '`' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn parse_set(chars: &[char], mut i: usize) -> Result<(Tok, usize), FilterError> {
     let mut members = Vec::new();
     let mut closed = false;
     while let Some(&c) = chars.get(i) {
         i += 1;
         match c {
+            ']' if members == [('~', false)] && closes_before_separator(chars, i) => {
+                members.push((']', true));
+            }
             ']' if members.is_empty() && chars.get(i..).is_some_and(|r| r.contains(&']')) => {
                 members.push((']', true));
             }
@@ -648,6 +664,9 @@ mod tests {
             ("[]a,]", "a", true),
             ("[]a,]", ",", true),
             ("[]a,]", "b", false),
+            ("[~]a]", "b", true),
+            ("[~]a]", "]", false),
+            ("[~]a]", "a", false),
             ("[~],[a]", "~", true),
             ("[~],[a]", "a", true),
             ("[~],[a]", "b", false),

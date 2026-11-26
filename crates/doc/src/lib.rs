@@ -38,8 +38,8 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
-pub use names::{Named, NamedList, NamedMap};
 pub use layer_filter::{FilterKind, FilterRule, LayerFilter, LayerFilters};
+pub use names::{Named, NamedList, NamedMap};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
