@@ -449,7 +449,7 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
     // As it was (none for a new style), so dimensions are redrawn only when it changes.
     let before = d.text_style(&name).cloned();
-    let idx = match d.text_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
+    let idx = match d.text_styles.position_by_name(&name) {
         Some(i) => i,
         None => {
             d.text_styles.push(cadcraft_doc::TextStyle { name: name.clone(), ..Default::default() });
@@ -554,7 +554,7 @@ fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
     if d.text_style(&to).is_some() && !to.eq_ignore_ascii_case(&from) {
         return Err(bad("style.rename", format!("a text style `{to}` already exists")));
     }
-    let st = d.text_styles.iter_mut().find(|t| t.name.eq_ignore_ascii_case(&from)).ok_or_else(|| bad("style.rename", "no such style"))?;
+    let st = d.text_styles.by_name_mut(&from).ok_or_else(|| bad("style.rename", "no such style"))?;
     st.name = to.clone();
     // References follow the new name.
     let fix = |n: &mut String| {
@@ -642,7 +642,7 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     // As it was (none for a new style), so dimensions are redrawn only when it changes.
     let before = d.dim_style(&name).cloned();
     let base = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
-    let idx = match d.dim_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
+    let idx = match d.dim_styles.position_by_name(&name) {
         Some(i) => i,
         None => {
             d.dim_styles.push(cadcraft_doc::DimStyle { name: name.clone(), ..base });
@@ -792,7 +792,7 @@ fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
     if d.dim_style(&to).is_some() && !to.eq_ignore_ascii_case(&from) {
         return Err(bad("dimstyle.rename", format!("a dimension style `{to}` already exists")));
     }
-    let st = d.dim_styles.iter_mut().find(|t| t.name.eq_ignore_ascii_case(&from)).ok_or_else(|| bad("dimstyle.rename", "no such dimension style"))?;
+    let st = d.dim_styles.by_name_mut(&from).ok_or_else(|| bad("dimstyle.rename", "no such dimension style"))?;
     st.name = to.clone();
     if d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(&from) {
         d.header.set_str("DIMSTYLE", &to);
@@ -1015,7 +1015,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
             if d.linetype(&to).is_some() && !to.eq_ignore_ascii_case(&from) {
                 return Err(bad("rename", format!("a linetype `{to}` already exists")));
             }
-            let st = d.linetypes.iter_mut().find(|t| t.name.eq_ignore_ascii_case(&from)).ok_or_else(|| bad("rename", "no such linetype"))?;
+            let st = d.linetypes.by_name_mut(&from).ok_or_else(|| bad("rename", "no such linetype"))?;
             st.name = to.clone();
             // References follow the new name.
             let fix = |n: &mut String| {

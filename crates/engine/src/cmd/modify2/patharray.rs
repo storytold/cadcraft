@@ -1,6 +1,6 @@
 use super::{
     Accept, Chain, Handle, Input, Interactive, Mat3, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Value, bad, bool_or, curves, json,
-    number, other, targets,
+    other, targets,
 };
 
 // =====================================================================================
@@ -61,10 +61,23 @@ pub(crate) fn arraypath(
 pub(super) fn run_arraypath(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let path = curves::handle_param(p, "path").ok_or_else(|| bad("arraypath", "`path` (handle) is required"))?;
-    let count = p.get("count").and_then(Value::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-    let spacing = p.get("spacing").and_then(Value::as_f64);
-    let r = arraypath(s, &hs, path, count, spacing, bool_or(p, "align", true))?;
+    // As in the other arrays' JSON forms, a value that isn't a whole number of at least 1 (or a
+    // positive spacing) is refused, not ignored; missing or null is the default.
+    let count = crate::cmd::array::count_or("arraypath", p, "count", 6)?;
+    let spacing = crate::cmd::size_param("arraypath", p, "spacing", false)?;
+    let r = arraypath(s, &hs, path, Some(usize::try_from(count).unwrap_or(usize::MAX)), spacing, bool_or(p, "align", true))?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
+}
+
+/// The number of items typed at ARRAYPATH's prompt: a whole number from 1 to 32767, written in
+/// plain decimals. AutoCAD 2024 takes 5, +5, 05, 5., 5.0, 5.00 and +5.0 there, and refuses 4.5,
+/// 1e1, 8/2, 3', 0 and 32768 (measured).
+pub(super) fn item_count(t: &str) -> Option<usize> {
+    let t = t.trim();
+    let digits = t.strip_prefix('+').unwrap_or(t);
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let plain = !whole.is_empty() && whole.bytes().all(|b| b.is_ascii_digit()) && fraction.bytes().all(|b| b == b'0');
+    whole.parse::<usize>().ok().filter(|n| plain && (1..=32_767).contains(n))
 }
 
 #[derive(Default)]
@@ -121,7 +134,7 @@ impl Interactive for PathArrayM {
             }
             (Some(path), inp @ (Input::Text(_) | Input::Enter)) => {
                 let n = match &inp {
-                    Input::Text(t) => number(t).filter(|n| *n >= 1.0).ok_or_else(|| other("Requires a count of 1 or more."))? as usize,
+                    Input::Text(t) => item_count(t).ok_or_else(|| other("Requires an integer between 1 and 32767."))?,
                     _ => 6,
                 };
                 arraypath(s, &self.objs, path, Some(n), None, true)?;

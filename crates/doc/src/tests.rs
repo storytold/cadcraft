@@ -988,3 +988,60 @@ fn layer_and_block_lookups_by_name_cost_about_the_same_for_any_table_size() {
     }
     assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
 }
+
+/// Table entries for the cost tests below.
+const NAMED: usize = 40_000;
+
+/// A name of 54 bytes whose first 48 every such name of `kind` shares, so comparing two costs
+/// about 50 bytes and not a length check, as in a crafted file.
+fn long_name(kind: &str, tail: &str) -> String {
+    format!("{kind}{}{tail}", "x".repeat(48 - kind.len()))
+}
+
+/// The [`NAMED`] names `long_name(kind, "000000")`, `..."000001"`, ...
+fn long_names(kind: &str) -> impl Iterator<Item = String> + '_ {
+    (0..NAMED).map(move |i| long_name(kind, &format!("{i:06}")))
+}
+
+/// Each of a table's [`NAMED`] names is looked up in other case (found) and as a missing name of
+/// the same length, well within a bound that scanning the table for each lookup misses: a file of
+/// N entries and N objects naming one it lacks, or names in other case, drew in N² name
+/// comparisons (#1924).
+fn lookups_by_name_are_quick(kind: &str, found: impl Fn(&str) -> bool) {
+    let started = std::time::Instant::now();
+    for i in 0..NAMED {
+        assert!(found(&long_name(kind, &format!("{i:06}")).to_ascii_uppercase()), "{kind} {i}");
+        assert!(!found(&long_name(kind, &format!("z{i:05}"))), "{kind} {i}");
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+}
+
+#[test]
+fn linetype_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.linetypes = long_names("LT").map(|n| Linetype::simple(&n, "", &[0.5, -0.25])).collect();
+    lookups_by_name_are_quick("LT", |n| d.linetype(n).is_some());
+}
+
+#[test]
+fn text_style_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles = long_names("S").map(|name| TextStyle { name, ..TextStyle::default() }).collect();
+    lookups_by_name_are_quick("S", |n| d.text_style(n).is_some());
+}
+
+#[test]
+fn dim_style_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.dim_styles = long_names("D").map(|name| DimStyle { name, ..DimStyle::default() }).collect();
+    lookups_by_name_are_quick("D", |n| d.dim_style(n).is_some());
+}
+
+/// Each change to a drawing looks up every layout of the drawing before it by name (the check for
+/// non-finite results), so a drawing of N layouts cost N² name comparisons per command.
+#[test]
+fn layout_lookups_by_name_cost_about_the_same_for_any_table_size() {
+    let mut d = Drawing::new_imperial();
+    d.layouts = long_names("L").zip(1..).map(|(n, tab)| Layout::new(&n, tab)).collect();
+    lookups_by_name_are_quick("L", |n| d.layout(n).is_some());
+}

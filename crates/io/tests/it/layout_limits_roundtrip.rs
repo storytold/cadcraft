@@ -12,7 +12,7 @@ fn drawing() -> Drawing {
     let mut layout = Layout::new("Sheet", 1);
     layout.limits = Some((Vec2::new(1.038, 0.694), Vec2::new(9.506, 6.681)));
     layout.page.image_origin = Some(Vec2::new(-1.054, -0.71));
-    d.layouts = vec![layout];
+    d.layouts = vec![layout].into();
     d
 }
 

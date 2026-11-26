@@ -61,8 +61,11 @@ fn edit(sp: &Spline, opt: &str, p: &Value) -> Result<EntityKind> {
             spline(sp.refit(&fit, sp.closed))
         }
         "polyline" => {
-            let precision = p.get("precision").and_then(Value::as_u64).unwrap_or(10).min(99) as usize;
-            Ok(EntityKind::LwPolyline(spline_to_poly(sp, precision)))
+            let precision = match p.get("precision") {
+                None | Some(Value::Null) => 10,
+                Some(v) => v.as_u64().filter(|n| *n <= 99).ok_or_else(|| bad("splinedit", "`precision` must be a whole number from 0 to 99"))?,
+            };
+            Ok(EntityKind::LwPolyline(spline_to_poly(sp, precision as usize)))
         }
         "move" => {
             let (i, to) = (index(p)?, point_req("splinedit", p, "to")?);
@@ -388,13 +391,21 @@ fn add_control(sp: &Spline, at: Vec2) -> Result<Spline> {
     Ok(out)
 }
 
+/// The highest order Elevate order takes: degree 25 is the most `Spline::elevated` builds, and
+/// AutoCAD 2024's limit too.
+const MAX_ORDER: u64 = 26;
+
+/// AutoCAD 2024's message for an order it refuses: from the spline's own order to 26 (measured at
+/// orders 4 and 5).
+fn order_range(sp: &Spline) -> crate::EngineError {
+    other(format!("Requires an integer between {} and {MAX_ORDER}.", sp.degree as u64 + 1))
+}
+
 /// The same curve at a higher order (degree + 1), with more control points.
 fn elevate(sp: &Spline, order: u64) -> Result<Spline> {
-    // Degree 25 is the most `Spline::elevated` builds.
-    let max = 26;
     let current = sp.degree as u64 + 1;
-    if order < current || order > max {
-        return Err(other(format!("Requires an order between {current} and {max}.")));
+    if order < current || order > MAX_ORDER {
+        return Err(order_range(sp));
     }
     if order == current {
         return Ok(sp.clone());
@@ -585,6 +596,22 @@ impl SplineditM {
         }
         Ok(())
     }
+
+    /// Elevate order's "Enter new order": a whole number as typed. AutoCAD 2024 takes +5 and 05
+    /// and refuses 5.0, 5., 1e1, 4.5, 3, 27 and a point, all with the order range; Enter keeps
+    /// the order (measured).
+    fn input_order(&mut self, s: &mut Session, sp: &Spline, input: &Input) -> Result<()> {
+        if *input != Input::Enter {
+            let order = match input {
+                Input::Text(t) => t.trim().parse::<u64>().ok(),
+                _ => None,
+            }
+            .ok_or_else(|| order_range(sp))?;
+            self.apply(s, json!({ "option": "elevate", "order": order }))?;
+        }
+        self.sub = Sub::Vertex;
+        Ok(())
+    }
 }
 
 impl Interactive for SplineditM {
@@ -673,11 +700,15 @@ impl Interactive for SplineditM {
             }
             Sub::Join => self.input_join(s, h, &sp, &i)?,
             Sub::Precision => {
+                // A whole number as typed: AutoCAD 2024 takes +5 and 05 and refuses 5.0, 5., 4.5,
+                // 1e1, 8/2, 100, -1 and a point (measured).
                 let precision = match &i {
-                    Input::Text(t) => number(t).filter(|n| (0.0..=99.0).contains(n)).ok_or_else(|| other("Requires an integer between 0 and 99."))?,
-                    _ => 10.0,
-                };
-                self.apply(s, json!({ "option": "polyline", "precision": precision.round() as u64 }))?;
+                    Input::Text(t) => t.trim().parse::<u64>().ok().filter(|n| *n <= 99),
+                    Input::Enter => Some(10),
+                    _ => None,
+                }
+                .ok_or_else(|| other("Requires an integer between 0 and 99."))?;
+                self.apply(s, json!({ "option": "polyline", "precision": precision }))?;
                 s.set_selection(Vec::new());
                 return Ok(Step::Done);
             }
@@ -784,14 +815,7 @@ impl Interactive for SplineditM {
                 None if enter => self.sub = Sub::Vertex,
                 None => {}
             },
-            Sub::VertexOrder => {
-                if let Input::Text(t) = &i {
-                    let order =
-                        number(t).filter(|o| o.fract() == 0.0 && *o >= 1.0 && *o <= 1000.0).ok_or_else(|| other("Requires a whole number."))?;
-                    self.apply(s, json!({ "option": "elevate", "order": order as u64 }))?;
-                }
-                self.sub = Sub::Vertex;
-            }
+            Sub::VertexOrder => self.input_order(s, &sp, &i)?,
             Sub::VertexDelete => match point {
                 Some(p) => {
                     let u = distinct(&sp);

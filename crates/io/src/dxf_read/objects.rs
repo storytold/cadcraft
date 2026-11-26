@@ -195,6 +195,7 @@ impl Objects {
 
     /// Layouts' UCSs: the World UCS, unusable axes or no such layout leave it unset.
     fn apply_layout_ucss(&self, d: &mut Drawing, rx: &Rx) {
+        let layout_at = super::document::layout_positions(d);
         for (name, origin, x, y, named) in &self.layout_ucss {
             let usable = origin.is_finite() && crate::dxf_ext::usable_axes(*x, *y);
             // The named UCS group 345 points at, only while the layout's frame is still that
@@ -209,7 +210,7 @@ impl Objects {
             if !usable || (world && ucs_name.is_empty()) {
                 continue;
             }
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+            if let Some(l) = layout_at.get(name).and_then(|&i| d.layouts.get_mut(i)) {
                 l.ucs = Some(Ucs { name: ucs_name, origin: *origin, x_axis: *x, y_axis: *y });
             }
         }
@@ -348,8 +349,9 @@ impl Objects {
         }
         self.apply_mleader_styles(d, rx);
         crate::dxf_mleader::apply(d, &rx.mleader_fix, &self.names);
+        let layout_at = super::document::layout_positions(d);
         for (name, view) in &self.layout_views {
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+            if let Some(l) = layout_at.get(name).and_then(|&i| d.layouts.get_mut(i)) {
                 l.view = Some(*view);
             }
         }

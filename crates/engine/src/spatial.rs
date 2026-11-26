@@ -171,7 +171,7 @@ impl SpatialIndex {
         SpatialIndex {
             store: store.clone(),
             blocks: (*d.blocks).clone(),
-            dim_styles: d.dim_styles.clone(),
+            dim_styles: d.dim_styles.to_vec(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno,
             hidden_layers: hidden_layers(d).map(str::to_owned).collect(),
@@ -187,7 +187,7 @@ impl SpatialIndex {
         self.blocks.len() == d.blocks.len()
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
-            && self.dim_styles == d.dim_styles
+            && self.dim_styles == *d.dim_styles
             && self.anno == anno
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
     }

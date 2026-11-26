@@ -175,7 +175,7 @@ fn spline_interpolates_fit_points() {
         assert!(d < 0.05, "fit point {f:?} missed by {d}");
     }
     assert!(s.eval(0.0).near(fit[0], 1e-9));
-    assert!(s.eval(1.0).near(fit[4], 1e-9));
+    assert!(s.eval(s.domain().1).near(fit[4], 1e-9));
 }
 
 #[test]
