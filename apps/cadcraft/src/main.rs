@@ -241,8 +241,11 @@ fn filters(pick: &Pick) -> Vec<(&'static str, Vec<&'static str>)> {
 fn start_pick(ui: egui::Context) -> cadcraft_ui_egui::StartPick {
     Box::new(move |pick, done| {
         let ui = ui.clone();
+        // Here, not on the thread: the interface language is this thread's
+        // (`i18n::with_language`), and the filter labels are translated.
+        let filters = filters(&pick);
         let spawned = std::thread::Builder::new().name("file-dialog".into()).spawn(move || {
-            let dialog = file_dialog(&pick);
+            let dialog = file_dialog_with(&pick, &filters);
             let picked = if matches!(pick, Pick::Save(_)) { dialog.save_file() } else { dialog.pick_file() };
             done(picked.map(|p| p.to_string_lossy().to_string()));
             ui.request_repaint();
@@ -255,7 +258,13 @@ fn start_pick(ui: egui::Context) -> cadcraft_ui_egui::StartPick {
 
 /// The blocking dialog for `pick` (Windows, Linux, FreeBSD).
 fn file_dialog(pick: &Pick) -> rfd::FileDialog {
-    let dialog = filters(pick).iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
+    file_dialog_with(pick, &filters(pick))
+}
+
+/// [`file_dialog`] offering `filters`, the file types of `pick` ([`filters`]) as the caller's
+/// thread names them.
+fn file_dialog_with(pick: &Pick, filters: &[(&'static str, Vec<&'static str>)]) -> rfd::FileDialog {
+    let dialog = filters.iter().fold(rfd::FileDialog::new(), |d, (label, exts)| d.add_filter(*label, exts));
     match pick {
         Pick::Save(name) => dialog.set_file_name(name),
         Pick::Lisp(dir) | Pick::Pgp(dir) if !dir.is_empty() => dialog.set_directory(dir),
