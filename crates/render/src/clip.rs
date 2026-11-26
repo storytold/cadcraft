@@ -423,6 +423,80 @@ impl PolyClip {
         }
         out
     }
+
+    /// Clip a segment the other way round (an inverted XCLIP): the pieces outside the region.
+    fn clip_segment_outside(&self, a: Vec2, b: Vec2, out: &mut Vec<(Vec2, Vec2)>) {
+        if !a.is_finite() || !b.is_finite() {
+            return;
+        }
+        if clip_segment(a, b, &self.bounds).is_none() {
+            out.push((a, b));
+            return;
+        }
+        let d = b - a;
+        let mut prev = 0.0;
+        for t in self.crossings(a, b).into_iter().chain(std::iter::once(1.0)) {
+            if t - prev > 1e-12 && !self.contains(a + d * ((prev + t) / 2.0)) {
+                out.push((a + d * prev, a + d * t));
+            }
+            prev = t;
+        }
+    }
+    /// Clip a polyline to outside the region (an inverted XCLIP); the visible pieces.
+    pub fn clip_polyline_outside(&self, pts: &[Vec2]) -> Vec<Vec<Vec2>> {
+        let mut out: Vec<Vec<Vec2>> = Vec::new();
+        let mut cur: Vec<Vec2> = Vec::new();
+        let mut pieces = Vec::new();
+        for w in pts.windows(2) {
+            let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+            pieces.clear();
+            self.clip_segment_outside(*a, *b, &mut pieces);
+            if pieces.is_empty() {
+                if cur.len() >= 2 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+            }
+            for (p, q) in pieces.drain(..) {
+                if !cur.last().is_some_and(|l| l.near(p, 1e-12)) {
+                    if cur.len() >= 2 {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                    cur.clear();
+                    cur.push(p);
+                }
+                cur.push(q);
+            }
+        }
+        if cur.len() >= 2 {
+            out.push(cur);
+        }
+        out
+    }
+    /// Clip an infinite line (or a ray) to outside the region: the line cut where it crosses.
+    pub fn clip_infinite_outside(&self, base: Vec2, dir: Vec2, ray: bool) -> Vec<Vec<Vec2>> {
+        let len = dir.len();
+        if !base.is_finite() || !dir.is_finite() || len < 1e-300 {
+            return Vec::new();
+        }
+        let u = dir * (1.0 / len);
+        // Far enough past the region and the base point that the cut pieces reach the view.
+        let far = (self.bounds.width() + self.bounds.height() + (base - self.bounds.center()).len()) * 4.0 + 1e6;
+        let a = if ray { base } else { base - u * far };
+        self.clip_polyline_outside(&[a, base + u * far])
+    }
+    /// Fill triangles outside the region (an inverted XCLIP). A triangle wholly inside goes; one
+    /// the outline crosses stays whole (fills are not cut against the outside).
+    pub fn clip_triangles_outside(&self, tris: &[Vec2]) -> Vec<Vec2> {
+        let mut out = Vec::new();
+        for t in tris.as_chunks::<3>().0 {
+            let inside = t.iter().all(|p| self.contains(*p)) && (0..3).all(|i| self.crossings(t[i], t[(i + 1) % 3]).is_empty());
+            if !inside {
+                out.extend_from_slice(t);
+            }
+        }
+        out
+    }
 }
 
 /// Clip a polygon to a triangle (Sutherland–Hodgman; the triangle is convex).

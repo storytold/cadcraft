@@ -44,7 +44,6 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "showStatusBar": ui.show_status_bar,
         "showCommandLine": ui.show_command_line,
         "showViewcube": ui.show_viewcube,
-        "showUcsIcon": ui.show_ucs_icon,
         "showLayerList": ui.show_layer_list,
         "toolsetTab": ui.toolset_tab,
         "collapsedGroups": ui.collapsed_groups,
@@ -253,7 +252,7 @@ mod tests {
         app.run("ui.dock", json!({"operation":"move", "panel":"layers", "target":"properties", "zone":"left"})).unwrap();
         app.run("ui.dock", json!({"operation":"float", "panel":"properties", "rect":[120,90,340,410]})).unwrap();
         ui.docking = app.ui.docking;
-        ui.docking.set_visible(Panel::ToolSets, false, None, permissions).unwrap();
+        ui.docking.set_visible(Panel::ToolSets, false, None, false, permissions).unwrap();
         ui.show_toolsets = false;
         store.save_if_changed(&ui, Instant::now()).unwrap();
         let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -264,9 +263,9 @@ mod tests {
         assert_eq!(serde_json::to_value(&reloaded.docking).unwrap(), serde_json::to_value(&ui.docking).unwrap());
         assert!(!reloaded.show_toolsets);
         reveal_panel(&mut reloaded.docking, Panel::ToolSets).unwrap();
-        let tools = reloaded.docking.layout.location(&Panel::ToolSets).unwrap();
+        let tools = reloaded.docking.layout().location(&Panel::ToolSets).unwrap();
         assert_eq!(serde_json::to_value(&tools.group).unwrap()["column"]["side"], json!("Start"), "{tools:?}");
-        assert_eq!(reloaded.docking.layout.floating[0].rect, [120.0, 90.0, 340.0, 410.0]);
+        assert_eq!(reloaded.docking.layout().floating[0].rect, egui::Rect::from_min_size(egui::pos2(120.0, 90.0), egui::vec2(340.0, 410.0)));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -294,8 +293,8 @@ mod tests {
         assert_eq!(ui.toolset_tab, "Modeling");
         assert_eq!(ui.history_lines, 4);
         assert!(!ui.show_toolsets && ui.show_palettes && !ui.show_toolbar);
-        assert_eq!(ui.docking.layout, default_workspace().layout);
-        assert!(ui.docking.hidden.is_empty(), "{:?}", ui.docking.hidden);
+        assert_eq!(ui.docking.layout(), default_workspace().layout());
+        assert!(ui.docking.hidden().is_empty(), "{:?}", ui.docking.hidden());
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -34,15 +34,26 @@ pub(crate) fn arraypath(
         _ => (6, if c.closed { l / 6.0 } else { l / 5.0 }),
     };
     crate::cmd::array::check_size(s, n as u64, objs.len())?;
-    let Some((p0, t0)) = c.at_length(0.0) else { return Ok(Vec::new()) };
-    let mut out = Vec::new();
+    // Segment end lengths once: each sample is then a binary search, not a scan from the start.
+    let ends = c.end_lengths();
+    let Some((p0, t0)) = c.at_length_in(&ends, 0.0) else { return Ok(Vec::new()) };
+    let mut mats = Vec::new();
     for i in 1..n {
-        let Some((p, t)) = c.at_length(step * i as f64) else { continue };
+        let Some((p, t)) = c.at_length_in(&ends, step * i as f64) else { continue };
         let mut m = Mat3::translate(p - p0);
         if align {
             m = Mat3::rotate_about(p, t.angle() - t0.angle()).then_before(m);
         }
-        out.extend(crate::cmd::modify::transform_entities(s, &objs, &m, true)?);
+        mats.push(m);
+    }
+    // Every copy is checked before the first is made: a refusal part way would leave the copies
+    // already added in the drawing (a failed command is not rolled back).
+    if mats.iter().any(|m| !cadcraft_doc::ole_frame_accepts(m)) && crate::cmd::modify::holds_ole_frame(s, &objs, true)? {
+        return Err(crate::cmd::modify::ole_refusal());
+    }
+    let mut out = Vec::new();
+    for m in &mats {
+        out.extend(crate::cmd::modify::transform_entities(s, &objs, m, true)?);
     }
     Ok(out)
 }
@@ -50,9 +61,11 @@ pub(crate) fn arraypath(
 pub(super) fn run_arraypath(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let path = curves::handle_param(p, "path").ok_or_else(|| bad("arraypath", "`path` (handle) is required"))?;
-    let count = p.get("count").and_then(Value::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
-    let spacing = p.get("spacing").and_then(Value::as_f64);
-    let r = arraypath(s, &hs, path, count, spacing, bool_or(p, "align", true))?;
+    // As in the other arrays' JSON forms, a value that isn't a whole number of at least 1 (or a
+    // positive spacing) is refused, not ignored; missing or null is the default.
+    let count = crate::cmd::array::count_or("arraypath", p, "count", 6)?;
+    let spacing = crate::cmd::size_param("arraypath", p, "spacing", false)?;
+    let r = arraypath(s, &hs, path, Some(usize::try_from(count).unwrap_or(usize::MAX)), spacing, bool_or(p, "align", true))?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 

@@ -18,7 +18,7 @@ fn an_inactive_tabs_close_button_stays_under_the_pointer_and_closes_it() {
     assert_ne!(app.session.active, 0, "the first drawing's tab is inactive");
     let first = app.session.docs[0].title.clone();
     let open = app.session.docs.len();
-    let mut h = Harness::builder().with_size(vec2(1200.0, 760.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1200.0, 760.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
