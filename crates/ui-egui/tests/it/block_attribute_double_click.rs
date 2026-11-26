@@ -14,7 +14,7 @@ use cadcraft_engine::doc::{
     AnnoScale, Attrib, ClipBoundary, Common, EntityKind, HAlign, HVal, Handle, MText, MultilineAttrib, Space, VAlign, Viewport,
 };
 use cadcraft_engine::geom::{Vec2, Vec3};
-use cadcraft_ui_egui::{CadApp, Services};
+use cadcraft_ui_egui::{CadApp, Services, canvas, framework};
 use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -39,13 +39,14 @@ fn app_with_reference() -> (CadApp, Handle) {
 }
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h =
+        Harness::builder().with_context_setup(framework::install_headless).with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }
@@ -141,11 +142,12 @@ fn opening_the_editor_leaves_no_selection_window_behind() {
     let (mut app, reference) = app_with_reference();
     let ctx = egui::Context::default();
     let screen_rect = Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0)));
-    // The harness runs a separate frame for each event. Send both events in one RawInput.
+    // The window's runtime splits input after each pointer press. Draw only the canvas so it
+    // can receive both events in the same frame.
     let frame = |app: &mut CadApp, events, time| {
         app.logic(&ctx);
         let input = egui::RawInput { screen_rect, events, time: Some(time), ..Default::default() };
-        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+        let mut output = ctx.run_ui(input, |ui| canvas::show(app, ui));
         output.textures_delta.clear();
     };
     frame(&mut app, vec![], 0.0);
