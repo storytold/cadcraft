@@ -406,7 +406,7 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     {
         f.push("Hack".into());
     }
-    ctx.set_fonts(fonts);
+    craft_ui::fonts::load(ctx, fonts);
 }
 
 /// The system interface fonts [`install_fonts`] looks for, in order; it loads the first installed

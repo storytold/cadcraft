@@ -17,9 +17,14 @@ struct TableWritePlan<'a> {
     version: Version,
     cx: &'a mut Ctx,
     ext: cadcraft_geom::Bounds2,
+    /// The most dash elements a linetype is written with (a DWG's count is one byte); `None`
+    /// writes every element.
+    max_dashes: Option<usize>,
 }
 
-fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> {
+/// The tables; the LTYPE handles by upper-case name, and how many linetypes were written with
+/// only their first `plan.max_dashes` elements.
+fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> (HashMap<String, String>, usize) {
     let d = plan.d;
     let version = plan.version;
     let cx = plan.cx;
@@ -32,8 +37,13 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     // in the STYLE table below: (tag position, style name, is a shape) are filled in there.
     let mut ltype_handles: HashMap<String, String> = HashMap::new();
     let mut ltype_style_refs: Vec<(usize, Option<String>, bool)> = Vec::new();
+    let mut linetypes_cut = 0usize;
     let th = table_head(w, "LTYPE", d.linetypes.len());
     for lt in &d.linetypes {
+        let pattern = plan.max_dashes.and_then(|max| lt.pattern.get(..max)).unwrap_or(&lt.pattern);
+        if pattern.len() < lt.pattern.len() {
+            linetypes_cut = linetypes_cut.saturating_add(1);
+        }
         let h = record_head(w, "LTYPE", &th, "AcDbLinetypeTableRecord");
         ltype_handles.entry(lt.name.to_ascii_uppercase()).or_insert(h.clone());
         cx.ltypes.entry(lt.name.to_ascii_uppercase()).or_insert(h);
@@ -41,9 +51,9 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.i(70, if crate::dxf_xref::dependent(&lt.name) { 48 } else { 0 });
         w.s(3, &lt.description);
         w.i(72, 65);
-        w.i(73, lt.pattern.len() as i64);
-        w.f(40, lt.pattern_length());
-        for el in &lt.pattern {
+        w.i(73, pattern.len() as i64);
+        w.f(40, pattern.iter().map(|el| el.length.abs()).sum());
+        for el in pattern {
             w.f(49, el.length);
             // 74: 2 = text, 4 = shape, + 1 when the rotation is absolute (DXF Reference, LTYPE).
             let (kind, shape) = match (&el.text, el.shape) {
@@ -191,7 +201,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
     }
     w.s(0, "ENDTAB");
     write_dimstyles(w, d, cx, version);
-    ltype_handles
+    (ltype_handles, linetypes_cut)
 }
 
 /// The LAYER table; when the drawing has layer states AutoCAD can hold, the table's extension
@@ -1056,14 +1066,15 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
 /// The drawing's DXF tags, declaring `version` in `$ACADVER`, with what `target` (the version the
 /// file ends up in) has, and the foreign objects the file keeps, by their handles in the drawing.
 /// `bridge`: the text is for the DWG bridge, not a DXF file. The versions alone can't say so: an
-/// R2000 DWG is bridged from R2000 text.
+/// R2000 DWG is bridged from R2000 text. The bridge's linetypes keep at most
+/// [`super::DWG_MAX_LINETYPE_ELEMENTS`] elements; the last value counts those cut.
 pub(super) fn tags_kept_for(
     d: &Drawing,
     version: Version,
     target: Version,
     frozen_341: bool,
     bridge: bool,
-) -> (Vec<Tag>, std::collections::HashSet<Handle>) {
+) -> (Vec<Tag>, std::collections::HashSet<Handle>, usize) {
     // An in-place block edit in progress is not written: the drawing as before it.
     let committed = d.committed();
     let d: &Drawing = &committed;
@@ -1182,7 +1193,8 @@ pub(super) fn tags_kept_for(
 
     write_classes(&mut w, &cx, &every);
 
-    let ltype_handles = write_tables(&mut w, TableWritePlan { d, version, cx: &mut cx, ext: d.extents(&Space::Model) });
+    let max_dashes = bridge.then_some(super::DWG_MAX_LINETYPE_ELEMENTS);
+    let (ltype_handles, linetypes_cut) = write_tables(&mut w, TableWritePlan { d, version, cx: &mut cx, ext: d.extents(&Space::Model), max_dashes });
 
     // BLOCK_RECORD
     let th = table_head(&mut w, "BLOCK_RECORD", 1 + ps_brs.len() + user_blocks.len() + dim_defs.len() + arrow_defs.len() + table_defs.len());
@@ -1344,7 +1356,7 @@ pub(super) fn tags_kept_for(
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
     plot_settings_compatibility(&mut w.t, target);
-    (w.t, kept)
+    (w.t, kept, linetypes_cut)
 }
 
 fn plot_settings_compatibility(tags: &mut Vec<Tag>, target: Version) {

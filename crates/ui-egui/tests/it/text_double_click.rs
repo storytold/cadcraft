@@ -16,13 +16,17 @@ fn harness() -> Harness<'static, CadApp> {
     app.session.execute("view.set", &json!({ "center": [15, 10], "height": 40 })).unwrap();
     app.canvas.zoom_pending = false;
     // 60 frames a second: the default step (0.25 s) spreads two clicks past the double-click delay.
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }
