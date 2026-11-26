@@ -4,9 +4,9 @@
 //! DWG may explicitly refuse an unregistered class; a successful save must not silently drop it.
 
 use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Line, RawTag, Unknown};
-use cadcraft_dxf::{records, sections};
 use cadcraft_geom::Vec3;
 use cadcraft_io::{SaveOptions, Version, read, write_with};
+use craft_dxf::{records, sections};
 
 fn drawing() -> Drawing {
     let mut d = super::cases::drawing();
@@ -27,7 +27,7 @@ fn drawing() -> Drawing {
         RawTag { code: 30, value: "3.75".into() },
         RawTag { code: 330, value: target.hex() },
     ];
-    d.model.push(Entity::new(handle, EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags })));
+    d.model.push(Entity::new(handle, EntityKind::Unknown(Unknown { dxf_type: "SYNTHETIC_WIDGET".into(), tags, graphics: Vec::new() })));
     d.model.push(Entity::new(target, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(5.0, 6.0, 7.0) })));
     d
 }
@@ -55,7 +55,7 @@ fn preserved(original: &Drawing, back: &Drawing, context: &str) {
 }
 
 fn dxf_owner(bytes: &[u8]) {
-    let tags = cadcraft_dxf::parse(bytes).unwrap();
+    let tags = craft_dxf::parse(bytes).unwrap();
     let sections = sections(&tags);
     let tables = records(&sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
     let (_, model) = tables
@@ -69,6 +69,7 @@ fn dxf_owner(bytes: &[u8]) {
 }
 
 pub(super) fn check(path: &str, version: Version, binary: bool) {
+    cadcraft_io::dwg_worker::allow_in_process();
     let original = drawing();
     let mut current = original.clone();
     for pass in 1..=2 {
@@ -79,10 +80,10 @@ pub(super) fn check(path: &str, version: Version, binary: bool) {
             Err(error) => panic!("{context}: {error}"),
         };
         if path.ends_with(".dxf") {
-            assert_eq!(cadcraft_dxf::is_binary(&bytes), binary, "{context}: encoding");
+            assert_eq!(craft_dxf::is_binary(&bytes), binary, "{context}: encoding");
             dxf_owner(&bytes);
         } else {
-            assert_eq!(cadcraft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
+            assert_eq!(craft_dwg::version(&bytes).as_deref(), Some(version.code()), "{context}: wire version");
         }
         let back = read(&bytes, path).unwrap();
         preserved(&original, &back, &context);

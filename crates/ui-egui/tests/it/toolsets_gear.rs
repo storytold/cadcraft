@@ -18,13 +18,14 @@ fn harness() -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.ui.in_window_menu = false;
     app.integrated_titlebar = true;
-    let mut harness = Harness::builder().with_size(vec2(1280.0, 760.0)).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(&ui.ctx().clone());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut harness =
+        Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1280.0, 760.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            },
+            app,
+        );
     harness.run_steps(5);
     harness
 }

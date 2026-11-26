@@ -2,6 +2,8 @@
 //! by their own block (entity mode 0 and its handle). Written as "paper space" (mode 1), AutoCAD
 //! put them on the first layout and left theirs empty.
 
+#![cfg(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64"))))]
+
 use std::io::Cursor;
 
 use cadcraft_doc::{Circle, Common, Drawing, EntityKind, Layout, Line, Space};
@@ -10,6 +12,7 @@ use cadcraft_io::{SaveOptions, Version, read, write_with};
 
 #[test]
 fn entities_of_a_second_layout_are_owned_by_its_block() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_metric();
     let order = d.layouts.iter().map(|l| l.tab_order).max().unwrap_or(0) + 1;
     d.layouts.push(Layout::new("SHEET_A", order));

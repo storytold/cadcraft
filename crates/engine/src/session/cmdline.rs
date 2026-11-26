@@ -107,7 +107,8 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed_token(&format!("{r}"), false),
                 lisp::value::Value::Str(s) => self.typed_token(&s, false),
                 other => match other.as_point() {
-                    Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
+                    // A point from LISP is in the current UCS, as typed coordinates are.
+                    Some(p) => self.input(Input::Point(self.input_ucs().to_wcs(Vec2::new(p[0], p[1])))),
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -116,9 +117,26 @@ impl Session {
             };
         }
         // At "Select objects" prompts the selection modes (Previous, Last, ALL) win over a command
-        // keyword sharing the letter (HATCH's "picK internal point" against `P`).
-        let selection_mode = prompt.accept.select
-            && matches!(tt.strip_prefix('_').unwrap_or(tt).to_ascii_lowercase().as_str(), "all" | "l" | "last" | "p" | "previous");
+        // keyword sharing the letter (HATCH's "picK internal point" against `P`). A word typed with
+        // the Greek keyboard layout active is read by its keys there too: Λ is Last at COUNT's prompt,
+        // not List.
+        let selection_mode = prompt.accept.select && {
+            let word = tt.strip_prefix('_').unwrap_or(tt);
+            let keys = crate::keyboard::latin_keys(word).unwrap_or_else(|| word.to_ascii_lowercase());
+            matches!(keys.as_str(), "all" | "l" | "last" | "p" | "previous")
+        };
+        // A Greek word that is an existing name at a prompt that takes one is that name, in any case:
+        // ΣΟΛΙΔ is also the keys of Solid.
+        let existing = if matches!(prompt.picker, Some(crate::Picker::HatchPattern(_))) {
+            crate::keyboard::greek_fold(tt).and_then(|_| cmd::hatch::pattern_named(tt))
+        } else if prompt.takes_block {
+            self.greek_block_name(tt)
+        } else {
+            None
+        };
+        if let Some(name) = existing {
+            return self.input(Input::Text(name));
+        }
         // A leading underscore asks for a keyword by its English name, whatever the interface
         // language (`_M`, `_Yes`): scripts and LISP routines write them that way. (Snap
         // overrides such as `_cen` were taken above.)
@@ -129,7 +147,8 @@ impl Session {
             return self.input(Input::Keyword(k));
         }
         if prompt.accept.point {
-            if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
+            self.note_tilted_ucs();
+            if let Some(p) = self.parse_typed_point(tt, self.last_point) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
                 return self.input(Input::Point(p));
             }
@@ -173,6 +192,7 @@ impl Session {
     }
 
     fn script_lines(&mut self, text: &str) -> Result<()> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for line in text.lines() {
             // Trailing spaces are inputs (Enter); other trailing whitespace (`\r`) is not.
             let line = line.trim_end_matches(|c: char| c.is_whitespace() && c != ' ');

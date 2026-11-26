@@ -279,13 +279,14 @@ fn angular_diameter_and_radius_dimensions_are_saved_with_dimassoc() {
 /// reference in `dxf_read::dimassoc`, plus the curve start/end osnap semantics in `infer_snap`.
 #[test]
 fn standard_dimassoc_associates_in_dxf_and_dwg() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let c = case();
     let plain = without_cadcraft_xdata(&write_dxf(&c.d));
 
     let back = read_dxf(plain.as_bytes()).unwrap();
     assert_standard_assoc(&c, &back, "DXF");
 
-    let dwg = cadcraft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
+    let dwg = craft_dwg::dxf_to_dwg_as(plain.as_bytes(), Version::R2018.code()).unwrap();
     let back = read(&dwg, "case.dwg").unwrap();
     assert_standard_assoc(&c, &back, "DWG");
 }
