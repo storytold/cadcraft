@@ -28,6 +28,7 @@ fn spline_leader_and_block_content_are_written() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         }),
     };
     d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();

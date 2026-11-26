@@ -9,10 +9,7 @@ use super::helpers::{arc, circle, line, lwpoly, polygon_from_edge, polygon_typed
 
 use super::machines::number;
 use super::pline_opts::{Outcome, PlineAsk};
-use super::{
-    CommandSpec, bad, bool_or, distinct_points, f64_or, f64_req, find_command, point_param, point_req, point_value, points_param, size_param,
-    str_param,
-};
+use super::{CommandSpec, bad, bool_or, distinct_points, f64_or, f64_req, point_param, point_req, point_value, points_param, size_param, str_param};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, snap};
 
@@ -32,9 +29,11 @@ use line_pline::{LineM, PlineM, run_line, run_pline};
 use point::{DonutM, PointM, RayM, run_donut, run_point, run_ray};
 use polygon::{PolygonM, run_polygon};
 use solid::{SolidM, run_solid};
-use spline::{SplineM, run_spline};
-pub(crate) use text::justify;
+pub(super) use spline::SplineM;
+use spline::run_spline;
+
 use text::{MTextM, TextM, run_mtext, run_text};
+pub(crate) use text::{justify, justify_prompt};
 
 /// Every draw command's spec: JSON parameters, menu path, aliases and the interactive prompt
 /// machine each command starts.
