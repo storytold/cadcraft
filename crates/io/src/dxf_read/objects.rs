@@ -196,6 +196,7 @@ impl Objects {
     /// Layouts' UCSs: the World UCS, unusable axes or no such layout leave it unset.
     fn apply_layout_ucss(&self, d: &mut Drawing, rx: &Rx) {
         let layout_at = super::document::layout_positions(d);
+        let ucs_names = crate::dxf_ext::UcsNames::new(&d.ucss);
         for (name, origin, x, y, named) in &self.layout_ucss {
             let usable = origin.is_finite() && crate::dxf_ext::usable_axes(*x, *y);
             // The named UCS group 345 points at, only while the layout's frame is still that
@@ -203,7 +204,7 @@ impl Objects {
             let ucs_name = named
                 .as_ref()
                 .and_then(|h| rx.ucss.get(&h.trim().to_ascii_uppercase()))
-                .and_then(|n| crate::dxf_ext::named_ucs(&d.ucss, n, *origin, *x, *y))
+                .and_then(|n| ucs_names.named(n, *origin, *x, *y))
                 .map(|u| u.name.clone())
                 .unwrap_or_default();
             let world = origin.len() <= 1e-12 && (*x - Vec3::new(1.0, 0.0, 0.0)).len() <= 1e-12 && (*y - Vec3::new(0.0, 1.0, 0.0)).len() <= 1e-12;
