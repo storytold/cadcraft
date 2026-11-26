@@ -15,6 +15,22 @@ fn last(s: &Session) -> Handle {
     s.doc().unwrap().model.iter().last().map(|e| e.handle).unwrap()
 }
 
+/// Types `lines` at the command line and returns the one entity that run created. The prompt
+/// sequence must have finished: a stale script leaves a prompt waiting, and `last` would then be
+/// the previous entity, whose XDATA this test would wrongly accept. Counts new handles, not
+/// entities: Object mode erases the picked shape as it adds the cloud.
+fn typed_cloud(s: &mut Session, lines: &[&str]) -> Handle {
+    let before: Vec<Handle> = s.doc().unwrap().model.iter().map(|e| e.handle).collect();
+    for l in lines {
+        s.cmdline(l).unwrap();
+    }
+    assert!(!s.prompting(), "{lines:?} left a prompt waiting: {}", s.prompt_text());
+    let new: Vec<Handle> = s.doc().unwrap().model.iter().map(|e| e.handle).filter(|h| !before.contains(h)).collect();
+    assert_eq!(new.len(), 1, "{lines:?} must create exactly one entity, got {new:?}");
+    assert_eq!(last(s), new[0], "{lines:?}: the new cloud must be the last entity");
+    new[0]
+}
+
 fn props(xdata: &[RawTag]) -> Vec<(i32, String)> {
     let start = xdata.iter().position(|t| t.code == 1001 && t.value == "RevcloudProps").expect("RevcloudProps xdata");
     xdata[start..].iter().take_while(|t| t.code != 1001 || t.value == "RevcloudProps").map(|t| (t.code, t.value.trim().to_string())).collect()
@@ -41,12 +57,11 @@ fn every_way_of_drawing_a_cloud_is_recognised() {
     let rev = h(&s.execute("revcloud.freehand", &json!({"freehand": [[0, 0], [50, 0], [50, 50]], "arcLength": 10, "reverse": true})).unwrap());
     let circle = h(&s.execute("circle", &json!({"center": [200, 0], "radius": 20})).unwrap());
     let obj = h(&s.execute("revcloud", &json!({"handle": circle, "arcLength": 4})).unwrap());
-    s.cmdline("revcloud a 2").unwrap();
-    s.cmdline("300,0 320,10").unwrap();
-    let typed = last(&s);
+    // Arc length asks the minimum and then the maximum (#1714).
+    let typed = typed_cloud(&mut s, &["revcloud a 2 2", "300,0 320,10"]);
     s.execute("rectang", &json!({"p1": [400, 0], "p2": [420, 20]})).unwrap();
-    s.cmdline("revcloud a 3 o 400,10").unwrap();
-    let picked = last(&s);
+    // Object then asks "Reverse direction" after the pick.
+    let picked = typed_cloud(&mut s, &["revcloud a 3 3 o 400,10 n"]);
     let d = s.doc().unwrap();
     for (h, a) in [(rect, 15.0), (poly, 5.0), (rev, 10.0), (obj, 4.0), (typed, 2.0), (picked, 3.0)] {
         assert_cloud(d, h, a);
