@@ -4,6 +4,7 @@ mod annotate_options;
 mod annotative;
 mod arc_ctrl_direction;
 mod array_commands;
+mod array_counts;
 mod array_key_point;
 mod array_live;
 mod assoc_array;
