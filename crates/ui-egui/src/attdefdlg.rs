@@ -203,7 +203,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.add_enabled_ui(!st.align_below, |ui| {
                         egui::Grid::new("attdef-text").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
                             ui.label(crate::tl!("Justification"));
-                            craft_ui::ComboBox::from_id_salt("attdef-justify")
+                            egui::ComboBox::from_id_salt("attdef-justify")
                                 .width(180.0)
                                 .selected_text(crate::i18n::justify(&st.justification))
                                 .show_ui(ui, |ui| {
@@ -213,7 +213,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                 });
                             ui.end_row();
                             ui.label(crate::tl!("Text style"));
-                            craft_ui::ComboBox::from_id_salt("attdef-style").width(180.0).selected_text(st.style.clone()).show_ui(ui, |ui| {
+                            egui::ComboBox::from_id_salt("attdef-style").width(180.0).selected_text(st.style.clone()).show_ui(ui, |ui| {
                                 for n in &styles {
                                     ui.selectable_value(&mut st.style, n.clone(), n);
                                 }

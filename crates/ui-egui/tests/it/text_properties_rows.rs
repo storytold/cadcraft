@@ -16,8 +16,8 @@ fn painted(app: &mut CadApp, ctx: &egui::Context) -> String {
             _ => {}
         }
     }
-    let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
-    let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+    let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 3000.0))), ..Default::default() };
+    let mut output = ctx.run_ui(input, |ui| cadcraft_ui_egui::palettes::right_palettes(app, ui));
     output.textures_delta.clear();
     let mut text = String::new();
     for s in &output.shapes {
@@ -37,7 +37,7 @@ fn a_texts_style_and_justification_rows_are_listed() {
     painted(&mut app, &ctx);
     let text = painted(&mut app, &ctx);
     // (Drop-down contents are not painted shapes here, so only the row labels are checked.)
-    for s in ["Contents", "Text style", "Justify", "Height", "Rotation", "Width factor"] {
+    for s in ["Contents", "Style", "Justification", "Height", "Rotation", "Width factor"] {
         assert!(text.lines().any(|l| l == s), "{s} missing from:\n{text}");
     }
     // The rows change the text through properties.set.

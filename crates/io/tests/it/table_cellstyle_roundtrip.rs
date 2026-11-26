@@ -4,6 +4,194 @@
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::*;
 use cadcraft_geom::Vec3;
+use cadcraft_io::SaveOptions;
+use craft_dxf::Version;
+
+#[test]
+fn modern_table_cell_values_have_reference_groups() {
+    for (rows, cols, merged) in [(3, 2, false), (4, 3, true)] {
+        let mut d = Drawing::new_imperial();
+        let mut cells: Vec<Vec<TableCell>> = (0..rows)
+            .map(|row| (0..cols).map(|col| TableCell { text: format!("{}{}", (b'A' + col as u8) as char, row + 1), ..Default::default() }).collect())
+            .collect();
+        if merged {
+            cells[0][0].text = "Title".into();
+            cells[0][0].merged = Some((1, cols as u32));
+            cells[0][1].text = "CoveredText".repeat(30);
+        }
+        let table = Table { col_widths: vec![2.0; cols], row_heights: vec![0.5; rows], cells, title: merged, ..Table::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::Table(table.clone())).unwrap();
+        if !merged {
+            let bytes = cadcraft_io::write_with(&d, "t.dxf", &SaveOptions { version: Some(Version::R2018), binary: true }).unwrap();
+            assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells, table.cells);
+        }
+        for version in [Version::R2007, Version::R2010, Version::R2013, Version::R2018] {
+            let bytes = cadcraft_io::write_with(&d, "t.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+            let text = String::from_utf8(bytes.clone()).unwrap();
+            let lines: Vec<_> = text.lines().map(str::trim).collect();
+            let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
+            let start = pairs.iter().position(|p| *p == ("0", "ACAD_TABLE")).unwrap();
+            let end = start + 1 + pairs[start + 1..].iter().position(|p| p.0 == "0").unwrap();
+            let values: Vec<_> = pairs[start..end].iter().filter(|p| p.0 == "302").map(|p| p.1).collect();
+            let expected: Vec<_> = table
+                .cells
+                .iter()
+                .enumerate()
+                .flat_map(|(row, cells)| {
+                    cells.iter().enumerate().map(move |(col, cell)| if merged && row == 0 && col > 0 { "" } else { cell.text.as_str() })
+                })
+                .collect();
+            assert_eq!(values, expected);
+            assert_eq!(pairs[start..end].iter().filter(|p| **p == ("301", "CELL_VALUE")).count(), rows * cols);
+            assert_eq!(pairs[start..end].iter().filter(|p| **p == ("304", "ACVALUE_END")).count(), rows * cols);
+            let value_start = start + pairs[start..end].iter().position(|p| *p == ("301", "CELL_VALUE")).unwrap();
+            let value_end = value_start + pairs[value_start..end].iter().position(|p| *p == ("304", "ACVALUE_END")).unwrap();
+            let cell_start = start + pairs[start..end].iter().position(|p| *p == ("171", "1")).unwrap();
+            assert!(pairs[cell_start..value_start].contains(&("92", "0")));
+            let first_text = if merged { "Title" } else { "A1" };
+            assert_eq!(
+                &pairs[value_start..=value_end],
+                &[
+                    ("301", "CELL_VALUE"),
+                    ("93", "4"),
+                    ("90", "4"),
+                    ("1", first_text),
+                    ("94", "0"),
+                    ("300", ""),
+                    ("302", first_text),
+                    ("304", "ACVALUE_END")
+                ]
+            );
+            if merged {
+                assert_eq!(
+                    &pairs[cell_start..=value_end],
+                    &[
+                        ("171", "1"),
+                        ("172", "0"),
+                        ("173", "0"),
+                        ("174", "0"),
+                        ("175", "3"),
+                        ("176", "1"),
+                        ("91", "0"),
+                        ("92", "0"),
+                        ("178", "0"),
+                        ("145", "0.0"),
+                        ("301", "CELL_VALUE"),
+                        ("93", "4"),
+                        ("90", "4"),
+                        ("1", "Title"),
+                        ("94", "0"),
+                        ("300", ""),
+                        ("302", "Title"),
+                        ("304", "ACVALUE_END")
+                    ]
+                );
+                let covered_start = cell_start + 1 + pairs[cell_start + 1..end].iter().position(|pair| *pair == ("171", "1")).unwrap();
+                let covered_end = covered_start + pairs[covered_start..end].iter().position(|pair| *pair == ("304", "ACVALUE_END")).unwrap();
+                assert_eq!(
+                    &pairs[covered_start..=covered_end],
+                    &[
+                        ("171", "1"),
+                        ("172", "0"),
+                        ("173", "1"),
+                        ("174", "0"),
+                        ("175", "0"),
+                        ("176", "0"),
+                        ("91", "0"),
+                        ("92", "0"),
+                        ("178", "0"),
+                        ("145", "0.0"),
+                        ("301", "CELL_VALUE"),
+                        ("93", "4"),
+                        ("90", "4"),
+                        ("1", ""),
+                        ("94", "0"),
+                        ("300", ""),
+                        ("302", ""),
+                        ("304", "ACVALUE_END")
+                    ]
+                );
+            }
+            let mut expected_cells = table.cells.clone();
+            if merged {
+                for cell in &mut expected_cells[0][1..] {
+                    cell.text.clear();
+                }
+            }
+            assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells, expected_cells);
+        }
+        if merged {
+            let bytes = cadcraft_io::write_with(&d, "t.dxf", &SaveOptions { version: Some(Version::R2004), binary: false }).unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            let lines: Vec<_> = text.lines().map(str::trim).collect();
+            let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])).collect();
+            let start = pairs.iter().position(|pair| *pair == ("0", "ACAD_TABLE")).unwrap();
+            let end = start + 1 + pairs[start + 1..].iter().position(|pair| pair.0 == "0").unwrap();
+            let mut values = Vec::new();
+            let mut value = String::new();
+            let cell_start = start + pairs[start..end].iter().position(|pair| *pair == ("171", "1")).unwrap();
+            for &(code, chunk) in &pairs[cell_start..end] {
+                if code == "2" || code == "1" {
+                    value.push_str(chunk);
+                    if code == "1" {
+                        values.push(std::mem::take(&mut value));
+                    }
+                }
+            }
+            assert_eq!(values, table.cells.iter().flatten().map(|cell| cell.text.clone()).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn formatted_cell_text_reads_without_typed_text() {
+    // Synthetic DXF with one complete value and one value split across chunks.
+    let dxf = "0\nSECTION\n2\nENTITIES\n0\nACAD_TABLE\n100\nAcDbTable\n91\n1\n92\n2\n171\n1\n301\nCELL_VALUE\n302\nSingle\n304\nACVALUE_END\n171\n1\n301\nCELL_VALUE\n303\nFirst \n302\nsecond\n304\nACVALUE_END\n0\nENDSEC\n0\nEOF\n";
+    let table = first_table(&cadcraft_io::read(dxf.as_bytes(), "table.dxf").unwrap());
+    assert_eq!(table.cells[0][0].text, "Single");
+    assert_eq!(table.cells[0][1].text, "First second");
+}
+
+#[test]
+fn legacy_table_cell_text_stays_in_legacy_groups() {
+    let (drawing, table) = sample();
+    for version in [Version::R2000, Version::R2004] {
+        let bytes = cadcraft_io::write_with(&drawing, "t.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let lines: Vec<_> = text.lines().map(str::trim).collect();
+        let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])).collect();
+        let start = pairs.iter().position(|pair| *pair == ("0", "ACAD_TABLE")).unwrap();
+        let end = start + 1 + pairs[start + 1..].iter().position(|pair| pair.0 == "0").unwrap();
+        assert!(!pairs[start..end].iter().any(|pair| matches!(pair.0, "301" | "302" | "303" | "304")));
+        let values: Vec<_> = pairs[start..end].iter().filter(|pair| pair.0 == "1").map(|pair| pair.1).collect();
+        assert_eq!(values, table.cells.iter().flatten().map(|cell| cell.text.as_str()).collect::<Vec<_>>());
+        assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells, table.cells);
+    }
+}
+
+#[test]
+fn long_modern_cell_text_roundtrips() {
+    let mut d = Drawing::new_imperial();
+    let value = "éabc".repeat(140);
+    let table = Table {
+        col_widths: vec![2.0],
+        row_heights: vec![0.5],
+        cells: vec![vec![TableCell { text: value.clone(), ..Default::default() }]],
+        ..Table::default()
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Table(table)).unwrap();
+    for version in [Version::R2007, Version::R2018] {
+        let bytes = cadcraft_io::write_with(&d, "t.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|pair| (pair[0].trim(), pair[1])).collect();
+        let start = pairs.iter().position(|pair| *pair == ("301", "CELL_VALUE")).unwrap();
+        let end = start + pairs[start..].iter().position(|pair| *pair == ("304", "ACVALUE_END")).unwrap();
+        let formatted: String = pairs[start..end].iter().filter(|pair| matches!(pair.0, "302" | "303")).map(|pair| pair.1).collect();
+        assert_eq!(formatted, value);
+        assert_eq!(first_table(&cadcraft_io::read(&bytes, "t.dxf").unwrap()).cells[0][0].text, value);
+    }
+}
 
 fn sample() -> (Drawing, Table) {
     let mut d = Drawing::new_imperial();
@@ -122,5 +310,9 @@ fn breaks_and_data_links_roundtrip_and_the_block_draws_the_parts() {
     assert_eq!(first_table(&back), t);
     // Two parts: the block repeats the header row (Item / Cost).
     let text = String::from_utf8(bytes).unwrap();
-    assert_eq!(text.lines().filter(|l| l.trim() == "Item").count(), 3, "two in the block, one in the table cells");
+    let lines: Vec<_> = text.lines().map(str::trim).collect();
+    let pairs: Vec<_> = lines.as_chunks::<2>().0.iter().map(|pair| (pair[0], pair[1])).collect();
+    let start = pairs.iter().position(|pair| *pair == ("2", "BLOCKS")).unwrap();
+    let end = start + pairs[start..].iter().position(|pair| *pair == ("0", "ENDSEC")).unwrap();
+    assert_eq!(pairs[start..end].iter().filter(|pair| **pair == ("1", "Item")).count(), 2, "one header per table part in the block");
 }

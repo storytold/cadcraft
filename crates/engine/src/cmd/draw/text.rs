@@ -45,6 +45,16 @@ pub(crate) fn baseline_end(style: Option<&cadcraft_doc::TextStyle>, s: &str, hei
     at + Vec2::from_angle(rotation) * w
 }
 
+/// The justification options TEXT offers, in prompt order.
+const JUSTIFY_OPTIONS: [&str; 15] = ["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
+
+/// The prompt for a justification option. Align and Fit run between two baseline points, so a
+/// command that takes one point (`-ATTDEF`) passes `two_points: false` and doesn't list them.
+pub(crate) fn justify_prompt(two_points: bool) -> Prompt {
+    let options: Vec<&str> = JUSTIFY_OPTIONS.into_iter().filter(|o| two_points || !matches!(*o, "Align" | "Fit")).collect();
+    Prompt::new("Enter an option", Accept::TEXT).kw(&options)
+}
+
 pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
     let (h, v) = j;
@@ -177,8 +187,7 @@ impl Interactive for TextM {
     fn prompt(&self, s: &Session) -> Prompt {
         let th = s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
         if self.asking_justify {
-            return Prompt::new("Enter an option", Accept::TEXT)
-                .kw(&["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]);
+            return justify_prompt(true);
         }
         if self.asking_style {
             let current = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
@@ -304,7 +313,7 @@ impl Interactive for MTextM {
             None => Prompt::new("Specify first corner", Accept::POINT),
             Some(a) if !self.boxed() => Prompt::new("Specify opposite corner", Accept::POINT)
                 .kw(&["Height", "Justify", "Line spacing", "Rotation", "Style", "Width", "Columns"])
-                .base(a),
+                .corner(a),
             _ if self.lines.is_empty() => Prompt::new("Enter text (use \\P for new paragraphs)", Accept::TEXT),
             _ => Prompt::new("Enter next line of text (empty line to finish)", Accept::TEXT),
         }

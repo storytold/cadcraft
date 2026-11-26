@@ -29,17 +29,22 @@ fn drawing(ltscale: f64, own: &str) -> Drawing {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, reference, EntityKind::Insert(ins)).unwrap();
     d
 }
 
-/// The lengths of the dashes drawn for the reference, all but the last one (which may be cut).
+/// The lengths of the dashes drawn for the reference, all but the first and the last (the
+/// pattern is centred on the line, so those two may be cut).
 fn dashes(d: &Drawing) -> Vec<f64> {
     let l = build(d, &Space::Model, &Options::default());
     let mut out: Vec<f64> =
         l.prims.iter().filter(|p| p.kind == Kind::Polyline).map(|p| l.points(p).windows(2).map(|w| w[0].dist(w[1])).sum()).collect();
     out.pop();
+    if !out.is_empty() {
+        out.remove(0);
+    }
     out
 }
 
