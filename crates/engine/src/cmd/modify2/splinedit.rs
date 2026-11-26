@@ -61,8 +61,11 @@ fn edit(sp: &Spline, opt: &str, p: &Value) -> Result<EntityKind> {
             spline(sp.refit(&fit, sp.closed))
         }
         "polyline" => {
-            let precision = p.get("precision").and_then(Value::as_u64).unwrap_or(10).min(99) as usize;
-            Ok(EntityKind::LwPolyline(spline_to_poly(sp, precision)))
+            let precision = match p.get("precision") {
+                None | Some(Value::Null) => 10,
+                Some(v) => v.as_u64().filter(|n| *n <= 99).ok_or_else(|| bad("splinedit", "`precision` must be a whole number from 0 to 99"))?,
+            };
+            Ok(EntityKind::LwPolyline(spline_to_poly(sp, precision as usize)))
         }
         "move" => {
             let (i, to) = (index(p)?, point_req("splinedit", p, "to")?);
@@ -673,11 +676,15 @@ impl Interactive for SplineditM {
             }
             Sub::Join => self.input_join(s, h, &sp, &i)?,
             Sub::Precision => {
+                // A whole number as typed: AutoCAD 2024 takes +5 and 05 and refuses 5.0, 5., 4.5,
+                // 1e1, 8/2, 100, -1 and a point (measured).
                 let precision = match &i {
-                    Input::Text(t) => number(t).filter(|n| (0.0..=99.0).contains(n)).ok_or_else(|| other("Requires an integer between 0 and 99."))?,
-                    _ => 10.0,
-                };
-                self.apply(s, json!({ "option": "polyline", "precision": precision.round() as u64 }))?;
+                    Input::Text(t) => t.trim().parse::<u64>().ok().filter(|n| *n <= 99),
+                    Input::Enter => Some(10),
+                    _ => None,
+                }
+                .ok_or_else(|| other("Requires an integer between 0 and 99."))?;
+                self.apply(s, json!({ "option": "polyline", "precision": precision }))?;
                 s.set_selection(Vec::new());
                 return Ok(Step::Done);
             }
