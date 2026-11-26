@@ -132,6 +132,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         return None;
     }
     let h = selected_reference(app)?;
+    if app.session.running.is_some() {
+        app.session.cancel();
+    }
+    app.session.pending_window = None;
     app.session.echo(format!("Command: {}", id.to_ascii_uppercase()));
     open(app, h, None).then_some(Ok(Value::Null))
 }

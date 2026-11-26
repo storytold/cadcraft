@@ -162,6 +162,52 @@ fn attedit_leaves_constant_attributes_and_locked_references_alone() {
     assert_eq!(value(&s, h, "T"), "one");
 }
 
+/// The command-line prompts refuse a reference on a locked layer, as `attedit` with parameters
+/// does: picked at the prompt, selected before the command, or locked while values are typed.
+#[test]
+fn attedit_prompts_leave_a_reference_on_a_locked_layer_alone() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    let lock = |s: &mut Session, locked: bool| {
+        s.execute("layer.set", &json!({"name": "0", "locked": locked})).unwrap();
+    };
+    let said_locked = |s: &Session| s.log.iter().any(|l| l.contains("locked layer"));
+    let values = |s: &Session| (value(s, h, "T"), value(s, h, "U"));
+    let untouched = ("one".to_string(), "u".to_string());
+
+    // Picked at the prompt: refused, and the command asks again.
+    lock(&mut s, true);
+    type_lines(&mut s, &["attedit", "105,0"]);
+    assert!(s.prompt_text().contains("Select block reference"), "{}", s.prompt_text());
+    assert!(said_locked(&s), "{:?}", s.log);
+    s.cancel();
+
+    // Selected before the command: it says why, and asks for another.
+    s.log.clear();
+    s.set_selection(vec![h]);
+    s.cmdline("attedit").unwrap();
+    assert!(s.prompt_text().contains("Select block reference"), "{}", s.prompt_text());
+    assert!(said_locked(&s), "{:?}", s.log);
+    s.cancel();
+
+    // Locked after the pick, as the layer palette can do: nothing is written.
+    lock(&mut s, false);
+    s.set_selection(Vec::new());
+    type_lines(&mut s, &["attedit", "105,0"]);
+    assert!(s.prompt_text().contains("Enter value for T <one>"), "{}", s.prompt_text());
+    lock(&mut s, true);
+    s.log.clear();
+    type_lines(&mut s, &["x", "y"]);
+    assert_eq!(values(&s), untouched);
+    assert!(said_locked(&s), "{:?}", s.log);
+
+    // The command still waits for the last value: once unlocked, that value completes the edit.
+    lock(&mut s, false);
+    type_lines(&mut s, &["y"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(values(&s), ("x".to_string(), "y".to_string()));
+}
+
 #[test]
 fn attedit_at_changes_one_of_two_attributes_sharing_a_tag() {
     let mut s = with_block();

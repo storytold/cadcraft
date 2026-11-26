@@ -15,6 +15,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 
 /// Longest attribute value a string replacement may produce (bytes).
 const MAX_VALUE: usize = 65_536;
+const LOCKED_REFERENCE: &str = "the reference is on a locked layer";
 
 pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
@@ -71,7 +72,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
     };
     if super::super::curves::is_locked(s, h) {
-        return Err(bad("attedit", "the reference is on a locked layer"));
+        return Err(bad("attedit", LOCKED_REFERENCE));
     }
     // Values by place (`at`): one attribute each, where a tag repeats (a DXF reference may carry
     // two attributes with one tag; `values` changes both).
@@ -398,6 +399,10 @@ impl AtteditM {
         let mut msg = "Select a block reference.";
         for h in hs {
             let Some(EntityKind::Insert(ins)) = d.entity(*h).map(|e| &e.kind) else { continue };
+            if super::super::curves::is_locked(s, *h) {
+                msg = LOCKED_REFERENCE;
+                continue;
+            }
             let atts: Vec<(usize, String, String)> =
                 ins.attribs.iter().enumerate().filter(|(_, a)| !a.constant).map(|(k, a)| (k, a.tag.clone(), a.text.value.clone())).collect();
             if atts.is_empty() {
@@ -419,7 +424,8 @@ impl Interactive for AtteditM {
     /// A selected block reference is taken at once (Edit Attributes from the shortcut menu).
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         let pre = s.selection();
-        if s.settings.pickfirst && !pre.is_empty() && self.pick(s, &pre).is_ok() {
+        if s.settings.pickfirst && !pre.is_empty() {
+            self.pick(s, &pre)?;
             s.set_selection(Vec::new());
         }
         Ok(Step::Continue)
@@ -439,17 +445,22 @@ impl Interactive for AtteditM {
                 _ => Ok(Step::Continue),
             };
         };
-        let cur = self.attribs.get(self.values.len()).map(|a| a.2.clone()).unwrap_or_default();
-        self.values.push(match i {
+        let value = match i {
             Input::Text(t) => t,
-            Input::Enter => cur,
+            Input::Enter => self.attribs.get(self.values.len()).map(|a| a.2.clone()).unwrap_or_default(),
             _ => return Ok(Step::Continue),
-        });
-        if self.values.len() < self.attribs.len() {
+        };
+        if self.values.len() + 1 < self.attribs.len() {
+            self.values.push(value);
             return Ok(Step::Continue);
         }
+        // The layer can be locked after the pick. Keep the last prompt open so it can be retried.
+        if super::super::curves::is_locked(s, h) {
+            return Err(EngineError::Other(LOCKED_REFERENCE.into()));
+        }
         // All answered: apply them together (one undo step).
-        for ((k, _, _), v) in self.attribs.iter().zip(&self.values) {
+        let answers = self.values.iter().chain(std::iter::once(&value));
+        for ((k, _, _), v) in self.attribs.iter().zip(answers) {
             edit(s, (h, *k), |_| Some(v.clone()))?;
         }
         Ok(Step::Done)

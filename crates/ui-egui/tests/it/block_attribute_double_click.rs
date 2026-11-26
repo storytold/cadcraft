@@ -117,6 +117,35 @@ fn double_clicking_an_attributes_text_opens_the_editor_too() {
     assert_editor_on(h.state(), reference);
 }
 
+/// The first click between an attribute's strokes opens a selection window. When the second
+/// press and release arrive in one frame, opening the editor must clear the window.
+#[test]
+fn opening_the_editor_leaves_no_selection_window_behind() {
+    let (mut app, reference) = app_with_reference();
+    let ctx = egui::Context::default();
+    let screen_rect = Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0)));
+    // The harness runs a separate frame for each event. Send both events in one RawInput.
+    let frame = |app: &mut CadApp, events, time| {
+        app.logic(&ctx);
+        let input = egui::RawInput { screen_rect, events, time: Some(time), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+        output.textures_delta.clear();
+    };
+    frame(&mut app, vec![], 0.0);
+    frame(&mut app, vec![], 0.05);
+    let at = between_strokes(&app, reference, "NO", |picked| picked.is_none());
+    let pos = app.canvas.xf.unwrap().to_screen(at);
+    let button = |pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    frame(&mut app, vec![Event::PointerMoved(pos)], 0.1);
+    frame(&mut app, vec![button(true)], 0.15);
+    frame(&mut app, vec![button(false)], 0.2);
+    assert!(app.session.pending_window.is_some(), "the first click opens a window");
+
+    frame(&mut app, vec![button(true), button(false)], 0.25);
+    assert_editor_on(&app, reference);
+    assert!(app.session.pending_window.is_none(), "opening the editor clears the window");
+}
+
 #[test]
 fn a_reference_with_only_constant_attributes_opens_no_editor() {
     let (mut app, reference) = app_with_reference();

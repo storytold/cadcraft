@@ -167,6 +167,19 @@ fn open_makes_the_chosen_attribute_current() {
     assert!(app.ui.dialog.is_none());
 }
 
+/// The dialog never reaches the engine's command start, so opening it ends a running command
+/// itself, as starting any other command does.
+#[test]
+fn opening_the_dialog_ends_a_running_command() {
+    let (mut app, h) = app_with_reference();
+    app.session.start("line").unwrap();
+    app.session.set_selection(vec![h]);
+    assert!(app.session.running.is_some(), "LINE waits for its first point");
+    menus::activate(&mut app, "eattedit");
+    assert_eq!(app.ui.dialog.as_deref(), Some("attedit"));
+    assert!(app.session.running.is_none(), "{}", app.session.prompt_text());
+}
+
 #[test]
 fn without_a_selected_reference_attedit_asks_at_the_command_line() {
     let (mut app, _) = app_with_reference();
