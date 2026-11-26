@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data, warnings?: what an image draws short of the drawing}")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
@@ -123,7 +123,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
     let file = format!("export.{format}");
-    let bytes = (hooks.write)(s.doc()?, &file).map_err(|e| bad("export", e))?;
+    let (bytes, notes) = super::file::write_noted(hooks, s.doc()?, &file).map_err(|e| bad("export", e))?;
     let folder = path.and_then(super::file::new_folder);
     let mut r = match path {
         Some(path) => {
@@ -134,6 +134,7 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     };
     super::file::report_new_folder(s, &mut r, folder);
     super::file::report_loss(s, &mut r, &file);
+    super::file::report_notes(s, &mut r, notes);
     Ok(r)
 }
 

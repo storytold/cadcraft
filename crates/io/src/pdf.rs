@@ -219,6 +219,12 @@ fn window(v: Option<&Value>) -> Option<Bounds2> {
 
 /// Plot with JSON options (the engine's `plot` hook).
 pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
+    plot_noted(d, space, opts).map(|(bytes, _)| bytes)
+}
+
+/// [`plot`], also returning the dashed runs its pages drew continuous because of a dash limit
+/// ([`cadcraft_render::DisplayList::undashed`]).
+pub fn plot_noted(d: &Drawing, space: &Space, opts: &Value) -> Result<(Vec<u8>, usize)> {
     validate_plot_offset_json(opts)?;
     // `layouts: [name | "Model"] | "all"` plots those sheets into one file, one page each,
     // instead of `space`; "all" = Model if it has objects, then the layouts in tab order.
@@ -245,7 +251,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                 Ok((Space::Model, po))
             })
             .collect::<Result<Vec<_>>>()?;
-        return pdf_items(d, &items, &o);
+        return pdf_items_noted(d, &items, &o);
     }
     match opts.get("layouts") {
         Some(Value::String(a)) if a.eq_ignore_ascii_case("all") => {
@@ -253,7 +259,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
             layouts.sort_by_key(|l| l.tab_order);
             let model = (!d.model.is_empty()).then_some(Space::Model);
             let spaces: Vec<Space> = model.into_iter().chain(layouts.iter().map(|l| Space::Paper(l.name.clone()))).collect();
-            pdf_sheets(d, &spaces, &o)
+            pdf_items_noted(d, &sheet_items(&spaces, &o), &o)
         }
         Some(v) => {
             let names = v.as_array().ok_or_else(|| IoError::Format("`layouts` must be a list of layout names".into()))?;
@@ -268,9 +274,9 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                     None => Err(IoError::Format("`layouts` must be a list of layout names".into())),
                 })
                 .collect::<Result<Vec<_>>>()?;
-            pdf_sheets(d, &spaces, &o)
+            pdf_items_noted(d, &sheet_items(&spaces, &o), &o)
         }
-        None => pdf(d, space, &o),
+        None => pdf_noted(d, space, &o),
     }
 }
 

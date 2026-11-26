@@ -890,7 +890,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
         return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
     }
-    let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
+    let (bytes, notes) = super::file::plot_noted(hook, s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
         Some(names) => names.first().cloned().unwrap_or_default(),
         None => space.tab_name().to_string(),
@@ -909,15 +909,22 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
                 let mut r = json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });
                 super::file::report_new_folder(s, &mut r, folder);
+                super::file::report_notes(s, &mut r, notes);
                 Ok(r)
             }
             #[cfg(target_arch = "wasm32")]
             {
                 super::exchange::deliver_file(cmd, _path, &bytes, super::file::deliver())?;
-                Ok(json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format }))
+                let mut r = json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });
+                super::file::report_notes(s, &mut r, notes);
+                Ok(r)
             }
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format })),
+        None => {
+            let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format });
+            super::file::report_notes(s, &mut r, notes);
+            Ok(r)
+        }
     }
 }
 

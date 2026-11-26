@@ -29,7 +29,7 @@ pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, t
 }
 
 /// [`export_window_with`] and the list's [`cadcraft_render::DisplayList::undashed`].
-fn export_noted(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> (String, usize) {
+pub(crate) fn export_noted(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> (String, usize) {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
     (export_list(&list, window), list.undashed)
 }
