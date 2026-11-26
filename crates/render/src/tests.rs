@@ -941,6 +941,32 @@ fn a_constant_attribute_definition_draws_its_value_with_the_reference() {
 }
 
 #[test]
+fn many_constant_definitions_are_matched_to_the_attributes_without_comparing_every_pair() {
+    // #1923: a reference with N attributes of a block with N constant definitions, the tags N long
+    // ones alike up to their last characters, no attribute's a definition's. Asking for each
+    // definition whether the reference carries its tag by comparing it with every attribute cost
+    // N x N comparisons of whole tags for each copy drawn (many seconds here); gathering the
+    // reference's tags once costs milliseconds. The values are empty and the attributes invisible,
+    // so drawing them costs nothing.
+    const N: usize = 4000;
+    let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("K");
+    for (h, i) in (1..).zip(0..N) {
+        let mut a = cadcraft_doc::Attrib { constant: true, ..attrib(&tag('D', i)) };
+        a.text.value.clear();
+        blk.entities.push(block_entity(h, Common::default(), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("K".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("K") else { panic!("an insert") };
+    ins.attribs = (0..N).map(|i| cadcraft_doc::Attrib { invisible: true, ..attrib(&tag('A', i)) }).collect();
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let t = std::time::Instant::now();
+    build(&d, &Space::Model, &Options::default());
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
 fn constant_attribute_definitions_follow_attmode() {
     let at = Vec3::ZERO;
     // ATTMODE 0 hides every attribute; 1 the invisible ones; 2 shows them all.

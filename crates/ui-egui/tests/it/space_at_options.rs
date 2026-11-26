@@ -8,7 +8,7 @@ use egui_kittest::Harness;
 
 fn harness() -> Harness<'static, CadApp> {
     let app = CadApp::new(Session::new(), Services::default());
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(ui.ctx());
             app.ui(ui);

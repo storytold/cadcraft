@@ -27,7 +27,7 @@ fn harness(path: String) -> Harness<'static, CadApp> {
     let services = Services { pick_open: Some(Box::new(move || Some(path.clone()))), ..Services::default() };
     let mut app = CadApp::new(Session::new(), services);
     app.start("pdfimport");
-    Harness::builder().with_size(egui::vec2(900.0, 700.0)).build_ui_state(
+    Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(egui::vec2(900.0, 700.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);

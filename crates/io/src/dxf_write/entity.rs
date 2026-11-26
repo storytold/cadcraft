@@ -372,13 +372,15 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
             w.f(45, i.row_spacing);
         }
         if !i.attribs.is_empty() {
+            // The block's definitions by tag, gathered once for all the attributes (#1923).
+            let defs = d.block(&i.block).map(|b| b.attdefs_by_tag()).unwrap_or_default();
             for (index, a) in i.attribs.iter().enumerate() {
                 let ah = w.h();
                 w.s(0, "ATTRIB");
                 w.s(5, ah);
                 w.s(330, e.handle.hex());
                 w.s(100, "AcDbEntity");
-                let (c, base) = attrib_common(d, e, i, a);
+                let (c, base) = attrib_common(e, &defs, a);
                 layer_and_props(w, &c, Some(&base));
                 // Hidden with its definition (a dynamic block's visibility state hides it).
                 if !base.visible {

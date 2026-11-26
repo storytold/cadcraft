@@ -177,7 +177,7 @@ fn focus_json(ctx: &egui::Context) -> Value {
         "id": focused.map(|id| format!("{:016x}", id.value())),
         "label": widget.map(|widget| &widget.label),
         "role": widget.map(|widget| widget.role),
-        "keyboardInput": ctx.egui_wants_keyboard_input(),
+        "keyboardInput": crate::framework::widget_has_keyboard(ctx),
     })
 }
 

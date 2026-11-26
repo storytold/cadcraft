@@ -41,22 +41,18 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Floating panels open in their own OS windows on the desktop; the web build keeps them in the page.
-craft-ui = { workspace = true, features = ["native-windows"] }
 craft-update = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# `title_bar::sync_movable`: AppKit's title-band drag leaves the window still under the row's
-# controls and under floating panels.
-craft-window = { workspace = true }
 muda = { version = "0.21", default-features = false }
+# Quit CADCraft as a close request of the main window, so the unsaved-changes question runs (#2157).
+craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "8fa4db64a9bb943520259ea95331a303ba788f21", features = ["ui"] }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }
-# The same winit eframe uses (the storytold fork, patched in the workspace): its opt-in that turns
-# AppKit's terminate (Cmd+Q, Dock Quit) into a close request, so unsaved changes are asked about.
+# The same winit eframe uses (the storytold fork, patched in the workspace).
 # `rwh_06`: the window handle a file dialog shown as a sheet attaches to (src/sheet.rs).
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 # Waits for the answer of a file dialog shown as a sheet (src/sheet.rs). MIT OR Apache-2.0, already

@@ -124,7 +124,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 ui.label(RichText::new(crate::tl!("Values typed at the command line work too")).small().color(t.text_dim));
             });
         });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::framework::escape_pressed(ctx) {
         done = Done::Cancel;
     }
     if fresh {
