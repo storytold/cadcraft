@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_color::Color;
 use cadcraft_doc::{
     AssocSnap, Attrib, Block, Common, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, EntityStore, Gradient, Group, HAlign,
-    HVal, Handle, Hatch, Insert, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
+    HVal, Handle, Hatch, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
     TableStyle, Text, Transparency, Ucs, VAlign, VportConfig, VportTile,
 };
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
@@ -189,7 +189,10 @@ pub fn entity_sub_record(d: &Drawing, e: &Entity, index: usize) -> Option<(Strin
     };
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
     match i.attribs.get(index) {
-        Some(a) => entity::attrib_record(&mut w, d, e, i, index, a, &cx),
+        Some(a) => {
+            let base = d.block(&i.block).and_then(|b| common::attdef_base(b, &a.tag));
+            entity::attrib_record(&mut w, d, e, index, a, base, &cx);
+        }
         None if index == i.attribs.len() => entity::seqend_record(&mut w, e),
         None => return None,
     }

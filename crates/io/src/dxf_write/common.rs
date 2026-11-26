@@ -1,9 +1,10 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Handle, HashMap, Insert, Lineweight, Text,
-    Transparency, VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Block, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Handle, HashMap, Lineweight, Text, Transparency,
+    VAlign, Vec3, Version, W, dxf_ext,
 };
 
 /// The most ATTDEF tags the definition indexes on one thread hold in all (a block with none
@@ -24,7 +25,8 @@ const MAX_TOO_LARGE: usize = 1 << 10;
 /// past [`MAX_INDEXED_TAGS`] has no entry here.
 #[derive(Default)]
 struct AttdefIndexes {
-    by_store: HashMap<u64, HashMap<String, Handle>>,
+    /// Order tags from the drawing so lookup cost does not depend on hash collisions.
+    by_store: HashMap<u64, BTreeMap<String, Handle>>,
     /// Tags held in all, for [`MAX_INDEXED_TAGS`].
     tags: usize,
     /// States of definitions with more distinct tags than [`MAX_INDEXED_TAGS`], so a read of one
@@ -42,8 +44,8 @@ thread_local! {
 /// The first ATTDEF of each tag in `block`, by upper-case tag, when there are at most `budget`
 /// distinct tags. `None` when another distinct tag would pass `budget`: the partial map is
 /// dropped, so a prefix is not stored in place of the definition.
-fn attdef_index_within(block: &Block, budget: usize) -> Option<HashMap<String, Handle>> {
-    let mut by_tag = HashMap::new();
+fn attdef_index_within(block: &Block, budget: usize) -> Option<BTreeMap<String, Handle>> {
+    let mut by_tag = BTreeMap::new();
     for e in block.entities.iter() {
         count_attdef_visit();
         if let EntityKind::AttDef(ad) = &e.kind {
@@ -80,7 +82,7 @@ fn scan_attdef(block: &Block, tag: &str) -> Option<Handle> {
 /// index. A definition with more distinct tags is not stored: the first read of that state builds
 /// at most [`MAX_INDEXED_TAGS`] index entries, then gives up and remembers the state; every read
 /// of it scans the definition once at most, stopping at the first match.
-fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
+pub(super) fn attdef_base<'a>(block: &'a Block, tag: &str) -> Option<&'a Common> {
     let token = block.entities.content_token();
     let want = tag.to_ascii_uppercase();
     let found = ATTDEF_INDEXES
@@ -110,7 +112,7 @@ fn attdef_base(block: &Block, tag: &str) -> Option<Common> {
             found
         })
         .unwrap_or_else(|_| scan_attdef(block, tag));
-    block.entities.get(found?).map(|e| e.common.clone())
+    block.entities.get(found?).map(|e| &e.common)
 }
 
 /// One more definition entity examined (counted in tests).
@@ -272,11 +274,10 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
     }
 }
 
-/// The properties attribute `a` of block reference `e` (of `ins`) is drawn with: its own, else its
-/// definition's; an attribute defined on layer 0 is on the reference's layer. Also the
-/// definition's properties.
-pub(super) fn attrib_common(d: &Drawing, e: &Entity, ins: &Insert, a: &Attrib) -> (Common, Common) {
-    let base = d.block(&ins.block).and_then(|b| attdef_base(b, &a.tag)).unwrap_or_default();
+/// Attribute `a` takes its own properties over its definition's. Layer 0 takes the layer of
+/// block reference `e`. Return the effective and definition properties.
+pub(super) fn attrib_common(e: &Entity, a: &Attrib, base: Option<&Common>) -> (Common, Common) {
+    let base = base.cloned().unwrap_or_default();
     let mut c = a.props.over(&base);
     if c.layer == "0" {
         c.layer.clone_from(&e.common.layer);

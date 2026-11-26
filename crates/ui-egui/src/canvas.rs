@@ -38,7 +38,7 @@ use list::{preview_options, prims_of};
 use pick::{edit_text_at, hatch_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
-use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
+use viewport::{HoverPart, VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
 use widgets::{draw_tiles, draw_ucs_icon, draw_viewcube, tile_rects, tile_xf, viewport_label};
 
 /// World ↔ screen transform for the canvas rect.
@@ -137,6 +137,9 @@ pub struct CanvasState {
     /// The selection and hover highlights inside the active MSPACE viewport (see [`VpHighlight`]).
     vp_sel: VpHighlight,
     vp_hover: VpHighlight,
+    /// The part of the hovered object a running command highlights instead of all of it (see
+    /// [`HoverPart`]).
+    hover_part: HoverPart,
     /// Model space seen through the active MSPACE viewport (see [`VpContent`]).
     vp: VpContent,
     /// What a running command shows in place of the drawing (see [`OnlyList`]).
@@ -397,6 +400,16 @@ struct CanvasPaint<'a> {
     raw_world: Option<Vec2>,
 }
 
+/// The part of the hovered object a click changes ([`HoverPart`]: the piece TRIM removes, the
+/// stretch EXTEND adds): a wide, see-through band in the hover colour under the usual rollover
+/// highlight. The rollover look alone (a thin dashed line over the object itself) is hard to see
+/// on part of an object, and this is what the user is about to change.
+fn draw_hover_part(p: &egui::Painter, xf: &Xf, part: &DisplayList, color: Color32, look: Look) {
+    let all: Vec<usize> = (0..part.prims.len()).collect();
+    draw_highlight(p, xf, part, &all, color.gamma_multiply(0.45), Look { width: 6.0, dashed: false });
+    draw_highlight(p, xf, part, &all, color, look);
+}
+
 fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle], preview_look: Look, selection_look: Option<Look>) {
     let app = &mut *frame.app;
     let painter = frame.painter;
@@ -408,6 +421,8 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     let active_vp = &frame.active_vp;
     let active_clip = &frame.active_clip;
     let scale = frame.xf.scale;
+    let (hover, cursor) = (app.canvas.hover, app.canvas.cursor);
+    app.canvas.hover_part.update(&app.session, hover, cursor, scale);
     // The active viewport's contents, drawn apart from the layout's list, under its own objects.
     // `masked`: its outline is in the stencil buffer this frame.
     let mut masked = false;
@@ -466,7 +481,9 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             });
             let clipped = painter.with_clip_rect(bounds.intersect(rect));
             let c = &mut app.canvas;
-            if let Some(h) = c.hover
+            if let Some(part) = &c.hover_part.list {
+                draw_hover_part(&clipped, &xf, part, t.hover, preview_look);
+            } else if let Some(h) = c.hover
                 && !sel.contains(&h)
             {
                 c.vp_hover.update(st, &[h], scale);
@@ -492,8 +509,12 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
                 }
             }
         }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
-        if let Some(h) = *hover
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, hover_part, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } =
+        &mut app.canvas
+    {
+        if let Some(part) = &hover_part.list {
+            draw_hover_part(painter, &xf, part, t.hover, preview_look);
+        } else if let Some(h) = *hover
             && !sel.contains(&h)
         {
             draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);
@@ -557,8 +578,12 @@ fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, 
         draw_viewcube(app, ui, rect);
     }
     viewport_label(painter, rect);
-    // Typing and Escape reach the command line even when its overlay is hidden.
-    crate::cmdline::keyboard(app, ui.ctx());
+    // Typing and Escape reach the command line even when its overlay is hidden, unless the
+    // inline constraint editor already handled this frame's keys (Enter would otherwise repeat
+    // `last_command`, e.g. immediately undoing the edit after Cmd+Z).
+    if !crate::parametric::take_keyboard(app) {
+        crate::cmdline::keyboard(app, ui.ctx());
+    }
     // Command line overlay.
     if app.ui.show_command_line {
         crate::cmdline::show(app, ui, full);
@@ -949,7 +974,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Some(f) = dyn_frame
                 && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
             {
-                app.cmd.buffer.clear();
+                app.cmd.clear_entry();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
             let result = match app.canvas.snap {
@@ -1022,10 +1047,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Context, dyn_frame: Option<crate::dyninput::Frame>) {
     if let Some(w) = raw {
         let mut eff = effective_point(app, w, xf, ctx);
-        // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
+        // A locked Dynamic Input value (`40,` or `40<` typed, or a Tab-locked second value) holds the
+        // cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
+            && crate::dyninput::holds_cursor(&e, app.cmd.second_locked())
         {
             eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
             app.canvas.snap = None;
@@ -1042,7 +1068,10 @@ fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Contex
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if dyn_frame
+            .and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f))
+            .is_none_or(|e| !crate::dyninput::holds_cursor(&e, app.cmd.second_locked()))
+        {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.
@@ -1090,7 +1119,7 @@ fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egu
         if let Some(f) = dyn_frame
             && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
         {
-            app.cmd.buffer.clear();
+            app.cmd.clear_entry();
         }
         // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
         let result = match app.canvas.snap {
@@ -1201,6 +1230,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         };
         let p = painter.with_clip_rect(clip);
         crate::parametric::draw_overlay(app, ui, &p, &xf);
+    } else {
+        crate::parametric::dismiss_inline(app, ui.ctx());
     }
     // Grips on selected objects (when idle or editing grips).
     let grip_edit = app.session.running.as_ref().is_some_and(|r| r.id == "grip");
@@ -1248,7 +1279,11 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
-    let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
+    // While the Array window is open the pointer is over it, so fall back to the last canvas
+    // cursor; every other command keeps today's behavior.
+    let over_array = app.ui.dialog.as_deref() == Some("array") && app.session.cursor.is_finite();
+    let cursor = app.canvas.cursor.or(if over_array { Some(app.session.cursor) } else { None });
+    let drag = match (cursor, app.canvas.gpu.is_some()) {
         (Some(c), true) => app.session.drag(c),
         _ => None,
     };
@@ -1260,7 +1295,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             let list = rebuilt_preview(&st.doc, extra.iter(), scale);
             draw_list(painter, &xf, &list, bg, false);
         }
-    } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
+    } else if let (Some(c), true) = (cursor, app.session.prompting()) {
         let ents = app.session.preview(c);
         if !ents.is_empty()
             && let Ok(st) = app.session.state()

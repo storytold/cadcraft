@@ -105,7 +105,7 @@ fn decimate(pts: &[Vec2], max: usize) -> Vec<Vec2> {
     v
 }
 
-fn offset_points(pts: &[Vec2], d: f64, closed: bool) -> Vec<Vec2> {
+pub(super) fn offset_points(pts: &[Vec2], d: f64, closed: bool) -> Vec<Vec2> {
     let n = pts.len();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {

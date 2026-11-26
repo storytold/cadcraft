@@ -1,5 +1,5 @@
 //! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG or PDF), IMPORT (the objects of another
-//! DXF/DWG file), PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
+//! DXF/DWG file or a PDF page), PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
 //! ATTACH, SHARE and 3DORBIT are registered so the tool bar and command line say they are not
 //! available yet.
 //!
@@ -35,7 +35,11 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF or DWG; PDF pages can be imported too), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+        CommandSpec::new("pdfimport", "Import PDF...", run_pdfimport)
+            .menu(&["File", "Import PDF..."])
+            .alias(&["pdfi"])
+            .params("{path | data: base64, name?: \"x.pdf\", page?: 1.. (default 1), password?, at?: [x,y] (default 0,0), scale?: (default 1), text?: true, fills?: true, lineweights?: true} → {imported, handles, layers, pages, page, warnings?}: vector paths, fills and supported text become editable objects; raster images and other unsupported content are reported. A scanned PDF has no editable vector content"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -135,28 +139,158 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- IMPORT ----------
 
-fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
-    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
+/// A PDF page reader installed by the app that links the PDF library.
+pub type PdfImportHook = fn(&[u8], &Value) -> std::result::Result<(Drawing, usize), String>;
+
+static PDF_IMPORT: std::sync::OnceLock<PdfImportHook> = std::sync::OnceLock::new();
+
+/// Install the PDF page reader used by OPEN, IMPORT and PDFIMPORT.
+pub fn set_pdf_import(hook: PdfImportHook) {
+    let _ = PDF_IMPORT.set(hook);
+}
+
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-")
+}
+
+/// Read a PDF's first page as a metric drawing when this host has installed a PDF reader.
+pub(super) fn open_pdf(bytes: &[u8]) -> Option<std::result::Result<Drawing, String>> {
+    if !is_pdf(bytes) {
+        return None;
+    }
+    let read = PDF_IMPORT.get()?;
+    Some(read(bytes, &json!({ "unit": 25.4 / 72.0 })).and_then(|(drawing, _)| {
+        if drawing.model.is_empty() {
+            let notes = drawing.read_notes.join("; ");
+            let message = if notes.is_empty() {
+                "PDF page 1 has no editable vector content; scanned drawings need manual tracing".to_string()
+            } else {
+                format!("PDF page 1 has no editable vector content; scanned drawings need manual tracing. {notes}")
+            };
+            Err(message)
+        } else {
+            Ok(drawing)
+        }
+    }))
+}
+
+/// Read an import source from a path or base64 data.
+fn source_file(cmd: &str, p: &Value, default_name: &str) -> Result<(Vec<u8>, String)> {
+    if let Some(path) = str_param(p, "path") {
+        return Ok((read_file(path)?, path.to_string()));
+    }
+    let data = str_param(p, "data").ok_or_else(|| bad(cmd, "`path` or `data` (base64) is required"))?;
+    Ok((base64_decode(data).ok_or_else(|| bad(cmd, "invalid base64"))?, str_param(p, "name").unwrap_or(default_name).to_string()))
+}
+
+/// Parse the optional insertion point and scale shared by import commands.
+fn placement(cmd: &str, p: &Value) -> Result<(Vec2, f64)> {
     let at = match p.get("at") {
-        Some(v) => point_value(v).ok_or_else(|| bad("import", "`at` must be a point [x, y]"))?,
+        Some(v) => point_value(v).ok_or_else(|| bad(cmd, "`at` must be a point [x, y]"))?,
         None => Vec2::ZERO,
     };
     let scale = match p.get("scale") {
-        Some(v) => v
-            .as_f64()
-            .filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs()))
-            .ok_or_else(|| bad("import", "`scale` must be a non-zero number"))?,
+        Some(v) => {
+            v.as_f64().filter(|k| k.is_finite() && (1e-9..=1e9).contains(&k.abs())).ok_or_else(|| bad(cmd, "`scale` must be a non-zero number"))?
+        }
         None => 1.0,
     };
-    let (bytes, name) = if let Some(path) = str_param(p, "path") {
-        (read_file(path)?, path.to_string())
-    } else {
-        let data = str_param(p, "data").ok_or_else(|| bad("import", "`path` or `data` (base64) is required"))?;
-        (base64_decode(data).ok_or_else(|| bad("import", "invalid base64"))?, str_param(p, "name").unwrap_or("import.dxf").to_string())
-    };
+    Ok((at, scale))
+}
+
+fn source_name(name: &str) -> String {
+    std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
+    let (at, scale) = placement("import", p)?;
+    let (bytes, name) = source_file("import", p, "import.dxf")?;
+    if is_pdf(&bytes) {
+        return import_pdf(s, "import", p, &bytes, &name, at, scale);
+    }
+    let hooks = io().ok_or_else(|| bad("import", "file formats are not available in this build"))?;
     let src = (hooks.read)(&bytes, &name).map_err(|e| bad("import", e))?;
-    let file = std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    import_drawing(s, &src, at, scale, &file)
+    import_drawing(s, &src, at, scale, &source_name(&name))
+}
+
+/// Convert millimetres to the current drawing's `$INSUNITS`.
+fn units_per_mm(d: &Drawing) -> f64 {
+    match d.header.i64("INSUNITS", 4) {
+        1 => 1.0 / 25.4,
+        2 => 1.0 / 304.8,
+        3 => 1.0 / 1_609_344.0,
+        5 => 0.1,
+        6 => 0.001,
+        7 => 1e-6,
+        8 => 39_370.078_74,
+        9 => 39.370_078_74,
+        10 => 1.0 / 914.4,
+        11 => 1e7,
+        12 => 1e6,
+        13 => 1e3,
+        14 => 0.01,
+        15 => 1e-4,
+        16 => 1e-5,
+        17 => 1e-12,
+        18 => 1.0 / 1.495_978_707e14,
+        19 => 1.0 / 9.460_730_472_580_8e18,
+        20 => std::f64::consts::PI / (648_000.0 * 1.495_978_707e14),
+        // US survey units: a survey foot is 1200/3937 m.
+        21 => 3937.0 / 1_200_000.0,
+        22 => 3937.0 / 100_000.0,
+        23 => 3937.0 / 3_600_000.0,
+        24 => 3937.0 / 6_336_000_000.0,
+        _ => 1.0,
+    }
+}
+
+fn run_pdfimport(s: &mut Session, p: &Value) -> Result<Value> {
+    let (at, scale) = placement("pdfimport", p)?;
+    let (bytes, name) = source_file("pdfimport", p, "import.pdf")?;
+    if !is_pdf(&bytes) {
+        return Err(bad("pdfimport", format!("{} is not a PDF file", source_name(&name))));
+    }
+    import_pdf(s, "pdfimport", p, &bytes, &name, at, scale)
+}
+
+fn import_pdf(s: &mut Session, cmd: &str, p: &Value, bytes: &[u8], name: &str, at: Vec2, scale: f64) -> Result<Value> {
+    let read = PDF_IMPORT.get().ok_or_else(|| bad(cmd, "PDF import is not available in this build"))?;
+    let unit = 25.4 / 72.0 * units_per_mm(s.doc()?);
+    let mut options = serde_json::Map::new();
+    options.insert("unit".into(), json!(unit));
+    for key in ["page", "password", "text", "fills", "lineweights"] {
+        if let Some(value) = p.get(key) {
+            options.insert(key.into(), value.clone());
+        }
+    }
+    let (source, pages) = read(bytes, &Value::Object(options)).map_err(|e| bad(cmd, e))?;
+    let page = p.get("page").and_then(Value::as_u64).unwrap_or(1);
+    if source.model.is_empty() {
+        let detail = source.read_notes.join("; ");
+        let message = if detail.is_empty() {
+            "the selected PDF page has no editable vector content; scanned drawings need manual tracing".to_string()
+        } else {
+            format!("the selected PDF page has no editable vector content; scanned drawings need manual tracing. {detail}")
+        };
+        return Err(bad(cmd, message));
+    }
+    let warnings = source.read_notes.clone();
+    let mut result = import_drawing(s, &source, at, scale, &source_name(name))?;
+    if let Some(object) = result.as_object_mut() {
+        object.insert("pages".into(), json!(pages));
+        object.insert("page".into(), json!(page));
+        object.insert("warnings".into(), json!(warnings));
+        let imported = object.get("imported").and_then(Value::as_u64).unwrap_or(0);
+        let mut message = format!("{imported} objects imported from page {page} of {pages} of {}", source_name(name));
+        if !source.read_notes.is_empty() {
+            message.push_str(". Some PDF content was omitted or approximated. See the command history for details.");
+            for note in &source.read_notes {
+                s.echo(note.clone());
+            }
+        }
+        object.insert("message".into(), json!(message));
+    }
+    Ok(result)
 }
 
 /// Copy `src`'s model space into the current space (scaled about the origin, then moved to
@@ -590,6 +724,40 @@ mod tests {
         s.cmdline("").unwrap();
         s.cmdline("circle 50,25 20").unwrap();
         s
+    }
+
+    fn scanned_pdf(_: &[u8], _: &Value) -> std::result::Result<(Drawing, usize), String> {
+        let mut drawing = Drawing::new_metric();
+        drawing.read_notes.push("PDF: 1 raster image was not imported".into());
+        Ok((drawing, 1))
+    }
+
+    #[test]
+    fn scanned_pdf_does_not_open_or_import_as_an_empty_drawing() {
+        set_pdf_import(scanned_pdf);
+        let data = base64_encode(b"%PDF-1.7 synthetic scan");
+        let mut s = Session::new();
+        let before = s.doc().unwrap().model.len();
+        let open = s.execute("open", &json!({ "data": data, "name": "scan.pdf" })).unwrap_err().to_string();
+        assert!(open.contains("no editable vector content") && open.contains("raster image"), "{open}");
+        let import = s.execute("pdfimport", &json!({ "data": data, "name": "scan.pdf" })).unwrap_err().to_string();
+        assert!(import.contains("manual tracing") && import.contains("raster image"), "{import}");
+        assert_eq!(s.doc().unwrap().model.len(), before, "no empty drawing was opened or imported");
+    }
+
+    #[test]
+    fn survey_units_convert_like_their_international_counterparts() {
+        let per_mm = |insunits: i64| {
+            let mut d = Drawing::new_metric();
+            d.header.set_i64("INSUNITS", insunits);
+            units_per_mm(&d)
+        };
+        // Survey feet, inches, yards and miles beside feet, inches, yards and miles.
+        for (survey, international) in [(21, 2), (22, 1), (23, 10), (24, 3)] {
+            let ratio = per_mm(survey) / per_mm(international);
+            // The survey unit is two parts per million longer.
+            assert!(ratio < 1.0 && ratio > 1.0 - 1e-5, "INSUNITS {survey}: {ratio}");
+        }
     }
 
     fn temp(name: &str) -> std::path::PathBuf {

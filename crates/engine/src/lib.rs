@@ -7,6 +7,7 @@
 //! [`Session::input`], [`Session::cmdline`]) exactly like typing at AutoCAD's command line.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
+pub mod array_live;
 
 pub mod assoc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,6 +49,7 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use array_live::{ArrayLive, ArrayLiveKind};
 pub use cadcraft_doc as doc;
 pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
@@ -55,7 +57,7 @@ pub use cadcraft_render as render;
 pub use cmd::blocks::WblockPicks;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
+pub use prompt::{Accept, AttribAsk, AttribEntry, DisplayOnly, Drag, EditorKind, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
 mod doc_state;
 mod error;
@@ -80,6 +82,18 @@ pub fn build_version() -> &'static str {
     &VERSION
 }
 
+/// Who started the command running now ([`Session::start`]): a person at the command line or
+/// from a menu, toolbar or palette, or a program (a script, an AutoLISP `(command …)`, a JSON
+/// call). The origin is fixed when the command starts and kept for its whole life: only a
+/// person's INSERT opens the Edit Attributes dialog, since nobody is there to answer one that a
+/// program opened, and nobody has seen it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Origin {
+    #[default]
+    Person,
+    Program,
+}
+
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {
     pub docs: Vec<DocState>,
@@ -91,11 +105,23 @@ pub struct Session {
     pub running: Option<Running>,
     /// How many commands were started, nested transparent ones left out.
     pub commands_started: u64,
+    /// How many inputs the session was given ([`Session::input`]): answers to a running command or
+    /// to a LISP routine waiting for one, and the Enter that repeats the last command.
+    pub inputs: u64,
+    /// Who started the command running now ([`Origin`]): a command keeps the origin it started
+    /// with, so a scripted or LISP-started INSERT never opens a dialog, even when the user then
+    /// answers its prompts by hand.
+    command_origin: Origin,
     /// The last command that ended by itself, not cancelled: its number in `commands_started`, and
     /// whether it took new handles (it added to the drawing, and nothing took that back).
     pub last_finished: Option<(u64, bool)>,
     /// A script is running ([`Session::script`]); a SCRIPT command inside it is refused.
     in_script: bool,
+    /// The LISP evaluator is running ([`Session::lisp_drive`]): what a routine feeds the command
+    /// line — the command it starts, or a `'command` token it types into a running one — is the
+    /// program's input, so [`Session::start`] records [`Origin::Program`] for it. Saved and
+    /// restored around each slice of a routine, so nesting keeps the outer answer.
+    program_input: bool,
     /// The command suspended while a transparent command (`'ZOOM`, `'PAN`…) prompts inside it;
     /// it resumes when that command ends. One level, as in AutoCAD.
     pub suspended: Option<Running>,
@@ -192,8 +218,11 @@ impl Session {
             settings: Settings::default(),
             running: None,
             commands_started: 0,
+            inputs: 0,
+            command_origin: Origin::Person,
             last_finished: None,
             in_script: false,
+            program_input: false,
             suspended: None,
             log: Vec::new(),
             last_command: None,

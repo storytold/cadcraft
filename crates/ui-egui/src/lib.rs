@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -35,6 +36,7 @@ pub mod docking;
 mod drawing_fonts;
 pub mod fault;
 // The Find and Replace window behind the FIND command.
+pub mod arraydlg;
 pub mod finddlg;
 pub mod hatchdlg;
 mod line_editor;
@@ -62,6 +64,7 @@ pub mod menus;
 pub mod modal;
 pub mod opening;
 pub mod options;
+pub mod os_window;
 pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
@@ -245,7 +248,14 @@ pub struct Services {
     pub no_file_system: bool,
     /// Pick a `.pgp` alias file, starting in the folder given (the last import's).
     pub pick_pgp: Option<Box<dyn Fn(Option<&str>) -> Option<String>>>,
+    /// The app binary's last step as the app leaves, run once at the end of its `on_exit`. On
+    /// macOS every quit ends the process inside AppKit's terminate, after `on_exit`, so code
+    /// after `eframe::run_native` never runs there (the Nightly session record is finished here).
+    pub at_exit: Option<AtExitFn>,
 }
+
+/// Runs once when the app leaves ([`Services::at_exit`]).
+pub type AtExitFn = Box<dyn FnOnce()>;
 
 /// The file dialog to show: Open, Save with the suggested file name, APPLOAD's `.lsp` picker or
 /// ALIASEDIT's `.pgp` picker, starting in the given folder (empty for the default one).
@@ -313,6 +323,8 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Paste commands waiting for the system clipboard ([`clipboard::defer`]).
+    pub(crate) paste: clipboard::Paste,
     /// Keys, text and clipboard events a floating panel's own OS window left over, with the
     /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
     forwarded: Vec<egui::Event>,
@@ -369,6 +381,8 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Array dialog while open or picking ([`arraydlg`]).
+    pub array_dlg: Option<arraydlg::ArrayDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
     /// The Write Block dialog ([`wblock`]).
@@ -405,6 +419,7 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            paste: clipboard::Paste::default(),
             forwarded: Vec::new(),
             forwarded_modifiers: None,
             restore_modifiers: None,
@@ -433,6 +448,7 @@ impl CadApp {
             autosave_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            array_dlg: None,
             bedit: bedit::State::default(),
             wblock: wblock::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -616,6 +632,13 @@ impl CadApp {
 
     /// Start a command as if typed (interactive when it has prompts).
     pub fn start(&mut self, name: &str) {
+        if clipboard::defer(self, name, None) {
+            return;
+        }
+        // Starting another command drops a paste still waiting for the clipboard.
+        if !self.paste.running {
+            self.paste.cancel();
+        }
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
@@ -646,7 +669,26 @@ impl CadApp {
             let name = cadcraft_engine::keyboard::latin_keys(first)
                 .filter(|_| !self.session.greek_word_is_a_command(first))
                 .unwrap_or_else(|| first.to_ascii_lowercase());
+            // A typed command drops a paste still waiting for the clipboard (a typed paste is held anew below).
+            if !first.is_empty() && !self.paste.running {
+                self.paste.cancel();
+            }
+            // A user alias typed alone routes as its command does: an alias of HATCH opens the Hatch
+            // dialog, typed as is or with the Greek layout active. With more on the line
+            // (`KR P ANSI31`) it goes to the engine, which runs the command with those inputs.
+            let alone = text.split_whitespace().nth(1).is_none();
+            let name = if alone {
+                cadcraft_engine::cmd::file::user_alias_command(first)
+                    .or_else(|| cadcraft_engine::cmd::file::user_alias_command(&name))
+                    .unwrap_or(name)
+            } else {
+                name
+            };
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &name, &Value::Null).is_some() {
+                return None;
+            }
+            // A bare PASTECLIP, PASTEBLOCK or PASTEORIG reads the system clipboard first.
+            if text.trim() == first && clipboard::defer(self, &cadcraft_engine::cmd::resolve_alias(&name), Some(text)) {
                 return None;
             }
         }
@@ -748,6 +790,12 @@ impl CadApp {
         if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
         }
+    }
+
+    /// Whether the window may answer a request for the system clipboard (Edit > Paste) later than
+    /// the next frame, as native Wayland does; elsewhere it never does ([`clipboard::Paste::set_late_answers`]).
+    pub fn set_clipboard_late_answers(&mut self, late: bool) {
+        self.paste.set_late_answers(late);
     }
 
     /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and

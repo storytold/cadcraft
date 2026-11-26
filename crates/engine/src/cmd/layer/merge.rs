@@ -175,6 +175,10 @@ pub(super) fn run_laymrg(s: &mut Session, p: &Value) -> Result<Value> {
         hs.len()
     });
     forget_in_viewports(d, &set);
+    // Proxy graphics drawn on a merged layer move to the target, as its objects do.
+    for source in &sources {
+        d.rename_proxy_layer(source, &target);
+    }
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     let mut msg = format!("Merged {} into \"{target}\": {} moved.", quoted(&sources), plural(moved, "object"));
     if set.contains(&d.header.str("CLAYER", "0").to_ascii_lowercase()) {
@@ -202,6 +206,11 @@ pub(super) fn run_laydel(s: &mut Session, p: &Value) -> Result<Value> {
         hs.len()
     });
     forget_in_viewports(d, &set);
+    // A proxy isn't deleted for drawing on a deleted layer (its parts can't be); they fall back
+    // to layer 0, the proxy's own layer.
+    for source in &sources {
+        d.rename_proxy_layer(source, "0");
+    }
     d.layers.retain(|l| !set.contains(&l.name.to_ascii_lowercase()));
     s.set_selection(Vec::new());
     let msg = format!("Deleted {} and {}.", quoted(&sources), plural(erased, "object"));

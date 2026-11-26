@@ -1,8 +1,8 @@
 use crate::DisplayOnly;
 
 use super::{
-    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
-    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, Origin, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value,
+    Vec2, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
 
 impl Session {
@@ -41,8 +41,60 @@ impl Session {
         blocks.keys().find(|k| *k == word).or_else(|| blocks.keys().find(|k| same(k))).cloned()
     }
 
-    /// Start a command by name or alias as if typed at the command line.
+    /// Launch a non-nested interactive state machine through the standard command-start checks
+    /// (`enabled`, `refused_in_editor`, `commands_started`, `last_command`, `Guarded`, `feed`).
+    pub(crate) fn launch_interactive(
+        &mut self,
+        id: &str,
+        enabled: fn(&Session) -> std::result::Result<(), String>,
+        machine: Box<dyn crate::Interactive>,
+    ) -> Result<()> {
+        self.last_polar = None;
+        self.pick_hint = None;
+        if self.running.is_some() {
+            self.cancel();
+        }
+        self.commands_started = self.commands_started.wrapping_add(1);
+        self.command_origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        enabled(self).map_err(|m| EngineError::Disabled(id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, id) {
+            return Err(EngineError::Disabled(id.into(), why));
+        }
+        self.last_command = Some(id.to_string());
+        self.echo(format!("Command: {}", id.to_ascii_uppercase()));
+        let guarded = guard::Guarded::wrap(machine);
+        let st = self.state()?;
+        let (before, selection_before) = (st.doc.clone(), st.selection.clone());
+        self.running = Some(Running { id: id.to_string(), machine: guarded, before, selection_before });
+        self.pending_window = None;
+        self.point_mods.clear();
+        self.feed(None)?;
+        Ok(())
+    }
+
+    /// Who started the command running now ([`Origin`]): fixed when it started, so a scripted or
+    /// LISP-started command keeps its origin while it prompts.
+    pub fn command_origin(&self) -> Origin {
+        self.command_origin
+    }
+
+    /// Start a command by name or alias as if typed at the command line. A script's commands are
+    /// the program's ([`Origin::Program`]), as those of [`Session::start_programmatic`] are, and so
+    /// is a command started by a token a LISP routine feeds through [`Session::typed`]: `(command
+    /// "LINE" "0,0" "'-INSERT" …)` replaces LINE with an INSERT the routine started.
     pub fn start(&mut self, name: &str) -> Result<()> {
+        let origin = if self.in_script || self.program_input { Origin::Program } else { Origin::Person };
+        self.start_from(name, origin)
+    }
+
+    /// Start a command as a program does: an AutoLISP `(command …)` cannot answer a dialog, so
+    /// none opens for what it starts, even after the routine ends.
+    pub fn start_programmatic(&mut self, name: &str) -> Result<()> {
+        self.start_from(name, Origin::Program)
+    }
+
+    /// [`Session::start`] with the command's origin recorded for its whole life.
+    fn start_from(&mut self, name: &str, origin: Origin) -> Result<()> {
         self.last_polar = None;
         self.pick_hint = None;
         let name = name.trim();
@@ -74,7 +126,7 @@ impl Session {
             // A bare system variable name (ORTHOMODE, GRIDMODE…) acts as SETVAR on that variable.
             let var = lower.to_ascii_uppercase();
             if !name.starts_with(['_', '.', '-']) && sysvars::get(self, &var).is_some() {
-                self.start(if transparent { "'setvar" } else { "setvar" })?;
+                self.start_from(if transparent { "'setvar" } else { "setvar" }, origin)?;
                 return self.input(Input::Text(var));
             }
             return Err(EngineError::UnknownCommand(typed.to_string()));
@@ -101,10 +153,15 @@ impl Session {
             return self.input(Input::Keyword("Undo".into()));
         }
         if !nested {
-            self.commands_started = self.commands_started.wrapping_add(1);
+            // The command this one replaces is cancelled first: its cancellation can run a paused
+            // LISP routine's `*error*` handler, and a handler that starts a command records that
+            // command's Program origin. Origin and number go in after it, so they describe this
+            // start and the factory below still sees the origin this command was started with.
             if self.running.is_some() {
                 self.cancel();
             }
+            self.commands_started = self.commands_started.wrapping_add(1);
+            self.command_origin = origin;
         }
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
@@ -162,6 +219,7 @@ impl Session {
     /// command (as in AutoCAD) and points do nothing. A LISP routine waiting in a `get…`
     /// function takes the input instead; one paused in `command` carries on after it.
     pub fn input(&mut self, input: Input) -> Result<()> {
+        self.inputs = self.inputs.wrapping_add(1);
         if self.lisp_input(input.clone()) {
             return Ok(());
         }
@@ -541,6 +599,17 @@ impl Session {
         self.running.as_ref().and_then(|r| r.machine.text_editor())
     }
 
+    /// The attribute values the running command asks for in the Edit Attributes dialog
+    /// ([`Interactive::attribute_entry`]), stamped with the drawing it runs in and its number in
+    /// [`Session::commands_started`]: a dialog draft kept for a cancelled command never belongs
+    /// to the one started after it, even for the same block.
+    pub fn attribute_entry(&self) -> Option<crate::AttribEntry> {
+        let mut entry = self.running.as_ref().and_then(|r| r.machine.attribute_entry())?;
+        entry.drawing = self.docs.get(self.active).map_or(0, |d| d.uid);
+        entry.command = self.commands_started;
+        Some(entry)
+    }
+
     pub fn current_prompt(&self) -> Option<Prompt> {
         if let Some(p) = self.lisp_prompt() {
             return Some(p);
@@ -608,6 +677,29 @@ impl Session {
         out
     }
 
+    /// The value the cursor would give at the active command's prompt (see
+    /// [`Interactive::live_value`]).
+    pub fn live_value(&self, cursor: Vec2) -> Option<String> {
+        self.running.as_ref()?.machine.live_value(self, cursor)
+    }
+
+    /// What the rollover highlight shows of the object `h` under the cursor, with its properties,
+    /// when the running command highlights only a part of it ([`Interactive::highlight`]: TRIM
+    /// the piece a click there removes, EXTEND what it adds). `None`: the whole object.
+    pub fn highlight(&self, h: Handle, cursor: Vec2) -> Option<Vec<Entity>> {
+        let kinds = self.running.as_ref()?.machine.highlight(self, h, cursor)?;
+        let common = self.doc().ok()?.entity(h)?.common.clone();
+        Some(kinds.into_iter().map(|k| Entity { handle: h, common: common.clone(), kind: k }).collect())
+    }
+
+    /// What the running command will change wherever the cursor is, with each part's properties
+    /// ([`Interactive::highlight_all`]: TRIM's Fence and Crossing). `None`: nothing of the kind.
+    pub fn highlight_all(&self, cursor: Vec2) -> Option<Vec<Entity>> {
+        let parts = self.running.as_ref()?.machine.highlight_all(self, cursor)?;
+        let d = self.doc().ok()?;
+        Some(parts.into_iter().filter_map(|(h, k)| Some(Entity { handle: h, common: d.entity(h)?.common.clone(), kind: k })).collect())
+    }
+
     /// What the drawing area shows in place of the drawing while a command runs (DVIEW's preview
     /// set, see [`Interactive::display_only`]), also while a transparent command interrupts it.
     /// `None`: the drawing.
@@ -623,5 +715,45 @@ impl Session {
         let common = self.current_common();
         let extra = d.extra.iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k.clone() }).collect();
         Some((d, extra))
+    }
+    /// The live parameters of the running array command ([`Interactive::array_live`]).
+    pub fn array_live(&self) -> Option<crate::ArrayLive> {
+        self.running.as_ref().and_then(|r| r.machine.array_live())
+    }
+
+    /// Change the running array's live parameters. With no array running this does nothing; an
+    /// invalid value is refused and leaves the command as it was.
+    pub fn set_array_live(&mut self, v: &crate::ArrayLive) -> Result<()> {
+        if self.array_live().is_none() {
+            return Ok(());
+        }
+        let Some(mut run) = self.running.take() else { return Ok(()) };
+        let r = run.machine.set_array_live(self, v);
+        self.running = Some(run);
+        r
+    }
+
+    /// Ask the running polar array for its centre as the next canvas point
+    /// ([`Interactive::array_pick_center`]).
+    pub fn array_pick_center(&mut self) -> bool {
+        self.running.as_mut().is_some_and(|r| r.machine.array_pick_center())
+    }
+
+    /// Finish the running array: `Ok(true)` when the command ended, `Ok(false)` when there is no
+    /// array command or it is still selecting objects.
+    pub fn commit_array(&mut self) -> Result<bool> {
+        if self.array_live().is_none() {
+            return Ok(false);
+        }
+        if self.current_prompt().is_some_and(|p| p.accept.select) {
+            return Ok(false);
+        }
+        if let Some(r) = self.running.as_mut()
+            && !r.machine.array_set_main()
+        {
+            return Ok(false);
+        }
+        self.feed(Some(Input::Keyword("eXit".into())))?;
+        Ok(self.running.is_none())
     }
 }
