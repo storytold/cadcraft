@@ -7,6 +7,7 @@ use cadcraft_ui_egui::{CadApp, Services};
 /// The cursor icon the app asks for with the pointer in the middle of the drawing area.
 fn canvas_cursor(app: &mut CadApp) -> egui::CursorIcon {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut icon = egui::CursorIcon::Default;
     // A few frames: layout settles and the pointer hover is known from the second frame on.
     for _ in 0..3 {

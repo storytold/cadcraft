@@ -49,6 +49,7 @@ fn bedit_without_a_selected_reference_opens_the_dialog() {
 
     app.bedit.name = "door".into();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     let text = painted(&mut app, &ctx);
@@ -77,6 +78,7 @@ fn a_new_name_starts_a_new_block_and_a_bad_one_keeps_the_dialog() {
 
     app.bedit.name = " Skylight ".into();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     assert!(painted(&mut app, &ctx).contains("New block"));
@@ -144,6 +146,7 @@ fn opening_a_drawing_with_authoring_elements_offers_the_block_editor() {
     app.finish_opening();
     assert_eq!(app.ui.dialog.as_deref(), Some("authoring"));
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     app.logic(&ctx);
     painted(&mut app, &ctx);
     let text = painted(&mut app, &ctx);
@@ -213,13 +216,14 @@ fn in_the_block_editor_the_dialog_switches_blocks_asking_to_save_first() {
     app.bedit.name = "door".into();
     assert!(!bedit::confirm(&mut app), "asks first");
     assert!(app.bedit.ask_save);
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h =
+        Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(2);
     assert!(h.query_by_label_contains("Save changes to block \"Window\"").is_some());
     h.get_by_label("Cancel").click();

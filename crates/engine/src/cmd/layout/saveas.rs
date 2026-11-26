@@ -12,7 +12,7 @@ use cadcraft_doc::{Common, Drawing, Entity, EntityKind, EntityStore, Point};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
-use super::super::file::{drops_unknown, io, not_saved, not_saved_message};
+use super::super::file::{drops_unknown, dwg_notes, io, not_saved, not_saved_message, report_dwg_notes};
 use super::super::{bad, str_param};
 use super::layout_name;
 use super::prompts::current_layout;
@@ -136,6 +136,9 @@ pub(super) fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
             o.insert("notSaved".into(), json!(lost));
         }
     }
+    if drops_unknown(&path) {
+        report_dwg_notes(s, &mut r, dwg_notes(&t));
+    }
     Ok(r)
 }
 
@@ -145,6 +148,7 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
     {
         // Exclusively create a fresh temporary file and rename it into place so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write (CWE-59).
+        crate::file_access::check_write(path).map_err(|e| bad("layout.saveas", e))?;
         crate::atomic_write::write_atomic_making_folders(std::path::Path::new(path), bytes).map_err(|e| bad("layout.saveas", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]

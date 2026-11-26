@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -71,6 +71,33 @@ impl SnapHit {
             Some(d) => crate::Input::Deferred(d),
             None => crate::Input::Point(self.point),
         }
+    }
+
+    fn plain(mode: u32, point: Vec2) -> SnapHit {
+        SnapHit { point, mode, name: name_of(mode), viewport: None, deferred: None }
+    }
+
+    /// Where this hit sorts among the candidates near a cursor: specific snaps by distance
+    /// (Endpoint and Intersection favoured a little), then deferred snaps, then Nearest.
+    fn rank(&self, cursor: Vec2, aperture: f64) -> (u8, f64) {
+        let class = if self.deferred.is_some() {
+            1
+        } else if self.mode == mode::NEA {
+            2
+        } else {
+            0
+        };
+        (class, snap_score(self.mode, self.point, cursor, aperture))
+    }
+
+    /// The same snap as `o`: mode and point, from the same source (paper space, or one
+    /// viewport). Overlapping viewports can show different model points at one paper point;
+    /// each stays a candidate, since DIST measures in the model units of the viewport picked.
+    fn same(&self, o: &SnapHit) -> bool {
+        self.mode == o.mode
+            && self.deferred.is_some() == o.deferred.is_some()
+            && self.viewport.map(|v| v.viewport) == o.viewport.map(|v| v.viewport)
+            && self.point.near(o.point, 1e-9 * (1.0 + self.point.len()))
     }
 }
 
@@ -211,6 +238,14 @@ pub fn osnap(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u3
     osnap_with(d, space, &ix, cursor, aperture, osmode, base, deferred)
 }
 
+/// Every object snap within `aperture` of `cursor`, the one [`osnap`] picks first and the rest
+/// in the order Tab cycles them: specific snaps nearest first, then deferred snaps, then Nearest.
+/// Snaps seen through layout viewports are included.
+pub fn osnap_all(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    let ix = crate::spatial::index(d, space);
+    osnap_all_with_neighborhood(d, space, &ix, cursor, aperture, osmode, base, deferred).0
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn osnap_with(
     d: &Drawing,
@@ -237,19 +272,39 @@ pub(crate) fn osnap_with_neighborhood(
     base: Option<Vec2>,
     deferred: bool,
 ) -> (Option<SnapHit>, Option<Vec<Prim>>) {
+    let (all, prims) = osnap_all_with_neighborhood(d, space, ix, cursor, aperture, osmode, base, deferred);
+    (all.into_iter().next(), prims)
+}
+
+/// Every object snap near the cursor ([`osnap_all`]) and the local-space primitives gathered.
+#[allow(clippy::too_many_arguments)]
+fn osnap_all_with_neighborhood(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+) -> (Vec<SnapHit>, Option<Vec<Prim>>) {
     if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
-        return (None, None);
+        return (Vec::new(), None);
     }
-    let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
-        Some((hit, prims)) => (hit, Some(prims)),
-        None => (None, None),
+    let (mut all, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
+        Some((hits, prims)) => (hits, Some(prims)),
+        None => (Vec::new(), None),
     };
     let views = viewport::near(d, space, cursor, aperture);
     if views.is_empty() {
-        return (best, near_prims);
+        return (all, near_prims);
     }
     let model = Space::Model;
     let model_ix = crate::spatial::index(d, &model);
+    // What a click picks across spaces stays as it was: each space's best snap, and a viewport's
+    // replaces the best so far only when it scores closer. A paper-space Nearest can therefore
+    // beat an Endpoint seen through a viewport, which `ranked` alone would put first.
+    let mut pick = all.first().copied();
     for view in views {
         let model_cursor = view.to_model(cursor);
         let model_aperture = aperture / view.scale;
@@ -257,7 +312,7 @@ pub(crate) fn osnap_with_neighborhood(
         if !model_cursor.is_finite() || !(model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
             continue;
         }
-        let hit = osnap_in(
+        let hits = osnap_in(
             d,
             &model,
             &model_ix,
@@ -268,15 +323,36 @@ pub(crate) fn osnap_with_neighborhood(
             deferred,
             &view.viewport.frozen_layers,
             Some(view.model_clip),
-        )
-        .and_then(|h| view.hit(h));
-        if let Some(hit) = hit
-            && best.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
+        );
+        if let Some(hit) = hits.first().and_then(|h| view.hit(*h))
+            && pick.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
         {
-            best = Some(hit);
+            pick = Some(hit);
+        }
+        all.extend(hits.into_iter().filter_map(|h| view.hit(h)));
+    }
+    let mut out = ranked(all, cursor, aperture);
+    if let Some(pick) = pick {
+        out.retain(|h| !h.same(&pick));
+        out.insert(0, pick);
+    }
+    (out, near_prims)
+}
+
+/// `hits` best first ([`SnapHit::rank`]), without repeats.
+fn ranked(mut hits: Vec<SnapHit>, cursor: Vec2, aperture: f64) -> Vec<SnapHit> {
+    hits.sort_by(|a, b| {
+        let (ca, sa) = a.rank(cursor, aperture);
+        let (cb, sb) = b.rank(cursor, aperture);
+        ca.cmp(&cb).then(sa.total_cmp(&sb))
+    });
+    let mut out: Vec<SnapHit> = Vec::with_capacity(hits.len());
+    for h in hits {
+        if !out.iter().any(|o| o.same(&h)) {
+            out.push(h);
         }
     }
-    (best, near_prims)
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -291,10 +367,11 @@ fn osnap_in(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
-    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _)| hit)
+) -> Vec<SnapHit> {
+    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).map(|(hits, _)| hits).unwrap_or_default()
 }
 
+/// The snaps near the cursor in one space, best first, and the primitives gathered there.
 #[allow(clippy::too_many_arguments)]
 fn osnap_in_with_prims(
     d: &Drawing,
@@ -307,8 +384,8 @@ fn osnap_in_with_prims(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<(Option<SnapHit>, Vec<Prim>)> {
-    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+) -> Option<(Vec<SnapHit>, Vec<Prim>)> {
+    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen, None)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
     // that don't reach each other).
@@ -345,8 +422,8 @@ fn osnap_in_with_prims(
             }
         }
     }
-    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
-    Some((hit, near_prims))
+    let hits = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
+    Some((hits, near_prims))
 }
 
 fn finite_intersection_probe(cursor: Vec2, aperture: f64) -> Option<Bounds2> {
@@ -398,9 +475,60 @@ pub(crate) fn gather(
     aperture: f64,
     osmode: u32,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
+    gather_in(d, space, ix, cursor, aperture, osmode, &[], None)
 }
 
+/// The point nearest `cursor` within `aperture` on the visible objects of `space` other than
+/// `skip` (and on the objects inside block references), with the object's direction there (a unit
+/// vector; a circle's or arc's runs counterclockwise): what an alignment grip aligns a dynamic
+/// block reference with. Objects on the layers `frozen` in the active viewport aren't drawn there,
+/// so they are passed over.
+pub(crate) fn nearest_with_direction(
+    d: &Drawing,
+    space: &Space,
+    cursor: Vec2,
+    aperture: f64,
+    frozen: &[String],
+    skip: Handle,
+) -> Option<(Vec2, Vec2)> {
+    let ix = crate::spatial::index(d, space);
+    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, frozen, Some(skip))?;
+    let mut best: Option<(f64, Vec2, Vec2)> = None;
+    let mut consider = |at: Vec2, dir: Vec2| {
+        let dd = at.dist(cursor);
+        if at.is_finite() && dir.len() > 1e-12 && dir.is_finite() && dd <= aperture && best.is_none_or(|(bd, _, _)| dd < bd) {
+            best = Some((dd, at, dir * (1.0 / dir.len())));
+        }
+    };
+    for p in prims.iter().take(2000) {
+        if let Prim::Circle(c) = p {
+            let at = c.closest(cursor);
+            consider(at, (at - c.center).perp());
+            continue;
+        }
+        if let Prim::Infinite { base, dir, ray } = p {
+            let len = dir.len();
+            if len > 1e-12 {
+                let u = *dir * (1.0 / len);
+                // A ray runs one way from its base: behind it, its base is the nearest point.
+                let t = (cursor - *base).dot(u);
+                consider(*base + u * if *ray { t.max(0.0) } else { t }, u);
+            }
+            continue;
+        }
+        for seg in prim_segments(p) {
+            let seg = fix_circle(&seg);
+            let at = seg.closest(cursor);
+            match seg {
+                Segment::Line(l) => consider(at, l.b - l.a),
+                Segment::Arc { arc, .. } => consider(at, (at - arc.center).perp()),
+            }
+        }
+    }
+    best.map(|(_, at, dir)| (at, dir))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn gather_in(
     d: &Drawing,
     space: &Space,
@@ -409,6 +537,7 @@ fn gather_in(
     aperture: f64,
     osmode: u32,
     frozen: &[String],
+    skip: Option<Handle>,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
     let probe = Bounds2::new(cursor, cursor).expand(aperture);
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
@@ -416,11 +545,17 @@ fn gather_in(
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
-        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
+        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) || Some(e.handle) == skip {
             continue;
         }
         let inf = crate::select::is_infinite(e);
         if !inf && !crate::select::bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+            continue;
+        }
+        // A blank MTEXT frame covering the cursor is for picking: it neither uses up the candidate
+        // limit nor the intersection slots unless its drawn geometry is in reach, or INS is on and an
+        // insertion point is within the aperture.
+        if !inf && crate::select::blank_frame_only(d, e, &probe, cursor, aperture, osmode & mode::INS != 0) {
             continue;
         }
         count += 1;
@@ -438,6 +573,7 @@ fn gather_in(
                 }
                 EntityKind::AttDef(a) => cands.push((mode::INS, a.text.justify_point())),
                 // A multileader: its text's insertion point, or its block content's.
+                // select.rs blank_snap_points must offer the same points.
                 EntityKind::MLeader(m) => {
                     cands.extend(m.text.iter().map(|t| (mode::INS, t.insert.xy())));
                     cands.extend(m.block.iter().map(|b| (mode::INS, b.insert.xy())));
@@ -454,11 +590,21 @@ fn gather_in(
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
+        // A dimension kept as read draws its block through a reference in its graphics (#3438),
+        // and snaps to the objects inside it the same way.
+        if let EntityKind::Unknown(u) = &e.kind {
+            for g in &u.graphics {
+                if let EntityKind::Insert(ins) = &g.kind {
+                    block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+                }
+            }
+        }
     }
     Some((cands, near_prims))
 }
 
-/// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
+/// Ranks the gathered candidates within the aperture ([`ranked`]), adding the base-dependent
+/// snaps, the deferred snaps and Nearest.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     mut cands: Vec<(u32, Vec2)>,
@@ -469,7 +615,7 @@ fn finish(
     base: Option<Vec2>,
     deferred: bool,
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
+) -> Vec<SnapHit> {
     // Perpendicular / tangent from the base point.
     if let Some(bp) = base {
         for p in near_prims {
@@ -507,20 +653,10 @@ fn finish(
         }
     }
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
-        // Prefer more specific modes when nearly equidistant.
-        let da = snap_score(a.0, a.1, cursor, aperture);
-        let db = snap_score(b.0, b.1, cursor, aperture);
-        da.total_cmp(&db)
-    });
-    if let Some((m, p)) = best {
-        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
-    }
-    if base.is_none()
-        && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
-    {
-        return Some(h);
+    let mut hits: Vec<SnapHit> =
+        cands.into_iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).map(|(m, p)| SnapHit::plain(m, p)).collect();
+    if base.is_none() && deferred {
+        hits.extend(deferred_hits(near_prims, cursor, aperture, osmode, clip));
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
@@ -540,12 +676,13 @@ fn finish(
             }
         }
         if let Some((_, p)) = nb {
-            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
+            hits.push(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
         }
     }
-    None
+    ranked(hits, cursor, aperture)
 }
 
+/// Prefer more specific modes when nearly equidistant.
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
     point.dist(cursor) - if mode == mode::INT || mode == mode::END { aperture * 0.15 } else { 0.0 }
 }
@@ -703,20 +840,7 @@ impl Sink<'_> {
     fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
-                // The block holds world geometry: a reference at its own base point places it as is.
-                let ins = Insert {
-                    block: blk.name.clone(),
-                    insert: blk.base,
-                    scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
-                    rotation: 0.0,
-                    attribs: Vec::new(),
-                    cols: 1,
-                    rows: 1,
-                    col_spacing: 0.0,
-                    row_spacing: 0.0,
-                    clip: None,
-                };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &dimension_reference(blk, dm), &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
@@ -793,10 +917,40 @@ fn block_leaves(d: &Drawing, ins: &Insert, m: &Mat3, depth: usize, budget: &mut 
                 match &be.kind {
                     EntityKind::AttDef(_) => {}
                     EntityKind::Insert(inner) => block_leaves(d, inner, &mm, depth + 1, budget, frozen, f),
+                    // A dimension draws its block, as at the top level.
+                    EntityKind::Dimension(dm) if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n)) => {
+                        block_leaves(d, &dimension_reference(blk, dm), &mm, depth + 1, budget, frozen, f);
+                    }
+                    k @ EntityKind::Unknown(u) => {
+                        f(k, &mm);
+                        for g in &u.graphics {
+                            if let EntityKind::Insert(inner) = &g.kind {
+                                block_leaves(d, inner, &mm, depth + 1, budget, frozen, f);
+                            }
+                        }
+                    }
                     k => f(k, &mm),
                 }
             }
         }
+    }
+}
+
+/// The reference that places a dimension's block as the renderer draws it: the block holds world
+/// geometry, moved by the insertion point (DXF group 12, which an older AutoCAD sets for a moved
+/// dimension; #2634).
+fn dimension_reference(blk: &cadcraft_doc::Block, dm: &cadcraft_doc::Dimension) -> Insert {
+    Insert {
+        block: blk.name.clone(),
+        insert: blk.base + dm.insertion_point,
+        scale: cadcraft_geom::Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: Vec::new(),
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+        clip: None,
     }
 }
 
@@ -848,9 +1002,11 @@ fn xform_prim(p: &Prim, m: &Mat3) -> Prim {
     }
 }
 
-/// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
-fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
-    let mut best: Option<(f64, SnapHit)> = None;
+/// Every deferred tangent and perpendicular within `aperture` of `cursor`: one per curve and
+/// mode, in drawing order (the caller ranks them), so Tab can cycle from the tangent to the
+/// perpendicular on the same circle.
+fn deferred_hits(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Vec<SnapHit> {
+    let mut hits = Vec::new();
     for p in prims {
         let curve = match p {
             Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius },
@@ -859,32 +1015,28 @@ fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: 
             Prim::Infinite { base, dir, .. } => SnapCurve::Line { a: *base, b: *base + *dir },
             _ => continue,
         };
-        let (m, name, at) = match curve {
-            SnapCurve::Circle { center, radius } if osmode & mode::TAN != 0 => {
-                (mode::TAN, "Deferred Tangent", Circle::new(center, radius).closest(cursor))
-            }
-            SnapCurve::Circle { center, radius } if osmode & mode::PER != 0 => {
-                (mode::PER, "Deferred Perpendicular", Circle::new(center, radius).closest(cursor))
-            }
-            SnapCurve::Arc { center, radius, start, end } if osmode & mode::TAN != 0 => {
-                (mode::TAN, "Deferred Tangent", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
-            }
-            SnapCurve::Arc { center, radius, start, end } if osmode & mode::PER != 0 => {
-                (mode::PER, "Deferred Perpendicular", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
-            }
-            SnapCurve::Line { a, b } if osmode & mode::PER != 0 => {
-                // Pick on the drawn extent: a segment's own span, an xline/ray anywhere.
+        // Where the curve was picked: a circle's, an arc's or a segment's own span, an xline/ray
+        // anywhere.
+        let at = match curve {
+            SnapCurve::Circle { center, radius } => Circle::new(center, radius).closest(cursor),
+            SnapCurve::Arc { center, radius, start, end } => cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor),
+            SnapCurve::Line { a, b } => {
                 let l = cadcraft_geom::Line::new(a, b);
-                (mode::PER, "Deferred Perpendicular", if matches!(p, Prim::Seg(_)) { l.closest(cursor) } else { l.project(cursor) })
+                if matches!(p, Prim::Seg(_)) { l.closest(cursor) } else { l.project(cursor) }
             }
-            _ => continue,
         };
-        let dd = at.dist(cursor);
-        if at.is_finite() && clip.is_none_or(|c| c.contains(at)) && dd <= aperture && best.is_none_or(|(bd, _)| dd < bd) {
-            best = Some((dd, SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) }));
+        if !(at.is_finite() && clip.is_none_or(|c| c.contains(at)) && at.dist(cursor) <= aperture) {
+            continue;
+        }
+        let modes: &[(u32, &'static str)] = match curve {
+            SnapCurve::Circle { .. } | SnapCurve::Arc { .. } => &[(mode::TAN, "Deferred Tangent"), (mode::PER, "Deferred Perpendicular")],
+            SnapCurve::Line { .. } => &[(mode::PER, "Deferred Perpendicular")],
+        };
+        for &(m, name) in modes.iter().filter(|(m, _)| osmode & m != 0) {
+            hits.push(SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) });
         }
     }
-    best.map(|(_, h)| h)
+    hits
 }
 
 /// Solve a line whose ends may be deferred tangent/perpendicular snaps: returns its two
@@ -1025,6 +1177,17 @@ pub fn ortho(base: Vec2, p: Vec2) -> Vec2 {
     if d.x.abs() >= d.y.abs() { Vec2::new(p.x, base.y) } else { Vec2::new(base.x, p.y) }
 }
 
+/// [`ortho`] along axes turned by `angle` radians (the current UCS's).
+pub fn ortho_at(base: Vec2, p: Vec2, angle: f64) -> Vec2 {
+    if !angle.is_finite() || angle == 0.0 {
+        return ortho(base, p);
+    }
+    let d = (p - base).rotate(-angle);
+    let along = if d.x.abs() >= d.y.abs() { Vec2::new(d.x, 0.0) } else { Vec2::new(0.0, d.y) };
+    let r = base + along.rotate(angle);
+    if r.is_finite() { r } else { p }
+}
+
 /// Polar tracking: if the direction base→p is within `tol` radians of a multiple of `inc`,
 /// return the point projected onto that ray and the angle.
 pub fn polar(base: Vec2, p: Vec2, inc: f64, tol: f64) -> Option<(Vec2, f64)> {
@@ -1058,10 +1221,24 @@ pub fn grid_snap(p: Vec2, unit: Vec2, origin: Vec2, angle: f64) -> Vec2 {
     if s.is_finite() { s } else { p }
 }
 
-/// The snap grid's origin (SNAPBASE) and rotation in radians (SNAPANG, in degrees) of a drawing.
+/// The snap grid's origin (SNAPBASE) and rotation in radians (SNAPANG, in degrees) of a drawing,
+/// as stored: in the UCS ([`grid_frame_in`] places them in the world).
 pub fn grid_frame(d: &Drawing) -> (Vec2, f64) {
     let base = d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO);
     (base, d.header.f64("SNAPANG", 0.0).to_radians())
+}
+
+/// The snap grid's origin and rotation in world coordinates, for `space`: SNAPBASE is a point of
+/// the current UCS and SNAPANG is measured from its X axis, so the grid and grid snap lie in the
+/// UCS (in the World UCS while it is tilted out of the XY plane).
+pub fn grid_frame_in(d: &Drawing, space: &Space) -> (Vec2, f64) {
+    let (base, angle) = grid_frame(d);
+    let ucs = crate::ucs::current_frame(d, space);
+    if !ucs.is_planar() {
+        return (base, angle);
+    }
+    let (o, a) = (ucs.to_wcs(base), ucs.rotation() + angle);
+    if o.is_finite() && a.is_finite() { (o, a) } else { (base, angle) }
 }
 
 #[cfg(test)]
@@ -1080,6 +1257,27 @@ mod tests {
     }
 
     #[test]
+    fn alignment_targets_stay_on_a_ray_and_off_frozen_layers() {
+        let mut d = Drawing::new_imperial();
+        let ray = |base: (f64, f64)| EntityKind::Ray(cadcraft_doc::RayLine { base: Vec3::new(base.0, base.1, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) });
+        d.add(&Space::Model, Common::default(), ray((0.0, 0.0))).unwrap();
+        // Behind the ray: its base is the nearest point, out of a small aperture.
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(-5.0, 0.0), 0.5, &[], Handle(0)), None);
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(-0.2, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::ZERO) < 1e-12, "{at:?}");
+        let (at, _) = nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 0.1), 0.5, &[], Handle(0)).unwrap();
+        assert!(at.dist(Vec2::new(5.0, 0.0)) < 1e-12, "{at:?}");
+        // A line on a layer frozen in the viewport isn't a target.
+        let mut d = drawing();
+        d.ensure_layer("Hidden");
+        let c = Common { layer: "Hidden".into(), ..Common::default() };
+        let l = EntityKind::Line(Line { a: Vec3::new(0.0, 30.0, 0.0), b: Vec3::new(10.0, 30.0, 0.0) });
+        d.add(&Space::Model, c, l).unwrap();
+        assert!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &[], Handle(0)).is_some());
+        assert_eq!(nearest_with_direction(&d, &Space::Model, Vec2::new(5.0, 30.1), 0.5, &["HIDDEN".to_string()], Handle(0)), None);
+    }
+
+    #[test]
     fn endpoint_and_mid() {
         let d = drawing();
         let h = osnap(&d, &Space::Model, Vec2::new(9.8, 0.1), 0.5, mode::END | mode::MID, None, false).unwrap();
@@ -1088,12 +1286,179 @@ mod tests {
         assert_eq!(m.point, Vec2::new(5.0, 0.0));
     }
 
+    /// Blank MTEXT frames over the cursor are for picking: thousands of them, with their insertion
+    /// points out of reach, must not crowd a real endpoint out of the snap candidates (#2810).
+    #[test]
+    fn blank_mtext_frames_do_not_crowd_out_snap_candidates() {
+        for line_first in [true, false] {
+            let mut d = Drawing::new_metric();
+            let line = EntityKind::Line(Line { a: Vec3::new(5.2, -1.0, 0.0), b: Vec3::new(30.0, -1.0, 0.0) });
+            if line_first {
+                d.add(&Space::Model, Common::default(), line.clone()).unwrap();
+            }
+            for _ in 0..2100 {
+                let t = cadcraft_doc::MText {
+                    insert: Vec3::new(0.0, 0.0, 0.0),
+                    height: 2.5,
+                    width: 10.0,
+                    attach: 1,
+                    rotation: 0.0,
+                    style: "Standard".into(),
+                    contents: "  ".into(),
+                    line_spacing: 1.0,
+                    line_spacing_exact: false,
+                    columns: None,
+                };
+                d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+            }
+            if !line_first {
+                d.add(&Space::Model, Common::default(), line).unwrap();
+            }
+            // The cursor is inside every box (x 0..10, y -2.5..0), 0.2 from the line's end.
+            let h = osnap(&d, &Space::Model, Vec2::new(5.0, -1.0), 0.5, mode::END, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(5.2, -1.0), "line first: {line_first}");
+            // A blank MTEXT whose insertion point is in the aperture keeps its INS snap.
+            let h = osnap(&d, &Space::Model, Vec2::new(0.1, -0.1), 0.5, mode::INS, None, false).unwrap();
+            assert_eq!(h.point, Vec2::new(0.0, 0.0), "line first: {line_first}");
+        }
+    }
+
+    /// 2001 blank MTEXT frames covering `cursor` (insertion points at `ins_at`), drawn before a
+    /// LINE whose end is at `cursor`: the END snap found with `osmode`.
+    fn crowded_blank_frames_end_snap(ins_at: Vec2, cursor: Vec2, aperture: f64, osmode: u32) -> Option<Vec2> {
+        let mut d = Drawing::new_metric();
+        for _ in 0..2001 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(ins_at.x, ins_at.y, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(cursor.x, cursor.y, 0.0), b: Vec3::new(30.0, cursor.y, 0.0) }))
+            .unwrap();
+        osnap(&d, &Space::Model, cursor, aperture, osmode, None, false).map(|h| h.point)
+    }
+
+    /// An insertion point in a corner of the square probe is farther than the aperture from the
+    /// cursor, so snap would never accept it: its frame must not crowd out an END snap.
+    #[test]
+    fn blank_insertion_points_in_the_probe_corner_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        let ap = 0.5;
+        let corner = Vec2::new(cursor.x - 0.9 * ap, cursor.y + 0.9 * ap);
+        assert!(corner.dist(cursor) > ap, "outside the circle, inside the square probe");
+        assert_eq!(crowded_blank_frames_end_snap(corner, cursor, ap, mode::END | mode::INS), Some(cursor));
+    }
+
+    /// With INS off a blank MTEXT's insertion point is no snap candidate, even right at the cursor.
+    #[test]
+    fn blank_insertion_points_with_ins_off_do_not_crowd_out_an_end_snap() {
+        let cursor = Vec2::new(5.0, -1.0);
+        assert_eq!(crowded_blank_frames_end_snap(cursor, cursor, 0.5, mode::END), Some(cursor));
+    }
+
+    /// A blank annotative multileader (text 6 right of its landing, 4 x 2, at 1:2) among 2100 blank
+    /// MTEXT frames over the cursor. `block_at` also gives it a block content at that offset from
+    /// the landing. Returns the INS snap at `landing + probe` (aperture 0.5).
+    fn crowded_blank_mleader_ins(block_at: Option<f64>, probe: Vec2) -> Option<Vec2> {
+        let mut s = crate::Session::new();
+        let r = s.execute("mleader", &serde_json::json!({ "points": [[0, 0], [20, 0]], "text": "   " })).unwrap();
+        let h = cadcraft_doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let landing = {
+            let d = s.doc_mut().unwrap();
+            if block_at.is_some() {
+                // A block whose geometry (a line 60 long) covers its base point, at the stored insertion
+                // and, drawn at 1:2 about the landing, at the scaled one too.
+                let mut blk = cadcraft_doc::Block::new("BLK");
+                let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(60.0, 0.0, 0.0) });
+                blk.entities.push(cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), line));
+                d.blocks.insert("BLK".into(), std::sync::Arc::new(blk));
+            }
+            d.header.set_str("CANNOSCALE", "1:2");
+            let half = d.anno_scale("1:2").cloned().unwrap();
+            d.modify_entity(h, |e| {
+                e.common.anno_scales = vec![half];
+                let EntityKind::MLeader(m) = &mut e.kind else { panic!("mleader") };
+                let landing = m.landing;
+                let t = m.text.as_mut().unwrap();
+                t.insert = landing + Vec3::new(6.0, 0.0, 0.0);
+                t.width = 4.0;
+                t.height = 2.0;
+                t.attach = 1;
+                t.rotation = 0.0;
+                if let Some(x) = block_at {
+                    m.block = Some(cadcraft_doc::Insert {
+                        block: "BLK".into(),
+                        insert: landing + Vec3::new(x, 0.0, 0.0),
+                        scale: Vec3::new(1.0, 1.0, 1.0),
+                        ..Default::default()
+                    });
+                }
+            })
+            .unwrap();
+            let EntityKind::MLeader(m) = &d.entity(h).unwrap().kind else { panic!("mleader") };
+            m.landing.xy()
+        };
+        let cursor = landing + probe;
+        // Blank frames (10 x 2.5, top-left at the insert) cover the cursor; their inserts do not.
+        let d = s.doc_mut().unwrap();
+        for _ in 0..2100 {
+            let t = cadcraft_doc::MText {
+                insert: Vec3::new(cursor.x - 5.0, cursor.y + 1.0, 0.0),
+                height: 2.5,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: "  ".into(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            d.add(&Space::Model, Common::default(), EntityKind::MText(t)).unwrap();
+        }
+        osnap(d, &Space::Model, cursor, 0.5, mode::INS, None, false).map(|h| h.point - landing)
+    }
+
+    /// An annotative blank multileader keeps its INS snap (the stored, unscaled insertion point)
+    /// among thousands of blank frames, and so does its block content.
+    #[test]
+    fn annotative_blank_mleader_keeps_its_ins_snaps_among_blank_frames() {
+        assert_eq!(crowded_blank_mleader_ins(None, Vec2::new(6.1, -0.1)), Some(Vec2::new(6.0, 0.0)), "text");
+        assert_eq!(crowded_blank_mleader_ins(Some(30.0), Vec2::new(30.1, -0.1)), Some(Vec2::new(30.0, 0.0)), "block");
+    }
+
     #[test]
     fn intersection() {
         let d = drawing();
         let h = osnap(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, mode::INT, None, false).unwrap();
         assert!(h.point.near(Vec2::new(5.0, 0.0), 1e-9));
         assert_eq!(h.name, "Intersection");
+    }
+
+    /// Tab cycling sees every snap within the aperture: specific snaps nearest first (Intersection
+    /// favoured), then deferred snaps, then Nearest, and no snap twice; the first is what `osnap`
+    /// picks.
+    #[test]
+    fn osnap_all_ranks_every_candidate() {
+        let d = drawing();
+        let modes = mode::END | mode::MID | mode::INT | mode::NEA;
+        let all = osnap_all(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, modes, None, false);
+        assert_eq!(all.iter().map(|h| h.mode).collect::<Vec<_>>(), [mode::INT, mode::MID, mode::NEA], "{all:?}");
+        assert_eq!(all[0].point, osnap(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, modes, None, false).unwrap().point);
+        // On the circle: its quadrant, then the deferred tangent and perpendicular at the same spot.
+        let all = osnap_all(&d, &Space::Model, Vec2::new(22.1, 0.1), 0.5, mode::QUA | mode::TAN | mode::PER, None, true);
+        let kinds: Vec<(u32, bool)> = all.iter().map(|h| (h.mode, h.deferred.is_some())).collect();
+        assert_eq!(kinds, [(mode::QUA, false), (mode::TAN, true), (mode::PER, true)], "{all:?}");
+        assert!(osnap_all(&d, &Space::Model, Vec2::new(50.0, 50.0), 0.5, modes, None, false).is_empty());
     }
 
     #[test]

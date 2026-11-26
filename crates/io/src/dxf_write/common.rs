@@ -1,7 +1,7 @@
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
-    VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, HAlign, HashMap, Lineweight, Text, Transparency, VAlign, Vec3, Version, W,
+    dxf_ext,
 };
 
 /// `AcadAnnotative` xdata marking an annotative style.
@@ -16,7 +16,16 @@ pub(super) fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W {
+        t: Vec::new(),
+        next: 0,
+        used: std::collections::HashSet::new(),
+        pstyles: HashMap::new(),
+        layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
+        reactors: HashMap::new(),
+    };
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };
@@ -136,13 +145,11 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
     }
 }
 
-/// The properties attribute `a` of block reference `e` (of `ins`) is drawn with: its own, else its
-/// definition's; an attribute defined on layer 0 is on the reference's layer. Also the
-/// definition's properties.
-pub(super) fn attrib_common(d: &Drawing, e: &Entity, ins: &Insert, a: &Attrib) -> (Common, Common) {
-    let def = d
-        .block(&ins.block)
-        .and_then(|b| b.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))));
+/// The properties attribute `a` of block reference `e` is drawn with: its own, else its
+/// definition's, from the block's definitions by tag `defs`; an attribute defined on layer 0 is on
+/// the reference's layer. Also the definition's properties.
+pub(super) fn attrib_common(e: &Entity, defs: &std::collections::BTreeMap<cadcraft_doc::TagKey<'_>, &Entity>, a: &Attrib) -> (Common, Common) {
+    let def = defs.get(&cadcraft_doc::TagKey(&a.tag));
     let base = def.map(|de| de.common.clone()).unwrap_or_default();
     let mut c = a.props.over(&base);
     if c.layer == "0" {
@@ -245,8 +252,69 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
     if q.is_finite() { Vec3::new(q.x, q.y, t.insert.z) } else { t.insert }
 }
 
+fn relative_match(a: f64, b: f64) -> bool {
+    a.is_finite() && b.is_finite() && (a - b).abs() <= 1e-9 * a.abs().max(b.abs())
+}
+
+// A fitted dimension depends on the point distance, independently of position and direction.
+fn imported_fit_scale(original: &Text, current: &Text) -> Option<f64> {
+    let (Some(first), Some(second)) = (original.align_pt, current.align_pt) else {
+        return None;
+    };
+    let before = original.insert.xy().dist(first.xy());
+    let after = current.insert.xy().dist(second.xy());
+    if !before.is_finite() || !after.is_finite() || before <= 0.0 || after <= 0.0 {
+        return None;
+    }
+    if relative_match(before, after) {
+        return Some(1.0);
+    }
+    let scale = after / before;
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
 /// `attdef_prompt` is `Some` for an ATTDEF (its prompt, which may be empty) and `None` for an ATTRIB.
-pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
+pub(super) fn text_tags(
+    w: &mut W,
+    d: &Drawing,
+    t: &Text,
+    attrib: Option<(&Attrib, Version)>,
+    attdef_prompt: Option<&str>,
+    source: (cadcraft_doc::Handle, usize),
+) {
+    let fitted;
+    let t = if matches!(t.halign, HAlign::Aligned | HAlign::Fit) {
+        let mut resolved = t.clone();
+        // Imported dimensions use the originating font's measurements. A substituted font
+        // must not replace them while the fitting inputs still match the read-time snapshot.
+        if let Some((original, style)) = d.foreign.text_fits.get(&source.0).and_then(|texts| texts.get(source.1))
+            && original.value == t.value
+            && let Some(scale) = imported_fit_scale(original, t)
+            && original.style == t.style
+            && *style == d.text_style(&t.style).cloned().unwrap_or_default()
+            && original.halign == t.halign
+            && original.valign == t.valign
+            && original.oblique == t.oblique
+            && original.width_factor == t.width_factor
+            && (t.halign != HAlign::Fit || relative_match(t.height, original.height * scale))
+        {
+            if t.halign == HAlign::Aligned && !t.value.is_empty() {
+                resolved.height = original.height * scale;
+            }
+            if let Some(second) = t.align_pt {
+                let distance = t.insert.xy().dist(second.xy());
+                if distance.is_finite() && distance > 1e-12 {
+                    resolved.rotation = t.insert.xy().angle_to(second.xy());
+                }
+            }
+        } else {
+            resolved = cadcraft_render::fitted_text_entity(d, t, &t.value);
+        }
+        fitted = resolved;
+        &fitted
+    } else {
+        t
+    };
     let attdef = attdef_prompt.is_some();
     // An attribute definition with no default value is drawn as its tag, whatever its prompt: the
     // baseline start AutoCAD stored is judged against the tag's width too. A stored point that is

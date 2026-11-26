@@ -4,8 +4,10 @@
 mod breaks;
 mod cells;
 pub(crate) mod formula;
+mod paste;
 
 pub(crate) use cells::{recalc, tablestyle_cell_style};
+pub use paste::{MAX_PASTE_CELLS, is_tsv_table, parse_tsv};
 
 use cadcraft_doc::{EntityKind, Handle, Table, TableCell};
 use cadcraft_geom::Vec2;
@@ -35,6 +37,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("table.deletecol", "Delete Column", run_delete_col).params("{handle, col}"),
         CommandSpec::new("table.merge", "Merge Cells", run_merge).params("{handle, row, col, rows, cols}"),
         CommandSpec::new("table.unmerge", "Unmerge Cells", run_unmerge).params("{handle, row, col}"),
+        CommandSpec::new("pastetable", "Paste Table", paste::run_pastetable)
+            .params("{tsv: string, at?: [x,y], text_height?: number} → {handle, rows, cols}"),
     ]
     .into_iter()
     .chain(cells::specs())

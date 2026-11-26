@@ -341,6 +341,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 _ => None,
             })
         });
+        // An Escape with nothing focused is the window's cancel, which the runtime keeps out of egui's events.
+        let pressed = pressed.or_else(|| crate::framework::window_cancel_pending(ctx).then_some((Key::Escape, egui::Modifiers::NONE)));
         if let Some((k, m)) = pressed {
             if k != Key::Escape {
                 note = Some(match assign(&mut app.ui.shortcuts, &id, &format(m, k)) {

@@ -39,20 +39,31 @@ fn vertex_value(v: &Value) -> Option<PolyVertex> {
     Some(PolyVertex { p, bulge: f64_or(v, "bulge", 0.0), start_width: f64_or(v, "startWidth", 0.0), end_width: f64_or(v, "endWidth", 0.0) })
 }
 
+fn current_elevation(s: &Session) -> Result<f64> {
+    Ok(s.doc()?.header.f64("ELEVATION", 0.0))
+}
+
 pub(super) fn run_pline(s: &mut Session, p: &Value) -> Result<Value> {
     let raw = p.get("vertices").or_else(|| p.get("points")).and_then(Value::as_array);
+    let mut vertex_widths = false;
     for v in raw.into_iter().flatten() {
-        size_param("pline", v, "startWidth", true)?;
-        size_param("pline", v, "endWidth", true)?;
+        vertex_widths |= size_param("pline", v, "startWidth", true)?.is_some() | size_param("pline", v, "endWidth", true)?.is_some();
     }
     let vs: Vec<PolyVertex> = raw.map(|a| a.iter().filter_map(vertex_value).collect()).unwrap_or_default();
     if vs.len() < 2 {
         return Err(bad("pline", "`vertices` needs at least 2 points"));
     }
-    let width = size_param("pline", p, "width", true)?.unwrap_or(0.0);
+    // Without a width, the polyline starts at PLINEWID as the command does (unless its vertices
+    // give their own widths).
+    let width = match size_param("pline", p, "width", true)? {
+        Some(w) => w,
+        None if vertex_widths => 0.0,
+        None => Some(s.doc()?.header.f64("PLINEWID", 0.0)).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(0.0),
+    };
     let mut k = lwpoly(vs, bool_or(p, "closed", false));
     if let EntityKind::LwPolyline(pl) = &mut k {
         pl.const_width = width;
+        pl.elevation = current_elevation(s)?;
     }
     added(s.add_entity(k)?)
 }
@@ -174,6 +185,7 @@ impl Interactive for LineM {
 #[derive(Default)]
 pub(super) struct PlineM {
     verts: Vec<PolyVertex>,
+    elevation: f64,
     arc_mode: bool,
     /// Total width at the start and end of the next segment (Width / Halfwidth answers).
     start_w: f64,
@@ -191,6 +203,7 @@ impl PlineM {
     fn entity(&self, closed: bool) -> EntityKind {
         let mut k = lwpoly(self.verts.clone(), closed);
         if let EntityKind::LwPolyline(pl) = &mut k {
+            pl.elevation = self.elevation;
             // Every segment the same uniform width: store it as the constant width, as before.
             let segs = if closed { pl.vertices.len() } else { pl.vertices.len().saturating_sub(1) };
             let w = pl.vertices.first().map_or(0.0, |v| v.start_width);
@@ -259,6 +272,13 @@ impl Interactive for PlineM {
     fn name(&self) -> &'static str {
         "PLINE"
     }
+    /// Segments start at PLINEWID, the width the last Width or Halfwidth answer left.
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.elevation = current_elevation(s)?;
+        let w = s.doc()?.header.f64("PLINEWID", 0.0);
+        (self.start_w, self.end_w) = if w.is_finite() && w > 0.0 { (w, w) } else { (0.0, 0.0) };
+        Ok(Step::Continue)
+    }
     fn prompt(&self, s: &Session) -> Prompt {
         if self.asking_width > 0 {
             let unit = if self.half { "half-width" } else { "width" };
@@ -305,6 +325,11 @@ impl Interactive for PlineM {
                 self.end_w = self.start_w;
             }
             self.asking_width = if self.asking_width == 1 { 2 } else { 0 };
+            if self.asking_width == 0 {
+                // The ending width becomes PLINEWID, the next polyline's width (AutoCAD:
+                // Halfwidth 0.5 0.5 leaves PLINEWID 1).
+                s.doc_mut()?.header.set_f64("PLINEWID", self.end_w);
+            }
             return Ok(Step::Continue);
         }
         if let (Some(a), Some(st)) = (self.ask, self.verts.last().map(|v| v.p)) {
@@ -368,6 +393,10 @@ impl Interactive for PlineM {
                         l.bulge = 0.0;
                         (l.start_width, l.end_width) = (0.0, 0.0);
                     }
+                    // Back to the mode of the segment now last (AutoCAD: `_A` point `_U` returns
+                    // to "Specify next point", where `_L` is Length, not arc mode's Line).
+                    let n = self.verts.len();
+                    self.arc_mode = n >= 2 && self.verts.get(n - 2).is_some_and(|v| v.bulge != 0.0);
                     self.sync(s, false)?;
                     Ok(Step::Continue)
                 }
