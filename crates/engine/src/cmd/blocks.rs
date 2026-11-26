@@ -4,6 +4,7 @@
 pub(crate) mod bedit;
 pub(in crate::cmd) mod purge;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
@@ -294,11 +295,12 @@ pub(crate) fn insert_with(
     base: Option<Vec2>,
     values: &serde_json::Map<String, Value>,
 ) -> Result<Handle> {
-    insert_scaled(s, name, at, Vec3::new(scale.x, scale.y, scale.x), rotation, base, values, Grid::ONE)
+    insert_scaled(s, name, at, Vec3::new(scale.x, scale.y, scale.x), rotation, base, |_, tag| attedit::value_for(values, tag), Grid::ONE)
 }
 
 /// [`insert_with`] with a Z scale factor of its own, and MINSERT's grid. A grid has the one set
-/// of attributes (AutoCAD 2024 asks for their values once).
+/// of attributes (AutoCAD 2024 asks for their values once). Each value can come from the attribute
+/// definition's handle or tag.
 #[allow(clippy::too_many_arguments)]
 fn insert_scaled(
     s: &mut Session,
@@ -307,7 +309,7 @@ fn insert_scaled(
     scale: Vec3,
     rotation: f64,
     base: Option<Vec2>,
-    values: &serde_json::Map<String, Value>,
+    attribute_value: impl Fn(Handle, &str) -> Option<String>,
     grid: Grid,
 ) -> Result<Handle> {
     let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
@@ -325,7 +327,7 @@ fn insert_scaled(
             if let EntityKind::Text(tt) = k {
                 t = tt;
             }
-            t.value = attedit::value_for(values, &ad.tag).unwrap_or_else(|| ad.text.value.clone());
+            t.value = attribute_value(e.handle, &ad.tag).unwrap_or_else(|| ad.text.value.clone());
             ins.attribs.push(Attrib {
                 tag: ad.tag.clone(),
                 text: t,
@@ -442,7 +444,16 @@ fn insert_json(s: &mut Session, p: &Value, cmd: &str, grid: Grid) -> Result<Valu
     }
     let rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
-    let h = insert_scaled(s, &name, at, Vec3::new(scale.x, scale.y, scale.x), rot, point_param(p, "basePoint"), &vals, grid)?;
+    let h = insert_scaled(
+        s,
+        &name,
+        at,
+        Vec3::new(scale.x, scale.y, scale.x),
+        rot,
+        point_param(p, "basePoint"),
+        |_, tag| attedit::value_for(&vals, tag),
+        grid,
+    )?;
     if cmd == "insert" && bool_or(p, "explode", false) {
         // The EXPLODE command body, not `execute`: INSERT records the one undo step.
         let explode = find_command("explode").ok_or_else(|| EngineError::UnknownCommand("explode".into()))?;
@@ -838,6 +849,12 @@ enum InsStage {
     Verify,
 }
 
+/// A prompt and the definition that owns its answer, even when the tag is shared.
+struct InsertAttributePrompt {
+    definition: Handle,
+    ask: AttribAsk,
+}
+
 #[derive(Default)]
 struct InsertM {
     stage: InsStage,
@@ -856,11 +873,8 @@ struct InsertM {
     /// Where the block was dropped to pick a Basepoint on it.
     dropped: Option<Vec2>,
     rotation: Option<f64>,
-    /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
-    attdefs: Vec<(String, String, String, bool)>,
-    /// How many of `attdefs` have their value: counted here, not by `values`, whose key is the
-    /// tag, so two definitions with one tag are still each asked once.
-    asked: usize,
+    /// The attributes in the order INSERT asks for them.
+    attdefs: Vec<InsertAttributePrompt>,
     /// ATTDIA 1 and a person started the command: the values are asked for in the Edit
     /// Attributes dialog. A script, LISP routine or JSON call that opened INSERT has nobody to
     /// answer a dialog, so it asks at the command line, even after the program is done.
@@ -868,9 +882,11 @@ struct InsertM {
     /// A person started this command ([`Session::command_origin`]), fixed for its whole life:
     /// only then may ATTDIA 1 open the dialog.
     person: bool,
-    values: serde_json::Map<String, Value>,
-    /// Verify attributes asked again so far.
-    verified: usize,
+    /// One answer per definition. Its handle keeps the answer with the right attribute when tags
+    /// repeat or the definitions move in the draw order.
+    values: BTreeMap<Handle, String>,
+    /// First index where another Verify attribute can be found.
+    verify_from: usize,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
     /// The file waiting for the Redefine answer.
@@ -899,18 +915,18 @@ impl InsertM {
             s.echo("Enter attribute values");
         }
         // Then the Verify attributes are asked again, with the values typed.
-        if self.stage == InsStage::Attribs && self.asked >= self.attdefs.len() && self.verified < self.verifying().len() {
-            if self.verified == 0 {
+        if self.stage == InsStage::Attribs && self.values.len() == self.attdefs.len() && self.next_verify().is_some() {
+            if self.verify_from == 0 {
                 s.echo("Verify attribute values");
             }
             self.stage = InsStage::Verify;
             return Ok(Step::Continue);
         }
         if self.stage == InsStage::Attribs
-            && self.asked >= self.attdefs.len()
+            && self.values.len() == self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
-            let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values, self.grid())?;
+            let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, |definition, _| self.values.get(&definition).cloned(), self.grid())?;
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
@@ -946,9 +962,9 @@ impl InsertM {
         Grid::new(self.rows.unwrap_or(1), self.cols.unwrap_or(1), self.row_spacing.unwrap_or(0.0), self.col_spacing.unwrap_or(0.0))
     }
 
-    /// The Verify attributes asked for.
-    fn verifying(&self) -> Vec<&(String, String, String, bool)> {
-        self.attdefs.iter().filter(|a| a.3).collect()
+    /// The next Verify attribute and its index in prompt order.
+    fn next_verify(&self) -> Option<(usize, &InsertAttributePrompt)> {
+        self.attdefs.iter().enumerate().skip(self.verify_from).find(|(_, row)| row.ask.verify)
     }
 
     /// Block `name` chosen: collect its attribute prompts and ask for the insertion point. Constant
@@ -965,16 +981,17 @@ impl InsertM {
         } else {
             b.entities
                 .iter()
-                .filter_map(|e| {
-                    if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant && !a.modes.preset).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone(), a.modes.verify))
-                    } else {
-                        None
-                    }
+                .filter_map(|e| match &e.kind {
+                    EntityKind::AttDef(a) if !a.constant && !a.modes.preset => Some(InsertAttributePrompt {
+                        definition: e.handle,
+                        ask: AttribAsk { tag: a.tag.clone(), prompt: a.prompt.clone(), default: a.text.value.clone(), verify: a.modes.verify },
+                    }),
+                    _ => None,
                 })
                 .collect()
         };
-        self.asked = 0;
+        self.values.clear();
+        self.verify_from = 0;
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
         Ok(())
@@ -1064,15 +1081,18 @@ impl Interactive for InsertM {
             InsStage::Cell(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
             InsStage::ColSpacing => Prompt::new("Specify distance between columns (|||)", Accept::NUMBER),
             InsStage::Attribs => {
-                let (_, prompt, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
-                let p = Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT);
+                let Some(row) = self.attdefs.get(self.values.len()) else { return Prompt::new("Enter attribute value", Accept::TEXT) };
+                let prompt = &row.ask.prompt;
+                let default = &row.ask.default;
+                let p = Prompt::new(if prompt.is_empty() { "Enter attribute value" } else { prompt }, Accept::TEXT);
                 // No default shown when there is none ("Value:", AutoCAD 2024), not "<>".
                 if default.is_empty() { p } else { p.default(default) }
             }
             InsStage::Verify => {
-                let (tag, prompt) = self.verifying().get(self.verified).map(|a| (a.0.clone(), a.1.clone())).unwrap_or_default();
-                let typed = self.values.get(&tag).and_then(Value::as_str).unwrap_or_default().to_string();
-                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(typed)
+                let Some((_, row)) = self.next_verify() else { return Prompt::new("Enter attribute value", Accept::TEXT) };
+                let prompt = &row.ask.prompt;
+                let typed = self.values.get(&row.definition).map(String::as_str).unwrap_or_default();
+                Prompt::new(if prompt.is_empty() { "Enter attribute value" } else { prompt }, Accept::TEXT).default(typed)
             }
         }
     }
@@ -1271,30 +1291,29 @@ impl Interactive for InsertM {
                 }
             }
             InsStage::Attribs => {
-                let (tag, _, default, _) = self.attdefs.get(self.asked).cloned().unwrap_or_default();
+                let Some(row) = self.attdefs.get(self.values.len()) else { return self.advance(s) };
                 let v = match i {
                     Input::Text(t) => t,
                     // A canvas click is no answer to a text prompt: the dialog stays up and the
                     // attribute is asked for again, as Verify does. Enter keeps the default.
                     Input::Point(_) => return Ok(Step::Continue),
-                    _ => default,
+                    _ => row.ask.default.clone(),
                 };
-                self.values.insert(tag, Value::String(v));
-                self.asked += 1;
+                self.values.insert(row.definition, v);
                 return self.advance(s);
             }
             // Enter keeps the value typed.
             InsStage::Verify => {
-                let tag = self.verifying().get(self.verified).map(|a| a.0.clone()).unwrap_or_default();
+                let Some((index, row)) = self.next_verify() else { return self.advance(s) };
                 match i {
                     Input::Text(t) => {
-                        self.values.insert(tag, Value::String(t));
+                        self.values.insert(row.definition, t);
                     }
                     Input::Enter => {}
                     // A click or anything else is no answer: the value is asked for again.
                     _ => return Ok(Step::Continue),
                 }
-                self.verified += 1;
+                self.verify_from = index + 1;
                 return self.advance(s);
             }
         }
@@ -1320,14 +1339,10 @@ impl Interactive for InsertM {
     }
     fn attribute_entry(&self) -> Option<AttribEntry> {
         // Only before the first answer: values typed at the command line go on there.
-        if !self.dialog || self.stage != InsStage::Attribs || self.asked > 0 || self.attdefs.is_empty() {
+        if !self.dialog || self.stage != InsStage::Attribs || !self.values.is_empty() || self.attdefs.is_empty() {
             return None;
         }
-        let rows = self
-            .attdefs
-            .iter()
-            .map(|(tag, prompt, default, verify)| AttribAsk { tag: tag.clone(), prompt: prompt.clone(), default: default.clone(), verify: *verify })
-            .collect();
+        let rows = self.attdefs.iter().map(|row| row.ask.clone()).collect();
         Some(AttribEntry::idle(self.name.clone().unwrap_or_default(), rows))
     }
 }
