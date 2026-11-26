@@ -7,6 +7,7 @@ use cadcraft_geom::Vec3;
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn groups_survive_dwg_round_trip() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = Drawing::new_imperial();
     let mut line = |x: f64| {
         d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 10.0, 0.0) })).expect("line")

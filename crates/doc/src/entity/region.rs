@@ -37,7 +37,7 @@ pub struct RegionProps {
 impl Region {
     /// A region bounded by one closed loop.
     pub fn from_loop(vertices: Vec<PolyVertex>) -> Region {
-        Region { loops: vec![HatchLoop { vertices, outer: true, sources: Vec::new() }] }
+        Region { loops: vec![HatchLoop { vertices, outer: true, boundary_flags: None, sources: Vec::new() }] }
     }
 
     pub fn polylines(&self) -> Vec<Polyline> {
@@ -170,7 +170,7 @@ mod tests {
         let mut vertices: Vec<PolyVertex> =
             (0..n).map(|k| PolyVertex::new(Vec2::new(c - half + 2.0 * half * k as f64 / n as f64, c - half))).collect();
         vertices.extend([Vec2::new(c + half, c - half), Vec2::new(c + half, c + half), Vec2::new(c - half, c + half)].map(PolyVertex::new));
-        HatchLoop { vertices, outer, sources: Vec::new() }
+        HatchLoop { vertices, outer, boundary_flags: None, sources: Vec::new() }
     }
 
     #[test]
