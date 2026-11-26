@@ -1,6 +1,8 @@
 //! Hit testing and window/crossing selection.
 
-use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim, Space, entity_bounds};
+use std::borrow::Cow;
+
+use cadcraft_doc::{AnnoDraw, Drawing, Entity, EntityKind, Handle, Prim, Space, anno_draw, anno_scaled, entity_bounds};
 use cadcraft_geom::{Bounds2, Line, Vec2, point_in_polygon};
 
 use crate::spatial::{self, SpatialIndex};
@@ -420,7 +422,27 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
 /// in that viewport, are not drawn there and are not picked.
 pub fn pick_in(d: &Drawing, space: &Space, frozen: &[String], p: Vec2, aperture: f64) -> Option<Handle> {
     let ix = spatial::index(d, space);
-    pick_with(d, space, &ix, frozen, p, aperture)
+    pick_with(d, space, &ix, frozen, p, aperture, None)
+}
+
+/// Model-space pick at a layout viewport's annotation scale, for attribute editor double-clicks.
+pub fn pick_at_viewport_scale(d: &Drawing, frozen: &[String], scale: f64, p: Vec2, aperture: f64) -> Option<Handle> {
+    let ix = spatial::viewport_index(d, scale);
+    pick_with(d, &Space::Model, &ix, frozen, p, aperture, Some(scale))
+}
+
+/// Use the same viewport geometry for the index and the hit test. Clear the annotation scales
+/// after scaling so that the bounds and renderer use the projected entity as it is.
+pub(crate) fn entity_for_pick(e: &Entity, viewport_scale: Option<f64>, all_visible: bool) -> Option<Cow<'_, Entity>> {
+    match viewport_scale.map(|scale| anno_draw(e, scale, all_visible)) {
+        Some(AnnoDraw::Hidden) => None,
+        Some(AnnoDraw::Scaled(scale)) => {
+            let mut e = anno_scaled(e, scale);
+            e.common.anno_scales.clear();
+            Some(Cow::Owned(e))
+        }
+        _ => Some(Cow::Borrowed(e)),
+    }
 }
 
 pub(crate) fn pick_with(
@@ -430,18 +452,20 @@ pub(crate) fn pick_with(
     frozen: &[String],
     p: Vec2,
     aperture: f64,
+    viewport_scale: Option<f64>,
 ) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
+    let all_visible = viewport_scale.is_some() && d.anno_all_visible();
     // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e, frozen) {
             continue;
         }
-        let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        let Some(e) = entity_for_pick(e, viewport_scale, all_visible) else { continue };
+        if !is_infinite(&e) && !bounds_of(d, &e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+        if entity_distance(d, &e, p, aperture / 4.0) <= aperture {
             return Some(e.handle);
         }
     }

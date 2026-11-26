@@ -42,19 +42,21 @@ struct ChunkIx {
 }
 
 impl ChunkIx {
-    fn build(d: &Drawing, key: usize, items: &[Arc<Entity>]) -> ChunkIx {
+    fn build(d: &Drawing, key: usize, items: &[Arc<Entity>], anno: AnnoKey) -> ChunkIx {
         let mut infinite = Vec::new();
         // One block-bounds cache for the chunk: references to the same block measure it once.
         let mut cache = BlockBoundsCache::default();
+        let viewport_scale = anno.viewport.then_some(f64::from_bits(anno.factor));
         let bounds = items
             .iter()
             .enumerate()
             .map(|(i, e)| {
+                let Some(e) = crate::select::entity_for_pick(e, viewport_scale, anno.all_visible) else { return Bounds2::EMPTY };
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                let b = entity_bounds_cached(d, e, 0, &mut cache);
-                crate::select::pick_bounds(d, e, b)
+                let b = entity_bounds_cached(d, &e, 0, &mut cache);
+                crate::select::pick_bounds(d, &e, b)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -74,8 +76,7 @@ pub struct SpatialIndex {
     blocks: BTreeMap<String, Arc<Block>>,
     dim_styles: Vec<DimStyle>,
     dimscale: f64,
-    /// Annotation scale factor and ANNOALLVISIBLE: annotative objects measure at that scale.
-    anno: (u64, bool),
+    anno: AnnoKey,
     /// Layers turned off or frozen: block contents on them take no room in their inserts.
     hidden_layers: Vec<String>,
     /// (draw index of the chunk's first entity, chunk), in draw order.
@@ -88,9 +89,17 @@ pub struct SpatialIndex {
     len: usize,
 }
 
-/// What annotative objects' bounds depend on besides the objects themselves.
-fn anno_key(d: &Drawing) -> (u64, bool) {
-    (d.current_anno_scale().factor().to_bits(), d.anno_all_visible())
+/// The annotation context for these bounds. Layout sheets in the ordinary index measure at 1:1.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AnnoKey {
+    factor: u64,
+    all_visible: bool,
+    viewport: bool,
+}
+
+fn anno_key(d: &Drawing, viewport_scale: Option<f64>) -> AnnoKey {
+    let factor = viewport_scale.unwrap_or_else(|| d.current_anno_scale().factor()).to_bits();
+    AnnoKey { factor, all_visible: d.anno_all_visible(), viewport: viewport_scale.is_some() }
 }
 
 fn hidden_layers(d: &Drawing) -> impl Iterator<Item = &str> {
@@ -122,13 +131,13 @@ fn patch_tree(tree: &RTree<Item>, removed: impl Iterator<Item = Item>, inserted:
 impl SpatialIndex {
     /// Build an index over a store (no caching).
     pub fn build(d: &Drawing, store: &EntityStore) -> SpatialIndex {
-        Self::build_from(d, store, None)
+        Self::build_from(d, store, None, anno_key(d, None))
     }
 
     /// Build, reusing `prev` for chunks the two stores share (only when the bounds context —
-    /// blocks, dimension styles, DIMSCALE, hidden layers — is the same).
-    fn build_from(d: &Drawing, store: &EntityStore, prev: Option<&SpatialIndex>) -> SpatialIndex {
-        let prev = prev.filter(|p| p.same_context(d));
+    /// blocks, dimension styles, DIMSCALE, annotation scale, hidden layers — is the same).
+    fn build_from(d: &Drawing, store: &EntityStore, prev: Option<&SpatialIndex>, anno: AnnoKey) -> SpatialIndex {
+        let prev = prev.filter(|p| p.same_context(d, anno));
         let old: std::collections::HashMap<usize, Arc<ChunkIx>> =
             prev.map(|p| p.chunks.iter().map(|(_, c)| (c.key, c.clone())).collect()).unwrap_or_default();
         let mut chunks = Vec::new();
@@ -142,7 +151,7 @@ impl SpatialIndex {
                     c.clone()
                 }
                 _ => {
-                    let c = Arc::new(ChunkIx::build(d, key, items));
+                    let c = Arc::new(ChunkIx::build(d, key, items, anno));
                     fresh.push(c.clone());
                     c
                 }
@@ -164,7 +173,7 @@ impl SpatialIndex {
             blocks: (*d.blocks).clone(),
             dim_styles: d.dim_styles.clone(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
-            anno: anno_key(d),
+            anno,
             hidden_layers: hidden_layers(d).map(str::to_owned).collect(),
             chunks,
             offsets,
@@ -174,17 +183,17 @@ impl SpatialIndex {
         }
     }
 
-    fn same_context(&self, d: &Drawing) -> bool {
+    fn same_context(&self, d: &Drawing, anno: AnnoKey) -> bool {
         self.blocks.len() == d.blocks.len()
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
             && self.dim_styles == d.dim_styles
-            && self.anno == anno_key(d)
+            && self.anno == anno
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
     }
 
-    fn matches(&self, d: &Drawing, store: &EntityStore) -> bool {
-        self.store.same_as(store) && self.same_context(d)
+    fn matches(&self, d: &Drawing, store: &EntityStore, anno: AnnoKey) -> bool {
+        self.store.same_as(store) && self.same_context(d, anno)
     }
 
     pub fn len(&self) -> usize {
@@ -243,20 +252,29 @@ pub fn index(d: &Drawing, space: &Space) -> Option<Arc<SpatialIndex>> {
     Some(index_store(d, store))
 }
 
+/// A separate set of model-space bounds for the attribute editor's viewport geometry pick.
+pub(crate) fn viewport_index(d: &Drawing, scale: f64) -> Option<Arc<SpatialIndex>> {
+    (d.model.len() >= MIN_INDEXED).then(|| cached_index(d, &d.model, anno_key(d, Some(scale))))
+}
+
 /// The cached index for a store regardless of its size.
 pub fn index_store(d: &Drawing, store: &EntityStore) -> Arc<SpatialIndex> {
-    {
+    cached_index(d, store, anno_key(d, None))
+}
+
+fn cached_index(d: &Drawing, store: &EntityStore, anno: AnnoKey) -> Arc<SpatialIndex> {
+    let prev = {
         let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(pos) = cache.iter().position(|ix| ix.matches(d, store)) {
+        if let Some(pos) = cache.iter().position(|ix| ix.matches(d, store, anno)) {
             let ix = cache.remove(pos);
             cache.push(ix.clone());
             return ix;
         }
-    }
-    // The most recent index is the likeliest ancestor of this store (one edit ago): reuse its
-    // unchanged chunks. Build outside the lock so other threads aren't blocked.
-    let prev = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).last().cloned();
-    let ix = Arc::new(SpatialIndex::build_from(d, store, prev.as_deref()));
+        // The most recent index for this scale is the likeliest ancestor of this store.
+        cache.iter().rev().find(|ix| ix.anno == anno).cloned()
+    };
+    // Build outside the lock so other threads aren't blocked.
+    let ix = Arc::new(SpatialIndex::build_from(d, store, prev.as_deref(), anno));
     let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // Drop entries whose store this one supersedes cheaply: keep the most recent ones.
     while cache.len() >= CACHE_SIZE {
@@ -425,8 +443,8 @@ mod tests {
             for k in 0..400 {
                 let p = Vec2::new(r.r(-5.0, 105.0), r.r(-5.0, 105.0));
                 let ap = [0.05, 0.3, 1.5][k % 3];
-                let a = select::pick_with(&d, &Space::Model, &ix, &[], p, ap);
-                let b = select::pick_with(&d, &Space::Model, &None, &[], p, ap);
+                let a = select::pick_with(&d, &Space::Model, &ix, &[], p, ap, None);
+                let b = select::pick_with(&d, &Space::Model, &None, &[], p, ap, None);
                 assert_eq!(a, b, "seed {seed} p {p:?} ap {ap}");
                 hits += usize::from(a.is_some());
             }
@@ -488,7 +506,7 @@ mod tests {
         for (p, ap) in
             [(Vec2::new(f64::NAN, 1.0), 1.0), (Vec2::new(1.0, 1.0), f64::NAN), (Vec2::new(f64::INFINITY, 0.0), 1.0), (Vec2::new(50.0, 50.0), 1e300)]
         {
-            assert_eq!(select::pick_with(&d, &Space::Model, &ix, &[], p, ap), select::pick_with(&d, &Space::Model, &None, &[], p, ap));
+            assert_eq!(select::pick_with(&d, &Space::Model, &ix, &[], p, ap, None), select::pick_with(&d, &Space::Model, &None, &[], p, ap, None));
         }
         let bx = Bounds2 { min: Vec2::new(f64::NEG_INFINITY, 0.0), max: Vec2::new(f64::INFINITY, 50.0) };
         assert_eq!(
@@ -562,8 +580,9 @@ mod tests {
         assert!(select::select_window(&d, &Space::Model, small, false).is_empty());
 
         d.layer_mut("HID").unwrap().on = false;
-        assert!(!shown.matches(&d, &d.model));
-        let reused = SpatialIndex::build_from(&d, &d.model, Some(&shown));
+        let anno = anno_key(&d, None);
+        assert!(!shown.matches(&d, &d.model, anno));
+        let reused = SpatialIndex::build_from(&d, &d.model, Some(&shown), anno);
         let fresh = SpatialIndex::build(&d, &d.model);
         let last = u32::try_from(MIN_INDEXED).unwrap();
         assert_eq!(reused.bounds(last), fresh.bounds(last));
@@ -601,7 +620,7 @@ mod tests {
                     d.modify_entity(h, |e| e.kind.transform(&cadcraft_geom::Mat3::translate(Vec2::new(dx, dy)))).unwrap();
                 }
             }
-            let inc = SpatialIndex::build_from(&d, &d.model, Some(&prev));
+            let inc = SpatialIndex::build_from(&d, &d.model, Some(&prev), anno_key(&d, None));
             let fresh = SpatialIndex::build(&d, &d.model);
             assert_eq!(inc.len(), fresh.len());
             for _ in 0..20 {

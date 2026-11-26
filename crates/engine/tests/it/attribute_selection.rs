@@ -130,6 +130,19 @@ fn the_index_and_the_scan_select_references_alike_whatever_their_attributes() {
     }
 }
 
+#[test]
+fn ordinary_picks_hit_visible_attribute_strokes() {
+    let a = attrib(Vec3::new(100.0, 1.0, 0.0), "L");
+    for filler in [10, 300] {
+        let (d, reference) = drawing(filler, a.clone());
+        let (shaped, _) = cadcraft_render::place_text_entity(&d, &a.text, &a.text.value);
+        let stroke = shaped.strokes.iter().find(|s| s.len() >= 2).unwrap();
+        let at = (stroke[0] + stroke[1]) / 2.0;
+        assert!(entity_bounds(&d, d.entity(reference).unwrap(), 0).contains(at));
+        assert_eq!(select::pick(&d, &Space::Model, at, 0.05), Some(reference), "with {filler} filler objects");
+    }
+}
+
 /// The selection index measures every object as the document measures it: attribute text is not
 /// laid out to measure a reference, whatever its attributes.
 #[test]

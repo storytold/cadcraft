@@ -244,9 +244,8 @@ impl AttribPick {
         self.layer_shown(d, layer, frozen)
     }
 
-    /// The box the renderer lays attribute `a` of `ins` out in, drawn at scale `f` (annotative
-    /// references), or `None` when the budget cannot pay for the layout. The payload is measured
-    /// in place and paid for before anything is copied or laid out.
+    /// The layout box of attribute `a` of `ins` at scale `f`, empty when the text draws nothing.
+    /// `None` means the budget cannot pay for the layout. Pay for the payload before copying it.
     fn text_box(&mut self, d: &Drawing, ins: &Insert, a: &Attrib, f: f64) -> Option<Bounds2> {
         match &a.multiline {
             None => {
@@ -255,13 +254,17 @@ impl AttribPick {
                 // Scaled, the text is copied (its value and style name) before it is laid out.
                 let copy = if f == 1.0 { 0 } else { len_u64(t.value.len()).saturating_add(len_u64(t.style.len())) };
                 self.charge_layout(len_u64(t.value.len()).saturating_add(style).saturating_add(copy))?;
-                if f == 1.0 {
-                    return Some(place_text_entity(d, t, &t.value).1);
-                }
                 // The same transform the renderer applies (`scale_annotative_attrib`), on a copy
                 // of only the text already paid for above.
-                let s = scaled_text_copy(a, ins, f);
-                Some(place_text_entity(d, &s.text, &s.text.value).1)
+                let scaled;
+                let t = if f == 1.0 {
+                    t
+                } else {
+                    scaled = scaled_text_copy(a, ins, f);
+                    &scaled.text
+                };
+                let (shaped, bounds) = place_text_entity(d, t, &t.value);
+                Some(if has_ink(&shaped) { bounds } else { Bounds2::EMPTY })
             }
             Some(ml) => {
                 let m = &ml.mtext;
@@ -293,11 +296,9 @@ impl AttribPick {
                     scaled_attr = scaled_text_copy(a, ins, f);
                     scaled_attr.multiline.as_ref().map(|ml| &ml.mtext).unwrap_or(m)
                 };
-                Some(if edited {
-                    layout_mtext_contents(d, m, &cadcraft_doc::mtext_literal(&a.text.value)).bounds
-                } else {
-                    layout_mtext_entity(d, m).bounds
-                })
+                let layout =
+                    if edited { layout_mtext_contents(d, m, &cadcraft_doc::mtext_literal(&a.text.value)) } else { layout_mtext_entity(d, m) };
+                Some(if layout.pieces.iter().any(|p| has_ink(&p.shaped)) { layout.bounds } else { Bounds2::EMPTY })
             }
         }
     }
@@ -412,20 +413,22 @@ impl AttribPick {
                 Some(Reach::Within(r)) if !r.expand(aperture).contains(p) => continue,
                 Some(_) => {}
             }
-            let b = self.text_box(d, ins, a, f)?;
-            if b.is_empty() || !b.expand(aperture).contains(p) {
-                continue;
-            }
-            if !self.clip_keeps(d, ins, f, p, blocks)? {
-                continue;
-            }
             let def = self.definition(d, ins, &a.tag, blocks)?;
-            if self.attribute_shown(d, e, a, def, click.frozen)? {
+            if !self.attribute_shown(d, e, a, def, click.frozen)? {
+                continue;
+            }
+            let b = self.text_box(d, ins, a, f)?;
+            if !b.is_empty() && b.expand(aperture).contains(p) && self.clip_keeps(d, ins, f, p, blocks)? {
                 return Some(true);
             }
         }
         Some(false)
     }
+}
+
+/// Spaces can contribute to the layout box without drawing a stroke or outline.
+fn has_ink(shaped: &cadcraft_fonts::Shaped) -> bool {
+    shaped.strokes.iter().chain(shaped.glyphs.iter().flatten()).any(|path| path.len() >= 2)
 }
 
 /// A double-click to answer: where it is, how near counts as on text, what the ordinary pick took

@@ -10,7 +10,9 @@
 //! a later edit, text style change or layer change is seen by the next double-click.
 
 use cadcraft_engine::Session;
-use cadcraft_engine::doc::{Attrib, ClipBoundary, Common, EntityKind, HAlign, Handle, MText, MultilineAttrib, Space, VAlign, Viewport};
+use cadcraft_engine::doc::{
+    AnnoScale, Attrib, ClipBoundary, Common, EntityKind, HAlign, HVal, Handle, MText, MultilineAttrib, Space, VAlign, Viewport,
+};
 use cadcraft_engine::geom::{Vec2, Vec3};
 use cadcraft_ui_egui::{CadApp, Services};
 use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
@@ -103,6 +105,21 @@ fn double_clicking_a_references_geometry_opens_the_enhanced_attribute_editor() {
     let mut h = harness(app);
     double_click(&mut h, Vec2::new(105.0, 0.0));
     assert_editor_on(h.state(), reference);
+}
+
+#[test]
+fn a_blank_attribute_opens_the_editor_only_on_the_references_geometry() {
+    let (mut app, reference) = app_with_reference();
+    with_attrib(&mut app, reference, "NO", |a| a.text.value = " ".into());
+    with_attrib(&mut app, reference, "NOTE", |a| a.text.value.clear());
+    let blank_box_center = attribute_centre(&app, reference, "NO");
+    let mut h = harness(app);
+    double_click(&mut h, blank_box_center);
+    assert!(h.state().ui.dialog.is_none(), "the space advances the cursor but draws no text");
+    // Let egui's multi-click window close before the next double-click.
+    h.run_steps(30);
+    double_click(&mut h, Vec2::new(105.0, 0.0));
+    assert_editor_on_attribute(h.state(), reference, " ");
 }
 
 #[test]
@@ -441,6 +458,54 @@ fn an_attribute_frozen_in_the_viewport_is_not_clickable() {
     double_click(&mut h, at);
     assert!(h.state().ui.dialog.is_none(), "the viewport does not draw the attribute's text: no editor");
     assert!(h.state().session.running.is_none(), "and no command starts");
+}
+
+#[test]
+fn the_attribute_editor_uses_the_viewport_scale_for_reference_geometry() {
+    for filler in [0, 300] {
+        let (mut app, hidden) = app_with_reference();
+        let r = app.run("insert", json!({ "name": "Tag", "at": [135, 0], "attribs": { "NO": "7" } })).unwrap();
+        let shown = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let paper = Space::Paper("Layout1".into());
+        let viewport;
+        {
+            let d = app.session.doc_mut().unwrap();
+            d.header.set("CANNOSCALE", HVal::Str("1:1".into()));
+            d.header.set("ANNOALLVISIBLE", HVal::Int(0));
+            d.modify_entity(hidden, |e| e.common.anno_scales = vec![AnnoScale::unit()]).unwrap();
+            d.modify_entity(shown, |e| e.common.anno_scales = vec![AnnoScale::new("1:2", 1.0, 2.0)]).unwrap();
+            for i in 0..filler {
+                let x = 1_000.0 + f64::from(i) * 3.0;
+                let line = cadcraft_engine::doc::Line { a: Vec3::new(x, 500.0, 0.0), b: Vec3::new(x + 1.0, 500.0, 0.0) };
+                d.add(&Space::Model, Common::default(), EntityKind::Line(line)).unwrap();
+            }
+            let vp = Viewport {
+                id: 2,
+                center: Vec3::new(70.0, 60.0, 0.0),
+                width: 60.0,
+                height: 40.0,
+                view_center: Vec2::new(126.0, 0.0),
+                view_height: 80.0,
+                ..Viewport::default()
+            };
+            viewport = d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+        }
+        app.session.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        app.session.execute("view.set", &json!({ "center": [70, 60], "height": 40 })).unwrap();
+        app.session.execute("mspace", &json!({})).unwrap();
+        assert_eq!(app.session.state().unwrap().mspace, Some(viewport));
+        app.canvas.zoom_pending = false;
+        let hidden_at = Vec2::new(105.0, 0.0);
+        let shown_at = Vec2::new(150.0, 0.0);
+        assert_eq!(cadcraft_engine::cmd::curves::pick_at(&app.session, hidden_at), Some(hidden), "ordinary pick still uses CANNOSCALE");
+        let mut h = harness(app);
+        double_click(&mut h, hidden_at);
+        assert!(h.state().ui.dialog.is_none(), "the viewport does not show the 1:1 reference");
+        h.run_steps(30);
+        double_click(&mut h, shown_at);
+        assert_editor_on(h.state(), shown);
+        assert_eq!(cadcraft_engine::cmd::curves::pick_at(&h.state().session, shown_at), None, "ordinary pick still hides the 1:2 reference");
+    }
 }
 
 #[test]

@@ -54,9 +54,9 @@ pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
 /// own). The topmost of those wins, so an object drawn over the reference takes the click. `None`
 /// when there is none or the reference has only constant attributes.
 ///
-/// The ordinary pick is unchanged; the attribute text comes from a double-click-only candidate
-/// list ([`cadcraft_render::attribute_reference_at`]) under one work budget. When the budget runs
-/// out, the ordinary pick stands.
+/// The MSPACE geometry pick uses the viewport's annotation scale. The attribute text comes from
+/// a double-click-only candidate list ([`cadcraft_render::attribute_reference_at`]) under one
+/// work budget. When the budget runs out, a confirmed geometry pick stands.
 pub(super) fn editable_block_at(app: &mut CadApp, p: Vec2) -> Option<Handle> {
     editable_block_at_with(app, p, cadcraft_render::MAX_ATTRIB_PICK_WORK).0
 }
@@ -65,8 +65,6 @@ pub(super) fn editable_block_at(app: &mut CadApp, p: Vec2) -> Option<Handle> {
 fn editable_block_at_with(app: &mut CadApp, p: Vec2, budget: u64) -> (Option<Handle>, cadcraft_render::AttribPickStats) {
     use cadcraft_engine::doc::Space;
     let mut pick = cadcraft_render::AttribPick::with_budget(budget);
-    // What a pick takes, and where it is drawn: an object over an attribute's text wins.
-    let picked = cadcraft_engine::cmd::curves::pick_at(&app.session, p);
     let aperture = cadcraft_engine::cmd::curves::pick_aperture(&app.session);
     let Ok(st) = app.session.state() else { return (None, pick.stats()) };
     // Inside the active MSPACE viewport the edited space is model space, seen at the viewport's
@@ -84,7 +82,12 @@ fn editable_block_at_with(app: &mut CadApp, p: Vec2, budget: u64) -> (Option<Han
         (None, Space::Paper(_)) => cadcraft_render::AnnoView::Sheet,
         (None, _) => cadcraft_render::AnnoView::Model,
     };
-    let click = cadcraft_render::AttribClick { at: p, aperture, picked, frozen: st.viewport_frozen(), anno };
+    let frozen = st.viewport_frozen();
+    let picked = match viewport {
+        Some(scale) => cadcraft_engine::select::pick_at_viewport_scale(&st.doc, frozen, scale, p, aperture),
+        None => cadcraft_engine::cmd::curves::pick_at(&app.session, p),
+    };
+    let click = cadcraft_render::AttribClick { at: p, aperture, picked, frozen, anno };
     let found = cadcraft_render::attribute_reference_at(&st.doc, store, click, &mut app.canvas.attrib_targets, &mut pick);
     (found, pick.stats())
 }
@@ -303,9 +306,8 @@ mod block_pick_tests {
         assert_eq!((warm.entities_visited, warm.candidates_visited), (0, 0), "no walk over the space on a later click");
     }
 
-    /// A nearby miss over overlapping references: every candidate whose reach holds the click is
-    /// laid out, one after another, until the shared budget stops the scan. A miss reads no
-    /// definition.
+    /// A nearby miss over overlapping references: visible candidates whose reach holds the click
+    /// are laid out until the shared budget stops the scan.
     #[test]
     fn a_nearby_miss_over_many_overlapping_references_stops_at_the_budget() {
         const REFS: usize = 10_000;
@@ -322,7 +324,7 @@ mod block_pick_tests {
         assert_eq!(hit, None);
         assert!(stats.candidates_visited > 0 && stats.text_layouts > 0, "{stats:?}");
         assert!(stats.text_layouts < REFS as u64, "the budget stopped the layouts: {stats:?}");
-        assert_eq!(stats.definition_entities, 0, "a miss never reads the definition");
+        assert_eq!(stats.definition_entities, 1, "visibility checks share one pass over the block");
         assert!(stats.exhausted && stats.work <= MAX_ATTRIB_PICK_WORK, "{stats:?}");
     }
 
@@ -347,8 +349,7 @@ mod block_pick_tests {
             d.ensure_layer("HID");
             d.layer_mut("HID").unwrap().on = false;
             // The visible reference, drawn first (bottom), and hidden attributes above it: each
-            // hidden reference's text is under the click and is found hidden without another
-            // read of the block definition.
+            // hidden reference's text can reach the click and can be skipped before layout.
             let a = attrib("T", Vec3::new(0.0, 1.0, 0.0), "1");
             bottom = d.add(&Space::Model, Common::default(), reference_with_attribs("Tag", vec![a.clone()], None)).unwrap();
             for _ in 0..HIDDEN {
@@ -362,7 +363,43 @@ mod block_pick_tests {
         let (hit, stats) = click(&mut app, p);
         assert_eq!(hit, Some(bottom), "the one reference whose attribute is drawn wins");
         assert_eq!(stats.definition_entities, (DEFS + 1) as u64, "one pass over the definition for all {HIDDEN} references");
-        assert_eq!(stats.text_layouts, (HIDDEN + 1) as u64);
+        assert_eq!(stats.text_layouts, 1, "the hidden attributes skip layout");
+    }
+
+    #[test]
+    fn hidden_multiline_attribute_text_leaves_the_layout_budget_for_visible_text() {
+        let mut app = app();
+        let visible = attrib("T", Vec3::new(0.0, 1.0, 0.0), "1");
+        let bottom;
+        {
+            let d = app.session.doc_mut().unwrap();
+            d.blocks.insert("Tag".into(), std::sync::Arc::new(holder_block("Tag")));
+            d.ensure_layer("HID");
+            d.layer_mut("HID").unwrap().on = false;
+            bottom = d.add(&Space::Model, Common::default(), reference_with_attribs("Tag", vec![visible.clone()], None)).unwrap();
+            let value = "A".repeat(1_000);
+            let mtext = MText {
+                insert: Vec3::new(0.0, 1.0, 0.0),
+                height: 1.0,
+                width: 10.0,
+                attach: 1,
+                rotation: 0.0,
+                style: "Standard".into(),
+                contents: value.clone(),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            let mut hidden = attrib("T", mtext.insert, &value);
+            hidden.props.layer = Some("HID".into());
+            hidden.multiline = Some(cadcraft_doc::MultilineAttrib { mtext, read_as: value });
+            d.add(&Space::Model, Common::default(), reference_with_attribs("Tag", vec![hidden], None)).unwrap();
+        }
+        let at = between_strokes(&app, &visible);
+        let (hit, stats) = super::editable_block_at_with(&mut app, at, 4_000);
+        assert_eq!(hit, Some(bottom), "the hidden attribute cannot spend the budget on layout: {stats:?}");
+        assert_eq!(stats.text_layouts, 1, "only the visible text is laid out: {stats:?}");
+        assert!(!stats.exhausted, "{stats:?}");
     }
 
     /// When the budget runs out before a text hit, the ordinary pick stands: bounded, and never a
@@ -585,10 +622,10 @@ mod block_pick_tests {
         let (hit, full) = click(&mut app, at);
         assert_eq!(hit, Some(reference));
         assert!(full.work > (TAG_BYTES / 64) as u64, "the compare is paid for by its bytes: {full:?}");
-        // With the list kept, a budget that pays for the layout but not the compare stops there.
+        // With the list kept, the comparison must fit before the text can be laid out.
         let (hit, small) = super::editable_block_at_with(&mut app, at, 20_000);
         assert_eq!(hit, None, "the {TAG_BYTES}-byte tag spends the budget before it is compared");
-        assert_eq!(small.text_layouts, 1, "the text layout itself was paid for");
+        assert_eq!(small.text_layouts, 0, "the visibility check spends the budget before layout");
         assert!(small.exhausted);
     }
 
@@ -725,9 +762,8 @@ mod block_pick_tests {
         let at = centre(&app, &a);
         let (hit, stats) = click(&mut app, at);
         assert_eq!(hit, None, "the attributes are on a layer turned off");
-        assert_eq!(stats.text_layouts, ATTRIBS as u64);
+        assert_eq!(stats.text_layouts, 0, "the hidden attributes skip layout");
         assert!(!stats.exhausted);
-        // About 1,400 units an attribute (its layout and lookups); the linetype would add 15,625.
         assert!(stats.work < ATTRIBS as u64 * 2_000, "no unit pays for the 1,000,000-byte linetype: {stats:?}");
     }
 
