@@ -135,6 +135,7 @@ mod web {
         // What a DXF before 2007 leaves out for its proxies' string streams (#3229).
         cadcraft_engine::cmd::file::set_proxies_lost(cadcraft_io::proxies_lost);
         cadcraft_engine::cmd::file::set_dwg_compat_lost(cadcraft_io::dwg_compat_lost);
+        cadcraft_engine::cmd::file::set_dwg_notes(cadcraft_io::dwg_notes);
         let Some(canvas) = app_canvas() else {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
