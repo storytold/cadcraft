@@ -96,6 +96,31 @@ fn modify_edits_the_style() {
 }
 
 #[test]
+fn modify_keeps_closed_filled_per_end_arrowheads() {
+    let mut h = manager(|app| {
+        app.run("dimstyle", json!({ "name": "Standard", "DIMBLK": "_DOT" })).unwrap();
+    });
+    click(&mut h, "Modify...");
+    click(&mut h, "Symbols and Arrows");
+    for label in ["Arrow 1", "Arrow 2"] {
+        h.get(by().label(label).role(egui::accesskit::Role::ComboBox)).click();
+        h.run_steps(3);
+        click(&mut h, "Closed filled");
+    }
+    click(&mut h, "OK");
+    let style = h.state().session.doc().unwrap().dim_style("Standard").unwrap();
+    assert_eq!(style.arrow_block, "_DOT");
+    assert_eq!(style.arrow_block1, "_CLOSEDFILLED");
+    assert_eq!(style.arrow_block2, "_CLOSEDFILLED");
+
+    click(&mut h, "Modify...");
+    click(&mut h, "Symbols and Arrows");
+    for label in ["Arrow 1", "Arrow 2"] {
+        h.get(by().label(label).role(egui::accesskit::Role::ComboBox).value("Closed filled"));
+    }
+}
+
+#[test]
 fn cancel_leaves_the_style_alone() {
     let mut h = manager(|_| {});
     click(&mut h, "Modify...");
@@ -157,6 +182,47 @@ fn a_refused_value_keeps_the_editor_and_its_edits() {
     // dimstyle.overrides refuses a negative text height: the page stays, with what was typed.
     assert!(h.state().session.doc().unwrap().dim_overrides().is_empty());
     field(&h, "-1.0000");
+}
+
+#[test]
+fn modify_keeps_the_editor_and_says_so_when_a_value_is_left_out() {
+    let mut h = manager(|_| {});
+    click(&mut h, "Modify...");
+    click(&mut h, "Text");
+    type_into(&mut h, "0.1800", "0");
+    click(&mut h, "OK");
+    // `dimstyle` leaves a text height of 0 out (it must be greater than 0): the style keeps its
+    // value, and the page stays with what was typed and the reason.
+    assert_eq!(text_height(&h, "Standard"), 0.18);
+    field(&h, "0.0000");
+    h.get(by().label_contains("Ignored invalid value for: textHeight"));
+    // Set right, OK takes it and goes back to the list.
+    type_into(&mut h, "0.0000", "0.25");
+    click(&mut h, "OK");
+    assert_eq!(text_height(&h, "Standard"), 0.25);
+    assert!(h.query_by_label_contains("Ignored invalid value").is_none());
+}
+
+/// The editing pages belong to the drawing they were opened on: another drawing becoming active
+/// cancels them, so OK can't write the first drawing's style into the second.
+#[test]
+fn the_editor_is_cancelled_when_another_drawing_becomes_active() {
+    let mut h = manager(|app| {
+        app.run("dimstyle", json!({ "name": "Standard", "textHeight": 7.0 })).unwrap();
+        app.run("new", json!({})).unwrap();
+        app.run("dimstyle", json!({ "name": "Standard", "textHeight": 3.0 })).unwrap();
+        // The manager opens on the first of the two drawings.
+        app.session.active = app.session.docs.len() - 2;
+    });
+    click(&mut h, "Modify...");
+    click(&mut h, "Text");
+    field(&h, "7.0000");
+    let other = h.state().session.docs.len() - 1;
+    h.state_mut().session.active = other;
+    h.run_steps(4);
+    assert!(h.query_by_label_contains("Modify Dimension Style:").is_none(), "the editor is cancelled");
+    assert!(h.query_by_label("OK").is_none(), "no OK left to press");
+    assert_eq!(text_height(&h, "Standard"), 3.0, "the second drawing keeps its own style");
 }
 
 #[test]

@@ -211,3 +211,18 @@ fn empty_arrowheads_read_as_the_ones_drawn() {
     assert_eq!(dim_value(p("arrowBlock"), &st), json!("_DOT"));
     assert_eq!(dim_value(p("leaderArrowBlock"), &st), json!(""));
 }
+
+/// Float noise is no difference between two objects' values (7 and 7.0000000000001), but values
+/// the display rounds alike still vary (7 and 7.000001 both show as 7.0000).
+#[test]
+fn float_noise_does_not_vary_but_a_real_difference_does() {
+    let mut s = Session::new();
+    let a = handle(&s.execute("text", &json!({ "at": [0, 0], "text": "A", "height": 7.0 })).unwrap());
+    let b = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "B", "height": 7.0 + 1e-13 })).unwrap());
+    let both = describe(&mut s, json!({ "handles": [a.clone(), b.clone()] }));
+    let h = row(&both, "Text", "height");
+    assert_eq!((h["varies"].as_bool(), h["display"].as_str()), (Some(false), Some("7.0000")));
+    s.execute("properties.set", &json!({ "handles": [b.clone()], "height": 7.000001 })).unwrap();
+    let both = describe(&mut s, json!({ "handles": [a, b] }));
+    assert_eq!(row(&both, "Text", "height")["varies"], true);
+}

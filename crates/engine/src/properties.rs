@@ -240,7 +240,7 @@ impl<'a> Ctx<'a> {
     fn choice(&self, key: &'static str, label: &'static str, kind: Kind, options: Vec<Choice>, values: impl IntoIterator<Item = Value>) -> Row {
         let mut it = values.into_iter();
         let first = it.next().unwrap_or(Value::Null);
-        let varies = it.any(|v| v != first);
+        let varies = it.any(|v| !same(&v, &first));
         let (value, display) = if varies { (Value::Null, VARIES.to_string()) } else { (first.clone(), self.show(kind, &first, &options)) };
         Row { key, label, kind, value, varies, display, editable: true, note: None, overridden: false, options, quick: false }
     }
@@ -757,6 +757,23 @@ fn dimension_groups(c: &Ctx, ents: &[&Entity], dims: &[&Dimension]) -> Vec<Group
         groups.push(Group { name, rows });
     }
     groups
+}
+
+/// Equal values, numbers to 12 significant digits, as the palette compares them: float noise
+/// (7 and 7.0000000000001, or 1.2e-16 next to zero) is no difference, while values the display
+/// rounds alike (7 and 7.000001) still differ.
+fn same(a: &Value, b: &Value) -> bool {
+    fn tag(v: f64) -> String {
+        let v = if v.abs() < 1e-12 { 0.0 } else { v };
+        format!("{:.11e}", v + 0.0)
+    }
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(x), Some(y)) => tag(x) == tag(y),
+            _ => x == y,
+        },
+        _ => a == b,
+    }
 }
 
 /// A fixed-height text style decides the dimension text height whatever DIMTXT says (as in

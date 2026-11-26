@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Drawing, Entity, EntityKind, Handle, Insert, MLeader, MLeaderStyle, MText};
-use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
+use craft_dxf::Tag;
 
 /// Most leader roots (landings) read per multileader.
 const MAX_ROOTS: usize = 256;
@@ -617,20 +617,12 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
         p(&mut t, 10, b.scale);
         f(&mut t, 43, b.rotation);
         i(&mut t, 176, 1);
-        // Attribute values by their ATTDEF in the block.
-        let defs: Vec<(Handle, &str)> = d
-            .block(&b.block)
-            .map(|blk| {
-                blk.entities
-                    .iter()
-                    .filter_map(|e| if let EntityKind::AttDef(ad) = &e.kind { Some((e.handle, ad.tag.as_str())) } else { None })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Attribute values by their ATTDEF in the block, the definitions gathered by tag once.
+        let defs = d.block(&b.block).map(|blk| blk.attdefs_by_tag()).unwrap_or_default();
         let mut n = 0i64;
         for a in &b.attribs {
-            let Some((h, _)) = defs.iter().find(|(_, tag)| tag.eq_ignore_ascii_case(&a.tag)) else { continue };
-            s(&mut t, 330, &h.hex());
+            let Some(def) = defs.get(&cadcraft_doc::TagKey(&a.tag)) else { continue };
+            s(&mut t, 330, &def.handle.hex());
             i(&mut t, 177, n);
             f(&mut t, 44, 0.0);
             s(&mut t, 302, &a.text.value);

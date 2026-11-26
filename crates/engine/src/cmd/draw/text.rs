@@ -25,6 +25,16 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
     })
 }
 
+/// The justification options TEXT offers, in prompt order.
+const JUSTIFY_OPTIONS: [&str; 15] = ["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"];
+
+/// The prompt for a justification option. Align and Fit run between two baseline points, so a
+/// command that takes one point (`-ATTDEF`) passes `two_points: false` and doesn't list them.
+pub(crate) fn justify_prompt(two_points: bool) -> Prompt {
+    let options: Vec<&str> = JUSTIFY_OPTIONS.into_iter().filter(|o| two_points || !matches!(*o, "Align" | "Fit")).collect();
+    Prompt::new("Enter an option", Accept::TEXT).kw(&options)
+}
+
 /// Justification → the name TEXT's status line gives it.
 fn justify_name(j: (HAlign, VAlign)) -> &'static str {
     match j {
@@ -212,8 +222,7 @@ impl Interactive for TextM {
         let th = s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
         match self.ask {
             Some(TextAsk::Justify) => {
-                return Prompt::new("Enter an option", Accept::TEXT)
-                    .kw(&["Left", "Center", "Right", "Align", "Middle", "Fit", "TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]);
+                return justify_prompt(true);
             }
             Some(TextAsk::Style) => return Prompt::new("Enter style name", Accept::TEXT).kw(&["?"]).default(self.style(s)),
             Some(TextAsk::StyleList) => return Prompt::new("Enter text style(s) to list", Accept::TEXT).default("*"),
@@ -368,7 +377,7 @@ impl Interactive for MTextM {
             None => Prompt::new("Specify first corner", Accept::POINT),
             Some(a) if !self.boxed() => Prompt::new("Specify opposite corner", Accept::POINT)
                 .kw(&["Height", "Justify", "Line spacing", "Rotation", "Style", "Width", "Columns"])
-                .base(a),
+                .corner(a),
             _ if self.lines.is_empty() => Prompt::new("Enter text (use \\P for new paragraphs)", Accept::TEXT),
             _ => Prompt::new("Enter next line of text (empty line to finish)", Accept::TEXT),
         }

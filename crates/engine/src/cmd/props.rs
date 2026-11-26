@@ -28,10 +28,11 @@ pub fn specs() -> Vec<CommandSpec> {
              mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
              dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
              <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable]} \
-             → {changed, ignored: keys no selected object took} (the keys are those of `properties.describe` rows)",
+             → {changed, locked, message?, ignored: keys no selected object took} (the keys are those of `properties.describe` rows): objects on locked layers \
+             (and, during REFEDIT, outside the working set) are left out, and `message` says how many",
         ),
-        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
-            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+        CommandSpec::new("chprop", "Change Properties", run_set)
+            .params("as properties.set, leaving out objects on locked layers (and, during REFEDIT, outside the working set) → {changed, locked, message?} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("change", "Change", change::run_change)
             .alias(&["-ch"])
@@ -100,7 +101,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("rename", "Rename...", run_rename)
             .menu(&["Format", "Rename..."])
             .alias(&["ren", "-rename"])
-            .params("{table: layer|linetype|style|dimstyle|block|mleaderstyle|tablestyle|view|ucs, from, to}")
+            .params("{table: layer|linetype|style|dimstyle|block|mleaderstyle|tablestyle|view|ucs|vport, from, to}")
             .interactive(|_| Ok(Box::new(rename::RenameM::default()))),
     ]
 }
@@ -518,24 +519,29 @@ pub fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
         for e in st.iter() {
+            out.extend(super::blocks::object_attribs(e).iter().flat_map(attrib_text_styles));
             match &e.kind {
                 EntityKind::Text(t) => out.push(t.style.clone()),
                 EntityKind::MText(t) => out.push(t.style.clone()),
-                EntityKind::AttDef(a) => out.push(a.text.style.clone()),
-                EntityKind::Insert(i) => out.extend(i.attribs.iter().map(|a| a.text.style.clone())),
+                EntityKind::AttDef(a) => out.extend(attrib_text_styles(a)),
                 EntityKind::MLeader(m) => out.extend(m.text.iter().map(|t| t.style.clone())),
                 // A dimension's own text style (a DIMTXSTY override), which a rename follows too.
                 EntityKind::Dimension(dm) => out.extend(
                     dm.overrides
                         .iter()
                         .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
-                        .filter_map(|(_, v)| v.as_str().map(str::to_string)),
+                        .filter_map(|(_, v)| super::blocks::purge::override_name(v)),
                 ),
                 _ => {}
             }
         }
     }
     out
+}
+
+/// The text styles of an attribute or attribute definition, its multiline text included.
+fn attrib_text_styles(a: &cadcraft_doc::Attrib) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(a.text.style.clone()).chain(a.multiline.iter().map(|m| m.mtext.style.clone()))
 }
 
 fn run_style_rename(s: &mut Session, p: &Value) -> Result<Value> {
@@ -666,7 +672,8 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if !rejected.is_empty()
         && let Some(o) = out.as_object_mut()
     {
-        o.insert("ignored".into(), json!(rejected));
+        o.insert("ignored".into(), json!(rejected.clone()));
+        o.insert("message".into(), json!(format!("Ignored invalid value for: {}", rejected.join(", "))));
     }
     Ok(out)
 }
@@ -988,7 +995,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "block" => rename::block(s, &from, &to)?,
         "mleaderstyle" | "multileaderstyle" => rename::simple(s, "mleaderstyle", &from, &to)?,
-        "tablestyle" | "view" | "ucs" => rename::simple(s, &table, &from, &to)?,
+        "tablestyle" | "view" | "ucs" | "vport" => rename::simple(s, &table, &from, &to)?,
         "style" | "textstyle" => {
             run_style_rename(s, &json!({ "from": from, "to": to }))?;
         }

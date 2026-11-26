@@ -17,14 +17,18 @@ fn harness(width: f32, height: f32, scale: f32, message: bool) -> Harness<'stati
     if message {
         app.set_status("Drawing saved successfully with a long status message");
     }
-    let mut h = Harness::builder().with_size(vec2(width, height)).with_pixels_per_point(scale).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(&ui.ctx().clone());
-            app.canvas.cursor = Some(Vec2::new(1234.5, -9876.25));
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(width, height))
+        .with_pixels_per_point(scale)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(&ui.ctx().clone());
+                app.canvas.cursor = Some(Vec2::new(1234.5, -9876.25));
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }

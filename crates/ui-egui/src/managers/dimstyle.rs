@@ -73,6 +73,10 @@ struct State {
     /// OK was clicked on an editing page: the entry the list chooses once its commands succeed
     /// (a refused value keeps the page open with every edit).
     after_ok: Option<String>,
+    /// Why OK's command refused the edits, or left a value out, shown on the editing page.
+    error: Option<String>,
+    /// The drawing the pages were opened on ([`cadcraft_engine::DocState::uid`]).
+    doc: u64,
 }
 
 /// The tab a variable is edited on.
@@ -138,6 +142,13 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
         return None;
     };
     let mut st: State = super::temp(ctx, STATE).unwrap_or_default();
+    // A page left open while another drawing became active (its file tab) is cancelled, back to
+    // the list: its values are the first drawing's, and OK would write them into this one.
+    let uid = app.session.state().map_or(0, |s| s.uid);
+    if st.page != Page::List && st.doc != uid {
+        st = State::default();
+    }
+    st.doc = uid;
     let current = d.header.str("DIMSTYLE", "Standard");
     let overrides = d.dim_overrides();
     let valid = |n: &str| n == OVERRIDES && !overrides.is_empty() || d.dim_style(n).is_some();
@@ -162,12 +173,24 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
             Page::Compare => compare_page(ui, d, &mut st, &current, &overrides),
         },
     );
-    // Errors are echoed on the command line by `run`; a failed step stops the rest.
+    // Errors are echoed on the command line by `run`; a failed step stops the rest. A value the
+    // command left out (`ignored`, such as a text height of 0) counts as refused too, so the page
+    // stays open with the edits and says which values were not taken.
     let mut ok = true;
     for (cmd, p) in actions {
-        if app.run(cmd, p).is_err() {
-            ok = false;
-            break;
+        match app.run(cmd, p) {
+            Ok(r) => {
+                if let Some(m) = left_out(&r) {
+                    st.error = Some(m);
+                    ok = false;
+                    break;
+                }
+            }
+            Err(e) => {
+                st.error = Some(e);
+                ok = false;
+                break;
+            }
         }
     }
     if let Some(selected) = st.after_ok.take()
@@ -175,10 +198,22 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
     {
         st.selected = selected;
         st.page = Page::List;
+        st.error = None;
     }
     // Closed (the title bar's X), it opens on the list next time, not on a page left open.
     super::set_temp(ctx, STATE, if *open { st } else { State::default() });
     None
+}
+
+/// The message of a result that left some values out (`ignored`), as `dimstyle` reports them;
+/// the variables' names when the command gave no message.
+fn left_out(r: &Value) -> Option<String> {
+    let ignored = r.get("ignored").and_then(Value::as_array).filter(|a| !a.is_empty())?;
+    Some(
+        r.get("message")
+            .and_then(Value::as_str)
+            .map_or_else(|| ignored.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "), str::to_string),
+    )
 }
 
 fn list_page(
@@ -250,7 +285,7 @@ fn list_page(
                     }
                 });
             });
-            let filter = craft_ui::ComboBox::from_id_salt("dimstyle_list_filter")
+            let filter = egui::ComboBox::from_id_salt("dimstyle_list_filter")
                 .selected_text(if st.in_use_only { crate::tl!("Styles in use") } else { crate::tl!("All styles") })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut st.in_use_only, false, crate::tl!("All styles"));
@@ -399,7 +434,7 @@ fn new_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
         ui.add(egui::TextEdit::singleline(&mut st.new_name).desired_width(220.0)).labelled_by(name_label.id);
         ui.end_row();
         let start_label = ui.label(crate::tl!("Start with"));
-        let start = craft_ui::ComboBox::from_id_salt("dimstyle_start_with").selected_text(st.start_with.clone()).width(220.0).show_ui(ui, |ui| {
+        let start = egui::ComboBox::from_id_salt("dimstyle_start_with").selected_text(st.start_with.clone()).width(220.0).show_ui(ui, |ui| {
             for s in &d.dim_styles {
                 ui.selectable_value(&mut st.start_with, s.name.clone(), &s.name);
             }
@@ -425,6 +460,7 @@ fn new_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
         }
         if ui.button(crate::tl!("Cancel")).clicked() {
             st.page = Page::List;
+            st.error = None;
         }
     });
 }
@@ -450,6 +486,9 @@ fn edit_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, actions: &mut Vec<(
         });
     });
     ui.separator();
+    if let Some(e) = &st.error {
+        ui.label(RichText::new(e.as_str()).color(Tokens::get().warn));
+    }
     ui.horizontal(|ui| {
         if ui.button(crate::tl!("OK")).clicked() {
             let changed: Map<String, Value> = st
@@ -581,7 +620,7 @@ fn fields(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
             DimPropKind::Color => {
                 let c = serde_json::from_value::<cadcraft_color::Color>(cur.clone()).unwrap_or(cadcraft_color::Color::ByBlock);
                 let mut out = None;
-                craft_ui::ComboBox::from_id_salt(id).selected_text(crate::i18n::t(&c.name())).width(160.0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt(id).selected_text(crate::i18n::t(&c.name())).width(160.0).show_ui(ui, |ui| {
                     for (n, aci) in [
                         ("ByBlock", 0),
                         ("ByLayer", 256),
@@ -619,6 +658,11 @@ fn fields(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
                 combo(ui, egui::Id::unique(id), &cur, options)
             }
         });
+        let new = new.map(|v| match (p.field, v.as_str()) {
+            // An empty per-end name inherits DIMBLK.
+            ("arrowBlock1" | "arrowBlock2", Some("")) => json!("_CLOSEDFILLED"),
+            _ => v,
+        });
         if let Some(v) = new.filter(|v| *v != cur) {
             st.values.insert(p.field.into(), v);
         }
@@ -633,7 +677,7 @@ fn combo(ui: &mut egui::Ui, id: egui::Id, cur: &Value, options: Vec<(Value, Stri
         .find(|(v, _)| v == cur)
         .map_or_else(|| cur.as_str().map(str::to_string).unwrap_or_else(|| cur.to_string()), |(_, l)| l.clone());
     let mut out = None;
-    craft_ui::ComboBox::from_id_salt(id).selected_text(shown).width(160.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(shown).width(160.0).show_ui(ui, |ui| {
         for (v, label) in options {
             if ui.selectable_label(v == *cur, label).clicked() {
                 out = Some(v);
@@ -654,14 +698,14 @@ fn compare_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, current: &str, o
     }
     ui.horizontal(|ui| {
         let compare_label = ui.label(crate::tl!("Compare"));
-        let a = craft_ui::ComboBox::from_id_salt("dimstyle_compare_a").selected_text(st.selected.clone()).show_ui(ui, |ui| {
+        let a = egui::ComboBox::from_id_salt("dimstyle_compare_a").selected_text(st.selected.clone()).show_ui(ui, |ui| {
             for n in &names {
                 ui.selectable_value(&mut st.selected, n.clone(), n);
             }
         });
         a.response.labelled_by(compare_label.id);
         let with_label = ui.label(crate::tl!("With"));
-        let b = craft_ui::ComboBox::from_id_salt("dimstyle_compare_b").selected_text(st.compare_with.clone()).show_ui(ui, |ui| {
+        let b = egui::ComboBox::from_id_salt("dimstyle_compare_b").selected_text(st.compare_with.clone()).show_ui(ui, |ui| {
             for n in &names {
                 ui.selectable_value(&mut st.compare_with, n.clone(), n);
             }

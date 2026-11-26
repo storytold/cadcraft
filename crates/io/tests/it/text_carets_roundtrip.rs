@@ -75,6 +75,7 @@ fn all_strings(d: &Drawing) -> Vec<String> {
 
 #[test]
 fn carets_are_written_escaped_and_read_back() {
+    cadcraft_io::dwg_worker::allow_in_process();
     let dxf = write_dxf(&drawing());
     // `^J` stays two characters: a single-line string has no line feeds.
     for escaped in ["10^ 2 m, A^ JB", "1^ 3", "Area in m^ 2", "<> x10^ 3"] {
@@ -114,7 +115,7 @@ fn entget_shows_plain_carets_and_entmake_takes_them() {
     // entmod of entget changes nothing; entmake takes a plain string.
     let (_, back) = cadcraft_io::entity_from_groups(&kind, &groups).unwrap();
     assert_eq!(strings(&back), ["x^ y 10^2"]);
-    let made = [cadcraft_dxf::Tag::s(1, "p^ q")];
+    let made = [craft_dxf::Tag::s(1, "p^ q")];
     assert_eq!(strings(&cadcraft_io::entity_from_groups("TEXT", &made).unwrap().1), ["p^ q"]);
     // Every kind, and a DIMENSION's style name (also group 3) as it is.
     let d = drawing();

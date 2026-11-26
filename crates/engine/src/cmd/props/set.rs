@@ -226,11 +226,74 @@ impl Call<'_> {
     }
 }
 
+/// The objects `properties.set` leaves alone, as CHPROP, MATCHPROP and MOVE do: those on locked
+/// layers and, while a reference is edited in place, those outside the working set.
+#[derive(Default)]
+struct LeftOut {
+    locked: usize,
+    outside: usize,
+}
+
+impl LeftOut {
+    /// `hs` without the objects that can't be edited, each object once, and how many those were. A
+    /// handle that names no object is an error, before anything changes.
+    fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
+        let d = s.doc()?;
+        // The working set, once: `RefEdit::is_working` searches a list.
+        let working: Option<std::collections::HashSet<Handle>> = d.refedit.as_ref().map(|r| r.items.iter().map(|i| i.copy).collect());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = LeftOut::default();
+        let mut free = Vec::new();
+        for h in hs {
+            let Some(e) = d.entity(h) else {
+                return Err(cadcraft_doc::DocError::NoEntity(h).into());
+            };
+            if !seen.insert(h) {
+                continue;
+            }
+            if working.as_ref().is_some_and(|w| !w.contains(&h)) {
+                out.outside += 1;
+            } else if d.layer(&e.common.layer).is_some_and(|l| l.locked) {
+                out.locked += 1;
+            } else {
+                free.push(h);
+            }
+        }
+        Ok((free, out))
+    }
+
+    /// `{changed, locked, ignored}`, and a message saying how many were left out when any were.
+    fn result(&self, changed: usize, ignored: &[&str]) -> Value {
+        let mut notes = Vec::new();
+        match self.locked {
+            0 => {}
+            1 => notes.push("1 object was on a locked layer.".to_string()),
+            n => notes.push(format!("{n} objects were on a locked layer.")),
+        }
+        match self.outside {
+            0 => {}
+            1 => notes.push("1 object was not in the working set.".to_string()),
+            n => notes.push(format!("{n} objects were not in the working set.")),
+        }
+        if changed == 0 && !notes.is_empty() {
+            notes.push("Nothing was changed.".to_string());
+        }
+        let mut r = json!({ "changed": changed, "locked": self.locked + self.outside, "ignored": ignored });
+        if !notes.is_empty()
+            && let Some(o) = r.as_object_mut()
+        {
+            o.insert("message".into(), json!(notes.join(" ")));
+        }
+        r
+    }
+}
+
 pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     if hs.is_empty() {
         return Err(bad("properties.set", "nothing selected"));
     }
+    let (hs, left_out) = LeftOut::split(s, hs)?;
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
@@ -242,7 +305,8 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .transpose()?;
     let lineweight =
         p.get("lineweight").map(|v| crate::cmd::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
-    let d = s.doc_mut()?;
+    // Every check reads the drawing first: a refused call leaves no empty undo step.
+    let d = s.doc()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
         .map(|n| {
@@ -260,23 +324,25 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
     let dim_vars = DimVars::new(d, p)?;
-    if let Some(h) = hs.iter().find(|h| d.entity(**h).is_none()) {
-        return Err(bad("properties.set", format!("no object {}", h.hex())));
-    }
     // A pattern must be one each hatch can take, as HATCHEDIT refuses others.
     if let Some(v) = str_param(p, "pattern").filter(|v| !v.trim().is_empty())
         && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(x)) if !crate::cmd::hatch::takes_pattern(x, v)))
     {
         return Err(bad("properties.set", format!("unknown pattern {}", v.trim().to_ascii_uppercase())));
     }
-    // A failed call changes nothing (a command's error doesn't undo what it did), so the layer
-    // comes after every check, and every object is there before any is edited.
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
+    if hs.is_empty() {
+        // Every object was left out: the drawing stays as it was, with no undo step.
+        return Ok(left_out.result(0, &[]));
     }
     let prep = Prepared::new(d, p, &hs);
     let anno_scale = d.current_anno_scale();
     let c = Call { p, color, transparency, thickness, lineweight, linetype, dim_style, text_style, dim_vars, prep, anno_scale };
+    // A failed call changes nothing (a command's error doesn't undo what it did), so the drawing
+    // is taken for writing, and the layer made, only after every check.
+    let d = s.doc_mut()?;
+    if let Some(l) = str_param(p, "layer") {
+        d.ensure_layer(l);
+    }
     let mut used = Used::new();
     for h in &hs {
         let h = *h;
@@ -291,6 +357,7 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     text_position(t, &c, &mut used);
                 }
                 EntityKind::MText(t) => mtext(t, &c, &mut used),
+                EntityKind::MLeader(m) => mleader(m, &c, &mut used),
                 EntityKind::LwPolyline(pl) => {
                     if let Some(x) = c.num("width").filter(|x| *x >= 0.0) {
                         pl.const_width = x;
@@ -312,7 +379,20 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .as_object()
         .map(|o| o.keys().map(String::as_str).filter(|k| !matches!(*k, "handles" | "handle") && !used.contains(k)).collect())
         .unwrap_or_default();
-    Ok(json!({ "changed": hs.len(), "ignored": ignored }))
+    Ok(left_out.result(hs.len(), &ignored))
+}
+
+/// A multileader's text: its contents (#1081) and height.
+fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'c>) {
+    let Some(t) = &mut m.text else { return };
+    if let Some(v) = str_param(c.p, "text") {
+        t.contents = v.replace('\n', "\\P");
+        used.insert("text");
+    }
+    if let Some(x) = c.num("height").filter(|x| *x > 0.0) {
+        t.height = x;
+        used.insert("height");
+    }
 }
 
 /// The properties every object has: annotative, layer, color, linetype, lineweight, linetype

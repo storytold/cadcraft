@@ -287,7 +287,7 @@ fn main_page(
             ui.set_width(200.0);
             ui.label(RichText::new(crate::tl!("Styles")).strong());
             style_list(ui, d, st, current, used, actions, open);
-            let filter = craft_ui::ComboBox::from_id_salt("textstyle_list_filter")
+            let filter = egui::ComboBox::from_id_salt("textstyle_list_filter")
                 .selected_text(if st.in_use_only { crate::tl!("Styles in use") } else { crate::tl!("All styles") })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut st.in_use_only, false, crate::tl!("All styles"));
@@ -441,7 +441,7 @@ fn font_group(ui: &mut egui::Ui, st: &mut State, v: &mut TextStyle, fonts: &[Fon
             None if is_builtin(&v.font) => BUILTIN_FONT.to_string(),
             None => crate::tf!("{font} (not installed)", font = v.font),
         };
-        let font_name = craft_ui::ComboBox::from_id_salt("textstyle_font_name")
+        let font_name = egui::ComboBox::from_id_salt("textstyle_font_name")
             .selected_text(shown)
             .width(220.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -478,7 +478,7 @@ fn font_group(ui: &mut egui::Ui, st: &mut State, v: &mut TextStyle, fonts: &[Fon
         let style_label = ui.label(crate::tl!("Font Style"));
         ui.label_inputs_by(style_label.id, |ui| match &face {
             Some(f) => {
-                craft_ui::ComboBox::from_id_salt("textstyle_font_style").selected_text(&f.style).width(220.0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("textstyle_font_style").selected_text(&f.style).width(220.0).show_ui(ui, |ui| {
                     for e in fonts.iter().filter(|e| e.family == f.family) {
                         if ui.selectable_label(e.style == f.style, &e.style).clicked() {
                             v.font = e.file.clone();
@@ -488,10 +488,7 @@ fn font_group(ui: &mut egui::Ui, st: &mut State, v: &mut TextStyle, fonts: &[Fon
             }
             None => {
                 ui.add_enabled_ui(false, |ui| {
-                    craft_ui::ComboBox::from_id_salt("textstyle_font_style_off")
-                        .selected_text(crate::tl!("Regular"))
-                        .width(220.0)
-                        .show_ui(ui, |_| {});
+                    egui::ComboBox::from_id_salt("textstyle_font_style_off").selected_text(crate::tl!("Regular")).width(220.0).show_ui(ui, |_| {});
                 });
             }
         });
