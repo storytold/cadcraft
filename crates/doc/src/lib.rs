@@ -14,6 +14,7 @@ mod format;
 mod gdt;
 mod header;
 pub mod library;
+mod names;
 mod plotstyle;
 mod plotter;
 mod raster;
@@ -36,6 +37,7 @@ pub use extents::{
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
+pub use names::{Named, NamedList, NamedMap};
 pub use plotstyle::*;
 pub use plotter::*;
 pub use raster::{Raster, Rasters};
@@ -101,7 +103,8 @@ pub struct Drawing {
     pub header: Header,
     /// File data CADCraft does not model, written back on save.
     pub foreign: std::sync::Arc<foreign::Foreign>,
-    pub layers: Vec<Layer>,
+    /// Layers in table order; [`Drawing::layer`] looks them up by name.
+    pub layers: NamedList<Layer>,
     pub linetypes: Vec<Linetype>,
     pub text_styles: Vec<TextStyle>,
     pub dim_styles: Vec<DimStyle>,
@@ -109,8 +112,11 @@ pub struct Drawing {
     pub table_styles: Vec<TableStyle>,
     /// Multiline styles (MLSTYLE); STANDARD is always there.
     pub mline_styles: Vec<MLineStyle>,
-    pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
+    /// Block definitions by name; [`Drawing::block`] looks them up.
+    pub blocks: NamedMap<std::sync::Arc<Block>>,
     pub model: EntityStore,
+    /// Model layout's page setup, or the default extents-to-fit setup for a new drawing.
+    pub model_page: Option<PageSetup>,
     pub layouts: Vec<Layout>,
     /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
     /// written active again. `None`, or a layout that no longer exists: the first by tab order.
@@ -139,6 +145,10 @@ pub struct Drawing {
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
     /// a drawing opens with everything shown again.
     pub hidden_objects: BTreeSet<Handle>,
+    /// Model space's earlier UCSs for UCS Previous, oldest first (each layout keeps its own,
+    /// [`Layout::ucs_previous`]). Part of the drawing so undo restores them with the UCS. Never
+    /// written to a file.
+    pub ucs_previous: Vec<Ucs>,
     /// What reading the file left out (a DWG's object records the reader couldn't decode), told
     /// to the user when the drawing opens. Never written to a file.
     pub read_notes: Vec<String>,
@@ -154,6 +164,11 @@ pub struct Drawing {
     pub portable_fonts: bool,
     /// The pixels of the raster images that are loaded (IMAGE). Never written to a file.
     pub rasters: Rasters,
+    /// The LAYER table of the file this drawing was read from, in the file's order and under
+    /// the layers' current names: proxy graphics name layers by their index in it, and saving
+    /// turns those indices into the written table's (#3094). An empty name stands for a record
+    /// without one. Empty for a drawing not read from a file.
+    pub proxy_layers: Vec<String>,
 }
 
 impl Default for Drawing {
@@ -184,7 +199,7 @@ impl Drawing {
         Drawing {
             header: Header::default(),
             foreign: std::sync::Arc::default(),
-            layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }],
+            layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }].into(),
             linetypes: vec![
                 Linetype { name: "ByBlock".into(), description: String::new(), pattern: Vec::new() },
                 Linetype { name: "ByLayer".into(), description: String::new(), pattern: Vec::new() },
@@ -195,8 +210,9 @@ impl Drawing {
             mleader_styles: vec![MLeaderStyle::default()],
             table_styles: vec![TableStyle::default()],
             mline_styles: vec![MLineStyle::default()],
-            blocks: BTreeMap::new(),
+            blocks: NamedMap::default(),
             model: EntityStore::new(),
+            model_page: None,
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
             active_layout: None,
             views: Vec::new(),
@@ -211,11 +227,13 @@ impl Drawing {
             handseed: 0x100,
             reserved_handles: BTreeSet::new(),
             hidden_objects: BTreeSet::new(),
+            ucs_previous: Vec::new(),
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
             portable_fonts: false,
             rasters: Rasters::default(),
+            proxy_layers: Vec::new(),
         }
     }
 
@@ -299,11 +317,14 @@ impl Drawing {
         }
     }
 
+    /// The first layer named `name`, without case.
     pub fn layer(&self, name: &str) -> Option<&Layer> {
-        self.layers.iter().find(|l| l.name.eq_ignore_ascii_case(name))
+        self.layers.by_name(name)
     }
+    /// The first layer named `name`, without case, to change.
     pub fn layer_mut(&mut self, name: &str) -> Option<&mut Layer> {
-        self.layers.iter_mut().find(|l| l.name.eq_ignore_ascii_case(name))
+        let i = self.layers.position_by_name(name)?;
+        self.layers.get_mut(i)
     }
     pub fn linetype(&self, name: &str) -> Option<&Linetype> {
         self.linetypes.iter().find(|l| l.name.eq_ignore_ascii_case(name))
@@ -380,8 +401,9 @@ impl Drawing {
             }
         }
     }
+    /// The block named exactly `name`, else the first by name order named `name` without case.
     pub fn block(&self, name: &str) -> Option<&std::sync::Arc<Block>> {
-        self.blocks.get(name).or_else(|| self.blocks.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))
+        self.blocks.by_name(name)
     }
     pub fn layout(&self, name: &str) -> Option<&Layout> {
         self.layouts.iter().find(|l| l.name.eq_ignore_ascii_case(name))

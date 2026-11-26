@@ -118,7 +118,7 @@ numbers):
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski) and Georgian (ქართული), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar), Turkish (Türkçe), Greek (Ελληνικά), Bosnian (Bosanski), Georgian (ქართული) and Tamil (தமிழ், with an installed Tamil font), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -184,6 +184,34 @@ in the text style or set `FONTFALLBACK` (`CADCRAFT_FONTFALLBACK="Vazirmatn"`). F
 inside a word (an MTEXT colour change in the middle of a Persian word) break the joining at that
 point.
 
+### Portable Windows ZIP
+
+The Windows portable ZIP includes `portable.txt` beside `cadcraft.exe`. With that
+marker present, the desktop app's settings, logs, autosaves, workspace data,
+plotter files, and eframe preferences/window state stay in `CADCraftData` beside
+the executable. eframe saves its preferences and window state in `CADCraftData/app.ron`.
+Keep that directory when replacing the binaries. The MSI does not include the
+marker and continues to use the normal user profile.
+
+`CADCRAFT_CONFIG_DIR` takes precedence over the marker, including an empty or
+blank value that disables the settings folder. If `CADCraftData` cannot be
+created or written, CADCraft warns and uses the normal profile. Existing profile
+settings are not automatically copied into the portable directory.
+
+Before switching an existing Windows installation to portable mode, close CADCraft,
+back up `%APPDATA%\CADCraft`, and copy the settings you want to retain into
+`CADCraftData`. Include the `autosave` folder if you need to recover unsaved drawings. The
+preferences and window state are kept apart, in `%APPDATA%\ai.storyteller.cadcraft\data\app.ron`:
+copy that file to `CADCraftData\app.ron` to keep them.
+Updating a portable ZIP, including through the updater, can restore `portable.txt`;
+set `CADCRAFT_CONFIG_DIR` to your existing profile folder to keep using it across updates.
+
+`cadcraft-cli.exe` does not detect the marker. To share the desktop app's portable
+settings, pass `--config-dir` with the full path to `CADCraftData`, or set
+`CADCRAFT_CONFIG_DIR` to that path. The marker is also recognized on other desktop
+platforms, but is intended for a standalone writable installation, not inside a
+signed macOS application bundle.
+
 ### Logs
 
 The desktop app writes its `log` records to standard error and to `logs/cadcraft.log` in the
@@ -208,6 +236,8 @@ The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser 
 cadcraft-cli mcp
 # …or bridged to the running app (start it with --control 7979):
 cadcraft-cli mcp --connect 127.0.0.1:7979
+# …or headless, with the agent confined to a work folder:
+cadcraft-cli mcp --automation-read-root ~/work --automation-write-root ~/work/out
 
 # One-shot headless runs:
 cadcraft-cli run --sample --script 'CIRCLE 22,3 1\n' --save out.dxf --export out.png
@@ -314,7 +344,9 @@ See [ROADMAP.md](ROADMAP.md) for the stage, measured parity and the estimate of 
 |---|---|---|
 | x64 (64-bit Intel/AMD) | `cadcraft-<ver>-windows-x64.msi` | `cadcraft-<ver>-windows-x64-portable.zip` |
 | arm64 (Snapdragon and other ARM PCs) | `cadcraft-<ver>-windows-arm64.msi` | `cadcraft-<ver>-windows-arm64-portable.zip` |
-| x86 (32-bit) | `cadcraft-<ver>-windows-x86.msi` | `cadcraft-<ver>-windows-x86-portable.zip` |
+
+For 32-bit Windows, [CADCraft v0.18.0](https://github.com/storytold/cadcraft/releases/tag/v0.18.0)
+was the last release with both an x86 MSI and portable ZIP.
 
 Installers and executables are code-signed.
 
@@ -351,15 +383,19 @@ and web backend defaults are unchanged.
 | Flatpak | `cadcraft-<ver>-linux-x86_64.flatpak` | `cadcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
 | Debian/Ubuntu | `cadcraft-<ver>-linux-x86_64.deb` | `cadcraft-<ver>-linux-aarch64.deb` | |
 | Fedora/RHEL/openSUSE | `cadcraft-<ver>-linux-x86_64.rpm` | `cadcraft-<ver>-linux-aarch64.rpm` | |
+| Arch Linux | `cadcraft-<ver>-linux-x86_64.pkg.tar.zst` | `cadcraft-<ver>-linux-aarch64.pkg.tar.zst` | |
 | Tarball | `cadcraft-<ver>-linux-x86_64.tar.gz` | `cadcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
-RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
+RISC-V (riscv64) packages are `cadcraft-<ver>-linux-riscv64.deb`,
+`cadcraft-<ver>-linux-riscv64.rpm`, and `cadcraft-<ver>-linux-riscv64.tar.gz`. They are
+cross-compiled and need glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
 ### FreeBSD
 
 | Build | File |
 |---|---|
 | x86_64 | `cadcraft-<ver>-freebsd-x86_64.tar.gz` |
+| aarch64 (ARM64) | `cadcraft-<ver>-freebsd-aarch64.tar.gz` |
 
 ### Web (WebAssembly)
 

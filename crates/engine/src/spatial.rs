@@ -53,7 +53,8 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds_cached(d, e, 0, &mut cache)
+                let b = entity_bounds_cached(d, e, 0, &mut cache);
+                crate::select::pick_bounds(d, e, b)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -160,7 +161,7 @@ impl SpatialIndex {
         let infinite = chunks.iter().flat_map(|(off, c)| c.infinite.iter().map(move |i| off + i)).collect();
         SpatialIndex {
             store: store.clone(),
-            blocks: d.blocks.clone(),
+            blocks: (*d.blocks).clone(),
             dim_styles: d.dim_styles.clone(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno: anno_key(d),

@@ -99,10 +99,11 @@ fn right_click_settings_are_checked_and_survive_a_restart() {
 #[test]
 fn an_idle_right_click_can_repeat_the_last_command() {
     let mut a = app();
-    a.run("options", json!({"rightClickDefault": "repeat"})).unwrap();
+    a.run("options", json!({"timeSensitiveRightClick": false, "rightClickDefault": "repeat"})).unwrap();
     a.cmdline("circle 0,0 5");
     assert!(!a.session.prompting());
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     frame(&mut a, &ctx, Vec::new(), 0.0);
     right_click(&mut a, &ctx, 0.1, 0.05);
     assert!(a.session.prompting(), "CIRCLE runs again: {}", a.session.prompt_text());
@@ -116,9 +117,27 @@ fn an_idle_right_click_can_repeat_the_last_command() {
     assert!(text.contains("Erase"), "the shortcut menu opens:\n{text}");
 }
 
+/// With the time-sensitive right-click on (the default), Default and Edit modes don't decide, as
+/// in AutoCAD: a quick click is Enter (#1387) and a longer one opens the shortcut menu, even with
+/// both set to repeat the last command.
+#[test]
+fn the_time_sensitive_right_click_decides_between_commands_too() {
+    let mut a = app();
+    a.run("options", json!({"rightClickDefault": "repeat", "rightClickEdit": "repeat"})).unwrap();
+    a.cmdline("circle 0,0 5");
+    assert!(!a.session.prompting());
+    let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
+    frame(&mut a, &ctx, Vec::new(), 0.0);
+    let text = right_click(&mut a, &ctx, 0.1, 0.4);
+    assert!(!a.session.prompting(), "a longer click repeats nothing: {}", a.session.prompt_text());
+    assert!(text.contains("Repeat CIRCLE"), "the shortcut menu opens:\n{text}");
+}
+
 #[test]
 fn command_mode_and_click_duration_decide_enter_or_the_menu() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
 
     // A longer duration: a 0.5 s click is still Enter.
     let mut a = app();
@@ -130,6 +149,7 @@ fn command_mode_and_click_duration_decide_enter_or_the_menu() {
 
     // Time-sensitive off, Command mode Enter: every right-click is Enter.
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     let mut a = app();
     a.run("options", json!({"timeSensitiveRightClick": false, "rightClickCommand": "enter"})).unwrap();
     frame(&mut a, &ctx, Vec::new(), 0.0);
@@ -151,7 +171,7 @@ fn command_mode_and_click_duration_decide_enter_or_the_menu() {
 const SHOTS: &str = "CADCRAFT_OPTIONS_SHOTS";
 
 fn harness(app: CadApp) -> Harness<'static, CadApp> {
-    let builder = Harness::builder().with_size(egui::vec2(1400.0, 900.0));
+    let builder = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(egui::vec2(1400.0, 900.0));
     let builder = if std::env::var_os(SHOTS).is_some() { builder.wgpu() } else { builder };
     let mut h = builder.build_ui_state(
         |ui, app: &mut CadApp| {
@@ -182,6 +202,17 @@ fn the_customization_window_sets_every_mode() {
     h.get_by_label("Longer click duration:");
     shot(&mut h, "options-right-click.png");
 
+    // Default, Edit and Command modes apply once the time-sensitive right-click is off; with it
+    // on, Default mode's choice can't be made.
+    if let Some(n) = h.get_all_by_label("Repeat last command").next() {
+        n.click();
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().options.right_click_default, IdleClick::Menu);
+    h.get_by_label("Turn on time-sensitive right-click").click();
+    h.run_steps(3);
+    assert!(!h.state().options.time_sensitive_right_click);
+
     // Default mode's "Repeat last command" comes first, Edit mode's second.
     if let Some(n) = h.get_all_by_label("Repeat last command").next() {
         n.click();
@@ -190,10 +221,6 @@ fn the_customization_window_sets_every_mode() {
     assert_eq!(h.state().options.right_click_default, IdleClick::Repeat);
     assert_eq!(h.state().options.right_click_edit, IdleClick::Menu);
 
-    // Command mode applies once the time-sensitive right-click is off.
-    h.get_by_label("Turn on time-sensitive right-click").click();
-    h.run_steps(3);
-    assert!(!h.state().options.time_sensitive_right_click);
     h.get_by_label("Shortcut Menu: enabled when command options are present").click();
     h.run_steps(3);
     assert_eq!(h.state().options.right_click_command, CommandClick::MenuWithOptions);

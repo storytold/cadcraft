@@ -8,7 +8,7 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn square() -> HatchLoop {
     let v = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].into_iter().map(|(x, y)| PolyVertex::new(Vec2::new(x, y))).collect();
-    HatchLoop { vertices: v, outer: true, sources: Vec::new() }
+    HatchLoop { vertices: v, outer: true, boundary_flags: None, sources: Vec::new() }
 }
 
 fn hatch(pattern: &str, scale: f64, angle: f64, origin: Vec2, lines: Vec<PatternLine>) -> Hatch {

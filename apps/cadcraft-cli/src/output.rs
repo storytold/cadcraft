@@ -171,6 +171,10 @@ pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> 
                 ole = ole.saturating_add(1);
                 continue;
             }
+            // One with proxy graphics draws them (#2697, #3438).
+            if !u.graphics.is_empty() {
+                continue;
+            }
             let n = types.entry(u.dxf_type.as_str()).or_insert(0);
             *n = n.saturating_add(1);
         }

@@ -41,6 +41,7 @@ fn pointer(pos: egui::Pos2, pressed: bool) -> Event {
 #[test]
 fn drafting_button_preserves_multicolor_selection_and_accessibility() {
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     ctx.enable_accesskit();
     let mut state = ButtonState { selected: true, ..Default::default() };
     button_frame(&ctx, &mut state, vec![]);
@@ -63,6 +64,7 @@ fn drafting_button_preserves_multicolor_selection_and_accessibility() {
 fn drafting_button_keyboard_disabled_state_and_click_cancellation() {
     for key_code in [Key::Enter, Key::Space] {
         let ctx = egui::Context::default();
+        cadcraft_ui_egui::framework::install_headless(&ctx);
         ctx.enable_accesskit();
         let mut state = ButtonState::default();
         button_frame(&ctx, &mut state, vec![]);
@@ -91,7 +93,7 @@ fn drafting_button_keyboard_disabled_state_and_click_cancellation() {
 
 #[test]
 fn drafting_palette_pointer_and_keyboard_start_the_same_commands() {
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             app.ui(ui);
@@ -157,13 +159,18 @@ fn shared_controls_visuals() {
     let Some(directory) = std::env::var_os("CRAFT_UI_SUITE_SHOTS").map(std::path::PathBuf::from) else { return };
     std::fs::create_dir_all(&directory).unwrap();
     for scale in [1.0, 2.0] {
-        let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_pixels_per_point(scale).wgpu().build_ui_state(
-            |ui, app: &mut CadApp| {
-                app.logic(&ui.ctx().clone());
-                app.ui(ui);
-            },
-            app(),
-        );
+        let mut h = Harness::builder()
+            .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+            .with_size(vec2(1600.0, 1000.0))
+            .with_pixels_per_point(scale)
+            .wgpu()
+            .build_ui_state(
+                |ui, app: &mut CadApp| {
+                    app.logic(&ui.ctx().clone());
+                    app.ui(ui);
+                },
+                app(),
+            );
         for (name, size) in [("normal", vec2(1600.0, 1000.0)), ("narrow", vec2(900.0, 600.0))] {
             h.set_size(size);
             h.run_steps(6);

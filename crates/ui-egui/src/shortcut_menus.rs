@@ -51,7 +51,12 @@ pub fn command_line_entries(app: &CadApp) -> Vec<Vec<Entry>> {
         .recent_commands(RECENT)
         .iter()
         .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
+        .map(|c| Entry::Item {
+            label: c.id.to_ascii_uppercase(),
+            id: c.id.to_string(),
+            shortcut: None,
+            enabled: crate::clipboard::offered(&app.session, c),
+        })
         .collect();
     if !recent.is_empty() {
         groups.push(vec![Entry::Sub { label: "Recent Commands".into(), children: recent }]);

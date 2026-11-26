@@ -70,7 +70,8 @@ pub(crate) fn from_polyline(tags: &[Tag], pl: LwPolyline) -> Option<EntityKind> 
     let list = xdata_list(x, "REGION");
     let fin = |v: &PolyVertex| v.p.is_finite() && v.bulge.is_finite();
     let first_outer = list.iter().find(|t| t.code == 1070).is_none_or(|t| t.i64() != 0);
-    let mut loops = vec![HatchLoop { vertices: pl.vertices.into_iter().filter(fin).collect(), outer: first_outer, sources: Vec::new() }];
+    let mut loops =
+        vec![HatchLoop { vertices: pl.vertices.into_iter().filter(fin).collect(), outer: first_outer, boundary_flags: None, sources: Vec::new() }];
     let mut total = 0usize;
     let mut cur: Option<HatchLoop> = None;
     let mut expect_flag = false;
@@ -81,7 +82,7 @@ pub(crate) fn from_polyline(tags: &[Tag], pl: LwPolyline) -> Option<EntityKind> 
                 if loops.len() >= MAX_REGION_LOOPS {
                     break;
                 }
-                cur = Some(HatchLoop { vertices: Vec::new(), outer: false, sources: Vec::new() });
+                cur = Some(HatchLoop { vertices: Vec::new(), outer: false, boundary_flags: None, sources: Vec::new() });
                 expect_flag = true;
             }
             1070 if expect_flag => {

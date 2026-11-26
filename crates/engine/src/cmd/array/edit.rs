@@ -18,7 +18,9 @@ use super::super::helpers::v3;
 use super::super::machines::{SelOutcome, SelectPhase, number};
 use super::super::{CommandSpec, bad, bool_or, point_param, targets};
 
-use super::{KEYWORDS, angle, check_size, count, fmt, nesting, other, yes, yes_no};
+use super::{
+    KEY_POINT_PROMPT, KEYWORDS, angle, check_size, count, fmt, key_point_of, key_point_param, nearest_key_point, nesting, other, yes, yes_no,
+};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub(super) fn specs() -> Vec<CommandSpec> {
@@ -26,7 +28,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("arrayedit", "Edit Array", run_arrayedit)
             .menu(&["Modify", "Object", "Array"])
             .params(
-                "{handle, cols?, rows?, colSpacing?, rowSpacing?, axisAngle? (degrees), rowElevation?, levels?, levelSpacing?, items?, angle? (fill, degrees), angleBetween?, rotate?: bool, center? ([x, y]), base? ([x, y], the new base point), reset?: bool, replace?: {handles, base? ([x, y], default the objects' centre), items: [[i, j, level]…] | \"source\"}, source?: {item? ([i, j, level], default [0, 0, 0])} (places the source objects for editing; ARRAYCLOSE ends)}",
+                "{handle, cols?, rows?, colSpacing?, rowSpacing?, axisAngle? (degrees), rowElevation?, levels?, levelSpacing?, items?, angle? (fill, degrees), angleBetween?, rotate?: bool, center? ([x, y]), base? ([x, y], the new base point), reset?: bool, replace?: {handles, base? ([x, y], default the objects' centre), items: [[i, j, level]…] | \"source\"}, keyPoint? ([x, y]: the new base point is the source objects' key point nearest it, on the item there), replace?.keyPoint? ([x, y]: the replacement objects' key point nearest it is their base point), source?: {item? ([i, j, level], default [0, 0, 0])} (places the source objects for editing; ARRAYCLOSE ends)}",
             )
             .interactive(|_| Ok(Box::new(EditM::default()))),
         CommandSpec::new("arrayclose", "Close Array Editing", run_arrayclose)
@@ -215,6 +217,16 @@ fn item_at(d: &Drawing, h: Handle, at: Vec2, tol: f64) -> Option<(u32, u32, u32)
     best.map(|b| b.0)
 }
 
+/// ARRAYEDIT Key point: the key point of the source objects nearest `at`, with the objects as
+/// placed at the item under `at` (within `tol`).
+fn source_key_point(d: &Drawing, h: Handle, at: Vec2, tol: f64) -> Result<Vec2> {
+    let item = item_at(d, h, at, tol).ok_or_else(|| other("No array item there; specify a point on an item of the array."))?;
+    let (ins, blk, p) = array_of(d, h)?;
+    let src = d.block(&p.source).ok_or_else(|| other("The array's source block is missing."))?;
+    let m = ins.transform(blk.base.xy()).then_before(item_place(&p, item)?).then_before(Mat3::translate(-src.base.xy()));
+    nearest_key_point(src.entities.iter().map(|e| e.as_ref()), &m, at)?.ok_or_else(|| other("The source objects have no key point; specify a point."))
+}
+
 /// Move the base point of array `h` to world point `base` without moving the items.
 fn rebase(s: &mut Session, h: Handle, base: Vec2) -> Result<()> {
     let d = s.doc()?;
@@ -232,6 +244,30 @@ fn rebase(s: &mut Session, h: Handle, base: Vec2) -> Result<()> {
     ns.name = d.anonymous_block_name("*U");
     p.source.clone_from(&ns.name);
     d.blocks.insert(ns.name.clone(), Arc::new(ns));
+    // A replacement is placed as the source is, so its base point moves the same way (each block
+    // once, however many items share it). Records no item uses keep their names.
+    let used: Vec<bool> = {
+        let block_for = p.block_lookup();
+        p.replaced.iter().map(|r| block_for(r.i, r.j, r.level) == r.block).collect()
+    };
+    let mut moved: HashMap<String, String> = HashMap::new();
+    for (r, used) in p.replaced.iter_mut().zip(used) {
+        if !used {
+            continue;
+        }
+        let key = r.block.to_ascii_uppercase();
+        if let Some(n) = moved.get(&key) {
+            r.block.clone_from(n);
+            continue;
+        }
+        let Some(rb) = d.block(&r.block).cloned() else { continue };
+        let mut nb = (*rb).clone();
+        nb.base = (nb.base.xy() + b).to3(nb.base.z);
+        nb.name = d.anonymous_block_name("*U");
+        moved.insert(key, nb.name.clone());
+        r.block.clone_from(&nb.name);
+        d.blocks.insert(nb.name.clone(), Arc::new(nb));
+    }
     if let ArrayKind::Polar(k) = &mut p.kind {
         k.center -= b;
     }
@@ -343,6 +379,9 @@ fn close_source(s: &mut Session, save: bool) -> Result<Value> {
 
 // ---------------- JSON ----------------
 
+/// How far outside an item's extents a JSON `keyPoint` may be.
+const KEY_POINT_TOLERANCE: f64 = 1e-6;
+
 fn item_param(v: &Value) -> Option<(u32, u32, u32)> {
     let a = v.as_array()?;
     let n = |k: usize| a.get(k).and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok());
@@ -449,17 +488,22 @@ fn fill_from_between(b: f64, items: u32) -> Result<f64> {
 fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     let h = super::super::curves::handle_param(p, "handle").ok_or_else(|| bad("arrayedit", "`handle` (the array) is required"))?;
     refuse_while_editing(s)?;
-    let (ins, blk, _) = array_of(s.doc()?, h)?;
-    let w = ins.transform(blk.base.xy());
-    let to_local = w.inverse().ok_or_else(|| other("The array's scale is zero."))?;
+    array_of(s.doc()?, h)?;
+    // Both key points are read before anything changes: a bad one leaves the array as it was.
+    let replace = p.get("replace").filter(|v| !v.is_null());
+    let rep_key = replace.map(|r| key_point_param("arrayedit", r)).transpose()?.flatten();
+    let key = key_point_param("arrayedit", p)?;
     if bool_or(p, "reset", false) {
         let (_, _, mut a) = array_of(s.doc()?, h)?;
         a.replaced.clear();
         rebuild(s, h, a, None)?;
     }
-    if let Some(r) = p.get("replace").filter(|v| !v.is_null()) {
+    if let Some(r) = replace {
         let hs = targets(s, r)?;
-        let base = point_param(r, "base").unwrap_or_else(|| s.doc().map(|d| centroid(d, &hs)).unwrap_or_default());
+        let base = match rep_key {
+            Some(k) => key_point_of(s.doc()?, &hs, k)?,
+            None => point_param(r, "base").unwrap_or_else(|| s.doc().map(|d| centroid(d, &hs)).unwrap_or_default()),
+        };
         let name = block_from(s, h, &hs, base)?;
         let (_, _, mut a) = array_of(s.doc()?, h)?;
         match r.get("items") {
@@ -477,7 +521,13 @@ fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(b) = point_param(p, "base") {
         rebase(s, h, b)?;
     }
-    let (_, _, mut a) = array_of(s.doc()?, h)?;
+    if let Some(k) = key {
+        let at = source_key_point(s.doc()?, h, k, KEY_POINT_TOLERANCE)?;
+        rebase(s, h, at)?;
+    }
+    // A new base point moves the array's insertion point: read `center` in its placement after.
+    let (ins, blk, mut a) = array_of(s.doc()?, h)?;
+    let to_local = ins.transform(blk.base.xy()).inverse().ok_or_else(|| other("The array's scale is zero."))?;
     let before = a.clone();
     apply_params(&mut a, p, &to_local)?;
     if a != before {
@@ -507,6 +557,8 @@ enum Stage {
     Select,
     Main,
     Base,
+    /// Base point: Key point (of the source objects).
+    BaseKey,
     ColsCount,
     ColsSpace,
     ColsTotal,
@@ -524,6 +576,8 @@ enum Stage {
     /// REPlace: objects, their base point, then the items to replace.
     RepSelect,
     RepBase,
+    /// REPlace base point: Key point (of the replacement objects).
+    RepKey,
     RepItems,
     /// Source: the item whose objects are placed for editing.
     SourceItem,
@@ -659,6 +713,7 @@ impl Interactive for EditM {
                 .kw(&["Source", "REPlace", "Base point", "Rows", "Columns", "Levels", "RESet", "eXit"])
                 .default("eXit"),
             Base => Prompt::new("Specify base point", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            BaseKey => Prompt::new(KEY_POINT_PROMPT, Accept::POINT),
             ColsCount => Prompt::new("Enter the number of columns", Accept::NUMBER).default(cols.to_string()),
             ColsSpace => dist("Specify the distance between columns", cs).kw(&["Total"]),
             ColsTotal => dist("Specify the distance between the first and last column", total(cols, cs)),
@@ -687,6 +742,7 @@ impl Interactive for EditM {
             Rotate => Prompt::new("Rotate arrayed items?", KEYWORDS).kw(&["Yes", "No"]).default(yes(polar.as_ref().is_none_or(|k| k.rotate))),
             RepSelect => Prompt::new("Select replacement objects", Accept::SELECT),
             RepBase => Prompt::new("Select base point of replacement objects", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            RepKey => Prompt::new("Specify key point on replacement objects to use as base point", Accept::POINT),
             RepItems => Prompt::new("Select an item in array to replace", Accept::POINT).kw(&["Source objects"]),
             SourceItem => Prompt::new("Select item in array", Accept::POINT),
         }
@@ -746,10 +802,21 @@ impl Interactive for EditM {
                 }
                 Main
             }
-            (Base | RepBase, Input::Keyword(_)) => {
-                s.echo("Key points are not available yet; specify a point.");
-                stage
+            (Base, Input::Keyword(_)) => BaseKey,
+            (RepBase, Input::Keyword(_)) => RepKey,
+            (BaseKey, Input::Point(p)) => {
+                let tol = s.pixel_size() * s.settings.pickbox;
+                let at = source_key_point(s.doc()?, h, *p, tol)?;
+                rebase(s, h, at)?;
+                Main
             }
+            (BaseKey, Input::Enter) => Base,
+            (RepKey, Input::Point(p)) => {
+                let base = key_point_of(s.doc()?, &self.rep_objs, *p)?;
+                self.rep_block = Some(block_from(s, h, &self.rep_objs.clone(), base)?);
+                RepItems
+            }
+            (RepKey, Input::Enter) => RepBase,
             (ColsCount | Items, _) => match count(&i, c64, self.max_for(s, r64.saturating_mul(l64)))? {
                 Some(n) => {
                     let n = super::count32(n);
