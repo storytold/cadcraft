@@ -3342,6 +3342,32 @@ fn tilted_text_is_placed_as_seen_from_above() {
     }
 }
 
+/// The two operations the plain fixture cannot reach: a nonzero turn (group 50) puts weight on the
+/// plane's y axis in `plan_frame`, and a justified text carries an alignment point (group 11) that
+/// has to be mapped with the insertion point. Numbers worked out by hand from the arbitrary axis
+/// algorithm: extrusion (0.6,0,0.8) gives x = (0,1,0) and y = (-0.8,0,0.6), so a turn of 45° runs
+/// along (−0.8,1)/√2 in plan, which is (−0.624695, 0.780869) normalized.
+#[test]
+fn tilted_text_turns_by_the_plane_axes_and_maps_its_alignment_point() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n2000\n20\n-800\n30\n600\n11\n2100\n21\n-800\n31\n600\n\
+                40\n2.5\n50\n45\n72\n2\n73\n0\n1\nRIGHT\n210\n0.6\n220\n0\n230\n0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "r.dxf").unwrap();
+    let tx = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    // Both anchors go through the same frame: (2000,-800,600) → (1000,2000,0) and
+    // (2100,-800,600) → (1000,2100,0).
+    for (got, want) in [(tx.insert.x, 1000.0), (tx.insert.y, 2000.0), (tx.insert.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "insert {:?}", tx.insert);
+    }
+    let align = tx.align_pt.expect("a right-justified text keeps its alignment point");
+    for (got, want) in [(align.x, 1000.0), (align.y, 2100.0), (align.z, 0.0)] {
+        assert!((got - want).abs() < 1e-9, "align_pt {:?}", tx.align_pt);
+    }
+    // The direction is the plane's x axis turned by 45° in the plane, seen from above.
+    let (want_x, want_y) = (-0.624695, 0.780869);
+    assert!((tx.rotation.cos() - want_x).abs() < 1e-6, "cos {} (rotation {})", tx.rotation.cos(), tx.rotation);
+    assert!((tx.rotation.sin() - want_y).abs() < 1e-6, "sin {} (rotation {})", tx.rotation.sin(), tx.rotation);
+}
+
 /// A mirrored plane (z < 0) maps its anchors once, in `text_from`'s mirror path. The tilted branch
 /// must leave those points alone: mapping them again would move the text twice. The mirrored
 /// tilted plane's footprint is otherwise unchanged from main and is a separate change.
