@@ -18,7 +18,7 @@ use web_sys::js_sys;
 /// The hidden file input (one at a time; a cancelled pick leaves it until the next one).
 const INPUT_ID: &str = "cadcraft_open_input";
 /// What the picker offers: the formats OPEN reads, and the SHX fonts drawings name.
-const ACCEPT: &str = ".dxf,.dwg,.shx";
+const ACCEPT: &str = ".dxf,.dwg,.pdf,.shx";
 
 /// Most files taken from one pick.
 const MAX_PICKED: u32 = 64;

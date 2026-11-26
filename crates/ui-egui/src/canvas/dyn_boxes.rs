@@ -19,13 +19,27 @@ pub(super) fn dynamic_input(app: &mut CadApp, p: &egui::Painter, hover: Pos2, fi
     // DYNPROMPT = 0: no prompt beside the cursor (the value boxes stay).
     let show_prompt = app.session.settings.dynprompt;
     let options = show_prompt && !prompt.keywords.is_empty();
+    // An angle about the base (a rotation grip): one angle box, as AutoCAD shows it.
+    if !fields
+        && prompt.angle
+        && crate::cmdline::dyn_frame(app).is_some()
+        && let Some(c) = app.canvas.cursor
+    {
+        let message = if show_prompt { crate::i18n::t(&prompt.message) } else { "" };
+        let typed = !app.cmd.buffer.is_empty();
+        let value = if typed { app.cmd.buffer.clone() } else { app.session.live_value(c).unwrap_or_default() };
+        let r = angle_box(p, at, message, &value, typed, options);
+        options_menu(app, p, r, hover);
+        return;
+    }
     if !fields
         && let Some(f) = crate::cmdline::dyn_frame(app)
         && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
         && let Some(c) = app.canvas.cursor
     {
         let message = if show_prompt { crate::i18n::t(&prompt.message) } else { "" };
-        let r = dynamic_input_boxes(p, at, message, &f, &e, c, app.cmd.second_locked(), options, length_units(&app.session));
+        let r =
+            dynamic_input_boxes(p, at, message, &f, &e, c, (app.cmd.first_active(), app.cmd.second_locked()), options, length_units(&app.session));
         options_menu(app, p, r, hover);
         return;
     }
@@ -119,10 +133,42 @@ fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {
     r
 }
 
+/// The Dynamic Input tooltip for an angle: the prompt and one box, holding what was typed (full
+/// text colour, with the caret) or the live value (dimmed).
+fn angle_box(p: &egui::Painter, at: Pos2, message: &str, value: &str, typed: bool, options: bool) -> Rect {
+    let t = Tokens::get();
+    let font = crate::theme::small();
+    let msg = p.layout_no_wrap(message.to_owned(), font.clone(), t.text_dim);
+    let val = p.layout_no_wrap(value.to_owned(), font, if typed { t.text } else { t.text_faint });
+    let (pad, gap) = (6.0, 6.0);
+    let box_h = msg.size().y + 6.0;
+    let bw = (val.size().x + 10.0).max(48.0);
+    let hint = if options { OPTIONS_HINT_W } else { 0.0 };
+    let r = tooltip_frame(p, at, vec2(pad + msg.size().x + gap + bw + pad + hint, box_h + 2.0 * pad - 2.0));
+    if options {
+        options_hint(p, r);
+    }
+    let cy = r.center().y;
+    let x = r.left() + pad;
+    let msg_w = msg.size().x;
+    p.galley(pos2(x, cy - msg.size().y / 2.0), msg, t.text_dim);
+    let b = Rect::from_min_size(pos2(x + msg_w + gap, cy - box_h / 2.0), vec2(bw, box_h));
+    p.rect_filled(b, 2.0, t.chrome_dark);
+    p.rect_stroke(b, 2.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+    let vw = val.size().x;
+    p.galley(pos2(b.left() + 5.0, cy - val.size().y / 2.0), val, t.text);
+    if typed {
+        let cx = b.left() + 6.0 + vw;
+        p.line_segment([pos2(cx, b.top() + 3.0), pos2(cx, b.bottom() - 3.0)], Stroke::new(1.0, t.text));
+    }
+    r
+}
+
 /// The Dynamic Input value boxes: X and Y, or distance and angle. Typed values show in full
 /// text colour, a locked value (a separator typed after it) gets a lock, the active box gets the
 /// accent outline, and open boxes show the cursor's live value, dimmed. Values measured from the
-/// last point are marked with `@`.
+/// last point are marked with `@`. `(first_active, second_locked)`: Tab wrapped around to the first
+/// box, and Tab locked the second value.
 #[allow(clippy::too_many_arguments)]
 fn dynamic_input_boxes(
     p: &egui::Painter,
@@ -131,7 +177,7 @@ fn dynamic_input_boxes(
     f: &crate::dyninput::Frame,
     e: &crate::dyninput::Entry<'_>,
     cursor: Vec2,
-    second_locked: bool,
+    (first_active, second_locked): (bool, bool),
     options: bool,
     (lu, lp): (i64, i64),
 ) -> Rect {
@@ -155,14 +201,14 @@ fn dynamic_input_boxes(
             if e.first.is_empty() { dist(live_first) } else { e.first.to_owned() },
             !e.first.is_empty(),
             e.first_locked().is_some(),
-            !e.split,
+            !e.split || first_active,
         ),
         (
             label_second,
             if e.second.is_empty() { live_second } else { e.second.to_owned() },
             !e.second.is_empty(),
             second_locked,
-            e.split && !second_locked,
+            e.split && !first_active,
         ),
     ];
 
