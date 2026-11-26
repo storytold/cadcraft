@@ -53,6 +53,7 @@ fn painted_grips(app: &mut CadApp, ctx: &egui::Context) -> usize {
 fn a_hidden_selection_paints_no_grips_while_an_ordinary_selection_does() {
     let (mut app, regular, hidden) = drawing_with_hidden_object();
     let ctx = egui::Context::default();
+    cadcraft_ui_egui::framework::install_headless(&ctx);
     // Settle the dock layout, then keep both objects comfortably within the canvas.
     painted_grips(&mut app, &ctx);
     painted_grips(&mut app, &ctx);

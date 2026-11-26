@@ -1,5 +1,5 @@
-//! `convert` to an image says how many model-space entities it can't draw, by type, instead of
-//! leaving them out silently (#1208). The exit code stays 0.
+//! Image exports report how many model-space entities they can't draw, by type. The exit code
+//! stays 0 (#1208).
 
 use std::process::{Command, Output};
 
@@ -68,6 +68,28 @@ fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
     let out = cli(&["convert", sample.to_str().unwrap(), dir.join("sample.svg").to_str().unwrap()]);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn run_image_export_warns_about_undrawn_entities() {
+    let scratch = Scratch::new("run-undrawn");
+    let input = scratch.0.join("proxies.dxf");
+    std::fs::write(&input, PROXIES).unwrap();
+    let image = scratch.0.join("out.svg");
+    let out = cli(&["run", input.to_str().unwrap(), "--export", image.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{:?}: {err}", out.status);
+    assert!(image.is_file());
+    assert!(out.stdout.is_empty(), "the warning belongs on stderr");
+    let warnings: Vec<&str> = err.lines().filter(|l| l.contains("not drawn")).collect();
+    assert_eq!(warnings, [format!("{}: 3 entities not drawn (PDFUNDERLAY: 1, REGION: 2)", image.display())], "{err}");
+
+    let copy = scratch.0.join("copy.dxf");
+    let out = cli(&["run", input.to_str().unwrap(), "--export", copy.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{:?}: {err}", out.status);
+    assert!(copy.is_file());
+    assert!(!err.contains("not drawn"), "{err}");
 }
 
 /// An OLE2FRAME's frame outline is drawn, so an image export doesn't call it an undrawn entity (#2422); it

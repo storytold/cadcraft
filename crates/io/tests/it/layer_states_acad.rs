@@ -174,6 +174,8 @@ fn reads_the_layer_states_autocad_writes() {
 
 #[test]
 fn autocads_layer_states_are_written_back_in_its_form() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let d = read(autocad_file().as_bytes(), "acad.dxf").unwrap();
     let text = write_dxf(&d);
     let p = pairs(&text);
@@ -310,6 +312,8 @@ fn entries_whose_names_differ_only_in_case_open_as_one_state() {
 
 #[test]
 fn view_snapshots_and_names_twice_in_another_case_stay_in_cadcrafts_record() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     let mut d = drawing();
     for name in ["Plan", "*VIEW Front", "PLAN", "Wände", "WÄNDE", "", " "] {
         d.layer_states.push(LayerState::new(name, d.layers.clone(), "A"));
@@ -363,6 +367,8 @@ fn a_layer_of_an_xref_gets_group_93() {
 
 #[test]
 fn named_plot_styles_are_written_by_placeholder() {
+    // The drawing is the test's own, so it is converted in this process.
+    cadcraft_io::dwg_worker::allow_in_process();
     // In a drawing of named plot styles AutoCAD 2024 writes a layer's plot style as group 390, the
     // handle of the style's placeholder object (measured); CADCraft reads it back by that handle.
     let mut d = drawing();
@@ -448,4 +454,45 @@ fn group_92_without_the_true_colour_prefix_is_not_a_true_colour() {
     let text = autocad_file().replace("92\n-1039526882", "92\n-1023410175");
     let d = read(text.as_bytes(), "c3.dxf").unwrap();
     assert_eq!(d.layer_states[0].layers.iter().find(|l| l.name == "A").unwrap().color, Color::Index(168));
+}
+
+#[test]
+fn xdata_of_the_layer_tables_dictionary_is_kept_when_its_entries_join() {
+    // Application xdata on the LAYER table's extension dictionary, whose entries join the one
+    // CADCraft writes for the states: it is written on that dictionary, its handle reference
+    // pointing at the written layer record.
+    let base = write_dxf(&drawing());
+    let p = pairs(&base);
+    let h = |k| fresh(&p, k);
+    let (x, y, r2, f, fr) = (h(1), h(2), h(3), h(4), h(5));
+    let a = record_handle(&p, "LAYER", "A");
+    let mut objects = dictionaries(&p, &x, &y, &[("S2", &r2)], &[("ACAD_LAYERFILTERS", f.as_str())]);
+    let second = 1 + objects.iter().skip(1).position(|(c, _)| c == "0").unwrap();
+    objects.splice(second..second, [g("1001", "CADCRAFT_TEST"), g("1000", "note"), g("1005", &a)]);
+    objects.extend(s2(&p, &r2, &y));
+    objects.extend([g("0", "DICTIONARY"), g("5", &f), g("102", "{ACAD_REACTORS"), g("330", &x), g("102", "}"), g("330", &x)]);
+    objects.extend([g("100", "AcDbDictionary"), g("281", "1"), g("3", "Walls"), g("350", &fr)]);
+    objects.extend([g("0", "XRECORD"), g("5", &fr), g("102", "{ACAD_REACTORS"), g("330", &f), g("102", "}"), g("330", &f), g("100", "AcDbXrecord")]);
+    objects.extend([g("280", "1"), g("1", "A*")]);
+    let mut text = inject(&base, &x, objects);
+    for round in 0..2 {
+        let d = read(text.as_bytes(), "f.dxf").unwrap();
+        assert_eq!(d.layer_states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["S2"], "round {round}");
+        text = write_dxf(&d);
+        let p = pairs(&text);
+        let recs = records(&p);
+        let (_, table) = recs.iter().find(|(k, gs)| k == "TABLE" && value(gs, "2") == Some("LAYER")).unwrap();
+        let xd = table.windows(2).find(|w| w[0] == g("102", "{ACAD_XDICTIONARY")).map(|w| w[1].1.clone()).unwrap();
+        let (_, dict) = recs.iter().find(|(k, gs)| k == "DICTIONARY" && value(gs, "5") == Some(xd.as_str())).unwrap();
+        let keys: Vec<&str> = dict.iter().filter(|(c, _)| c == "3").map(|(_, v)| v.as_str()).collect();
+        assert_eq!(keys, ["ACAD_LAYERSTATES", "ACAD_LAYERFILTERS"], "round {round}");
+        // The xdata closes the dictionary, the reference remapped; one handle, no copied owner.
+        let at = dict.iter().position(|(c, v)| c == "1001" && v == "CADCRAFT_TEST").unwrap_or_else(|| panic!("round {round}: {dict:?}"));
+        let want = [g("1001", "CADCRAFT_TEST"), g("1000", "note"), g("1005", &record_handle(&p, "LAYER", "A"))];
+        assert_eq!(dict[at..], want, "round {round}");
+        assert_eq!(dict.iter().filter(|(c, _)| c == "5").count(), 1, "round {round}");
+        assert!(dict[..at].iter().filter(|(c, _)| c == "330").all(|(_, v)| Some(v.as_str()) == value(table, "5")), "round {round}: {dict:?}");
+        // The application is registered.
+        assert!(recs.iter().any(|(k, gs)| k == "APPID" && value(gs, "2") == Some("CADCRAFT_TEST")), "round {round}");
+    }
 }

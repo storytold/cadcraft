@@ -70,7 +70,9 @@ fn items(p: &PickSet) -> Vec<Handle> {
 /// selection set picks objects (a name, alone or with a point as `entsel` gives it, also answers
 /// a prompt picking one object: [`Session::input_object`]), and `pause` waits for the user. A
 /// command not finished by the arguments stays active for the next `command` call. No
-/// arguments: cancel the active command.
+/// arguments: cancel the active command. Whatever it feeds is the program's input
+/// ([`crate::Origin::Program`]): the command it starts here, and the one a `'command` token
+/// starts while another command runs, never open a dialog.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     if a.is_empty() {
         if ctx.s.running.is_some() {
@@ -91,7 +93,7 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             }
             Value::Str(s) => {
                 let r = if ctx.s.running.is_none() {
-                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start(s) }
+                    if s.trim().is_empty() { Ok(()) } else { ctx.s.start_programmatic(s) }
                 } else if s.is_empty() {
                     ctx.s.input(Input::Enter)
                 } else {
@@ -813,7 +815,7 @@ fn interactive_ssget(ctx: &mut Ctx<'_>, filter: Option<Value>) -> Result<Flow, L
     if ctx.s.running.is_some() {
         return Ok(Flow::Value(Value::Nil));
     }
-    if let Err(e) = ctx.s.start("select") {
+    if let Err(e) = ctx.s.start_programmatic("select") {
         return Err(LispError::new(e.to_string()));
     }
     let f = super::eval::lookup(ctx.env, &super::value::Sym::new("SSGET"));
@@ -1233,7 +1235,7 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 /// A coordinate system `trans` converts from or to: its origin and axes in world coordinates.
-fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
+fn trans_system(ctx: &mut Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
     use crate::ucs::UcsFrame;
     match v {
         // 0 the WCS; 3 paper space's display system, which lines up with paper space's WCS (from
@@ -1246,11 +1248,19 @@ fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispEr
             Ok(UcsFrame::WORLD.rotated_z(-twist))
         }
         Value::Int(1) => Ok(ctx.s.input_ucs()),
-        // An object: its OCS.
+        // An object: its OCS. An entity of a block definition is found as `entget` finds it.
+        // LINE and POINT keep their points in world coordinates whatever their extrusion (the
+        // DXF Reference), so their system is the WCS.
         Value::Ename(h) => {
-            let d = ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?;
-            let e = d.entity(*h).ok_or_else(|| LispError::bad_arg("lentityp", v))?;
-            ocs(e.common.extrusion).ok_or_else(|| LispError::bad_arg("lentityp", v))
+            let frame = |e: &Entity| match e.kind {
+                cadcraft_doc::EntityKind::Line(_) | cadcraft_doc::EntityKind::Point(_) => Some(UcsFrame::WORLD),
+                _ => ocs(e.common.extrusion),
+            };
+            let found = match ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?.entity(*h) {
+                Some(e) => frame(e),
+                None => frame(&*block_entity(ctx, *h).ok_or_else(|| LispError::bad_arg("lentityp", v))?),
+            };
+            found.ok_or_else(|| LispError::bad_arg("lentityp", v))
         }
         // An extrusion direction: the OCS of objects with it.
         Value::Cons(_) => {
@@ -1306,7 +1316,8 @@ fn viewport_to_paper(ctx: &Ctx<'_>, from: &Value, to: &Value, p: cadcraft_geom::
 pub fn trans(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 3, 4)?;
     let p = a[0].as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", &a[0]))?;
-    let (from, to) = (trans_system(ctx, &a[1])?, trans_system(ctx, &a[2])?);
+    let from = trans_system(ctx, &a[1])?;
+    let to = trans_system(ctx, &a[2])?;
     let disp = a.get(3).is_some_and(|v| !v.is_nil());
     let p = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
     let q = if let Some(q) = viewport_to_paper(ctx, &a[1], &a[2], p, disp) {

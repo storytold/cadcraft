@@ -22,13 +22,17 @@ fn harness() -> Harness<'static, CadApp> {
     session.execute("line", &json!({"points": [[20, 20], [60, 20]]})).unwrap();
     let mut app = CadApp::new(session, Services::default());
     app.canvas.zoom_pending = false;
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-        |ui, app: &mut CadApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
+    let mut h = Harness::builder()
+        .with_context_setup(cadcraft_ui_egui::framework::install_headless)
+        .with_size(vec2(1600.0, 1000.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
     h.run_steps(5);
     h
 }
@@ -122,6 +126,27 @@ fn both_corners_of_a_click_click_window_count_while_the_mouse_moves() {
     quick_moving_click(&mut h, Vec2::new(70.0, 30.0));
     assert!(h.state().session.pending_window.is_none());
     assert_eq!(h.state().session.selection().len(), 1);
+}
+
+#[test]
+fn pointer_drift_at_the_first_corner_does_not_commit_the_window() {
+    for (drift, release) in [(9.0, 9.0), (30.0, 4.0)] {
+        let mut h = harness();
+        let first = screen(&h, Vec2::new(10.0, 10.0));
+        h.event(Event::PointerMoved(first));
+        button(&mut h, first, true);
+        h.event(Event::PointerMoved(first + vec2(drift, 0.0)));
+        h.run_steps(30);
+        let at_release = first + vec2(release, 0.0);
+        h.event(Event::PointerMoved(at_release));
+        button(&mut h, at_release, false);
+        h.run_steps(2);
+        assert!(h.state().session.pending_window.is_some(), "drift {drift}, release {release}: still waiting for the second corner");
+
+        quick_moving_click(&mut h, Vec2::new(70.0, 30.0));
+        assert!(h.state().session.pending_window.is_none());
+        assert_eq!(h.state().session.selection().len(), 1);
+    }
 }
 
 #[test]

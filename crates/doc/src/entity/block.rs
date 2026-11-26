@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+
 use super::common::{Common, Lineweight};
 use super::text::{MText, Text};
 use super::{Color, Deserialize, EntityKind, Mat3, Serialize, Vec2, Vec3};
@@ -142,6 +145,43 @@ impl AttribProps {
     }
 }
 
+/// An attribute tag as attributes are matched to their definitions and to each other: ASCII
+/// letters in either case are the same tag, other characters must be equal. As an ordered map key
+/// it finds the match in a logarithmic number of comparisons, where comparing each attribute with
+/// each definition costs their product on a block with many of both (#1923). It orders, rather
+/// than hashes, so the cost doesn't depend on hash keys a crafted file could predict (the web
+/// build's `RandomState`), as in the layer and block name index.
+#[derive(Clone, Copy, Debug)]
+pub struct TagKey<'a>(pub &'a str);
+
+impl TagKey<'_> {
+    /// The tag's bytes with ASCII letters in lower case: equal for the tags `eq_ignore_ascii_case`
+    /// finds equal.
+    fn folded(&self) -> impl Iterator<Item = u8> + '_ {
+        self.0.bytes().map(|b| b.to_ascii_lowercase())
+    }
+}
+
+impl PartialEq for TagKey<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(other.0)
+    }
+}
+
+impl Eq for TagKey<'_> {}
+
+impl Ord for TagKey<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.folded().cmp(other.folded())
+    }
+}
+
+impl PartialOrd for TagKey<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Insert {
@@ -191,11 +231,44 @@ fn one_u() -> u32 {
 }
 
 impl Insert {
+    /// The attributes that have a grip of their own (grips 1, 2… after the insertion point), with
+    /// their index in `attribs`: those shown and not locked in position, as AutoCAD offers them.
+    pub fn grip_attribs(&self) -> impl Iterator<Item = (usize, &Attrib)> {
+        self.attribs.iter().enumerate().filter(|(_, a)| !a.invisible && !a.modes.lock_position)
+    }
+
     /// Block-to-world transform (2D part).
     pub fn transform(&self, base: Vec2) -> Mat3 {
         Mat3::translate(self.insert.xy())
             .then_before(Mat3::rotate(self.rotation))
             .then_before(Mat3::scale(self.scale.x, self.scale.y))
             .then_before(Mat3::translate(-base))
+    }
+
+    /// The reference's attributes by tag: of several with one tag (in any ASCII case), the first.
+    /// Built once, it tells whether the reference carries a definition's tag, and its value, in
+    /// one lookup instead of a pass over the attributes per definition (#1923).
+    pub fn attribs_by_tag(&self) -> BTreeMap<TagKey<'_>, &Attrib> {
+        let mut by_tag = BTreeMap::new();
+        for a in &self.attribs {
+            by_tag.entry(TagKey(a.tag.as_str())).or_insert(a);
+        }
+        by_tag
+    }
+}
+
+impl crate::Block {
+    /// The block's attribute definitions by tag: of several with one tag (in any ASCII case), the
+    /// first in the block's order, the one an attribute of that tag takes its properties from.
+    /// Built once for all of a reference's attributes, it matches each in one lookup instead of a
+    /// pass over the block per attribute (#1923).
+    pub fn attdefs_by_tag(&self) -> BTreeMap<TagKey<'_>, &crate::Entity> {
+        let mut by_tag = BTreeMap::new();
+        for e in self.entities.iter() {
+            if let EntityKind::AttDef(a) = &e.kind {
+                by_tag.entry(TagKey(a.tag.as_str())).or_insert(e.as_ref());
+            }
+        }
+        by_tag
     }
 }

@@ -45,7 +45,7 @@ fn harness(paper: bool, render: bool) -> Harness<'static, CadApp> {
     session.settings.orthomode = true;
     let mut app = CadApp::new(session, Services::default());
     app.canvas.zoom_pending = false;
-    let builder = Harness::builder().with_size(vec2(1600.0, 1000.0));
+    let builder = Harness::builder().with_context_setup(cadcraft_ui_egui::framework::install_headless).with_size(vec2(1600.0, 1000.0));
     let builder = if render { builder.wgpu() } else { builder };
     let mut h = builder.build_ui_state(
         |ui, app: &mut CadApp| {

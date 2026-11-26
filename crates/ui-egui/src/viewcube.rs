@@ -323,6 +323,7 @@ mod tests {
         app.ui.in_window_menu = true;
         app.start("ui.sample");
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         frame(&mut app, &ctx, Vec::new());
         frame(&mut app, &ctx, Vec::new());
         (app, ctx)

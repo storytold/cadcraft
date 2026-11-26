@@ -100,25 +100,30 @@ pub fn absolute(paths: &[PathBuf]) -> Option<Vec<String>> {
 
 /// Decide what this launch does. `files` are absolute ([`absolute`]); `may_hand_off` is false
 /// when the launch asked for anything besides opening files, so it gets its own window.
-pub fn claim(files: &[String], may_hand_off: bool) -> Claim {
+/// `profile` is the Nightly profile root: its socket then lives in the profile, so a nightly launch
+/// can never hand its files to a running stable CADCraft (and the reverse).
+pub fn claim(files: &[String], may_hand_off: bool, profile: Option<&std::path::Path>) -> Claim {
     #[cfg(windows)]
     {
-        match socket_path() {
+        match socket_path(profile) {
             Some(path) => claim_at(&path, files, may_hand_off),
             None => Claim::Alone,
         }
     }
     #[cfg(not(windows))]
     {
-        let _ = (files, may_hand_off);
+        let _ = (files, may_hand_off, profile);
         Claim::Alone
     }
 }
 
-/// The socket in `%LOCALAPPDATA%\CADCraft`.
+/// The socket in `%LOCALAPPDATA%\CADCraft`, or `<profile>\single-instance` for a Nightly launch.
 #[cfg(windows)]
-fn socket_path() -> Option<std::path::PathBuf> {
+fn socket_path(profile: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let name = socket_name(std::env::var("SESSIONNAME").ok().as_deref());
+    if let Some(root) = profile {
+        return Some(root.join("single-instance").join(name));
+    }
     std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|d| std::path::PathBuf::from(d).join("CADCraft").join(name))
 }
 
@@ -331,14 +336,41 @@ mod tests {
         }
     }
 
-    /// A fresh folder for one test, and its socket path.
+    /// A fresh folder for one test, and its socket path. Both names stay short: a Windows socket path
+    /// holds at most 107 bytes, and a long `%TEMP%` already uses most of them.
     #[cfg(windows)]
     fn socket_dir(test: &str) -> (Cleanup, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("cadcraft-single-instance-{}-{test}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cc-si-{}-{test}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("instance-test.sock");
+        let path = dir.join("t.sock");
         (Cleanup(dir), path)
+    }
+
+    /// Whether a socket can be bound at `path` here. It can't when `%TEMP%` is too long or lives
+    /// under a redirected `%LOCALAPPDATA%`; the socket tests then skip instead of failing.
+    #[cfg(windows)]
+    fn can_bind(path: &std::path::Path) -> bool {
+        let bound = uds_windows::UnixListener::bind(path)
+            .map(drop)
+            .map_err(|e| {
+                // Straight to stderr: the test harness hides `eprintln!` from a test that passes.
+                use std::io::Write;
+                let _ = writeln!(std::io::stderr(), "skipping: no AF_UNIX socket at {}: {e}", path.display());
+            })
+            .is_ok();
+        let _ = std::fs::remove_file(path);
+        bound
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_test_socket_path_stays_far_below_the_limit() {
+        // Its own folder, with a name as long as the longest one used here: `socket_dir` empties the
+        // folder, and the launches test may be using "together" at the same moment.
+        let (_dir, path) = socket_dir("lengthck");
+        let added = path.as_os_str().len() - std::env::temp_dir().as_os_str().len();
+        assert!(added <= 40, "{added} bytes on top of %TEMP%");
     }
 
     /// The whole exchange over a real socket: a stale socket file is taken over, a later launch
@@ -348,6 +380,9 @@ mod tests {
     #[test]
     fn a_later_launch_hands_its_files_to_the_first() {
         let (dir, path) = socket_dir("handoff");
+        if !can_bind(&path) {
+            return;
+        }
         drop(uds_windows::UnixListener::bind(&path).unwrap());
         assert!(path.exists(), "the stale socket file stays behind");
 
@@ -369,6 +404,9 @@ mod tests {
     fn launches_at_once_open_one_window() {
         const LAUNCHES: usize = 6;
         let (dir, path) = socket_dir("together");
+        if !can_bind(&path) {
+            return;
+        }
         let start = Arc::new(std::sync::Barrier::new(LAUNCHES));
         let launches: Vec<_> = (0..LAUNCHES)
             .map(|i| {
