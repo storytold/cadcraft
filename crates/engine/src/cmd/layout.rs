@@ -957,7 +957,7 @@ fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Optio
     let plain_sheet = p.get("fit").and_then(Value::as_bool) == Some(false) && p.get("scale").is_none() && p.get("window").is_none();
     let effective = match (&area, space) {
         (Some(a), _) => Some(a.as_str()),
-        (None, Space::Paper(name)) if !plain_sheet => {
+        (None, Space::Paper(name)) if !plain_sheet && p.get("window").is_none() => {
             s.doc()?.layout(name).filter(|l| l.page.plot_area.eq_ignore_ascii_case("display")).map(|_| "display")
         }
         (None, _) => None,

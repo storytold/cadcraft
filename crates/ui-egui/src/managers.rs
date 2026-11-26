@@ -884,10 +884,14 @@ const PICKING_WINDOW: &str = "plot_picking_window";
 /// Set by Print... in a preview opened from the Plot dialog: plot as soon as the dialog is back.
 pub(crate) const PLOT_NOW: &str = "plot_now";
 
-/// Switch to the Plot dialog's `target` space (if different from the active tab) before starting
-/// `plotwindow` so picked corners belong to `target`.
+/// Switch to the Plot dialog's `target` space (if different from the active tab, or exit MSPACE
+/// when picking a Paper Space layout window) before starting `plotwindow` so picked corners belong
+/// to `target`.
 fn start_plot_window_pick(app: &mut CadApp, ctx: &egui::Context, target: &str) -> bool {
     if !app.session.layout_space().tab_name().eq_ignore_ascii_case(target) && app.run("layout.set", json!({ "name": target })).is_err() {
+        return false;
+    }
+    if !target.eq_ignore_ascii_case("Model") && app.session.state().is_ok_and(|st| st.mspace.is_some()) && app.run("pspace", json!({})).is_err() {
         return false;
     }
     set_temp(ctx, PICKING_WINDOW, true);
@@ -1442,10 +1446,26 @@ mod plot_dialog_tests {
         assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Model);
         assert!(start_plot_window_pick(&mut app, &ctx, "Layout1"));
         assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Paper("Layout1".into()));
         assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("plotwindow"));
         app.session.cancel();
+
+        // While inside MSPACE on Layout1, picking a window for Layout1 must exit MSPACE so picked
+        // corners are in Paper Space rather than Model Space.
+        app.session.execute("mview", &json!({"p1": [10.0, 10.0], "p2": [100.0, 80.0]})).unwrap();
+        app.session.execute("mspace", &json!({"at": [55.0, 45.0]})).unwrap();
+        assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Model);
+        assert!(app.session.state().unwrap().mspace.is_some());
+        assert!(start_plot_window_pick(&mut app, &ctx, "Layout1"));
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Paper("Layout1".into()));
+        assert!(app.session.state().unwrap().mspace.is_none());
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("plotwindow"));
+        app.session.cancel();
+
         assert!(start_plot_window_pick(&mut app, &ctx, "Model"));
         assert_eq!(app.session.layout_space(), cadcraft_doc::Space::Model);
+        assert_eq!(app.session.space(), cadcraft_doc::Space::Model);
     }
 
     #[test]

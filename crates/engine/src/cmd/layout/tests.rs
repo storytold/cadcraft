@@ -331,15 +331,6 @@ fn plot_goes_through_the_hook() {
     let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window", "window": [[4388, -1253], [5229, -659]]})).unwrap());
     assert!(text.contains(r#""window":[[4388.0,-1253.0],[5229.0,-659.0]]"#), "{text}");
     assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "extents"})).is_ok());
-    // Saved plot_window is used as fallback for explicit `plotArea: "window"` even when saved plot_area is "layout".
-    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
-    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window"})).unwrap());
-    assert!(text.contains(r#""window":[[10.0,20.0],[110.0,80.0]]"#), "fallback to saved plot_window: {text}");
-    // Saved `plotArea: "display"` resolves the layout's current view window when `plot` omits `plotArea`.
-    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "display"})).unwrap();
-    let text = opts(s.execute("plot", &json!({"layout": "Layout1"})).unwrap());
-    assert!(text.contains(r#""window":[["#), "saved display area resolves current view window: {text}");
-    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout"})).unwrap();
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
     // Image output holds one sheet: several `layouts` would report pages:N but write one render.
     for out in ["x.png", "x.svg"] {
@@ -482,4 +473,33 @@ fn plot_path_extension_picks_the_format_like_export() {
     assert!(e.contains("svg") && e.contains("png"), "{e}");
     assert!(!dir.join("w.png").exists(), "nothing written when `output` and the path disagree");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plot_layout_saved_area_and_explicit_window_precedence() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let mut s = session_with_model();
+    let opts = |r: Value| String::from_utf8(super::super::file::base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap();
+
+    // Saved plot_window is used as fallback for explicit `plotArea: "window"` even when saved plot_area is "layout".
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "layout", "plotWindow": [10.0, 20.0, 110.0, 80.0]})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "window"})).unwrap());
+    assert!(text.contains(r#""window":[[10.0,20.0],[110.0,80.0]]"#), "fallback to saved plot_window: {text}");
+
+    // Saved `plotArea: "display"` resolves the layout's current view window when `plot` omits `plotArea`,
+    // but an explicit `window` without `plotArea` takes precedence over saved `"display"`.
+    s.execute("pagesetup", &json!({"layout": "Layout1", "plotArea": "display"})).unwrap();
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1"})).unwrap());
+    assert!(text.contains(r#""window":[["#), "saved display area resolves current view window: {text}");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(text.contains(r#""window":[[15,25],[85,75]]"#), "explicit window beats saved display default: {text}");
+    let text = opts(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display", "window": [[15, 25], [85, 75]]})).unwrap());
+    assert!(!text.contains(r#""window":[[15,25],[85,75]]"#), "explicit plotArea display still resolves current view: {text}");
 }

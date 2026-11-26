@@ -122,29 +122,41 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let o = pdf::with_saved_setup(d, space, &PdfOptions::from_json(opts));
-    let Space::Model = space else {
-        let (sheet, page) = sheet(d, space, &o)?;
-        let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        let bounds = if let Some(w) = o.window.filter(|w| !w.is_empty()) {
-            Some(w)
-        } else if o.plot_area.as_deref() == Some("extents") {
-            None
-        } else {
-            Some(sheet.bounds())
-        };
-        return Ok(crate::svg::export_window_with(d, space, bounds, transparency).into_bytes());
-    };
-    // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
-    // fills at the scale that fits the window (or the extents) on the device's paper.
     let (sheet, page) = sheet(d, space, &o)?;
     let window = o.window.filter(|w| !w.is_empty());
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
-    let lineweights = o.lineweights.unwrap_or(true);
+    let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
+    let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
+    if matches!(space, Space::Paper(_)) {
+        let fit = o.fit == Some(true);
+        let extents_area = o.plot_area.as_deref() == Some("extents");
+        let placed = fit || window.is_some() || extents_area;
+        let est = if fit {
+            fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o)
+        } else {
+            pdf::plot_scale(&Bounds2::EMPTY, &sheet, false, o.scale)
+        };
+        let tolerance = (0.05 / (sheet.unit_mm * est)).max(1e-9);
+        let tolerance = if tolerance.is_finite() { tolerance } else { cadcraft_render::Options::default().tolerance };
+        let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
+        let mut list = cadcraft_render::build_plot(d, space, &ropts);
+        let b = window.unwrap_or(list.bounds);
+        let s = if fit { fit_scale(&b, &sheet, &o) } else { est };
+        cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
+        let (from, to) = if placed {
+            pdf::placement(if window.is_some() || extents_area { &Space::Model } else { space }, &b, fit, &sheet, &o)
+        } else {
+            (Vec2::ZERO, Vec2::ZERO)
+        };
+        let view = if s.is_finite() && s > 0.0 { Bounds2::new(from - to / s, from + (sheet.size - to) / s) } else { sheet.bounds() };
+        return Ok(crate::svg::export_list(&list, Some(view)).into_bytes());
+    }
+    // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
+    // fills at the scale that fits the window (or the extents) on the device's paper.
     let est = fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o);
     // Chord tolerance: about 0.05 mm on paper.
     let tolerance = (0.05 / (sheet.unit_mm * est)).max(1e-9);
     let tolerance = if tolerance.is_finite() { tolerance } else { cadcraft_render::Options::default().tolerance };
-    let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
@@ -450,10 +462,29 @@ mod tests {
         let blank_png = plot(&d, &sp, &json!({"output": "png", "resolution": 100, "plotArea": "layout", "fit": false})).unwrap();
         assert!(!inked(&blank_png, 120.0, 180.0, 105.0), "explicit layout area ignores saved offset window");
 
-        // SVG respects the saved window (841 x 594) instead of exporting an empty (0,0) sheet (297 x 210).
+        // SVG maps the saved window onto the sheet (not an unmapped 297x210 sheet at (0,0)).
         let svg_text = String::from_utf8(plot(&d, &sp, &json!({"output": "svg"})).unwrap()).unwrap();
-        assert!(svg_text.contains("viewBox=\"0 0 841.") && svg_text.contains(" 594."), "SVG viewBox should match saved window: {svg_text}");
+        assert!(!svg_text.contains("viewBox=\"0 0 297"), "SVG should apply fitted sheet mapping: {svg_text}");
         assert!(svg_text.contains("<polyline"), "SVG should contain title block geometry");
+    }
+
+    /// With `fit: false`, layout SVG export applies the requested `scale` to the sheet mapping so
+    /// two different scales over the same window produce proportionally scaled output.
+    #[test]
+    fn layout_svg_applies_explicit_scale_when_fit_is_off() {
+        let d = layout_drawing(false);
+        let sp = Space::Paper("L1".into());
+        let win = json!([[0.0, 0.0], [100.0, 60.0]]);
+        let half =
+            String::from_utf8(plot(&d, &sp, &json!({"output": "svg", "plotArea": "window", "window": win, "fit": false, "scale": 0.5})).unwrap())
+                .unwrap();
+        let dbl =
+            String::from_utf8(plot(&d, &sp, &json!({"output": "svg", "plotArea": "window", "window": win, "fit": false, "scale": 2.0})).unwrap())
+                .unwrap();
+        assert_ne!(half, dbl, "different scales must produce different layout SVG output");
+        // A4 landscape (297 x 210): at scale 0.5 the viewBox is 594 x 420; at scale 2.0 it is 148.5 x 105.
+        assert!(half.contains("viewBox=\"0 0 594") && half.contains(" 420"), "scale 0.5 viewBox: {half}");
+        assert!(dbl.contains("viewBox=\"0 0 148.5") && dbl.contains(" 105"), "scale 2.0 viewBox: {dbl}");
     }
 
     /// A layout with saved `plot_area = "extents"`, `scale_to_fit = false`, and an explicit scale
