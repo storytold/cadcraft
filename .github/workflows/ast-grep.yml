@@ -1,13 +1,13 @@
-# Structural rules for the command-line code (RFC-0012): lint/ast-grep's rule tests, then a scan.
+# Structural rules for the command-line code (RFC-0018): the shared rule sets of craft-common-actions, then a scan.
 # Seconds, no Rust build.
 name: ast-grep
 
 on:
   push:
     branches: [main]
-    paths: ["lint/ast-grep/**", "apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
+    paths: ["apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
   pull_request:
-    paths: ["lint/ast-grep/**", "apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
+    paths: ["apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
   workflow_dispatch:
 
 permissions:
@@ -22,5 +22,7 @@ jobs:
     # Tracked at @main like the other shared workflows.
     uses: storytold/craft-common-actions/.github/workflows/ast-grep.yml@main
     with:
-      config: lint/ast-grep/sgconfig.yml
+      # No rules of its own: the shared RFC-0018 sets (rfc-0018-string-error is on, as it was here).
+      config: ""
+      shared-rules: rfc-0018 rfc-0018-string-error
       paths: apps/cadcraft-cli/src apps/cadcraft/src/launch_args.rs apps/cadcraft/src/main.rs

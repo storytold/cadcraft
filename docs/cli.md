@@ -2,7 +2,7 @@
 
 `cadcraft-cli` is headless CADCraft: it reads, converts and exports drawings, runs scripts and
 commands, prints the command catalog and serves MCP. It follows
-[RFC-0012: Command-line conventions](https://github.com/storytold/craft-contrib/pull/18).
+[RFC-0018: Command-line conventions](https://github.com/storytold/craft-contrib/blob/main/rfcs/0018-cli-conventions.md).
 
 `cadcraft-cli --help` and `cadcraft-cli help <subcommand>` (or `<subcommand> --help`) are the
 reference for every subcommand, flag and value; this page doesn't repeat them. Examples are in the
@@ -47,7 +47,7 @@ substitutes lack the original's OS/2 cap height, and applies to every subcommand
 ## Not followed yet
 
 - **`CADCRAFT_CONFIG_DIR` is the one flag fallback where an empty variable doesn't count as
-  unset** (RFC-0012 rule 1.7): empty (or `--config-dir ""`) means no settings folder, as it did
+  unset** (RFC-0018 rule 1.7): empty (or `--config-dir ""`) means no settings folder, as it did
   before the port.
 - **No variable for `mcp --connect`.** Photocraft's `mcp --bridge` falls back to its
   `*_CONTROL_PORT` variable. Here an exported `CADCRAFT_CONTROL_PORT` would silently switch `mcp`
@@ -57,10 +57,7 @@ substitutes lack the original's OS/2 cap height, and applies to every subcommand
 - **The `string-error` ast-grep rule** covers the CLI code only. The engine's file hooks
   (`cadcraft_engine::cmd::file::IoHooks`) still return `Result<_, String>`, so `install_io` maps
   errors to strings at that boundary.
-- **No AGENTS.md line for the ast-grep scan.** RFC-0012 asks an app's AGENTS.md to have coding
-  agents run the scan before pushing (`ast-grep scan -c lint/ast-grep/sgconfig.yml`); CI runs it
-  on every PR that touches the CLI code.
 - **`perf` prints a text table**, with no `--json` (whether text listings get one is an open
-  question in RFC-0012).
+  question in RFC-0018).
 - **Saves a command or script runs** (`--cmd 'saveas {…}'`, a script's `SAVEAS`) are the engine's
   and are not checked against the opened drawings; only `--save` and `--export` are.

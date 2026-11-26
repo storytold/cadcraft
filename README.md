@@ -280,7 +280,7 @@ To run LISP routines, scripts and alias files, or to drive CADCraft from your ow
 [docs/customization.md](docs/customization.md).
 
 `cadcraft-cli --help` documents every subcommand and flag; exit codes, streams, environment
-variables and its RFC-0012 conventions are in [docs/cli.md](docs/cli.md).
+variables and its RFC-0018 conventions are in [docs/cli.md](docs/cli.md).
 
 ## Architecture
 

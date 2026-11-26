@@ -81,3 +81,4 @@ Paths and conventions:
 - Progress log: `ROADMAP.md`. `plan/` is an optional gitignored notebook.
 - Run with a control channel: `cargo run --release -p cadcraft -- --sample --control PORT`. Methods are in `crates/ui-egui/src/control.rs`, the protocol in `docs/control-protocol.md`. Headless: `cadcraft-cli run --sample --script 'LINE 0,0 10,10\n' --export out.png`, `cadcraft-cli info file.dxf`, `cadcraft-cli mcp`.
 - Docs: `ROADMAP.md`, `docs/gaps.md` (ranked work), `docs/target-app-parity.md`, `docs/roadmap.md`, `docs/contributors.md`.
+- Before pushing a change to `apps/cadcraft-cli` or its launch flags, run the command-line scan CI runs (RFC-0018 section 3): with a checkout of storytold/craft-common-actions next to this repository, `ast-grep scan --config ../craft-common-actions/actions/ast-grep/shared/rfc-0018/sgconfig.yml <paths>` and the same with `rfc-0018-string-error`, where `<paths>` are the `paths` in `.github/workflows/ast-grep.yml`.
