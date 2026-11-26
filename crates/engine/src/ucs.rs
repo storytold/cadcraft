@@ -198,7 +198,7 @@ pub fn set_current(d: &mut Drawing, space: &Space, frame: &UcsFrame, name: &str)
             h.set_str("UCSNAME", name);
         }
         Space::Paper(layout) => {
-            if let Some(l) = d.layouts.iter_mut().find(|l| l.name.eq_ignore_ascii_case(layout)) {
+            if let Some(l) = d.layouts.by_name_mut(layout) {
                 l.ucs = (!(frame.is_world() && name.is_empty())).then(|| frame.record(name));
             }
         }
@@ -210,7 +210,7 @@ pub fn set_current(d: &mut Drawing, space: &Space, frame: &UcsFrame, name: &str)
 fn previous_mut<'a>(d: &'a mut Drawing, space: &Space) -> Option<&'a mut Vec<Ucs>> {
     match space {
         Space::Model => Some(&mut d.ucs_previous),
-        Space::Paper(layout) => d.layouts.iter_mut().find(|l| l.name.eq_ignore_ascii_case(layout)).map(|l| &mut l.ucs_previous),
+        Space::Paper(layout) => d.layouts.by_name_mut(layout).map(|l| &mut l.ucs_previous),
     }
 }
 

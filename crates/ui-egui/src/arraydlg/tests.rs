@@ -28,6 +28,7 @@ fn ready(kind: ArrayLiveKind) -> (CadApp, Handle) {
 
 fn frames(app: &mut CadApp) -> egui::Context {
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     app.logic(&ctx);
     let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
     for _ in 0..10 {
@@ -151,6 +152,7 @@ fn apply_live_applies_a_changed_value() {
 fn dialog_returns_immediately_without_state() {
     let mut app = CadApp::new(Session::new(), Services::default());
     let ctx = egui::Context::default();
+    crate::framework::install_headless(&ctx);
     let mut open = true;
     dialog(&mut app, &ctx, &mut open);
     assert!(open, "no state: the window is left untouched");

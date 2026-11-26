@@ -83,6 +83,7 @@ mod hatch_pick_tests {
         let hx = app.session.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "SOLID" })).unwrap()["handle"].as_str().unwrap().to_string();
         let _ = app.session.zoom_extents();
         let ctx = egui::Context::default();
+        crate::framework::install_headless(&ctx);
         let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
         let frame = |app: &mut CadApp, events: Vec<egui::Event>, time: f64| {
             app.logic(&ctx);

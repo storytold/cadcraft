@@ -1,7 +1,7 @@
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
-    VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, HAlign, HashMap, Lineweight, Text, Transparency, VAlign, Vec3, Version, W,
+    dxf_ext,
 };
 
 /// `AcadAnnotative` xdata marking an annotative style.
@@ -145,13 +145,11 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
     }
 }
 
-/// The properties attribute `a` of block reference `e` (of `ins`) is drawn with: its own, else its
-/// definition's; an attribute defined on layer 0 is on the reference's layer. Also the
-/// definition's properties.
-pub(super) fn attrib_common(d: &Drawing, e: &Entity, ins: &Insert, a: &Attrib) -> (Common, Common) {
-    let def = d
-        .block(&ins.block)
-        .and_then(|b| b.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))));
+/// The properties attribute `a` of block reference `e` is drawn with: its own, else its
+/// definition's, from the block's definitions by tag `defs`; an attribute defined on layer 0 is on
+/// the reference's layer. Also the definition's properties.
+pub(super) fn attrib_common(e: &Entity, defs: &std::collections::BTreeMap<cadcraft_doc::TagKey<'_>, &Entity>, a: &Attrib) -> (Common, Common) {
+    let def = defs.get(&cadcraft_doc::TagKey(&a.tag));
     let base = def.map(|de| de.common.clone()).unwrap_or_default();
     let mut c = a.props.over(&base);
     if c.layer == "0" {

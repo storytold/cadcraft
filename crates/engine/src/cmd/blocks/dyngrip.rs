@@ -5,7 +5,7 @@
 
 use cadcraft_doc::color::Color;
 use cadcraft_doc::dynblock::{self, GripPart, GripShape};
-use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Lineweight, Transparency};
+use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Lineweight, TagKey, Transparency};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -111,11 +111,10 @@ fn drawn(d: &Drawing, h: Handle) -> Vec<Entity> {
         .collect();
     // An attribute draws with its definition's properties, except those set on it.
     let by_block = Common { layer: "0".into(), color: Color::ByBlock, linetype: "ByBlock".into(), lineweight: Lineweight::ByBlock, ..r.clone() };
+    // The block's definitions by tag, gathered once for all the attributes (#1923).
+    let defs = b.attdefs_by_tag();
     out.extend(ins.attribs.iter().filter(|a| !a.invisible).map(|a| {
-        let def = b.entities.iter().find_map(|e| match &e.kind {
-            EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag) => Some(&e.common),
-            _ => None,
-        });
+        let def = defs.get(&TagKey(&a.tag)).map(|e| &e.common);
         let common = under(&a.props.over(def.unwrap_or(&by_block)), r);
         let kind = match a.multiline_text() {
             Some(m) => EntityKind::MText(m),
@@ -246,5 +245,53 @@ impl Session {
         self.point_mods.clear();
         self.echo(label);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn many_attributes_are_previewed_without_comparing_every_pair_with_the_definitions() {
+        // #1923: a reference with N attributes of a block with N definitions, the tags N long ones
+        // alike up to their last characters, no attribute's a definition's. Looking for each
+        // attribute's definition by comparing it with every one cost N x N comparisons of whole
+        // tags for each preview (many seconds here); the definitions gathered by tag once cost
+        // milliseconds.
+        const N: usize = 4000;
+        let tag = |kind: char, i: usize| format!("{}{kind}{i:05}", "T".repeat(1000));
+        let attrib = |tag: String| cadcraft_doc::Attrib {
+            tag,
+            text: cadcraft_doc::Text {
+                insert: cadcraft_geom::Vec3::ZERO,
+                align_pt: None,
+                height: 1.0,
+                value: "v".into(),
+                rotation: 0.0,
+                width_factor: 1.0,
+                oblique: 0.0,
+                style: "Standard".into(),
+                halign: Default::default(),
+                valign: Default::default(),
+            },
+            invisible: false,
+            constant: false,
+            prompt: String::new(),
+            props: Default::default(),
+            multiline: None,
+            modes: Default::default(),
+        };
+        let mut d = Drawing::new_metric();
+        let mut blk = cadcraft_doc::Block::new("B");
+        for (h, i) in (1..).zip(0..N) {
+            blk.entities.push(Entity::new(Handle(h), EntityKind::AttDef(attrib(tag('D', i)))));
+        }
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let ins = cadcraft_doc::Insert { block: "B".into(), attribs: (0..N).map(|i| attrib(tag('A', i))).collect(), ..Default::default() };
+        let h = d.add(&cadcraft_doc::Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let t = std::time::Instant::now();
+        assert_eq!(drawn(&d, h).len(), N);
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
     }
 }

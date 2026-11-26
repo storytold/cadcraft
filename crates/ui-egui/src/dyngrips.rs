@@ -210,7 +210,7 @@ pub(crate) fn menu(app: &mut CadApp, ctx: &egui::Context, xf: &Xf) {
         if let Err(e) = app.run("blocks.reference.set", json!({ "handle": h.hex(), "name": g.property, "value": value })) {
             app.session.echo(e);
         }
-    } else if clicked_elsewhere || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    } else if clicked_elsewhere || crate::framework::escape_pressed(ctx) {
         app.canvas.dyn_menu = None;
     }
 }
