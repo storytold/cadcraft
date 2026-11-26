@@ -158,7 +158,7 @@ fn closes_before_separator(chars: &[char], mut i: usize) -> bool {
     while let Some(&c) = chars.get(i) {
         match c {
             ']' => return true,
-            '[' | ',' => return false,
+            '[' => return false,
             '`' => i += 1,
             _ => {}
         }
@@ -667,6 +667,10 @@ mod tests {
             ("[~]a]", "b", true),
             ("[~]a]", "]", false),
             ("[~]a]", "a", false),
+            ("[~]a,]", "b", true),
+            ("[~]a,]", "]", false),
+            ("[~]a,]", "a", false),
+            ("[~]a,]", ",", false),
             ("[~],[a]", "~", true),
             ("[~],[a]", "a", true),
             ("[~],[a]", "b", false),
