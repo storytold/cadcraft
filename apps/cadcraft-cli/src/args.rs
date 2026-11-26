@@ -190,10 +190,26 @@ pub(crate) enum ViewMode {
     --cmd 'mview {"p1":[20,20],"p2":[200,150]}'        prints {"viewports":["100"]}
     --cmd 'viewport.set {"handle":"{last}","scale":1}' changes viewport 100
   It works in any parameter, at any depth (e.g. "handles":["{last}"]); every other string is
-  passed unchanged. With no earlier returned handle the run fails and says so."#)]
+  passed unchanged. With no earlier returned handle the run fails and says so.
+
+--connect:
+  With --connect HOST:PORT the steps run in the open app (started with --control PORT) instead
+  of a headless session, so you see each edit land and the drawing stays open afterwards:
+    cadcraft-cli run --connect 127.0.0.1:7979 --script "circle 0,0 25"
+  FILE opens in the app and --metric starts a new metric drawing there; without either, the
+  steps act on the drawing the app has open. --save or --export is
+  the app's Save As (an image path exports and the drawing keeps its name). Paths are made
+  absolute before they are sent. A --script's command-line output goes to stderr, as headless.
+  After a --script, or a --cmd that can change the current drawing (new, open, close,
+  closeall, document.switch), {last} is forgotten: a handle is never applied to another
+  drawing. --sample, --window and --view are headless only."#)]
 pub(crate) struct RunArgs {
     #[arg(value_name = "FILE", help = open_help())]
     pub(crate) files: Vec<PathBuf>,
+    /// Run the steps in the open app at its control port (its --control, e.g. 127.0.0.1:7979)
+    /// instead of a headless session; see "--connect" in --help
+    #[arg(long, value_name = "HOST:PORT", value_parser = connect_addr, conflicts_with_all = ["sample", "window", "view"])]
+    pub(crate) connect: Option<String>,
     /// Open the built-in sample drawing
     #[arg(long)]
     pub(crate) sample: bool,
@@ -541,8 +557,8 @@ impl McpArgs {
     }
 }
 
-/// `mcp --connect`: an empty, flag-like or port-less address is an error, never a silent fall back
-/// to a headless session (#103). The host is not resolved here.
+/// `mcp --connect` and `run --connect`: an empty, flag-like or port-less address is an error,
+/// never a silent fall back to a headless session (#103). The host is not resolved here.
 fn connect_addr(s: &str) -> Result<String, ValueError> {
     let s = s.trim();
     let valid = !s.starts_with('-')
@@ -727,6 +743,22 @@ mod tests {
             assert_eq!(mcp(&["--connect", flag]).unwrap_err().kind(), clap::error::ErrorKind::UnknownArgument, "{flag}");
         }
         assert!(mcp(&["--connect", "127.0.0.1:1", "--connect", "127.0.0.1:2"]).is_err());
+    }
+
+    #[test]
+    fn run_connect_takes_an_address_and_refuses_headless_only_flags() {
+        let Command::Run(r) = parse_args(&["run", "--connect", "127.0.0.1:7979", "--script", "circle 0,0 5"]).unwrap().command else {
+            panic!("not run")
+        };
+        assert_eq!(r.connect.as_deref(), Some("127.0.0.1:7979"));
+        for bad in [&["run", "--connect"][..], &["run", "--connect", ""], &["run", "--connect", "7979"], &["run", "--connect", "--script"]] {
+            assert!(parse_args(bad).is_err(), "{bad:?} should be rejected");
+        }
+        for flag in [&["--sample"][..], &["--export", "a.png", "--window", "0,0,1,1"], &["--export", "a.png", "--view", "extents"]] {
+            let args: Vec<&str> = ["run", "--connect", "127.0.0.1:7979"].into_iter().chain(flag.iter().copied()).collect();
+            let e = parse_args(&args).err().unwrap_or_else(|| panic!("{flag:?} is headless only"));
+            assert_eq!(e.kind(), clap::error::ErrorKind::ArgumentConflict, "{flag:?}: {e}");
+        }
     }
 
     #[test]
