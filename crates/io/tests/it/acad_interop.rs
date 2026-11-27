@@ -241,6 +241,94 @@ fn justified_text_made_here_writes_its_baseline_start_for_every_justification() 
     assert_eq!(text_starts(&write_dxf(&back)), starts);
 }
 
+fn with_linear_factor(mut d: Drawing, factor: f64) -> Drawing {
+    d.dim_styles.last_mut().expect("S25").linear_factor = factor;
+    d
+}
+
+#[test]
+fn stored_linear_measurements_include_dimlfac_but_angles_stay_in_radians() {
+    let linear_case = with_linear_factor(linear(0.0), 100.0);
+    assert!((stored_measurement(&linear_case) - 10000.0).abs() < 1e-7, "linear and its DIMLFAC=100 style");
+    let aligned = with_linear_factor(s25(DimKind::Aligned, Vec3::ZERO, Vec3::new(3.0, 4.0, 0.0), Vec3::new(0.0, -5.0, 0.0)), 100.0);
+    assert!((stored_measurement(&aligned) - 500.0).abs() < 1e-7, "aligned");
+    let radius = with_linear_factor(s25(DimKind::Radius, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO), 100.0);
+    let radius = {
+        let mut d = radius;
+        let h = d.model.iter().find(|e| matches!(e.kind, EntityKind::Dimension(_))).unwrap().handle;
+        d.modify_entity(h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.p15 = Vec3::new(2.5, 0.0, 0.0);
+            }
+        })
+        .unwrap();
+        d
+    };
+    assert!((stored_measurement(&radius) - 250.0).abs() < 1e-7, "radius");
+    let diameter = with_linear_factor(s25(DimKind::Diameter, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO), 100.0);
+    let diameter = {
+        let mut d = diameter;
+        let h = d.model.iter().find(|e| matches!(e.kind, EntityKind::Dimension(_))).unwrap().handle;
+        d.modify_entity(h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.p15 = Vec3::new(5.0, 0.0, 0.0);
+            }
+        })
+        .unwrap();
+        d
+    };
+    assert!((stored_measurement(&diameter) - 500.0).abs() < 1e-7, "diameter");
+    let ordinate = with_linear_factor(s25(DimKind::Ordinate { x_type: true }, Vec3::new(4.0, 0.0, 0.0), Vec3::new(5.0, 1.0, 0.0), Vec3::ZERO), 100.0);
+    let ordinate_measurement = stored_measurement_dxf(&ordinate);
+    assert!((ordinate_measurement - 400.0).abs() < 1e-7, "ordinate: {ordinate_measurement}");
+    let arc = with_linear_factor(
+        s25(
+            DimKind::ArcLength,
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            Vec3::new(std::f64::consts::SQRT_2, std::f64::consts::SQRT_2, 0.0),
+        ),
+        100.0,
+    );
+    assert!((stored_measurement_dxf(&arc) - std::f64::consts::PI * 100.0).abs() < 1e-7, "arc length");
+    let overridden = with_linear_factor(linear(0.0), 100.0);
+    let overridden = {
+        let mut d = overridden;
+        let h = d.model.iter().find(|e| matches!(e.kind, EntityKind::Dimension(_))).unwrap().handle;
+        d.modify_entity(h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.overrides.insert("DIMLFAC".into(), serde_json::json!(2.0));
+            }
+        })
+        .unwrap();
+        d
+    };
+    assert!((stored_measurement(&overridden) - 200.0).abs() < 1e-9, "a dimension's own DIMLFAC override wins");
+    let angular = with_linear_factor(s25(DimKind::Angular3P, polar(0.0, 20.0), polar(90.0, 20.0), polar(45.0, 15.0)), 100.0);
+    assert!((stored_measurement(&angular) - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "DIMLFAC never scales an angle");
+    let control = with_linear_factor(linear(0.0), 1.0);
+    assert!((stored_measurement(&control) - 100.0).abs() < 1e-9, "DIMLFAC=1 keeps the raw measurement");
+}
+
+#[test]
+fn negative_dimlfac_follows_the_dimension_space() {
+    let model = with_linear_factor(linear(0.0), -2.0);
+    assert!((stored_measurement(&model) - 100.0).abs() < 1e-9, "model space uses 1.0 when DIMLFAC is negative");
+
+    let entity = model.model.iter().next().expect("the linear dimension");
+    let mut paper = Drawing::new_metric();
+    paper.dim_styles = model.dim_styles.clone();
+    paper.add(&Space::Paper("Layout1".into()), entity.common.clone(), entity.kind.clone()).unwrap();
+    assert!((stored_measurement(&paper) - 200.0).abs() < 1e-9, "paper space uses the absolute DIMLFAC");
+}
+
+/// Group 42 in CADCraft's direct DXF output.
+fn stored_measurement_dxf(d: &Drawing) -> f64 {
+    let t = tags(&write_dxf(d));
+    let dim = t.iter().position(|(c, v)| *c == 0 && v == "DIMENSION").unwrap();
+    t[dim..].iter().find(|(c, _)| *c == 42).unwrap().1.parse().unwrap()
+}
+
 /// Group 42 of a dimension in the DXF AutoCAD reads from `d`'s DWG.
 fn stored_measurement(d: &Drawing) -> f64 {
     cadcraft_io::dwg_worker::allow_in_process();

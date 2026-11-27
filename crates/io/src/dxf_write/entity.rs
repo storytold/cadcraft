@@ -444,8 +444,18 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
             DimKind::ArcLength => 1,
         };
         w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
-        // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
-        w.f(42, g.measurement);
+        // The actual measurement (read-only in DXF): AutoLISP's entget shows it. Linear
+        // measurements carry DIMLFAC; angles are radians. A negative factor means 1.0 in model
+        // space and its absolute value in paper space (Autodesk's model/paper-space rule).
+        let measurement = match dm.kind {
+            DimKind::Angular | DimKind::Angular3P => g.measurement,
+            _ => {
+                let factor = style.with_overrides(&dm.overrides).linear_factor;
+                let factor = if factor < 0.0 { if paper { factor.abs() } else { 1.0 } } else { factor };
+                g.measurement * factor
+            }
+        };
+        w.f(42, measurement);
         if !dm.text.is_empty() {
             w.s(1, crate::dxf_read::mtext_dxf::encode_line(&dm.text));
         }
