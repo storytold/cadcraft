@@ -218,18 +218,46 @@ fn one_undo_restores_everything() {
 }
 
 #[test]
-fn never_leaves_a_piece_of_no_length() {
+fn a_short_piece_on_the_kept_side_stays_as_trim_leaves_it() {
+    // Landing review of #2808: only pieces of no length go; a short one that has length stays.
     let mut s = Session::new();
     let edge = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
-    // Starts a hair below the edge: trimming above would leave a sliver.
+    // Starts a hair below the edge: trimming above leaves that hair.
     line(&mut s, [5.0, -1e-8], [5.0, 5.0]);
-    extrim(&mut s, &edge, [5.0, 3.0]);
+    let v = extrim(&mut s, &edge, [5.0, 3.0]);
+    assert_eq!(v["trimmed"], 1, "{v}");
     let d = s.doc().unwrap();
-    for e in d.model.iter() {
-        if let EntityKind::Line(l) = &e.kind {
-            assert!(l.a.xy().dist(l.b.xy()) > 1e-6, "sliver left: {l:?}");
-        }
-    }
+    let hairs: Vec<f64> = d
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Line(l) if (l.a.x - 5.0).abs() < 1e-9 => Some(l.a.xy().dist(l.b.xy())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hairs.len(), 1, "{hairs:?}");
+    assert!((hairs[0] - 1e-8).abs() < 1e-12, "{hairs:?}");
+}
+
+#[test]
+fn a_stretch_shorter_than_trims_on_cut_tolerance_is_left_and_reported() {
+    // Landing review of #2808: TRIM passes over a cut within 5e-7 of the pick and runs on to the
+    // next one, so it would take more than the planned stretch. Such a stretch is left instead.
+    let mut s = Session::new();
+    // A short edge, so the trace runs closer to it than that.
+    let edge = line(&mut s, [0.0, 0.0], [0.01, 0.0]);
+    // A polyline that pokes 4e-7 above the edge, comes back down and then rises well above it.
+    let verts = json!([[0.003, -5.0], [0.003, 4e-7], [0.0031, -5.0], [0.0031, 5.0]]);
+    s.execute("pline", &json!({ "vertices": verts })).unwrap();
+    line(&mut s, [0.007, -5.0], [0.007, 5.0]);
+    let v = extrim(&mut s, &edge, [0.005, 3.0]);
+    assert_eq!(v["trimmed"], 1, "the line: {v}");
+    assert_eq!(v["skipped"]["uncut"], 1, "the polyline: {v}");
+    assert_eq!(v["skipped"]["partly"], 1, "its tall stretch is still cut: {v}");
+    // The polyline's start is still there: the poke's trim didn't run on to the rise.
+    let start = Vec2::new(0.003, -5.0);
+    assert!(points_but(&s, &edge).iter().any(|p| p.near(start, 1e-9)), "the start below the edge was taken");
+    assert!(top_but(&s, &edge) < 1e-6, "{}", top_but(&s, &edge));
 }
 
 #[test]
@@ -519,4 +547,24 @@ fn large_radius_arcs_weaving_through_a_short_edge_lose_every_stretch_on_the_side
         .map(|p| p.y - zig(p.x))
         .fold(f64::NEG_INFINITY, f64::max);
     assert!(above <= 1e-6, "a stretch above the edge was left: {above:e}");
+}
+
+#[test]
+fn the_preview_cap_counts_drawn_parts_not_objects() {
+    // One zigzag polyline with `k` teeth above the edge loses `k` stretches: one object, `k` parts
+    // to draw. The preview draws up to 2000 parts (landing review of #2808).
+    for (k, previewed) in [(1999usize, true), (2001, false)] {
+        let mut s = Session::new();
+        let edge = line(&mut s, [-1.0, 0.0], [2.0 * k as f64 + 1.0, 0.0]);
+        let verts: Vec<[f64; 2]> = (0..=2 * k).map(|i| [i as f64, if i % 2 == 0 { -1.0 } else { 1.0 }]).collect();
+        s.execute("pline", &json!({ "vertices": verts })).unwrap();
+        s.set_selection(Vec::new());
+        s.start("extrim").unwrap();
+        s.input(Input::Pick(vec![Handle::parse_hex(&edge).unwrap()])).unwrap();
+        let shown = s.preview(Vec2::new(5.0, 3.0));
+        assert_eq!(!shown.is_empty(), previewed, "{k} teeth: {} shown", shown.len());
+        // Past the cap the trim itself still takes every tooth.
+        s.input(Input::Point(Vec2::new(5.0, 3.0))).unwrap();
+        assert!(top_but(&s, &edge) <= 1e-6, "{k} teeth: {}", top_but(&s, &edge));
+    }
 }

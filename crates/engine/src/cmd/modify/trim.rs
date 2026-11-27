@@ -49,7 +49,16 @@ pub(crate) fn edge_segments_over(s: &Session, edges: Edges, exclude: Handle, ove
     // its first piece under the object's handle and the others under new ones, so only the first
     // stays one of the picked edges, as in a run of trims on the drawing itself.
     let is_edge = |h: &Handle| edges.only.is_none_or(|es| es.contains(h));
-    for e in store.iter() {
+    // Only the given edges: look them up rather than scan the whole space for them. A piece of
+    // one is keyed by its handle in the overlay, and the other pieces are never edges.
+    let given: Vec<&Entity> = match edges.only {
+        Some(es) => {
+            let mut seen = std::collections::HashSet::new();
+            es.iter().filter(|h| seen.insert(**h) && store.contains(**h)).filter_map(|h| d.entity(*h).map(|e| &**e)).collect()
+        }
+        None => store.iter().map(|e| &**e).collect(),
+    };
+    for e in given {
         if !d.is_visible(e) {
             continue;
         }
@@ -392,7 +401,7 @@ const MAX_SELF_CROSSINGS: usize = 1 << 16;
 /// across it, on lines, arcs and circles too. On open polylines from 1e-3 to 1e9 long it was within
 /// 5e-7, and 5.1e-7 away trimmed at the cut (around a closed rectangle it reached a little further,
 /// to 1e-6; on a line, further still, to 5e-4 on one 10 long).
-const ON_CUT: f64 = 5e-7;
+pub(crate) const ON_CUT: f64 = 5e-7;
 
 /// The refusal when every cut was passed over ([`ON_CUT`]): the object meets an edge, at the pick,
 /// so Quick mode leaves it in place rather than erasing it as one no edge crosses.

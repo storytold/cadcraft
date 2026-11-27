@@ -781,3 +781,17 @@ fn a_small_and_a_large_selection_leave_out_the_same_objects() {
     s.set_selection(all.clone());
     assert_eq!(s.selection(), all);
 }
+
+/// EXTRIM through a viewport leaves the objects on layers frozen there, as a fence through it
+/// selects only what it draws (landing review of #2808).
+#[test]
+fn extrim_through_a_viewport_leaves_layers_frozen_there() {
+    for (frozen_here, hidden_trimmed) in [(true, false), (false, true)] {
+        let Sheet { mut s, shown, hidden, a, b } = sheet();
+        enter(&mut s, if frozen_here { &a } else { &b });
+        let edge = line(&mut s, [5.0, -5.0], [5.0, 5.0]);
+        s.execute("extrim", &json!({ "edge": edge.hex(), "side": [8.0, 1.0] })).unwrap();
+        assert!(edited(&s, shown), "the drawn line is trimmed");
+        assert_eq!(edited(&s, hidden), hidden_trimmed, "frozen in this viewport: {frozen_here}");
+    }
+}
