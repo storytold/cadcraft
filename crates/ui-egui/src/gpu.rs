@@ -295,9 +295,13 @@ pub fn build_highlight_mesh(list: &DisplayList, prims: &[usize], origin: Vec2, c
     m
 }
 
+/// Maximum drift of a cached vertex origin from `view_center` (in multiples of `view_height`)
+/// before re-centering to preserve `f32` GPU vertex precision.
+const MAX_ORIGIN_DRIFT_FACTOR: f64 = 512.0;
+
 /// The vertex origin for a display list seen at `view_center` / `view_height`: the list's centre
 /// normally; at deep zoom (the view much smaller than the drawing) a point near the view, snapped
-/// to a coarse grid so panning re-uploads only every few dozen screens.
+/// to a coarse power-of-two grid so consecutive zoom steps and panning re-upload rarely.
 pub fn choose_origin(bounds: &Bounds2, view_center: Vec2, view_height: f64) -> Vec2 {
     let size = bounds.width().max(bounds.height());
     if bounds.is_empty()
@@ -307,8 +311,34 @@ pub fn choose_origin(bounds: &Bounds2, view_center: Vec2, view_height: f64) -> V
     {
         return if bounds.is_empty() { Vec2::ZERO } else { bounds.center() };
     }
-    let step = view_height * 64.0;
-    Vec2::new((view_center.x / step).round() * step, (view_center.y / step).round() * step)
+    let raw = view_height * 64.0;
+    if !raw.is_finite() || raw <= 0.0 {
+        return bounds.center();
+    }
+    let exp = raw.log2().floor().clamp(-1000.0, 1000.0) as i32;
+    let step = 2.0_f64.powi(exp);
+    if !step.is_finite() || step <= 0.0 {
+        return bounds.center();
+    }
+    let o = Vec2::new((view_center.x / step).round() * step, (view_center.y / step).round() * step);
+    if o.is_finite() { o } else { bounds.center() }
+}
+
+/// Whether an already uploaded mesh's `origin` is still close enough to `view_center` for `f32`
+/// vertex precision at `view_height`, avoiding needless GPU mesh rebuilds while zooming or panning.
+pub fn origin_usable(origin: Vec2, bounds: &Bounds2, view_center: Vec2, view_height: f64) -> bool {
+    if !origin.is_finite() {
+        return false;
+    }
+    if bounds.is_empty() || !view_center.is_finite() || view_height.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        return true;
+    }
+    let size = bounds.width().max(bounds.height());
+    if view_height * 2000.0 >= size && origin == bounds.center() {
+        return true;
+    }
+    let d = (view_center.x - origin.x).abs().max((view_center.y - origin.y).abs());
+    d.is_finite() && d <= view_height * MAX_ORIGIN_DRIFT_FACTOR
 }
 
 /// Pending upload shared between the canvas (producer) and the paint callback (consumer).
@@ -968,6 +998,45 @@ mod tests {
         assert!((o.x - 123_456.7).abs() <= 32.0 && (o.y - 654_321.2).abs() <= 32.0);
         assert_eq!(choose_origin(&Bounds2::EMPTY, Vec2::new(1.0, 1.0), 1.0), Vec2::ZERO);
         assert_eq!(choose_origin(&b, Vec2::new(f64::NAN, 0.0), 1.0), b.center());
+    }
+
+    #[test]
+    fn choose_origin_is_stable_across_small_zoom_steps() {
+        let b = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(1e6, 1e6));
+        let center = Vec2::new(123_456.7, 654_321.2);
+        let base = choose_origin(&b, center, 1.0);
+        for h in [1.1, 1.25, 1.5, 1.9] {
+            assert_eq!(choose_origin(&b, center, h), base, "view_height {h} changed origin within 2x band");
+        }
+        // Panning far away or zooming across much larger/smaller scales still tracks the camera.
+        let panned = choose_origin(&b, Vec2::new(900_000.0, 900_000.0), 1.0);
+        assert_ne!(panned, base);
+        assert!((panned.x - 900_000.0).abs() <= 32.0);
+        let zoomed_out = choose_origin(&b, center, 64.0);
+        assert!((zoomed_out.x - center.x).abs() <= 2048.0);
+        let zoomed_in = choose_origin(&b, Vec2::new(123_456.789, 654_321.123), 1e-3);
+        assert!((zoomed_in.x - 123_456.789).abs() <= 0.1);
+        // Degenerate view heights and extreme scales fall back cleanly without panicking or NaN.
+        assert_eq!(choose_origin(&b, center, 0.0), b.center());
+        assert_eq!(choose_origin(&b, center, -1.0), b.center());
+        assert_eq!(choose_origin(&b, center, f64::NAN), b.center());
+        assert!(choose_origin(&b, center, 1e-300).is_finite());
+        assert_eq!(choose_origin(&b, center, 1e300), b.center());
+    }
+
+    #[test]
+    fn origin_usable_keeps_origin_within_precision_budget() {
+        let b = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(1e6, 1e6));
+        let center = Vec2::new(123_456.7, 654_321.2);
+        let o = choose_origin(&b, center, 1.0);
+        // Small pans and zooming out or moderately in keep the uploaded origin valid.
+        assert!(origin_usable(o, &b, center + Vec2::new(100.0, -200.0), 1.0));
+        assert!(origin_usable(o, &b, center, 10.0));
+        assert!(origin_usable(o, &b, o + Vec2::new(256.0, -256.0), 0.5));
+        // Exceeding 512 * view_height or non-finite origins force a recenter.
+        assert!(!origin_usable(o, &b, o + Vec2::new(513.0, 0.0), 1.0));
+        assert!(!origin_usable(o, &b, o + Vec2::new(60.0, 0.0), 0.1));
+        assert!(!origin_usable(Vec2::new(f64::NAN, 0.0), &b, center, 1.0));
     }
 
     #[test]
