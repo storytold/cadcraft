@@ -2,6 +2,7 @@ use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
 use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Ucs, Vec2, Vec3};
+use crate::dxf_ext::ByName;
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]
@@ -218,14 +219,13 @@ impl Objects {
     }
 
     fn apply_table_styles(&self, d: &mut Drawing) {
-        // Table styles (named by their ACAD_TABLESTYLE dictionary entries).
+        // Table styles (named by their ACAD_TABLESTYLE dictionary entries); a later style of a
+        // name replaces the first.
+        let mut by_name = ByName::new(&d.table_styles, |s| &s.name);
         for (h, tags) in &self.table_styles {
             let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
             let st = crate::dxf_table::read_table_style(name, tags);
-            match d.table_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(name)) {
-                Some(x) => *x = st,
-                None => d.table_styles.push(st),
-            }
+            by_name.put(&mut d.table_styles, name, st);
         }
     }
 
@@ -236,10 +236,7 @@ impl Objects {
             // style's, so every cell style height applies as it is.
             let height = {
                 let style = name.as_deref().unwrap_or("Standard");
-                d.table_styles
-                    .iter()
-                    .find(|s| s.name.eq_ignore_ascii_case(style))
-                    .map_or(cadcraft_doc::TableStyle::default().text_height, |s| s.text_height)
+                d.table_styles.by_name(style).map_or(cadcraft_doc::TableStyle::default().text_height, |s| s.text_height)
             };
             let _ = d.modify_entity(*h, |e| {
                 if let EntityKind::Table(t) = &mut e.kind {
@@ -253,7 +250,9 @@ impl Objects {
     }
 
     fn apply_mleader_styles(&self, d: &mut Drawing, rx: &Rx) {
-        // Multileader styles (named by their ACAD_MLEADERSTYLE dictionary entries).
+        // Multileader styles (named by their ACAD_MLEADERSTYLE dictionary entries); a later style
+        // of a name replaces the first.
+        let mut by_name = ByName::new(&d.mleader_styles, |s| &s.name);
         for (h, tags) in &self.mleader_styles {
             let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
             let t = T(tags);
@@ -269,10 +268,7 @@ impl Objects {
                 text_style: text_style.unwrap_or(def.text_style),
                 annotative: t.i(296).unwrap_or(0) != 0,
             };
-            match d.mleader_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(name)) {
-                Some(x) => *x = st,
-                None => d.mleader_styles.push(st),
-            }
+            by_name.put(&mut d.mleader_styles, name, st);
         }
     }
 

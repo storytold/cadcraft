@@ -101,6 +101,40 @@ impl<'a> UcsNames<'a> {
     }
 }
 
+/// The entries of a list (a table's records, a drawing's styles), by name with its ASCII letters
+/// lower-cased, each name at the position of its first entry. A later record of a name replaces
+/// the first, which keeps its place and takes the later record's name. Each record or lookup is
+/// then a map lookup, not a scan of the list: a file of N records, or of N objects each naming one
+/// of N styles, cost N² name comparisons (#1924). Ordered by name rather than hashed, so its cost
+/// does not depend on hash keys.
+#[derive(Default)]
+pub(crate) struct ByName(std::collections::BTreeMap<String, usize>);
+
+impl ByName {
+    /// The entries the list starts with; the first of a name is the one kept.
+    pub(crate) fn new<T>(list: &[T], name: impl Fn(&T) -> &str) -> Self {
+        ByName(list.iter().enumerate().rev().map(|(i, t)| (name(t).to_ascii_lowercase(), i)).collect())
+    }
+
+    /// Put `item`, named `name`, in place of the first entry of that name, else at the end.
+    pub(crate) fn put<T>(&mut self, list: &mut Vec<T>, name: &str, item: T) {
+        let key = name.to_ascii_lowercase();
+        match self.0.get(&key).and_then(|&i| list.get_mut(i)) {
+            Some(x) => *x = item,
+            None => {
+                self.0.insert(key, list.len());
+                list.push(item);
+            }
+        }
+    }
+
+    /// The position of the first entry named `name` (ignoring ASCII case), while the list has
+    /// changed only through [`ByName::put`] since [`ByName::new`].
+    pub(crate) fn position(&self, name: &str) -> Option<usize> {
+        self.0.get(&name.to_ascii_lowercase()).copied()
+    }
+}
+
 /// Whether `x` and `y` can be a UCS's axes: finite, not zero and not along each other (relative
 /// to their lengths, so short but square axes are fine). Read and written by the same rule.
 pub(crate) fn usable_axes(x: cadcraft_geom::Vec3, y: cadcraft_geom::Vec3) -> bool {

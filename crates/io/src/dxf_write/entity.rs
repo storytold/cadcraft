@@ -599,6 +599,7 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
             common(w, e, owner, paper, "AcDbMLeader");
             let refs = crate::dxf_mleader::Refs {
                 style: cx.mleader_style(&m.style),
+                style_def: cx.mleader_style_def(d, &m.style),
                 text_style: m.text.as_ref().and_then(|t| cx.style(&t.style)),
                 block: m.block.as_ref().and_then(|b| cx.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
             };
