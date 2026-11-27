@@ -102,6 +102,7 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         lt_factor: 1.0,
         block_pstyle: None,
         block_transparency: 0,
+        block: None,
     }
 }
 
@@ -115,6 +116,7 @@ pub(crate) fn build_space_within(d: &Drawing, space: &Space, opts: &Options, plo
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
     let (points, dashes) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let loops = std::sync::OnceLock::new();
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -127,6 +129,7 @@ pub(crate) fn build_space_within(d: &Drawing, space: &Space, opts: &Options, plo
         max_points,
         dashes: &dashes,
         max_dashes,
+        loops: &loops,
     };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
@@ -174,7 +177,8 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     use rayon::prelude::*;
     let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
-    let (opts, plotting, points, max_points, dashes, max_dashes) = (b.opts, b.plotting, b.points, b.max_points, b.dashes, b.max_dashes);
+    let (opts, plotting, points, max_points, dashes, max_dashes, loops) =
+        (b.opts, b.plotting, b.points, b.max_points, b.dashes, b.max_dashes, b.loops);
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
@@ -190,6 +194,7 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
                 max_points,
                 dashes,
                 max_dashes,
+                loops,
             };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
@@ -243,6 +248,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
         opts
     };
     let (points, dashes) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let loops = std::sync::OnceLock::new();
     let mut b = Builder {
         list: DisplayList::default(),
         opts,
@@ -255,6 +261,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
         max_points: MAX_DISPLAY_POINTS,
         dashes: &dashes,
         max_dashes: MAX_DASH_ELEMENTS,
+        loops: &loops,
     };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);

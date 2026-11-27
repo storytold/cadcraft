@@ -13,6 +13,7 @@ mod fill;
 mod hatch;
 mod linetype;
 mod linetype_text;
+mod loops;
 mod mline;
 mod outline;
 pub mod paper;
@@ -100,6 +101,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The block whose contents are being drawn (`None` at the top level): a dimension in it whose
+    /// own block leads back to it is drawn from its definition points (see [`loops`]).
+    block: Option<&'a cadcraft_doc::Block>,
 }
 
 impl Ctx<'_> {
@@ -134,6 +138,9 @@ struct Builder<'a> {
     dashes: &'a std::sync::atomic::AtomicUsize,
     /// The most dash pattern elements the build may lay out: [`MAX_DASH_ELEMENTS`] (less in tests).
     max_dashes: usize,
+    /// The loops of the drawing's block graph, worked out once for the whole build when a search
+    /// near a dimension's block does not settle whether it leads back (see [`loops`]).
+    loops: &'a std::sync::OnceLock<loops::BlockLoops>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
@@ -304,10 +311,20 @@ impl<'a> Builder<'a> {
         // Plots note which filled outlines are font glyphs (see `DisplayList::texts`).
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
+        // On screen, glyphs outside the area being looked at are left out, as hatch patterns
+        // are: a text-heavy drawing zoomed in otherwise filled every glyph of every text at the
+        // detail of that zoom (tens of millions of triangles, drawn every frame), and the canvas
+        // builds again when the view leaves the area (#666).
+        let view = if self.plotting { None } else { self.opts.view };
         for (i, g) in sh.glyphs.iter().enumerate() {
             if fill {
                 while text.next_if(|t| t.outline < i).is_some() {}
                 let glyph = text.next_if(|t| t.outline == i);
+                if let (Some(t), Some(v)) = (glyph, view)
+                    && !crate::text::may_show(crate::text::placement(t, ctx.xf), cadcraft_fonts::ttf::glyph_bounds(&t.face, t.gid), &v)
+                {
+                    continue;
+                }
                 let at = self.list.prims.len();
                 let len = if let Some(t) = glyph {
                     let xf = crate::text::placement(t, ctx.xf);
@@ -391,7 +408,13 @@ impl<'a> Builder<'a> {
             max_points: self.max_points,
             dashes: self.dashes,
             max_dashes: self.max_dashes,
+            loops: self.loops,
         }
+    }
+    /// Whether block `to` leads back to block `from` in `d`, the drawing being built (see
+    /// [`loops`]).
+    fn leads_back(&self, d: &Drawing, from: &cadcraft_doc::Block, to: &cadcraft_doc::Block) -> bool {
+        loops::leads_back(d, self.loops, from, to)
     }
     /// Take one unit of the block-expansion budget; false once it is spent, or once the build
     /// holds all the points it may ([`MAX_DISPLAY_POINTS`]), so block copies stop being visited.

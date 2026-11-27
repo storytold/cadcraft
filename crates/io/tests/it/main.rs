@@ -37,6 +37,7 @@ mod exhausted_handseed;
 mod followups_626;
 mod groups_roundtrip;
 mod hatch_assoc_roundtrip;
+mod hatch_edge_chain;
 mod hatch_elliptic_edge_dedup;
 mod hatch_loop_flags;
 mod hatch_pattern_def;

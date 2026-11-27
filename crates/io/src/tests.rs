@@ -421,6 +421,91 @@ fn many_distinct_dimension_style_names_read_quickly() {
     assert_eq!(styles.get(2), Some(&(name(1).as_str(), 1.0)));
 }
 
+/// Many distinct view and UCS names read in linear time, with the duplicate rule kept: a later
+/// record of a name in other case replaces the first, which keeps its place and takes the later
+/// record's name (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_distinct_view_and_ucs_names_read_quickly() {
+    const N: usize = 20_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let view = |n: &str, height: u32| format!("0\nVIEW\n2\n{n}\n70\n0\n40\n{height}\n41\n1\n10\n0\n20\n0\n");
+    let ucs = |n: &str, x: usize| format!("0\nUCS\n2\n{n}\n70\n0\n10\n{x}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n");
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        t.push_str(&view(&name('V', i), 1));
+        t.push_str(&ucs(&name('U', i), i));
+    }
+    t.push_str(&view(&name('V', 0).to_ascii_uppercase(), 2));
+    t.push_str(&ucs(&name('U', 0).to_ascii_uppercase(), 7));
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "many.dxf").unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let views: Vec<(&str, f64)> = d.views.iter().map(|v| (v.name.as_str(), v.height)).collect();
+    assert_eq!(views.len(), N);
+    assert_eq!(views.first(), Some(&(name('V', 0).to_ascii_uppercase().as_str(), 2.0)));
+    assert_eq!(views.get(1), Some(&(name('V', 1).as_str(), 1.0)));
+    let ucss: Vec<(&str, f64)> = d.ucss.iter().map(|u| (u.name.as_str(), u.origin.x)).collect();
+    assert_eq!(ucss.len(), N);
+    assert_eq!(ucss.first(), Some(&(name('U', 0).to_ascii_uppercase().as_str(), 7.0)));
+    assert_eq!(ucss.get(1), Some(&(name('U', 1).as_str(), 1.0)));
+}
+
+/// Layouts that each name one of many UCSs read and save in linear time, and each keeps the name of
+/// its UCS (#1924). The names share their first 200 bytes, so comparing two costs about that.
+#[test]
+fn many_layouts_naming_many_ucss_read_and_save_quickly() {
+    const N: usize = 10_000;
+    let name = |kind: char, i: usize| format!("{kind}{}{i:06}", "x".repeat(199));
+    let mut t = String::from("0\nSECTION\n2\nTABLES\n");
+    for i in 0..N {
+        let u = name('U', i);
+        t.push_str(&format!("0\nUCS\n5\n{:X}\n2\n{u}\n70\n0\n10\n{i}\n20\n0\n30\n0\n11\n1\n21\n0\n31\n0\n12\n0\n22\n1\n32\n0\n", 0x10000 + i));
+    }
+    t.push_str("0\nENDSEC\n0\nSECTION\n2\nOBJECTS\n");
+    for i in 0..N {
+        let l = name('L', i);
+        t.push_str(&format!(
+            "0\nLAYOUT\n5\n{:X}\n100\nAcDbPlotSettings\n100\nAcDbLayout\n1\n{l}\n71\n{}\n13\n{i}\n23\n0\n33\n0\n16\n1\n26\n0\n36\n0\n17\n0\n27\n1\n37\n0\n330\n0\n345\n{:X}\n",
+            0x1000 + i,
+            i + 1,
+            0x10000 + i
+        ));
+    }
+    t.push_str("0\nENDSEC\n0\nEOF\n");
+    let started = std::time::Instant::now();
+    let d = read(t.as_bytes(), "ucss.dxf").unwrap();
+    let saved = write_dxf(&d);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
+    let named = d.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| u.name == name('U', l.tab_order as usize - 1))).count();
+    assert_eq!(named, N);
+    let again = read_dxf(saved.as_bytes()).unwrap();
+    assert_eq!(again.layouts.iter().filter(|l| l.ucs.as_ref().is_some_and(|u| !u.name.is_empty())).count(), N);
+}
+
+/// A layout's named UCS is the first UCS of that name, without case, whose frame is the layout's:
+/// what scanning the UCSs finds, also when a name's first UCS has another frame.
+#[test]
+fn a_layouts_named_ucs_is_the_first_of_its_name_with_its_frame() {
+    use cadcraft_geom::Vec3;
+    let ucs = |name: &str, x: f64| Ucs {
+        name: name.into(),
+        origin: Vec3::new(x, 0.0, 0.0),
+        x_axis: Vec3::new(1.0, 0.0, 0.0),
+        y_axis: Vec3::new(0.0, 1.0, 0.0),
+    };
+    let ucss = [ucs("Front", 0.0), ucs("FRONT", 1.0), ucs("front", 1.0), ucs("Side", 2.0), ucs("", 3.0), ucs(" Pad", 4.0)];
+    let names = crate::dxf_ext::UcsNames::new(&ucss);
+    let (x, y) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+    for name in ["Front", "front", "FRONT", " front ", "Side", "side", "", "  ", "Pad", " Pad", "Back"] {
+        for origin in [0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|o| Vec3::new(o, 0.0, 0.0)) {
+            let want = crate::dxf_ext::named_ucs(&ucss, name, origin, x, y).map(std::ptr::from_ref);
+            assert_eq!(names.named(name, origin, x, y).map(std::ptr::from_ref), want, "{name:?} {origin:?}");
+        }
+    }
+    assert_eq!(names.named("front", Vec3::new(1.0, 0.0, 0.0), x, y).map(|u| u.name.as_str()), Some("FRONT"));
+}
+
 /// Many layouts with every paper-space object in one of the last of them read in linear time.
 /// Each object goes to the first layout of its exact name, as before: not to an earlier one whose
 /// name differs only in case, nor to a later one of the same name (#1924).
@@ -3653,6 +3738,189 @@ fn mirrored_mtext_extrusion_keeps_its_footprint() {
     assert!((t.rotation - std::f64::consts::PI).abs() < 1e-12, "{}", t.rotation);
     let b = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
     assert!(b.min.x > -0.2 && b.max.x > 0.5 && b.min.y > -0.2 && b.max.y > 0.5, "box right of and above (0,0): {b:?}");
+}
+
+/// Attributes in the plane of extrusion `n` (#3541): the DXF of block BL holding two ATTDEFs that
+/// start at world point `start` and turn `degrees` in that plane (LEFT, and RIGHT, right-justified,
+/// whose baseline ends 20 units on), a reference to BL at the origin whose two ATTRIBs repeat
+/// them, and a 100 × 60 rectangle round `start`. Groups 10 and 11 hold OCS coordinates (DXF
+/// Reference, ATTDEF and ATTRIB), worked out here with the arbitrary axis algorithm. Also returns
+/// the world end of RIGHT's baseline and the world direction the attributes run in.
+fn tilted_attribute_dxf(n: Vec3, start: Vec3, degrees: f64) -> (String, Vec3, Vec3) {
+    // Ax = Wy × N when N is near the Z axis (|Nx| and |Ny| under 1/64), else Wz × N; Ay = N × Ax.
+    let n = n.normalized();
+    let near_z = n.x.abs() < 1.0 / 64.0 && n.y.abs() < 1.0 / 64.0;
+    let ax = if near_z { Vec3::new(0.0, 1.0, 0.0) } else { Vec3::Z }.cross(n).normalized();
+    let ay = n.cross(ax).normalized();
+    let pt = |code: i32, p: Vec3| format!("{code}\n{}\n{}\n{}\n{}\n{}\n", p.dot(ax), code + 10, p.dot(ay), code + 20, p.dot(n));
+    let turn = degrees.to_radians();
+    let dir = ax * turn.cos() + ay * turn.sin();
+    let end = start + dir * 20.0;
+    let attribute = |kind: &str, tag: &str| {
+        let right = if tag == "RIGHT" { format!("72\n2\n{}", pt(11, end)) } else { String::new() };
+        let prompt = if kind == "ATTDEF" { "3\nValue\n" } else { "" };
+        format!(
+            "0\n{kind}\n8\n0\n{}40\n3\n1\n{tag}\n50\n{degrees}\n210\n{}\n220\n{}\n230\n{}\n{prompt}2\n{tag}\n70\n0\n{right}",
+            pt(10, start),
+            n.x,
+            n.y,
+            n.z
+        )
+    };
+    let (x0, y0, x1, y1) = (start.x - 50.0, start.y - 30.0, start.x + 50.0, start.y + 30.0);
+    let text = format!(
+        "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nBL\n70\n2\n10\n0\n20\n0\n30\n0\n3\nBL\n{}{}0\nENDBLK\n8\n0\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n4\n70\n1\n10\n{x0}\n20\n{y0}\n10\n{x1}\n20\n{y0}\n10\n{x1}\n20\n{y1}\n10\n{x0}\n20\n{y1}\n\
+         0\nINSERT\n8\n0\n66\n1\n2\nBL\n10\n0\n20\n0\n30\n0\n{}{}0\nSEQEND\n8\n0\n0\nENDSEC\n0\nEOF\n",
+        attribute("ATTDEF", "LEFT"),
+        attribute("ATTDEF", "RIGHT"),
+        attribute("ATTRIB", "LEFT"),
+        attribute("ATTRIB", "RIGHT"),
+    );
+    (text, end, dir)
+}
+
+/// The ATTDEFs of block BL (with their extrusions) and the ATTRIBs of the first block reference.
+fn attributes(d: &Drawing) -> (Vec<(Attrib, Vec3)>, Vec<Attrib>) {
+    let defs = d.block("BL").expect("block BL").entities.iter();
+    let defs = defs.filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some((a.clone(), e.common.extrusion)) } else { None });
+    let refs = first(d, |k| if let EntityKind::Insert(i) = k { Some(i.attribs.clone()) } else { None });
+    (defs.collect(), refs)
+}
+
+/// Issue #3541: an ATTDEF and an ATTRIB in a tilted plane near survey coordinates are read at their
+/// world points, turned the way the plane runs in plan, and drawn there, not millions of units
+/// away at their OCS coordinates read as world ones.
+#[test]
+fn tilted_attributes_are_read_at_their_world_points() {
+    let start = Vec3::new(550_050.0, 9_580_030.0, 0.0);
+    let (text, end, dir) = tilted_attribute_dxf(Vec3::new(0.3, -0.2, 0.93), start, 30.0);
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    let plan = dir.xy().normalized();
+    let check = |a: &Attrib, what: &str| {
+        assert!((a.text.insert - start).len() < 1e-6, "{what} {} insert {:?}", a.tag, a.text.insert);
+        if a.tag == "RIGHT" {
+            let at = a.text.align_pt.expect("a right-justified attribute keeps its alignment point");
+            assert!((at - end).len() < 1e-6, "{what} RIGHT alignment point {at:?}, want {end:?}");
+        }
+        let runs = Vec2::new(a.text.rotation.cos(), a.text.rotation.sin());
+        assert!((runs - plan).len() < 1e-9, "{what} {} runs along {runs:?}, want {plan:?}", a.tag);
+    };
+    let (defs, refs) = attributes(&d);
+    assert_eq!((defs.len(), refs.len()), (2, 2));
+    for (a, extrusion) in &defs {
+        check(a, "ATTDEF");
+        // Its points are plan coordinates now, so the plane they were in is spent.
+        assert_eq!(*extrusion, Vec3::Z, "ATTDEF {}", a.tag);
+    }
+    for a in &refs {
+        check(a, "ATTRIB");
+    }
+    // The ATTRIBs are drawn inside the rectangle's neighbourhood.
+    let b = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
+    assert!(b.min.x > start.x - 80.0 && b.max.x < start.x + 80.0 && b.min.y > start.y - 60.0 && b.max.y < start.y + 60.0, "drawn over {b:?}");
+
+    // In a plane standing on edge (normal along X) a direction turned -90° runs straight down and
+    // leaves no direction in plan: the attributes keep the file's turn, at their world points.
+    let (text, _, _) = tilted_attribute_dxf(Vec3::new(1.0, 0.0, 0.0), start, -90.0);
+    let d = read(text.as_bytes(), "edge.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs) {
+        assert!((a.text.insert - start).len() < 1e-6, "{} insert {:?}", a.tag, a.text.insert);
+        assert!((a.text.rotation - (-90f64).to_radians()).abs() < 1e-12, "{} rotation {}", a.tag, a.text.rotation);
+    }
+}
+
+/// Issue #3541, on save: tilted attributes are written at their world points with no plane
+/// (groups 10 and 11 in the WCS, no 210), and reopened where they were read.
+#[test]
+fn tilted_attributes_are_saved_at_their_world_points_and_reopened_there() {
+    let start = Vec3::new(550_050.0, 9_580_030.0, 0.0);
+    let (text, end, _) = tilted_attribute_dxf(Vec3::new(0.3, -0.2, 0.93), start, 30.0);
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    for kind in ["ATTDEF", "ATTRIB"] {
+        let recs = dxf_records(&pairs, kind);
+        assert_eq!(recs.len(), 2, "{kind}");
+        for r in recs {
+            let num = |code: i32, default: f64| group(r, &code.to_string()).map_or(default, |v| v.parse::<f64>().unwrap());
+            let point = |code: i32, default_z: f64| Vec3::new(num(code, 0.0), num(code + 10, 0.0), num(code + 20, default_z));
+            let tag = group(r, "2").unwrap_or_default();
+            assert_eq!(point(210, 1.0), Vec3::Z, "{kind} {tag} is written with a plane");
+            let (code, want) = if tag == "RIGHT" { (11, end) } else { (10, start) };
+            assert!((point(code, 0.0) - want).len() < 1e-6, "{kind} {tag} group {code}: {:?}, want {want:?}", point(code, 0.0));
+        }
+    }
+    let back = read_dxf(out.as_bytes()).unwrap();
+    let ((defs, refs), (defs2, refs2)) = (attributes(&d), attributes(&back));
+    let same = |a: &Attrib, b: &Attrib| {
+        assert_eq!(a.tag, b.tag);
+        // A justified attribute is placed by its alignment point: the writer derives its group 10
+        // from it (#1050), so only a baseline-left one keeps its own.
+        if a.text.align_pt.is_none() {
+            assert!((a.text.insert - b.text.insert).len() < 1e-6, "{} insert {:?} came back as {:?}", a.tag, a.text.insert, b.text.insert);
+        }
+        assert!(a.text.align_pt.zip(b.text.align_pt).is_none_or(|(p, q)| (p - q).len() < 1e-6), "{} alignment point", a.tag);
+        assert_eq!(a.text.align_pt.is_some(), b.text.align_pt.is_some(), "{} alignment point", a.tag);
+        assert!((a.text.rotation - b.text.rotation).abs() < 1e-9, "{} rotation {} came back as {}", a.tag, a.text.rotation, b.text.rotation);
+    };
+    assert_eq!((defs2.len(), refs2.len()), (2, 2));
+    for ((a, _), (b, extrusion)) in defs.iter().zip(&defs2) {
+        same(a, b);
+        assert_eq!(*extrusion, Vec3::Z, "ATTDEF {}", b.tag);
+    }
+    for (a, b) in refs.iter().zip(&refs2) {
+        same(a, b);
+    }
+}
+
+/// A block reference in a tilted plane is still read as is (its block drawn at the OCS point read),
+/// so the ATTRIBs in that plane stay as read too, on the block's own ATTDEFs, rather than mapped
+/// away from the block.
+#[test]
+fn attributes_of_a_tilted_reference_stay_with_its_block() {
+    let start = Vec3::new(50.0, 30.0, 0.0);
+    let (flat, _, _) = tilted_attribute_dxf(Vec3::Z, start, 30.0);
+    let (blocks, reference) = flat.split_once("0\nINSERT\n").unwrap();
+    let plane = "210\n0.3\n220\n-0.2\n230\n0.93\n";
+    let flat_plane = "210\n0\n220\n0\n230\n1\n";
+    assert_eq!(reference.matches(flat_plane).count(), 2);
+    let text = format!("{blocks}0\nINSERT\n{plane}{}", reference.replace(flat_plane, plane));
+    let d = read(text.as_bytes(), "r.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    assert_eq!(refs.len(), 2);
+    for a in &refs {
+        let def = defs.iter().find(|(def, _)| def.tag == a.tag).expect("its definition");
+        assert_eq!(a.text.insert, def.0.text.insert, "{} left its definition", a.tag);
+    }
+}
+
+/// Attributes on the Z axis are read exactly as written, and saved so; a plane facing down keeps
+/// the mirrored reading, which maps its points once (#3541 changes neither).
+#[test]
+fn flat_and_mirrored_attributes_read_as_before() {
+    let start = Vec3::new(550_050.125, 9_580_030.375, 12.5);
+    // A turn of -30° stays -30° (taken through the plane it would come back as 330°).
+    let (text, _, _) = tilted_attribute_dxf(Vec3::Z, start, -30.0);
+    let d = read(text.as_bytes(), "flat.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs) {
+        assert_eq!((a.text.insert, a.text.rotation), (start, (-30f64).to_radians()), "{}", a.tag);
+    }
+    let out = write_dxf(&d);
+    let pairs = dxf_pairs(&out);
+    for r in dxf_records(&pairs, "ATTDEF").into_iter().chain(dxf_records(&pairs, "ATTRIB")).filter(|r| group(r, "2") == Some("LEFT")) {
+        let num = |code: &str| group(r, code).map(|v| v.parse::<f64>().unwrap());
+        assert_eq!((num("10"), num("20"), num("30"), num("210")), (Some(start.x), Some(start.y), Some(start.z), None));
+    }
+    // Facing down and tilted: the mirrored reading maps the start point once, to `start`.
+    let (text, _, _) = tilted_attribute_dxf(Vec3::new(0.6, 0.0, -0.8), start, 30.0);
+    let d = read(text.as_bytes(), "down.dxf").unwrap();
+    let (defs, refs) = attributes(&d);
+    for a in defs.iter().map(|(a, _)| a).chain(&refs).filter(|a| a.tag == "LEFT") {
+        assert!((a.text.insert - start).len() < 1e-6, "{} insert {:?}, want {start:?}", a.tag, a.text.insert);
+    }
 }
 
 // --- SVG import ---

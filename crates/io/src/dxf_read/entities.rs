@@ -1,7 +1,7 @@
 use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
 use super::hatch::{CurvePoints, hatch};
 use super::mtext_dxf;
-use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
+use super::text::{attdef, attrib_modes, attrib_props, flatten_tilted, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
@@ -106,22 +106,45 @@ fn spline(t: &T) -> Spline {
     let knots = t.all_f(40);
     let control = t.pts(10);
     let weights = t.all_f(41);
-    let fit = t.pts(11);
-    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
-    let fit_opts =
-        cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance: t.fd(44, 0.0) }
-            .sanitized();
+    let mut fit = t.pts(11);
     let closed = t.i(70).unwrap_or(0) & 1 != 0;
+    // AutoCAD ends a closed spline's fit points with the first again; here it is implied.
+    if closed && fit.len() > 3 && fit.first().zip(fit.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
+        fit.pop();
+    }
+    let tangent = |c: i32| t.f(c).map(|_| t.p(c).xy());
+    // AutoCAD writes no fit tolerance as 1e-10; read as a tolerance, an approximation could meet it.
+    let tolerance = t.fd(44, 0.0);
+    let tolerance = if tolerance <= 1e-10 { 0.0 } else { tolerance };
+    // AutoCAD takes a 12/13 tangent with its length (for a closed spline, its tangent where it
+    // closes), keeps it through fit-point edits and writes it back as it read it.
+    let fit_opts = cadcraft_geom::FitOptions { knots: Default::default(), start_tangent: tangent(12), end_tangent: tangent(13), tolerance }
+        .sanitized_keeping_length();
     let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed, fit_opts };
     if !sp.is_valid() && fit.len() >= 2 {
-        sp = Spline::fit_with(&fit, sp.closed, fit_opts);
+        sp = Spline::fit_with_end_derivatives(&fit, sp.closed, fit_opts);
     } else if !sp.is_valid() && sp.control.len() >= 2 {
         sp = Spline::from_control(sp.control.clone(), degree);
     } else if fit.len() >= 3 {
         // DXF keeps the knots, not how they were spaced: recover it for later refits.
         sp.fit_opts.knots = sp.infer_knot_param();
     }
+    // The writer gives every closed spline its curve's tangents where it closes, but only one
+    // built as AutoCAD's closed fit spline keeps them (as `Spline::fit_with` stores them); for the
+    // others a refit takes none, before a save or after it.
+    if sp.closed && !keeps_closing_tangent(&sp) {
+        sp.fit_opts.start_tangent = None;
+        sp.fit_opts.end_tangent = None;
+    }
     sp
+}
+
+/// A closed spline that keeps a tangent where it closes: AutoCAD's closed fit spline, with three
+/// fit points or more, no kink (a fit point twice in a row) and clamped knots (periodic knots,
+/// square-root, uniform or within a fit tolerance, wrap round).
+fn keeps_closing_tangent(sp: &Spline) -> bool {
+    let kinked = sp.fit.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.near(*b, 1e-12)));
+    sp.fit.len() >= 3 && !kinked && !sp.wraps()
 }
 
 pub(super) fn entity_with_table_budget(
@@ -149,16 +172,17 @@ pub(super) fn entity_with_table_budget(
         "XLINE" => EntityKind::XLine(RayLine { base: t.p(10), dir: t.p(11) }),
         "TEXT" => EntityKind::Text(text_from(&t)),
         "MTEXT" => EntityKind::MText(mtext_from(tags, &c)),
-        "ATTDEF" => EntityKind::AttDef(attdef(tags, &c)),
+        "ATTDEF" => EntityKind::AttDef(attdef(tags, &mut c)),
         "INSERT" => {
             // A mirrored block reference comes with extrusion (0,0,-1): its insertion point, scale,
             // rotation and column spacing are in that OCS, where x runs the other way. In the WCS that
             // is the mirrored point, a negative x scale, the opposite rotation and a negative column
             // spacing. Noise of up to 1e-3 in the extrusion's x/y moves the projection by ~1e-7 of the
             // size, so it still counts as mirrored. A truly tilted extrusion (block plane not parallel
-            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read.
+            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read,
+            // and so are its ATTRIBs facing up (`reference_left_tilted`).
             let n = c.extrusion;
-            let mirrored = n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs();
+            let mirrored = mirrored_reference(n);
             let mut p = t.p(10);
             let mut scale = Vec3::new(t.fd(41, 1.0), t.fd(42, 1.0), t.fd(43, 1.0));
             let mut rotation = t.fd(50, 0.0).to_radians();
@@ -637,8 +661,26 @@ pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -
     Some((c, k, extra))
 }
 
-/// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND.
-pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
+/// Whether a block reference with extrusion `n` is mirrored: (0,0,-1), up to noise of 1e-3 in x and
+/// y. The INSERT arm maps such a reference's point, scale, rotation and column spacing.
+fn mirrored_reference(n: Vec3) -> bool {
+    n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs()
+}
+
+/// Whether a block reference with extrusion `n` is read as is although its plane is tilted: the
+/// INSERT arm maps only a mirrored one, since `Insert` cannot hold the 3D transform, so its block is
+/// drawn at the OCS point read. Its ATTRIBs facing up are then left as read too: mapped on their
+/// own they would leave the block they belong to. (One facing down is mirrored by `text_from`, as
+/// before.)
+pub(super) fn reference_left_tilted(n: Vec3) -> bool {
+    let unit = n.normalized();
+    !mirrored_reference(n) && (unit.x.abs() >= 1e-12 || unit.y.abs() >= 1e-12)
+}
+
+/// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND. Those of a
+/// reference read as is in its tilted plane (`left_tilted`, [`reference_left_tilted`]) stay as
+/// read with it.
+pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer: &str, left_tilted: bool) -> Vec<Attrib> {
     let mut attribs = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
         if k2 == "ATTRIB" {
@@ -648,6 +690,11 @@ pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer
             let multiline = multiline_attrib(embedded, &common(&tt));
             let own = T(own);
             let mut text = text_from(&own);
+            // An ATTRIB keeps no plane of its own: one in a tilted plane is drawn as seen from above,
+            // unless its reference is left in its own tilted plane.
+            if !left_tilted {
+                flatten_tilted(&mut text, &own);
+            }
             if let Some(m) = &multiline {
                 text.value.clone_from(&m.read_as);
             }

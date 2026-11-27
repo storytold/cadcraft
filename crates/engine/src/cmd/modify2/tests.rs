@@ -639,6 +639,32 @@ fn arraypath_json_and_command_line() {
     assert!(matches!(last(&s), EntityKind::Line(l) if near(l.a.xy(), -5.0, 20.0) && near(l.b.xy(), -6.0, 20.0)));
     assert!(s.execute("arraypath", &json!({"handles": [dot], "path": dot})).is_err());
 
+    // By spacing, AutoCAD 2024 fills a closed path with floor(length / spacing) items and an open
+    // one with one more, at the end (measured on a 100 square and on the same square open).
+    let square = [[0, 0], [100, 0], [100, 100], [0, 100]];
+    let r400 = 400.0 / std::f64::consts::TAU;
+    for (closed, spacing, items) in
+        [(true, 100, 4), (true, 30, 13), (true, 200, 2), (true, 400, 1), (true, 399, 1), (false, 100, 4), (false, 30, 11), (false, 300, 2)]
+    {
+        let mut s = Session::new();
+        let dot = h(&s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap());
+        let path = h(&s.execute("pline", &json!({"points": square, "closed": closed})).unwrap());
+        let r = s.execute("arraypath", &json!({"handles": [dot], "path": path, "spacing": spacing})).unwrap();
+        assert_eq!(r["handles"].as_array().map(Vec::len), Some(items - 1), "closed {closed}, spacing {spacing}");
+    }
+    // A circle 400 round: 4 items at 100, none on the first (AutoCAD 2024, measured).
+    let mut s = Session::new();
+    let dot = h(&s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap());
+    let path = h(&s.execute("circle", &json!({"center": [0, r400], "radius": r400})).unwrap());
+    let r = s.execute("arraypath", &json!({"handles": [dot], "path": path, "spacing": 100})).unwrap();
+    assert_eq!(r["handles"].as_array().map(Vec::len), Some(3));
+    // Three sides of 0.35 add up to a hair under 3 × 0.35; the item at the end still fits.
+    let mut s = Session::new();
+    let dot = h(&s.execute("circle", &json!({"center": [0, 0], "radius": 0.01})).unwrap());
+    let path = h(&s.execute("pline", &json!({"points": [[0, 0], [0.35, 0], [0.35, 0.35], [0, 0.35]]})).unwrap());
+    let r = s.execute("arraypath", &json!({"handles": [dot], "path": path, "spacing": 0.35})).unwrap();
+    assert_eq!(r["handles"].as_array().map(Vec::len), Some(3));
+
     let mut s = Session::new();
     s.execute("circle", &json!({"center": [0, 1], "radius": 0.25})).unwrap();
     s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
@@ -647,6 +673,40 @@ fn arraypath_json_and_command_line() {
     s.cmdline("5,0 3").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(s.doc().unwrap().model.len(), 4);
+}
+
+#[test]
+fn arraypath_item_count_as_autocad_takes_it() {
+    // AutoCAD 2024 at "Enter number of items along path": a whole number from 1 to 32767 in plain
+    // decimals, 5. and 5.0 included; 4.5, 1e1, 8/2, 3', 0 and 32768 are refused.
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 1], "radius": 0.25})).unwrap();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.cmdline("arraypath 0.25,1").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("5,0").unwrap();
+    let asked = s.prompt_text();
+    // Measured, then texts that aren't plain whole numbers (not measured).
+    for t in ["4.5", "1e1", "8/2", "3'", "0", "32768", "+", ".5", "5.0.0", "5.1"] {
+        s.cmdline(t).unwrap();
+        assert_eq!(s.log.last().map(String::as_str), Some("Requires an integer between 1 and 32767."), "{t}");
+        assert_eq!(s.prompt_text(), asked, "{t}");
+    }
+    s.cmdline("3").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    // The ends of the range, without drawing 32,767 copies.
+    assert_eq!((super::patharray::item_count("1"), super::patharray::item_count("32767")), (Some(1), Some(32_767)));
+    for (typed, items) in [("5", 5), ("5.", 5), ("5.0", 5), ("5.00", 5), ("05.0", 5), ("+5.0", 5), ("05", 5), ("+4", 4), ("1", 1)] {
+        let mut s = Session::new();
+        s.execute("circle", &json!({"center": [0, 1], "radius": 0.25})).unwrap();
+        s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        for t in ["arraypath 0.25,1", "", "5,0", typed] {
+            s.cmdline(t).unwrap();
+        }
+        assert!(s.running.is_none(), "{typed}: {}", s.prompt_text());
+        // The path and the items (the original is the first).
+        assert_eq!(s.doc().unwrap().model.len(), 1 + items, "{typed}");
+    }
 }
 
 #[test]

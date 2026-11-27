@@ -152,6 +152,19 @@ fn fit_spline(s: &mut Session) -> String {
 }
 
 #[test]
+fn close_gives_a_closed_fit_its_own_tangent() {
+    // SPLINEDIT Close refits the fit points closed: the open ends' tangents don't carry over, the
+    // closed curve takes its own where it closes, as SPLINE ... Close builds it.
+    let mut s = Session::new();
+    let fit = json!([[0, 0], [4, 0], [6, 3], [1, 4]]);
+    let sp = h(&s.execute("spline", &json!({ "fit": fit, "startTangent": [0, 1] })).unwrap());
+    s.execute("splinedit", &json!({ "handle": sp, "option": "close" })).unwrap();
+    let closed = spline(&s, &sp);
+    let own = h(&s.execute("spline", &json!({ "fit": fit, "closed": true })).unwrap());
+    assert_eq!(closed, spline(&s, &own));
+}
+
+#[test]
 fn fit_data_options_at_the_command_line() {
     let mut s = Session::new();
     let sp = fit_spline(&mut s);
@@ -281,9 +294,10 @@ fn control_edits_drop_fit_data_and_keep_closed_splines_closed() {
     let x = spline(&s, &sp);
     assert!(x.fit.is_empty() && x.control[1] == Vec2::new(1.0, 5.0));
 
-    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true })).unwrap());
+    // Control points that wrap round (uniform knots): the first `degree` repeat at the end.
+    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true, "knots": "uniform" })).unwrap());
     let before = spline(&s, &c);
-    assert!(before.is_periodic());
+    assert!(before.wraps() && before.is_periodic());
     let u = before.control.len() - before.degree;
     s.execute("splinedit", &json!({ "handle": c, "option": "vertexmove", "index": 0, "to": [-1, -1] })).unwrap();
     let x = spline(&s, &c);
@@ -297,6 +311,23 @@ fn control_edits_drop_fit_data_and_keep_closed_splines_closed() {
     let (lo, hi) = x.domain();
     assert!(x.eval(lo).near(x.eval(hi), 1e-9), "still closed");
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 99 })).is_err());
+
+    // Clamped (chord-length knots, as AutoCAD 2024 builds a closed fit spline): only the first
+    // control point repeats, at the end. Moving it leaves a corner where the curve closes.
+    let c = h(&s.execute("spline", &json!({ "fit": [[0, 0], [4, 0], [4, 4], [0, 4], [-2, 2]], "closed": true })).unwrap());
+    let before = spline(&s, &c);
+    assert!(before.is_periodic() && !before.wraps());
+    let last = before.control.len() - 1;
+    s.execute("splinedit", &json!({ "handle": c, "option": "vertexmove", "index": 0, "to": [-1, -1] })).unwrap();
+    let x = spline(&s, &c);
+    assert_eq!((x.control[0], x.control[last]), (Vec2::new(-1.0, -1.0), Vec2::new(-1.0, -1.0)), "both ends move");
+    assert!(x.closed && !x.is_periodic(), "a corner where it closes");
+    s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 2 })).unwrap();
+    let x = spline(&s, &c);
+    assert!(x.is_valid() && x.closed && x.control.len() == before.control.len() - 1);
+    let (lo, hi) = x.domain();
+    assert!(x.eval(lo).near(x.eval(hi), 1e-9), "still closed");
+    assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexdelete", "index": 0 })).is_err(), "the start point stays");
 }
 
 /// Largest distance from samples of `a` to the curve `b` (a shape comparison).
@@ -368,6 +399,57 @@ fn edit_vertex_add_and_elevate_order_keep_the_shape() {
         assert!(s.execute("splinedit", &json!({ "handle": c, "option": "elevate", "order": order })).is_err(), "{order}");
     }
     assert!(s.execute("splinedit", &json!({ "handle": c, "option": "vertexadd" })).is_err());
+}
+
+#[test]
+fn elevate_order_takes_a_whole_number_as_typed() {
+    // AutoCAD 2024 at "Enter new order <4>:" on a cubic: +5, 05 and the LISP real 5.0 make it order
+    // 5, and 4 keeps it; 5.0, 5., 1e1, 4.5, 3, 27 and a point from LISP get "Requires an integer
+    // between 4 and 26." and the prompt again. At order 5 the range starts at 5 (measured).
+    let control = json!({ "control": [[0, 0], [2, 3], [4, 0], [6, 3], [8, 0]] });
+    let refused = |s: &mut Session, bad: &str, message: &str| {
+        let asked = s.prompt_text();
+        let logged = s.log.len();
+        s.cmdline(bad).unwrap();
+        let said: Vec<&str> = s.log.iter().skip(logged).map(String::as_str).filter(|l| l.starts_with("Requires")).collect();
+        assert_eq!(said, [message], "{bad}");
+        assert_eq!(s.prompt_text(), asked, "{bad}");
+    };
+    for typed in ["+5", "05", "(+ 2.5 2.5)"] {
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        s.cmdline("splinedit 0,0 e e").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter new order <4>:"));
+        for bad in ["5.0", "5.", "1e1", "4.5", "3", "27", "(list 1 2)"] {
+            refused(&mut s, bad, "Requires an integer between 4 and 26.");
+        }
+        assert_eq!(spline(&s, &sp).degree, 3);
+        s.cmdline(typed).unwrap();
+        assert_eq!(spline(&s, &sp).degree, 4, "{typed}");
+        assert!(s.prompt_text().contains("vertex editing option"), "{}", s.prompt_text());
+        // Now order 5: 4 is below it, 5 keeps it.
+        s.cmdline("e").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter new order <5>:"));
+        refused(&mut s, "4", "Requires an integer between 5 and 26.");
+        s.cmdline("5").unwrap();
+        assert_eq!(spline(&s, &sp).degree, 4, "{typed}");
+        assert!(s.prompt_text().contains("vertex editing option"), "{typed}: {}", s.prompt_text());
+    }
+    // 26 is the highest order (AutoCAD 2024: taken, degree 25).
+    let mut s = Session::new();
+    let sp = h(&s.execute("spline", &control).unwrap());
+    s.cmdline("splinedit 0,0 e e 26").unwrap();
+    assert_eq!(spline(&s, &sp).degree, 25);
+    // 4 keeps a cubic as it is, and so does Enter.
+    for keep in ["4", ""] {
+        let mut s = Session::new();
+        let sp = h(&s.execute("spline", &control).unwrap());
+        let before = spline(&s, &sp);
+        s.cmdline("splinedit 0,0 e e").unwrap();
+        s.cmdline(keep).unwrap();
+        assert!(s.prompt_text().contains("vertex editing option"), "{keep:?}: {}", s.prompt_text());
+        assert_eq!(spline(&s, &sp).control, before.control, "{keep:?}");
+    }
 }
 
 #[test]
