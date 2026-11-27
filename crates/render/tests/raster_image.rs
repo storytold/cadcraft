@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use cadcraft_color::Rgb;
 use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, Handle, Image, Insert, Line, Raster, Space, Transparency, Viewport};
-use cadcraft_geom::{Vec2, Vec3};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use cadcraft_render::raster::{RasterOptions, View, render};
-use cadcraft_render::{Kind, Options, build};
+use cadcraft_render::{DisplayList, Kind, Options, build, build_plot};
 
 const RED: [u8; 4] = [255, 0, 0, 255];
 const GREEN: [u8; 4] = [0, 255, 0, 255];
@@ -340,4 +340,268 @@ fn two_references_share_one_set_of_pixels() {
     assert!(Arc::ptr_eq(&list.images[0].raster, &list.images[1].raster));
     let kinds: Vec<Kind> = list.prims.iter().map(|p| p.kind).filter(|k| matches!(k, Kind::Image { .. })).collect();
     assert_eq!(kinds, [Kind::Image { index: 0 }, Kind::Image { index: 1 }]);
+}
+
+// ---------------- IMAGEFRAME: what the mode changes, and what it must not ----------------
+
+/// Pixels that are not opaque, so the raster's own alpha is part of what is drawn: red and blue
+/// (the left column) and green and white (the right).
+fn translucent_pixels() -> Arc<Raster> {
+    Arc::new(Raster::new(2, 2, [[255, 0, 0, 128], [0, 255, 0, 200], [0, 0, 255, 255], [255, 255, 255, 128]].concat()).unwrap())
+}
+
+/// The picture the preservation matrix draws: the same 10 x 10 square as [`image`], clipped to its
+/// left column (a real boundary, not the whole image), half faded, drawn half transparent.
+fn rich_image() -> Image {
+    Image { clip: vec![Vec2::new(-0.5, -0.5), Vec2::new(0.5, 1.5)], clipping: true, fade: 25, ..image() }
+}
+
+/// The half transparency `rich_image` is drawn with, on its entity.
+fn rich_common() -> Common {
+    Common { transparency: Transparency::Percent(50), ..Common::default() }
+}
+
+/// Where the picture is shown: model space, a layout's own objects, a layout's viewport onto model
+/// space, or a block reference.
+#[derive(Clone, Copy, Debug)]
+enum Place {
+    Model,
+    Paper,
+    Viewport,
+    Block,
+}
+
+impl Place {
+    const ALL: [Place; 4] = [Place::Model, Place::Paper, Place::Viewport, Place::Block];
+
+    fn space(self) -> Space {
+        match self {
+            Place::Model | Place::Block => Space::Model,
+            Place::Paper | Place::Viewport => Space::Paper("Layout1".into()),
+        }
+    }
+
+    /// A drawing whose picture is drawn with `mode` in its header (`None`: no IMAGEFRAME at all),
+    /// with the image's pixels when `loaded`, and with the clip boundary, fade and transparency
+    /// [`rich_image`] describes when `rich`.
+    fn drawing(self, mode: Option<i64>, loaded: bool, rich: bool) -> Drawing {
+        let mut d = Drawing::new_imperial();
+        if let Some(mode) = mode {
+            d.header.set_i64("IMAGEFRAME", mode);
+        }
+        let common = if rich { rich_common() } else { Common::default() };
+        let image = if rich { rich_image() } else { image() };
+        match self {
+            Place::Model | Place::Paper => {
+                d.add(&self.space(), common, EntityKind::Image(image)).unwrap();
+            }
+            Place::Viewport => {
+                d.add(&Space::Model, common.clone(), EntityKind::Image(image)).unwrap();
+                // Larger than the picture: the viewport cuts none of it, so its frame is one stroke.
+                let vp = Viewport {
+                    center: Vec3::new(5.0, 5.0, 0.0),
+                    width: 20.0,
+                    height: 20.0,
+                    view_center: Vec2::new(5.0, 5.0),
+                    view_height: 20.0,
+                    id: 2,
+                    locked: false,
+                    frozen_layers: Vec::new(),
+                    layer_colors: Vec::new(),
+                    clip: None,
+                    on: true,
+                    twist: 0.0,
+                };
+                d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+            }
+            Place::Block => {
+                // The block reference scales its contents 5: the picture's axes and the corners of
+                // its clip boundary turn with the block.
+                let mut blk = Block::new("MAP");
+                blk.entities.push(Entity { handle: Handle(900), common, kind: EntityKind::Image(image) });
+                d.blocks.insert("MAP".into(), Arc::new(blk));
+                let ins = Insert {
+                    block: "MAP".into(),
+                    insert: Vec3::ZERO,
+                    scale: Vec3::new(5.0, 5.0, 1.0),
+                    rotation: 0.0,
+                    attribs: Vec::new(),
+                    cols: 1,
+                    rows: 1,
+                    col_spacing: 0.0,
+                    row_spacing: 0.0,
+                    clip: None,
+                };
+                d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+            }
+        }
+        if loaded {
+            d.rasters.insert("map.png", if rich { translucent_pixels() } else { pixels() });
+        }
+        d
+    }
+
+    /// The placement of the picture's top-left corner, one pixel to the right and one down, in the
+    /// space it is drawn in: what the block's scale changes, and nothing else does.
+    fn expected_geometry(self) -> (Vec2, Vec2, Vec2) {
+        match self {
+            Place::Model | Place::Paper | Place::Viewport => (Vec2::new(0.0, 10.0), Vec2::new(5.0, 0.0), Vec2::new(0.0, -5.0)),
+            Place::Block => (Vec2::new(0.0, 50.0), Vec2::new(25.0, 0.0), Vec2::new(0.0, -25.0)),
+        }
+    }
+
+    /// The corners of [`rich_image`]'s clip boundary: the left column of the picture, in the space
+    /// it is drawn in.
+    fn expected_clip(self) -> Vec<Vec2> {
+        let s = if matches!(self, Place::Block) { 5.0 } else { 1.0 };
+        [(0.0, 10.0), (5.0, 10.0), (5.0, 0.0), (0.0, 0.0)].map(|(x, y)| Vec2::new(x * s, y * s)).to_vec()
+    }
+}
+
+/// What one picture holds: the strokes drawn (the frame and its diagonals, a viewport's border),
+/// each image's placement, clip outlines and fade, the opacity each image draws with, and the
+/// colours at the centres of the four quarters of the picture.
+#[derive(Debug, PartialEq)]
+struct Shot {
+    strokes: usize,
+    count: usize,
+    geometry: Vec<(Vec2, Vec2, Vec2)>,
+    clips: Vec<Vec<Vec<Vec2>>>,
+    fades: Vec<u8>,
+    opacity: Vec<u8>,
+    pixels: [[u8; 4]; 4],
+}
+
+/// The view that fits `list`'s picture into the sample grid, so the four quarters are sampled at the
+/// same place whatever space, block scale or viewport the picture is drawn through.
+fn fitted(list: &DisplayList) -> View {
+    let b = list.images.first().map(|i| Bounds2::from_points(i.corners())).unwrap_or(list.bounds);
+    let size = b.width().max(b.height());
+    View { center: b.center(), scale: if size > 0.0 { 100.0 / size } else { 1.0 }, width: 100, height: 100 }
+}
+
+fn shot(place: Place, mode: Option<i64>, loaded: bool, rich: bool, plotting: bool, transparency: bool) -> Shot {
+    let d = Place::drawing(place, mode, loaded, rich);
+    let space = place.space();
+    let opts = Options { transparency, ..Options::default() };
+    let list = if plotting { build_plot(&d, &space, &opts) } else { build(&d, &space, &opts) };
+    let view = fitted(&list);
+    let pm = render(&list, &view, &RasterOptions { antialias: false, ..Default::default() }).unwrap();
+    let pixels = [(25, 25), (75, 25), (25, 75), (75, 75)].map(|(x, y)| {
+        let c = pm.pixel(x, y).unwrap();
+        [c.red(), c.green(), c.blue(), c.alpha()]
+    });
+    Shot {
+        strokes: list.prims.iter().filter(|p| p.kind == Kind::Polyline).count(),
+        count: list.images.len(),
+        geometry: list.images.iter().map(|i| (i.origin, i.right, i.down)).collect(),
+        clips: list.images.iter().map(|i| i.clips.clone()).collect(),
+        fades: list.images.iter().map(|i| i.fade).collect(),
+        opacity: list.prims.iter().filter(|p| matches!(p.kind, Kind::Image { .. })).map(|p| p.alpha()).collect(),
+        pixels,
+    }
+}
+
+/// How far a colour is from the canvas, channel by channel.
+fn from_bg(p: [u8; 4]) -> u32 {
+    p.iter().zip(bg()).map(|(a, b)| u32::from(a.abs_diff(b))).sum()
+}
+
+/// The mode changes the frame and nothing else: the pixels, the image's placement and axes, its
+/// clip boundary, its fade and the opacity it draws with are the same in every mode, on screen and
+/// in a plot, with transparency drawn and not, in all four places.
+#[test]
+fn every_mode_draws_the_same_picture() {
+    for place in Place::ALL {
+        for plotting in [false, true] {
+            for transparency in [false, true] {
+                let shots: [Shot; 3] = [0, 1, 2].map(|m| shot(place, Some(m), true, true, plotting, transparency));
+                for (m, s) in shots.iter().enumerate() {
+                    let what = format!("{place:?} mode {m} plotting {plotting} transparency {transparency}");
+                    assert_eq!(s.count, 1, "{what}: one picture");
+                    assert_eq!(s.geometry, shots[1].geometry, "{what}: placement and axes");
+                    assert_eq!(s.clips, shots[1].clips, "{what}: clip outlines");
+                    assert_eq!(s.fades, shots[1].fades, "{what}: fade");
+                    assert_eq!(s.opacity, shots[1].opacity, "{what}: the opacity it draws with");
+                    assert_eq!(s.pixels, shots[1].pixels, "{what}: pixels");
+                    // What the pixels hold is the picture itself: the two samples inside the clip
+                    // are its content, and the two outside it are the canvas.
+                    assert_ne!(s.pixels[0], bg(), "{what}: the first quarter is the picture");
+                    assert_ne!(s.pixels[2], bg(), "{what}: the third quarter is the picture");
+                    assert_eq!(s.pixels[1], bg(), "{what}: the second quarter is clipped away");
+                    assert_eq!(s.pixels[3], bg(), "{what}: the fourth quarter is clipped away");
+                }
+            }
+        }
+    }
+}
+
+/// The clip boundary, the fade and the transparency reach the drawing, and are what they say.
+#[test]
+fn the_picture_keeps_its_clip_fade_and_transparency() {
+    for place in Place::ALL {
+        let s = shot(place, Some(1), true, true, false, true);
+        let what = format!("{place:?}");
+        assert_eq!(s.geometry, [place.expected_geometry()], "{what}: placement and axes");
+        // A viewport adds its own outline to the picture's, so the picture is cut to both.
+        let outlines = if matches!(place, Place::Viewport) { 2 } else { 1 };
+        assert_eq!(s.clips.first().map(Vec::len), Some(outlines), "{what}: outlines");
+        let own = s.clips.first().and_then(|outlines| outlines.first()).cloned().unwrap_or_default();
+        assert_eq!(own.len(), place.expected_clip().len(), "{what}: clip corners");
+        for (got, want) in own.iter().zip(place.expected_clip()) {
+            assert!((*got - want).len() < 1e-9, "{what}: clip corner {got:?} is not {want:?}");
+        }
+        assert_eq!(s.fades, [25], "{what}: the fade");
+        // The source pixels are not opaque, so the raster's alpha is part of the picture drawn.
+        assert_eq!(translucent_pixels().rgba().get(3), Some(&128), "{what}: a translucent source pixel");
+
+        // The entity's 50 % transparency is only drawn when transparency is on, and it then lets
+        // more of the canvas through.
+        let opaque_entity = shot(place, Some(1), true, true, false, false);
+        assert_eq!(opaque_entity.opacity, [255], "{what}: an opaque entity");
+        assert_eq!(s.opacity, [128], "{what}: a 50 % entity");
+        assert!(from_bg(s.pixels[0]) < from_bg(opaque_entity.pixels[0]), "{what}: the canvas shows through");
+        // And the pixel is not the source colour: the fade blends it towards the canvas.
+        assert_ne!(s.pixels[0], [255, 0, 0, 128], "{what}: an unfaded, untransparent pixel");
+    }
+}
+
+/// The frame is all the mode adds or takes away: one rectangle with pixels, the rectangle and its
+/// two diagonals without. Mode 0 draws none, 2 draws it on screen but not in a plot.
+#[test]
+fn the_mode_changes_the_frame_strokes_only() {
+    for place in Place::ALL {
+        for loaded in [true, false] {
+            let per_mode = if loaded { 1 } else { 3 };
+            for plotting in [false, true] {
+                let base = shot(place, Some(0), loaded, false, plotting, false);
+                for m in [0, 1, 2] {
+                    let s = shot(place, Some(m), loaded, false, plotting, false);
+                    let want = match (m, plotting) {
+                        (0, _) | (2, true) => 0,
+                        _ => per_mode,
+                    };
+                    assert_eq!(s.strokes, base.strokes + want, "{place:?} mode {m} plotting {plotting} loaded {loaded}");
+                    if !loaded {
+                        assert!(s.count == 0 && s.geometry.is_empty(), "{place:?} mode {m}: no pixels, no picture");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A drawing whose header holds no IMAGEFRAME shows the frame, on screen and in a plot, exactly as
+/// mode 1 does: the default is 1.
+#[test]
+fn a_drawing_without_the_setting_shows_the_frame() {
+    for place in Place::ALL {
+        for loaded in [true, false] {
+            for plotting in [false, true] {
+                let unset = shot(place, None, loaded, false, plotting, false);
+                let one = shot(place, Some(1), loaded, false, plotting, false);
+                assert_eq!(unset, one, "{place:?} plotting {plotting} loaded {loaded}");
+            }
+        }
+    }
 }

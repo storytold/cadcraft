@@ -327,10 +327,20 @@ fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw:
     if let Some(r) = raster {
         b.image(ctx, rgb, i, r);
     }
-    b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-    if raster.is_none() {
-        b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-        b.polyline(ctx, rgb, lw, &[o + u, o + v]);
+    // The frame per IMAGEFRAME, as WIPEOUTFRAME and XCLIPFRAME: 0 = none, 1 = shown and plotted,
+    // 2 = shown but not plotted. The pixels, placement and clip boundary are the same in every
+    // mode; a frame without pixels is crossed out in the modes that show it.
+    let frame = match ctx.d.header.i64("IMAGEFRAME", 1) {
+        0 => false,
+        2 => !b.plotting,
+        _ => true,
+    };
+    if frame {
+        b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+        if raster.is_none() {
+            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
+        }
     }
 }
 

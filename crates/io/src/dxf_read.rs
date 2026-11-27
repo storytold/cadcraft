@@ -18,6 +18,8 @@ mod common;
 mod dimassoc;
 mod document;
 mod entities;
+/// IMAGEFRAME's group 70 in a RASTERVARIABLES object (see the module's own comment).
+mod frame;
 mod hatch;
 mod objects;
 mod tables;
@@ -281,7 +283,12 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize, curve_points: usize)
     draw_kept_dimensions_from_their_blocks(&mut d);
     number_unknown_viewport_ids(&mut d, &dropped_paper_views(&rx, &paper_block_for, &first_layout));
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
+    // IMAGEFRAME is the RASTERVARIABLES object's group 70, not a HEADER variable: the mode the
+    // parser selected there, from the file's own spelling, else the default (1). A `$IMAGEFRAME`
+    // tag another writer put in HEADER must not decide what the drawing does.
+    let image_frame = frame::image_frame(bytes, &tags).unwrap_or(1);
     objs.apply(&mut d, &rx);
+    d.header.set_i64("IMAGEFRAME", image_frame);
     crate::dxf_image::resolve(&secs, &mut d, &rx.image_defs);
     crate::dxf_mline::resolve(&secs, &mut d);
     // Keep handles unique against the header's seed.

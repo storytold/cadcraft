@@ -188,9 +188,13 @@ pub(crate) struct Plan {
     /// IMAGE entity → (IMAGEDEF handle, IMAGEDEF_REACTOR handle).
     pub by_entity: HashMap<Handle, (String, String)>,
     defs: Vec<PlannedDef>,
-    /// The `ACAD_IMAGE_DICT` dictionary and the `ACAD_IMAGE_VARS` RASTERVARIABLES object.
+    /// The `ACAD_IMAGE_DICT` dictionary, written only when the drawing has images.
     pub dict: String,
+    /// The `ACAD_IMAGE_VARS` RASTERVARIABLES object, written for every drawing: it holds the
+    /// drawing's IMAGEFRAME, which no image has to exist for.
     pub vars: String,
+    /// The drawing's IMAGEFRAME (0 = no frame, 1 = shown and plotted, 2 = shown, not plotted).
+    pub frame: i64,
 }
 
 impl Plan {
@@ -210,8 +214,11 @@ fn def_name(i: &Image) -> String {
     if stem.is_empty() { "Image".to_string() } else { stem.to_string() }
 }
 
-/// Allocate the IMAGEDEF, IMAGEDEF_REACTOR and dictionary handles for every image entity.
-pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>, mut next: impl FnMut() -> String) -> Plan {
+/// Allocate the IMAGEDEF, IMAGEDEF_REACTOR, dictionary and RASTERVARIABLES handles: the last for
+/// every drawing, since IMAGEFRAME is a drawing setting rather than a property of an image.
+/// `frame` is the drawing's IMAGEFRAME; one this build does not draw is written as the default
+/// (1), so a value another reader could not use does not change what the file shows.
+pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>, frame: i64, mut next: impl FnMut() -> String) -> Plan {
     let mut p = Plan::default();
     let mut index: HashMap<(String, String), usize> = HashMap::new();
     let mut used: HashSet<String> = HashSet::new();
@@ -259,8 +266,9 @@ pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>,
     }
     if !p.defs.is_empty() {
         p.dict = next();
-        p.vars = next();
     }
+    p.vars = next();
+    p.frame = if (0..=2).contains(&frame) { frame } else { 1 };
     p
 }
 
@@ -297,27 +305,27 @@ pub(crate) fn entity_tags(i: &Image, def: &str, reactor: &str) -> Vec<Tag> {
 /// the named object dictionary, which lists `ACAD_IMAGE_DICT` and `ACAD_IMAGE_VARS`.
 pub(crate) fn objects(p: &Plan, root: &str) -> Vec<Tag> {
     let mut t = Vec::new();
-    if p.is_empty() {
-        return t;
-    }
-    t.extend([Tag::s(0, "DICTIONARY"), Tag::s(5, &p.dict), Tag::s(330, root), Tag::s(100, "AcDbDictionary"), Tag::i(281, 1)]);
-    for d in &p.defs {
-        t.extend([Tag::s(3, &d.name), Tag::s(350, &d.handle)]);
-    }
-    for d in &p.defs {
-        t.extend([Tag::s(0, "IMAGEDEF"), Tag::s(5, &d.handle), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, &p.dict)]);
-        t.extend(d.reactors.iter().map(|(r, _)| Tag::s(330, r)));
-        t.extend([Tag::s(102, "}"), Tag::s(330, &p.dict), Tag::s(100, "AcDbRasterImageDef"), Tag::i(90, 0), Tag::s(1, &d.path)]);
-        t.extend([Tag::f(10, d.size.x), Tag::f(20, d.size.y), Tag::f(11, d.pixel_size.x), Tag::f(21, d.pixel_size.y)]);
-        t.extend([Tag::i(280, 1), Tag::i(281, i64::from(d.units))]);
-        for (r, img) in &d.reactors {
-            let ih = img.hex();
-            t.extend([Tag::s(0, "IMAGEDEF_REACTOR"), Tag::s(5, r), Tag::s(330, &ih), Tag::s(100, "AcDbRasterImageDefReactor")]);
-            t.extend([Tag::i(90, 2), Tag::s(330, ih)]);
+    if !p.defs.is_empty() {
+        t.extend([Tag::s(0, "DICTIONARY"), Tag::s(5, &p.dict), Tag::s(330, root), Tag::s(100, "AcDbDictionary"), Tag::i(281, 1)]);
+        for d in &p.defs {
+            t.extend([Tag::s(3, &d.name), Tag::s(350, &d.handle)]);
+        }
+        for d in &p.defs {
+            t.extend([Tag::s(0, "IMAGEDEF"), Tag::s(5, &d.handle), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, &p.dict)]);
+            t.extend(d.reactors.iter().map(|(r, _)| Tag::s(330, r)));
+            t.extend([Tag::s(102, "}"), Tag::s(330, &p.dict), Tag::s(100, "AcDbRasterImageDef"), Tag::i(90, 0), Tag::s(1, &d.path)]);
+            t.extend([Tag::f(10, d.size.x), Tag::f(20, d.size.y), Tag::f(11, d.pixel_size.x), Tag::f(21, d.pixel_size.y)]);
+            t.extend([Tag::i(280, 1), Tag::i(281, i64::from(d.units))]);
+            for (r, img) in &d.reactors {
+                let ih = img.hex();
+                t.extend([Tag::s(0, "IMAGEDEF_REACTOR"), Tag::s(5, r), Tag::s(330, &ih), Tag::s(100, "AcDbRasterImageDefReactor")]);
+                t.extend([Tag::i(90, 2), Tag::s(330, ih)]);
+            }
         }
     }
-    // Image frame shown, high display quality, no insertion units.
+    // The image frame setting (group 70), high display quality, no insertion units. Written for
+    // every drawing, so an empty drawing and a template keep their IMAGEFRAME too.
     t.extend([Tag::s(0, "RASTERVARIABLES"), Tag::s(5, &p.vars), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, root), Tag::s(102, "}")]);
-    t.extend([Tag::s(330, root), Tag::s(100, "AcDbRasterVariables"), Tag::i(90, 0), Tag::i(70, 1), Tag::i(71, 1), Tag::i(72, 0)]);
+    t.extend([Tag::s(330, root), Tag::s(100, "AcDbRasterVariables"), Tag::i(90, 0), Tag::i(70, p.frame), Tag::i(71, 1), Tag::i(72, 0)]);
     t
 }

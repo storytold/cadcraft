@@ -12,6 +12,9 @@ use crate::{EngineError, Result, Session, Settings};
 enum Kind {
     /// An integer from the list.
     Choice(&'static [i64]),
+    /// An integer from the list, taken only as an integer number: a programmatic `true`, `"2"`,
+    /// null, a fraction or a container is refused instead of being coerced (IMAGEFRAME).
+    StrictIntChoice(&'static [i64]),
     /// An integer in `min..=max`.
     Int(i64, i64),
     /// A real number of at least `min` (`strict`: greater than `min`).
@@ -59,6 +62,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
+    // Raster images: 0 = frame hidden, 1 = shown and plotted, 2 = shown but not plotted.
+    ("IMAGEFRAME", Kind::StrictIntChoice(&[0, 1, 2]), Def::Int(1)),
     ("INSNAME", Kind::Name, Def::Str("")),
     // Percent that objects on locked layers fade on screen; 0 or negative: no fade.
     ("LAYLOCKFADECTL", Kind::Int(-90, 90), Def::Int(50)),
@@ -112,6 +117,16 @@ pub(super) fn is_read_only(name: &str) -> bool {
     header_var(name).is_some_and(|(_, k, _)| matches!(k, Kind::ReadOnlyStr))
 }
 
+/// The integer `text` gives `name` when it takes only integer modes ([`Kind::StrictIntChoice`]),
+/// for SETVAR's typed value prompt, which hands its answer over as text. Nothing for any other
+/// variable, whose coercion stays as it was.
+pub(super) fn typed_int(name: &str, text: &str) -> Option<i64> {
+    match header_var(name)?.1 {
+        Kind::StrictIntChoice(_) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 /// The value of a table variable (upper-case `name`), or None when it isn't one.
 pub(super) fn get(s: &Session, name: &str) -> Option<Value> {
     if let Some((_, read, _)) = toggle(name) {
@@ -133,7 +148,7 @@ pub(super) fn get(s: &Session, name: &str) -> Option<Value> {
         Def::Str(_) => 0.0,
     };
     Some(match (kind, def) {
-        (Kind::Choice(_) | Kind::Int(..), Def::Int(i)) => json!(h.i64(name, *i)),
+        (Kind::Choice(_) | Kind::StrictIntChoice(_) | Kind::Int(..), Def::Int(i)) => json!(h.i64(name, *i)),
         (Kind::Angle, _) => json!(h.f64(name, real_def).to_degrees()),
         (_, Def::Str(t)) => json!(h.str(name, t)),
         _ => json!(h.f64(name, real_def)),
@@ -171,6 +186,17 @@ fn set_header(s: &mut Session, name: &str, kind: Kind, v: &Value, bad: impl Fn(S
     match kind {
         Kind::Choice(allowed) => {
             let i = int_value(v).filter(|i| allowed.contains(i));
+            let list = || allowed.iter().map(i64::to_string).collect::<Vec<_>>().join(", ");
+            let i = i.ok_or_else(|| bad(list()))?;
+            s.doc_mut()?.header.set_i64(name, i);
+        }
+        Kind::StrictIntChoice(allowed) => {
+            // Only an integer number: a JSON `2.0`, `"2"`, `true` or `null` is not the mode 2.
+            // SETVAR's typed value prompt converts its text first (`sysvars::typed_value`).
+            let i = match v {
+                Value::Number(n) => n.as_i64().filter(|i| allowed.contains(i)),
+                _ => None,
+            };
             let list = || allowed.iter().map(i64::to_string).collect::<Vec<_>>().join(", ");
             let i = i.ok_or_else(|| bad(list()))?;
             s.doc_mut()?.header.set_i64(name, i);

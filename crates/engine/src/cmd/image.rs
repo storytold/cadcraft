@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::file::base64_decode;
 use super::{CommandSpec, bad, point_value, str_param};
-use crate::{Result, Session};
+use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most image files loaded per drawing.
 const MAX_IMAGE_FILES: usize = 1000;
@@ -47,6 +47,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["im"])
             .params("{} → {images: [{name, path, foundAt, status: Loaded|Not Found|Not loaded, references, pixels?: [w, h]}]}")
             .noundo(),
+        CommandSpec::new("imageframe", "Image Frame", run_imageframe)
+            .params("{value?: 0|1|2} (none: report) → {value, message}")
+            .transparent()
+            .interactive(|_| Ok(Box::new(ImageframeM))),
     ]
 }
 
@@ -339,6 +343,61 @@ fn def_name(d: &Drawing, path: &str, wanted: &str) -> String {
 }
 
 const ID: &str = "imageattach";
+
+/// IMAGEFRAME `{value?}`: the drawing's raster image frame mode. It is a system variable first
+/// (SETVAR, GETVAR and AutoLISP's `setvar`/`getvar` reach it), so this command only reports it or
+/// hands the value to the same validation: there is no second store.
+fn run_imageframe(s: &mut Session, p: &Value) -> Result<Value> {
+    // No `value` asks for the mode; an explicit `null` is a value, and the setter refuses it.
+    let Some(v) = p.get("value") else { return frame_report(s) };
+    crate::sysvars::set(s, "IMAGEFRAME", v)?;
+    s.touch();
+    frame_report(s)
+}
+
+fn frame_report(s: &Session) -> Result<Value> {
+    let value = crate::sysvars::get(s, "IMAGEFRAME").unwrap_or_else(|| json!(1));
+    let n = value.as_i64().unwrap_or(1);
+    Ok(json!({ "value": value, "message": format!("<Imageframe {n}>") }))
+}
+
+/// IMAGEFRAME at the command line: "Enter image frame setting or [0/1/2] <1>".
+#[derive(Default)]
+struct ImageframeM;
+
+impl Interactive for ImageframeM {
+    fn name(&self) -> &'static str {
+        "IMAGEFRAME"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let current = crate::sysvars::get(s, "IMAGEFRAME").map_or_else(|| "1".to_string(), |v| v.to_string());
+        // Not a number-only prompt: a wrong entry is reported by the command, as SETVAR's value
+        // prompt reports it, instead of being refused before it reaches the variable.
+        Prompt::new("Enter image frame setting", Accept { number: true, ..Accept::TEXT }).kw(&["0", "1", "2"]).default(current)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let text = match i {
+            Input::Enter => return Ok(Step::Done),
+            Input::Text(t) | Input::Keyword(t) => t,
+            Input::Cancel => return Ok(Step::Cancel),
+            _ => return Ok(Step::Continue),
+        };
+        let Ok(n) = text.trim().parse::<i64>() else {
+            s.echo("Invalid value: enter 0, 1 or 2.".to_string());
+            return Ok(Step::Continue);
+        };
+        match crate::sysvars::set(s, "IMAGEFRAME", &json!(n)) {
+            Ok(()) => {
+                s.touch();
+                Ok(Step::Done)
+            }
+            Err(e) => {
+                s.echo(e.to_string());
+                Ok(Step::Continue)
+            }
+        }
+    }
+}
 
 pub(crate) fn run_imageattach(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad(ID, "`path` is required"))?.to_string();
