@@ -16,7 +16,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject, class_group, class_index, class_number, proxy_has_string_stream};
+use cadcraft_doc::foreign::{
+    Foreign, ForeignExtra, ForeignKey, ForeignObject, VertexId, class_group, class_index, class_number, proxy_has_string_stream,
+};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, RawTag, Unknown};
 use craft_dxf::{SectionRef, Tag, Version};
 
@@ -48,6 +50,8 @@ const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "A
 
 /// Most objects kept from one file.
 const MAX_OBJECTS: usize = 1_000_000;
+/// Most vertices of one polyline whose identifiers are kept.
+const MAX_VERTEX_IDS: usize = 1_000_000;
 /// Most xdata groups kept per record (AutoCAD allows 16 KB of xdata per object).
 const MAX_XDATA_GROUPS: usize = 16_384;
 /// Longest ownership chain followed.
@@ -289,7 +293,40 @@ fn extra(kind: &str, tags: &[Tag], entity: bool, unknown: bool, kept: &HashSet<S
         }
         x.props = props.iter().filter(|t| matches!(t.code, 347 | 284)).map(raw).collect();
     }
+    if entity && !unknown && kind == "LWPOLYLINE" {
+        x.vertex_ids = vertex_ids(tags);
+    }
     x
+}
+
+/// A LWPOLYLINE record's vertices with their identifiers (group 91 after a vertex's point): one
+/// per vertex, identifier 0 for a vertex without one; empty when no vertex has one
+/// ([`ForeignExtra::vertex_ids`]).
+fn vertex_ids(tags: &[Tag]) -> Vec<VertexId> {
+    let own = || tags.iter().take_while(|t| t.code < 1000);
+    if !own().any(|t| t.code == 91 && t.i64() != 0) {
+        return Vec::new();
+    }
+    let mut ids: Vec<VertexId> = Vec::new();
+    for t in own() {
+        match t.code {
+            // A polyline past the cap keeps none: identifiers for some of its vertices would be wrong.
+            10 if ids.len() >= MAX_VERTEX_IDS => return Vec::new(),
+            10 => ids.push(VertexId { id: 0, x: t.f64(), y: 0.0 }),
+            20 => {
+                if let Some(last) = ids.last_mut() {
+                    last.y = t.f64();
+                }
+            }
+            91 => {
+                if let Some(last) = ids.last_mut() {
+                    last.id = i32::try_from(t.i64()).unwrap_or(0);
+                }
+            }
+            _ => {}
+        }
+    }
+    ids
 }
 
 /// Every entity of the drawing (model space, layouts, blocks).
