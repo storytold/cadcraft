@@ -1526,3 +1526,405 @@ menu	View	视图
 
 # ArtCraft feature naming
 	Additional Tools	其他工具
+
+# Dialogs, status text, dimension-style rows and command prompts that fell back to English (zh gap list).
+	Enter file name	输入文件名
+	Enter group name	输入编组名称
+	Enter layer name	输入图层名称
+	Enter name of new layout	输入新布局的名称
+	Enter name of output file	输入输出文件名
+	Enter new color	输入新颜色
+	Enter new group name	输入新编组名称
+	Enter new layer name	输入新图层名称
+	Enter new layout name	输入新布局名称
+	Enter new linetype name	输入新线型名称
+	Enter new lineweight	输入新线宽
+	Enter new text height	输入新文字高度
+	Enter new text style	输入新文字样式
+	Enter the number of columns	输入列数
+	Enter the number of rows	输入行数
+	Enter transparency value	输入透明度值
+	Enter value	输入值
+	Enter variable name	输入变量名称
+	Enter view name to restore	输入要恢复的视图名称
+	Enter view name to save	输入要保存的视图名称
+	Indicate dimension point to add	指示要添加的标注点
+	Indicate dimension point to remove	指示要删除的标注点
+	Pick a table cell	拾取表格单元格
+	Pick an internal point for the new boundary	拾取新边界的内部点
+	Pick internal point	拾取内部点
+	Select a block	选择一个块
+	Select a block reference	选择一个块参照
+	Select a content type	选择内容类型
+	Select a dimension	选择一个标注
+	Select a leader type	选择引线类型
+	Select a multileader	选择一个多重引线
+	Select a table	选择一个表格
+	Select a viewport	选择一个视口
+	Select an item in array to replace	选择阵列中要替换的项目
+	Select an object to copy	选择要复制的对象
+	Select array	选择阵列
+	Select attributes	选择属性
+	Select base dimension	选择基准标注
+	Select base point of replacement objects	选择替换对象的基点
+	Select block reference	选择块参照
+	Select boundary objects (Enter finds them)	选择边界对象（按 Enter 键自动查找）
+	Select clipping object	选择剪裁对象
+	Select closed boundary objects to add	选择要添加的闭合边界对象
+	Select destination object(s)	选择目标对象
+	Select dimension	选择标注
+	Select dimension to add jog	选择要添加折弯的标注
+	Select dimension to add/remove break	选择要添加/删除打断的标注
+	Select dimensions to space	选择要调整间距的标注
+	Select first mline	选择第一条多线
+	Select grip to edit array	选择要编辑阵列的夹点
+	Select group	选择编组
+	Select hatch object	选择图案填充对象
+	Select item in array	选择阵列中的项目
+	Select jog to remove	选择要删除的折弯
+	Select mline	选择多线
+	Select multileader to align to or [Options]	选择要对齐到的多重引线或 [Options]
+	Select new datum point	选择新基准点
+	Select object on target layer	选择目标图层上的对象
+	Select object to align UCS	选择用于对齐 UCS 的对象
+	Select object to break dimension	选择要打断的标注对象
+	Select object to clip viewport	选择用于剪裁视口的对象
+	Select object to count or [List/Spaces]	选择要计数的对象或 [List/Spaces]
+	Select objects or	选择对象或
+	Select objects to add to the group	选择要添加到编组的对象
+	Select objects to erase or	选择要删除的对象或
+	Select objects to remove from the group	选择要从编组中移除的对象
+	Select reference objects	选择参照对象
+	Select replacement objects	选择替换对象
+	Select second mline	选择第二条多线
+	Select source object	选择源对象
+	Select the cutting edge (line, arc, circle, ellipse, polyline or spline)	选择剪切边（直线、圆弧、圆、椭圆、多段线或样条曲线）
+	Select viewport to clip	选择要剪裁的视口
+	Select viewports	选择视口
+	Specify X scale factor	指定 X 比例因子
+	Specify Z scale factor or	指定 Z 比例因子或
+	Specify a fit tolerance	指定拟合公差
+	Specify a point on the spline <exit>	指定样条曲线上的点 <退出>
+	Specify a precision	指定精度
+	Specify angle for dimension text	指定标注文字的角度
+	Specify base point of objects	指定对象的基点
+	Specify block attachment	指定块的附着方式
+	Specify break point	指定打断点
+	Specify center location override	指定圆心位置替代
+	Specify center of isocircle	指定等轴测圆的圆心
+	Specify center of view box	指定视图框的中心
+	Specify center point	指定中心点
+	Specify chamfer angle from the first line	指定第一条直线的倒角角度
+	Specify chamfer length on the first line	指定第一条直线的倒角距离
+	Specify change point	指定修改点
+	Specify clipping boundary or select invert option	指定剪裁边界或选择反向选项
+	Specify collected multileader location or [Vertical/Horizontal/Wrap]	指定合并后多重引线的位置或 [Vertical/Horizontal/Wrap]
+	Specify column height	指定栏高
+	Specify control point <exit>	指定控制点 <退出>
+	Specify diameter of isocircle	指定等轴测圆的直径
+	Specify dimension line position	指定标注线位置
+	Specify direction	指定方向
+	Specify direction (first point)	指定方向（第一点）
+	Specify direction (second point)	指定方向（第二点）
+	Specify direction of chord for arc	指定圆弧弦的方向
+	Specify direction of vertex tangent	指定顶点切线方向
+	Specify displacement	指定位移
+	Specify displacement base point	指定位移基点
+	Specify distance between columns (|||)	指定列间距 (|||)
+	Specify end tangent	指定终点切向
+	Specify endpoint of the arc	指定圆弧的端点
+	Specify existing fit point <exit>	指定现有拟合点 <退出>
+	Specify first break point	指定第一个打断点
+	Specify first corner of the unit cell	指定单元格的第一个角点
+	Specify first fence point	指定第一个栏选点
+	Specify first point for arc length dimension	指定弧长标注的第一点
+	Specify first point for breakline	指定折断线的第一点
+	Specify first point or [Options]	指定第一点或 [Options]
+	Specify fourth point or	指定第四点或
+	Specify gutter width	指定栏间距
+	Specify included angle for arc	指定圆弧的包含角
+	Specify insertion point of the table	指定表格的插入点
+	Specify jog location	指定折弯位置
+	Specify jog location (or press ENTER)	指定折弯位置（或按 Enter 键）
+	Specify key point on replacement objects to use as base point	指定替换对象上用作基点的关键点
+	Specify leader arrowhead location or [Remove leaders]	指定引线箭头位置或 [Remove leaders]
+	Specify leader start point	指定引线起点
+	Specify leaders to remove	指定要删除的引线
+	Specify leaders to remove or [Add leaders]	指定要删除的引线或 [Add leaders]
+	Specify length of line	指定直线长度
+	Specify linetype name	指定线型名称
+	Specify location for break symbol	指定打断符号的位置
+	Specify location of the text	指定文字位置
+	Specify maximum length of arc	指定圆弧的最大长度
+	Specify new angle	指定新角度
+	Specify new block insertion point	指定新的块插入点
+	Specify new block rotation angle	指定新的块旋转角度
+	Specify new circle radius	指定新的圆半径
+	Specify new elevation	指定新标高
+	Specify new fit point <exit>	指定新拟合点 <退出>
+	Specify new height	指定新高度
+	Specify new length	指定新长度
+	Specify new linetype scale	指定新线型比例
+	Specify new location	指定新位置
+	Specify new location for dimension text	指定标注文字的新位置
+	Specify new origin point	指定新原点
+	Specify new point on spline <exit>	指定样条曲线上的新点 <退出>
+	Specify new rotation angle	指定新旋转角度
+	Specify new text insertion point	指定新文字插入点
+	Specify new thickness	指定新厚度
+	Specify next fence point	指定下一个栏选点
+	Specify number of columns	指定列数
+	Specify origin of UCS	指定 UCS 的原点
+	Specify other corner	指定另一角点
+	Specify point on X-axis	指定 X 轴上的点
+	Specify point on the XY plane	指定 XY 平面上的点
+	Specify quadrant	指定象限
+	Specify radius of isocircle	指定等轴测圆的半径
+	Specify reference angle	指定参照角度
+	Specify reference length	指定参照长度
+	Specify rotation angle about Z axis	指定绕 Z 轴的旋转角度
+	Specify rotation around major axis	指定绕长轴的旋转角度
+	Specify scale factor for XYZ axes	指定 XYZ 轴的比例因子
+	Specify second point for arc length dimension	指定弧长标注的第二点
+	Specify second point for breakline	指定折断线的第二点
+	Specify second point on arc	指定圆弧上的第二点
+	Specify size of view box	指定视图框的大小
+	Specify spacing	指定间距
+	Specify start tangent	指定起点切向
+	Specify temporary OTRACK point	指定临时 OTRACK 点
+	Specify text height	指定文字高度
+	Specify the angle between items	指定项目之间的角度
+	Specify the angle to fill (+=ccw, -=cw)	指定填充角度 (+=逆时针, -=顺时针)
+	Specify the distance between columns (|||)	指定列间距 (|||)
+	Specify the incrementing elevation between rows	指定行间的标高增量
+	Specify the new angle	指定新角度
+	Specify the pattern origin	指定图案原点
+	Specify the reference angle	指定参照角度
+	Specify the side to trim on	指定要裁剪的一侧
+	Specify the tangent direction for the start point of arc	指定圆弧起点的切线方向
+	Specify third point	指定第三点
+	Specify tolerance	指定公差
+	Specify view twist angle	指定视图扭转角度
+	Specify width	指定宽度
+	Specify zoom scale factor	指定缩放比例因子
+	Backup copies are off, so the current file will be replaced.	备份副本已关闭，当前文件将被替换。
+	DXF 2007 and later keep them. Use Save As to keep them in the drawing.	DXF 2007 及更高版本可保留它们。请使用“另存为”将它们保留在图形中。
+	DXF 2010 and earlier keep them. Use Save As to keep them in the drawing.	DXF 2010 及更低版本可保留它们。请使用“另存为”将它们保留在图形中。
+	DXF 2013 and later keep them. Use Save As to keep them in the drawing.	DXF 2013 及更高版本可保留它们。请使用“另存为”将它们保留在图形中。
+	DXF keeps them. Use Save As to keep them in the drawing.	DXF 可保留它们。请使用“另存为”将它们保留在图形中。
+	Save Anyway	仍然保存
+	Save cancelled: {path} was not changed.	已取消保存：{path} 未被更改。
+	Saving {name} will remove content	保存 {name} 将丢失部分内容
+	The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.	当前文件似乎不完整，因此 {name} 保持原样，当前文件将被替换。
+	The current file is kept as {name} until the next save.	在下次保存之前，当前文件将保留为 {name}。
+	This format can't keep these objects yet: {objects}.	此格式暂不支持保留这些对象：{objects}。
+	{count} more types	另有 {count} 种类型
+	(select)	（选择）
+	<style overrides>	<样式替代>
+	A dimension style with this name already exists.	已存在同名的标注样式。
+	A file path is required.	必须提供文件路径。
+	Aliases are saved in your CADCraft profile and survive restarts.	别名保存在您的 CADCraft 配置文件中，重启后仍然有效。
+	All properties of {style}	{style} 的全部特性
+	All styles	所有样式
+	Alternate Units	换算单位
+	Angle between	项目间角度
+	Annotative	注释性
+	Block name:	块名称：
+	Check for updates when CADCraft starts	启动 CADCraft 时检查更新
+	Column spacing	列间距
+	Columns	列
+	Command Mode	命令模式
+	Compare	比较
+	Compare Dimension Styles	比较标注样式
+	Compare...	比较...
+	Create New Dimension Style	创建新标注样式
+	Current dimension style: {style}	当前标注样式：{style}
+	Default Mode	默认模式
+	Destination	目标
+	Dimension Style Manager	标注样式管理器
+	ENTER	Enter 键
+	Edit Attributes	编辑属性
+	Edit Mode	编辑模式
+	File name and path	文件名和路径
+	Fill angle	填充角度
+	Fit	调整
+	Import and replace	导入并替换
+	Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.	导入：此处没有文件对话框；请运行 ALIASEDIT，并通过其文本参数提供文件内容。
+	Importing a file replaces your {n} aliases, and any changes not applied yet.	导入文件将替换您现有的 {n} 个别名以及尚未应用的所有更改。
+	Import…	导入…
+	Invalid base X coordinate.	基点 X 坐标无效。
+	Invalid base Y coordinate.	基点 Y 坐标无效。
+	Items	项目
+	Keep my aliases	保留我的别名
+	Leading	前导
+	Level spacing	层间距
+	Levels	层数
+	Lines	直线
+	Longer click duration:	长按时长：
+	Modify Dimension Style: {style}	修改标注样式：{style}
+	Modify...	修改...
+	New Dimension Style: {style}	新建标注样式：{style}
+	New style name	新样式名
+	New...	新建...
+	No objects selected	未选择对象
+	No objects selected and no command running:	未选择对象且没有命令在运行时：
+	Objects	对象
+	Objects selected and no command running:	已选择对象且没有命令在运行时：
+	Override Current Style: {style}	替代当前样式：{style}
+	Override...	替代...
+	Pick center	拾取中心
+	Pick point	拾取点
+	Preview of: {style}	预览：{style}
+	Preview of: {style} (overrides)	预览：{style}（含替代）
+	Primary Units	主单位
+	Rename	重命名
+	Repeat last command	重复上一个命令
+	Right-Click Customization	右键自定义
+	Right-Click Customization...	右键自定义...
+	Rotate items	旋转项目
+	Row elevation	行标高增量
+	Row spacing	行间距
+	Rows	行
+	Run ALIASEDIT with the file's contents using its text parameter.	请运行 ALIASEDIT，并通过其文本参数提供文件内容。
+	Save to current style	保存到当前样式
+	Select a block.	选择一个块。
+	Select objects first	请先选择对象
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	由文字样式“{style}”设定，该样式具有固定高度。将样式高度设为 0 即可使用标注文字高度。
+	Shortcut Menu	快捷菜单
+	Shortcut Menu: always enabled	快捷菜单：始终启用
+	Shortcut Menu: enabled when command options are present	快捷菜单：命令有选项时启用
+	Source	源
+	Start with	基于
+	Styles	样式
+	Styles in use	使用中的样式
+	Symbols and Arrows	符号和箭头
+	Tag: {tag}	标记：{tag}
+	Tolerances	公差
+	Trailing	后续
+	Turn on time-sensitive right-click	启用时间相关右键
+	Turned off, CADCraft never offers an update on its own; Help ▸ Check for Updates… still looks.	关闭后，CADCraft 不会自行提示更新；“帮助 ▸ 检查更新…”仍可手动检查。
+	Turned off, a right-click while a command runs does what Right-Click Customization sets for Command mode.	关闭后，命令运行期间的右键单击将按“右键自定义”中为命令模式设定的方式执行。
+	Type something to find	输入要查找的内容
+	Values typed at the command line work too	在命令行中输入的值同样有效
+	Variable	变量
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	命令运行期间，快速单击相当于 Enter，长按则打开快捷菜单。
+	While a command runs:	命令运行期间：
+	With	与
+	With no command running, a quick click repeats the last command or runs what was typed.	没有命令运行时，快速单击将重复上一个命令，或执行已输入的内容。
+	Write Block was opened on another drawing; open it again.	“写块”是为另一个图形打开的；请重新打开。
+	milliseconds	毫秒
+	{count} differences	{count} 处差异
+	{n} more warnings; see the command line.	另有 {n} 条警告；请查看命令行。
+	{objects} written to "{path}".	已将 {objects} 写入“{path}”。
+	Unnamed	未命名
+	Base point	基点
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	您指定的快捷键优先于 CADCraft 自带的快捷键。更改立即生效，并会保留到下次使用。
+	Back to CADCraft's shortcut	恢复为 CADCraft 的快捷键
+	Close panel	关闭面板
+	Close {panel}	关闭 {panel}
+	Import PDF	导入 PDF
+	Import Page	导入页面
+	Import failed: {error}	导入失败：{error}
+	Import filled shapes as solid hatches	将填充形状导入为实体填充
+	Import text as TEXT	将文字导入为单行文字
+	Keyboard Shortcuts	键盘快捷键
+	Needs Ctrl, Alt or a function key	需要 Ctrl、Alt 或功能键
+	Overrides the dimension style. Right-click to use the style's value.	已替代标注样式。右键单击可改用样式中的值。
+	Page number	页码
+	Paper units	图纸单位
+	Password	密码
+	Press the keys	请按下按键
+	Replaces the shortcut of {commands}	将替换 {commands} 的快捷键
+	Scale factor	比例因子
+	Some of these dimensions take their text height from a fixed-height text style.	其中部分标注的文字高度来自固定高度的文字样式。
+	The drawing this window was opened for is closed; nothing was imported.	此窗口所对应的图形已关闭；未导入任何内容。
+	Use the PDF's line widths	使用 PDF 的线宽
+	Use the style's value	使用样式中的值
+	What one paper-space unit is on this layout	此布局中一个图纸空间单位的含义
+	Above	上方
+	Above text	文字上方
+	Alt enabled	启用换算单位
+	Alt format	换算格式
+	Alt precision	换算精度
+	Alt prefix and suffix	换算前缀和后缀
+	Alt round	换算舍入
+	Alt scale factor	换算比例因子
+	Alt zero suppression	换算消零
+	Angle format	角度格式
+	Angle precision	角度精度
+	Angular zero suppression	角度消零
+	Arc length symbol	弧长符号
+	Architectural stacked	建筑堆叠
+	Arrow 1	箭头 1
+	Arrow 2	箭头 2
+	Arrowheads	箭头
+	Arrows	箭头
+	At Ext Line 1	在延伸线 1 处
+	At Ext Line 2	在延伸线 2 处
+	Baseline spacing	基线间距
+	Before text	文字之前
+	Below	下方
+	Best fit	最佳效果
+	Bottom	底部
+	Center mark size	圆心标记大小
+	Decimal degrees	十进制度数
+	Decimal separator	小数分隔符
+	Degrees Minutes Seconds	度/分/秒
+	Diagonal stacking	对角堆叠
+	Dim line color	标注线颜色
+	Dim line ext	标注线超出量
+	Dim line forced	强制绘制标注线
+	Dim line linetype	标注线线型
+	Dim line lineweight	标注线线宽
+	Dim roundoff	标注舍入
+	Dim scale linear	线性标注比例
+	Dim units	标注单位
+	Ext line 1 linetype	延伸线 1 线型
+	Ext line 2 linetype	延伸线 2 线型
+	Ext line color	延伸线颜色
+	Ext line ext	延伸线超出量
+	Ext line fixed	固定长度延伸线
+	Ext line length	延伸线长度
+	Ext line lineweight	延伸线线宽
+	Ext line offset	延伸线偏移
+	Fraction format	分数格式
+	Fractional stacked	分数堆叠
+	Gradians	百分度
+	Hide dim line 1	隐藏标注线 1
+	Hide dim line 2	隐藏标注线 2
+	Hide ext line 1	隐藏延伸线 1
+	Hide ext line 2	隐藏延伸线 2
+	Horizontal stacking	水平堆叠
+	JIS	JIS
+	Jog angle	折弯角度
+	Keep dim line with text	标注线随文字移动
+	Leader arrow	引线箭头
+	Lines & Arrows	直线和箭头
+	Lower tolerance	下偏差
+	Middle	中间
+	Move text, add leader	移动文字，添加引线
+	Move text, no leader	移动文字，不添加引线
+	Not stacked	不堆叠
+	Outside	外部
+	Over Ext Line 1	在延伸线 1 上方
+	Over Ext Line 2	在延伸线 2 上方
+	Prefix and suffix	前缀和后缀
+	Suppress arrows	抑制箭头
+	Text and arrows	文字和箭头
+	Text inside	文字在内部
+	Text inside align	内部文字对齐
+	Text movement	文字移动
+	Text offset	文字偏移
+	Text outside align	外部文字对齐
+	Text pos hor	文字水平位置
+	Text pos vert	文字垂直位置
+	Text vertical position	文字垂直位置
+	Tick size	斜线大小
+	Tolerance height	公差高度
+	Tolerance pos vert	公差垂直位置
+	Tolerance precision	公差精度
+	Tolerance zero suppression	公差消零
+	Top	顶部
+	Upper tolerance	上偏差
+	Windows desktop	Windows 桌面
+	Zero suppression	消零
