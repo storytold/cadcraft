@@ -1667,3 +1667,61 @@ fn pieces_cut_by_a_clip_stop_at_the_list_limits_and_say_so() {
         }
     }
 }
+
+/// A block reference clipped (XCLIP, frame off) to a large rectangle, of block "Z" holding `kind`.
+fn xclipped_ref(d: &mut Drawing, kind: EntityKind, at: Vec3) -> EntityKind {
+    if d.block("Z").is_none() {
+        let mut blk = cadcraft_doc::Block::new("Z");
+        blk.entities.push(block_entity(1, Common::default(), kind));
+        d.blocks.insert("Z".into(), std::sync::Arc::new(blk));
+    }
+    let EntityKind::Insert(mut ins) = insert_of("Z") else { panic!("an insert") };
+    ins.insert = at;
+    ins.clip = Some(cadcraft_doc::ClipBoundary::new(vec![Vec2::new(-100.0, 1.0), Vec2::new(100.0, 100.0)]));
+    EntityKind::Insert(ins)
+}
+
+#[test]
+fn attributes_cut_by_a_clip_say_what_the_budget_left_out() {
+    // The last object of the drawing: a clipped reference whose attribute text runs out of points.
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("XCLIPFRAME", 0);
+    let kind = xclipped_ref(&mut d, line_common(Common::default()).1, Vec3::ZERO);
+    let EntityKind::Insert(mut ins) = kind else { panic!("an insert") };
+    let mut a = attrib("TAG");
+    a.text.insert = Vec3::new(1.0, 2.0, 0.0);
+    a.text.value = "ABCDEFGHIJKLMNOP".into();
+    ins.attribs.push(a);
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let build = |max_points| crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, max_points, MAX_DISPLAY_PRIMS);
+    let full = build(MAX_DISPLAY_POINTS);
+    assert!(!full.truncated && points(&full) > 20, "{}", points(&full));
+    let l = build(points(&full) - 1);
+    assert!(l.truncated && points(&l) < points(&full), "{} of {}", points(&l), points(&full));
+}
+
+#[test]
+fn parts_built_on_all_cores_are_joined_within_the_list_limits() {
+    // Two clipped zigzags in different parts of the parallel build: each part fits the list's
+    // limits and the build's counts, which hold the zigzags and not their pieces; together they
+    // don't fit.
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("XCLIPFRAME", 0);
+    for i in 0..600 {
+        let kind = if i == 0 || i == 300 { xclipped_ref(&mut d, zigzag(), Vec3::ZERO) } else { point_at(f64::from(i)) };
+        d.add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    let build = |max_points, max_prims| crate::pipeline::build_space_within(&d, &Space::Model, &Options::default(), false, max_points, max_prims);
+    let full = build(MAX_DISPLAY_POINTS, MAX_DISPLAY_PRIMS);
+    assert!(!full.truncated && full.prims.len() > 700 && points(&full) > 1000, "{} prims, {} points", full.prims.len(), points(&full));
+    let max = full.prims.len() - 50;
+    let l = build(MAX_DISPLAY_POINTS, max);
+    assert!(l.truncated && l.prims.len() <= max, "{} of {max}", l.prims.len());
+    let max = points(&full) - 50;
+    let l = build(max, MAX_DISPLAY_PRIMS);
+    assert!(l.truncated && points(&l) <= max, "{} of {max}", points(&l));
+    // Exactly as much as the parts hold is joined whole.
+    for l in [build(MAX_DISPLAY_POINTS, full.prims.len()), build(points(&full), MAX_DISPLAY_PRIMS)] {
+        assert!(!l.truncated && l.prims.len() == full.prims.len(), "{} of {}", l.prims.len(), full.prims.len());
+    }
+}

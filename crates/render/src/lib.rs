@@ -464,6 +464,23 @@ impl<'a> Builder<'a> {
     fn limits(&self) -> Limits {
         Limits { points: self.max_points, prims: self.max_prims }
     }
+    /// Join the parts of a list built on all cores to this builder's list, in drawing order and
+    /// within its limits ([`Limits`]): the clipped copies a part holds are in no count, so the
+    /// parts can hold more together than one list may. At the first part that doesn't fit the build
+    /// is spent and the parts left are not joined.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn join(&mut self, parts: Vec<DisplayList>) {
+        let points = |l: &DisplayList| l.verts.len().saturating_add(l.tris.len());
+        for part in parts {
+            if self.list.prims.len().saturating_add(part.prims.len()) > self.max_prims
+                || points(&self.list).saturating_add(points(&part)) > self.max_points
+            {
+                self.spend();
+                return;
+            }
+            display::append(&mut self.list, part);
+        }
+    }
 }
 
 /// The clip boundary of image `i` as a closed outline, or `None` when the whole image shows.

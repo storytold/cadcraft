@@ -125,6 +125,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     let mut part = attr_clip.as_ref().map(|_| b.part());
     attributes(part.as_mut().unwrap_or(&mut *b), ctx, e, ins, rgb, own);
     if let (Some(part), Some((region, inverted))) = (part, &attr_clip) {
+        b.list.truncated |= part.list.truncated;
         let limits = b.limits();
         if !append_clipped_keep(&mut b.list, &part.list, &if *inverted { Clip::Outside(region) } else { Clip::Poly(region) }, limits) {
             b.spend();

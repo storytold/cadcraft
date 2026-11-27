@@ -1,5 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::display::append;
 use super::display::{DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 use super::viewports::{MAX_VIEWPORTS, viewport};
@@ -196,13 +194,11 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
             part.list
         })
         .collect();
-    // One allocation per array for the joined list.
-    b.list.prims.reserve(parts.iter().map(|p| p.prims.len()).sum());
-    b.list.verts.reserve(parts.iter().map(|p| p.verts.len()).sum());
-    b.list.tris.reserve(parts.iter().map(|p| p.tris.len()).sum());
-    for part in parts {
-        append(&mut b.list, part);
-    }
+    // One allocation per array for the joined list, within what it may hold.
+    b.list.prims.reserve(parts.iter().map(|p| p.prims.len()).sum::<usize>().min(b.max_prims));
+    b.list.verts.reserve(parts.iter().map(|p| p.verts.len()).sum::<usize>().min(b.max_points));
+    b.list.tris.reserve(parts.iter().map(|p| p.tris.len()).sum::<usize>().min(b.max_points));
+    b.join(parts);
 }
 
 /// The plot style table a build draws with: the one in `opts`, else (on screen) the layout's

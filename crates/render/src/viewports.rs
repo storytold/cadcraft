@@ -1,5 +1,3 @@
-#[cfg(not(target_arch = "wasm32"))]
-use super::display::append;
 use super::display::{DImage, DPrim, DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
@@ -174,9 +172,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                     part.list
                 })
                 .collect();
-            for part in parts {
-                append(&mut sub.list, part);
-            }
+            sub.join(parts);
         }
     } else {
         let c = ctx();
