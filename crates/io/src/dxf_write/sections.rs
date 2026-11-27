@@ -464,7 +464,13 @@ fn write_plot_settings(w: &mut W, d: &Drawing, page: &PageSetup, model: bool) {
     let start = w.t.len();
     // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
     // per 143 drawing units).
-    let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
+    let scale = if page.scale_to_fit && page.fit_scale_pending {
+        1.0
+    } else if page.scale.is_finite() && page.scale > 0.0 {
+        page.scale
+    } else {
+        1.0
+    };
     // The file's standard scale (such as 1:50) while the scale is still the one read with it.
     let file_standard = page.file_standard_scale.filter(|&(_, s)| !page.scale_to_fit && s == scale).map(|(code, _)| code);
     let standard = page.scale_to_fit || scale == 1.0 || file_standard.is_some();
@@ -596,7 +602,8 @@ fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Op
         None if cadcraft_render::paper::page_unit_mm(d, page) == 1.0 => Some(2),
         None => None,
     };
-    if view.is_some() || unit_marker.is_some() {
+    let pending_scale = (page.scale_to_fit && page.fit_scale_pending && page.scale.is_finite() && page.scale > 0.0).then_some(page.scale);
+    if view.is_some() || unit_marker.is_some() || pending_scale.is_some() {
         w.s(1001, dxf_ext::APP);
         if let Some((c, height)) = view {
             w.s(1000, "PSVIEW");
@@ -609,6 +616,12 @@ fn write_layout_data(w: &mut W, d: &Drawing, data: LayoutWriteData<'_>, view: Op
             w.s(1000, "PSUNITS");
             w.s(1002, "{");
             w.i(1070, units);
+            w.s(1002, "}");
+        }
+        if let Some(scale) = pending_scale {
+            w.s(1000, "PSFITSCALE");
+            w.s(1002, "{");
+            w.f(1040, scale);
             w.s(1002, "}");
         }
     }
@@ -689,7 +702,15 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
                 page: &l.page,
                 view: l.view,
                 ucs: l.ucs.as_ref(),
-                limits: l.limits,
+                // Preserve imported limits, but persist the displayed scaled sheet for layouts
+                // created in CADCraft so a later read does not replace it with default limits.
+                limits: l.limits.or_else(|| {
+                    if l.page.scale == 1.0 {
+                        None
+                    } else {
+                        cadcraft_render::layout_sheet(d, &l.name).map(|sheet| (sheet.bounds().min, sheet.bounds().max))
+                    }
+                }),
                 model: false,
             },
         );

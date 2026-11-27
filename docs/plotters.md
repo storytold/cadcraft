@@ -4,6 +4,16 @@ A plotter (output device) decides what a plot writes and on which paper sizes. P
 and plots pick a device and one of its papers. Each paper carries margins, which bound its
 printable area. Layouts show the printable area as a dashed outline on the sheet.
 
+On a layout tab, the sheet and its margins are divided by the layout's plot scale and
+placed at its saved paper-space limits, when those still match the page setup. Otherwise,
+it starts at the paper-space origin. A fitted layout read from a file uses its saved
+effective ratio; when fit is newly selected, CADCraft shows the physical sheet until an
+effective ratio is available, rather than reusing the previous custom scale. A DXF save
+records the 1:1 fallback for fit and keeps the custom scale in CADCraft metadata.
+Invalid or unrepresentable scales also use the physical sheet. Changing geometry does not
+move the sheet. Physical
+output still uses the selected paper size: an A4 plot stays A4 even when the drawing is larger.
+
 ## Devices
 
 The built-in devices come first:

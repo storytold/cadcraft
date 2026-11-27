@@ -800,6 +800,8 @@ pub struct PageSetup {
     pub scale_to_fit: bool,
     /// Paper units per drawing unit.
     pub scale: f64,
+    /// Fit was selected after a custom scale; no effective fitted ratio is known yet.
+    pub fit_scale_pending: bool,
     pub plot_style_table: String,
     pub center: bool,
     pub lineweights: bool,
@@ -821,8 +823,8 @@ pub struct PageSetup {
     /// and no turn (#1463). `None` for page setups made in CADCraft.
     #[serde(skip)]
     pub file_paper: Option<(f64, f64, i64)>,
-    /// The paper image origin (DXF groups 148/149, in plot paper units) as the file had it, so a
-    /// save keeps where the sheet sits; `None` for a page CADCraft made, written as 0,0 (#2109).
+    /// The paper image origin (DXF groups 148/149) as the file had it, so a save keeps it.
+    /// `None` for a page CADCraft made, written as 0,0 (#2109).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_origin: Option<Vec2>,
     /// The plot layout flags (DXF group 70 of AcDbPlotSettings) as the file had them. Saving keeps
@@ -853,6 +855,7 @@ impl Default for PageSetup {
             plot_window: [0.0; 4],
             scale_to_fit: false,
             scale: 1.0,
+            fit_scale_pending: false,
             plot_style_table: String::new(),
             center: false,
             lineweights: true,

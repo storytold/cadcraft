@@ -165,7 +165,7 @@ fn a_paper_viewport_behind_a_model_viewport_stays_id_1_through_dwg() {
 
 /// The paper-space viewport a save adds is the sheet as large as it plots: a layout with a custom
 /// plot scale (here 49.6 mm of paper per unit, as in #2108's file) has an A3 sheet of 8.47 × 5.99
-/// units in paper space, not 420 × 297. A layout at 1:1 or scaled to fit keeps the page size.
+/// units in paper space, not 420 × 297. The stored effective scale also sizes a fitted layout.
 #[test]
 fn the_added_paper_viewport_follows_the_plot_scale() {
     let sheet_width = |scale: f64, fit: bool| {
@@ -182,8 +182,25 @@ fn the_added_paper_viewport_follows_the_plot_scale() {
     };
     assert!((sheet_width(49.6, false) - 420.0 / 49.6).abs() < 1e-9, "{}", sheet_width(49.6, false));
     assert!((sheet_width(1.0, false) - 420.0).abs() < 1e-9);
-    assert!((sheet_width(49.6, true) - 420.0).abs() < 1e-9, "scaled to fit: the scale means nothing");
+    assert!((sheet_width(49.6, true) - 420.0 / 49.6).abs() < 1e-9);
     assert!((sheet_width(f64::NAN, false) - 420.0).abs() < 1e-9, "an unusable scale is 1");
+}
+
+#[test]
+fn the_added_paper_viewport_uses_the_saved_sheet_position() {
+    let mut d = Drawing::new_metric();
+    let l = &mut d.layouts[0];
+    (l.page.width_mm, l.page.height_mm, l.page.landscape, l.page.paper_mm) = (210.0, 297.0, true, Some(true));
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    let space = Space::Paper(l.name.clone());
+    d.add(&space, Common::default(), viewport(2)).unwrap();
+    let text = cadcraft_io::write_dxf(&d);
+    let vps = records(&text, "VIEWPORT");
+    let sheet = &vps[0];
+    let number = |code| group(sheet, code).unwrap().parse::<f64>().unwrap();
+    assert_eq!((number("10"), number("20"), number("40"), number("41")), (301.0, 212.0, 594.0, 420.0));
 }
 
 /// A layout viewport's view twist (group 51, #1316) is read and written, so DXF and DWG keep it;

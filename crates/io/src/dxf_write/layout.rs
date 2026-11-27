@@ -47,9 +47,11 @@ fn sheet_scale(l: &Layout) -> f64 {
 /// leaves it implicit again.
 pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
+    // Keep generated viewport dimensions bounded even when a file supplies an extreme scale.
+    let sheet = (1e-6..=1e6).contains(&l.page.scale).then(|| cadcraft_render::layout_sheet(d, &l.name)).flatten();
     let paper = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
-    let size = paper / sheet_scale(l);
-    let center = size * 0.5;
+    let size = sheet.map_or_else(|| paper / sheet_scale(l), |s| s.size);
+    let center = sheet.map_or(size * 0.5, |s| s.bounds().center());
     let h = w.h();
     w.s(0, "VIEWPORT");
     w.s(5, h);

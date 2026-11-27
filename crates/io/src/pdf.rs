@@ -698,18 +698,7 @@ fn links(list: &cadcraft_render::DisplayList, map: &Map, clip_pt: &Bounds2, link
 
 /// Paper units per drawing unit for a plot.
 pub(crate) fn plot_scale(b: &Bounds2, sheet: &Sheet, fit: bool, scale: Option<f64>) -> f64 {
-    if let Some(s) = scale.filter(|s| s.is_finite() && *s > 0.0)
-        && !fit
-    {
-        return s;
-    }
-    if !fit || b.is_empty() {
-        return 1.0;
-    }
-    let pw = sheet.printable.width();
-    let ph = sheet.printable.height();
-    let s = (pw / b.width().max(1e-12)).min(ph / b.height().max(1e-12));
-    if s.is_finite() && s > 0.0 { s } else { 1.0 }
+    paper::plot_scale(b, sheet, fit, scale)
 }
 
 /// Largest coordinate written (points); a primitive reaching further is clipped to the plot

@@ -9,7 +9,7 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
 use super::file::{base64_encode, io};
-use super::{CommandSpec, bad, bool_or, find_command, point_param, point_value, str_param, targets};
+use super::{CommandSpec, bad, bool_or, find_command, point_req, point_value, str_param, targets};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 use viewports::MviewM;
@@ -385,9 +385,11 @@ fn run_layout(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- viewports ----------
 
-/// The printable area of a layout, in paper units.
+/// The printable area of a layout, in paper-space drawing coordinates.
 fn printable(s: &Session, layout: &str) -> Result<Bounds2> {
-    cadcraft_render::sheet(s.doc()?, layout).map(|sh| sh.printable).ok_or_else(|| bad("mview", format!("no layout `{layout}`")))
+    cadcraft_render::layout_sheet(s.doc()?, layout)
+        .map(|sh| sh.printable)
+        .ok_or_else(|| bad("mview", format!("no usable paper sheet for layout `{layout}`")))
 }
 
 /// The layout a viewport command acts on: `layout` param or the current layout.
@@ -448,11 +450,17 @@ fn add_viewports(s: &mut Session, space: &Space, rect: Bounds2, count: usize, ar
     if !(1..=4).contains(&count) {
         return Err(bad("mview", "count must be 1, 2, 3 or 4"));
     }
-    if rect.is_empty() || !rect.min.is_finite() || !rect.max.is_finite() || rect.width() < 1e-6 || rect.height() < 1e-6 {
+    if rect.is_empty()
+        || !rect.min.is_finite()
+        || !rect.max.is_finite()
+        || !rect.width().is_finite()
+        || !rect.height().is_finite()
+        || rect.width() < 1e-6
+        || rect.height() < 1e-6
+        || rect.width() > 1e12
+        || rect.height() > 1e12
+    {
         return Err(bad("mview", "the viewport has no area"));
-    }
-    if rect.width() > 1e7 || rect.height() > 1e7 {
-        return Err(bad("mview", "the viewport is too large"));
     }
     let common = s.current_common();
     let d = s.doc_mut()?;
@@ -472,9 +480,10 @@ fn mview(s: &mut Session, p: &Value, count: usize, cmd: &str) -> Result<Value> {
     }
     let space = target_layout(s, cmd, p)?;
     let Space::Paper(name) = &space else { return Err(bad(cmd, "not a layout")) };
-    let rect = match (point_param(p, "p1"), point_param(p, "p2")) {
-        (Some(a), Some(b)) => Bounds2::new(a, b),
-        _ => printable(s, name)?,
+    let rect = match (p.get("p1"), p.get("p2")) {
+        (Some(_), Some(_)) => Bounds2::new(point_req(cmd, p, "p1")?, point_req(cmd, p, "p2")?),
+        (None, None) => printable(s, name)?,
+        _ => return Err(bad(cmd, "`p1` and `p2` must be provided together")),
     };
     let arrangement = str_param(p, "arrangement").unwrap_or("");
     let hs = add_viewports(s, &space, rect, count, arrangement)?;
@@ -745,14 +754,21 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = p.get("lineweights").and_then(Value::as_bool) {
         page.lineweights = v;
     }
+    let fit_was_enabled = page.scale_to_fit;
     if let Some(v) = p.get("scaleToFit").and_then(Value::as_bool) {
         page.scale_to_fit = v;
     }
     if let Some(v) = p.get("center").and_then(Value::as_bool) {
         page.center = v;
     }
+    let previous_scale = page.scale;
     if let Some(v) = p.get("scale") {
         page.scale = parse_scale(v).ok_or_else(|| bad(cmd, "`scale` must be positive"))?;
+    }
+    let invalidate_fit = page.scale_to_fit
+        && (!fit_was_enabled || p.get("scale").is_some_and(|_| page.scale != previous_scale));
+    if invalidate_fit {
+        page.fit_scale_pending = true;
     }
     if let Some(v) = str_param(p, "plotArea") {
         let v = v.to_ascii_lowercase();
@@ -776,6 +792,10 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if changes {
         if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
+            if invalidate_fit {
+                // Limits for the former custom scale cannot locate a newly fitted sheet.
+                l.limits = None;
+            }
             l.page = page.clone();
         }
         s.touch();

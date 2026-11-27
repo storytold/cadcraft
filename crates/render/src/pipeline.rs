@@ -126,7 +126,7 @@ pub(crate) fn build_space_within(d: &Drawing, space: &Space, opts: &Options, plo
         max_points,
     };
     if let Space::Paper(name) = space {
-        b.list.sheet = paper::sheet(d, name);
+        b.list.sheet = if plotting { paper::sheet(d, name) } else { paper::layout_sheet(d, name) };
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));

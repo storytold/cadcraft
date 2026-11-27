@@ -173,6 +173,120 @@ fn layout_viewport_shows_model_clipped() {
 }
 
 #[test]
+fn layout_sheet_uses_saved_scaled_limits_without_changing_plot_media() {
+    let mut d = sample();
+    let layout = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    layout.page = cadcraft_doc::PageSetup {
+        paper_mm: Some(true),
+        width_mm: 210.0,
+        height_mm: 297.0,
+        scale: 0.5,
+        scale_to_fit: true,
+        plot_area: "extents".into(),
+        center: true,
+        margins_mm: [5.0; 4],
+        image_origin: Some(Vec2::new(-15.0, -12.0)),
+        ..Default::default()
+    };
+    layout.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    let space = Space::Paper("Layout1".into());
+    let screen = build(&d, &space, &Options::default()).sheet.unwrap();
+    assert_eq!(screen.bounds(), Bounds2::new(Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    assert_eq!(screen.printable, Bounds2::new(Vec2::new(14.0, 12.0), Vec2::new(588.0, 412.0)));
+    let plot = build_plot(&d, &space, &Options::default()).sheet.unwrap();
+    assert_eq!(plot.bounds(), Bounds2::new(Vec2::ZERO, Vec2::new(297.0, 210.0)));
+}
+
+#[test]
+fn layout_sheet_uses_stored_scale_when_limits_are_stale() {
+    let mut d = sample();
+    let layout = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    layout.page = cadcraft_doc::PageSetup {
+        paper_mm: Some(true),
+        width_mm: 210.0,
+        height_mm: 297.0,
+        scale: 0.5,
+        scale_to_fit: true,
+        plot_area: "window".into(),
+        plot_window: [100.0, 50.0, 674.0, 450.0],
+        center: true,
+        margins_mm: [5.0; 4],
+        ..Default::default()
+    };
+    layout.limits = Some((Vec2::ZERO, Vec2::new(12.0, 9.0)));
+    let space = Space::Paper("Layout1".into());
+    d.add(&space, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(100.0, 50.0, 0.0), b: Vec3::new(674.0, 450.0, 0.0) }))
+        .unwrap();
+    let screen = build(&d, &space, &Options::default()).sheet.unwrap();
+    assert_eq!(screen.printable, Bounds2::new(Vec2::new(10.0, 10.0), Vec2::new(584.0, 410.0)));
+    assert_eq!(screen.bounds(), Bounds2::new(Vec2::ZERO, Vec2::new(594.0, 420.0)));
+    d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.plot_area = "extents".into();
+    let extents = build(&d, &space, &Options::default()).sheet.unwrap();
+    assert_eq!(extents.bounds(), screen.bounds());
+    assert_eq!(extents.printable, screen.printable);
+}
+
+#[test]
+fn layout_sheet_does_not_infer_placement_from_the_image_origin() {
+    let mut d = sample();
+    let layout = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    layout.page = cadcraft_doc::PageSetup {
+        paper_mm: Some(true),
+        width_mm: 210.0,
+        height_mm: 297.0,
+        scale: 0.5,
+        margins_mm: [5.0; 4],
+        image_origin: Some(Vec2::new(-12.0, -9.0)),
+        ..Default::default()
+    };
+    let space = Space::Paper("Layout1".into());
+    let screen = build(&d, &space, &Options::default()).sheet.unwrap();
+    assert_eq!(screen.bounds(), Bounds2::new(Vec2::ZERO, Vec2::new(594.0, 420.0)));
+    assert_eq!(screen.printable.min, Vec2::new(10.0, 10.0));
+    assert_eq!(screen.unit_mm, 1.0);
+}
+
+#[test]
+fn layout_sheet_falls_back_for_unrepresentable_scales() {
+    let mut d = sample();
+    for scale in [0.0, -1.0, 1e-7, 2e6, f64::NAN, f64::INFINITY, f64::from_bits(1)] {
+        let page = &mut d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+        page.scale = scale;
+        let screen = build(&d, &Space::Paper("Layout1".into()), &Options::default()).sheet.unwrap();
+        let physical = crate::sheet(&d, "Layout1").unwrap();
+        assert_eq!(screen, physical, "invalid scale {scale}");
+    }
+}
+
+#[test]
+fn pending_fit_does_not_use_a_stale_custom_scale() {
+    let mut d = sample();
+    let l = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.page.fit_scale_pending = true;
+    assert_eq!(crate::layout_sheet(&d, "Layout1"), crate::sheet(&d, "Layout1"));
+}
+
+#[test]
+fn extents_fit_does_not_move_the_sheet_when_geometry_changes() {
+    let mut d = sample();
+    let l = d.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.page.plot_area = "extents".into();
+    l.page.center = true;
+    let space = Space::Paper("Layout1".into());
+    let before = build(&d, &space, &Options::default()).sheet.unwrap().bounds();
+    d.add(&space, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(900.0, 400.0, 0.0), b: Vec3::new(1000.0, 600.0, 0.0) }))
+        .unwrap();
+    assert_eq!(build(&d, &space, &Options::default()).sheet.unwrap().bounds(), before);
+}
+
+#[test]
 fn layout_viewport_frozen_layer_and_id1() {
     let mut v = vp(Vec2::new(5.0, 4.0), 20.0, 20.0, Vec2::new(5.0, 5.0), 20.0, 2);
     v.frozen_layers = vec!["0".into()];

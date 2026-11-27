@@ -47,6 +47,117 @@ fn new_layout_gets_viewport_zoomed_to_extents() {
 }
 
 #[test]
+fn zoom_limits_frames_the_scaled_and_positioned_layout_sheet() {
+    let mut s = Session::new();
+    let layout = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    layout.page.paper_mm = Some(true);
+    layout.page.width_mm = 210.0;
+    layout.page.height_mm = 297.0;
+    layout.page.scale = 0.5;
+    layout.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    s.execute("layout.set", &json!({"name":"Layout1"})).unwrap();
+    assert_eq!(s.zoom_limits().unwrap(), Bounds2::new(Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+}
+
+#[test]
+fn mview_defaults_to_the_scaled_positioned_printable_area() {
+    let mut s = Session::new();
+    let l = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.margins_mm = [5.0; 4];
+    l.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    s.execute("mview", &json!({"layout": "Layout1"})).unwrap();
+    let vp = &viewports(&s, "Layout1")[0].1;
+    assert_eq!(vp.center.xy(), Vec2::new(301.0, 212.0));
+    assert_eq!((vp.width, vp.height), (574.0, 400.0));
+}
+
+#[test]
+fn mview_uses_the_physical_sheet_when_the_scale_is_invalid() {
+    let mut s = Session::new();
+    s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.scale = f64::NAN;
+    let printable = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap().printable;
+    s.execute("mview", &json!({"layout": "Layout1"})).unwrap();
+    let vp = &viewports(&s, "Layout1")[0].1;
+    assert_eq!((vp.width, vp.height), (printable.width(), printable.height()));
+}
+
+#[test]
+fn mview_accepts_a0_printable_area_at_small_plot_scale() {
+    let mut s = Session::new();
+    s.execute("pagesetup", &json!({
+        "layout": "Layout1",
+        "paper": "A0",
+        "landscape": true,
+        "paperUnits": "mm",
+        "margins": [5.0, 5.0, 5.0, 5.0],
+        "scale": 0.0001
+    })).unwrap();
+    s.execute("mview", &json!({"layout": "Layout1"})).unwrap();
+    let vp = &viewports(&s, "Layout1")[0].1;
+    assert!(vp.width > 1e7, "A0 printable width remains usable at scale 1:10000");
+    assert!(vp.height > 0.0);
+}
+
+#[test]
+fn resubmitting_the_same_fit_scale_preserves_imported_limits() {
+    let mut s = Session::new();
+    let l = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    let imported = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    *s.doc_mut().unwrap() = imported;
+    let before = cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap();
+    s.execute("pagesetup", &json!({"layout":"Layout1","scaleToFit":true,"scale":0.5})).unwrap();
+    let after = cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap();
+    assert_eq!(after, before);
+    assert_eq!(after.bounds(), Bounds2::new(Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+}
+
+#[test]
+fn enabling_fit_does_not_reuse_the_previous_custom_sheet() {
+    let mut s = Session::new();
+    s.execute("pagesetup", &json!({"layout":"Layout1","paper":"A4","scale":0.5})).unwrap();
+    let bounds = cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap().bounds();
+    s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().limits = Some((bounds.min, bounds.max));
+    s.execute("pagesetup", &json!({"layout":"Layout1","scaleToFit":true})).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(cadcraft_render::layout_sheet(d, "Layout1"), cadcraft_render::sheet(d, "Layout1"));
+    assert_eq!(d.layout("Layout1").unwrap().page.scale, 0.5, "the custom scale remains available");
+    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(d).as_bytes()).unwrap();
+    assert_eq!(cadcraft_render::layout_sheet(&back, "Layout1"), cadcraft_render::sheet(&back, "Layout1"), "fit remains unscaled after reopening");
+    assert_eq!(back.layout("Layout1").unwrap().page.scale, 0.5, "the custom scale also survives reopening");
+    s.execute("pagesetup", &json!({"layout":"Layout1","scaleToFit":false})).unwrap();
+    assert_eq!(s.doc().unwrap().layout("Layout1").unwrap().page.scale, 0.5);
+    assert_eq!(cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap().size.x, 594.0);
+}
+
+#[test]
+fn resubmitting_fit_keeps_an_imported_effective_ratio() {
+    let mut s = Session::new();
+    let l = s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap();
+    l.page.paper_mm = Some(true);
+    l.page.width_mm = 210.0;
+    l.page.height_mm = 297.0;
+    l.page.scale = 0.5;
+    l.page.scale_to_fit = true;
+    l.limits = Some((Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+    let imported = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    *s.doc_mut().unwrap() = imported;
+    let before = cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap();
+    s.execute("pagesetup", &json!({"layout":"Layout1","scaleToFit":true})).unwrap();
+    assert_eq!(cadcraft_render::layout_sheet(s.doc().unwrap(), "Layout1").unwrap(), before);
+    assert_eq!(before.bounds(), Bounds2::new(Vec2::new(4.0, 2.0), Vec2::new(598.0, 422.0)));
+}
+
+#[test]
 fn rename_keeps_the_active_layout_whatever_its_case() {
     let mut s = session_with_model();
     s.doc_mut().unwrap().active_layout = Some("layout1".into());
